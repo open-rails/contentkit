@@ -114,11 +114,11 @@ func TestListingSummarySettlesIncompleteEntitlements(t *testing.T) {
 	f := newFixtureBilling(t, nil, "", siteConfig(), billing)
 	f.group("tag", "big-breasts")
 	f.seed(
-		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, listing: "members", groups: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, groups: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 2, titles: map[string]string{"en": "Gallery 2"}, age: time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 	)
 	out, err := f.svc.List(f.ctx, ListOptions{Reader: Reader{Host: "main.test", Actor: access.Actor{ID: "reader"}}, Filter: Filter{Kind: "gallery"}, Summary: true})
-	if err != nil || out.Summary == nil || out.Summary.FilteredCount != 0 || out.Summary.LockedCount != 1 {
+	if err != nil || out.Summary == nil || out.Summary.FilteredCount != 1 || out.Summary.LockedCount != 1 {
 		t.Fatalf("settled summary %+v: %v", out.Summary, err)
 	}
 }

@@ -82,7 +82,7 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 		if it == nil {
 			continue
 		}
-		c := &Content{ID: id, Kind: it.kind, State: it.state, Listing: it.listing, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
+		c := &Content{ID: id, Kind: it.kind, State: it.state, OriginalTitle: it.originalTitle, OriginalLanguage: it.originalLanguage, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
 			Access: it.access, Restrictions: it.restrictions, Attributes: map[string]any{}, OwnerGroupID: it.ownerGroup, Creators: orEmpty(creators[id]),
 			Groups: []GroupSummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
 			UpdatedAt: it.updatedAt, DeletedAt: it.deletedAt}
@@ -129,12 +129,22 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			if vt, ok := ver.Text[lang]; ok {
 				out.Title, out.Description = vt.Title, vt.Description
 			}
+			if s.cfg.Kinds[it.kind].TitlePolicy == kinds.TitleOriginalAndVersion {
+				out.Title = editionTitle(ver, v.language, it.originalTitle, t.Title)
+			}
 			if !iv.editor {
 				out.Text, out.State, out.Access = nil, "", nil
 			}
 			out.Segments = released(out.Segments, v.now)
 			s.lockVersion(it.kind, &out)
 			c.Versions = append(c.Versions, out)
+		}
+		if s.cfg.Kinds[it.kind].TitlePolicy == kinds.TitleOriginalAndVersion {
+			if selected := DefaultVersion(c.Versions, v.language); selected != nil {
+				c.Title = selected.Title
+			} else if it.originalTitle != "" {
+				c.Title = it.originalTitle
+			}
 		}
 		if b := bodyVersion(c, iv.editor, v.language); b != nil {
 			bodies[id] = b.ID
@@ -419,7 +429,8 @@ func (s *Store) pickLanguage(want string, texts map[string]Text) string {
 }
 
 type itemRow struct {
-	kind, state, listing, ownerGroup  string
+	kind, state, ownerGroup           string
+	originalTitle, originalLanguage   string
 	comments                          string
 	moderation, moderationReason      string
 	access                            access.Rule
@@ -433,7 +444,7 @@ type itemRow struct {
 }
 
 func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, c.listing, coalesce(c.owner_group_id, ''), c.moderation, coalesce(c.moderation_reason, ''),
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.original_title, ''), coalesce(c.original_language, ''), coalesce(c.owner_group_id, ''), c.moderation, coalesce(c.moderation_reason, ''),
  c.access, c.restrictions, c.attributes, c.published_snapshot, c.ever_sold, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
  c.revision, c.comments
  FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
@@ -446,7 +457,7 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 		var id string
 		var r itemRow
 		var access, attrs, snapshot []byte
-		if err := rows.Scan(&id, &r.kind, &r.state, &r.listing, &r.ownerGroup, &r.moderation, &r.moderationReason, &access, &r.restrictions,
+		if err := rows.Scan(&id, &r.kind, &r.state, &r.originalTitle, &r.originalLanguage, &r.ownerGroup, &r.moderation, &r.moderationReason, &access, &r.restrictions,
 			&attrs, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments); err != nil {
 			return nil, err
 		}

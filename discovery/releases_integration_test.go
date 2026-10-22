@@ -121,7 +121,7 @@ func TestDailyReleasesWindowAndVisibility(t *testing.T) {
 		item{n: 3, titles: map[string]string{"en": "First day"}, age: 9 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 4, titles: map[string]string{"en": "Outside"}, age: 10 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 5, titles: map[string]string{"en": "Future"}, age: time.Hour, versions: []ver{{langs: []string{"en"}, future: true}}},
-		item{n: 6, titles: map[string]string{"en": "Unlisted"}, age: time.Hour, listing: "unlisted", versions: []ver{{langs: []string{"en"}}}},
+		item{n: 6, titles: map[string]string{"en": "Draft"}, age: time.Hour, draft: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 7, titles: map[string]string{"en": "Deleted"}, age: time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 8, titles: map[string]string{"en": "Premium"}, age: time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 9, titles: map[string]string{"en": "Filtered"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
@@ -155,7 +155,7 @@ func TestDailyReleasesWindowAndVisibility(t *testing.T) {
 	for _, d := range out.Days {
 		for _, c := range d.Contents {
 			if c.ID == f.cid(5) || c.ID == f.cid(6) || c.ID == f.cid(7) {
-				t.Fatal("publication feed exposed future, unlisted or deleted content to staff")
+				t.Fatal("publication feed exposed future, draft or deleted content to staff")
 			}
 		}
 	}

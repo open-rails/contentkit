@@ -12,7 +12,7 @@ import { ContentSections } from "./editors.js";
 const at = "2026-10-16T00:00:00Z";
 const content = (id = "p1"): Content => ({
   id, kind: "post", code: id, path: `/p/${id}`, language: "en", title: id,
-  decision: { allowed: true }, state: "draft", listing: "listed", comments: "open",
+  decision: { allowed: true }, state: "draft", comments: "open",
   live: false, access: { level: "public" }, restrictions: [], attributes: { caption: `Stored ${id}` },
   creators: [], entities: [], versions: [], editor: true, revision: 3, created_at: at, updated_at: at,
 });
@@ -85,8 +85,6 @@ it("ContentSections keeps unsaved details across an access save, uses the fresh 
   const caption = await screen.findByLabelText("Caption");
   await user.clear(caption);
   await user.type(caption, "Draft caption");
-  await user.click(ui.details().getByRole("combobox", { name: "Listing" }));
-  await user.click(await screen.findByRole("option", { name: "Unlisted (link only)" }));
   await user.click(ui.details().getByRole("combobox", { name: "Comments" }));
   await user.click(await screen.findByRole("option", { name: "Closed (kept, no new ones)" }));
   await user.click(ui.access().getByRole("combobox", { name: "Who can open it" }));
@@ -95,10 +93,9 @@ it("ContentSections keeps unsaved details across an access save, uses the fresh 
   await waitFor(() => expect(screen.getByLabelText("Record revision")).toHaveTextContent("4"));
 
   expect(caption).toHaveValue("Draft caption");
-  expect(ui.details().getByRole("combobox", { name: "Listing" })).toHaveTextContent("Unlisted (link only)");
   expect(ui.details().getByRole("combobox", { name: "Comments" })).toHaveTextContent("Closed");
   await user.click(ui.details().getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(s.writes.at(-1)?.patch).toEqual({ listing: "unlisted", comments: "closed", attributes: { caption: "Draft caption" }, revision: 4 }));
+  await waitFor(() => expect(s.writes.at(-1)?.patch).toEqual({ comments: "closed", attributes: { caption: "Draft caption" }, revision: 4 }));
   expect(await ui.details().findByRole("status")).toHaveTextContent("Saved.");
   expect(caption).toHaveValue("DRAFT CAPTION");
 
@@ -139,17 +136,16 @@ it("rebases clean fields and attributes without replacing edited fields", async 
   await choose(user, "Who can open it", "Tier members");
   await user.click(ui.access().getByRole("switch", { name: /Member/ }));
 
-  s.records.set("p1", { ...s.records.get("p1")!, revision: 4, listing: "unlisted", comments: "closed", attributes: { caption: "Remote caption", note: "Remote note" }, access: { level: "public", free_after: "2027-01-01T00:00:00Z" } });
+  s.records.set("p1", { ...s.records.get("p1")!, revision: 4, comments: "closed", attributes: { caption: "Remote caption", note: "Remote note" }, access: { level: "public", free_after: "2027-01-01T00:00:00Z" } });
   await user.click(screen.getByRole("button", { name: "Refresh record" }));
   await waitFor(() => expect(screen.getByLabelText("Note")).toHaveValue("Remote note"));
   expect(caption).toHaveValue("Keep this draft");
-  expect(ui.details().getByRole("combobox", { name: "Listing" })).toHaveTextContent("Unlisted");
   expect(ui.details().getByRole("combobox", { name: "Comments" })).toHaveTextContent("Closed");
   expect(ui.access().getByRole("combobox", { name: "Who can open it" })).toHaveTextContent("Tier members");
   expect(ui.access().getByRole("switch", { name: /Member/ })).toBeChecked();
   expect(ui.access().getByLabelText("Free for everyone from")).not.toHaveValue("");
   await user.click(ui.details().getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(s.writes.at(-1)?.patch).toEqual({ listing: "unlisted", comments: "closed", attributes: { caption: "Keep this draft", note: "Remote note" }, revision: 4 }));
+  await waitFor(() => expect(s.writes.at(-1)?.patch).toEqual({ comments: "closed", attributes: { caption: "Keep this draft", note: "Remote note" }, revision: 4 }));
 });
 
 it("retains drafts on conflict and failed reload, then Cancel reloads only its own section", async () => {
@@ -250,11 +246,11 @@ it("seeds late model attributes even after another details field was edited", as
   s.controls.modelGate = gate.promise;
   const user = userEvent.setup();
   const ui = mount(s.client);
-  await screen.findByRole("combobox", { name: "Listing" });
-  await choose(user, "Listing", "Unlisted (link only)");
+  await screen.findByRole("combobox", { name: "Comments" });
+  await choose(user, "Comments", "Closed (kept, no new ones)");
   gate.resolve();
   expect(await screen.findByLabelText("Caption")).toHaveValue("Stored p1");
-  expect(ui.details().getByRole("combobox", { name: "Listing" })).toHaveTextContent("Unlisted");
+  expect(ui.details().getByRole("combobox", { name: "Comments" })).toHaveTextContent("Closed");
 });
 
 it("Cancel cannot roll back a sibling save completed while its reload was pending", async () => {

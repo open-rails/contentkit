@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/kinds"
 )
 
 // MembershipState: a proposed membership (a suggestion awaiting review) is
@@ -180,8 +181,11 @@ func (s *Store) prepare(ctx context.Context, q Querier, ms []Membership) ([]memb
 		}
 		row := memberRow{GroupID: string(m.GroupID), ContentID: m.ContentID, Role: strings.TrimSpace(m.Role), Position: m.Position,
 			ActiveFrom: m.ActiveFrom, ActiveUntil: m.ActiveUntil, State: string(m.State)}
+		if m.VersionID == "" && len(gk.MembershipScopes) > 0 && !gk.AllowsMembership(kinds.ContentScope) {
+			return nil, f, fmt.Errorf("%w: %s memberships are version-level", ErrInvalid, g.Kind)
+		}
 		if m.VersionID != "" {
-			if !gk.VersionLevel {
+			if !gk.AllowsMembership(kinds.VersionScope) {
 				return nil, f, fmt.Errorf("%w: %s memberships are content-level", ErrInvalid, g.Kind)
 			}
 			if f.versions[m.VersionID] != m.ContentID {
@@ -506,7 +510,11 @@ func (s *Store) scopeContentGroups(ctx context.Context, q Querier, set *ContentG
 	}
 	declared := s.cfg.Kinds[contentKind].Groups
 	allowed := func(kind string) bool {
-		return s.cfg.GroupKinds[kind].VersionLevel == (versionScope != "")
+		scope := kinds.ContentScope
+		if versionScope != "" {
+			scope = kinds.VersionScope
+		}
+		return s.cfg.GroupKinds[kind].AllowsMembership(scope)
 	}
 	if len(set.Kinds) == 0 {
 		set.Kinds = []string{}

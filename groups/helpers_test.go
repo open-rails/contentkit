@@ -71,11 +71,10 @@ func cid(n int) string    { return fmt.Sprintf("01920000-0000-7000-8000-%012d", 
 func vid(n, i int) string { return fmt.Sprintf("01920000-0000-7000-9000-%010d%02d", n, i) }
 
 // version is one content version with its facet: live from live (nil: not
-// live), listed unless unlisted.
+// live).
 type version struct {
 	languages []string
 	live      *time.Time
-	unlisted  bool
 	favorites int
 }
 
@@ -92,16 +91,12 @@ func (f *fixture) content(kind string, n int, versions ...version) {
 		f.t.Fatal(err)
 	}
 	for i, v := range versions {
-		listing := "listed"
-		if v.unlisted {
-			listing = "unlisted"
-		}
 		if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+q+`.content_versions (tenant_id, id, content_id, position, languages) VALUES ($1, $2, $3, $4, $5)`,
 			tenant, vid(n, i), cid(n), i, v.languages); err != nil {
 			f.t.Fatal(err)
 		}
-		if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+q+`.content_facets (tenant_id, content_id, version_id, kind, live_from, listing, languages, access_level, favorites, published_at)
- VALUES ($1, $2, $3, $4, $5, $6, $7, 'public', $8, $5)`, tenant, cid(n), vid(n, i), kind, v.live, listing, v.languages, v.favorites); err != nil {
+		if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+q+`.content_facets (tenant_id, content_id, version_id, kind, live_from, languages, access_level, favorites, published_at)
+ VALUES ($1, $2, $3, $4, $5, $6, 'public', $7, $5)`, tenant, cid(n), vid(n, i), kind, v.live, v.languages, v.favorites); err != nil {
 			f.t.Fatal(err)
 		}
 	}

@@ -16,7 +16,7 @@ type KnownCardsOptions struct {
 	Summary    bool
 }
 
-// KnownCards hydrates explicit IDs in caller order, including unlisted items.
+// KnownCards hydrates explicit IDs in caller order.
 // No publication, domain, preference, access or deletion rule is relaxed.
 func (s *Service) KnownCards(ctx context.Context, o KnownCardsOptions) (ContentPage, error) {
 	ctx = access.WithMemo(ctx)

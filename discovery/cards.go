@@ -148,7 +148,6 @@ type cardRow struct {
 	groupIDs    []string
 	owner       string
 	creator     bool
-	listing     string
 	slug        string
 	description string
 	bodyExcerpt string
@@ -232,13 +231,20 @@ func (s *Service) cardRows(ctx context.Context, q *sel, picks []pick) ([]cardRow
 	// The page opens the version its language does by default among those
 	// the reader may see; another one needs ?v=.
 	listed, largs := q.viewer.Shown("g")
-	args := pgx.NamedArgs{"d_vids": vids, "d_tenant": s.o.Tenant, "d_display": q.display, "d_langs": s.languages(), "d_user": person(q.reader.Actor)}
+	titleKinds := []string{}
+	for kind, spec := range s.o.Kinds.Kinds {
+		if spec.TitlePolicy == kinds.TitleOriginalAndVersion {
+			titleKinds = append(titleKinds, kind)
+		}
+	}
+	args := pgx.NamedArgs{"d_title_kinds": titleKinds, "d_vids": vids, "d_tenant": s.o.Tenant, "d_display": q.display, "d_langs": s.languages(), "d_user": person(q.reader.Actor)}
 	for k, v := range largs {
 		args[k] = v
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
- f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio, f.listing,
- coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, ''),
+ f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio,
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), CASE WHEN c.kind=ANY(@d_title_kinds::text[]) THEN nullif(c.original_title,'') END, t.title, ''),
+ CASE WHEN nullif(vt.title,'') IS NOT NULL THEN vt.language WHEN c.kind=ANY(@d_title_kinds::text[]) AND nullif(c.original_title,'') IS NOT NULL THEN coalesce(nullif(c.original_language,''),t.language,'') ELSE coalesce(t.language,'') END,
  coalesce(nullif(vt.description, ''), t.description, ''), coalesce(t.body_excerpt, ''),
  coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user),
  coalesce((SELECT g.version_id FROM %[1]s g WHERE g.tenant_id = f.tenant_id AND g.content_id = f.content_id AND %[8]s
@@ -250,7 +256,10 @@ JOIN %[3]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id
 LEFT JOIN %[4]s cd ON cd.tenant_id = c.tenant_id AND cd.content_kind = c.kind AND cd.content_id = c.id
 LEFT JOIN LATERAL (SELECT x.title, x.language, left(x.description, 600) AS description, x.body_excerpt FROM %[5]s x WHERE x.tenant_id = c.tenant_id AND x.content_id = c.id
  ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1) t ON true
-LEFT JOIN %[6]s vt ON vt.tenant_id = v.tenant_id AND vt.version_id = v.id AND vt.language = t.language
+LEFT JOIN LATERAL (SELECT x.title,x.description,x.language FROM %[6]s x
+ WHERE x.tenant_id=v.tenant_id AND x.version_id=v.id
+ AND ((c.kind=ANY(@d_title_kinds::text[]) AND x.language=ANY(v.languages)) OR (NOT(c.kind=ANY(@d_title_kinds::text[])) AND x.language=t.language))
+ ORDER BY (nullif(x.title,'') IS NOT NULL) DESC,x.language=@d_display DESC,array_position(v.languages,x.language),x.language LIMIT 1) vt ON true
 ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.versionText, s.t.creators, listed, edition.Order("g", "@d_display::text")),
 		args)
 	if err != nil {
@@ -262,7 +271,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var isDefault bool
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.counts.likes,
 			&c.counts.dislikes, &c.counts.favorites, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
-			&c.Version.HasAudio, &c.listing, &code, &c.slug, &c.Title, &c.Language, &c.description, &c.bodyExcerpt, &c.owner, &c.creator, &isDefault)
+			&c.Version.HasAudio, &code, &c.slug, &c.Title, &c.Language, &c.description, &c.bodyExcerpt, &c.owner, &c.creator, &isDefault)
 		if err != nil {
 			return c, err
 		}
@@ -285,10 +294,10 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 	if err := s.decide(ctx, q, got); err != nil {
 		return nil, err
 	}
-	// Members-only listings, like hide mode, need the exact verdict after an
+	// Hide mode needs the exact verdict after an
 	// incomplete entitlement keyspace admitted them as SQL candidates.
 	got = slices.DeleteFunc(got, func(c cardRow) bool {
-		return !c.Access.Allowed && (q.reader.Mode == access.Hide || c.listing == "members")
+		return !c.Access.Allowed && q.reader.Mode == access.Hide
 	})
 	s.lock(got)
 	return got, nil
@@ -619,7 +628,8 @@ func (s *Service) standing(ctx context.Context, actor access.Actor, refs []conte
 	}
 	reactions, err := pgx.CollectRows(reacted, func(row pgx.CollectableRow) (struct{ n, value int64 }, error) {
 		var v struct{ n, value int64 }
-		return v, row.Scan(&v.n, &v.value)
+		err := row.Scan(&v.n, &v.value)
+		return v, err
 	})
 	if err != nil {
 		return nil, err

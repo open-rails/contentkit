@@ -7,6 +7,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// AddMembershipsTx adds associations in a caller-owned transaction, preserving
+// every other shared and version-specific association. Authorize the mutation
+// before opening tx; the same hierarchy-lock ordering as SetContentGroupsTx applies.
+func (s *Store) AddMembershipsTx(ctx context.Context, tx pgx.Tx, in []Membership) error {
+	if tx == nil {
+		return errors.New("groups: transaction is required")
+	}
+	return s.bound(tx).AddMemberships(ctx, in)
+}
+
 // CreateGroupsTx is CreateGroups in a caller-owned transaction. A store bound
 // with As retains that actor and all its ordinary authorization checks. Scope
 // provisioning is left to the existing transactional sync job after commit.

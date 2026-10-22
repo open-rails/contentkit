@@ -22,15 +22,11 @@ var (
 	ErrConflict  = errors.New("catalog: conflict")
 )
 
-// Content states and listings.
+// Content states.
 const (
 	StateDraft     = "draft"
 	StatePublished = "published"
 	StateDeleted   = "deleted"
-
-	ListingListed   = "listed"
-	ListingMembers  = "members"
-	ListingUnlisted = "unlisted"
 )
 
 // Text is a content item's text in one language. Body is rich text whose
@@ -191,9 +187,14 @@ type Content struct {
 	// Code and Path are its page: /{lang}/{route}/{code}/{slug}.
 	Code string `json:"code"`
 	Path string `json:"path"`
-	// Language is the language of the text below.
+	// Language is the localized text language. Title may instead come from the
+	// selected edition or OriginalTitle under the kind's title policy.
 	Language string `json:"language"`
 	Title    string `json:"title"`
+	// OriginalTitle is the shared source-language title, independent of editions.
+	// OriginalLanguage is optional: unknown source languages are never guessed.
+	OriginalTitle    string `json:"original_title,omitempty"`
+	OriginalLanguage string `json:"original_language,omitempty"`
 	// Slug is Path's decorative tail in the page's language (entity and
 	// title, "/"-joined); Slugs is it per language. Links built from them
 	// equal Path.
@@ -212,9 +213,8 @@ type Content struct {
 	Images map[string]string `json:"images,omitempty"`
 	// Cover is the cover of the edition the request's language opens by
 	// default (DefaultVersion): what cards and meta tags show.
-	Cover   *Cover `json:"cover,omitempty"`
-	State   string `json:"state"`
-	Listing string `json:"listing"`
+	Cover *Cover `json:"cover,omitempty"`
+	State string `json:"state"`
 	// Comments is open, closed or hidden.
 	Comments     string         `json:"comments"`
 	PublishAt    *time.Time     `json:"publish_at,omitempty"`

@@ -129,8 +129,8 @@ func (s *Service) compile(ctx context.Context, r Reader, f Filter) (*sel, error)
 	return s.compileWithViewer(ctx, r, f, nil)
 }
 
-// compileKnown preserves the normal selection's policy, admitting unlisted
-// items only for a caller-bounded known-ID selection or personal history.
+// compileKnown preserves the normal visibility policy and also retains
+// temporarily unplayable items in a bounded known-ID selection or history.
 func (s *Service) compileKnown(ctx context.Context, r Reader, f Filter) (*sel, error) {
 	v, err := s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode})
 	if err != nil {
@@ -140,7 +140,7 @@ func (s *Service) compileKnown(ctx context.Context, r Reader, f Filter) (*sel, e
 		return nil, err
 	}
 	f.keepUnplayable = true
-	return s.compileWithViewer(ctx, r, f, v.ForKnownContents())
+	return s.compileWithViewer(ctx, r, f, v)
 }
 
 // compileWithViewer reuses a resolved request viewer for a private selection
@@ -287,7 +287,7 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 		if err != nil {
 			return nil, fmt.Errorf("%w: published_within %q is one of %v", ErrInvalid, f.PublishedWithin, popularity.Periods)
 		}
-		q.and("f.published_at IS NOT NULL AND f.published_at <= @d_published_now AND f.live_from <= @d_published_now AND NOT f.deleted AND f.listing <> 'unlisted'", pgx.NamedArgs{"d_published_now": now})
+		q.and("f.published_at IS NOT NULL AND f.published_at <= @d_published_now AND f.live_from <= @d_published_now AND NOT f.deleted", pgx.NamedArgs{"d_published_now": now})
 		if !window.From.IsZero() {
 			q.and("f.published_at >= @d_published_from", pgx.NamedArgs{"d_published_from": window.From})
 		}
@@ -676,7 +676,8 @@ WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit OFFSET @d_offset`, o.e
 	}
 	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
 		var x row
-		return x, r.Scan(&x.content, &x.sk)
+		err := r.Scan(&x.content, &x.sk)
+		return x, err
 	})
 	if err != nil {
 		return nil, "", err
@@ -715,7 +716,8 @@ func (s *Service) pickAmong(ctx context.Context, q *sel, ids []string) ([]pick, 
 	}
 	byID, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (pick, error) {
 		var p pick
-		return p, r.Scan(&p.content, &p.version)
+		err := r.Scan(&p.content, &p.version)
+		return p, err
 	})
 	if err != nil {
 		return nil, err

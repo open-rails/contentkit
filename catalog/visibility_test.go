@@ -12,7 +12,7 @@ import (
 
 // The one visibility rule: site scopes (excluded restrictions, required
 // groups), content filters (config defaults and a viewer's overrides), the
-// listing rule (listed, members, unlisted), lock and hide modes, and the
+// lock and hide access modes, and the
 // viewers who see everything (staff, creators, owner-group editors), for
 // lists (Listed) and direct reads (Contents) alike.
 func TestVisibilityIntegration(t *testing.T) {
@@ -40,9 +40,9 @@ func TestVisibilityIntegration(t *testing.T) {
 	reddish := item("Red", nil, "ja")
 	f.join(red, reddish, "")
 	members := item("Members", func(c *ContentInput) {
-		c.Listing, c.Access = ListingMembers, &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
+		c.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
 	}, "en")
-	unlisted := item("Unlisted", func(c *ContentInput) { c.Listing = ListingUnlisted }, "en")
+	additional := item("Additional", nil, "en")
 	premium := item("Premium", func(c *ContentInput) { c.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}} }, "en")
 	channel := item("Channel", func(c *ContentInput) { c.Access = &access.Rule{Level: access.GroupLevel, Group: studio} }, "en")
 	ppv := item("Pay per view", func(c *ContentInput) { c.Access = &access.Rule{Level: access.PPV} }, "en")
@@ -63,27 +63,27 @@ func TestVisibilityIntegration(t *testing.T) {
 		want              []string
 	}{
 		{"anonymous on main: listed, outside the default filter", anon, "main.test", ViewerOptions{},
-			[]string{plain, restricted, gay, reddish, premium, channel, ppv}},
+			[]string{plain, restricted, gay, reddish, members, additional, premium, channel, ppv}},
 		{"unmatched host is the first site", anon, "elsewhere.test", ViewerOptions{},
-			[]string{plain, restricted, gay, reddish, premium, channel, ppv}},
+			[]string{plain, restricted, gay, reddish, members, additional, premium, channel, ppv}},
 		{"the restricted site leaves restricted content out", anon, "moe.test", ViewerOptions{},
-			[]string{plain, gay, reddish, premium, channel, ppv}},
+			[]string{plain, gay, reddish, members, additional, premium, channel, ppv}},
 		{"the gay site shows only its group", anon, "gay.test", ViewerOptions{}, []string{gay}},
-		{"a tier holder also lists the members listing it opens", "pam", "main.test", ViewerOptions{},
-			[]string{plain, restricted, gay, reddish, members, premium, channel, ppv}},
-		{"hide mode: only what the viewer opens", anon, "main.test", ViewerOptions{Mode: access.Hide}, []string{plain, restricted, gay, reddish}},
-		{"hide mode for a tier holder", "pam", "main.test", ViewerOptions{Mode: access.Hide}, []string{plain, restricted, gay, reddish, members, premium}},
+		{"a tier holder opens every premium item", "pam", "main.test", ViewerOptions{},
+			[]string{plain, restricted, gay, reddish, members, additional, premium, channel, ppv}},
+		{"hide mode: only what the viewer opens", anon, "main.test", ViewerOptions{Mode: access.Hide}, []string{plain, restricted, gay, reddish, additional}},
+		{"hide mode for a tier holder", "pam", "main.test", ViewerOptions{Mode: access.Hide}, []string{plain, restricted, gay, reddish, members, additional, premium}},
 		{"a viewer's overrides: show gore, hide red", "carol", "main.test", ViewerOptions{},
-			[]string{plain, restricted, gay, gory, reddish, premium, channel, ppv}},
+			[]string{plain, restricted, gay, gory, reddish, members, additional, premium, channel, ppv}},
 		{"a language lists only items with a live version serving it", anon, "main.test", ViewerOptions{Language: "ja"}, []string{plain, reddish}},
-		{"public staff obey domain and optional filters", "staff", "moe.test", ViewerOptions{}, []string{plain, gay, reddish, members, unlisted, premium, channel, ppv, draft}},
+		{"public staff obey domain and optional filters", "staff", "moe.test", ViewerOptions{}, []string{plain, gay, reddish, members, additional, premium, channel, ppv, draft}},
 		{"view-restricted stays inside domain", "viewer", "gay.test", ViewerOptions{}, []string{gay}},
 		{"a creator also lists their draft", "alice", "main.test", ViewerOptions{},
-			[]string{plain, restricted, gay, reddish, premium, channel, ppv, draft}},
+			[]string{plain, restricted, gay, reddish, members, additional, premium, channel, ppv, draft}},
 		{"an owner group's editor lists its drafts", "ed", "main.test", ViewerOptions{EditorGroups: []string{studio}},
-			[]string{plain, restricted, gay, reddish, premium, channel, ppv, draft}},
+			[]string{plain, restricted, gay, reddish, members, additional, premium, channel, ppv, draft}},
 		{"another channel's editor does not", "bob", "main.test", ViewerOptions{EditorGroups: []string{studio}},
-			[]string{plain, restricted, gay, reddish, premium, channel, ppv}},
+			[]string{plain, restricted, gay, reddish, members, additional, premium, channel, ppv}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got, want := f.listed(f.viewer(c.actor, c.host, c.o)), sorted(c.want...); !slices.Equal(got, want) {
@@ -92,9 +92,9 @@ func TestVisibilityIntegration(t *testing.T) {
 		})
 	}
 
-	// Direct reads ignore the listing rule and the filters, keep the site
+	// Direct reads ignore optional filters, keep the site
 	// scope, and decide each version's access.
-	got := f.read(anon, "main.test", unlisted, gory, members, premium, channel, ppv, draft)
+	got := f.read(anon, "main.test", additional, gory, members, premium, channel, ppv, draft)
 	if got[0] == nil || got[1] == nil || got[2] == nil || got[6] != nil {
 		t.Fatalf("anonymous direct reads %v", ids(got))
 	}
@@ -126,10 +126,10 @@ func TestVisibilityIntegration(t *testing.T) {
 	if got := f.read("ed", "main.test", plain)[0]; got == nil || got.Editor {
 		t.Fatalf("an editor of another group edits plain content: %+v", got)
 	}
-	if err := f.s.Update(f.ctx, f.as("ed"), []Update{{ID: draft, ContentPatch: ContentPatch{Listing: ptr(ListingUnlisted)}}}); err != nil {
+	if err := f.s.Update(f.ctx, f.as("ed"), []Update{{ID: draft, ContentPatch: ContentPatch{Comments: ptr("closed")}}}); err != nil {
 		t.Fatalf("the owner group's editor edits: %v", err)
 	}
-	if err := f.s.Update(f.ctx, f.as("ed"), []Update{{ID: plain, ContentPatch: ContentPatch{Listing: ptr(ListingUnlisted)}}}); err == nil {
+	if err := f.s.Update(f.ctx, f.as("ed"), []Update{{ID: plain, ContentPatch: ContentPatch{Comments: ptr("closed")}}}); err == nil {
 		t.Fatal("an editor edited content outside its group")
 	}
 

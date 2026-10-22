@@ -28,6 +28,7 @@ import (
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/popularity"
+	"github.com/open-rails/contentkit/signal"
 )
 
 // Errors; match with errors.Is.
@@ -61,6 +62,8 @@ type Options struct {
 	// MeasuredEngagement activates new measured writes only after the erasure
 	// executor cohort understands their storage. False leaves this API disabled.
 	MeasuredEngagement bool
+	// ActivityCohorts are ordered, application-defined readership categories.
+	ActivityCohorts []signal.ActivityCohort
 	// Groups names the groups on cards and in typeahead.
 	Groups *groups.Store
 	// Media resolves cards' covers and ladders; nil leaves them out.
@@ -106,6 +109,9 @@ func New(o Options) (*Service, error) {
 	}
 	if err := o.Kinds.Validate(); err != nil {
 		return nil, fmt.Errorf("discovery: Kinds: %w", err)
+	}
+	if err := signal.ValidateActivityCohorts(o.ActivityCohorts); err != nil {
+		return nil, err
 	}
 	if o.Policy.Name == "" {
 		o.Policy = popularity.PolicyV2

@@ -20,8 +20,21 @@ const signalCHDB = "contentkit_discovery_signal_test"
 // history, view_status, statistics and recommendations over real ClickHouse.
 func TestSignalPlaneRoutes(t *testing.T) {
 	env := signaltest.FromEnv(t)
-	f := seededOn(t, env.Fresh(t, signalCHDB), signalCHDB)
+	database := fmt.Sprintf("contentkit_stats_test_%d", time.Now().UnixNano())
+	admin := env.Open(t, "")
+	if err := admin.Exec(t.Context(), "CREATE DATABASE "+database+env.OnCluster()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { env.Drop(t, admin, database) })
+	conn := env.Open(t, database)
+	env.Apply(t, conn)
+	f := seededOn(t, conn, database)
 	const host = "main.test"
+	f.svc.o.ActivityCohorts = []signal.ActivityCohort{
+		{ID: "supporter", Identity: signal.ActivityAccount, AnyTier: []string{"premium"}},
+		{ID: "member", Identity: signal.ActivityAccount},
+		{ID: "guest", Identity: signal.ActivityAnonymous},
+	}
 	at := time.Now().UTC().Add(-time.Hour)
 	click := func(content, version, event string) SignalInput {
 		return SignalInput{ContentID: content, VersionID: version, Type: TypeClick, EventID: event, OccurredAt: at}
@@ -102,7 +115,7 @@ func TestSignalPlaneRoutes(t *testing.T) {
 	var activity Activity
 	// Every day of the default 10 is listed; readers split by audience.
 	status, code := f.call(http.MethodGet, host, "staff", q("/stats/activity", "kind", "gallery"), nil, &activity)
-	want := ActivityDay{Date: at.Format(time.DateOnly), ActiveMS: 1_400_000, Readers: 5, Anon: 3, Free: 1, Premium: 1}
+	want := ActivityDay{Date: at.Format(time.DateOnly), ActiveMS: 1_400_000, Readers: 5, Cohorts: map[string]uint64{"guest": 3, "member": 1, "supporter": 1}}
 	var day ActivityDay
 	for _, d := range activity.Days {
 		if d.Date == want.Date {
@@ -111,7 +124,7 @@ func TestSignalPlaneRoutes(t *testing.T) {
 			t.Errorf("activity on %s: %+v", d.Date, d)
 		}
 	}
-	if status != http.StatusOK || len(activity.Days) != 10 || activity.Days[0].Date != time.Now().UTC().Format(time.DateOnly) || day != want {
+	if status != http.StatusOK || len(activity.Days) != 10 || activity.Days[0].Date != time.Now().UTC().Format(time.DateOnly) || !reflect.DeepEqual(day, want) {
 		t.Fatalf("activity: %d %s %+v", status, code, activity)
 	}
 	var mine MyStats

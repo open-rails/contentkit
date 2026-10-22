@@ -74,17 +74,17 @@ var routes = []httpapi.Route[*Store]{
 		Request: ContentInput{}, Responses: []httpapi.Reply{httpapi.Created(Content{})}, Errors: []string{httpapi.CodeForbidden}},
 		Serve: httpapi.H((*Store).handleCreate)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Edits a content item's listing, access, restrictions, attributes or creators." + editorsDoc,
+		Doc:     "Edits a content item's access, restrictions, attributes or creators." + editorsDoc,
 		Request: ContentPatch{}, Responses: []httpapi.Reply{httpapi.OK(Content{})},
 		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, "not_configured"}},
 		Serve: httpapi.H((*Store).handleUpdate)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
-		Doc:       "Deletes a content item: holders of its key still read it; one never sold is erased after the retention." + editorsDoc,
-		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
+		Doc:       "Deletes a hidden-version item or an empty item. For content with visible versions, delete each version instead; the parent is deleted with its last version. Purchased content remains protected from purge." + editorsDoc,
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleDelete)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/restore", Resource: "contents", Auth: httpapi.Public,
-		Doc:       "Restores a deleted content item as it was." + editorsDoc,
-		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
+		Doc:       "Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead." + editorsDoc,
+		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleRestore)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/publish", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Refused (not_ready) while a published version's media is still processing or being published." + editorsDoc,
@@ -126,7 +126,7 @@ var routes = []httpapi.Route[*Store]{
 		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, "not_ready"}},
 		Serve: httpapi.H((*Store).handleUpdateVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
-		Doc:       "Deletes a version; a content item keeps at least one." + editorsDoc,
+		Doc:       "Soft-deletes a version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content retains its existing access and purge protections." + editorsDoc,
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleDeleteVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/versions/{vid}/segments", Resource: "contents", Auth: httpapi.Public,
@@ -802,7 +802,10 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	return `SELECT c.id FROM ` + s.t.items + ` c WHERE c.tenant_id = $1 AND ` + state + `
  AND ($2 = '' OR c.kind = $2) AND ($3 = '' OR c.owner_group_id = $3)
  AND ($4 OR $5 OR EXISTS (SELECT 1 FROM ` + s.t.creators + ` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $6))
- AND ($7 = '' OR EXISTS (SELECT 1 FROM ` + s.t.text + ` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
+ AND ($7 = '' OR strpos(lower(coalesce(c.original_title,'')),lower($7))>0 OR EXISTS (
+ SELECT 1 FROM ` + s.t.versions + ` v JOIN ` + s.t.versionText + ` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND strpos(lower(t.title),lower($7))>0)
+ OR EXISTS (SELECT 1 FROM ` + s.t.text + ` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
   AND (strpos(lower(t.title), lower($7)) > 0 OR strpos(lower(t.description), lower($7)) > 0 OR strpos(lower(t.body), lower($7)) > 0)))
  AND ($10 = '' OR EXISTS (SELECT 1 FROM ` + s.qs + `.content_codes k WHERE k.tenant_id = c.tenant_id AND k.content_kind = c.kind AND k.content_id = c.id AND k.code = $10))
  AND (cardinality($11::text[]) = 0 OR c.id = ANY($11::text[]))`,

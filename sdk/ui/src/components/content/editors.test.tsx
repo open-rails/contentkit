@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient, type ContentKitClient } from "../../client/index.js";
 import type { Content, ContentModel, GroupCard, GroupDetail, Version } from "../../client/generated/wire.js";
+import { toLocalInput } from "../../client/group-fields.js";
 import { ContentKitProvider } from "../../react/index.js";
 import { AccessEditor, SegmentsEditor, VersionEditor, VersionsEditor } from "./editors.js";
 
@@ -57,7 +58,6 @@ const content = (o: Partial<Content> = {}): Content => ({
   title: "A post",
   decision: { allowed: true },
   state: "draft",
-  listing: "listed",
   comments: "open",
   live: false,
   access: { level: "public" },
@@ -177,10 +177,10 @@ it("edits one selected version without duplicating its media or chapter panels",
   });
   const user = userEvent.setup();
   const { container } = render(<VersionEditor content={content({ kind: "comic" })} version={version} media={false} chapters={false} client={s.client} />);
-  const label = await screen.findByLabelText("Label (optional)");
-  await user.type(label, "Revised edition");
+  fireEvent.change(await screen.findByLabelText("Goes live"), { target: { value: "2027-01-01T12:00" } });
+  expect(screen.queryByLabelText("Label (optional)")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(s.calls.find((call) => call.key === "PATCH /contents/p1/versions/v1")?.body).toMatchObject({ label: "Revised edition", languages: ["en"] }));
+  await waitFor(() => expect(s.calls.find((call) => call.key === "PATCH /contents/p1/versions/v1")?.body).toMatchObject({ publish_at: new Date("2027-01-01T12:00").toISOString(), languages: ["en"] }));
   expect(container.querySelector('[data-ckui="segments-editor"]')).toBeNull();
   expect(container.querySelector('[data-ckui="media-folder"]')).toBeNull();
   expect(screen.queryByRole("button", { name: "Add version" })).toBeNull();
@@ -222,12 +222,12 @@ it("lets the host cancel edition deletion to preserve unsaved parent fields", as
 });
 
 it("resets unsaved version fields when selecting another edition", async () => {
-  const s = server({ "GET /kinds": () => model }), user = userEvent.setup();
+  const s = server({ "GET /kinds": () => model });
   const view = render(<VersionEditor content={content()} version={version} media={false} chapters={false} client={s.client} />);
-  await user.type(await screen.findByLabelText("Label (optional)"), "First draft");
-  const second = { ...version, id: "v2", code: "SECOND", label: "Second edition" };
+  fireEvent.change(await screen.findByLabelText("Goes live"), { target: { value: "2027-01-01T12:00" } });
+  const second = { ...version, id: "v2", code: "SECOND", publish_at: "2028-01-01T12:00:00Z" };
   view.rerender(<VersionEditor content={content()} version={second} media={false} chapters={false} client={s.client} />);
-  expect(screen.getByLabelText("Label (optional)")).toHaveValue("Second edition");
+  expect(screen.getByLabelText("Goes live")).toHaveValue(toLocalInput(second.publish_at));
 });
 
 it("can render chapter controls under a host-supplied heading", async () => {

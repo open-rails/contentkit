@@ -17,11 +17,11 @@ export type PollKind = "multiple_choice" | "free_text";
 export type ModerationState = "approved" | "held" | "rejected";
 export type ContentState = "draft" | "published" | "deleted";
 export type VersionState = "draft" | "published";
-export type Listing = "listed" | "members" | "unlisted";
 export type AliasStatus = "found" | "not_found" | "gone";
 
 export interface Activity {
   days: ActivityDay[];
+  cohorts: string[];
 }
 
 export interface ActivityContext {
@@ -45,9 +45,7 @@ export interface ActivityContextsInput {
 export interface ActivityDay {
   date: string;
   readers: number;
-  anon: number;
-  free: number;
-  premium: number;
+  cohorts: Record<string, number>;
   active_ms: number;
 }
 
@@ -148,6 +146,7 @@ export interface Attribute {
   values?: string[];
   filterable?: boolean;
   sortable?: boolean;
+  required?: boolean;
 }
 
 export interface Avatar {
@@ -380,6 +379,8 @@ export interface Content {
   path: string;
   language: string;
   title: string;
+  original_title?: string;
+  original_language?: string;
   slug?: string;
   slugs?: Record<string, string>;
   description?: string;
@@ -388,7 +389,6 @@ export interface Content {
   images?: Record<string, string>;
   cover?: CatalogCover;
   state: ContentState;
-  listing: Listing;
   comments: string;
   publish_at?: string;
   published_at?: string;
@@ -447,7 +447,8 @@ export interface ContentGroups {
 export interface ContentInput {
   kind: string;
   text?: Record<string, CatalogText>;
-  listing?: Listing;
+  original_title?: string;
+  original_language?: string;
   comments?: string;
   access?: Rule;
   restrictions?: string[];
@@ -480,7 +481,8 @@ export interface ContentPage {
 }
 
 export interface ContentPatch {
-  listing?: Listing;
+  original_title?: string;
+  original_language?: string;
   comments?: string;
   access?: Rule;
   restrictions?: string[];
@@ -503,7 +505,8 @@ export interface ContentRecord {
   publish_at?: string;
   published_at?: string;
   deleted_at?: string;
-  listing?: string;
+  original_title?: string;
+  original_language?: string;
   comments?: string;
   access?: Rule;
   restrictions?: string[];
@@ -959,6 +962,7 @@ export interface GroupKind {
   sellable?: boolean;
   auth_scope?: boolean;
   windows?: boolean;
+  membership_scopes?: ("content" | "version")[];
   version_level?: boolean;
   creatable?: boolean;
   roles?: string[];
@@ -1131,7 +1135,9 @@ export interface Item {
 }
 
 export interface Kind {
+  title_policy?: "localized" | "original_and_version";
   access_levels?: string[];
+  access_scope?: "content" | "version";
   comment_modes?: string[];
   route: string;
   path_entity?: string;

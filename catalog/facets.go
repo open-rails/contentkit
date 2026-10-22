@@ -79,7 +79,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 	if err != nil {
 		return err
 	}
-	if _, err := q.Exec(ctx, `INSERT INTO `+s.t.facets+` AS f (tenant_id, content_id, version_id, kind, live_from, deleted, listing, unplayable, languages,
+	if _, err := q.Exec(ctx, `INSERT INTO `+s.t.facets+` AS f (tenant_id, content_id, version_id, kind, live_from, deleted, unplayable, languages,
  access_level, access_tiers, access_group_id, access_free_after, restrictions, group_ids, traits, owner_group_id, position, published_at, attributes,
  updated_at)
  SELECT c.tenant_id, c.id, v.id, c.kind,
@@ -87,7 +87,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
    AND (v.state = 'published' OR (v.state = 'deleted' AND v.published_at IS NOT NULL))
    AND (c.moderation = 'approved' OR c.published_snapshot IS NOT NULL)
    THEN greatest(coalesce(c.published_at, c.publish_at), coalesce(v.published_at, v.publish_at)) END,
-  c.state = 'deleted' OR v.state = 'deleted', c.listing, c.kind = ANY($4::text[]) AND v.playable IS FALSE, v.languages,
+  c.state = 'deleted' OR v.state = 'deleted', c.kind = ANY($4::text[]) AND v.playable IS FALSE, v.languages,
   a.level, a.tiers, a.group_id, a.free_after, c.restrictions, a.groups, v.traits, c.owner_group_id, v.position, coalesce(c.published_at, c.publish_at),
   c.attributes || v.attributes, clock_timestamp()
  FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], group_id text, free_after timestamptz, groups text[])
@@ -95,7 +95,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
  JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
  WHERE c.id = ANY($2)
  ON CONFLICT (tenant_id, version_id) DO UPDATE SET content_id = EXCLUDED.content_id, kind = EXCLUDED.kind, live_from = EXCLUDED.live_from,
-  deleted = EXCLUDED.deleted, listing = EXCLUDED.listing, unplayable = EXCLUDED.unplayable, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
+  deleted = EXCLUDED.deleted, unplayable = EXCLUDED.unplayable, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
   access_tiers = EXCLUDED.access_tiers, access_group_id = EXCLUDED.access_group_id, access_free_after = EXCLUDED.access_free_after,
   restrictions = EXCLUDED.restrictions, group_ids = EXCLUDED.group_ids, traits = EXCLUDED.traits, owner_group_id = EXCLUDED.owner_group_id,
   position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes,

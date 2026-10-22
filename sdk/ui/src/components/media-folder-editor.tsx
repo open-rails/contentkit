@@ -1,6 +1,5 @@
 import {
   Alert02Icon,
-  Cancel01Icon,
   CropIcon,
   Delete02Icon,
   Edit02Icon,
@@ -492,13 +491,6 @@ function Group({
   );
 }
 
-/** A page's name from its place: zero-padded to at least two digits, keeping its extension. */
-export function positionalName(position: number, count: number, path: string): string {
-  const dot = path.lastIndexOf(".");
-  const ext = dot > path.lastIndexOf("/") ? path.slice(dot).toLowerCase() : "";
-  return String(position).padStart(Math.max(2, String(count).length), "0") + ext;
-}
-
 const TILE = "group relative grid min-w-0 content-start gap-1 rounded-lg border bg-background p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function RemoveTile({ label, disabled, onRemove }: { label: string; disabled?: boolean; onRemove: () => void }) {
@@ -508,7 +500,7 @@ function RemoveTile({ label, disabled, onRemove }: { label: string; disabled?: b
       aria-label={label}
       title={label}
       disabled={disabled}
-      className="absolute end-2 top-2 inline-flex size-6 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 disabled:hidden"
+      className="absolute end-2 top-2 inline-flex size-7 items-center justify-center rounded-md bg-destructive/10 text-destructive shadow-sm hover:bg-destructive/20 disabled:hidden"
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
       onClick={(e) => {
@@ -517,7 +509,7 @@ function RemoveTile({ label, disabled, onRemove }: { label: string; disabled?: b
       }}
       data-ckui="tile-remove"
     >
-      <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3.5" />
+      <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} className="size-4" />
     </button>
   );
 }
@@ -533,7 +525,7 @@ function TileImage({ url, aspect, busy }: { url?: string; aspect?: number; busy?
 
 /**
  * Pages as one grid: committed pages (drag anywhere on a tile to reorder;
- * names follow position) followed by uploads still on their way, shown from
+ * filenames stay with their images) followed by uploads still on their way, shown from
  * their local files. Pages automatic processing removed are left out.
  */
 function PageGrid({
@@ -558,6 +550,13 @@ function PageGrid({
   waiting: readonly File[];
 }) {
   const { t, error: errorText } = useMessages();
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const filename = (f: FileInfo) => folder.displayNames?.[f.path] ?? nameIn(group, f.path);
+  const filenameTitle = (f: FileInfo) => {
+    const page = f.meta?.page;
+    const original = page && typeof page === "object" ? (page as Record<string, unknown>).source_name : undefined;
+    return typeof original === "string" && original !== filename(f) ? `${filename(f)}\n${t("crop.original")}: ${original}` : filename(f);
+  };
   const pages = useMemo(() => group.files.filter((f) => !pageRemoved(f)), [group.files]);
   const total = pages.length + pending.length + queued.length + waiting.length;
   // Local previews bridge an upload until the server's thumbnail arrives.
@@ -577,7 +576,7 @@ function PageGrid({
         className="grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))]"
         items={pages}
         id={(f) => f.path}
-        name={(f) => positionalName(pages.indexOf(f) + 1, total, f.path)}
+        name={filename}
         disabled={locked}
         label={t(`folder.kinds.${ruleKind(group.rule)}`)}
         onMove={(from, to) => void folder.move(pages[from]!.path, group.files.findIndex((f) => f.path === pages[to]!.path)).catch(() => {})}
@@ -602,7 +601,7 @@ function PageGrid({
                 <li key={f.path} className={cn(TILE, "border-dashed border-border")} data-ckui="page-tile-pending">
                   <TileImage url={thumb?.url ?? previews.current.get(f.path)} busy={isProcessing(f)} />
                   <span className="truncate px-0.5 text-xs text-muted-foreground tabular-nums">
-                    {positionalName(pages.length + i + 1, total, f.path)} · {f.failed ? errorText(failureError(f.failed)) : auto ? t("folder.adding") : t("folder.notAdded")}
+                    {filename(f)} · {pages.length + i + 1}/{total} · {f.failed ? errorText(failureError(f.failed)) : auto ? t("folder.adding") : t("folder.notAdded")}
                   </span>
                   <RemoveTile label={t("common.remove")} disabled={locked} onRemove={() => void folder.remove([f.path]).catch(() => {})} />
                 </li>
@@ -615,7 +614,7 @@ function PageGrid({
                   <TileImage url={previews.current.get(i.path)} busy />
                   {value !== null && <Progress value={value} aria-label={queueLabel(t, errorText, i, auto)} className="h-1" />}
                   <span className={cn("truncate px-0.5 text-xs tabular-nums", i.status === "failed" ? "text-destructive" : "text-muted-foreground")} title={i.file.name}>
-                    {positionalName(pages.length + pending.length + n + 1, total, i.path)} · {queueLabel(t, errorText, i, auto)}
+                    {i.file.name} · {pages.length + pending.length + n + 1}/{total} · {queueLabel(t, errorText, i, auto)}
                   </span>
                   <RemoveTile label={t("common.remove")} onRemove={() => folder.queue.remove(i.id)} />
                 </li>
@@ -640,9 +639,12 @@ function PageGrid({
             <>
               <TileImage url={thumb?.url ?? previews.current.get(f.path)} aspect={thumb?.w && thumb.h ? thumb.w / thumb.h : undefined} busy={busy} />
               <span className="flex min-w-0 items-center justify-between gap-1 px-0.5 text-xs text-muted-foreground tabular-nums">
-                <span className="truncate" data-ckui="upload-name" title={f.path}>
-                  {positionalName(index + 1, total, f.path)}
-                </span>
+                {renaming === f.path ? <span className="min-w-0" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                  <RenameInput name={filename(f)} label={t("common.rename")} onDone={async (name) => { if (name) await folder.rename(f.path, name); setRenaming(null); }} />
+                </span> : <button type="button" className="truncate text-start hover:underline" data-ckui="upload-name" title={filenameTitle(f)} disabled={locked} onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); setRenaming(f.path); }}>
+                  {filename(f)}
+                </button>}
+                <span className="shrink-0">{index + 1}/{total}</span>
                 {failure ? (
                   <span className="truncate text-destructive" title={failure} data-ckui="failed">
                     {t("folder.failed")}

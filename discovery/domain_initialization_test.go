@@ -49,7 +49,7 @@ func TestRegistrationPreservesGuestChoicesAcrossDomains(t *testing.T) {
 	}
 	main, _ := f.list("main.test", "registered", "/contents?kind=gallery")
 	if len(main) != 2 {
-		t.Fatalf("hard/internal/unlisted rules weakened: %v", main)
+		t.Fatalf("hard/internal/draft rules weakened: %v", main)
 	}
 	other, _ := f.list("other.test", "registered", "/contents?kind=gallery")
 	if len(other) != 3 {

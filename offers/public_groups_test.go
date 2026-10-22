@@ -103,7 +103,7 @@ func TestInternalGroupPublicOffersAndLibrary(t *testing.T) {
 		vid := contentref.NewID()
 		exec(`INSERT INTO `+table("content_items")+` (tenant_id,id,kind,state) VALUES ('policy',$1,'gallery','published')`, c.id)
 		exec(`INSERT INTO `+table("content_versions")+` (tenant_id,id,content_id,languages,state) VALUES ('policy',$1,$2,ARRAY['en'],'published')`, vid, c.id)
-		exec(`INSERT INTO `+table("content_facets")+` (tenant_id,content_id,version_id,kind,listing,languages,access_level,group_ids) VALUES ('policy',$1,$2,'gallery','listed',ARRAY['en'],'public',$3)`, c.id, vid, c.groups)
+		exec(`INSERT INTO `+table("content_facets")+` (tenant_id,content_id,version_id,kind,languages,access_level,group_ids) VALUES ('policy',$1,$2,'gallery',ARRAY['en'],'public',$3)`, c.id, vid, c.groups)
 		key, _ := access.ContentKey("policy", c.id)
 		billing.keys = append(billing.keys, key.String())
 	}
@@ -133,7 +133,7 @@ func TestInternalGroupPublicOffersAndLibrary(t *testing.T) {
 	blog, version := contentref.NewID(), contentref.NewID()
 	exec(`INSERT INTO `+table("content_items")+` (tenant_id,id,kind,state) VALUES ('policy',$1,'blog','published')`, blog)
 	exec(`INSERT INTO `+table("content_versions")+` (tenant_id,id,content_id,languages,state) VALUES ('policy',$1,$2,ARRAY['en'],'published')`, version, blog)
-	exec(`INSERT INTO `+table("content_facets")+` (tenant_id,content_id,version_id,kind,listing,languages,access_level) VALUES ('policy',$1,$2,'blog','listed',ARRAY['en'],'public')`, blog, version)
+	exec(`INSERT INTO `+table("content_facets")+` (tenant_id,content_id,version_id,kind,languages,access_level) VALUES ('policy',$1,$2,'blog',ARRAY['en'],'public')`, blog, version)
 	key, _ := access.ContentKey("policy", blog)
 	billing.keys = append(billing.keys, key.String())
 	s.kinds.ContentFilters.Domains, s.kinds.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}}}}, []string{"gallery"}

@@ -32,13 +32,13 @@ export function AttributeFields({ declared, form, onChange, labels }: { declared
         if (spec.type === "enum")
           return (
             <div key={name} className="grid gap-1.5">
-              <Label>{label}</Label>
-              <Select value={String(value) || NONE} onValueChange={(v) => onChange(name, v === NONE ? "" : String(v))}>
-                <SelectTrigger size="sm" aria-label={label}>
-                  <SelectValue>{(v: string) => (v === NONE ? t("groupEditor.none") : labelOf(labels, v))}</SelectValue>
+              <Label>{label}{spec.required && " *"}</Label>
+              <Select value={String(value) || NONE} required={spec.required} onValueChange={(v) => onChange(name, v === NONE ? "" : String(v))}>
+                <SelectTrigger size="sm" aria-label={label} aria-required={spec.required}>
+                  <SelectValue>{(v: string) => (v === NONE ? (spec.required ? `${label}…` : t("groupEditor.none")) : labelOf(labels, v))}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NONE}>{t("groupEditor.none")}</SelectItem>
+                  {!spec.required && <SelectItem value={NONE}>{t("groupEditor.none")}</SelectItem>}
                   {(spec.values ?? []).map((v) => (
                     <SelectItem key={v} value={v}>
                       {labelOf(labels, v)}
@@ -50,9 +50,10 @@ export function AttributeFields({ declared, form, onChange, labels }: { declared
           );
         return (
           <div key={name} className="grid gap-1.5">
-            <Label htmlFor={`${id}-${name}`}>{label}</Label>
+            <Label htmlFor={`${id}-${name}`}>{label}{spec.required && " *"}</Label>
             <Input
               id={`${id}-${name}`}
+              required={spec.required}
               className="h-8"
               type={spec.type === "int" ? "number" : spec.type === "time" ? "datetime-local" : "text"}
               step={spec.type === "int" ? 1 : undefined}

@@ -95,7 +95,8 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusNotFound, anon, "GET", "/contents/"+post.ID, nil, nil)
 	f.want(http.StatusOK, staff, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)
 
-	// A book has versions in order, with segments; one stays.
+	// A book has ordered versions and segments; deleting its last version
+	// retires the parent until an edition is restored.
 	var book catalog.Content
 	f.want(http.StatusCreated, staff, "POST", "/contents", catalog.ContentInput{Kind: "book", Text: map[string]catalog.Text{"en": {Title: "Book"}},
 		Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &book)
@@ -105,7 +106,8 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/versions/"+second.ID+"/segments", catalog.SegmentsInput{Segments: []catalog.SegmentInput{{Start: 0, End: 10, Title: "One"}}}, nil)
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/versions/order", catalog.OrderInput{IDs: []string{second.ID, book.Versions[0].ID}}, nil)
 	f.want(http.StatusNoContent, staff, "DELETE", "/contents/"+book.ID+"/versions/"+book.Versions[0].ID, nil, nil)
-	f.want(http.StatusConflict, staff, "DELETE", "/contents/"+book.ID+"/versions/"+second.ID, nil, nil)
+	f.want(http.StatusNoContent, staff, "DELETE", "/contents/"+book.ID+"/versions/"+second.ID, nil, nil)
+	f.want(http.StatusOK, staff, "PATCH", "/contents/"+book.ID+"/versions/"+second.ID, catalog.VersionInput{State: catalog.StateDraft}, nil)
 	f.want(http.StatusOK, staff, "PUT", "/contents/"+book.ID+"/text/ja", catalog.Text{Title: "アルバム"}, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/contents/"+book.ID+"/text/ja", nil, nil)
 

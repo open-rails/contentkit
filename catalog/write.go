@@ -29,8 +29,9 @@ import (
 type ContentInput struct {
 	Kind string `json:"kind"`
 	// Text is the text per language.
-	Text    map[string]Text `json:"text,omitempty"`
-	Listing string          `json:"listing,omitempty"` // default listed
+	Text             map[string]Text `json:"text,omitempty"`
+	OriginalTitle    string          `json:"original_title,omitempty"`
+	OriginalLanguage string          `json:"original_language,omitempty"`
 	// Comments is open (the default when permitted), closed (existing ones
 	// show, new ones are refused) or hidden. A kind excluding open defaults to
 	// its first configured comment mode.
@@ -52,12 +53,13 @@ type ContentInput struct {
 
 // ContentPatch edits a content item; nil fields stay.
 type ContentPatch struct {
-	Listing      *string        `json:"listing,omitempty"`
-	Comments     *string        `json:"comments,omitempty"`
-	Access       *access.Rule   `json:"access,omitempty"`
-	Restrictions *[]string      `json:"restrictions,omitempty"`
-	Attributes   map[string]any `json:"attributes,omitempty"` // replaces all
-	Creators     *[]Creator     `json:"creators,omitempty"`
+	OriginalTitle    *string        `json:"original_title,omitempty"`
+	OriginalLanguage *string        `json:"original_language,omitempty"`
+	Comments         *string        `json:"comments,omitempty"`
+	Access           *access.Rule   `json:"access,omitempty"`
+	Restrictions     *[]string      `json:"restrictions,omitempty"`
+	Attributes       map[string]any `json:"attributes,omitempty"` // replaces all
+	Creators         *[]Creator     `json:"creators,omitempty"`
 	// Revision, when set, refuses the edit (409) unless it is current.
 	Revision *int64 `json:"revision,omitempty"`
 }
@@ -261,10 +263,7 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		if p.kind, err = s.kind(c.Kind); err != nil {
 			return nil, err
 		}
-		if p.Listing == "" {
-			p.Listing = ListingListed
-		}
-		if err := s.checkListing(p.Listing); err != nil {
+		if p.OriginalTitle, p.OriginalLanguage, err = cleanOriginalTitle(p.OriginalTitle, p.OriginalLanguage); err != nil {
 			return nil, err
 		}
 		if p.Comments == "" {
@@ -292,6 +291,11 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		}
 		if p.Attributes, err = checkAttributes(p.kind.Attributes, c.Attributes); err != nil {
 			return nil, err
+		}
+		if c.Attributes != nil {
+			if err := kinds.ValidateRequiredAttributes(p.kind.Attributes, p.Attributes); err != nil {
+				return nil, invalid("%v", err)
+			}
 		}
 		texts := map[string]Text{}
 		for l, t := range c.Text {
@@ -360,9 +364,9 @@ func (s *Store) createPreparedTx(ctx context.Context, tx pgx.Tx, actor access.Ac
 		}
 		rule, _ := json.Marshal(p.Access)
 		attrs, _ := json.Marshal(p.Attributes)
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, listing, access, restrictions, attributes, owner_group_id, created_by, comments)
- VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), nullif($9, ''), $10)`,
-			s.tenant, p.id, p.Kind, p.Listing, rule, p.Restrictions, attrs, p.OwnerGroupID, viewerID(actor), p.Comments); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, original_title, original_language, access, restrictions, attributes, owner_group_id, created_by, comments)
+ VALUES ($1, $2, $3, nullif($4, ''), nullif($5, ''), $6, $7, $8, nullif($9, ''), nullif($10, ''), $11)`,
+			s.tenant, p.id, p.Kind, p.OriginalTitle, p.OriginalLanguage, rule, p.Restrictions, attrs, p.OwnerGroupID, viewerID(actor), p.Comments); err != nil {
 			return nil, err
 		}
 		if err := s.writeTexts(ctx, tx, p.id, p.Text, nil); err != nil {
@@ -411,10 +415,19 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 	ids := make([]string, len(in))
 	for i, u := range in {
 		ids[i] = u.ID
-		if u.Listing != nil {
-			if err := s.checkListing(*u.Listing); err != nil {
+		if u.OriginalTitle != nil {
+			title, _, err := cleanOriginalTitle(*u.OriginalTitle, "")
+			if err != nil {
 				return err
 			}
+			in[i].OriginalTitle = &title
+		}
+		if u.OriginalLanguage != nil {
+			_, language, err := cleanOriginalTitle("", *u.OriginalLanguage)
+			if err != nil {
+				return err
+			}
+			in[i].OriginalLanguage = &language
 		}
 		if u.Comments != nil {
 			if err := checkComments(*u.Comments); err != nil {
@@ -474,15 +487,18 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 				if err != nil {
 					return fx, err
 				}
+				if err := kinds.ValidateRequiredAttributes(s.cfg.Kinds[o.kind].Attributes, a); err != nil {
+					return fx, invalid("%v", err)
+				}
 				attrs, _ = json.Marshal(a)
 			}
 			var restrictions []string
 			if u.Restrictions != nil {
 				restrictions = *u.Restrictions
 			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET listing = coalesce($3, listing), access = coalesce($4, access),
- restrictions = coalesce($5, restrictions), attributes = coalesce($6, attributes), comments = coalesce($7, comments) WHERE tenant_id = $1 AND id = $2`,
-				s.tenant, u.ID, u.Listing, access, restrictions, attrs, u.Comments); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET original_title = coalesce($3, original_title), original_language = coalesce($4, original_language), access = coalesce($5, access),
+ restrictions = coalesce($6, restrictions), attributes = coalesce($7, attributes), comments = coalesce($8, comments) WHERE tenant_id = $1 AND id = $2`,
+				s.tenant, u.ID, u.OriginalTitle, u.OriginalLanguage, access, restrictions, attrs, u.Comments); err != nil {
 				return fx, err
 			}
 			if u.Creators != nil {
@@ -823,8 +839,13 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 				continue
 			}
 			var titled, versioned bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.text+` WHERE tenant_id = $1 AND content_id = $2 AND title <> ''),
- EXISTS (SELECT 1 FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND state <> 'deleted')`, s.tenant, p.ContentID).Scan(&titled, &versioned); err != nil {
+			originalAndVersion := s.cfg.Kinds[o.kind].TitlePolicy == kinds.TitleOriginalAndVersion
+			if err := tx.QueryRow(ctx, `SELECT
+ EXISTS (SELECT 1 FROM `+s.t.text+` WHERE tenant_id=$1 AND content_id=$2 AND title<>'') OR
+ ($3 AND (EXISTS (SELECT 1 FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2 AND coalesce(original_title,'')<>'') OR
+ EXISTS (SELECT 1 FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
+ WHERE v.tenant_id=$1 AND v.content_id=$2 AND v.state<>'deleted' AND t.language=ANY(v.languages) AND t.title<>''))),
+ EXISTS (SELECT 1 FROM `+s.t.versions+` WHERE tenant_id=$1 AND content_id=$2 AND state<>'deleted')`, s.tenant, p.ContentID, originalAndVersion).Scan(&titled, &versioned); err != nil {
 				return fx, err
 			}
 			if !titled || !versioned {
@@ -874,18 +895,48 @@ func (s *Store) Unpublish(ctx context.Context, actor access.Actor, ids []string)
 	})
 }
 
-// Delete deletes content items. A deleted item stays readable to holders of
-// its own key; one never sold is erased, media included, after the retention
-// (PurgeDeleted), until when Restore brings it back.
+// Delete deletes a hidden-version kind or an already empty content item.
+// Visible-version kinds are deleted by deleting their versions instead.
 func (s *Store) Delete(ctx context.Context, actor access.Actor, ids []string) error {
+	return s.deleteContent(ctx, actor, ids, false)
+}
+
+// DeleteForModeration hides content without changing its editions. This
+// embedded operation has no public delete route. Existing purchaser access
+// and retention protections still apply.
+func (s *Store) DeleteForModeration(ctx context.Context, actor access.Actor, ids []string) error {
+	return s.deleteContent(ctx, actor, ids, true)
+}
+
+func (s *Store) deleteContent(ctx context.Context, actor access.Actor, ids []string, moderation bool) error {
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
 		fx := effects{expose: true}
 		for _, id := range ids {
 			o := got[id]
 			if o.state == StateDeleted {
+				if moderation {
+					changed, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_without_versions=false WHERE tenant_id=$1 AND id=$2 AND deleted_without_versions`, s.tenant, id)
+					if err != nil {
+						return fx, err
+					}
+					if changed.RowsAffected() > 0 {
+						fx.events = append(fx.events, Event{Type: EventContentDeleted, Kind: o.kind, ContentID: id})
+						continue
+					}
+				}
 				return fx, ErrNotFound
 			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'deleted', deleted_at = clock_timestamp() WHERE tenant_id = $1 AND id = $2`, s.tenant, id); err != nil {
+			auto := !moderation && !s.cfg.Kinds[o.kind].Versions.Hidden
+			if auto {
+				var nonempty bool
+				if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.versions+` WHERE tenant_id=$1 AND content_id=$2 AND state<>'deleted')`, s.tenant, id).Scan(&nonempty); err != nil {
+					return fx, err
+				}
+				if nonempty {
+					return fx, errors.Join(ErrConflict, errors.New("delete the content's versions instead"))
+				}
+			}
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'deleted', deleted_at = clock_timestamp(),deleted_without_versions=$3 WHERE tenant_id = $1 AND id = $2`, s.tenant, id, auto); err != nil {
 				return fx, err
 			}
 			fx.events = append(fx.events, Event{Type: EventContentDeleted, Kind: o.kind, ContentID: id})
@@ -903,6 +954,13 @@ func (s *Store) Restore(ctx context.Context, actor access.Actor, ids []string) e
 			o := got[id]
 			if o.state != StateDeleted {
 				return fx, ErrNotFound
+			}
+			var emptyCause bool
+			if err := tx.QueryRow(ctx, `SELECT deleted_without_versions FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, id).Scan(&emptyCause); err != nil {
+				return fx, err
+			}
+			if emptyCause {
+				return fx, errors.Join(ErrConflict, errors.New("restore a version to restore this content"))
 			}
 			if err := s.restoreRows(ctx, tx, []string{id}); err != nil {
 				return fx, err
@@ -928,7 +986,7 @@ func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error 
 	if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_group = NULL,
+	_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_group = NULL,deleted_without_versions=false,
  state = CASE WHEN published_at IS NOT NULL OR publish_at IS NOT NULL THEN 'published' ELSE 'draft' END WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
 	return err
 }
@@ -945,7 +1003,7 @@ func (s *Store) DeleteOwned(ctx context.Context, groups []string) error {
  WHERE c.tenant_id = $1 AND g.state = 'deleted' AND g.kind = ANY($2) AND ($3::text[] IS NULL OR g.id = ANY($3)) AND c.state <> 'deleted'
  ORDER BY c.id LIMIT `+strconv.Itoa(ownedBatch)+` FOR UPDATE OF c FOR SHARE OF g`, groups, EventContentDeleted,
 		func(ctx context.Context, tx pgx.Tx, ids, causes []string) error {
-			_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` c SET state = 'deleted', deleted_at = clock_timestamp(), deleted_with_group = r.cause
+			_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` c SET state = 'deleted', deleted_at = clock_timestamp(), deleted_with_group = r.cause,deleted_without_versions=false
  FROM unnest($2::text[], $3::text[]) AS r(id, cause) WHERE c.tenant_id = $1 AND c.id = r.id`, s.tenant, ids, causes)
 			return err
 		})
@@ -1040,7 +1098,15 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			o := got[p.ContentID]
 			k := s.cfg.Kinds[o.kind]
 			if o.state == StateDeleted {
-				return fx, ErrNotFound
+				var automatic bool
+				if err := tx.QueryRow(ctx, `SELECT c.deleted_without_versions AND (c.owner_group_id IS NULL OR EXISTS
+ (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id=c.tenant_id AND g.id=c.owner_group_id AND g.state='active'))
+ FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND c.id=$2`, s.tenant, p.ContentID).Scan(&automatic); err != nil {
+					return fx, err
+				}
+				if !automatic {
+					return fx, ErrNotFound
+				}
 			}
 			if k.Versions.Hidden && (p.VersionID == "" || !coverOnly(p.VersionInput)) {
 				return fx, invalid("kind %s has one hidden version: only its cover is edited", o.kind)
@@ -1078,7 +1144,7 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 				fx.events = append(fx.events, Event{Type: EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
 				continue
 			}
-			if o.state == StatePublished && (p.State == StatePublished || p.State == "" && p.PublishAt != nil) {
+			if (o.state == StatePublished || o.state == StateDeleted && (o.publishedAt || o.publishAt)) && (p.State == StatePublished || p.State == "" && p.PublishAt != nil) {
 				var was string
 				if err := tx.QueryRow(ctx, `SELECT state FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND id = $3`,
 					s.tenant, p.ContentID, p.VersionID).Scan(&was); err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -1102,6 +1168,11 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			out[i] = p.VersionID
 			fx.events = append(fx.events, Event{Type: EventVersionUpdated, Kind: o.kind, ContentID: p.ContentID, VersionID: p.VersionID})
 		}
+		restored, err := s.restoreVersionParents(ctx, tx, ids)
+		if err != nil {
+			return fx, err
+		}
+		fx.events = append(fx.events, restored...)
 		return fx, nil
 	})
 	if err != nil {
@@ -1207,6 +1278,12 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	}
 	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
 		return "", err
+	}
+	if k.TitlePolicy == kinds.TitleOriginalAndVersion {
+		v.Text, err = s.seedVersionTitles(ctx, tx, contentID, r.languages, v.Text)
+		if err != nil {
+			return "", err
+		}
 	}
 	id := contentref.NewID()
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versions+` (tenant_id, id, content_id, position, languages, traits, label, state, publish_at, published_at, access, attributes,
@@ -1357,7 +1434,8 @@ func (s *Store) writeVersionExtras(ctx context.Context, tx pgx.Tx, id string, v 
 	return nil
 }
 
-// DeleteVersions deletes versions; an item keeps at least one.
+// DeleteVersions soft-deletes editions. Removing the final undeleted edition
+// also soft-deletes its parent in the same transaction.
 func (s *Store) DeleteVersions(ctx context.Context, actor access.Actor, keys []VersionKey) error {
 	var ids []string
 	for _, k := range keys {
@@ -1382,14 +1460,11 @@ func (s *Store) DeleteVersions(ctx context.Context, actor access.Actor, keys []V
 			}
 			fx.events = append(fx.events, Event{Type: EventVersionDeleted, Kind: o.kind, ContentID: k.ContentID, VersionID: k.VersionID})
 		}
-		var orphan bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)
- AND NOT EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id AND v.state <> 'deleted'))`, s.tenant, ids).Scan(&orphan); err != nil {
+		deleted, err := s.deleteEmptyParents(ctx, tx, ids)
+		if err != nil {
 			return fx, err
 		}
-		if orphan {
-			return fx, errors.Join(ErrConflict, errors.New("a content item keeps at least one version"))
-		}
+		fx.events = append(fx.events, deleted...)
 		return fx, nil
 	})
 }

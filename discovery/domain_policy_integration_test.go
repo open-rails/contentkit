@@ -76,7 +76,7 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	if w := f.guestCall(http.MethodGet, "safe.test", "", "/contents?kind=gallery", header, nil, &page); w.Code != http.StatusOK || len(page.Contents) != 5 {
 		t.Fatalf("guest escaped internal rule: %d %s", w.Code, w.Body)
 	}
-	// Fixed rules also constrain direct HTTP reads for staff; unlisted rules do not.
+	// Fixed rules also constrain direct HTTP reads for staff; draft rules do not.
 	for _, tc := range []struct {
 		host      string
 		n, status int

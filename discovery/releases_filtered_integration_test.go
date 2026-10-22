@@ -151,10 +151,10 @@ func TestDailyReleasesFilteredCountsKeepHardAndAccessPolicies(t *testing.T) {
 	f.seed(
 		item{n: 4, titles: map[string]string{"en": "Outside required domain"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 5, titles: map[string]string{"en": "Future"}, age: time.Hour, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}, future: true}}},
-		item{n: 6, titles: map[string]string{"en": "Unlisted"}, age: time.Hour, listing: "unlisted", groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 6, titles: map[string]string{"en": "Draft"}, age: time.Hour, draft: true, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 7, titles: map[string]string{"en": "Deleted"}, age: time.Hour, deleted: true, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 8, titles: map[string]string{"en": "Premium"}, age: time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 9, titles: map[string]string{"en": "Members only"}, age: time.Hour, listing: "members", rule: `{"level":"tier","tiers":["premium"]}`, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 9, titles: map[string]string{"en": "Members only"}, age: time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 10, titles: map[string]string{"ja": "Other language"}, age: time.Hour, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"ja"}}}},
 	)
 	if status, _ := f.call(http.MethodPatch, "required.test", "fan", "/me/content-filters", ContentFiltersUpdate{IncludeDeleted: boolPtr(true)}, nil); status != http.StatusOK {
@@ -163,7 +163,7 @@ func TestDailyReleasesFilteredCountsKeepHardAndAccessPolicies(t *testing.T) {
 	for _, tc := range []struct {
 		user, mode     string
 		total, visible int
-	}{{"", "lock", 2, 0}, {"", "hide", 1, 0}, {"fan", "hide", 3, 0}, {"staff", "lock", 3, 0}} {
+	}{{"", "lock", 3, 0}, {"", "hide", 1, 0}, {"fan", "hide", 3, 0}, {"staff", "lock", 3, 0}} {
 		var out DailyReleases
 		if status, code := f.call(http.MethodGet, "required.test", tc.user, q("/releases", "kind", "gallery", "language", "en", "mode", tc.mode), nil, &out); status != http.StatusOK {
 			t.Fatalf("%+v: %d %s", tc, status, code)
@@ -252,13 +252,13 @@ func TestDailyReleasesFilteredCountsSettleTruncatedEntitlements(t *testing.T) {
 	f.seed(
 		item{n: 1, titles: map[string]string{"en": "Owned hidden"}, age: time.Hour, groups: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 2, titles: map[string]string{"en": "Unowned hidden"}, age: time.Hour, groups: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, titles: map[string]string{"en": "Members hidden"}, age: time.Hour, listing: "members", groups: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Members hidden"}, age: time.Hour, groups: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 	)
 	billing.held[tenant+":content:"+f.cid(1)] = true
 	for _, tc := range []struct {
 		mode  string
 		total int
-	}{{"hide", 1}, {"lock", 2}} {
+	}{{"hide", 1}, {"lock", 3}} {
 		billing.queries = nil
 		out, err := f.svc.Releases(f.ctx, DailyReleasesOptions{Reader: Reader{Actor: access.Actor{ID: "reader"}, Host: "main.test", Language: "en", Mode: access.Mode(tc.mode)}, Filter: Filter{Kind: "gallery"}})
 		if err != nil {
@@ -276,7 +276,7 @@ func TestDailyReleasesFilteredCountsSettleTruncatedEntitlements(t *testing.T) {
 		if total != tc.total || prefixes != 1 || len(billing.queries) != 2 {
 			t.Fatalf("%s: filtered=%d queries=%+v", tc.mode, total, billing.queries)
 		}
-		// The exact negative member decision must not become a locked-mode count.
+		// Tier holdings are memoized while explicit content keys are settled.
 		if slices.Contains(billing.queries[1].Keys, "premium") {
 			t.Fatal("resolved tier was read again")
 		}

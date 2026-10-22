@@ -227,6 +227,39 @@ func TestValidateAttributes(t *testing.T) {
 	}
 }
 
+func TestRequiredAttributes(t *testing.T) {
+	declared := map[string]Attribute{"format": {Type: "enum", Values: []string{"doujin", "cgset"}, Required: true}}
+	for _, values := range []map[string]any{nil, {}, {"format": nil}, {"format": ""}, {"format": "  "}} {
+		if err := ValidateRequiredAttributes(declared, values); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("missing required value %v accepted: %v", values, err)
+		}
+	}
+	if err := ValidateRequiredAttributes(declared, map[string]any{"format": "cgset"}); err != nil {
+		t.Fatal(err)
+	}
+	// Allocation drafts and version overrides are intentionally allowed to be
+	// incomplete; only their supplied values are type-checked here.
+	if _, err := ValidateAttributes(declared, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRequiredAttributes(map[string]Attribute{"enabled": {Type: "bool", Required: true}, "count": {Type: "int", Required: true}}, map[string]any{"enabled": false, "count": 0}); err != nil {
+		t.Fatalf("false and zero are present values: %v", err)
+	}
+}
+
+func TestKindAccessScope(t *testing.T) {
+	for _, scope := range []AccessScope{"", AccessContent, AccessVersion, "other"} {
+		c := doujins()
+		kind := c.Kinds["gallery"]
+		kind.AccessScope = scope
+		c.Kinds["gallery"] = kind
+		err := c.Validate()
+		if (scope == "other") != errors.Is(err, ErrInvalid) {
+			t.Fatalf("scope %q: %v", scope, err)
+		}
+	}
+}
+
 func TestRoutes(t *testing.T) {
 	r := doujins().Routes()
 	if r["gallery"] != "g" || r["tag"] != "tags" || r["voice_actor"] != "voice-actors" || len(r) != 6 {

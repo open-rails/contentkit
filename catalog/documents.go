@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/search"
 )
 
@@ -27,8 +29,12 @@ func (s *Store) ListDocuments(ctx context.Context, kind, language, cursor string
 		limit = 1000
 	}
 	rows, err := s.pool.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.kind = $2 AND c.state = 'published' AND c.id > $4
- AND EXISTS (SELECT 1 FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3) ORDER BY c.id LIMIT $5`,
-		s.tenant, kind, language, cursor, limit+1)
+ AND (EXISTS (SELECT 1 FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3)
+ OR ($6 AND (coalesce(c.original_title,'')<>'' OR EXISTS (
+ SELECT 1 FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND (v.publish_at IS NULL OR v.publish_at<=clock_timestamp()) AND t.title<>''))))
+ ORDER BY c.id LIMIT $5`,
+		s.tenant, kind, language, cursor, limit+1, s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion)
 	if err != nil {
 		return nil, "", false, err
 	}
@@ -67,7 +73,10 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.moderation, c.published_snapshot -> $3, t.title, t.aliases,
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.moderation, c.published_snapshot -> $3, t.title, t.aliases, coalesce(c.original_title,''),
+ ARRAY(SELECT vt.title FROM `+s.t.versions+` v JOIN `+s.t.versionText+` vt ON vt.tenant_id=v.tenant_id AND vt.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND (v.publish_at IS NULL OR v.publish_at<=clock_timestamp())
+ AND vt.language=ANY(v.languages) AND vt.title<>'' ORDER BY (vt.language=$3) DESC,v.position,vt.language),
  ARRAY(SELECT coalesce((SELECT n.name FROM `+s.t.groupNames+` n WHERE n.tenant_id = g.tenant_id AND n.group_id = g.id AND n.kind = 'name'
    ORDER BY n.language = $3 DESC, n.language = $5 DESC, n.language LIMIT 1), g.slug)
   FROM `+s.t.groups+` g WHERE g.tenant_id = c.tenant_id AND g.state = 'active' AND NOT g.internal AND g.id IN (
@@ -80,11 +89,11 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
 	defer rows.Close()
 	var docs []search.KeywordDocument
 	for rows.Next() {
-		var id, moderation string
+		var id, moderation, original string
 		var snapshot []byte
 		var title *string
-		var aliases, keywords []string
-		if err := rows.Scan(&id, &moderation, &snapshot, &title, &aliases, &keywords); err != nil {
+		var aliases, keywords, editionTitles []string
+		if err := rows.Scan(&id, &moderation, &snapshot, &title, &aliases, &original, &editionTitles, &keywords); err != nil {
 			return nil, err
 		}
 		doc := search.KeywordDocument{DocumentKey: search.DocumentKey{ContentRef: s.Ref(kind, id), Language: language}, Keywords: keywords}
@@ -95,10 +104,39 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
 				return nil, err
 			}
 			doc.Title, doc.Aliases = t.Title, t.Aliases
-		case moderation == "approved" && title != nil:
-			doc.Title, doc.Aliases = *title, aliases
+		case moderation == "approved" && (title != nil || s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion):
+			if title != nil {
+				doc.Title = *title
+			}
+			doc.Aliases = aliases
+			if s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion {
+				if original != "" {
+					doc.Aliases = append(doc.Aliases, original)
+				}
+				if doc.Title != "" {
+					doc.Aliases = append(doc.Aliases, doc.Title)
+				}
+				doc.Aliases = append(doc.Aliases, editionTitles...)
+				if len(editionTitles) > 0 {
+					doc.Title = editionTitles[0]
+				} else if original != "" {
+					doc.Title = original
+				}
+				if doc.Title == "" {
+					continue
+				}
+			}
 		default:
 			continue
+		}
+		if s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion {
+			aliases := []string{}
+			for _, alias := range doc.Aliases {
+				if strings.TrimSpace(alias) != "" && alias != doc.Title && !slices.Contains(aliases, alias) {
+					aliases = append(aliases, alias)
+				}
+			}
+			doc.Aliases = aliases
 		}
 		if len(doc.Aliases) > 64 {
 			doc.Aliases = doc.Aliases[:64]

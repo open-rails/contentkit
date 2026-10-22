@@ -136,7 +136,7 @@ func TestLifecycleIntegration(t *testing.T) {
 		t.Fatalf("a person without content:write created content: %v", err)
 	}
 	// alice edits only through her creator row.
-	if err := f.s.Update(f.ctx, f.as("alice"), []Update{{ID: id, ContentPatch: ContentPatch{Listing: ptr(ListingListed)}}}); err != nil {
+	if err := f.s.Update(f.ctx, f.as("alice"), []Update{{ID: id, ContentPatch: ContentPatch{Comments: ptr("open")}}}); err != nil {
 		t.Fatalf("the creator edits: %v", err)
 	}
 	draft := f.read("alice", "main.test", id)[0]
@@ -196,7 +196,7 @@ func TestLifecycleIntegration(t *testing.T) {
 	}
 
 	// Deleted: gone for everyone but its editors and holders of its key.
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{id}); err != nil {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{id}); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.read(anon, "main.test", id)[0]; got != nil {
@@ -206,7 +206,7 @@ func TestLifecycleIntegration(t *testing.T) {
 	if got := f.read("staff", "main.test", id)[0]; got == nil || got.State != StateDeleted || got.Live || len(got.Versions) != 3 {
 		t.Fatalf("staff read the deleted item: %+v", got)
 	}
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{id}); !errors.Is(err, ErrNotFound) {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{id}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleting twice: %v", err)
 	}
 	if err := f.s.Restore(f.ctx, f.as("staff"), []string{id}); err != nil {
@@ -231,7 +231,7 @@ func TestLifecycleIntegration(t *testing.T) {
 	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_items")+` SET ever_sold = true WHERE id = $1`, sold); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{id, sold}); err != nil {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{id, sold}); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != 0 {
@@ -358,7 +358,7 @@ func TestWriteAuthorizesBeforeItsTransactionIntegration(t *testing.T) {
 		ctx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
 		defer cancel()
 		for _, who := range []string{"staff", "alice", "ed"} {
-			if err := s.Update(ctx, as(who), []Update{{ID: id, ContentPatch: ContentPatch{Listing: ptr(ListingListed)}}}); err != nil {
+			if err := s.Update(ctx, as(who), []Update{{ID: id, ContentPatch: ContentPatch{Comments: ptr("open")}}}); err != nil {
 				t.Fatalf("%s updates: %v", who, err)
 			}
 		}
@@ -370,7 +370,7 @@ func TestWriteAuthorizesBeforeItsTransactionIntegration(t *testing.T) {
 		if err := s.DeleteVersions(ctx, ed, []VersionKey{{ContentID: id, VersionID: vids[0]}}); err != nil {
 			t.Fatalf("the editor deletes a version: %v", err)
 		}
-		if err := s.Delete(ctx, ed, []string{id}); err != nil {
+		if err := s.DeleteForModeration(ctx, ed, []string{id}); err != nil {
 			t.Fatalf("the editor deletes: %v", err)
 		}
 		if err := s.Restore(ctx, ed, []string{id}); err != nil {
@@ -385,7 +385,7 @@ func TestWriteAuthorizesBeforeItsTransactionIntegration(t *testing.T) {
 			_, err := one.Exec(ctx, `UPDATE `+f.table("content_items")+` SET owner_group_id = $3 WHERE tenant_id = $1 AND id = $2`, tenant, id, other)
 			return err
 		}
-		if err := s.Delete(ctx, as("ed"), []string{id}); !errors.Is(err, ErrForbidden) {
+		if err := s.DeleteForModeration(ctx, as("ed"), []string{id}); !errors.Is(err, ErrForbidden) {
 			t.Fatalf("the studio's editor deleted an item moved to another group: %v", err)
 		}
 		var state, owner string
@@ -426,7 +426,6 @@ func TestValidationIntegration(t *testing.T) {
 		"int":                 {Kind: "gallery", Attributes: map[string]any{"volume": 1.5}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"time":                {Kind: "gallery", Attributes: map[string]any{"released": "yesterday"}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"restriction":         {Kind: "gallery", Restrictions: []string{"nsfw"}, Versions: []VersionInput{{Languages: []string{"en"}}}},
-		"listing":             {Kind: "gallery", Listing: "secret", Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"tier":                {Kind: "gallery", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"group not sellable":  {Kind: "gallery", Access: &access.Rule{Level: access.GroupLevel, Group: tag}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"missing group":       {Kind: "gallery", Access: &access.Rule{Level: access.GroupPPV, Group: contentref.NewID()}, Versions: []VersionInput{{Languages: []string{"en"}}}},

@@ -40,7 +40,7 @@ type ViewerOptions struct {
 }
 
 // Viewer is the one visibility rule (ContentKit #117 spec §4) for one
-// request: live content and versions, the listing rule, the site scope, the
+// request: live content and versions, the site scope, the
 // viewer's content filters and entitlements, and the staff, creators and
 // owner-group editors who see everything. Listed renders it as SQL over
 // content_facets for lists and searches; Store.Contents and Resolver decide
@@ -54,7 +54,6 @@ type Viewer struct {
 	now            time.Time
 	staff          bool
 	management     bool
-	knownContents  bool
 	filter         *access.Filter
 	policies       domainpolicy.Policies
 	hidden         map[string][]string
@@ -222,19 +221,9 @@ func (v *Viewer) WithoutContentFilters() *Viewer {
 	return &out
 }
 
-// ForKnownContents retains current domain, publication, reader preferences and
-// access policy while admitting unlisted items. Use only for an explicit bounded
-// ID selection or the reader's own saved history, never browsing or search.
-func (v *Viewer) ForKnownContents() *Viewer {
-	out := *v
-	out.knownContents = true
-	out.asked = maps.Clone(v.asked)
-	return &out
-}
-
 // Listed is a boolean SQL predicate over the content_facets row aliased
 // alias: the versions the viewer's listing shows. A list shows one card per
-// content item among its rows. In Hide mode, and for members-listed rows,
+// content item among its rows. In Hide mode,
 // rows a truncated keyspace may unlock are admitted as candidates: decide
 // them with Contents (or access.Gate.Settle) before showing. Args are pgx
 // named args prefixed cv_ and access_.
@@ -275,14 +264,11 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		}
 		return "(" + scope + " AND " + soft + ")", args
 	}
-	listed := "(" + f("listing") + " = 'listed' OR (" + f("listing") + " = 'members' AND " + opens + "))"
-	if v.knownContents {
-		listed = "(" + listed + " OR " + f("listing") + " = 'unlisted')"
-	}
+	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND " + soft
 	if v.mode == access.Hide {
-		listed += " AND " + opens
+		public += " AND " + opens
 	}
-	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND " + soft + " AND " + listed + ")"
+	public += ")"
 	if language {
 		public = "(" + public + " AND (@cv_language = '' OR @cv_language = ANY(" + f("languages") + ")))"
 	}
@@ -312,13 +298,13 @@ func (v *Viewer) Playable(alias string) string {
 
 // Indexable is a boolean SQL predicate over the content_facets row aliased
 // alias: the versions a site lists to anyone, as its sitemaps name them:
-// live, not deleted, listed, playable and in the viewer's site scope.
+// live, not deleted, playable and in the viewer's site scope.
 // Access, the language and a reader's content filters do not apply. Args are
 // pgx named args prefixed ci_.
 func (v *Viewer) Indexable(alias string) (string, pgx.NamedArgs) {
 	scope, args := v.policies.SQL(alias, "ci_domain")
 	args["ci_now"] = v.now
-	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND " + alias + ".listing = 'listed' AND NOT " + alias +
+	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND NOT " + alias +
 		".unplayable AND " + scope + ")", args
 }
 
@@ -330,7 +316,6 @@ type facetRow struct {
 	deleted, contentDeleted bool
 	// held: the content's latest edit awaits moderation.
 	held                   bool
-	listing                string
 	languages              []string
 	rule                   access.Rule
 	restrictions, groupIDs []string
@@ -354,7 +339,7 @@ type itemView struct {
 // decide applies the rule to content items for direct reads: an editor (staff,
 // creator, owner-group editor) sees everything; anyone else sees the live
 // versions of live content in the site's scope, and a deleted one that was
-// live if they hold its content or version key. Listing and content filters
+// live if they hold its content or version key. Optional content filters
 // do not apply to direct reads. With every, each item's owner group is asked
 // for editorship (a detail page); else only those of items the rule does not
 // show whole or open.
@@ -365,7 +350,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx, `SELECT f.content_id, f.version_id, f.kind, f.live_from, c.state = 'deleted', ver.state = 'deleted', c.moderation <> 'approved',
- f.listing, f.languages, c.access, ver.access, f.restrictions, f.group_ids, coalesce(f.owner_group_id, ''), f.position,
+ f.languages, c.access, ver.access, f.restrictions, f.group_ids, coalesce(f.owner_group_id, ''), f.position,
  EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = f.tenant_id AND cc.content_id = f.content_id AND cc.user_id = $3 AND $3 <> '')
  FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
  JOIN `+s.t.versions+` ver ON ver.tenant_id = f.tenant_id AND ver.id = f.version_id
@@ -379,7 +364,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		var r facetRow
 		var isCreator bool
 		var crule, vrule []byte
-		if err := rows.Scan(&r.contentID, &r.versionID, &r.kind, &r.liveFrom, &r.contentDeleted, &r.deleted, &r.held, &r.listing, &r.languages,
+		if err := rows.Scan(&r.contentID, &r.versionID, &r.kind, &r.liveFrom, &r.contentDeleted, &r.deleted, &r.held, &r.languages,
 			&crule, &vrule, &r.restrictions, &r.groupIDs, &r.ownerGroup, &r.position, &isCreator); err != nil {
 			rows.Close()
 			return nil, err

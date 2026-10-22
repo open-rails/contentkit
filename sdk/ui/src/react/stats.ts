@@ -20,7 +20,7 @@ function useStats<T>(key: string | null, fetch: (c: ContentKitClient, signal: Ab
   return { data: r.data ?? null, loading: !!key && (r.loading || !r.loaded), error: unavailable ? undefined : r.error, unavailable, reload: r.reload };
 }
 
-/** Staff: distinct people per UTC day (anonymous, free, premium) who read or played; distinct within each day, not across the period. Null reads nothing. */
+/** Staff: daily distinct engaged people in the host's cohorts, not period-unique visitors. Null reads nothing. */
 export function useActivity(q: ActivityQuery | null, o: { client?: ContentKitClient } = {}): UseStats<Activity> {
   const { scope } = useContentScope(o.client);
   return useStats(q ? keyOf("stats", scope, "activity", q.kind, q.days) : null, (c, s) => c.stats.activity(q!, s), o);

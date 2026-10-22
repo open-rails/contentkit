@@ -223,7 +223,7 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Domain, kindNames []
  SELECT DISTINCT f.kind, f.content_id, l.language, au.audience FROM `+s.t.facets+` f
  CROSS JOIN LATERAL unnest(f.languages) AS l(language)
  CROSS JOIN LATERAL unnest(`+audiences+`) AS au(audience)
- WHERE f.tenant_id = @tenant AND f.kind = ANY(@kinds) AND NOT f.deleted AND NOT f.unplayable AND f.live_from <= @now AND f.listing IN ('listed', 'members')
+ WHERE f.tenant_id = @tenant AND f.kind = ANY(@kinds) AND NOT f.deleted AND NOT f.unplayable AND f.live_from <= @now
   AND `+hard+` AND `+soft+`
 ) a GROUP BY GROUPING SETS ((a.kind, a.audience, a.language), (a.kind, a.audience))`, named)
 	if err != nil {

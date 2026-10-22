@@ -170,24 +170,24 @@ it("hydrates guest reading IDs through public policy and keeps account history a
   await waitFor(() => expect(result.current.items).toEqual([]));
 });
 
-it("keeps a previously read unlisted gallery in guest history through bounded known-ID hydration", async () => {
+it("keeps a previously read gallery in guest history through bounded known-ID hydration", async () => {
   const calls: URL[] = [];
-  const client = createContentKitClient({ baseUrl: "https://catalog.test/unlisted-history", fetch: async input => {
+  const client = createContentKitClient({ baseUrl: "https://catalog.test/known-history", fetch: async input => {
     const url = new URL(String(input)); calls.push(url);
     if (url.pathname.endsWith("/content-cards")) {
-      expect(url.searchParams.get("ids")).toBe("known-unlisted");
+      expect(url.searchParams.get("ids")).toBe("known-gallery");
       expect(url.searchParams.get("kind")).toBe("gallery");
       expect(url.searchParams.get("mode")).toBe("hide");
-      return Response.json({ contents: [{ id: "known-unlisted", kind: "gallery", version: { id: "edition", pages: 2 } }] });
+      return Response.json({ contents: [{ id: "known-gallery", kind: "gallery", version: { id: "edition", pages: 2 } }] });
     }
     return Response.json({ contents: [] });
   } });
-  client.guestHistory.record({ content_id: "known-unlisted", version_id: "edition", visit_id: "visit", segment_id: "segment",
+  client.guestHistory.record({ content_id: "known-gallery", version_id: "edition", visit_id: "visit", segment_id: "segment",
     revision: 1, active_ms: 1500, activity_token: "", pages: [{ index: 0, active_ms: 1500, ranges: [{ from: 0, to: 10_000 }] }], resume: "001", kind: "gallery" });
   const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={null}>{children}</ContentKitProvider>;
   const { result } = renderHook(() => useHistory({ kind: "gallery", mode: "hide" }), { wrapper });
-  await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["known-unlisted"]));
-  expect(calls.map(url => url.pathname)).toEqual(["/unlisted-history/v1/content-cards"]);
+  await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["known-gallery"]));
+  expect(calls.map(url => url.pathname)).toEqual(["/known-history/v1/content-cards"]);
 });
 
 it("bounds guest history summary hydration to the newest 100 known IDs", async () => {

@@ -52,9 +52,9 @@ func TestCatalogOverOpenRails(t *testing.T) {
 	if _, err := w.offers.Put(ctx, []offers.Put{{Target: offers.Target{Kind: offers.GroupTarget, ID: studio}}}); err != nil { // members-only needs a membership
 		t.Fatal(err)
 	}
-	post := func(title string, listing string, rule access.Rule, languages ...string) string {
+	post := func(title string, rule access.Rule, languages ...string) string {
 		t.Helper()
-		in := catalog.ContentInput{Kind: "post", Listing: listing, Access: &rule, Text: map[string]catalog.Text{"en": {Title: title}}}
+		in := catalog.ContentInput{Kind: "post", Access: &rule, Text: map[string]catalog.Text{"en": {Title: title}}}
 		for _, l := range languages {
 			in.Versions = append(in.Versions, catalog.VersionInput{Languages: []string{l}})
 		}
@@ -67,9 +67,9 @@ func TestCatalogOverOpenRails(t *testing.T) {
 		}
 		return ids[0]
 	}
-	free := post("Free", catalog.ListingListed, access.Rule{Level: access.Public}, "en")
-	members := post("Members", catalog.ListingMembers, access.Rule{Level: access.GroupLevel, Group: studio}, "en")
-	ppv := post("Night Train", catalog.ListingListed, access.Rule{Level: access.PPV}, "en", "ja")
+	free := post("Free", access.Rule{Level: access.Public}, "en")
+	members := post("Members", access.Rule{Level: access.GroupLevel, Group: studio}, "en")
+	ppv := post("Night Train", access.Rule{Level: access.PPV}, "en", "ja")
 	read := func(a access.Actor, ids ...string) []*catalog.Content {
 		t.Helper()
 		ctx := access.WithMemo(ctx)
@@ -115,9 +115,9 @@ func TestCatalogOverOpenRails(t *testing.T) {
 		mode   access.Mode
 		want   []string
 	}{
-		{"anonymous lists what is listed", access.Actor{Anonymous: true}, access.Lock, sorted(free, ppv)},
+		{"anonymous lists every published item", access.Actor{Anonymous: true}, access.Lock, sorted(free, members, ppv)},
 		{"anonymous hides what it does not open", access.Actor{Anonymous: true}, access.Hide, sorted(free)},
-		{"a member lists the members listing", max, access.Lock, sorted(free, members, ppv)},
+		{"a member lists all published items", max, access.Lock, sorted(free, members, ppv)},
 		{"a member and version buyer opens all three", max, access.Hide, sorted(free, members, ppv)},
 		{"a content buyer opens the item", bob, access.Hide, sorted(free, ppv)},
 	} {
@@ -136,7 +136,7 @@ func TestCatalogOverOpenRails(t *testing.T) {
 
 	// Deleted: holders of its content key read every version that was live,
 	// holders of a version key that version; nobody else.
-	if err := cat.Delete(ctx, staff, []string{ppv}); err != nil {
+	if err := cat.DeleteForModeration(ctx, staff, []string{ppv}); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(access.Actor{Anonymous: true}, ppv)[0]; got != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/search"
 )
 
@@ -150,9 +151,20 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 		}
 		if len(ids) > 0 {
 			args["ms_ids"], args["ms_tenant"], args["ms_language"], args["ms_default"] = ids, s.tenant, q.Language, s.defaultLanguage()
-			rows, err := s.pool.Query(ctx, `SELECT c.id,c.kind,t.title,t.language FROM `+s.t.items+` c
- CROSS JOIN LATERAL (SELECT title,language FROM `+s.t.text+` t WHERE t.tenant_id=c.tenant_id AND t.content_id=c.id
- ORDER BY t.language=@ms_language DESC,t.language=@ms_default DESC,t.language LIMIT 1) t
+			titleKinds := []string{}
+			for kind, spec := range s.cfg.Kinds {
+				if spec.TitlePolicy == kinds.TitleOriginalAndVersion {
+					titleKinds = append(titleKinds, kind)
+				}
+			}
+			args["ms_title_kinds"] = titleKinds
+			rows, err := s.pool.Query(ctx, `SELECT c.id,c.kind,coalesce(vt.title,CASE WHEN c.kind=ANY(@ms_title_kinds::text[]) THEN nullif(c.original_title,'') END,t.title,''),
+ coalesce(vt.language,t.language,c.original_language,'') FROM `+s.t.items+` c
+ LEFT JOIN LATERAL (SELECT title,language FROM `+s.t.text+` t WHERE t.tenant_id=c.tenant_id AND t.content_id=c.id
+ ORDER BY t.language=@ms_language DESC,t.language=@ms_default DESC,t.language LIMIT 1) t ON true
+ LEFT JOIN LATERAL (SELECT t.title,t.language FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND c.kind=ANY(@ms_title_kinds::text[]) AND t.title<>''
+ ORDER BY t.language=@ms_language DESC,v.position,t.language LIMIT 1) vt ON true
  WHERE c.tenant_id=@ms_tenant AND c.id=ANY(@ms_ids::text[]) AND c.state<>'deleted' AND `+allowed+`
  ORDER BY array_position(@ms_ids::text[],c.id)`, args)
 			if err != nil {

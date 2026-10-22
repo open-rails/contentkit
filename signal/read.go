@@ -667,39 +667,50 @@ func (st *Store) buildCoEngagement(ctx context.Context, tenant string, opts Refr
 	return st.conn.Exec(ctx, q, args...)
 }
 
-// DayActivity reports distinct people with measured attention, not page opens,
-// by audience: guests, signed-in people without a tier, and premium people.
+// DayActivity reports distinct people with measured attention, not page opens.
+// Cohorts are application-defined; unmatched readers still count in Readers.
 type DayActivity struct {
 	Day      time.Time
 	Readers  uint64
-	Anon     uint64
-	Free     uint64
-	Premium  uint64
+	Cohorts  map[string]uint64
 	ActiveMS uint64
 }
 
-func (st *Store) Activity(ctx context.Context, tenant, contentKind string, window Window) ([]DayActivity, error) {
+func (st *Store) Activity(ctx context.Context, tenant, contentKind string, window Window, cohorts ...ActivityCohort) ([]DayActivity, error) {
 	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("signal: tenant and contentKind are required")
 	}
 	if err := window.Validate(); err != nil {
 		return nil, err
 	}
+	if err := ValidateActivityCohorts(cohorts); err != nil {
+		return nil, err
+	}
 	pred, args := window.dayPredicate("day")
-	observed, observedArgs := window.dayPredicate("toDate(observed_at)")
-	// Premium needs a known tier observed that day; other signed-in people are free.
-	q := fmt.Sprintf(`SELECT d.day,toUInt64(count()),toUInt64(countIf(d.subject_kind<>'user')),
- toUInt64(countIf(d.subject_kind='user' AND ifNull(p.premium,0)=0)),
- toUInt64(countIf(d.subject_kind='user' AND ifNull(p.premium,0)=1)),sum(d.active) FROM (
+	cohortSQL, params := activityCohortSQL(cohorts)
+	join := ""
+	var populationArgs []any
+	for _, c := range cohorts {
+		if len(c.AnyTier) == 0 {
+			continue
+		}
+		observed, observedArgs := window.dayPredicate("toDate(observed_at)")
+		join = fmt.Sprintf(`LEFT JOIN (
+ SELECT toDate(observed_at) AS day,subject_kind,subject,
+ arrayDistinct(arrayFlatten(groupArrayIf(eligible_tiers,eligibility_known))) AS tiers
+ FROM %s.measured_population_observations FINAL WHERE tenant=? AND content_kind=?%s
+ GROUP BY day,subject_kind,subject) p ON p.day=d.day AND p.subject_kind=d.subject_kind AND p.subject=d.subject`, st.db, observed)
+		populationArgs = append([]any{tenant, contentKind}, observedArgs...)
+		break
+	}
+	q := fmt.Sprintf(`SELECT d.day,%[4]s AS cohort,toUInt64(count()),sum(d.active) FROM (
  SELECT day,subject_kind,subject,sum(active_ms) AS active,sum(length(covered_units)) AS units
  FROM %[1]s.engagement_daily FINAL WHERE tenant=? AND content_kind=? AND present%[2]s AND %[3]s
  GROUP BY day,subject_kind,subject HAVING active>=1000 AND units>0) d
- LEFT JOIN (SELECT toDate(observed_at) AS day,subject_kind,subject,toUInt8(max(eligibility_known AND notEmpty(eligible_tiers))) AS premium
- FROM %[1]s.measured_population_observations FINAL WHERE tenant=? AND content_kind=?%[4]s
- GROUP BY day,subject_kind,subject) p ON p.day=d.day AND p.subject_kind=d.subject_kind AND p.subject=d.subject
- GROUP BY d.day ORDER BY d.day DESC%[5]s`, st.db, pred, st.notErased(), observed, finalSettings)
-	params := append([]any{tenant, contentKind}, args...)
-	params = append(append(params, tenant, contentKind), observedArgs...)
+ %[5]s GROUP BY d.day,cohort ORDER BY d.day DESC,cohort%[6]s`, st.db, pred, st.notErased(), cohortSQL, join, finalSettings)
+	params = append(params, tenant, contentKind)
+	params = append(params, args...)
+	params = append(params, populationArgs...)
 	rows, err := st.conn.Query(ctx, q, params...)
 	if err != nil {
 		return nil, err
@@ -707,12 +718,22 @@ func (st *Store) Activity(ctx context.Context, tenant, contentKind string, windo
 	defer rows.Close()
 	var out []DayActivity
 	for rows.Next() {
-		var row DayActivity
-		if err := rows.Scan(&row.Day, &row.Readers, &row.Anon, &row.Free, &row.Premium, &row.ActiveMS); err != nil {
+		var day time.Time
+		var cohort string
+		var readers, active uint64
+		if err := rows.Scan(&day, &cohort, &readers, &active); err != nil {
 			return nil, err
 		}
-		row.Day = utcDay(row.Day)
-		out = append(out, row)
+		day = utcDay(day)
+		if len(out) == 0 || !out[len(out)-1].Day.Equal(day) {
+			out = append(out, DayActivity{Day: day, Cohorts: map[string]uint64{}})
+		}
+		row := &out[len(out)-1]
+		row.Readers += readers
+		row.ActiveMS += active
+		if cohort != "" {
+			row.Cohorts[cohort] = readers
+		}
 	}
 	return out, rows.Err()
 }

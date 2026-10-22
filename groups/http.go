@@ -102,9 +102,9 @@ var routes = []httpapi.Route[handler]{
 		httpapi.H(handler.contentGroups), nil, language),
 	staff(httpapi.PUT, "/contents/{id}/entities", "Replaces a content's memberships, its versions' included, in the entity kinds named (every kind its kind joins by default).",
 		ContentGroups{}, httpapi.OK(ContentMemberships{}), httpapi.H(handler.setContentGroups), writes, language),
-	staff(httpapi.PUT, "/contents/{id}/entities/shared", "Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Only entity kinds without version_level may be written; omitted kinds select all shared kinds. New names attach to the shared content.",
+	staff(httpapi.PUT, "/contents/{id}/entities/shared", "Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Entity kinds must allow the content membership scope; omitted kinds select all such kinds. New names attach to the shared content.",
 		ContentGroups{}, httpapi.OK(ContentMemberships{}), httpapi.H(handler.setSharedContentGroups), writes, language),
-	staff(httpapi.PUT, "/contents/{id}/versions/{vid}/entities", "Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Only version_level entity kinds may be written; omitted kinds select all version kinds. New names attach to this version. The version must belong to the content and not be deleted.",
+	staff(httpapi.PUT, "/contents/{id}/versions/{vid}/entities", "Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Entity kinds must allow the version membership scope; omitted kinds select all such kinds. New names attach to this version. The version must belong to the content and not be deleted.",
 		ContentGroups{}, httpapi.OK(ContentMemberships{}), httpapi.H(handler.setVersionContentGroups), writes, language),
 }
 

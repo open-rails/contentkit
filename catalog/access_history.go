@@ -22,7 +22,7 @@ func (s *Store) recordAccessHistory(ctx context.Context, q Querier, ids []string
  FROM `+s.t.facets+` f
  CROSS JOIN LATERAL (SELECT jsonb_build_object(
   'kind', f.kind, 'live_from', f.live_from, 'deleted', f.deleted,
-  'listing', f.listing, 'languages', f.languages,
+  'languages', f.languages,
   'level', f.access_level, 'tiers', f.access_tiers,
   'group_id', f.access_group_id, 'free_after', f.access_free_after) AS snapshot) state
  LEFT JOIN LATERAL (SELECT h.snapshot FROM `+history+` h

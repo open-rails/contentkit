@@ -77,14 +77,6 @@ func (s *Store) cleanText(ctx context.Context, language string, t Text) (Text, e
 	return t, nil
 }
 
-func (s *Store) checkListing(l string) error {
-	switch l {
-	case ListingListed, ListingMembers, ListingUnlisted:
-		return nil
-	}
-	return invalid("listing %q must be listed, members or unlisted", l)
-}
-
 func checkComments(c string) error {
 	switch c {
 	case content.CommentsOpen, content.CommentsClosed, content.CommentsHidden:
@@ -152,7 +144,7 @@ func (s *Store) checkKindComments(kind, mode string) error {
 // checkStoredPolicies prevents publication/restoration from bypassing a host
 // policy tightened since the item was created. The caller holds content locks.
 func (s *Store) checkStoredPolicies(ctx context.Context, tx pgx.Tx, ids []string) error {
-	rows, err := tx.Query(ctx, `SELECT c.kind, c.comments, c.access, v.access FROM `+s.t.items+` c
+	rows, err := tx.Query(ctx, `SELECT c.kind, c.comments, c.attributes, c.access, v.access FROM `+s.t.items+` c
  LEFT JOIN `+s.t.versions+` v ON v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state <> 'deleted'
  WHERE c.tenant_id=$1 AND c.id=ANY($2)`, s.tenant, ids)
 	if err != nil {
@@ -161,9 +153,16 @@ func (s *Store) checkStoredPolicies(ctx context.Context, tx pgx.Tx, ids []string
 	defer rows.Close()
 	for rows.Next() {
 		var kind, comments string
-		var itemRule, versionRule []byte
-		if err := rows.Scan(&kind, &comments, &itemRule, &versionRule); err != nil {
+		var attributes, itemRule, versionRule []byte
+		if err := rows.Scan(&kind, &comments, &attributes, &itemRule, &versionRule); err != nil {
 			return err
+		}
+		var values map[string]any
+		if err := json.Unmarshal(attributes, &values); err != nil {
+			return err
+		}
+		if err := kinds.ValidateRequiredAttributes(s.cfg.Kinds[kind].Attributes, values); err != nil {
+			return invalid("%v", err)
 		}
 		if err := s.checkKindComments(kind, comments); err != nil {
 			return err

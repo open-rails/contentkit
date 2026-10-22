@@ -138,7 +138,7 @@ export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> 
   end_date?: string;
   time_zone?: string;
 };
-/** Explicit known IDs, including unlisted items, under current reader policy. */
+/** Explicit known IDs under current reader policy. */
 export type KnownCardsQuery = ReaderQuery & CardQuery & { ids: readonly string[]; kind?: string; summary?: boolean };
 export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed"; summary?: boolean };
 export interface TypeaheadQuery extends ReaderQuery {

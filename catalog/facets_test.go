@@ -17,7 +17,6 @@ type facet struct {
 	Version      string
 	Live         bool
 	Deleted      bool
-	Listing      string
 	Languages    []string
 	Level        access.Level
 	FreeAfter    *time.Time
@@ -36,7 +35,7 @@ type facet struct {
 // facets reads the content item's facet rows in position order.
 func (f *fixture) facets(id string) []facet {
 	f.t.Helper()
-	rows, err := f.pool.Query(f.ctx, `SELECT version_id, coalesce(live_from <= $2, false), deleted, listing, languages, access_level, access_tiers,
+	rows, err := f.pool.Query(f.ctx, `SELECT version_id, coalesce(live_from <= $2, false), deleted, languages, access_level, access_tiers,
  coalesce(access_group_id, ''), access_free_after, restrictions, group_ids, traits, coalesce(owner_group_id, ''), position, attributes, likes, favorites
  FROM `+f.table("content_facets")+` WHERE tenant_id = $1 AND content_id = $3 ORDER BY position, version_id`, tenant, f.now(), id)
 	if err != nil {
@@ -47,7 +46,7 @@ func (f *fixture) facets(id string) []facet {
 	for rows.Next() {
 		var x facet
 		var attrs []byte
-		if err := rows.Scan(&x.Version, &x.Live, &x.Deleted, &x.Listing, &x.Languages, &x.Level, &x.Tiers, &x.Group, &x.FreeAfter, &x.Restrictions,
+		if err := rows.Scan(&x.Version, &x.Live, &x.Deleted, &x.Languages, &x.Level, &x.Tiers, &x.Group, &x.FreeAfter, &x.Restrictions,
 			&x.Groups, &x.Traits, &x.Owner, &x.Position, &attrs, &x.Likes, &x.Favorites); err != nil {
 			f.t.Fatal(err)
 		}
@@ -60,7 +59,7 @@ func (f *fixture) facets(id string) []facet {
 }
 
 // content_facets holds one row per version, rewritten in the transaction of
-// every change to its inputs: the item's state, listing, access, restrictions
+// every change to its inputs: the item's state, access, restrictions
 // and attributes, each version's state, languages, traits, access override,
 // attributes and order, and memberships; deletion keeps the rows (holders
 // still read them) marked deleted.
@@ -73,7 +72,7 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 	in.Attributes = map[string]any{"format": "doujin"}
 	id := f.create("staff", in)
 	vs := f.facets(id)
-	if len(vs) != 2 || vs[0].Live || vs[0].Listing != ListingListed || vs[0].Level != access.Public || vs[0].Owner != studio ||
+	if len(vs) != 2 || vs[0].Live || vs[0].Level != access.Public || vs[0].Owner != studio ||
 		!slices.Equal(vs[0].Languages, []string{"en"}) || !slices.Equal(vs[1].Languages, []string{"ja"}) || vs[0].Attributes["format"] != "doujin" {
 		t.Fatalf("a draft's facets %+v", vs)
 	}
@@ -83,13 +82,12 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 		t.Fatalf("published %+v", vs)
 	}
 	free := f.now().Add(24 * time.Hour)
-	err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Listing: ptr(ListingMembers),
-		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, FreeAfter: &free}, Restrictions: &[]string{"restricted"}, Attributes: map[string]any{"volume": 2}}}})
+	err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, FreeAfter: &free}, Restrictions: &[]string{"restricted"}, Attributes: map[string]any{"volume": 2}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	vs = f.facets(id)
-	if vs[0].Listing != ListingMembers || vs[0].Level != access.TierLevel || !slices.Equal(vs[0].Tiers, []string{"premium"}) ||
+	if vs[0].Level != access.TierLevel || !slices.Equal(vs[0].Tiers, []string{"premium"}) ||
 		vs[0].FreeAfter == nil || !vs[0].FreeAfter.Equal(free) ||
 		!slices.Equal(vs[1].Restrictions, []string{"restricted"}) || vs[1].Attributes["volume"] != float64(2) || vs[1].Attributes["format"] != nil {
 		t.Fatalf("after the item's edit %+v", vs)
@@ -128,10 +126,7 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 	if vs := f.facets(id); !vs[0].Deleted || vs[1].Deleted {
 		t.Fatalf("a deleted version %+v", vs)
 	}
-	if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: en}}); err == nil {
-		t.Fatal("the last version was deleted")
-	}
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{id}); err != nil {
+	if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: en}}); err != nil {
 		t.Fatal(err)
 	}
 	if vs := f.facets(id); !vs[0].Deleted || !vs[1].Deleted || !vs[1].Live {
@@ -139,11 +134,11 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 	}
 
 	// A failed write leaves the facets as they were.
-	if err := f.s.Restore(f.ctx, f.as("staff"), []string{id}); err != nil {
+	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: en, VersionInput: VersionInput{State: StatePublished}}}); err != nil {
 		t.Fatal(err)
 	}
 	before := f.facets(id)
-	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Listing: ptr(ListingUnlisted), Revision: ptr(int64(1))}}}); err == nil {
+	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Comments: ptr("closed"), Revision: ptr(int64(1))}}}); err == nil {
 		t.Fatal("a stale revision was accepted")
 	}
 	if after := f.facets(id); !reflect.DeepEqual(before, after) {

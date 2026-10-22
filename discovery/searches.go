@@ -80,7 +80,8 @@ func (s *Service) RecentSearches(ctx context.Context, actor access.Actor, sessio
 	}
 	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (RecentSearch, error) {
 		var x RecentSearch
-		return x, r.Scan(&x.Query, &x.Results, &x.SearchedAt)
+		err := r.Scan(&x.Query, &x.Results, &x.SearchedAt)
+		return x, err
 	})
 	if err != nil {
 		return out, err

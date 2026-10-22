@@ -62,8 +62,6 @@ var enums = []enum{
 		[]string{"content.Comment.moderation", "catalog.Content.moderation"}},
 	{"ContentState", []string{catalog.StateDraft, catalog.StatePublished, catalog.StateDeleted}, []string{"catalog.Content.state", "catalog.Version.state"}},
 	{"VersionState", []string{catalog.StateDraft, catalog.StatePublished}, []string{"catalog.VersionInput.state"}},
-	{"Listing", []string{catalog.ListingListed, catalog.ListingMembers, catalog.ListingUnlisted},
-		[]string{"catalog.Content.listing", "catalog.ContentInput.listing", "catalog.ContentPatch.listing"}},
 	{"AliasStatus", []string{contenturl.AliasFound, contenturl.AliasNotFound, contenturl.AliasGone}, []string{"contenturl.AliasResult.status"}},
 }
 

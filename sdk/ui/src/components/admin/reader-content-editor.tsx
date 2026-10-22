@@ -1,14 +1,17 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { parseAttributes } from "../../client/group-fields.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Listing, Membership, NewEntity, RefBody } from "../../client/generated/wire.js";
+import type { CatalogText, Content, ContentModel, FileInfo, GroupCard, Membership, NewEntity, RefBody, VersionText } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
+import { allowsEntityScope } from "../../client/entity-scopes.js";
 import { ruleFor } from "../../client/media/rules.js";
 import { isProcessing, pageRemoved } from "../../client/media/windows.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContent } from "../../react/contents.js";
 import { useErrorReporter, useGuarded } from "../../react/context.js";
 import { useMediaFolder } from "../../react/folder.js";
+import { useReaderFileDraft } from "../../react/reader-file-draft.js";
+import { DraftHistoryProvider, useDraftHistory } from "../../react/draft-history.js";
 import { useContentGroups } from "../../react/groups.js";
 import { useEditorCrop } from "../../react/crop.js";
 import { usePageNotices } from "../../react/page-notices.js";
@@ -24,7 +27,7 @@ import { AttributeFields, formOf } from "../groups/fields.js";
 import { EntityChips } from "../groups/entity-chips.js";
 import { labelOf } from "../groups/parts.js";
 import { ImageCropDialog } from "../image-crop-dialog.js";
-import { MediaFolderEditor, positionalName } from "../media-folder-editor.js";
+import { MediaFolderEditor } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
 import { RuleFields, cleanRule, complete, VersionEditor, SegmentsEditor, AddVersion, versionLabel, allowsIndividualSales, defaultAccessRule } from "../content/editors.js";
 import { OfferFields } from "../content/offer-fields.js";
@@ -61,6 +64,11 @@ function Panel({ title, label, children, className = "" }: { title?: ReactNode; 
 
 /** A reader work, its files and associations are one editing session. */
 export function ReaderContentEditor(p: ContentEditorProps & { model: ContentModel }) {
+  return <DraftHistoryProvider><ReaderContentWorkspace {...p} /></DraftHistoryProvider>;
+}
+
+function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel }) {
+  const history = useDraftHistory()!;
   const { client, scope } = useContentScope(p.client);
   const m = useMessages();
   const { t } = m;
@@ -69,6 +77,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const report = useErrorReporter(p.onError);
   const model = p.model,
     spec = model.kinds[p.kind]!;
+  const originalAndVersion = spec.title_policy === "original_and_version";
   const offered = p.languages?.map((l) => (typeof l === "string" ? { value: l, label: l } : l));
   const languages = offered?.length ? offered : model.languages.map((l) => ({ value: l, label: l }));
   const languageKey = languages.map((l) => l.value).join("|");
@@ -92,9 +101,15 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>();
   const [notice, setNotice] = useState("");
+  const [versionScheduleTarget, setVersionScheduleTarget] = useState<HTMLDivElement | null>(null);
+  const [versionActionsTarget, setVersionActionsTarget] = useState<HTMLDivElement | null>(null);
+  const [versionReaderTarget, setVersionReaderTarget] = useState<HTMLDivElement | null>(null);
+  const [versionSchedule, setVersionSchedule] = useState("");
+  const [stagedLanguage, setStagedLanguage] = useState<{ version: string; language: string } | null>(null);
+  const [coverChoices, setCoverChoices] = useState(false);
+  const [draftGeneration, setDraftGeneration] = useState(0);
   const publication = useDraft(useMemo(() => ({ at: item?.publish_at ? localInput(new Date(item.publish_at)) : "" }), [item?.publish_at]));
   const publishAt = publication.value.at;
-  const setPublishAt = (at: string) => publication.edit({ at });
   const [addingVersion, setAddingVersion] = useState(false);
   const [toolsOpened, setToolsOpened] = useState<string[]>([]);
   const [toolsExpanded, setToolsExpanded] = useState(false);
@@ -128,18 +143,25 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const [picked, setPicked] = useState<ReadonlyMap<string, GroupCard>>(new Map());
   const cards = useMemo(() => new Map([...picked, ...names]), [names, picked]);
   const groupKinds = useMemo(() => spec.entities ?? [], [spec.entities]);
-  const sharedKinds = useMemo(() => groupKinds.filter((kind) => !model.entity_kinds[kind]?.version_level), [groupKinds, model.entity_kinds]);
-  const versionKinds = useMemo(() => groupKinds.filter((kind) => model.entity_kinds[kind]?.version_level), [groupKinds, model.entity_kinds]);
+  const sharedKinds = useMemo(() => groupKinds.filter((kind) => allowsEntityScope(model.entity_kinds[kind], "content")), [groupKinds, model.entity_kinds]);
+  const versionKinds = useMemo(() => groupKinds.filter((kind) => allowsEntityScope(model.entity_kinds[kind], "version")), [groupKinds, model.entity_kinds]);
   const texts = useDraft(useMemo(() => Object.fromEntries(languageKey.split("|").map((l) => [l, editableText(item, l)])), [item, languageKey]));
+  const editionLanguage = stagedLanguage && stagedLanguage.version === version?.id ? stagedLanguage.language : version?.languages[0] ?? language;
+  const versionID = version?.id;
+  const onVersionLanguagesChange = useCallback((languages: readonly string[]) => {
+    if (versionID) setStagedLanguage({ version: versionID, language: languages[0] ?? language });
+  }, [versionID, language]);
+  const versionTexts = useDraft(useMemo<Record<string, VersionText>>(() => version?.text ?? {}, [version?.text]));
+  const displayTitle = versionTexts.value[editionLanguage]?.title ?? item?.text?.[editionLanguage]?.title ?? (item?.language === editionLanguage ? item.title : "");
   const details = useDraft(
     useMemo(
       () => ({
-        listing: item?.listing ?? ("listed" as Listing),
+        originalTitle: item?.original_title ?? "",
         comments: item?.comments ?? (!spec.comment_modes?.length || spec.comment_modes.includes("open") ? "open" : spec.comment_modes[0]!),
         attributes: formOf(spec.attributes ?? {}, item?.attributes ?? {}),
         access: item?.access ?? defaultAccessRule(model, p.kind),
       }),
-      [item?.listing, item?.comments, item?.attributes, item?.access, spec.attributes, spec.comment_modes, model, p.kind],
+      [item?.original_title, item?.comments, item?.attributes, item?.access, spec.attributes, spec.comment_modes, model, p.kind],
     ),
   );
   const associations = useDraft(
@@ -165,8 +187,8 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     return linked.size + create.filter((c) => c.kind === by).length === 1 ? undefined : labelOf(p.labels, by);
   };
   const coordinator = useEditorSaveCoordinator();
-  const latest = useRef({ texts, details, associations, versionAssociations, language });
-  latest.current = { texts, details, associations, versionAssociations, language };
+  const latest = useRef({ texts, details, associations, versionAssociations, language, versionTexts, editionLanguage });
+  latest.current = { texts, details, associations, versionAssociations, language, versionTexts, editionLanguage };
   // Starting entities (e.g. a series' "new gallery") join a new item's draft once, when they resolve.
   const started = useRef(false);
   useEffect(() => {
@@ -180,7 +202,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
       memberships: [...d.memberships, ...usable.filter((g) => kinds.includes(g.kind) && !d.memberships.some((a) => a.group_id === g.id)).map((g) => ({ group_id: g.id }))],
     }));
     seed(sharedKinds, latest.current.associations);
-    seed(versionKinds, latest.current.versionAssociations);
+    seed(versionKinds.filter((kind) => !sharedKinds.includes(kind)), latest.current.versionAssociations);
   }, [p.id, p.entities, groupKinds, sharedKinds, versionKinds]);
   const text = texts.value[language] ?? blank();
   const editText = (patch: Partial<CatalogText>) => texts.edit((all) => ({ ...all, [language]: { ...(all[language] ?? blank()), ...patch } }));
@@ -193,9 +215,10 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     if (owned.current.item) return owned.current.item;
     if (creating.current) return creating.current;
     setAllocating(true);
-    const l = latest.current.language;
+    const l = originalAndVersion ? latest.current.editionLanguage : latest.current.language;
     const before = latest.current.texts.get()[l] ?? blank();
-    const title = before.title.trim() || fileTitle(suggested ?? "") || t("readerEditor.untitled");
+    const title = (originalAndVersion ? latest.current.versionTexts.get()[l]?.title : before.title)?.trim() || fileTitle(suggested ?? "") || t("readerEditor.untitled");
+    if (originalAndVersion && !latest.current.versionTexts.get()[l]?.title?.trim()) latest.current.versionTexts.edit((all) => ({ ...all, [l]: { ...all[l], title } }));
     if (!before.title.trim()) latest.current.texts.edit((all) => ({ ...all, [l]: { ...(all[l] ?? blank()), title } }));
     const input = {
       kind: p.kind,
@@ -225,7 +248,11 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const offer = useAction("offer.save", p.onError);
   const addVersion = useAction("content.save", p.onError);
   const actions = useAction("content.save", p.onError);
-  const folder = useMediaFolder(ref, { commit: version?.live ? "manual" : "auto", client, onError: p.onError });
+  const sourceFolder = useMediaFolder(ref, { commit: version?.live ? "manual" : "auto", client, onError: p.onError });
+  const sourceFolderRef = useRef(sourceFolder);
+  sourceFolderRef.current = sourceFolder;
+  const fileDraft = useReaderFileDraft(sourceFolder, client);
+  const folder = fileDraft.folder;
   const folderRef = useRef(folder);
   folderRef.current = folder;
   const files = folder.read.read?.files ?? [];
@@ -265,6 +292,8 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     void ensure(added.find((f) => /\.zip$/i.test(f.name))?.name ?? added[0]?.name).catch(fail);
   };
   const dirty =
+    fileDraft.dirty ||
+    versionTexts.dirty.length > 0 ||
     publication.dirty.length > 0 ||
     texts.dirty.length > 0 ||
     details.dirty.length > 0 ||
@@ -274,21 +303,22 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   // Queued files of a live edition count as edits until a save commits them.
   const unsaved = dirty || folder.pending.length > 0 || folder.queue.items.some((q) => q.status === "uploaded");
   useEffect(() => {
-    if (!dirty && !folder.busy) return;
+    if (!unsaved && !folder.busy) return;
     const ask = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     addEventListener("beforeunload", ask);
     return () => removeEventListener("beforeunload", ask);
-  }, [dirty, folder.busy]);
+  }, [unsaved, folder.busy]);
   const save = async (publish: boolean) => {
     if (saving) return;
     setError(undefined);
     setNotice("");
     const state = latest.current;
     const active = state.texts.get()[state.language];
-    if (!active?.title.trim()) return setError(t("contentManager.titleRequired"));
+    const activeDisplayTitle = state.versionTexts.get()[state.editionLanguage]?.title ?? item?.text?.[state.editionLanguage]?.title ?? (item?.language === state.editionLanguage ? item.title : "");
+    if (!(originalAndVersion ? activeDisplayTitle : active?.title)?.trim()) return setError(t("contentManager.titleRequired"));
     const problem = coordinator.problem();
     if (problem) return setError(t("readerEditor.fixSection", { section: problem }));
     if (!complete(state.details.get().access) || (state.details.get().access.level === "tier" && !state.details.get().access.tiers?.length))
@@ -297,17 +327,24 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     try {
       attributes = parseAttributes(spec.attributes ?? {}, state.details.get().attributes);
     } catch (e) {
-      return fail(e);
+      return fail(e instanceof RangeError ? new ValidationError(e.message) : e);
     }
     if (publish && publishingBlocked) return setError(t("readerEditor.filesNotReady"));
     setSaving(true);
     const settleTexts = state.texts.checkpoint(),
+      settleVersionTexts = state.versionTexts.checkpoint(),
       settleDetails = state.details.checkpoint(),
       settleAssociations = state.associations.checkpoint(),
-      settleVersionAssociations = state.versionAssociations.checkpoint();
+      settleVersionAssociations = state.versionAssociations.checkpoint(),
+      settleFiles = fileDraft.checkpoint();
     const changedText = state.texts.dirty.slice();
     const changedDetails = state.details.dirty.slice();
     const snapshotTexts = { ...state.texts.get() };
+    if (originalAndVersion) for (const l of changedText) {
+      if (snapshotTexts[l] && !snapshotTexts[l].title.trim()) snapshotTexts[l] = { ...snapshotTexts[l], title: activeDisplayTitle };
+    }
+    const snapshotVersionTexts = { ...state.versionTexts.get() };
+    let savedVersionTexts = snapshotVersionTexts;
     const snapshotDetails = state.details.get();
     const snapshotAssociations = state.associations.get().memberships.slice();
     const snapshotCreate = state.associations.get().create.slice();
@@ -315,6 +352,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     const snapshotVersionCreate = state.versionAssociations.get().create.slice();
     const waiting = (c: NewEntity) => !!scopeMissing(c.kind, [...snapshotAssociations, ...snapshotVersionAssociations], [...snapshotCreate, ...snapshotVersionCreate]);
     let cleanAssociations = true;
+    let draftSaved = false;
     try {
       let content = await ensure();
       if (!current()) return;
@@ -333,12 +371,23 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
         if (!current()) return;
         if (changedDetails.length) {
           content = await client.contents.update(content.id, {
-            ...(changedDetails.includes("listing") ? { listing: snapshotDetails.listing } : {}),
+            ...(changedDetails.includes("originalTitle") ? { original_title: snapshotDetails.originalTitle } : {}),
             ...(changedDetails.includes("comments") ? { comments: snapshotDetails.comments } : {}),
             ...(changedDetails.includes("attributes") ? { attributes } : {}),
             ...(changedDetails.includes("access") ? { access: cleanRule(snapshotDetails.access) } : {}),
             revision: content.revision,
           });
+        }
+        if (!current()) return;
+        if (originalAndVersion && (state.versionTexts.dirty.length || !version?.text?.[state.editionLanguage]?.title)) {
+          const targetVersion = version ? content.versions.find((v) => v.id === version.id) : content.versions[0];
+          if (!targetVersion) throw new ValidationError(t("readerEditor.versionMissing"));
+          const fresh = await client.contents.version(content.id, targetVersion.id, state.editionLanguage);
+          const merged = { ...fresh.text };
+          for (const l of state.versionTexts.dirty) merged[l] = snapshotVersionTexts[l]!;
+          if (!merged[state.editionLanguage]?.title) merged[state.editionLanguage] = { ...merged[state.editionLanguage], title: activeDisplayTitle };
+          const saved = await client.contents.updateVersion(content.id, targetVersion.id, { text: merged });
+          savedVersionTexts = saved.text ?? merged;
         }
         if (!current()) return;
         const remember = (saved: { entities: GroupCard[] }) => setPicked((all) => new Map([...all, ...saved.entities.map((g) => [g.id, g] as const)]));
@@ -362,35 +411,48 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
         }
       });
       if (!current()) return;
-      // A live edition queues changes for one commit; a draft adds files as
-      // uploads finish. Saving metadata never interrupts a running upload.
-      const currentFolder = folderRef.current;
-      if (!currentFolder.busy && (currentFolder.pending.length || currentFolder.queue.items.some((q) => q.status === "uploaded"))) await currentFolder.commit();
       const blocked = await coordinator.save(current);
       if (blocked) throw new ValidationError(t("readerEditor.fixSection", { section: blocked }));
       if (!current()) return;
       const cleanTexts = settleTexts(Object.fromEntries(languages.map((l) => [l.value, content.text?.[l.value] ?? snapshotTexts[l.value] ?? blank()])));
+      const cleanVersionTexts = settleVersionTexts(savedVersionTexts);
       const cleanDetails = settleDetails({
-        listing: content.listing,
+        originalTitle: content.original_title ?? "",
         comments: content.comments,
         attributes: formOf(spec.attributes ?? {}, content.attributes),
         access: content.access,
       });
+      if (!cleanTexts || !cleanVersionTexts || !cleanDetails || !cleanAssociations) throw new ValidationError(t("readerEditor.changedDuringSave"));
+      // Files are the last draft mutation: a failed metadata section cannot
+      // leave a rename/removal committed behind a still-undoable local draft.
+      const currentFolder = folderRef.current;
+      if (!currentFolder.busy && (currentFolder.pending.length || currentFolder.queue.items.some((q) => q.status === "uploaded"))) await currentFolder.commit();
+      await fileDraft.commit();
+      if (!settleFiles()) throw new ValidationError(t("readerEditor.changedDuringSave"));
+      draftSaved = true;
+      history.clear(publication.dirty.length ? publication.historyKey : undefined);
       if (publish) {
-        if (!cleanTexts || !cleanDetails || !cleanAssociations) throw new ValidationError(t("readerEditor.changedDuringSave"));
-        const fresh = folderRef.current;
+        const fresh = sourceFolderRef.current;
         if (!ref || fresh.busy || fresh.error || fresh.queue.items.some((q) => q.status === "failed") || !(await readerMediaReady(client, ref)))
           throw new ValidationError(t("readerEditor.filesNotReady"));
         const edition = version ? await client.contents.version(content.id, version.id, language) : null;
-        if (edition?.state !== "published") throw new ValidationError(t("readerEditor.versionDraft"));
+        if (!edition) throw new ValidationError(t("readerEditor.versionMissing"));
+        if (edition.state !== "published") await client.contents.updateVersion(content.id, edition.id, { state: "published" });
         if (!current()) return;
         const settlePublication = publication.checkpoint();
-        const published = await guarded(() => client.contents.publishWhenReady(content.id, publishAt ? new Date(publishAt).toISOString() : undefined));
-        settlePublication({ at: published.publish_at ? localInput(new Date(published.publish_at)) : "" });
-        setNotice(t("contentManager.publishedNotice"));
-      } else setNotice(t("pollEditor.saved"));
+        if (!content.live) {
+          const at = versionSchedule || publishAt;
+          const published = await guarded(() => client.contents.publishWhenReady(content.id, at ? new Date(at).toISOString() : undefined));
+          settlePublication({ at: published.publish_at ? localInput(new Date(published.publish_at)) : "" });
+        } else ed.reload();
+        history.clear();
+      }
+      setNotice(t(publish ? "contentManager.publishedNotice" : "pollEditor.saved"));
     } catch (e) {
-      fail(e);
+      if (draftSaved && publish) {
+        report(toContentKitError(e), "content.save");
+        fail(new ValidationError(t("readerEditor.savedPublishFailed", { reason: contentError(m, toContentKitError(e)) })));
+      } else fail(e);
     } finally {
       if (current()) setSaving(false);
     }
@@ -416,22 +478,6 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
     if (current()) editThumbnail(path);
   };
   const { confirm, dialog } = useConfirm();
-  const remove = async () => {
-    if (
-      !item ||
-      !(await confirm({
-        title: t("contentManager.deleteTitle", { title: item.title }),
-        description: t("contentManager.deleteBody"),
-        confirm: t("contentManager.delete"),
-      }))
-    )
-      return;
-    await actions.run(async () => {
-      folder.discard();
-      await client.contents.remove(item.id);
-      if (current()) p.onDeleted?.(item);
-    });
-  };
   useEffect(() => {
     onLeaveGuard?.(async () => !unsaved || await confirm({ title: t("readerEditor.leaveVersion"), description: t("readerEditor.discardVersionEdits"), confirm: t("readerEditor.discard") }));
     return () => onLeaveGuard?.(undefined);
@@ -440,21 +486,26 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
   const status = item ? contentStatus(item) : "draft";
   const changeDetails = (patch: Partial<typeof details.value>) => details.edit((d) => ({ ...d, ...patch }));
   const versionChoices = versions.map((v) => ({ id: v.id, label: versionLabel(v, (l) => languages.find((x) => x.value === l)?.label ?? l, p.labels) }));
+  const discardLocalEdits = () => {
+    folder.discard();
+    fileDraft.discard();
+    setDraftGeneration((value) => value + 1);
+    texts.checkpoint()(Object.fromEntries(languages.map((l) => [l.value, editableText(item, l.value)])));
+    versionTexts.checkpoint()({});
+    details.checkpoint()({ originalTitle: item!.original_title ?? "", comments: item!.comments, attributes: formOf(spec.attributes ?? {}, item!.attributes ?? {}), access: item!.access });
+    publication.checkpoint()({ at: item!.publish_at ? localInput(new Date(item!.publish_at)) : "" });
+    associations.checkpoint()({ memberships: membership.memberships.filter((a) => !a.version_id && sharedKinds.includes(membership.entities.get(a.group_id ?? "")?.kind ?? "")), create: [] });
+    versionAssociations.checkpoint()({ memberships: [], create: [] });
+    history.clear();
+  };
   const chooseVersion = async (code: string) => {
     const next = versions.find((v) => v.code === code);
     if (!next || next.id === version?.id || saving || filesPending) return;
     if (unsaved && !(await confirm({ title: t("readerEditor.leaveVersion"), description: t("readerEditor.discardVersionEdits"), confirm: t("readerEditor.discard") }))) return;
     if (!current()) return;
-    folder.discard();
+    discardLocalEdits();
     if (p.onVersionChange) p.onVersionChange(next);
-    else {
-      texts.checkpoint()(Object.fromEntries(languages.map((l) => [l.value, editableText(item, l.value)])));
-      details.checkpoint()({ listing: item!.listing, comments: item!.comments, attributes: formOf(spec.attributes ?? {}, item!.attributes ?? {}), access: item!.access });
-      publication.checkpoint()({ at: item!.publish_at ? localInput(new Date(item!.publish_at)) : "" });
-      associations.checkpoint()({ memberships: membership.memberships.filter((a) => !a.version_id && sharedKinds.includes(membership.entities.get(a.group_id ?? "")?.kind ?? "")), create: [] });
-      versionAssociations.checkpoint()({ memberships: [], create: [] });
-      setChosen(next.code);
-    }
+    else setChosen(next.code);
   };
   const renderEntities = (kinds: readonly string[], draft: typeof associations, scopedVersion?: string) => kinds.map((kind) => {
     const rows = draft.value.memberships.map((a, index) => ({ a, index })).filter(({ a }) => cards.get(a.group_id ?? "")?.kind === kind);
@@ -475,16 +526,21 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
 
   return (
     <EditorSaveContext.Provider value={coordinator.context}>
-      <div className="grid gap-5 text-base" data-ckui="reader-content-editor">
+      <div className="grid gap-5 text-base" data-ckui="reader-content-editor" onKeyDown={(event) => {
+        if (event.defaultPrevented || saving || !(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "z") return;
+        if ((event.target as Element).closest("input, textarea, [contenteditable='true']")) return;
+        event.preventDefault();
+        if (event.shiftKey) history.redo(); else history.undo();
+      }}>
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background/95 p-4 shadow-sm">
           <button
             type="button"
             className="h-20 shrink-0 overflow-hidden rounded-md border border-border bg-muted disabled:cursor-default"
             style={{ aspectRatio: 0.7071 }}
-            disabled={!coverFile || saving}
+            disabled={saving || cover.pending}
             title={t("readerEditor.thumbnail")}
-            aria-label={t("readerEditor.editThumbnail")}
-            onClick={() => coverFile && editThumbnail(coverFile.path)}
+            aria-label={t("readerEditor.thumbnail")}
+            onClick={() => setCoverChoices(true)}
             data-ckui="editor-thumbnail"
           >
             {version?.cover?.url && <img src={version.cover.url} alt="" className="size-full object-cover" />}
@@ -511,18 +567,21 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
               {t(item.live ? "contentManager.view" : "readerEditor.preview")}
             </a>
           )}
+          <div ref={setVersionScheduleTarget} className="min-w-48" data-ckui="version-schedule-header" />
           {item && !unsaved && !saving ? (
             <span role="status" className="text-sm text-muted-foreground" data-ckui="editor-saved">
               {t("readerEditor.allSaved")}
             </span>
           ) : (
-            <Button disabled={saving || allocating || !unsaved} onClick={() => void save(false)}>
+            <Button disabled={saving || allocating || folder.updating || !unsaved} onClick={() => void save(false)}>
               {saving ? t("common.saving") : t(item?.live ? "readerEditor.saveChanges" : "readerEditor.saveDraft")}
             </Button>
           )}
-          {!item?.live && (
+          <Button variant="outline" size="sm" disabled={saving || !history.canUndo} onClick={history.undo}>{t("editor.undo")}</Button>
+          <Button variant="outline" size="sm" disabled={saving || !history.canRedo} onClick={history.redo}>{t("editor.redo")}</Button>
+          {(!item?.live || version?.state === "draft") && (
             <Button variant="outline" disabled={saving || publishingBlocked} onClick={() => void save(true)}>
-              {publishAt ? t("readerEditor.schedule") : t("contentManager.publish")}
+              {versionSchedule || publishAt ? t("readerEditor.schedule") : t("contentManager.publish")}
             </Button>
           )}
         </div>
@@ -532,10 +591,20 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
             {notice}
           </p>
         )}
-        <fieldset disabled={saving} className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
+        <fieldset disabled={saving || actions.pending} className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
           <div className="grid min-w-0 gap-5">
             <Panel title={t("readerEditor.details")}>
-              <p className="text-sm text-muted-foreground">{t("readerEditor.sharedHint")}</p>
+              <p className="text-sm text-muted-foreground">{t(originalAndVersion ? "readerEditor.titlesHint" : "readerEditor.sharedHint")}</p>
+              {originalAndVersion ? <div className="grid gap-4">
+                <div className="grid gap-1.5">
+                  <Label htmlFor={`${ids}-original-title`}>{t("readerEditor.originalTitle")}</Label>
+                  <Input id={`${ids}-original-title`} maxLength={512} value={details.value.originalTitle} onChange={(e) => changeDetails({ originalTitle: e.target.value })} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor={`${ids}-title`}>{t("readerEditor.displayTitle", { language: languages.find((l) => l.value === editionLanguage)?.label ?? editionLanguage })}</Label>
+                  <Input id={`${ids}-title`} required maxLength={512} value={displayTitle} onChange={(e) => versionTexts.edit((all) => ({ ...all, [editionLanguage]: { ...all[editionLanguage], title: e.target.value } }))} />
+                </div>
+              </div> : <>
               <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
                 <div className="grid gap-1.5">
                   <Label htmlFor={`${ids}-title`}>{t("contentManager.itemTitle")}</Label>
@@ -557,6 +626,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                   </Select>
                 </div>
               </div>
+              </>}
               <div className="grid gap-1.5">
                 <Label htmlFor={`${ids}-description`}>{t("readerEditor.headerText")}</Label>
                 <Textarea id={`${ids}-description`} rows={3} value={text.description ?? ""} onChange={(e) => editText({ description: e.target.value })} />
@@ -573,15 +643,13 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
               {page && (
                 <div className="flex flex-wrap items-center gap-2 text-sm" data-ckui="selected-page">
                   <span className="text-muted-foreground">
-                    {t("readerEditor.pageSelected", { name: positionalName(pages.findIndex((f) => f.path === page.path) + 1, pages.length, page.path) })}
+                    {t("readerEditor.pageSelected", { name: folder.displayNames?.[page.path] ?? page.path.split("/").at(-1)! })} ({pages.findIndex((f) => f.path === page.path) + 1}/{pages.length})
                   </span>
-                  <Button size="sm" variant="secondary" disabled={cover.pending || saving} onClick={() => void cover.run(() => setThumbnail(page))}>
-                    {t("readerEditor.setThumbnail")}
-                  </Button>
                 </div>
               )}
               <MediaFolderEditor
                 folder={{ ...folder, add }}
+                confirmRemove={false}
                 label={false}
                 layout="grid"
                 disabled={saving}
@@ -605,11 +673,10 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
             {item && version && (
               <details className="rounded-xl border border-border bg-card p-4" onToggle={(e) => setToolsExpanded(e.currentTarget.open)}>
                 <summary className="cursor-pointer font-medium">{t("readerEditor.readerTools")}</summary>
-                {toolsOpened.includes(version.id) && (
-                  <div hidden={!toolsExpanded}>
-                    <ReaderManifestEditor key={version.id} content={item.id} version={version.id} client={client} onError={p.onError} />
-                  </div>
-                )}
+                <div hidden={!toolsExpanded} className="mt-4 grid gap-4">
+                  <div ref={setVersionReaderTarget} data-ckui="version-reader-settings" />
+                  {toolsOpened.includes(version.id) && <ReaderManifestEditor key={`${version.id}:${draftGeneration}`} content={item.id} version={version.id} client={client} onError={p.onError} />}
+                </div>
               </details>
             )}
           </div>
@@ -621,16 +688,15 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
             </Panel>
             {item && version && (
               <Panel title={t("readerEditor.versionDetails")}>
-                <VersionEditor key={version.id} content={item} version={version} client={client} labels={p.labels} onError={p.onError} media={false} chapters={false}
+                <VersionEditor key={`${version.id}:${draftGeneration}`} content={item} version={version} client={client} labels={p.labels} onError={p.onError} media={false} chapters={false} showTraits={false} actionsTarget={versionActionsTarget} readerToolsTarget={versionReaderTarget}
+                  scheduleTarget={versionScheduleTarget} onScheduleChange={setVersionSchedule} onLanguagesChange={onVersionLanguagesChange} scheduleDisabled={saving}
                   beforeDelete={async () => {
                     if (!current()) return false;
-                    if (unsaved && !(await confirm({ title: t("contentEditor.deleteVersion"), description: t("readerEditor.discardVersionEdits"), confirm: t("readerEditor.discard") }))) return false;
-                    if (!current()) return false;
-                    folder.discard();
-                    return true;
+                    return await confirm({ title: t("contentEditor.deleteVersion"), description: t("readerEditor.deleteVersionHelp"), confirm: t("contentEditor.deleteVersion") }) && current();
                   }}
                   onDeleted={() => {
                     if (!current()) return;
+                    discardLocalEdits();
                     const next = versions.find((v) => v.id !== version.id);
                     if (p.onVersionChange) p.onVersionChange(next ?? null, { replace: true });
                     else setChosen(next?.code ?? "");
@@ -644,26 +710,7 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                 {renderEntities(versionKinds, versionAssociations, version?.id)}
               </Panel>
             )}
-            <Panel title={t("contentManager.cover")}>
-              <p className="text-sm text-muted-foreground">{t("readerEditor.thumbnailHelp")}</p>
-              <label className="inline-flex cursor-pointer justify-center rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">
-                {t("contentManager.addCover")}
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="sr-only"
-                  aria-label={t("contentManager.cover")}
-                  disabled={cover.pending || saving}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (file) void cover.run(() => customCover(file));
-                  }}
-                />
-              </label>
-              <ErrorLine error={cover.error} />
-            </Panel>
-            <Panel title={t(allowsIndividualSales(model, p.kind) ? "contentEditor.accessTitle" : "contentEditor.accessOnlyTitle")}>
+            {spec.access_scope !== "version" && <Panel title={t(allowsIndividualSales(model, p.kind) ? "contentEditor.accessTitle" : "contentEditor.accessOnlyTitle")}>
               <RuleFields
                 value={details.value.access}
                 onChange={(access) => changeDetails({ access })}
@@ -682,27 +729,8 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                 />
               )}
               <ErrorLine error={offer.error} />
-            </Panel>
+            </Panel>}
             <Panel title={t("readerEditor.publication")}>
-              {!item?.live && (
-                <div className="grid gap-1.5">
-                  <Label htmlFor={`${ids}-publish`}>{t("contentManager.publishAt")}</Label>
-                  <Input id={`${ids}-publish`} type="datetime-local" value={publishAt} onChange={(e) => setPublishAt(e.target.value)} />
-                </div>
-              )}
-              <Label htmlFor={`${ids}-listing`}>{t("contentEditor.listing")}</Label>
-              <Select value={details.value.listing} onValueChange={(listing) => listing && changeDetails({ listing: listing as Listing })}>
-                <SelectTrigger id={`${ids}-listing`}>
-                  <SelectValue>{t(`contentEditor.listing_${details.value.listing}`)}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {(["listed", "members", "unlisted"] as const).map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {t(`contentEditor.listing_${value}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               {spec.comment_modes?.length !== 1 && (
                 <>
                   <Label htmlFor={`${ids}-comments`}>{t("contentEditor.comments")}</Label>
@@ -720,27 +748,46 @@ export function ReaderContentEditor(p: ContentEditorProps & { model: ContentMode
                   </Select>
                 </>
               )}
-              {item?.state === "published" && (
-                <Button variant="outline" disabled={actions.pending} onClick={() => void actions.run(() => client.contents.unpublish(item.id))}>
-                  {t("contentManager.unpublish")}
-                </Button>
-              )}
-              {item && (
-                <Button variant="destructive" disabled={actions.pending} onClick={() => void remove()}>
-                  {t("contentManager.delete")}
-                </Button>
-              )}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {version?.state === "published" && (
+                  <Button variant="outline" disabled={actions.pending} onClick={() => void actions.run(async () => {
+                    if (unsaved && !(await confirm({ title: t("contentManager.unpublish"), description: t("readerEditor.discardBeforeUnpublish"), confirm: t("contentManager.unpublish") }))) return false;
+                    await client.contents.updateVersion(item!.id, version.id, { state: "draft" });
+                    if (current()) { discardLocalEdits(); ed.reload(); }
+                    return true;
+                  })}>
+                    {t("contentManager.unpublish")}
+                  </Button>
+                )}
+                <div ref={setVersionActionsTarget} className="contents" data-ckui="version-destructive-actions" />
+              </div>
               <ErrorLine error={actions.error} />
             </Panel>
           </aside>
         </fieldset>
+        <Dialog open={coverChoices} onOpenChange={setCoverChoices}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>{t("readerEditor.thumbnail")}</DialogTitle></DialogHeader>
+            <p className="text-sm text-muted-foreground">{t("readerEditor.thumbnailHelp")}</p>
+            <label className="inline-flex cursor-pointer justify-center rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">
+              {t("contentManager.addCover")}
+              <input type="file" accept="image/*" className="sr-only" aria-label={t("contentManager.cover")} disabled={cover.pending || saving} onChange={(e) => {
+                const file = e.target.files?.[0]; e.target.value = "";
+                if (file) void cover.run(async () => { await customCover(file); return true; }).then((ok) => ok && setCoverChoices(false));
+              }} />
+            </label>
+            {page && <Button disabled={cover.pending || saving} onClick={() => void cover.run(async () => { await setThumbnail(page); return true; }).then((ok) => ok && setCoverChoices(false))}>{t("readerEditor.setThumbnail")}</Button>}
+            {coverFile && <Button variant="outline" onClick={() => { setCoverChoices(false); editThumbnail(coverFile.path); }}>{t("folder.crop")}</Button>}
+            <ErrorLine error={cover.error} />
+          </DialogContent>
+        </Dialog>
         <Dialog open={addingVersion} onOpenChange={setAddingVersion}>
           <DialogContent>
             <DialogHeader><DialogTitle>{t("contentEditor.addVersion")}</DialogTitle></DialogHeader>
             <AddVersion languages={model.languages} many={spec.versions.languages === "many"} pending={addVersion.pending}
               onAdd={(input) => {
                 if (!item) return;
-                void addVersion.run(() => client.contents.addVersion(item.id, input)).then((v) => {
+                void addVersion.run(() => client.contents.addVersion(item.id, { ...input, ...(spec.access_scope === "version" ? { access: version?.access ?? item.access } : {}) })).then((v) => {
                   if (!v || !current()) return;
                   setAddingVersion(false);
                   ed.reload();

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
@@ -43,7 +43,6 @@ const gallery = (): Content => ({
   title: "Old title",
   decision: { allowed: true },
   state: "draft",
-  listing: "listed",
   comments: "open",
   live: false,
   access: { level: "public" },
@@ -74,7 +73,7 @@ const read = (files: FileInfo[] = [page]): ReadResult => ({
 const links: ContentMemberships = { content_id: "c1", memberships: [], entities: [] };
 
 type Call = { method: string; path: string; body: unknown };
-function server(options: { failText?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean; model?: ContentModel; versions?: Version[] } = {}) {
+function server(options: { failText?: boolean; failPublish?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean; model?: ContentModel; versions?: Version[] } = {}) {
   let item = gallery();
   if (options.versions) item.versions = options.versions;
   let memberState: ContentMemberships | undefined;
@@ -124,6 +123,7 @@ function server(options: { failText?: boolean; media?: ReadResult; memberships?:
     if (method === "GET" && editedVersion) return Response.json(item.versions.find((v) => v.id === editedVersion));
     if (method === "GET" && path.endsWith("/page-notices")) return Response.json({ notices: [] });
     if (method === "POST" && path === "/contents/c1/publish") {
+      if (options.failPublish) return Response.json({ code: "conflict", error: "Publication changed elsewhere" }, { status: 409 });
       item = { ...item, state: "published", live: true };
       return Response.json(item);
     }
@@ -187,6 +187,22 @@ it("allocates the technical draft only when saving and keeps the edited title", 
   expect(screen.queryByText("All changes saved")).not.toBeInTheDocument();
 });
 
+it("requires configured gallery format and preserves the host's CGset label", async () => {
+  const requiredModel: ContentModel = { ...model, kinds: { ...model.kinds, gallery: { ...model.kinds.gallery!, attributes: { format: { type: "enum", values: ["doujin", "cgset"], required: true } } } } };
+  const s = server({ model: requiredModel }), user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" labels={{ cgset: "CGset" }} />);
+  await user.type(await screen.findByLabelText("Title"), " edited");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(await screen.findByText("Format is required")).toBeVisible();
+  expect(writes(s)).toEqual([]);
+  await user.click(screen.getByRole("combobox", { name: "Format" }));
+  expect(screen.queryByRole("option", { name: "None" })).not.toBeInTheDocument();
+  await user.click(await screen.findByRole("option", { name: "CGset" }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(await screen.findByText("Saved.", { selector: "p[role=status]" })).toBeVisible();
+  expect(s.item.attributes.format).toBe("cgset");
+});
+
 it("starts a new gallery linked to the entity it was created from", async () => {
   const s = server(),
     user = userEvent.setup();
@@ -198,6 +214,19 @@ it("starts a new gallery linked to the entity it was created from", async () => 
   expect(await screen.findByText("Saved.", { selector: "p[role=status]" })).toBeVisible();
   const linked = writes(s).find((c) => c.method === "PUT" && c.path === "/contents/c1/entities/shared")?.body as { memberships?: unknown } | undefined;
   expect(linked?.memberships).toEqual([{ group_id: "s1" }]);
+});
+
+it("starts from a shared tag without duplicating it onto the first version", async () => {
+  const sharedTagModel: ContentModel = { ...model, entity_kinds: { ...model.entity_kinds, tag: { membership_scopes: ["content", "version"] } } };
+  const s = server({ model: sharedTagModel }), user = userEvent.setup();
+  const tag: GroupCard = { id: "t1", kind: "tag", slug: "parent-tag", name: "Parent tag", internal: false, count: 0, attributes: {}, created_at: at };
+  render(<ContentEditor client={s.client} kind="gallery" id={null} entities={[tag]} />);
+  expect(await screen.findByText("Parent tag")).toBeVisible();
+  await user.type(screen.getByLabelText("Title"), "Tagged gallery");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText("Saved.", { selector: "p[role=status]" });
+  expect(writes(s).some((call) => call.path === "/contents/c1/entities/shared")).toBe(true);
+  expect(writes(s).some((call) => call.path === "/contents/c1/versions/v1/entities")).toBe(false);
 });
 
 it("saves the visible text and current revision before publishing", async () => {
@@ -226,6 +255,69 @@ it("keeps unsaved input and refuses publication when saving fails", async () => 
   await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
   expect(title).toHaveValue("Keep me");
   expect(writes(s).some((c) => c.path.endsWith("/publish"))).toBe(false);
+});
+
+it("saves metadata before committing removals and retains undo if metadata fails", async () => {
+  const second = { ...page, path: "pages/second.png" };
+  const s = server({ failText: true, media: read([page, second]) }), user = userEvent.setup();
+  const commit = vi.spyOn(s.client.media, "commit");
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await screen.findByRole("button", { name: "Reorder 001.png" });
+  await user.click(screen.getAllByRole("button", { name: "Remove" })[0]!);
+  await user.type(screen.getByLabelText("Title"), " modified");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+  expect(commit).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Undo" }));
+  await user.click(screen.getByRole("button", { name: "Undo" }));
+  expect(screen.getByRole("button", { name: "Reorder 001.png" })).toBeVisible();
+});
+
+it("reports a separate publication failure after confirming saved metadata", async () => {
+  const s = server({ failPublish: true }), user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await user.type(await screen.findByLabelText("Title"), " modified");
+  await user.click(screen.getByRole("button", { name: "Publish" }));
+  expect(await screen.findByText(/Changes saved\. Publishing failed:/)).toBeVisible();
+  expect(s.item.title).toBe("Old title modified");
+  expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
+});
+
+it("guards a ready manual upload even when no metadata is dirty", async () => {
+  const s = server({ versions: [{ ...edition, live: true }], media: read([page, { ...page, path: "pages/pending.png", unattached: true }]) });
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await screen.findByRole("button", { name: "Reorder 001.png" });
+  const event = new Event("beforeunload", { cancelable: true });
+  await waitFor(() => { window.dispatchEvent(event); expect(event.defaultPrevented).toBe(true); });
+});
+
+it("leaves text-field undo to the focused editor", async () => {
+  const s = server(), user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await user.type(await screen.findByLabelText("Title"), " modified");
+  const search = screen.getByRole("combobox", { name: "Add: Artist" });
+  await user.type(search, "search");
+  const event = new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true });
+  search.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(false);
+  expect(screen.getByLabelText("Title")).toHaveValue("Old title modified");
+});
+
+it("keeps existing filenames on load and allows an individual staged rename", async () => {
+  const s = server({ media: read([{ ...page, path: "pages/02_2.png" }, { ...page, path: "pages/03_3.png" }]) }), user = userEvent.setup();
+  const commit = vi.spyOn(s.client.media, "commit");
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await screen.findByRole("button", { name: "Reorder 02_2.png" });
+  expect(screen.queryByRole("button", { name: "Clean filenames" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "02_2.png" }));
+  const rename = screen.getByRole("textbox", { name: "Rename" });
+  await user.clear(rename);
+  await user.type(rename, "02.png{Enter}");
+  expect(await screen.findByRole("button", { name: "Reorder 02.png" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Reorder 03_3.png" })).toBeVisible();
+  expect(commit).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Undo" }));
+  expect(screen.getByRole("button", { name: "Reorder 02_2.png" })).toBeVisible();
 });
 
 it("retains language drafts when switching languages and saves both", async () => {
@@ -303,14 +395,14 @@ it("saves the selected version edit before publishing without a combined version
   render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
   await screen.findByLabelText("Title");
   expect(screen.queryByText("Versions and chapters")).toBeNull();
-  const label = await screen.findByLabelText("Label (optional)");
-  await user.type(label, "Revised edition");
+  const release = await screen.findByLabelText("Goes live");
+  fireEvent.change(release, { target: { value: "2027-01-01T12:00" } });
   expect(screen.queryByText("Versions and chapters")).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Publish" }));
+  await user.click(screen.getByRole("button", { name: "Schedule" }));
   await waitFor(() => expect(writes(s).some((c) => c.path === "/contents/c1/publish")).toBe(true));
   const order = writes(s).map((c) => c.path);
   expect(order.indexOf("/contents/c1/versions/v1")).toBeLessThan(order.indexOf("/contents/c1/publish"));
-  expect(s.item.versions[0]?.label).toBe("Revised edition");
+  expect(s.item.versions[0]?.publish_at).toBeTruthy();
 });
 
 it("sets the thumbnail from a selected page without fetching or reuploading its bytes", async () => {
@@ -320,7 +412,8 @@ it("sets the thumbnail from a selected page without fetching or reuploading its 
   const commit = vi.spyOn(s.client.media, "commit").mockResolvedValue([]);
   const set = vi.spyOn(s.client.contents, "setCover").mockResolvedValue(edition);
   render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
-  await user.click(await screen.findByRole("button", { name: "Reorder 01.png" }));
+  await user.click(await screen.findByRole("button", { name: "Reorder 001.png" }));
+  await user.click(screen.getByRole("button", { name: "Thumbnail" }));
   await user.click(await screen.findByRole("button", { name: "Set as thumbnail" }));
   await waitFor(() => expect(set).toHaveBeenCalledOnce());
   expect(commit).toHaveBeenCalledWith({ kind: "gallery", id: "c1", version: "v1" }, [
@@ -429,16 +522,50 @@ it("the reader workspace follows the host's subscription-only model", async () =
   await waitFor(() => expect(s.calls.some((c) => c.method === "PATCH" && (c.body as Partial<Content> | undefined)?.access?.tiers?.[0] === "premium")).toBe(true));
 });
 
+it("edits only the selected version's access in a version-scoped model", async () => {
+  const direct: ContentModel = { ...model, tiers: ["premium"], kinds: { gallery: { ...model.kinds.gallery!, access_scope: "version", access_levels: ["public", "tier"], comment_modes: ["open"] } } };
+  const s = server({ model: direct, versions: [edition, { ...edition, id: "v2", code: "VERSION2", label: "Keep this label" }] }), user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  const access = await screen.findByRole("combobox", { name: "Who can open it" });
+  expect(screen.getAllByRole("combobox", { name: "Who can open it" })).toHaveLength(1);
+  expect(screen.queryByText("Its own access rule")).toBeNull();
+  expect(screen.queryByLabelText("Label (optional)")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Delete version" })).toBeVisible();
+  await user.click(access);
+  await user.click(await screen.findByRole("option", { name: "Tier members" }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(writes(s).some((call) => call.path === "/contents/c1/versions/v2")).toBe(true));
+  expect(writes(s).every((call) => call.path === "/contents/c1/versions/v2")).toBe(true);
+  expect(s.item.versions[1]?.access).toEqual({ level: "tier", tiers: ["premium"] });
+  expect(s.item.versions[1]?.label).toBe("Keep this label");
+  expect(s.item.versions[0]?.access).toBeUndefined();
+  expect(s.item.access).toEqual({ level: "public" });
+});
 
-it("keeps unlisted publishing available independently of subscription-only access", async () => {
+it("publishes an internal draft version only after the explicit header action", async () => {
+  const s = server({ versions: [{ ...edition, state: "draft" }] }), user = userEvent.setup();
+  s.item.state = "published";
+  s.item.live = true;
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  const release = await screen.findByLabelText("Goes live");
+  expect(release.closest('[data-ckui="version-schedule-header"]')).not.toBeNull();
+  expect(screen.queryByLabelText("Label (optional)")).toBeNull();
+  expect(writes(s)).toEqual([]);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Publish" }));
+  await waitFor(() => expect(s.item.versions[0]?.state).toBe("published"));
+  expect(writes(s).map((call) => call.path)).toEqual(["/contents/c1/versions/v1"]);
+});
+
+
+it("keeps publication scheduling separate from access without listing controls", async () => {
   const limited: ContentModel = { ...model, tiers: ["premium"], kinds: { gallery: { ...model.kinds.gallery!, access_levels: ["public", "tier"], comment_modes: ["open"] } } };
   const s = server({ model: limited });
-  const user = userEvent.setup();
   render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
-  await user.click(await screen.findByRole("combobox", { name: "Listing" }));
-  await user.click(await screen.findByRole("option", { name: "Unlisted (link only)" }));
-  await user.click(screen.getByRole("button", { name: "Save draft" }));
-  await waitFor(() => expect(s.calls.some((c) => c.method === "PATCH" && (c.body as Partial<Content> | undefined)?.listing === "unlisted")).toBe(true));
+  expect(await screen.findByLabelText("Goes live")).toBeVisible();
+  expect(screen.queryByRole("combobox", { name: "Listing" })).toBeNull();
+  expect(screen.getByRole("combobox", { name: "Who can open it" })).toBeVisible();
 });
 
 
@@ -480,16 +607,44 @@ it("a version URL loads only that version's files and credits", async () => {
   expect(screen.queryByRole("combobox", { name: /Version for Actor/ })).toBeNull();
 });
 
-it("editing selected-version traits never writes gallery details or another version", async () => {
-  const s = server({ model: scopedModel, versions: [edition, otherEdition] });
-  const user = userEvent.setup();
+it("uses the shared Save and ordinary version tags instead of trait or state controls", async () => {
+  const direct: ContentModel = { ...scopedModel, kinds: { gallery: { ...scopedModel.kinds.gallery!, access_scope: "version" } } };
+  const s = server({ model: direct, versions: [edition, otherEdition] });
+  const { container } = render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  expect(await screen.findByLabelText("Goes live")).toBeVisible();
+  expect(screen.queryByRole("switch", { name: /colored|uncensored|decensored|manhwa/i })).toBeNull();
+  expect(screen.queryByText("Its own access rule")).toBeNull();
+  expect(screen.queryByLabelText("Label (optional)")).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "State" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Delete version" }).closest('[data-ckui="version-destructive-actions"]')).not.toBeNull();
+  expect(container.querySelectorAll('[data-ckui="editor-thumbnail"]')).toHaveLength(1);
+  expect(writes(s)).toEqual([]);
+});
+
+it("unpublishes only the selected edition", async () => {
+  const s = server({ versions: [edition, otherEdition] }), user = userEvent.setup();
+  s.item.state = "published";
+  s.item.live = true;
   render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
-  await user.click(await screen.findByRole("switch", { name: /colored/i }));
-  await user.click(screen.getByRole("button", { name: "Save draft" }));
-  await waitFor(() => expect(writes(s).some((c) => c.path === "/contents/c1/versions/v2")).toBe(true));
-  expect(writes(s).every((c) => c.path === "/contents/c1/versions/v2")).toBe(true);
-  expect(s.item.versions[0]?.traits).toEqual([]);
-  expect(s.item.versions[1]?.traits).toEqual(["colored"]);
+  await user.click(await screen.findByRole("button", { name: "Unpublish" }));
+  await waitFor(() => expect(s.item.versions[1]?.state).toBe("draft"));
+  expect(s.item.versions[0]?.state).toBe("published");
+  expect(s.item.state).toBe("published");
+  expect(writes(s).map((call) => [call.path, call.body])).toEqual([["/contents/c1/versions/v2", { state: "draft" }]]);
+});
+
+it("confirms version deletion and preserves unsaved changes when cancelled", async () => {
+  const s = server({ versions: [edition, otherEdition] }), user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  const title = await screen.findByLabelText("Title");
+  await user.type(title, " edited");
+  await user.click(screen.getByRole("button", { name: "Delete version" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Delete version" });
+  expect(within(dialog).getByText(/Only this version will be deleted/)).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(title).toHaveValue("Old title edited");
+  expect(writes(s)).toEqual([]);
 });
 
 it("editing version credits targets only its atomic version scope", async () => {
@@ -502,15 +657,36 @@ it("editing version credits targets only its atomic version scope", async () => 
   expect(writes(s).map((c) => c.path)).toEqual(["/contents/c1/versions/v2/entities"]);
 });
 
+it("edits arbitrary version tags separately from shared gallery tags", async () => {
+  const tag = (id: string, name: string): GroupCard => ({ id, code: id.toUpperCase(), kind: "tag", slug: id, name, internal: false, count: 1, attributes: {}, created_at: at });
+  const linked: ContentMemberships = {
+    ...scopedLinks,
+    memberships: [...scopedLinks.memberships, { group_id: "shared-tag" }, { group_id: "colored", version_id: "v1" }, { group_id: "uncensored", version_id: "v2" }],
+    entities: [...scopedLinks.entities, tag("shared-tag", "Shared tag"), tag("colored", "Colored"), tag("uncensored", "Uncensored")],
+  };
+  const scopedTags: ContentModel = { ...scopedModel, kinds: { ...scopedModel.kinds, gallery: { ...scopedModel.kinds.gallery!, versions: { languages: "one", traits: [] } } }, entity_kinds: { ...scopedModel.entity_kinds, tag: { membership_scopes: ["content", "version"] } } };
+  const s = server({ model: scopedTags, versions: [edition, otherEdition], memberships: Promise.resolve(linked) }), user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  expect(await screen.findByText("Uncensored")).toBeVisible();
+  expect(screen.getByText("Shared tag")).toBeVisible();
+  expect(screen.queryByText("Colored")).toBeNull();
+  expect(screen.getAllByRole("combobox", { name: "Add: Tag" })).toHaveLength(2);
+  await user.click(screen.getByRole("button", { name: "Remove Uncensored" }));
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(writes(s)).toHaveLength(1));
+  expect(writes(s)[0]!.path).toBe("/contents/c1/versions/v2/entities");
+  expect(writes(s)[0]!.body).toMatchObject({ kinds: expect.arrayContaining(["tag"]), memberships: [{ group_id: "actor2", version_id: "v2" }] });
+});
+
 it("saves dirty version details alongside its scoped credits", async () => {
   const s = server({ model: scopedModel, versions: [edition, otherEdition], memberships: Promise.resolve(scopedLinks) });
   const user = userEvent.setup();
   render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
-  await user.type(await screen.findByLabelText("Label (optional)"), "Revised edition");
+  fireEvent.change(await screen.findByLabelText("Goes live"), { target: { value: "2027-01-01T12:00" } });
   await user.click(await screen.findByRole("button", { name: "Remove Actor two" }));
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   await screen.findByText("Saved.", { selector: "p[role=status]" });
-  expect(s.item.versions[1]?.label).toBe("Revised edition");
+  expect(s.item.versions[1]?.publish_at).toBeTruthy();
   expect(writes(s).map((call) => call.path)).toContain("/contents/c1/versions/v2/entities");
   expect(writes(s).map((call) => call.path)).toContain("/contents/c1/versions/v2");
 });
@@ -573,4 +749,85 @@ it("never saves vanished version credits into the first remaining version", asyn
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   expect(await screen.findByText("This version could not be found.")).toBeVisible();
   expect(writes(s)).toEqual([]);
+});
+
+it("shows a shared original title and the selected edition's display title without another language picker", async () => {
+  const titled: ContentModel = { ...model, kinds: { ...model.kinds, gallery: { ...model.kinds.gallery!, title_policy: "original_and_version" } } };
+  const s = server({ model: titled, versions: [
+    { ...edition, text: { en: { title: "First edition" } } },
+    { ...otherEdition, languages: ["en"], text: { en: { title: "RESORT LOVER" } } },
+  ] });
+  s.item.original_title = "原題";
+  s.item.original_language = "ja";
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  expect(await screen.findByLabelText("Original title")).toHaveValue("原題");
+  expect(screen.getByLabelText("Display title (en)")).toHaveValue("RESORT LOVER");
+  expect(screen.queryByRole("combobox", { name: "Language" })).toBeNull();
+  expect(writes(s)).toEqual([]);
+});
+
+it("saves original and edition titles to their respective scopes without overwriting sibling titles", async () => {
+  const titled: ContentModel = { ...model, kinds: { ...model.kinds, gallery: { ...model.kinds.gallery!, title_policy: "original_and_version" } } };
+  const s = server({ model: titled, versions: [
+    { ...edition, text: { en: { title: "First edition" } } },
+    { ...otherEdition, languages: ["en"], text: { en: { title: "RESORT LOVER", description: "Retain this" }, ja: { title: "既存の訳" } } },
+  ] });
+  s.item.original_title = "原題";
+  s.item.original_language = "ja";
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION2" />);
+  const original = await screen.findByLabelText("Original title");
+  await user.clear(original);
+  await user.type(original, "新しい原題");
+  const display = screen.getByLabelText("Display title (en)");
+  await user.clear(display);
+  await user.type(display, "Resort Lover revised");
+  expect(writes(s)).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText("Saved.", { selector: "p[role=status]" });
+  expect(s.item.original_title).toBe("新しい原題");
+  expect(s.item.original_language).toBe("ja");
+  expect(s.item.versions[0]?.text?.en?.title).toBe("First edition");
+  expect(s.item.versions[1]?.text).toEqual({ en: { title: "Resort Lover revised", description: "Retain this" }, ja: { title: "既存の訳" } });
+  expect(s.item.text?.en?.title).toBe("Old title");
+});
+
+it("binds the display title to a staged edition language before one shared Save", async () => {
+  const titled: ContentModel = { ...model, kinds: { ...model.kinds, gallery: { ...model.kinds.gallery!, title_policy: "original_and_version" } } };
+  const s = server({ model: titled, versions: [
+    { ...edition, text: { en: { title: "Keep English title" }, ja: { title: "元のタイトル" } } },
+    { ...otherEdition, text: { en: { title: "Keep sibling title" } } },
+  ] });
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION1" />);
+  expect(await screen.findByLabelText("Display title (en)")).toHaveValue("Keep English title");
+  await user.click(screen.getByRole("combobox", { name: "Version language" }));
+  await user.click(await screen.findByRole("option", { name: "Japanese" }));
+  const display = await screen.findByLabelText("Display title (ja)");
+  expect(display).toHaveValue("元のタイトル");
+  await user.clear(display);
+  await user.type(display, "新しいタイトル");
+  expect(writes(s)).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText("Saved.", { selector: "p[role=status]" });
+  expect(s.item.versions[0]?.languages).toEqual(["ja"]);
+  expect(s.item.versions[0]?.text).toEqual({ en: { title: "Keep English title" }, ja: { title: "新しいタイトル" } });
+  expect(s.item.versions[1]?.text).toEqual({ en: { title: "Keep sibling title" } });
+});
+
+it("stages continuous reading layout in Reader tools and preserves unrelated edition traits", async () => {
+  const continuous: ContentModel = { ...model, kinds: { ...model.kinds, gallery: { ...model.kinds.gallery!, versions: { languages: "one", traits: ["manhwa_style", "preserve_trait"] } } } };
+  const s = server({ model: continuous, versions: [{ ...edition, traits: ["preserve_trait"] }, otherEdition] }), user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION1" />);
+  await user.click(await screen.findByText("Reader tools"));
+  const layout = await screen.findByRole("combobox", { name: "Reading layout" });
+  expect(layout.closest('[data-ckui="version-reader-settings"]')).not.toBeNull();
+  await user.click(layout);
+  await user.click(await screen.findByRole("option", { name: "Continuous vertical" }));
+  expect(writes(s)).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText("Saved.", { selector: "p[role=status]" });
+  expect(s.item.versions[0]?.traits).toEqual(["preserve_trait", "manhwa_style"]);
+  expect(s.item.versions[1]?.traits).toEqual([]);
+  expect(s.item.versions[0]?.state).toBe("published");
 });

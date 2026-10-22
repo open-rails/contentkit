@@ -24,8 +24,8 @@ var aliasRe = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 // key; plus, while a keyspace is truncated, its candidates, which
 // Gate.Settle decides. An Unknown filter admits no candidates. Lock admits
 // every row. The text depends only on alias and mode, so one prepared
-// statement serves every viewer. A members-only listing (listing = members)
-// combines it: listing = 'listed' OR (listing = 'members' AND <SQL(Hide)>).
+// statement serves every viewer. Lock mode retains inaccessible items for
+// a locked preview; Hide mode excludes them.
 func (f *Filter) SQL(alias string, mode Mode) (string, map[string]any, error) {
 	if !aliasRe.MatchString(alias) {
 		return "", nil, fmt.Errorf("access: SQL alias %q must match %s", alias, aliasRe)

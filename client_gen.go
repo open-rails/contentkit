@@ -1165,19 +1165,19 @@ func (c *Client) PostContents(ctx context.Context, body catalog.ContentInput) (c
 	return out, err
 }
 
-// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's listing, access, restrictions, attributes or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's access, restrictions, attributes or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContent(ctx context.Context, id string, body catalog.ContentPatch) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// DeleteContent is DELETE /v1/contents/{id} (public). Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// DeleteContent is DELETE /v1/contents/{id} (public). Deletes a hidden-version item or an empty item. For content with visible versions, delete each version instead; the parent is deleted with its last version. Purchased content remains protected from purge. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) DeleteContent(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
 }
 
-// PostContentRestore is POST /v1/contents/{id}/restore (public). Restores a deleted content item as it was. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentRestore is POST /v1/contents/{id}/restore (public). Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentRestore(ctx context.Context, id string) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/restore", "{id}", url.PathEscape(id)), nil, nil, &out)
@@ -1247,7 +1247,7 @@ func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string,
 	return out, err
 }
 
-// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Deletes a version; a content item keeps at least one. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Soft-deletes a version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content retains its existing access and purge protections. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) DeleteContentVersion(ctx context.Context, id string, vid string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, nil)
 }
@@ -1930,7 +1930,7 @@ func (q PutContentEntitiesSharedQuery) values() url.Values {
 	return v
 }
 
-// PutContentEntitiesShared is PUT /v1/contents/{id}/entities/shared (staff). Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Only entity kinds without version_level may be written; omitted kinds select all shared kinds. New names attach to the shared content.
+// PutContentEntitiesShared is PUT /v1/contents/{id}/entities/shared (staff). Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Entity kinds must allow the content membership scope; omitted kinds select all such kinds. New names attach to the shared content.
 func (c *Client) PutContentEntitiesShared(ctx context.Context, id string, body groups.ContentGroups, q PutContentEntitiesSharedQuery) (groups.ContentMemberships, error) {
 	var out groups.ContentMemberships
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/entities/shared", "{id}", url.PathEscape(id)), q.values(), body, &out)
@@ -1951,7 +1951,7 @@ func (q PutContentVersionEntitiesQuery) values() url.Values {
 	return v
 }
 
-// PutContentVersionEntities is PUT /v1/contents/{id}/versions/{vid}/entities (staff). Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Only version_level entity kinds may be written; omitted kinds select all version kinds. New names attach to this version. The version must belong to the content and not be deleted.
+// PutContentVersionEntities is PUT /v1/contents/{id}/versions/{vid}/entities (staff). Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Entity kinds must allow the version membership scope; omitted kinds select all such kinds. New names attach to this version. The version must belong to the content and not be deleted.
 func (c *Client) PutContentVersionEntities(ctx context.Context, id string, vid string, body groups.ContentGroups, q PutContentVersionEntitiesQuery) (groups.ContentMemberships, error) {
 	var out groups.ContentMemberships
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/entities", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), q.values(), body, &out)
@@ -2373,7 +2373,7 @@ func (q GetReleasesQuery) values() url.Values {
 	return v
 }
 
-// GetReleases is GET /v1/releases (public). Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.
+// GetReleases is GET /v1/releases (public). Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future and deleted releases stay excluded.
 func (c *Client) GetReleases(ctx context.Context, q GetReleasesQuery) (discovery.DailyReleases, error) {
 	var out discovery.DailyReleases
 	err := c.call(ctx, http.MethodGet, "/v1/releases", q.values(), nil, &out)
@@ -2424,7 +2424,7 @@ func (q GetContentCardsQuery) values() url.Values {
 	return v
 }
 
-// GetContentCards is GET /v1/content-cards (public). Hydrates 1-100 already-known content IDs in caller order, including unlisted items. Current publication, deletion, domain, language, reader filters and access rules still apply. Missing or hidden IDs are omitted; this is not a discovery listing. It does not record engagement or history.
+// GetContentCards is GET /v1/content-cards (public). Hydrates 1-100 already-known content IDs in caller order. Current publication, deletion, domain, language, reader filters and access rules still apply. Missing or hidden IDs are omitted; this is not a discovery listing. It does not record engagement or history.
 func (c *Client) GetContentCards(ctx context.Context, q GetContentCardsQuery) (discovery.ContentPage, error) {
 	var out discovery.ContentPage
 	err := c.call(ctx, http.MethodGet, "/v1/content-cards", q.values(), nil, &out)
@@ -3533,7 +3533,7 @@ func (q GetStatsActivityQuery) values() url.Values {
 	return v
 }
 
-// GetStatsActivity is GET /v1/stats/activity (staff). A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into guests, free and premium accounts, with their focused active time, from the signal plane.
+// GetStatsActivity is GET /v1/stats/activity (staff). A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into application-defined cohorts, with their focused active time, from the signal plane.
 func (c *Client) GetStatsActivity(ctx context.Context, q GetStatsActivityQuery) (discovery.Activity, error) {
 	var out discovery.Activity
 	err := c.call(ctx, http.MethodGet, "/v1/stats/activity", q.values(), nil, &out)

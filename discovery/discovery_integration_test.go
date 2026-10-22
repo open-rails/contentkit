@@ -35,7 +35,7 @@ func seededOn(t *testing.T, ch signal.Conn, chDB string) *fixture {
 		item{n: 3, titles: map[string]string{"ja": "チャーリー"}, age: 24 * time.Hour, restrictions: []string{"restricted"}, favorites: 1,
 			attrs: map[string]any{"format": "doujin"}, versions: []ver{{langs: []string{"ja"}}}, groups: []string{"yaoi", "saga"}},
 		item{n: 4, titles: map[string]string{"en": "Delta"}, age: time.Hour, versions: []ver{{langs: []string{"en"}, future: true}}},
-		item{n: 5, titles: map[string]string{"en": "Echo"}, age: time.Hour, listing: "unlisted", versions: []ver{{langs: []string{"en"}}}},
+		item{n: 5, titles: map[string]string{"en": "Echo"}, age: time.Hour, draft: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 6, titles: map[string]string{"en": "Foxtrot"}, age: time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 7, kind: "video", titles: map[string]string{"en": "Golf"}, age: 12 * time.Hour, versions: []ver{{langs: []string{"en", "ja"}}}},
 	)
@@ -48,7 +48,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	const host = "main.test"
 	got, page := f.list(host, "", q("/contents", "kind", "gallery"))
 	if want := []string{f.cid(3), f.cid(1)}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("newest gallery list = %v, want %v (drafts, unlisted, deleted and default-hidden content left out)", got, want)
+		t.Fatalf("newest gallery list = %v, want %v (drafts, draft, deleted and default-hidden content left out)", got, want)
 	}
 	alpha := page.Contents[1]
 	if alpha.Title != "Alpha" || alpha.Language != "en" || alpha.Version.ID != f.vid(1, 0) || alpha.Code != f.codes[1] || alpha.Path != "/en/g/"+f.codes[1]+"/alpha" {
@@ -332,7 +332,7 @@ func TestSearchAndTypeahead(t *testing.T) {
 		doc("series", f.ids["saga"], "en", "Saga"), doc("tag", f.ids["romance"], "en", "Romance"))
 	got, page := f.list(host, "", q("/search", "q", "saga", "kind", "gallery"))
 	if !reflect.DeepEqual(got, []string{f.cid(1)}) || page.Contents[0].Title != "Alpha" {
-		t.Fatalf("search = %v (hidden, unlisted, other-language and other-kind matches left out)", got)
+		t.Fatalf("search = %v (hidden, draft, other-language and other-kind matches left out)", got)
 	}
 	if got, _ := f.list(host, "", q("/search", "q", "saga", "display_language", "ja")); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(3), f.cid(7)}) && !slices.Equal(sorted(got), sorted([]string{f.cid(1), f.cid(3), f.cid(7)})) {
 		t.Fatalf("ja search = %v", got)
@@ -375,7 +375,7 @@ func TestSearchAndTypeahead(t *testing.T) {
 		t.Fatalf("typeahead = %v %+v", contents, ta.Groups)
 	}
 	// Own title substrings also complete directly, while ordinary language,
-	// domain, hidden/unlisted and access eligibility remain enforced.
+	// domain, hidden/draft and access eligibility remain enforced.
 	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "alp", "kind", "gallery"), nil, &ta); status != http.StatusOK || len(ta.Contents) != 1 || ta.Contents[0].ID != f.cid(1) {
 		t.Fatalf("title prefix typeahead: %+v", ta)
 	}
@@ -560,7 +560,7 @@ func TestStats(t *testing.T) {
 	f.seed(
 		item{n: 1, titles: map[string]string{"en": "Free"}, age: 4 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 2, titles: map[string]string{"en": "Premium"}, age: 3 * time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, titles: map[string]string{"en": "Hidden"}, age: 2 * time.Hour, listing: "unlisted", versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Hidden"}, age: 2 * time.Hour, draft: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 4, kind: "video", titles: map[string]string{"en": "Clip"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}},
 	)
 	comment := func(n int, user string, age time.Duration, likes int, extra string) {

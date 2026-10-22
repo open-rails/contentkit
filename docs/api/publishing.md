@@ -214,12 +214,13 @@ images, thumbnails and download ZIPs are separate renditions. Excluding a page
 from the reading order does not delete its original. This policy applies to new
 ingestion; it cannot recover source archives removed by an older import.
 
-New numeric filenames are normalized once: `1.png`, `2.png`, `10.png` become
-`001.png`, `002.png`, `010.png` in natural numeric order. Numeric gaps are kept,
-and larger numbers are not truncated. A joined spread such as `002-003.png`
-remains one reader image; by default it replaces separate pages 2 and 3 in the
-reading order. Stored names and reader keys never change; editors and downloads
-name pages by their place (`01.png`, `02.png`, … padded to the page count).
+Initial ordering uses natural numeric order. When padding is inconsistent,
+`1.png`, `2.png`, `10.png` become `01.png`, `02.png`, `10.png`; meaningful names
+and numeric gaps remain. A joined spread such as `002-003.png` stays one reader
+image and normally replaces separate pages 2 and 3 in the reading order.
+The manifest owns page order independently of filenames: reordering never
+renames a page. Editors can explicitly rename files before Save. ZIP entries
+follow manifest order and retain those filenames.
 
 Exact duplicates, confidently empty pages and singles covered by a two-page
 spread are removed automatically, and an archive's pages are put in natural

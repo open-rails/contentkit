@@ -53,7 +53,7 @@ export function attributeInput(spec: Attribute, value: unknown): string | boolea
  * the attribute's type throws a RangeError.
  */
 export function parseAttribute(spec: Attribute, input: string | boolean): unknown {
-  if (spec.type === "bool") return input === true || undefined;
+  if (spec.type === "bool") return input === true || (spec.required ? false : undefined);
   const s = String(input).trim();
   if (!s) return undefined;
   switch (spec.type) {
@@ -80,6 +80,7 @@ export function parseAttributes(declared: Readonly<Record<string, Attribute>>, f
   const out: Record<string, unknown> = {};
   for (const [name, spec] of Object.entries(declared)) {
     const v = name in form ? parseAttribute(spec, form[name]!) : undefined;
+    if (spec.required && v === undefined) throw new RangeError(`${humanize(name)} is required`);
     if (v !== undefined) out[name] = v;
   }
   return out;

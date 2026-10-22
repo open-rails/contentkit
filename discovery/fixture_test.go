@@ -208,7 +208,7 @@ type item struct {
 	titles       map[string]string
 	age          time.Duration // published this long ago
 	rule         string        // access rule JSON; public by default
-	listing      string
+	draft        bool
 	restrictions []string
 	attrs        map[string]any
 	deleted      bool
@@ -240,7 +240,7 @@ func (f *fixture) seed(items ...item) {
 		if it.rule == "" {
 			it.rule = `{"level":"public"}`
 		}
-		in := catalog.ContentInput{Kind: it.kind, Text: map[string]catalog.Text{}, Listing: it.listing, Access: rule(it.rule),
+		in := catalog.ContentInput{Kind: it.kind, Text: map[string]catalog.Text{}, Access: rule(it.rule),
 			Restrictions: it.restrictions, Attributes: it.attrs}
 		for lang, title := range it.titles {
 			in.Text[lang] = catalog.Text{Title: title}
@@ -262,8 +262,10 @@ func (f *fixture) seed(items ...item) {
 			f.t.Fatalf("seed %d: %v", it.n, err)
 		}
 		id := ids[0]
-		if err := f.cat.Publish(f.ctx, staff, []catalog.Publish{{ContentID: id}}); err != nil {
-			f.t.Fatal(err)
+		if !it.draft {
+			if err := f.cat.Publish(f.ctx, staff, []catalog.Publish{{ContentID: id}}); err != nil {
+				f.t.Fatal(err)
+			}
 		}
 		f.cids[it.n] = id
 		rows, err := f.pool.Query(f.ctx, `SELECT id FROM `+f.table("content_versions")+` WHERE tenant_id = $1 AND content_id = $2 ORDER BY position`, tenant, id)
@@ -300,7 +302,7 @@ func (f *fixture) seed(items ...item) {
 			}
 		}
 		if it.deleted {
-			if err := f.cat.Delete(f.ctx, staff, []string{id}); err != nil {
+			if err := f.cat.DeleteForModeration(f.ctx, staff, []string{id}); err != nil {
 				f.t.Fatal(err)
 			}
 		}

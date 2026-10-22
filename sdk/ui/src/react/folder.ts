@@ -45,6 +45,8 @@ export interface FolderGroup {
 }
 
 export interface UseMediaFolder {
+  /** Local editor filename drafts; never source identities or blob paths. */
+  displayNames?: Readonly<Record<string, string>>;
   /** The item; null until the host has one (files added meanwhile wait for it). */
   ref: RefBody | null;
   /** The options the folder was opened with. */

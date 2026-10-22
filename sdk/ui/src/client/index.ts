@@ -158,3 +158,4 @@ export * from "./generated/wire.js";
 export { EngagementTracker, type EngagementTrackerOptions, type ReadingObservation, type VisiblePage } from "./engagement.js";
 export { GuestReadingHistory, guestStanding, type GuestReadingItem, type GuestReadingSnapshot } from "./guest-reading-history.js";
 export { entitiesForVersion } from "./content-entities.js";
+export { allowsEntityScope } from "./entity-scopes.js";

@@ -39,7 +39,7 @@ func TestPurgeVersionReferencesIntegration(t *testing.T) {
 				t.Fatal(err)
 			}
 			if wholeContent {
-				if err := f.s.Delete(f.ctx, f.as("staff"), []string{id}); err != nil {
+				if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{id}); err != nil {
 					t.Fatal(err)
 				}
 			} else if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: vid}}); err != nil {
@@ -158,7 +158,7 @@ func TestPurgeErasesInteractionsIntegration(t *testing.T) {
 	}
 	goneCodes := codes(gone)
 
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{gone}); err != nil {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{gone}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: kept, VersionID: purgedVersion}}); err != nil {
@@ -231,7 +231,7 @@ func TestPurgeDrainsBacklogIntegration(t *testing.T) {
 	if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: sold, VersionID: soldVersion}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.Delete(f.ctx, f.as("staff"), ids); err != nil {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), ids); err != nil {
 		t.Fatal(err)
 	}
 	f.advance(DefaultDeletedRetention + time.Hour)

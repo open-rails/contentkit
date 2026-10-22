@@ -24,8 +24,7 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 	f.publish("staff", live, nil)
 	f.join(tag, live, "")
 	draft := f.create("staff", gallery("Blue Draft", "en"))
-	premium := f.create("staff", ContentInput{Kind: "gallery", Text: map[string]Text{"en": {Title: "Blue Premium"}}, Listing: ListingMembers,
-		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Versions: []VersionInput{{Languages: []string{"en"}}}})
+	premium := f.create("staff", ContentInput{Kind: "gallery", Text: map[string]Text{"en": {Title: "Blue Premium"}}, Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Versions: []VersionInput{{Languages: []string{"en"}}}})
 	f.publish("staff", premium, nil)
 	f.claim("pam", "premium")
 	opts := worker.Options{Pool: f.pool, Schema: f.schema, Tenant: tenant, SupportedLanguages: f.s.Kinds().Languages, Sources: []worker.Source{f.s}}
@@ -57,8 +56,8 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 		slices.Sort(out)
 		return out
 	}
-	if got := find("blue", "en", anon); !slices.Equal(got, []string{live}) {
-		t.Fatalf("anonymous finds %v, want the live item only", got)
+	if got := find("blue", "en", anon); !slices.Equal(got, sorted(live, premium)) {
+		t.Fatalf("anonymous finds %v, want both published items (premium remains locked)", got)
 	}
 	if got := find("blue", "en", "pam"); !slices.Equal(got, sorted(live, premium)) {
 		t.Fatalf("a tier holder finds %v", got)
@@ -138,7 +137,7 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 	if err := f.s.PutText(f.ctx, f.as("staff"), []TextPut{{ContentID: live, Language: "en", Text: &Text{Title: "Green Ocean"}}, {ContentID: live, Language: "ja"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{premium}); err != nil {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{premium}); err != nil {
 		t.Fatal(err)
 	}
 	sync()

@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, toLocalInput } from "../../client/group-fields.js";
+import { allowsEntityScope } from "../../client/entity-scopes.js";
 import type { GroupCard, GroupKind, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient } from "../../react/context.js";
@@ -104,7 +105,7 @@ export function EntityChips(p: EntityChipsProps) {
   const suggestions = useMemo(() => found.entities.filter((g) => g.kind === p.kind && !plain.has(g.id)).slice(0, 6), [found.entities, p.kind, plain]);
   const listOpen = fragment !== "" && suggestions.length > 0;
   useEffect(() => setActive(0), [fragment]);
-  const detailed = (m: Membership) => (!!p.spec.version_level && p.allowVersionChange !== false) || !!p.spec.roles?.length || !!p.spec.ordered || m.state === "proposed" || !!m.active_from || !!m.active_until;
+  const detailed = (m: Membership) => (allowsEntityScope(p.spec, "version") && p.allowVersionChange !== false) || !!p.spec.roles?.length || !!p.spec.ordered || m.state === "proposed" || !!m.active_from || !!m.active_until;
   const add = (card: GroupCard) => {
     if (plain.has(card.id)) return false;
     p.onAdd(card);
@@ -145,7 +146,7 @@ export function EntityChips(p: EntityChipsProps) {
   // One picked name with roles, versions or positions opens its details.
   const pick = (card: GroupCard) => {
     setText("");
-    if (add(card) && (p.spec.version_level || p.spec.roles?.length || p.spec.ordered)) setOpen(p.memberships.length);
+    if (add(card) && (allowsEntityScope(p.spec, "version") && p.allowVersionChange !== false || p.spec.roles?.length || p.spec.ordered)) setOpen(p.memberships.length);
   };
   const removeLast = () => {
     if (missing.length) return setMissing((all) => all.slice(0, -1));
@@ -349,13 +350,13 @@ export function MembershipRow({
           </Button>
         </>
       )}
-      {allowVersionChange && spec.version_level && versionIds.length > 0 && (
+      {allowVersionChange && allowsEntityScope(spec, "version") && versionIds.length > 0 && (
         <Select value={x.version_id ?? NONE} onValueChange={(v) => onChange({ version_id: v === NONE ? undefined : String(v) })}>
           <SelectTrigger size="sm" aria-label={t("memberships.versionOf", { name })}>
             <SelectValue>{(v: string) => (v === NONE ? t("memberships.wholeContent") : versionLabel(v))}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={NONE}>{t("memberships.wholeContent")}</SelectItem>
+            {allowsEntityScope(spec, "content") && <SelectItem value={NONE}>{t("memberships.wholeContent")}</SelectItem>}
             {versionIds.map((v) => (
               <SelectItem key={v} value={v}>
                 {versionLabel(v)}

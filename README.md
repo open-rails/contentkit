@@ -601,9 +601,10 @@ future `publish_at` is scheduled until a job makes it live. A deleted item
 stays readable to holders of its own keys; its media is erased after
 `DeletedRetention` unless it was sold.
 
-The `Viewer` is the one visibility rule: live content by its listing
-(`listed`; `members` for key holders; `unlisted` by direct link), the site's
-scope and the viewer's content filters, with `access.Filter.SQL` for lists
+The `Viewer` is the one visibility rule: published content whose release time
+has arrived, the domain's scope and the viewer's content filters. Every
+published item can be listed; its edition's access rule controls reading.
+It uses `access.Filter.SQL` for lists
 and `Gate.Decide` for items; staff (`root:content:view-restricted`),
 creators and owner-group editors see everything. Discovery lists and searches
 under it; media and interactions resolve through it. Held text goes to the

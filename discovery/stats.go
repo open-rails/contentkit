@@ -16,17 +16,17 @@ import (
 // newest first; days without activity are zero.
 type Activity struct {
 	Days []ActivityDay `json:"days"`
+	// Cohorts lists application-defined category IDs in matching priority order.
+	Cohorts []string `json:"cohorts"`
 }
 
 // ActivityDay is one day's distinct people who read or played the kind, by
-// audience: guests, signed-in people without a tier, and premium people.
+// application-defined cohort. Readers counts all, including unmatched people.
 type ActivityDay struct {
-	Date     string `json:"date"`
-	Readers  uint64 `json:"readers"`
-	Anon     uint64 `json:"anon"`
-	Free     uint64 `json:"free"`
-	Premium  uint64 `json:"premium"`
-	ActiveMS uint64 `json:"active_ms"`
+	Date     string            `json:"date"`
+	Readers  uint64            `json:"readers"`
+	Cohorts  map[string]uint64 `json:"cohorts"`
+	ActiveMS uint64            `json:"active_ms"`
 }
 
 // MyStats is the signed-in reader's account statistics.
@@ -47,7 +47,7 @@ type MyStats struct {
 
 var statsRoutes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/stats/activity", Resource: "stats", Auth: httpapi.Staff, Perm: string(access.ContentViewRestricted),
-		Doc:       "A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into guests, free and premium accounts, with their focused active time, from the signal plane.",
+		Doc:       "A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into application-defined cohorts, with their focused active time, from the signal plane.",
 		Query:     []httpapi.Param{httpapi.Text("kind", "the content kind; required"), httpapi.Int("days", "the last days, today included: 10 by default, at most 90")},
 		Responses: []httpapi.Reply{httpapi.OK(Activity{})}, Errors: signals}, Serve: httpapi.H(handler.activity)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/stats", Resource: "stats", Auth: httpapi.User,
@@ -73,20 +73,26 @@ func (h handler) myStats(w http.ResponseWriter, r *http.Request) {
 // Activity reads a kind's measured readership per day of the last days (10 by default, at
 // most 90).
 func (s *Service) Activity(ctx context.Context, kind string, days int) (Activity, error) {
-	out := Activity{Days: []ActivityDay{}}
+	out := Activity{Days: []ActivityDay{}, Cohorts: []string{}}
+	for _, cohort := range s.o.ActivityCohorts {
+		out.Cohorts = append(out.Cohorts, cohort.ID)
+	}
 	if _, ok := s.o.Kinds.Kinds[kind]; !ok {
 		return out, fmt.Errorf("%w: kind %q is not configured", ErrInvalid, kind)
 	}
 	switch {
 	case days == 0:
 		days = 10
+	case days < 0:
+		return out, fmt.Errorf("%w: days must be positive", ErrInvalid)
 	case days > 90:
 		return out, fmt.Errorf("%w: days is at most 90", ErrInvalid)
 	}
 	if err := s.signals(); err != nil {
 		return out, err
 	}
-	got, err := s.o.Hub.Activity(ctx, kind, signal.LastDays(days, s.o.Now()))
+	now := s.o.Now()
+	got, err := s.o.Hub.Activity(ctx, kind, signal.LastDays(days, now), s.o.ActivityCohorts...)
 	if err != nil {
 		return out, err
 	}
@@ -94,11 +100,15 @@ func (s *Service) Activity(ctx context.Context, kind string, days int) (Activity
 	for _, d := range got {
 		byDay[d.Day.Format(time.DateOnly)] = d
 	}
-	today := s.o.Now().UTC()
+	today := now.UTC()
 	for i := range days {
 		date := today.AddDate(0, 0, -i).Format(time.DateOnly)
 		d := byDay[date]
-		out.Days = append(out.Days, ActivityDay{Date: date, Readers: d.Readers, Anon: d.Anon, Free: d.Free, Premium: d.Premium, ActiveMS: d.ActiveMS})
+		counts := make(map[string]uint64, len(out.Cohorts))
+		for _, id := range out.Cohorts {
+			counts[id] = d.Cohorts[id]
+		}
+		out.Days = append(out.Days, ActivityDay{Date: date, Readers: d.Readers, Cohorts: counts, ActiveMS: d.ActiveMS})
 	}
 	return out, nil
 }

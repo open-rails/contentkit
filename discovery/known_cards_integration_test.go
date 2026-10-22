@@ -20,29 +20,29 @@ func seedKnownCards(f *fixture) {
 	en := []string{"en"}
 	premium := `{"level":"tier","tiers":["premium"]}`
 	f.seed(
-		item{n: 1, titles: map[string]string{"en": "Known unlisted"}, age: time.Hour, listing: "unlisted", versions: []ver{{langs: en}}},
-		item{n: 2, titles: map[string]string{"en": "Known filtered"}, age: time.Hour, listing: "unlisted", groups: []string{"big-breasts"}, versions: []ver{{langs: en}}},
-		item{n: 3, titles: map[string]string{"en": "Known domain restricted"}, age: time.Hour, listing: "unlisted", groups: []string{"restricted"}, versions: []ver{{langs: en}}},
-		item{n: 4, titles: map[string]string{"en": "Known premium"}, age: time.Hour, listing: "unlisted", rule: premium, versions: []ver{{langs: en}}},
-		item{n: 5, titles: map[string]string{"en": "Future"}, age: time.Hour, listing: "unlisted", versions: []ver{{langs: en, future: true}}},
-		item{n: 6, titles: map[string]string{"en": "Deleted"}, age: time.Hour, listing: "unlisted", deleted: true, versions: []ver{{langs: en}}},
-		item{n: 7, titles: map[string]string{"en": "Members only"}, age: time.Hour, listing: "members", rule: premium, versions: []ver{{langs: en}}},
+		item{n: 1, titles: map[string]string{"en": "Known published"}, age: time.Hour, versions: []ver{{langs: en}}},
+		item{n: 2, titles: map[string]string{"en": "Known filtered"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: en}}},
+		item{n: 3, titles: map[string]string{"en": "Known domain restricted"}, age: time.Hour, groups: []string{"restricted"}, versions: []ver{{langs: en}}},
+		item{n: 4, titles: map[string]string{"en": "Known premium"}, age: time.Hour, rule: premium, versions: []ver{{langs: en}}},
+		item{n: 5, titles: map[string]string{"en": "Future"}, age: time.Hour, versions: []ver{{langs: en, future: true}}},
+		item{n: 6, titles: map[string]string{"en": "Deleted"}, age: time.Hour, deleted: true, versions: []ver{{langs: en}}},
+		item{n: 7, titles: map[string]string{"en": "Members only"}, age: time.Hour, rule: premium, versions: []ver{{langs: en}}},
 	)
 }
 
-func TestKnownCardsRetainUnlistedWithoutWeakeningDiscoveryOrReaderPolicy(t *testing.T) {
+func TestKnownCardsPreserveCallerOrderAndReaderPolicy(t *testing.T) {
 	f := newFixture(t, nil, "")
 	seedKnownCards(f)
 	selected := []string{f.cid(4), f.cid(2), f.cid(3), f.cid(1), f.cid(5), f.cid(6), f.cid(7), f.cid(99), f.cid(1)}
 	path := q("/content-cards", "ids", strings.Join(selected, ","), "kind", "gallery", "summary", "true")
 	ids, out := f.list("clean.test", "", path)
-	if want := []string{f.cid(4), f.cid(1)}; !reflect.DeepEqual(ids, want) {
+	if want := []string{f.cid(4), f.cid(1), f.cid(7)}; !reflect.DeepEqual(ids, want) {
 		t.Fatalf("known IDs in caller order = %v, want %v", ids, want)
 	}
 	if out.Contents[0].Access.Allowed || out.Contents[0].Access.Level != access.TierLevel {
 		t.Fatalf("premium known card must remain locked: %+v", out.Contents[0])
 	}
-	if out.Summary == nil || out.Summary.Total != 2 || out.Summary.FilteredCount != 1 || out.Summary.LockedCount != 1 {
+	if out.Summary == nil || out.Summary.Total != 3 || out.Summary.FilteredCount != 1 || out.Summary.LockedCount != 2 {
 		t.Fatalf("bounded summary = %+v", out.Summary)
 	}
 	if got, _ := f.list("clean.test", "", path+"&mode=hide"); !reflect.DeepEqual(got, []string{f.cid(1)}) {
@@ -58,11 +58,11 @@ func TestKnownCardsRetainUnlistedWithoutWeakeningDiscoveryOrReaderPolicy(t *test
 	if got, _ := f.list("clean.test", "", path+"&language=ja"); len(got) != 0 {
 		t.Fatalf("language bypassed: %v", got)
 	}
-	if got, _ := f.list("clean.test", "", q("/contents", "ids", f.cid(1))); len(got) != 0 {
+	if got, _ := f.list("clean.test", "", q("/contents", "ids", f.cid(1))); !reflect.DeepEqual(got, []string{f.cid(1)}) {
 		t.Fatalf("global ID listing changed: %v", got)
 	}
-	if got, _ := f.list("clean.test", "", "/search?q=Known"); len(got) != 0 {
-		t.Fatalf("unlisted content became searchable: %v", got)
+	if got, _ := f.list("clean.test", "", "/search?q=Known"); len(got) != 3 {
+		t.Fatalf("published search results: %v", got)
 	}
 	for _, invalid := range []string{path + "&mode=invalid", path + "&language=xx", path + "&summary=bad"} {
 		if status, _ := f.call(http.MethodGet, "clean.test", "", invalid, nil, nil); status != http.StatusBadRequest {
@@ -76,7 +76,7 @@ func TestKnownCardsRetainUnlistedWithoutWeakeningDiscoveryOrReaderPolicy(t *test
 	}
 }
 
-func TestPersonalHistoryRetainsUnlistedUnderCurrentReaderPolicy(t *testing.T) {
+func TestPersonalHistoryUsesCurrentReaderPolicy(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	database := "contentkit_known_history_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	conn := env.Fresh(t, database)
@@ -95,10 +95,10 @@ func TestPersonalHistoryRetainsUnlistedUnderCurrentReaderPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	ids, out := f.list("clean.test", "reader", "/me/history?kind=gallery&summary=true")
-	if want := []string{f.cid(4), f.cid(1)}; !reflect.DeepEqual(ids, want) {
+	if want := []string{f.cid(7), f.cid(4), f.cid(1)}; !reflect.DeepEqual(ids, want) {
 		t.Fatalf("personal history = %v, want %v", ids, want)
 	}
-	if out.Summary == nil || out.Summary.Total != 2 || out.Summary.FilteredCount != 1 || out.Summary.LockedCount != 1 {
+	if out.Summary == nil || out.Summary.Total != 3 || out.Summary.FilteredCount != 1 || out.Summary.LockedCount != 2 {
 		t.Fatalf("personal summary = %+v", out.Summary)
 	}
 	if got, _ := f.list("clean.test", "other", "/me/history?kind=gallery&summary=true"); len(got) != 0 {

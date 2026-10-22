@@ -30,7 +30,7 @@ type HistoryOptions struct {
 }
 
 // History pages the contents the signed-in reader engaged with, most
-// recent first, including unlisted items they already know. Current domain,
+// recent first they already know. Current domain,
 // publication, preferences and access rules still apply.
 func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, error) {
 	empty := ContentPage{Contents: []Card{}}

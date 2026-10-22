@@ -482,13 +482,13 @@ func (h *Hub) ForgetContents(ctx context.Context, contents []signal.ForgottenCon
 	return store.ForgetContents(ctx, h.tenant, contents)
 }
 
-// Activity is a content kind's view activity per day of window.
-func (h *Hub) Activity(ctx context.Context, contentKind string, window signal.Window) ([]signal.DayActivity, error) {
+// Activity is a content kind's distinct measured readership per day of window.
+func (h *Hub) Activity(ctx context.Context, contentKind string, window signal.Window, cohorts ...signal.ActivityCohort) ([]signal.DayActivity, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
 	}
-	return store.Activity(ctx, h.tenant, contentKind, window)
+	return store.Activity(ctx, h.tenant, contentKind, window, cohorts...)
 }
 
 func (h *Hub) Popular(ctx context.Context, contentKind string, opts signal.PopularOptions) ([]signal.PopularHit, error) {

@@ -3961,7 +3961,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a content item's listing, access, restrictions, attributes or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Edits a content item's access, restrictions, attributes or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -4021,7 +4021,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Deletes a content item: holders of its key still read it; one never sold is erased after the retention. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Deletes a hidden-version item or an empty item. For content with visible versions, delete each version instead; the parent is deleted with its last version. Purchased content remains protected from purge. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -4049,6 +4049,7 @@
         "x-contentkit-module": "contents",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
+          "conflict",
           "forbidden",
           "not_found"
         ],
@@ -4204,7 +4205,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Deletes a version; a content item keeps at least one. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Soft-deletes a version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content retains its existing access and purge protections. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -4987,7 +4988,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Restores a deleted content item as it was. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -5022,6 +5023,7 @@
         "x-contentkit-module": "contents",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
+          "conflict",
           "forbidden",
           "not_found"
         ],
@@ -8046,7 +8048,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Only entity kinds without version_level may be written; omitted kinds select all shared kinds. New names attach to the shared content.",
+        "summary": "Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Entity kinds must allow the content membership scope; omitted kinds select all such kinds. New names attach to the shared content.",
         "parameters": [
           {
             "name": "id",
@@ -8114,7 +8116,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Only version_level entity kinds may be written; omitted kinds select all version kinds. New names attach to this version. The version must belong to the content and not be deleted.",
+        "summary": "Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Entity kinds must allow the version membership scope; omitted kinds select all such kinds. New names attach to this version. The version must belong to the content and not be deleted.",
         "parameters": [
           {
             "name": "id",
@@ -9762,7 +9764,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future, unlisted and deleted releases stay excluded.",
+        "summary": "Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future and deleted releases stay excluded.",
         "parameters": [
           {
             "name": "kind",
@@ -10013,7 +10015,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Hydrates 1-100 already-known content IDs in caller order, including unlisted items. Current publication, deletion, domain, language, reader filters and access rules still apply. Missing or hidden IDs are omitted; this is not a discovery listing. It does not record engagement or history.",
+        "summary": "Hydrates 1-100 already-known content IDs in caller order. Current publication, deletion, domain, language, reader filters and access rules still apply. Missing or hidden IDs are omitted; this is not a discovery listing. It does not record engagement or history.",
         "parameters": [
           {
             "name": "language",
@@ -12212,7 +12214,7 @@
         "tags": [
           "stats"
         ],
-        "summary": "A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into guests, free and premium accounts, with their focused active time, from the signal plane.",
+        "summary": "A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into application-defined cohorts, with their focused active time, from the signal plane.",
         "parameters": [
           {
             "name": "kind",
@@ -12708,10 +12710,17 @@
             "items": {
               "$ref": "#/components/schemas/ActivityDay"
             }
+          },
+          "cohorts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
-          "days"
+          "days",
+          "cohorts"
         ]
       },
       "ActivityContext": {
@@ -12781,14 +12790,11 @@
           "readers": {
             "type": "integer"
           },
-          "anon": {
-            "type": "integer"
-          },
-          "free": {
-            "type": "integer"
-          },
-          "premium": {
-            "type": "integer"
+          "cohorts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
           },
           "active_ms": {
             "type": "integer"
@@ -12797,9 +12803,7 @@
         "required": [
           "date",
           "readers",
-          "anon",
-          "free",
-          "premium",
+          "cohorts",
           "active_ms"
         ]
       },
@@ -13096,6 +13100,9 @@
             "type": "boolean"
           },
           "sortable": {
+            "type": "boolean"
+          },
+          "required": {
             "type": "boolean"
           }
         },
@@ -13910,6 +13917,12 @@
           "title": {
             "type": "string"
           },
+          "original_title": {
+            "type": "string"
+          },
+          "original_language": {
+            "type": "string"
+          },
           "slug": {
             "type": "string"
           },
@@ -13939,9 +13952,6 @@
           },
           "state": {
             "$ref": "#/components/schemas/ContentState"
-          },
-          "listing": {
-            "$ref": "#/components/schemas/Listing"
           },
           "comments": {
             "type": "string"
@@ -14043,7 +14053,6 @@
           "title",
           "decision",
           "state",
-          "listing",
           "comments",
           "live",
           "access",
@@ -14172,8 +14181,11 @@
               "$ref": "#/components/schemas/CatalogText"
             }
           },
-          "listing": {
-            "$ref": "#/components/schemas/Listing"
+          "original_title": {
+            "type": "string"
+          },
+          "original_language": {
+            "type": "string"
           },
           "comments": {
             "type": "string"
@@ -14301,8 +14313,11 @@
       "ContentPatch": {
         "type": "object",
         "properties": {
-          "listing": {
-            "$ref": "#/components/schemas/Listing"
+          "original_title": {
+            "type": "string"
+          },
+          "original_language": {
+            "type": "string"
           },
           "comments": {
             "type": "string"
@@ -14377,7 +14392,10 @@
             "type": "string",
             "format": "date-time"
           },
-          "listing": {
+          "original_title": {
+            "type": "string"
+          },
+          "original_language": {
             "type": "string"
           },
           "comments": {
@@ -15816,6 +15834,16 @@
           "windows": {
             "type": "boolean"
           },
+          "membership_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "content",
+                "version"
+              ]
+            }
+          },
           "version_level": {
             "type": "boolean"
           },
@@ -16400,11 +16428,25 @@
       "Kind": {
         "type": "object",
         "properties": {
+          "title_policy": {
+            "type": "string",
+            "enum": [
+              "localized",
+              "original_and_version"
+            ]
+          },
           "access_levels": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "access_scope": {
+            "type": "string",
+            "enum": [
+              "content",
+              "version"
+            ]
           },
           "comment_modes": {
             "type": "array",
@@ -19783,14 +19825,6 @@
         "enum": [
           "draft",
           "published"
-        ]
-      },
-      "Listing": {
-        "type": "string",
-        "enum": [
-          "listed",
-          "members",
-          "unlisted"
         ]
       },
       "AliasStatus": {

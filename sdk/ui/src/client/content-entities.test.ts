@@ -23,3 +23,9 @@ it("retains legacy parent credits without a selected edition", () => {
   expect(entitiesForVersion({ entities: [shared] })).toEqual([shared]);
   expect(entitiesForVersion({ entities: [shared] }, null)).toEqual([shared]);
 });
+
+it("shows shared tags plus the selected version's tags, never its sibling's", () => {
+  const shared = entity("shared", "tag"), colored = entity("colored", "tag"), uncensored = entity("uncensored", "tag");
+  expect(entitiesForVersion({ entities: [shared] }, { entities: [colored, shared] })).toEqual([shared, colored]);
+  expect(entitiesForVersion({ entities: [shared] }, { entities: [uncensored] })).toEqual([shared, uncensored]);
+});

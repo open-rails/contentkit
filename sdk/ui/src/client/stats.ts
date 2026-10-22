@@ -12,7 +12,7 @@ export interface ActivityQuery {
 export class StatsClient {
   constructor(private readonly http: Http) {}
 
-  /** A kind's measured activity for every UTC day of the period, newest first: distinct people who read or played, by audience (anon, free, premium), and focused active milliseconds. */
+  /** A kind's measured activity for every UTC day of the period, newest first: distinct people who read or played, by application-defined cohort, and focused active milliseconds. */
   activity(q: ActivityQuery, signal?: AbortSignal): Promise<Activity> {
     return call(this.http, "GET", "/stats/activity", { query: { kind: q.kind, days: q.days }, signal });
   }

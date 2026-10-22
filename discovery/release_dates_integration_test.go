@@ -48,9 +48,9 @@ func TestReleaseDatesSettleAccess(t *testing.T) {
 			f.now = time.Date(2020, 3, 2, 12, 0, 0, 0, time.UTC)
 			f.seed(
 				item{n: 1, titles: map[string]string{"en": "Public"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}},
-				item{n: 2, titles: map[string]string{"en": "Owned member"}, age: time.Hour, listing: "members", rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
+				item{n: 2, titles: map[string]string{"en": "Owned member"}, age: time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 				item{n: 3, titles: map[string]string{"en": "Locked listed"}, age: time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
-				item{n: 4, titles: map[string]string{"en": "Denied member"}, age: 31 * 24 * time.Hour, listing: "members", rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
+				item{n: 4, titles: map[string]string{"en": "Denied member"}, age: 31 * 24 * time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 			)
 			billing.held[tenant+":content:"+f.cid(2)] = true
 			for _, mode := range []access.Mode{access.Lock, access.Hide} {
@@ -61,7 +61,7 @@ func TestReleaseDatesSettleAccess(t *testing.T) {
 						wantIDs = wantIDs[:1]
 					}
 					if mode == access.Lock {
-						wantIDs = append(wantIDs, f.cid(3))
+						wantIDs = []string{f.cid(1), f.cid(2), f.cid(3), f.cid(4)}
 					}
 					page, err := f.svc.List(f.ctx, ListOptions{Reader: reader, Filter: Filter{Kind: "gallery"}})
 					if err != nil {
@@ -86,7 +86,18 @@ func TestReleaseDatesSettleAccess(t *testing.T) {
 						if by == "month" {
 							date = "2020-03"
 						}
-						want := []DateCount{{Date: date, Count: len(wantIDs), Free: 1}}
+						count := len(wantIDs)
+						if mode == access.Lock {
+							count--
+						}
+						want := []DateCount{{Date: date, Count: count, Free: 1}}
+						if mode == access.Lock {
+							older := "2020-01-31"
+							if by == "month" {
+								older = "2020-01"
+							}
+							want = append(want, DateCount{Date: older, Count: 1})
+						}
 						if !reflect.DeepEqual(out.Dates, want) || out.NextCursor != "" {
 							t.Errorf("%s = %+v, want %+v", by, out, want)
 						}
@@ -165,7 +176,7 @@ func TestReleaseDatesKeepFiltersTimeZoneAndCursor(t *testing.T) {
 		item{n: 3, titles: map[string]string{"en": "Optional hidden"}, versions: []ver{{langs: []string{"en"}}}, groups: []string{"big-breasts", "yaoi"}},
 		item{n: 4, titles: map[string]string{"en": "Outside domain"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 5, titles: map[string]string{"en": "Internal fixed hidden"}, versions: []ver{{langs: []string{"en"}}}, restrictions: []string{"restricted"}, groups: []string{"yaoi"}},
-		item{n: 6, titles: map[string]string{"en": "Denied newest bucket"}, age: -24 * time.Hour, listing: "members", rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}, groups: []string{"yaoi"}},
+		item{n: 6, titles: map[string]string{"en": "Denied newest bucket"}, age: -24 * time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}, groups: []string{"yaoi"}},
 	)
 	for _, tc := range []struct {
 		host   string

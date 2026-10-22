@@ -103,12 +103,12 @@ func TestRoutesIntegration(t *testing.T) {
 		t.Fatalf("default language paths %q, Accept-Language %q", en.Path, accept.Path)
 	}
 
-	// Edits: listing, creators, a stale revision.
-	f.want(http.StatusOK, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Listing: ptr(ListingUnlisted)}, &c)
-	f.want(http.StatusConflict, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Listing: ptr(ListingListed), Revision: ptr(c.Revision - 1)}, nil)
-	f.want(http.StatusOK, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Listing: ptr(ListingListed), Revision: ptr(c.Revision)}, nil)
+	// Edits: comments, creators, a stale revision.
+	f.want(http.StatusOK, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Comments: ptr("closed")}, &c)
+	f.want(http.StatusConflict, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Comments: ptr("open"), Revision: ptr(c.Revision - 1)}, nil)
+	f.want(http.StatusOK, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Comments: ptr("open"), Revision: ptr(c.Revision)}, nil)
 	f.want(http.StatusOK, "staff", "PUT", "/v1/contents/"+id+"/creators", CreatorsInput{Creators: []Creator{{UserID: "carol"}}}, &c)
-	f.want(http.StatusForbidden, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Listing: ptr(ListingUnlisted)}, nil)
+	f.want(http.StatusForbidden, "alice", "PATCH", "/v1/contents/"+id, ContentPatch{Comments: ptr("closed")}, nil)
 	f.want(http.StatusNotImplemented, "staff", "POST", "/v1/contents/"+id+"/images", BodyImageInput{Image: ptr("i-01920000-0000-7000-8000-000000000001")}, nil)
 	f.want(http.StatusBadRequest, "staff", "POST", "/v1/contents/"+id+"/images", BodyImageInput{Image: ptr("../x")}, nil)
 
@@ -122,11 +122,13 @@ func TestRoutesIntegration(t *testing.T) {
 	}
 	f.want(http.StatusNotFound, anon, "GET", "/v1/contents/"+id, nil, nil)
 	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+id+"/versions/"+v.ID, nil, nil)
-	f.want(http.StatusConflict, "staff", "DELETE", "/v1/contents/"+id+"/versions/"+first, nil, nil)
+	f.want(http.StatusConflict, "staff", "DELETE", "/v1/contents/"+id, nil, nil)
 	f.want(http.StatusOK, "staff", "DELETE", "/v1/contents/"+id+"/text/ja", nil, nil)
-	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+id, nil, nil)
+	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+id+"/versions/"+first, nil, nil)
 	f.want(http.StatusNotFound, "staff", "DELETE", "/v1/contents/"+id, nil, nil)
-	f.want(http.StatusOK, "staff", "POST", "/v1/contents/"+id+"/restore", nil, &c)
+	f.want(http.StatusConflict, "staff", "POST", "/v1/contents/"+id+"/restore", nil, nil)
+	f.want(http.StatusOK, "staff", "PATCH", "/v1/contents/"+id+"/versions/"+first, VersionInput{State: StatePublished}, nil)
+	f.want(http.StatusOK, "staff", "GET", "/v1/contents/"+id, nil, &c)
 	if c.State != StatePublished || c.DeletedAt != nil {
 		t.Fatalf("restored %+v", c)
 	}
@@ -176,7 +178,8 @@ func TestRoutesIntegration(t *testing.T) {
 	if len(list) != 0 {
 		t.Fatalf("code outside the caller's rights %+v", list)
 	}
-	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+c.ID, nil, nil)
+	f.want(http.StatusConflict, "staff", "DELETE", "/v1/contents/"+c.ID, nil, nil)
+	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+c.ID+"/versions/"+c.Versions[0].ID, nil, nil)
 	f.want(http.StatusOK, "staff", "GET", "/v1/manage?code="+c.Code, nil, &list)
 	if len(list) != 1 || list[0].ID != c.ID || list[0].State != StateDeleted {
 		t.Fatalf("deleted by code %+v", list)
@@ -436,7 +439,7 @@ func TestManagedCountMatchesSelection(t *testing.T) {
 	f.publish("staff", scheduled, ptr(f.now().Add(time.Hour)))
 	deleted := f.create("staff", gallery("Deleted", "en"))
 	code := f.read("staff", "main.test", deleted)[0].Code
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{deleted}); err != nil {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{deleted}); err != nil {
 		t.Fatal(err)
 	}
 	paid := gallery("Paid", "en")

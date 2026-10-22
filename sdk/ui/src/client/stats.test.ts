@@ -3,7 +3,7 @@ import { createContentKitClient } from "./client.js";
 
 it("reads daily people by audience and preserves the native active-time response", async () => {
   const requests: URL[] = [];
-  const activity = { days: [{ date: "2026-10-16", readers: 3, anon: 1, free: 1, premium: 1, active_ms: 1234 }] };
+  const activity = { cohorts: ["guest", "member", "supporter"], days: [{ date: "2026-10-16", readers: 3, cohorts: { guest: 1, member: 1, supporter: 1 }, active_ms: 1234 }] };
   const client = createContentKitClient({
     baseUrl: "https://stats.test",
     fetch: async (input) => {

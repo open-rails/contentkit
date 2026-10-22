@@ -69,19 +69,16 @@ func TestListingSummaryRecoversAfterBillingOutage(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		mode     access.Mode
-		listing  string
 		filtered bool
 	}{
-		{name: "members", mode: access.Lock, listing: "members"},
 		{name: "hide", mode: access.Hide},
-		{name: "filtered members", mode: access.Lock, listing: "members", filtered: true},
 		{name: "filtered hide", mode: access.Hide, filtered: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			billing := &summaryBilling{releaseBilling: &releaseBilling{held: map[string]bool{}}}
 			f := newFixtureBilling(t, nil, "", siteConfig(), billing)
 			owned := item{n: 2, titles: map[string]string{"en": "Owned"}, age: time.Hour,
-				listing: tc.listing, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}}
+				rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}}
 			if tc.filtered {
 				f.group("tag", "big-breasts")
 				owned.groups = []string{"big-breasts"}

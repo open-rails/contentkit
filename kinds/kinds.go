@@ -106,10 +106,33 @@ type ContentFilter struct {
 func (f ContentFilter) Toggleable() bool { return f.UserToggle == nil || *f.UserToggle }
 
 // Kind is one content kind: a gallery, a movie, a creator post, a blog post.
+// TitlePolicy chooses how a kind's display title is resolved.
+type TitlePolicy string
+
+const (
+	TitleLocalized          TitlePolicy = "localized"
+	TitleOriginalAndVersion TitlePolicy = "original_and_version"
+)
+
+// AccessScope chooses where the editor presents the access rule. Both scopes
+// retain the same permission checks and optional per-version overrides.
+type AccessScope string
+
+const (
+	AccessContent AccessScope = "content"
+	AccessVersion AccessScope = "version"
+)
+
 type Kind struct {
+	// TitlePolicy defaults to localized text. OriginalAndVersion uses the
+	// selected edition title, then the shared original title, then legacy text.
+	TitlePolicy TitlePolicy `json:"title_policy,omitempty" yaml:"title_policy"`
+
 	// AccessLevels limits content and version rules. Empty permits every level.
 	// Omitting ppv and group_ppv also disables individual sales for this kind.
 	AccessLevels []string `json:"access_levels,omitempty" yaml:"access_levels"`
+	// AccessScope defaults to content; version presents a direct edition rule.
+	AccessScope AccessScope `json:"access_scope,omitempty" yaml:"access_scope"`
 	// CommentModes limits per-item comment settings. Empty permits every mode.
 	CommentModes []string `json:"comment_modes,omitempty" yaml:"comment_modes"`
 	// Route is the URL segment: /{lang}/{route}/{CODE}/{slug}.
@@ -289,7 +312,18 @@ type Attribute struct {
 	Values     []string `json:"values,omitempty" yaml:"values"`
 	Filterable bool     `json:"filterable,omitempty" yaml:"filterable"`
 	Sortable   bool     `json:"sortable,omitempty" yaml:"sortable"`
+	// Required fields must be present on completed content metadata. Empty
+	// drafts may omit them while media uploads; versions inherit the parent.
+	Required bool `json:"required,omitempty" yaml:"required"`
 }
+
+// MembershipScope identifies which record owns an entity association.
+type MembershipScope string
+
+const (
+	ContentScope MembershipScope = "content"
+	VersionScope MembershipScope = "version"
+)
 
 // GroupKind is one kind of grouping: tag, artist, series, channel, rail, ...
 type GroupKind struct {
@@ -320,7 +354,11 @@ type GroupKind struct {
 	AuthScope bool `json:"auth_scope,omitempty" yaml:"auth_scope"`
 	// Windows lets memberships carry active_from/active_until (rails).
 	Windows bool `json:"windows,omitempty" yaml:"windows"`
-	// VersionLevel lets memberships target one version (voice actors).
+	// MembershipScopes declares where this entity kind can be attached.
+	// Omitted keeps the legacy default: content, or version with VersionLevel.
+	MembershipScopes []MembershipScope `json:"membership_scopes,omitempty" yaml:"membership_scopes"`
+	// VersionLevel is the legacy version-only editor setting. Prefer
+	// MembershipScopes; it cannot be combined with that explicit setting.
 	VersionLevel bool `json:"version_level,omitempty" yaml:"version_level"`
 	// Creatable lets a content edit create an entity of the kind from a name no
 	// entity carries yet; never user-owned or authorization kinds.
@@ -332,6 +370,18 @@ type GroupKind struct {
 
 // HasAvatar reports whether the kind's entities take an avatar.
 func (k GroupKind) HasAvatar() bool { return k.Owner == "user" || k.Avatar }
+
+// AllowsMembership reports the configured ownership scopes, including the
+// legacy editor default when no explicit scopes were supplied.
+func (k GroupKind) AllowsMembership(scope MembershipScope) bool {
+	if len(k.MembershipScopes) > 0 {
+		return slices.Contains(k.MembershipScopes, scope)
+	}
+	if k.VersionLevel {
+		return scope == VersionScope
+	}
+	return scope == ContentScope
+}
 
 // UploadLimits bound a user-owned group's uploads; zero fields are off.
 type UploadLimits struct {
@@ -400,6 +450,16 @@ func (c Config) Validate() error {
 		if gk.Creatable && (gk.Owner == "user" || gk.AuthScope) {
 			return fmt.Errorf("%w: group kind %q: user-owned and auth_scope kinds are not creatable", ErrInvalid, name)
 		}
+		if len(gk.MembershipScopes) > 0 && gk.VersionLevel {
+			return fmt.Errorf("%w: group kind %s combines membership_scopes with legacy version_level", ErrInvalid, name)
+		}
+		seenScopes := map[MembershipScope]bool{}
+		for _, scope := range gk.MembershipScopes {
+			if (scope != ContentScope && scope != VersionScope) || seenScopes[scope] {
+				return fmt.Errorf("%w: group kind %s has invalid or repeated membership scope %q", ErrInvalid, name, scope)
+			}
+			seenScopes[scope] = true
+		}
 		for _, ref := range []string{gk.Parent, gk.ScopedBy} {
 			if _, ok := c.GroupKinds[ref]; ref != "" && !ok {
 				return fmt.Errorf("%w: group kind %s names unknown group kind %q", ErrInvalid, name, ref)
@@ -424,6 +484,15 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, k := range c.Kinds {
+		if k.AccessScope != "" && k.AccessScope != AccessContent && k.AccessScope != AccessVersion {
+			return fmt.Errorf("%w: kind %s has invalid access_scope %q", ErrInvalid, name, k.AccessScope)
+		}
+		if k.AccessScope == AccessVersion && k.Versions.Hidden {
+			return fmt.Errorf("%w: kind %s cannot edit access on a hidden version", ErrInvalid, name)
+		}
+		if k.TitlePolicy != "" && k.TitlePolicy != TitleLocalized && k.TitlePolicy != TitleOriginalAndVersion {
+			return fmt.Errorf("%w: kind %s has invalid title_policy %q", ErrInvalid, name, k.TitlePolicy)
+		}
 		seenComments := map[string]bool{}
 		for _, mode := range k.CommentModes {
 			if !slices.Contains([]string{"open", "closed", "hidden"}, mode) || seenComments[mode] {
@@ -466,7 +535,7 @@ func (c Config) Validate() error {
 				return fmt.Errorf("%w: kind %s names unknown group kind %q", ErrInvalid, name, g)
 			}
 		}
-		if e := k.PathEntity; e != "" && (!slices.Contains(k.Groups, e) || c.GroupKinds[e].VersionLevel) {
+		if e := k.PathEntity; e != "" && (!slices.Contains(k.Groups, e) || !c.GroupKinds[e].AllowsMembership(ContentScope)) {
 			return fmt.Errorf("%w: kind %s path_entity %q must be one of its content-level groups", ErrInvalid, name, e)
 		}
 		if err := validateAttributes("kind "+name, k.Attributes); err != nil {
@@ -585,6 +654,25 @@ func ValidateAttributes(declared map[string]Attribute, values map[string]any) (m
 		out[name] = n
 	}
 	return out, nil
+}
+
+// ValidateRequiredAttributes checks a content's complete attributes after
+// normalization. This is separate from ValidateAttributes because version
+// attributes are overrides, and newly allocated drafts can be incomplete.
+func ValidateRequiredAttributes(declared map[string]Attribute, values map[string]any) error {
+	for name, spec := range declared {
+		if !spec.Required {
+			continue
+		}
+		value, present := values[name]
+		if !present || value == nil {
+			return fmt.Errorf("%w: attribute %s is required", ErrInvalid, name)
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			return fmt.Errorf("%w: attribute %s is required", ErrInvalid, name)
+		}
+	}
+	return nil
 }
 
 func (a Attribute) normalize(v any) (any, error) {

@@ -38,7 +38,7 @@ func managementFixture(t *testing.T) (*fixture, string) {
 	f := seeded(t)
 	staff := testauth.Actor(access.Actor{ID: "staff"}, staffOnly{})
 	creators := []catalog.Creator{{UserID: "alice"}}
-	ids, err := f.cat.Create(f.ctx, staff, []catalog.ContentInput{{Kind: "gallery", Listing: "unlisted", Creators: &creators,
+	ids, err := f.cat.Create(f.ctx, staff, []catalog.ContentInput{{Kind: "gallery", Creators: &creators,
 		Text: map[string]catalog.Text{"en": {Title: "Private Azure Draft", Aliases: []string{"The Azure Alias"}, Body: "Bleach"}}}})
 	if err != nil {
 		t.Fatal(err)

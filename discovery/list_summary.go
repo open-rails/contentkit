@@ -151,14 +151,15 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	}
 	picks, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (pick, error) {
 		var p pick
-		return p, r.Scan(&p.content, &p.version)
+		err := r.Scan(&p.content, &p.version)
+		return p, err
 	})
 	if err != nil {
 		return false, err
 	}
 	// Rows load and settle a batch at a time; only the picks span the selection.
 	const batchSize = 2048
-	lean := fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.group_ids, f.listing, coalesce(f.owner_group_id, ''), f.published_at,
+	lean := fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.group_ids, coalesce(f.owner_group_id, ''), f.published_at,
  $3 <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $3)
  FROM %[3]s v
  JOIN %[1]s f ON f.tenant_id = v.tenant_id AND f.version_id = v.id
@@ -177,7 +178,7 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 		}
 		batch, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
 			var c cardRow
-			err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.ID, &c.groupIDs, &c.listing, &c.owner, &c.PublishedAt, &c.creator)
+			err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.ID, &c.groupIDs, &c.owner, &c.PublishedAt, &c.creator)
 			return c, err
 		})
 		if err != nil {
@@ -190,7 +191,7 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 			unknown = unknown || row.Access.Unknown
 		}
 		batch = slices.DeleteFunc(batch, func(c cardRow) bool {
-			return !c.Access.Allowed && (q.reader.Mode == access.Hide || c.listing == "members")
+			return !c.Access.Allowed && q.reader.Mode == access.Hide
 		})
 		s.lock(batch)
 		for _, row := range batch {

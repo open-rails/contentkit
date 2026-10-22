@@ -134,8 +134,9 @@ type ContentRecord struct {
 	PublishedAt *time.Time `json:"published_at,omitempty"`
 	// DeletedAt dates a deleted item (now when omitted).
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
-	// Listing is listed (the default), members or unlisted.
-	Listing string `json:"listing,omitempty"`
+	// Nil preserves an existing source title/language; a pointer to empty clears it.
+	OriginalTitle    *string `json:"original_title,omitempty"`
+	OriginalLanguage *string `json:"original_language,omitempty"`
 	// Comments is open (the default), closed or hidden.
 	Comments string `json:"comments,omitempty"`
 	// Access defaults to public. A group rule names the group's id.

@@ -675,6 +675,62 @@ version editing remain in the content editor. Site-specific import,
 review and publishing workflows can use the individual managers and media
 components without adopting this workbench.
 
+## Original and edition titles
+
+A host can set `title_policy: original_and_version` on a content kind. The
+parent then carries optional `original_title` and `original_language`, while
+`version.text[language].title` is the edition's display title. The reader editor
+shows one shared Original title and a Display title bound to the selected
+version's language; changing one edition never rewrites sibling titles.
+
+The default `localized` policy retains generic `content.text[language]`
+behavior. Those stored texts are preserved under the edition policy too.
+Public titles resolve from the selected edition, then the original, then the
+legacy localized title. An original's language may remain unknown; do not label
+an existing English translation as the source title.
+
+For existing content, `catalog.BackfillVersionTitles` is an explicit migration
+helper: it copies only missing titles from exactly matching content languages
+and does not overwrite existing edition text or invent source titles. Hosts
+call it from their migration command, rather than server startup.
+
+## Daily readership statistics
+
+`StatsDashboard` charts distinct engaged readers for the past ten UTC days.
+It reads `GET /stats/activity?kind=gallery&days=10`; opening a page without
+reading does not count. A subject needs at least one second of measured active
+reading and nonempty page coverage. Counts are distinct per day, not across the
+whole period, and the same anonymous person using different browser identities
+can count more than once.
+
+The host defines audience groups on the server, for example:
+
+```go
+cfg.ActivityCohorts = []signal.ActivityCohort{
+    {ID: "supporter", Identity: signal.ActivityAccount, AnyTier: []string{"paid"}},
+    {ID: "member", Identity: signal.ActivityAccount},
+    {ID: "guest", Identity: signal.ActivityAnonymous},
+}
+```
+
+The first matching group wins for each subject/day. Tier eligibility comes
+from trusted observations on that day; an account that gains a matching tier
+is counted once in that group, even if it also read before upgrading. A host
+that omits groups gets only the overall total. Unmatched readers also remain
+in that total. Labels, colors and display order belong to the host UI:
+
+```tsx
+<StatsDashboard kinds={["gallery"]} days={10} series={[
+  { id: "guest", label: "Guests", color: "#3987e5" },
+  { id: "member", label: "Members", color: "#e98042" },
+  { id: "supporter", label: "Supporters", color: "#21a87e" },
+]} />
+```
+
+The endpoint returns `cohorts: string[]` and each day's `cohorts` count map,
+`readers` total and `active_ms`. The chart uses line series, zero-filled days,
+an accessible daily table and no built-in commercial audience categories.
+
 ## Admin flows
 
 Drop-in staff screens for a host's own admin area: each makes its own reads
@@ -771,8 +827,20 @@ The host still owns navigation outside the flow, including browser Back handling
   pages removed as blank, duplicate or covered by a spread (one-click Restore)
   and archives put in name order (Dismiss). It renders nothing without notices
   and never blocks saving or publishing. `ContentManager` includes it for reader
-  versions; `usePageNotices()` exposes the same API. Page tiles are named by
-  their place and reordered by dragging the whole tile.
+  versions; `usePageNotices()` exposes the same API. Page tiles retain their
+  filenames and show a separate position counter. Dragging changes order;
+  renaming and removal remain local until **Save** in the
+  reader workspace. Undo/Redo spans those edits and its metadata drafts.
+  Uploads and cover processing can store files earlier; Undo is not a rollback
+  of bytes already uploaded. The header contains the cover selector and the
+  selected edition's staged release time. `access_scope: version` presents a
+  direct edition access rule instead of a parent rule/inheritance toggle.
+  The shared Save includes edition details; Unpublish and Delete affect the
+  selected edition. Trait toggles are omitted in the reader workspace; version
+  tags use the ordinary entity picker. Reading layout lives under Reader tools
+  when the kind declares `manhwa_style`; Paged / Continuous vertical stages that
+  existing reader behavior until the same Save. The display-title field follows
+  the edition's staged language, and preserves titles in other languages.
 
 - **`ReaderManifestEditor`**: a reader version's manifest over its published
   pages and audio: scroll anchors, audio cues (matched to pages or anchors by
@@ -1075,13 +1143,13 @@ server-owned. An account switch discards old in-flight observations instead of
 assigning them to the next account. The optional `kind` groups local guest history
 only; remote requests never trust a browser-supplied content kind.
 
-`useHistory` retains previously read unlisted items for guests and accounts.
+`useHistory` retains previously read items for guests and accounts.
 Guest cards hydrate through `client.discovery.knownCards({ ids })`
 (`GET /content-cards?ids=…`, at most 100 IDs, caller order), rather than a browse
 listing. This read records no engagement. Current domain rules, reader filters,
 languages, publication/deletion state and access decisions still apply; hidden
-items are omitted and locked cards use normal redaction. `/contents` and search
-continue to exclude unlisted items.
+items are omitted and locked cards use normal redaction. Published items use
+the same domain, filter and access policy in `/contents` and search.
 
 
 For a custom integration, `EngagementTracker` accepts injected `begin` and

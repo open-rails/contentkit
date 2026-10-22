@@ -209,7 +209,8 @@ WHERE %s GROUP BY d.date ORDER BY d.date DESC LIMIT @d_limit`, s.t.facets, q.pre
 		}
 		dates, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (DateCount, error) {
 			var d DateCount
-			return d, r.Scan(&d.Date, &d.Count, &d.Free)
+			err := r.Scan(&d.Date, &d.Count, &d.Free)
+			return d, err
 		})
 	} else {
 		dates, err = s.settledReleaseDates(ctx, q, layout, o.Cursor)

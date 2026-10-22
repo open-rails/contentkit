@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/index.js";
-import type { Content, ContentModel, ManageCount, Rule } from "../../client/generated/wire.js";
+import type { Content, ContentModel, ManageCount, Rule, Version } from "../../client/generated/wire.js";
 import { ContentManager } from "./content-manager.js";
 
 const model: ContentModel = {
@@ -26,7 +26,6 @@ const item = (id: string, title: string, access: Rule, extra: Partial<Content> =
   decision: { allowed: true },
   state: "published",
   published_at: at,
-  listing: "listed",
   comments: "open",
   live: true,
   access,
@@ -146,4 +145,20 @@ it("does not advertise individual purchases in a subscription-only manager", asy
   await user.click(await screen.findByRole("combobox", { name: "Access" }));
   expect(screen.queryByRole("option", { name: "Buyers" })).toBeNull();
   expect((await screen.findAllByRole("option")).map((o) => o.textContent)).not.toContain("Pay per view");
+});
+
+it("directs version-scoped gallery changes to the edition editor instead of parent bulk actions", async () => {
+  const versionScoped: ContentModel = { ...model, kinds: { gallery: { ...model.kinds.gallery!, access_scope: "version" } } };
+  const edition = (id: string, access: Rule): Version => ({ id, code: id.toUpperCase(), position: id === "free" ? 0 : 1, languages: ["en"], traits: [], state: "published", live: true, has_audio: false, entities: [], attributes: {}, segments: [], decision: { allowed: true }, access });
+  const s = server([item("a", "Alpha", { level: "public" }, { versions: [edition("free", { level: "public" }), edition("paid", { level: "tier", tiers: ["premium"] })] })], { model: versionScoped });
+  const { container } = render(<Route client={s.client} search="?access=public" />);
+  const row = (await screen.findByText("Alpha")).closest("li")!;
+  expect(within(row).getByRole("button", { name: "Edit" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Make premium" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Select every item on this page" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Access" })).toBeNull();
+  expect(container.querySelector('[data-ckui="access-badge"]')).toBeNull();
+  await waitFor(() => expect(s.calls.filter((call) => call.path === "/manage/gallery").at(-1)?.query.get("access")).toBeNull());
+  expect(s.calls.some((call) => call.method !== "GET")).toBe(false);
 });

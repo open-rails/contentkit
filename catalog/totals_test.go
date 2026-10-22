@@ -15,7 +15,7 @@ import (
 // Totals count content items, never versions: once in the kind and once per
 // language any eligible version serves. Public is what an anonymous
 // visitor's listing shows and opens; a tier counts everything its holders
-// open, members-listed items included. Unlisted, group-gated, pay-per-view,
+// open. Group-gated, pay-per-view,
 // draft, scheduled and deleted items never count; the site's scope and the
 // default content filters apply.
 func TestTotalsIntegration(t *testing.T) {
@@ -43,14 +43,14 @@ func TestTotalsIntegration(t *testing.T) {
 	restricted := item(with(gallery("Restricted", "en"), func(c *ContentInput) { c.Restrictions = []string{"restricted"} }), true)
 	_ = restricted
 	item(with(gallery("Premium", "en"), func(c *ContentInput) { c.Access = premium }), true)
-	item(with(gallery("Members", "ja"), func(c *ContentInput) { c.Access, c.Listing = premium, ListingMembers }), true)
-	item(with(gallery("Unlisted", "en"), func(c *ContentInput) { c.Listing = ListingUnlisted }), true)
+	item(with(gallery("Members", "ja"), func(c *ContentInput) { c.Access = premium }), true)
+	item(gallery("Additional", "en"), true)
 	item(with(gallery("Channel", "en"), func(c *ContentInput) { c.Access = &access.Rule{Level: access.GroupLevel, Group: studio} }), true)
 	item(with(gallery("Pay per view", "en"), func(c *ContentInput) { c.Access = &access.Rule{Level: access.PPV} }), true)
 	gory := item(gallery("Gory", "en"), true)
 	f.join(gore, gory, "")
 	deleted := item(gallery("Deleted", "en"), true)
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{deleted}); err != nil {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{deleted}); err != nil {
 		t.Fatal(err)
 	}
 	scheduled := f.create("staff", gallery("Scheduled", "en"))
@@ -72,12 +72,12 @@ func TestTotalsIntegration(t *testing.T) {
 		want map[string]Total
 	}{
 		{"main, every kind", TotalsQuery{}, map[string]Total{
-			// public: both, two-english, restricted; premium adds premium, members and the premium version.
-			"gallery": total(3, 6, map[string][2]int64{"en": {3, 4}, "ja": {1, 3}}),
+			// public: both, two-english, restricted, additional; premium adds premium, members and the premium version.
+			"gallery": total(4, 7, map[string][2]int64{"en": {4, 5}, "ja": {1, 3}}),
 			"blog":    total(1, 1, map[string][2]int64{"en": {1, 1}}),
 		}},
 		{"the restricted site", TotalsQuery{Kinds: []string{"gallery"}, Domain: "moe"}, map[string]Total{
-			"gallery": total(2, 5, map[string][2]int64{"en": {2, 3}, "ja": {1, 3}})}},
+			"gallery": total(3, 6, map[string][2]int64{"en": {3, 4}, "ja": {1, 3}})}},
 		{"the gay site", TotalsQuery{Kinds: []string{"gallery"}, Domain: "gay"}, map[string]Total{
 			"gallery": total(1, 1, map[string][2]int64{"en": {1, 1}, "ja": {1, 1}})}},
 		{"languages asked for, uncounted ones zero", TotalsQuery{Kinds: []string{"blog"}, Languages: []string{"ja"}}, map[string]Total{
@@ -118,7 +118,7 @@ func TestTotalsIntegration(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "public, max-age=600" || json.Unmarshal(rec.Body.Bytes(), &body) != nil {
 		t.Fatalf("route: %d %v %s", rec.Code, rec.Header(), rec.Body)
 	}
-	if want := total(2, 5, map[string][2]int64{"en": {2, 3}}); !reflect.DeepEqual(body.Kinds["gallery"], want) {
+	if want := total(3, 6, map[string][2]int64{"en": {3, 4}}); !reflect.DeepEqual(body.Kinds["gallery"], want) {
 		t.Fatalf("route totals %+v, want %+v", body.Kinds["gallery"], want)
 	}
 	f.want(http.StatusBadRequest, anon, "GET", "/v1/catalog/totals?kinds=video", nil, nil)
@@ -133,7 +133,7 @@ func TestTotalsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := total(3, 6, map[string][2]int64{"ja": {1, 3}}); !reflect.DeepEqual(remote.Kinds["gallery"], want) || remote.Kinds["blog"].Public != 1 {
+	if want := total(4, 7, map[string][2]int64{"ja": {1, 3}}); !reflect.DeepEqual(remote.Kinds["gallery"], want) || remote.Kinds["blog"].Public != 1 {
 		t.Fatalf("remote totals %+v", remote.Kinds)
 	}
 	if _, err := client.Totals(f.ctx, TotalsQuery{Kinds: []string{"gallery"}, Domain: "moe"}); err == nil {

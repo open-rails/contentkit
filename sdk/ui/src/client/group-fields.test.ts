@@ -38,6 +38,13 @@ describe("group fields", () => {
     expect(parseAttributes(declared, { format: "manga", pages: "", link: "https://x", extra: "y" })).toEqual({ format: "manga", link: "https://x" });
   });
 
+  it("requires configured fields without rejecting false or zero values", () => {
+    const declared = { format: { type: "enum", values: ["doujin", "cgset"], required: true } };
+    for (const form of [{}, { format: "" }, { format: "  " }] as Record<string, string | boolean>[]) expect(() => parseAttributes(declared, form)).toThrow("Format is required");
+    expect(parseAttributes(declared, { format: "cgset" })).toEqual({ format: "cgset" });
+    expect(parseAttributes({ enabled: { type: "bool", required: true }, count: { type: "int", required: true } }, { enabled: false, count: "0" })).toEqual({ enabled: false, count: 0 });
+  });
+
   it("round-trips local datetime inputs", () => {
     expect(toLocalInput(fromLocalInput("2026-01-02T03:04"))).toBe("2026-01-02T03:04");
     expect(fromLocalInput("")).toBeUndefined();

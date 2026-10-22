@@ -959,7 +959,7 @@ func TestRecount(t *testing.T) {
 	f := newFixture(t)
 	f.content("gallery", 1, live("en"), live("es"))
 	f.content("gallery", 2, live("en"), version{languages: []string{"ja"}, favorites: 50})
-	f.content("gallery", 3, version{languages: []string{"en"}, live: &past, unlisted: true})
+	f.content("gallery", 3, version{languages: []string{"en"}})
 	f.content("video", 4, version{languages: []string{"en", "ja"}, live: &past, favorites: 7})
 	g := f.create(GroupInput{Kind: "series", Slug: "parent"}, GroupInput{Kind: "tag", Slug: "tag"}, GroupInput{Kind: "tag", Slug: "picked", Cover: &Cover{ContentID: cid(1)}})
 	parent, tag, picked := g[0], g[1], g[2]

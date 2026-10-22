@@ -24,7 +24,7 @@ func TestActivityAvailabilityUsesImmutableIntervals(t *testing.T) {
 	}
 	removedAt := start.Add(36 * time.Hour)
 	f.clock = removedAt
-	if err := f.cat.Delete(f.ctx, staff, []string{f.cid(1)}); err != nil {
+	if err := f.cat.DeleteForModeration(f.ctx, staff, []string{f.cid(1)}); err != nil {
 		t.Fatal(err)
 	}
 	f.svc.o.Now = func() time.Time { return start.Add(48 * time.Hour) }
@@ -110,5 +110,38 @@ func TestWorkAudienceUnionsConcurrentEditions(t *testing.T) {
 	got = unionAccessIntervals([]signal.AccessInterval{paid, free, unknown})
 	if len(got) != 1 || got[0].Audience != "public" || !got[0].From.Equal(free.From) || !got[0].Until.Equal(free.Until) {
 		t.Fatalf("independent public edition should remain measurable: %+v", got)
+	}
+}
+
+// Retiring a listing policy must not invent earlier public availability. The
+// migration appends a policy-free boundary snapshot and leaves history intact.
+func TestActivityAvailabilityPreservesLegacyListingUntilAdoption(t *testing.T) {
+	for _, legacy := range []string{"listed", "members", "unlisted"} {
+		t.Run(legacy, func(t *testing.T) {
+			f := newFixture(t, nil, "")
+			start := f.now.Add(-48 * time.Hour)
+			f.now = start
+			f.seed(item{n: 1, titles: map[string]string{"en": "Existing publication"}, versions: []ver{{langs: []string{"en"}}}})
+			f.exec(`UPDATE {s}.content_access_history SET snapshot=jsonb_set(snapshot,'{listing}',to_jsonb($2::text)) WHERE tenant_id=$1`, tenant, legacy)
+			adopted := start.Add(24 * time.Hour)
+			f.exec(`INSERT INTO {s}.content_access_history (tenant_id,content_id,version_id,occurred_at,snapshot)
+SELECT tenant_id,content_id,version_id,$2,snapshot-'listing' FROM (
+ SELECT DISTINCT ON (version_id) tenant_id,content_id,version_id,snapshot
+ FROM {s}.content_access_history WHERE tenant_id=$1
+ ORDER BY version_id,occurred_at DESC,id DESC) latest`, tenant, adopted)
+			until := start.Add(48 * time.Hour)
+			f.svc.o.Now = func() time.Time { return until }
+			got, err := f.svc.Availability(f.ctx, "gallery", signal.AllTime(), signal.ActivityScope{Language: "en"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantFrom := adopted
+			if legacy == "listed" {
+				wantFrom = start
+			}
+			if len(got.Intervals) != 1 || !got.Intervals[0].From.Equal(wantFrom) || !got.Intervals[0].Until.Equal(until) {
+				t.Fatalf("legacy %s: intervals=%+v, want %s..%s", legacy, got.Intervals, wantFrom, until)
+			}
+		})
 	}
 }

@@ -159,7 +159,8 @@ WHERE @d_after_id = '' OR (at, id) < (@d_after_at, @d_after_id) ORDER BY at DESC
 	}
 	got, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
 		var x row
-		return x, r.Scan(&x.id, &x.value, &x.at)
+		err := r.Scan(&x.id, &x.value, &x.at)
+		return x, err
 	})
 	if err != nil {
 		return out, err

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { TypeaheadQuery } from "../../client/discovery.js";
+import { allowsEntityScope } from "../../client/entity-scopes.js";
 import type { Card, Content, GroupDetail, GroupKind, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
@@ -208,7 +209,7 @@ export function GroupMembers(p: GroupMembersProps) {
     return [...out].sort(([a], [b]) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
   }, [members.items, contents]);
   // Version-level kinds link a version, which a new item does not have yet.
-  const starts = spec.version_level
+  const starts = !allowsEntityScope(spec, "content")
     ? []
     : Object.entries(kinds?.kinds ?? {}).flatMap(([kind, k]) => {
         const href = k.entities?.includes(p.group.kind) ? p.newContentHref?.(kind, p.group) : undefined;
@@ -295,7 +296,7 @@ function AddContent({ spec, labels, client, onAdd }: { spec: GroupKind; labels?:
   const results = found.contents;
   const listOpen = text.trim() !== "" && !picked && results.length > 0;
   useEffect(() => setActive(0), [text]);
-  const detailed = !!spec.version_level || !!spec.roles?.length || !!spec.windows;
+  const detailed = allowsEntityScope(spec, "version") || !!spec.roles?.length || !!spec.windows;
   const reset = () => {
     setText("");
     setPicked(null);
@@ -308,7 +309,7 @@ function AddContent({ spec, labels, client, onAdd }: { spec: GroupKind; labels?:
     setPicked({ card });
     setText(card.title);
     // A version-level kind links one version: list the picked content's.
-    if (spec.version_level)
+    if (allowsEntityScope(spec, "version"))
       void client.contents.manage({ ids: [card.id], limit: 1 }).then(
         (r) => setPicked((cur) => (cur?.card.id === card.id ? { card, versions: r[0]?.versions } : cur)),
         () => undefined,
@@ -374,13 +375,13 @@ function AddContent({ spec, labels, client, onAdd }: { spec: GroupKind; labels?:
       </div>
       {picked && (
         <div className="flex flex-wrap items-end gap-2" data-ckui="add-member-details">
-          {spec.version_level && (
+          {allowsEntityScope(spec, "version") && (
             <Select value={version || NONE} onValueChange={(v) => setVersion(v === NONE ? "" : String(v))}>
               <SelectTrigger size="sm" aria-label={t("memberships.version")}>
                 <SelectValue>{(v: string) => (v === NONE ? t("memberships.wholeContent") : (picked.versions?.find((x) => x.id === v)?.title ?? v))}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={NONE}>{t("memberships.wholeContent")}</SelectItem>
+                {allowsEntityScope(spec, "content") && <SelectItem value={NONE}>{t("memberships.wholeContent")}</SelectItem>}
                 {(picked.versions ?? []).map((v, i) => (
                   <SelectItem key={v.id} value={v.id}>
                     {v.title || `#${i + 1}`}
@@ -415,7 +416,7 @@ function AddContent({ spec, labels, client, onAdd }: { spec: GroupKind; labels?:
               }}
             />
           )}
-          <Button size="sm" onClick={() => add(picked.card, version)}>
+          <Button size="sm" disabled={!allowsEntityScope(spec, "content") && !version} onClick={() => add(picked.card, version)}>
             {t("memberships.addMember")}
           </Button>
           <Button size="sm" variant="ghost" onClick={reset}>

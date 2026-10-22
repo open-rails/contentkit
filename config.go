@@ -64,6 +64,9 @@ type Config struct {
 	// account-erasure executor has upgraded. Keep false through a mixed-writer
 	// rollout; reads and legacy history remain available. No migration runs here.
 	MeasuredEngagement bool `yaml:"measured_engagement,omitempty" json:"measured_engagement,omitempty"`
+	// ActivityCohorts defines application-owned daily readership buckets. First
+	// match wins; nil reports totals without audience-specific categories.
+	ActivityCohorts []signal.ActivityCohort `yaml:"activity_cohorts,omitempty" json:"activity_cohorts,omitempty"`
 	// Offers prices what creators and staff put on sale (needs Deps.Billing).
 	Offers offers.Config `yaml:"offers" json:"offers"`
 	// Accounts declares one shared account space for inboxes and avatars.

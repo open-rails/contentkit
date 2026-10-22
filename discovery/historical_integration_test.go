@@ -23,7 +23,7 @@ func TestHistoricalActivityRanksWindowBeforeVisiblePagination(t *testing.T) {
 		item{n: 2, titles: map[string]string{"en": "Bravo"}, age: 100 * 24 * time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}, pages: 10}}, groups: []string{"big-breasts"}},
 		item{n: 3, titles: map[string]string{"ja": "チャーリー"}, age: 100 * 24 * time.Hour, restrictions: []string{"restricted"}, versions: []ver{{langs: []string{"ja"}, pages: 10}}, groups: []string{"yaoi"}},
 		item{n: 4, titles: map[string]string{"en": "Future edition"}, age: 100 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}, future: true}}},
-		item{n: 5, titles: map[string]string{"en": "Unlisted"}, age: 100 * 24 * time.Hour, listing: "unlisted", versions: []ver{{langs: []string{"en"}, pages: 10}}},
+		item{n: 5, titles: map[string]string{"en": "Draft"}, age: 100 * 24 * time.Hour, draft: true, versions: []ver{{langs: []string{"en"}, pages: 10}}},
 		item{n: 6, titles: map[string]string{"en": "Deleted"}, age: 100 * 24 * time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}, pages: 10}}},
 		item{n: 7, kind: "video", titles: map[string]string{"en": "Other content kind"}, age: 100 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 8, titles: map[string]string{"en": "Old publication, recent activity"}, age: 800 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}, pages: 10}}},

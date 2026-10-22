@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { Anchor, BackgroundCue, ForegroundCue, ReaderMeta, ReaderPlan } from "../../client/generated/wire.js";
+import type { Anchor, BackgroundCue, ForegroundCue, ReaderMeta } from "../../client/generated/wire.js";
 import { emptyReaderMeta, matchAudio, readerMetaProblems, readerNames, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "../../client/reader-meta.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { Switch } from "#ckui/ui/switch";
 import { ErrorLine, useAction } from "../social/parts.js";
 import { useEditorSaveTask } from "../content/editor-save.js";
+import { useDraft } from "../../react/use-draft.js";
 import { LoadFailed, Rows } from "./shell.js";
 import { AudioPreview, PagePicker, usePlanMedia, type PlanMedia } from "./page-picker.js";
 
@@ -63,30 +64,26 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
   const plan = useReaderPlan(content, version, { client });
   const names = useMemo<ReaderNames>(() => (plan.plan ? readerNames(plan.plan) : { pages: [], files: [] }), [plan.plan]);
   const media = usePlanMedia(plan.plan, client);
-  const [basis, setBasis] = useState<ReaderPlan | null>(null);
-  const [meta, setMeta] = useState<ReaderMeta | null>(null);
-  const [dirty, setDirty] = useState(false);
+  const seed = useMemo(() => ({ meta: plan.plan ? (plan.plan.reader ? structuredClone(plan.plan.reader) : emptyReaderMeta()) : null }), [plan.plan]);
+  const draft = useDraft(seed);
+  const meta = draft.value.meta;
+  const dirty = draft.dirty.length > 0;
   const [saved, setSaved] = useState(false);
   const [matched, setMatched] = useState<AudioMatch | null>(null);
   const save = useAction("reader.save", onError);
-  // A fresh plan replaces the draft unless it has unsaved edits.
-  if (plan.plan && plan.plan !== basis && !dirty) {
-    setBasis(plan.plan);
-    setMeta(plan.plan.reader ? structuredClone(plan.plan.reader) : emptyReaderMeta());
-  }
   const problems = useMemo(() => (meta ? readerMetaProblems(meta, names) : []), [meta, names]);
   const edit = (fn: (m: ReaderMeta) => ReaderMeta) => {
-    setMeta((m) => (m ? fn(m) : m));
-    setDirty(true);
+    draft.edit((d) => ({ meta: d.meta ? fn(d.meta) : null }));
     setSaved(false);
   };
   const latest=useRef(meta);latest.current=meta;
   const submit=async()=>{
     if(!meta||problems.length)return false;
-    setSaved(false);const snapshot=meta;
+    setSaved(false);const snapshot=meta, settle=draft.checkpoint();
     const ok=await save.run(async()=>{await client.versions.setReader(content,version,clean(snapshot));return true;});
     if(!ok||latest.current!==snapshot)return false;
-    setDirty(false);setSaved(true);return true;
+    if(!settle({meta:snapshot}))return false;
+    setSaved(true);return true;
   };
   useEditorSaveTask(`reader-meta:${version}`,{label:t("readerManifest.title"),dirty,pending:save.pending,valid:!problems.length,save:submit,order:30});
   const body = (() => {
@@ -139,8 +136,7 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
           </Button>
           {dirty && (
             <Button type="button" size="sm" variant="ghost" onClick={() => {
-              setDirty(false);
-              setBasis(null);
+              draft.checkpoint()(seed);
               setMatched(null);
             }}>
               {t("readerManifest.revert")}

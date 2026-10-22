@@ -36,7 +36,8 @@ JOIN %[2]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id`, s.t.facets, 
 	}
 	marks, err := pgx.CollectRows(got, func(r pgx.CollectableRow) (status, error) {
 		var st status
-		return st, r.Scan(&st.ord, &st.deleted, &st.updated)
+		err := r.Scan(&st.ord, &st.deleted, &st.updated)
+		return st, err
 	})
 	if err != nil {
 		return err

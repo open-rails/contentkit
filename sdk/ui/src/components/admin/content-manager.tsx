@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { imageRefs } from "../../client/contents.js";
+import { allowsEntityScope } from "../../client/entity-scopes.js";
 import type { Content, GroupCard, GroupDetail, ManageCount, Rule, Version } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
@@ -269,10 +270,12 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const m = useMessages();
   const { t } = m;
   const ids = useId();
+  const { kinds: model } = useKinds({ client });
+  const spec = model?.kinds[kind];
   const language = choices(offered)[0]?.value;
   const query = loc.query.get("q") ?? "";
   const status = states.find((s) => s === loc.query.get("status")) ?? "";
-  const accessFilter = loc.query.get("access") ?? "";
+  const accessFilter = spec?.access_scope === "version" ? "" : loc.query.get("access") ?? "";
   const deleted = loc.query.get("deleted") === "1";
   const page = pageOf(loc.query);
   const sizeParam = Number(loc.query.get("size"));
@@ -289,10 +292,12 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
-  const { kinds: model } = useKinds({ client });
   const tiers = model?.tiers ?? [];
   // Reader works take one ZIP per draft, players one video per draft.
-  const presentation = model?.kinds[kind]?.presentation;
+  const presentation = spec?.presentation;
+  const canDeleteParent = !!spec && (presentation !== "reader" || spec.versions.hidden === true);
+  const canChangeParentAccess = !!spec && spec.access_scope !== "version";
+  const canSelect = selectable && (deleted || canDeleteParent || (canChangeParentAccess && tiers.length > 0));
   const bulkable = presentation === "reader" || presentation === "player";
   const [bulkOpen, setBulkOpen] = useState(false);
   const drafts = useRef(new Map<string, Content>()).current;
@@ -334,7 +339,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const [rowErrors, setRowErrors] = useState<Readonly<Record<string, ContentKitError>>>({});
   const [bulk, setBulk] = useState<{ pending: boolean; summary?: string }>({ pending: false });
   const premium = tiers[0];
-  const toggleable = (c: Content) => !!premium && (c.access.level === "public" || c.access.level === "tier");
+  const toggleable = (c: Content) => canChangeParentAccess && !!premium && (c.access.level === "public" || c.access.level === "tier");
   const nextRule = (c: Content, toPremium: boolean): Rule => (toPremium ? { level: "tier", tiers: [premium!] } : { level: "public" });
   const setAccess = async (c: Content, toPremium: boolean) => {
     setBusy((b) => new Set(b).add(c.id));
@@ -441,7 +446,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
             </SelectContent>
           </Select>
         )}
-        <Select value={accessFilter} onValueChange={(v) => filter({ access: String(v ?? "") || undefined })}>
+        {canChangeParentAccess && <Select value={accessFilter} onValueChange={(v) => filter({ access: String(v ?? "") || undefined })}>
           <SelectTrigger size="sm" aria-label={t("contentManager.access")}>
             <SelectValue>
               {(v: string) =>
@@ -465,7 +470,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
               ))}
             {allowsIndividualSales(model, kind) && <SelectItem value="ppv">{t("contentManager.ppv")}</SelectItem>}
           </SelectContent>
-        </Select>
+        </Select>}
       </div>
       <ErrorLine error={del.error} />
       {bulk.summary && (
@@ -473,7 +478,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
           {bulk.summary}
         </p>
       )}
-      {selectable && chosen.length > 0 && (
+      {canSelect && chosen.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 p-2 text-sm" data-ckui="bulk-bar">
           <span className="font-medium">{t("contentManager.selected", { count: chosen.length })}</span>
           {deleted ? (
@@ -482,19 +487,19 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
             </Button>
           ) : (
             <>
-              {premium && (
+              {canChangeParentAccess && premium && (
                 <Button size="sm" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, true) }))}>
                   {t("contentManager.makePremium")}
                 </Button>
               )}
-              {premium && (
+              {canChangeParentAccess && premium && (
                 <Button size="sm" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, false) }))}>
                   {t("contentManager.makeFree")}
                 </Button>
               )}
-              <Button size="sm" variant="destructive" disabled={bulk.pending} onClick={() => void bulkDelete()}>
+              {canDeleteParent && <Button size="sm" variant="destructive" disabled={bulk.pending} onClick={() => void bulkDelete()}>
                 {t("contentManager.delete")}
-              </Button>
+              </Button>}
             </>
           )}
           <Button size="sm" variant="ghost" disabled={bulk.pending} onClick={() => setSelected(new Set())}>
@@ -523,7 +528,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
         </div>
       ) : (
         <ul className="grid divide-y divide-border rounded-lg border border-border" aria-busy={loading}>
-          {selectable && (
+          {canSelect && (
             <li className="flex items-center gap-3 px-3 py-2 text-xs text-muted-foreground">
               <input
                 type="checkbox"
@@ -542,7 +547,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
             const isPremium = c.access.level === "tier";
             return (
               <li key={c.id} className="flex flex-wrap items-start gap-3 p-3" data-ckui="content-row" data-status={deleted ? "deleted" : s}>
-                {selectable && (
+                {canSelect && (
                   <input
                     type="checkbox"
                     className="mt-1 size-4 shrink-0 accent-primary"
@@ -569,9 +574,9 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                   )}
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     {!deleted && <Badge variant={badge[s]}>{t(`contentManager.${s}`)}</Badge>}
-                    <Badge variant={isPremium ? "secondary" : "outline"} data-ckui="access-badge">
+                    {canChangeParentAccess && <Badge variant={isPremium ? "secondary" : "outline"} data-ckui="access-badge">
                       {accessLabel(t, c.access, labels)}
-                    </Badge>
+                    </Badge>}
                     <span className="font-mono">{c.code}</span>
                     <span>{c.language}</span>
                     {c.published_at && s === "published" ? (
@@ -606,9 +611,9 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                       <Button size="sm" variant="outline" onClick={() => open(c)}>
                         {t("comments.edit")}
                       </Button>
-                      <Button size="sm" variant="destructive" disabled={del.pending} onClick={() => void remove(c)}>
+                      {canDeleteParent && <Button size="sm" variant="destructive" disabled={del.pending} onClick={() => void remove(c)}>
                         {t("comments.delete")}
-                      </Button>
+                      </Button>}
                     </>
                   )}
                 </div>
@@ -772,7 +777,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
       if (!item) {
         const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: ownerGroup });
         // Starting entities link once the item exists; version-level kinds need a version first.
-        const linked = (entities ?? []).filter((g) => model?.kinds[kind]?.entities?.includes(g.kind) && !model.entity_kinds[g.kind]?.version_level);
+        const linked = (entities ?? []).filter((g) => model?.kinds[kind]?.entities?.includes(g.kind) && allowsEntityScope(model.entity_kinds[g.kind], "content"));
         if (linked.length) {
           await client.entities
             .setOfContent(created.id, { kinds: [...new Set(linked.map((g) => g.kind))], memberships: linked.map((g) => ({ group_id: g.id })) }, language)

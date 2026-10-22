@@ -114,7 +114,7 @@ func TestConfiguredPolicyAfterContentExistsIntegration(t *testing.T) {
 	closed := gallery("Restore comments", "en")
 	closed.Comments = "hidden"
 	closedID := f.create("staff", closed)
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{closedID}); err != nil {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{closedID}); err != nil {
 		t.Fatal(err)
 	}
 	paid := gallery("Old offer", "en")
@@ -143,7 +143,7 @@ func TestConfiguredPolicyAfterContentExistsIntegration(t *testing.T) {
 	if got := f.read("staff", "main.test", closedID)[0]; got.State != StateDraft || got.Comments != "open" {
 		t.Fatalf("restored state=%s comments=%s", got.State, got.Comments)
 	}
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{paidID}); err != nil {
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{paidID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.Restore(f.ctx, f.as("staff"), []string{paidID}); !errors.Is(err, ErrInvalid) {

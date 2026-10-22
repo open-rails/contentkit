@@ -226,6 +226,9 @@ func (e *Engine) validate(deps Deps) error {
 	}
 	cfg := &e.cfg
 	var err error
+	if err := signal.ValidateActivityCohorts(cfg.ActivityCohorts); err != nil {
+		return fmt.Errorf("contentkit: Config.ActivityCohorts: %w", err)
+	}
 	if err := cfg.Content.Validate(); err != nil {
 		return fmt.Errorf("contentkit: Config.Content: %w", err)
 	}
@@ -691,7 +694,7 @@ func (e *Engine) mount(deps Deps) error {
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
 		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
-		MeasuredEngagement: e.cfg.MeasuredEngagement}
+		MeasuredEngagement: e.cfg.MeasuredEngagement, ActivityCohorts: e.cfg.ActivityCohorts}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if o.Candidates != nil && !e.hub.SignalsConfigured() {
 		e.log.Warn("contentkit: Deps.Candidates needs the signal plane; similar and recommendations are off")

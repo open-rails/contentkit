@@ -14,7 +14,7 @@ const chapter = (start: string, title = "Chapter"): Segment => ({ position: 1, s
 const version = (segments = [chapter(hashes.a, "First"), chapter(hashes.c, "Second")]): Version => ({ id: "v1", code: "EDITION1", position: 1, languages: ["en"], traits: [], state: "draft", live: false, has_audio: false, entities: [], attributes: {}, segments, decision: { allowed: true } });
 const content = (edition: Version): Content => ({
   id: "c1", code: "GALLERY1", kind: "gallery", path: "/g/GALLERY1", language: "en", title: "Gallery", decision: { allowed: true },
-  state: "draft", listing: "listed", comments: "open", live: false, access: { level: "public" }, restrictions: [], attributes: {},
+  state: "draft", comments: "open", live: false, access: { level: "public" }, restrictions: [], attributes: {},
   creators: [], entities: [], versions: [edition], editor: true, revision: 1, created_at: "2026-10-18T00:00:00Z", updated_at: "2026-10-18T00:00:00Z",
 });
 

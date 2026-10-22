@@ -1,8 +1,9 @@
 import { cn } from "cn";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
-import type { Content, ContentModel, Listing, Rule, Segment, SegmentInput, Version } from "../../client/generated/wire.js";
+import type { Content, ContentModel, Rule, Segment, SegmentInput, Version } from "../../client/generated/wire.js";
 import { ruleFor } from "../../client/media/rules.js";
 import { pageRemoved } from "../../client/media/windows.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
@@ -30,7 +31,7 @@ import { GroupPicker, labelOf, useGroupNames, type Labels } from "../groups/part
 import { AttributeFields, formOf } from "../groups/fields.js";
 import { MembershipEditor } from "../groups/memberships.js";
 import { useDraft } from "../../react/use-draft.js";
-import { useEditorSaveTask, readerMediaReady } from "./editor-save.js";
+import { EditorSaveContext, useEditorSaveTask } from "./editor-save.js";
 import { OfferFields } from "./offer-fields.js";
 
 interface Common {
@@ -40,7 +41,6 @@ interface Common {
 }
 
 const NONE = "__none__";
-const LISTINGS: readonly Listing[] = ["listed", "members", "unlisted"];
 const COMMENTS = ["open", "closed", "hidden"] as const;
 type Comments = (typeof COMMENTS)[number];
 const LEVELS: readonly Rule["level"][] = ["public", "tier", "ppv", "group", "group_ppv"];
@@ -115,7 +115,7 @@ function useEditorReload(content: Content, own?: ContentKitClient) {
   };
 }
 
-/** Listing and the kind's declared attributes. */
+/** Comment policy and the kind's declared attributes. */
 export function ContentDetailsEditor(p: Common & { content: Content }) {
   const { client, scope } = useContentScope(p.client);
   const key = useEditorKey(p.content.id, client, scope);
@@ -127,9 +127,9 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
   const client = useContentKitClient(p.client);
   const { spec } = useKind(content.kind, p.client);
   const declared = useMemo(() => spec?.attributes ?? {}, [spec]);
-  const fields = useDraft(useMemo(() => ({ listing: content.listing, comments: content.comments }), [content.listing, content.comments]));
+  const fields = useDraft(useMemo(() => ({ comments: content.comments }), [content.comments]));
   const attrs = useDraft(useMemo(() => formOf(declared, content.attributes), [declared, content.attributes]));
-  const { listing, comments } = fields.value;
+  const { comments } = fields.value;
   const reload = useEditorReload(content, p.client);
   const [invalid, setInvalid] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -149,29 +149,14 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
             return setInvalid((err as Error).message);
           }
           const settleFields = fields.checkpoint(), settleAttrs = attrs.checkpoint();
-          void save.run(() => client.contents.update(content.id, { listing, comments, attributes, revision: content.revision })).then((d) => {
+          void save.run(() => client.contents.update(content.id, { comments, attributes, revision: content.revision })).then((d) => {
             if (!d) return;
-            const cleanFields = settleFields({ listing: d.listing, comments: d.comments });
+            const cleanFields = settleFields({ comments: d.comments });
             const cleanAttrs = settleAttrs(formOf(declared, d.attributes));
             setSaved(cleanFields && cleanAttrs);
           });
         }}
       >
-        <div className="grid gap-1.5 sm:max-w-xs">
-          <Label>{t("contentEditor.listing")}</Label>
-          <Select value={listing} onValueChange={(v) => { fields.edit((f) => ({ ...f, listing: v as Listing })); setSaved(false); }}>
-            <SelectTrigger size="sm" aria-label={t("contentEditor.listing")}>
-              <SelectValue>{(v: string) => t(`contentEditor.listing_${v as Listing}`)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {LISTINGS.map((l) => (
-                <SelectItem key={l} value={l}>
-                  {t(`contentEditor.listing_${l}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
         {spec?.comment_modes?.length !== 1 && (
           <div className="grid gap-1.5 sm:max-w-xs">
             <Label>{t("contentEditor.comments")}</Label>
@@ -200,7 +185,7 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
             const settleFields = fields.checkpoint(), settleAttrs = attrs.checkpoint();
             void save.run(reload).then((d) => {
               if (!d) return;
-              settleFields({ listing: d.listing, comments: d.comments });
+              settleFields({ comments: d.comments });
               settleAttrs(formOf(declared, d.attributes));
               setInvalid(null);
               setSaved(false);
@@ -546,6 +531,17 @@ export interface VersionEditorProps extends Common {
   /** Let the host confirm discarding other unsaved fields before deleting this edition. */
   beforeDelete?: () => boolean | Promise<boolean>;
   onDeleted?: (version: Version) => void;
+  /** Optional header slot for this edition's staged publication time. */
+  scheduleTarget?: HTMLElement | null;
+  onScheduleChange?: (at: string) => void;
+  /** Reflect this edition's staged language before the containing editor saves. */
+  onLanguagesChange?: (languages: readonly string[]) => void;
+  scheduleDisabled?: boolean;
+  showTraits?: boolean;
+  /** Optional footer slot for the destructive version action. */
+  actionsTarget?: HTMLElement | null;
+  /** Reader tools slot for the staged continuous-page layout, when declared. */
+  readerToolsTarget?: HTMLElement | null;
 }
 
 /** One edition's settings, reusable independently of the all-editions manager. */
@@ -556,36 +552,61 @@ export function VersionEditor({ content, version, media = true, chapters = true,
   return <VersionForm key={key} content={content} version={version} model={model} media={media} chapters={chapters} {...p} client={client} />;
 }
 
-function VersionForm({ content, version: v, model, media, chapters = true, beforeDelete, onDeleted, ...p }: Common & { content: Content; version: Version; model: ContentModel | null; media: boolean; chapters?: boolean; beforeDelete?: () => boolean | Promise<boolean>; onDeleted?: (version: Version) => void }) {
+function VersionForm({ content, version: v, model, media, chapters = true, beforeDelete, onDeleted, scheduleTarget, onScheduleChange, onLanguagesChange, scheduleDisabled, showTraits = true, actionsTarget, readerToolsTarget, ...p }: Common & { content: Content; version: Version; model: ContentModel | null; media: boolean; chapters?: boolean; beforeDelete?: () => boolean | Promise<boolean>; onDeleted?: (version: Version) => void; scheduleTarget?: HTMLElement | null; onScheduleChange?: (at: string) => void; onLanguagesChange?: (languages: readonly string[]) => void; scheduleDisabled?: boolean; showTraits?: boolean; actionsTarget?: HTMLElement | null; readerToolsTarget?: HTMLElement | null }) {
   const { t } = useMessages();
   const id = useId();
   const client = useContentKitClient(p.client);
   const spec = model?.kinds[content.kind];
-  const seed = useCallback((v: Version) => ({langs:v.languages,traits:v.traits,label:v.label??"",draft:v.state==="draft",at:toLocalInput(v.publish_at),own:!!v.access,rule:v.access??content.access}),[content.access]);
+  const coordinated = useContext(EditorSaveContext) !== null;
+  const seed = useCallback((v: Version) => ({langs:v.languages,traits:v.traits,at:toLocalInput(v.publish_at),own:!!v.access,rule:v.access??content.access}),[content.access]);
   const fields = useDraft(useMemo(()=>seed(v),[seed,v]));
-  const {langs,traits,label,draft,at,own,rule}=fields.value;
+  const {langs,traits,at,own,rule}=fields.value;
+  const directAccess = spec?.access_scope === "version";
+  useEffect(() => { onScheduleChange?.(at); }, [at, onScheduleChange]);
+  useEffect(() => { onLanguagesChange?.(langs); }, [langs, onLanguagesChange]);
   const edit=(patch:Partial<typeof fields.value>)=>{fields.edit((old)=>({...old,...patch}));setSaved(false);};
-  const [invalid,setInvalid]=useState<string|null>(null);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
   const remove = useAction("content.save", p.onError);
   const offer = useAction("offer.save", p.onError);
-  const valid=langs.length>0&&(!own||complete(rule));
+  const valid=langs.length>0&&(!(directAccess||own)||complete(rule));
   const submit=async()=>{
     if(!valid)return false;
-    setInvalid(null);setSaved(false);
-    if(spec?.presentation==="reader"&&v.state==="draft"&&!draft&&!(await readerMediaReady(client,{kind:content.kind,id:content.id,version:v.id}))){setInvalid(t("readerEditor.filesNotReady"));return false;}
+    setSaved(false);
     const settle=fields.checkpoint();
-    const out=await save.run(()=>client.contents.updateVersion(content.id,v.id,{languages:langs,traits,label:label.trim(),state:draft?"draft":"published",publish_at:fromLocalInput(at),...(own?{access:cleanRule(rule)}:{clear_access:!!v.access})}));
+    const accessChanged = fields.dirty.includes("own") || fields.dirty.includes("rule");
+    const out=await save.run(()=>client.contents.updateVersion(content.id,v.id,{languages:langs,traits,publish_at:fromLocalInput(at),...(accessChanged?(directAccess||own?{access:cleanRule(rule)}:{clear_access:true}):{})}));
     if(!out)return false;
     const clean=settle(seed(out));setSaved(clean);return clean;
   };
   useEditorSaveTask(`version:${v.id}`,{label:t("contentEditor.versions"),dirty:fields.dirty.length>0,pending:save.pending||remove.pending,valid,save:submit,order:10});
+  const schedule = <div className="grid gap-1.5">
+    <Label htmlFor={`${id}-at`}>{t("contentEditor.versionPublishAt")}</Label>
+    <Input id={`${id}-at`} className="h-8" type="datetime-local" value={at} onChange={(e)=>edit({at:e.target.value})} disabled={save.pending || scheduleDisabled} />
+  </div>;
+  const readingLayout = spec?.versions.traits?.includes("manhwa_style") && <div className="grid gap-1.5 sm:max-w-xs">
+    <Label htmlFor={`${id}-layout`}>{t("contentEditor.readingLayout")}</Label>
+    <Select value={traits.includes("manhwa_style") ? "continuous" : "paged"} onValueChange={(value) => edit({ traits: value === "continuous" ? [...new Set([...traits, "manhwa_style"])] : traits.filter((trait) => trait !== "manhwa_style") })}>
+      <SelectTrigger id={`${id}-layout`} size="sm"><SelectValue>{(value: string) => t(value === "continuous" ? "contentEditor.continuousVertical" : "contentEditor.pagedLayout")}</SelectValue></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="paged">{t("contentEditor.pagedLayout")}</SelectItem>
+        <SelectItem value="continuous">{t("contentEditor.continuousVertical")}</SelectItem>
+      </SelectContent>
+    </Select>
+  </div>;
+  const destructive = <>
+    <Button type="button" size="sm" variant="destructive" disabled={remove.pending} onClick={() => void remove.run(async () => {
+      if (beforeDelete && !(await beforeDelete())) return false;
+      await client.contents.removeVersion(content.id, v.id);
+      return true;
+    }).then((removed) => { if (removed) onDeleted?.(v); })}>{t("contentEditor.deleteVersion")}</Button>
+    <ErrorLine error={remove.error} />
+  </>;
   return (
     <div className="grid gap-4 pt-2">
-      <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();void submit();}}>
+      <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();if (!coordinated) void submit();}}>
         <LanguageFields languages={model?.languages ?? []} value={langs} many={spec?.versions.languages === "many"} onChange={(langs)=>edit({langs})} />
-        {!!spec?.versions.traits?.length && (
+        {showTraits && !!spec?.versions.traits?.length && (
           <fieldset className="flex flex-wrap gap-3">
             <legend className="sr-only">{t("contentEditor.traits")}</legend>
             {spec.versions.traits.map((x) => (
@@ -596,42 +617,24 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
             ))}
           </fieldset>
         )}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-1.5">
-            <Label htmlFor={`${id}-label`}>{t("contentEditor.versionLabel")}</Label>
-            <Input id={`${id}-label`} className="h-8" value={label} onChange={(e)=>edit({label:e.target.value})} />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor={`${id}-at`}>{t("contentEditor.versionPublishAt")}</Label>
-            <Input id={`${id}-at`} className="h-8" type="datetime-local" value={at} onChange={(e)=>edit({at:e.target.value})} />
-          </div>
-        </div>
-        <label className="flex items-center gap-2">
-          <Switch size="sm" checked={draft} onCheckedChange={(draft)=>edit({draft})} />
-          {t("contentEditor.versionDraft")}
-        </label>
-        <label className="flex items-center gap-2">
+        {scheduleTarget === undefined ? schedule : scheduleTarget && createPortal(schedule, scheduleTarget)}
+        {!directAccess && <label className="flex items-center gap-2">
           <Switch size="sm" checked={own} onCheckedChange={(own)=>edit({own})} />
           {t("contentEditor.ownAccess")}
-        </label>
-        {own && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
-        {invalid&&<ErrorLine>{invalid}</ErrorLine>}
+        </label>}
+        {(directAccess || own) && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
         <ErrorLine error={save.error} />
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" size="sm" disabled={save.pending || !langs.length || (own && !complete(rule))}>
-            {save.pending ? t("common.saving") : t("common.save")}
-          </Button>
-          <Saved show={saved} />
-          <Button type="button" size="sm" variant="destructive" className="ms-auto" disabled={remove.pending} onClick={() => void remove.run(async () => {
-            if (beforeDelete && !(await beforeDelete())) return false;
-            await client.contents.removeVersion(content.id, v.id);
-            return true;
-          }).then((removed) => { if (removed) onDeleted?.(v); })}>
-            {t("contentEditor.deleteVersion")}
-          </Button>
+          {!coordinated && <>
+            <Button type="submit" size="sm" disabled={save.pending || !langs.length}>
+              {save.pending ? t("common.saving") : t("common.save")}
+            </Button>
+            <Saved show={saved} />
+          </>}
+          {actionsTarget === undefined ? destructive : actionsTarget && createPortal(destructive, actionsTarget)}
         </div>
-        <ErrorLine error={remove.error} />
       </form>
+      {readerToolsTarget && readingLayout && createPortal(readingLayout, readerToolsTarget)}
       {allowsIndividualSales(model, content.kind) && <OfferFields
         offer={v.offer}
         pending={offer.pending}

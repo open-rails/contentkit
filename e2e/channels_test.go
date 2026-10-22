@@ -190,9 +190,9 @@ func TestChannels(t *testing.T) {
 	f.want(http.StatusForbidden, strangerToken, "POST", "/contents", post, nil)
 	var made2 catalog.Content
 	f.want(http.StatusCreated, writerToken, "POST", "/contents", post, &made2)
-	listing := "unlisted"
-	f.want(http.StatusOK, writerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Listing: &listing}, nil)
-	f.want(http.StatusForbidden, strangerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Listing: &listing}, nil)
+	comments := "closed"
+	f.want(http.StatusOK, writerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Comments: &comments}, nil)
+	f.want(http.StatusForbidden, strangerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Comments: &comments}, nil)
 	f.want(http.StatusForbidden, writerToken, "PATCH", path, groups.GroupUpdate{Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Mine"}}}, nil)
 
 	// Renaming the channel renames its product on OpenRails.

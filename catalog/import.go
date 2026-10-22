@@ -18,6 +18,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/codes"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/offers"
@@ -27,13 +28,14 @@ import (
 // state and times kept, trusted (not screened). Nil Creators, Text and a
 // version's Text and Segments keep what is stored; given ones replace it.
 type ImportContent struct {
-	ID          string
-	Kind        string
-	State       string
-	PublishAt   *time.Time
-	PublishedAt *time.Time
-	DeletedAt   *time.Time
-	Listing     string
+	ID               string
+	Kind             string
+	State            string
+	PublishAt        *time.Time
+	PublishedAt      *time.Time
+	DeletedAt        *time.Time
+	OriginalTitle    *string
+	OriginalLanguage *string
 	// Comments is open (when empty), closed or hidden.
 	Comments     string
 	Access       *access.Rule
@@ -81,20 +83,21 @@ type stamped struct {
 }
 
 type importItemRow struct {
-	ID           string          `json:"id"`
-	Kind         string          `json:"kind"`
-	State        string          `json:"state"`
-	PublishAt    *time.Time      `json:"publish_at"`
-	PublishedAt  *time.Time      `json:"published_at"`
-	DeletedAt    *time.Time      `json:"deleted_at"`
-	Listing      string          `json:"listing"`
-	Comments     string          `json:"comments"`
-	Access       json.RawMessage `json:"access"`
-	Restrictions []string        `json:"restrictions"`
-	Attributes   map[string]any  `json:"attributes"`
-	OwnerGroupID *string         `json:"owner_group_id"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID               string          `json:"id"`
+	Kind             string          `json:"kind"`
+	State            string          `json:"state"`
+	PublishAt        *time.Time      `json:"publish_at"`
+	PublishedAt      *time.Time      `json:"published_at"`
+	DeletedAt        *time.Time      `json:"deleted_at"`
+	OriginalTitle    *string         `json:"original_title"`
+	OriginalLanguage *string         `json:"original_language"`
+	Comments         string          `json:"comments"`
+	Access           json.RawMessage `json:"access"`
+	Restrictions     []string        `json:"restrictions"`
+	Attributes       map[string]any  `json:"attributes"`
+	OwnerGroupID     *string         `json:"owner_group_id"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 type importVersionRow struct {
@@ -229,6 +232,19 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	if err != nil {
 		return err
 	}
+	var versionParents []string
+	for _, version := range b.versions {
+		if !slices.Contains(versionParents, version.ContentID) {
+			versionParents = append(versionParents, version.ContentID)
+		}
+	}
+	emptyEvents, err := s.deleteEmptyParents(ctx, tx, versionParents)
+	if err != nil {
+		return err
+	}
+	for _, event := range emptyEvents {
+		changed[event.ContentID] = true
+	}
 	if err := codes.Reserve(ctx, codes.Pgx(tx), s.qs, s.tenant, b.keep); err != nil {
 		return codeError(err)
 	}
@@ -246,6 +262,7 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 		}
 		written = append(written, c.ID)
 	}
+	events = append(events, emptyEvents...)
 	if len(written) == 0 {
 		return nil
 	}
@@ -294,7 +311,7 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 		} else {
 			b.fresh[c.ID] = true
 		}
-		row := importItemRow{ID: c.ID, Kind: c.Kind, State: c.State, Listing: c.Listing, Comments: c.Comments,
+		row := importItemRow{ID: c.ID, Kind: c.Kind, State: c.State, OriginalTitle: c.OriginalTitle, OriginalLanguage: c.OriginalLanguage, Comments: c.Comments,
 			Restrictions: c.Restrictions, Attributes: c.Attributes}
 		row.PublishAt, row.PublishedAt, row.DeletedAt = importTimes(c.State, c.PublishAt, c.PublishedAt, c.DeletedAt, oldp, now)
 		row.Access, _ = json.Marshal(c.Access)
@@ -401,21 +418,22 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 		return err
 	}
 	data := func(v any) string { b, _ := json.Marshal(v); return string(b) }
-	if err := run(changed, `INSERT INTO `+s.t.items+` AS c (tenant_id, id, kind, state, publish_at, published_at, deleted_at, listing, comments,
+	if err := run(changed, `INSERT INTO `+s.t.items+` AS c (tenant_id, id, kind, state, publish_at, published_at, deleted_at, original_title, original_language, comments,
  access, restrictions, attributes, owner_group_id, created_at, updated_at)
- SELECT $1, r.id, r.kind, r.state, r.publish_at, r.published_at, r.deleted_at, r.listing, r.comments, r.access, r.restrictions,
+ SELECT $1, r.id, r.kind, r.state, r.publish_at, r.published_at, r.deleted_at, r.original_title, r.original_language, r.comments, r.access, r.restrictions,
   r.attributes, r.owner_group_id, r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, kind text, state text, publish_at timestamptz, published_at timestamptz, deleted_at timestamptz,
-  listing text, comments text, access jsonb, restrictions text[], attributes jsonb, owner_group_id text,
+  original_title text, original_language text, comments text, access jsonb, restrictions text[], attributes jsonb, owner_group_id text,
   created_at timestamptz, updated_at timestamptz)
  ON CONFLICT (tenant_id, id) DO UPDATE SET state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at,
-  deleted_at = EXCLUDED.deleted_at, listing = EXCLUDED.listing, comments = EXCLUDED.comments,
+  deleted_at = EXCLUDED.deleted_at, deleted_without_versions=false, original_title = coalesce(EXCLUDED.original_title,c.original_title),
+  original_language = coalesce(EXCLUDED.original_language,c.original_language), comments = EXCLUDED.comments,
   access = EXCLUDED.access, restrictions = EXCLUDED.restrictions, attributes = EXCLUDED.attributes, owner_group_id = EXCLUDED.owner_group_id,
   created_at = EXCLUDED.created_at
- WHERE (c.state, c.publish_at, c.published_at, c.deleted_at, c.listing, c.comments, c.access, c.restrictions, c.attributes,
+ WHERE (c.state, c.publish_at, c.published_at, c.deleted_at, c.original_title, c.original_language, c.comments, c.access, c.restrictions, c.attributes,
   c.owner_group_id, c.created_at)
-  IS DISTINCT FROM (EXCLUDED.state, EXCLUDED.publish_at, EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.listing, EXCLUDED.comments,
-  EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_group_id, EXCLUDED.created_at)
+  IS DISTINCT FROM (EXCLUDED.state, EXCLUDED.publish_at, EXCLUDED.published_at, EXCLUDED.deleted_at, coalesce(EXCLUDED.original_title,c.original_title),
+  coalesce(EXCLUDED.original_language,c.original_language), EXCLUDED.comments, EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_group_id, EXCLUDED.created_at) OR c.deleted_without_versions
  RETURNING c.id`, s.tenant, data(b.items)); err != nil {
 		return nil, nil, err
 	}
@@ -623,11 +641,19 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 	default:
 		return invalid("state %q must be draft, published or deleted", c.State)
 	}
-	if c.Listing == "" {
-		c.Listing = ListingListed
+	if c.OriginalTitle != nil {
+		value, _, err := cleanOriginalTitle(*c.OriginalTitle, "")
+		if err != nil {
+			return err
+		}
+		c.OriginalTitle = &value
 	}
-	if err := s.checkListing(c.Listing); err != nil {
-		return err
+	if c.OriginalLanguage != nil {
+		_, value, err := cleanOriginalTitle("", *c.OriginalLanguage)
+		if err != nil {
+			return err
+		}
+		c.OriginalLanguage = &value
 	}
 	if c.Comments == "" {
 		c.Comments = s.defaultComments(c.Kind)
@@ -661,6 +687,11 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 	}
 	if c.Attributes, err = checkAttributes(k.Attributes, c.Attributes); err != nil {
 		return err
+	}
+	if c.State == StatePublished {
+		if err := kinds.ValidateRequiredAttributes(k.Attributes, c.Attributes); err != nil {
+			return invalid("%v", err)
+		}
 	}
 	if c.OwnerGroupID != "" {
 		if err := contentref.ValidateID(c.OwnerGroupID); err != nil {
@@ -918,16 +949,27 @@ func (s *Store) resyncSold(ctx context.Context, tx pgx.Tx, retitled map[string]b
 	return s.offers.Resync(ctx, tx, targets)
 }
 
-// ImportDeletes deletes content items and versions in tx as Delete and
-// DeleteVersions do: holders of a deleted item's key still read it, and one
-// never sold is erased after the retention. Deleted ones stay as they are; a
-// kind's one hidden version goes only with its item.
+// ImportDeletes preserves the source's independent content tombstones and
+// follows version deletion with automatic empty-parent deletion. Purchased
+// content is still retained for its holders. Hidden versions go with their item.
 func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions []string) error {
 	var events []Event
 	touched := map[string]bool{}
+	locked, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND
+ (c.id=ANY($2) OR c.id IN (SELECT v.content_id FROM `+s.t.versions+` v WHERE v.tenant_id=$1 AND v.id=ANY($3))) ORDER BY c.id FOR UPDATE`, s.tenant, contents, versions)
+	if err != nil {
+		return err
+	}
+	for locked.Next() {
+	}
+	err = locked.Err()
+	locked.Close()
+	if err != nil {
+		return err
+	}
 	if len(contents) > 0 {
-		rows, err := tx.Query(ctx, `UPDATE `+s.t.items+` SET state = 'deleted', deleted_at = clock_timestamp()
- WHERE tenant_id = $1 AND id = ANY($2) AND state <> 'deleted' RETURNING id, kind`, s.tenant, contents)
+		rows, err := tx.Query(ctx, `UPDATE `+s.t.items+` SET state = 'deleted', deleted_at = clock_timestamp(),deleted_without_versions=false
+ WHERE tenant_id = $1 AND id = ANY($2) AND (state <> 'deleted' OR deleted_without_versions) RETURNING id, kind`, s.tenant, contents)
 		if err != nil {
 			return err
 		}
@@ -978,6 +1020,11 @@ func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions
 		return nil
 	}
 	ids := slices.Sorted(maps.Keys(touched))
+	deleted, err := s.deleteEmptyParents(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
+	events = append(events, deleted...)
 	return s.apply(ctx, tx, ids, effects{events: events, expose: true})
 }
 
