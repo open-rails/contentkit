@@ -64,7 +64,7 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     // The child tears compose down on exit, so capture diagnostics first.
     if (env("CKUI_E2E_KEEP_LOGS")) {
       try {
-        process.stderr.write(dc("--profile", "worker", "logs", "--no-color", "media-worker", "media-gateway"));
+        process.stderr.write(dc("--profile", "worker", "logs", "--no-color", "media-worker", "media-gateway", "postgres"));
       } catch {
         // already gone
       }
