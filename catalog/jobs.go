@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -512,6 +513,9 @@ type deliverEventsWorker struct {
 
 func (w *deliverEventsWorker) Work(ctx context.Context, job *river.Job[deliverEventsArgs]) error {
 	_, err := w.s.DeliverEvents(ctx)
+	if errors.Is(err, ErrEventDeliveryBusy) {
+		return river.JobSnooze(time.Second)
+	}
 	return err
 }
 

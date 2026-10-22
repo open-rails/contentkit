@@ -109,10 +109,14 @@ const eventBatch = 200
 // deliveredRetention is how long delivered events stay in the outbox.
 const deliveredRetention = 7 * 24 * time.Hour
 
+// ErrEventDeliveryBusy means another delivery holds this tenant's delivery lock.
+var ErrEventDeliveryBusy = errors.New("catalog: event delivery already in progress")
+
 // DeliverEvents hands undelivered events to the subscribers in batches, in
 // order, and marks each batch delivered once every subscriber took it; it
 // stops at the first failure, which it returns. Delivered events older than a
-// week are pruned. It returns how many events were delivered.
+// week are pruned. It returns how many events were delivered and
+// ErrEventDeliveryBusy if another delivery holds the tenant's lock.
 func (s *Store) DeliverEvents(ctx context.Context) (int, error) {
 	s.mu.Lock()
 	subs := append([]Subscriber(nil), s.subscribers...)
@@ -137,8 +141,12 @@ func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber) (int, error
 	}
 	defer tx.Rollback(ctx)
 	// Nonunique wake-ups may run together; deliver their batches in order.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "contentkit:catalog:events:"+s.schema+":"+s.tenant); err != nil {
+	var locked bool
+	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))`, "contentkit:catalog:events:"+s.schema+":"+s.tenant).Scan(&locked); err != nil {
 		return 0, err
+	}
+	if !locked {
+		return 0, ErrEventDeliveryBusy
 	}
 	rows, err := tx.Query(ctx, `SELECT id, type, payload, created_at FROM `+s.t.events+`
  WHERE tenant_id = $1 AND delivered_at IS NULL ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`, s.tenant, eventBatch)

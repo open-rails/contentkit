@@ -239,13 +239,13 @@ func TestCatalogEventsDeliverWithPeriodicJobsDisabled(t *testing.T) {
 		t.Fatal("mutation did not wake the delivery worker:", ctx.Err())
 	}
 	second := f.create("staff", gallery("Follow-up immediate delivery", "en"))
+	jobs := pgx.Identifier{schema, "river_job"}.Sanitize()
 	poll := time.NewTicker(10 * time.Millisecond)
 	defer poll.Stop()
 	for {
 		var waiting bool
-		if err := f.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted
- AND classid=((hashtextextended($1,0) >> 32) & 4294967295)::oid
- AND objid=(hashtextextended($1,0) & 4294967295)::oid)`, "contentkit:catalog:events:"+f.schema+":"+tenant).Scan(&waiting); err != nil {
+		if err := f.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+jobs+` WHERE kind='contentkit_catalog_deliver_events'
+ AND state IN ('available','scheduled') AND attempt=0 AND coalesce((metadata->>'snoozes')::int,0)>0)`).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {
@@ -256,8 +256,37 @@ func TestCatalogEventsDeliverWithPeriodicJobsDisabled(t *testing.T) {
 			t.Fatalf("delivery overtook the held subscriber: %+v", event)
 		case <-poll.C:
 		case <-ctx.Done():
-			t.Fatal("second delivery did not wait for the first:", ctx.Err())
+			t.Fatal("second delivery did not snooze without consuming an attempt:", ctx.Err())
 		}
+	}
+	if n, err := f.s.DeliverEvents(ctx); n != 0 || !errors.Is(err, ErrEventDeliveryBusy) {
+		t.Fatalf("concurrent direct delivery = %d, %v; want 0, ErrEventDeliveryBusy", n, err)
+	}
+	// The snoozed wake-up must leave the other catalog worker slot free.
+	other, err := client.Insert(ctx, refreshCountsArgs{}, &river.InsertOpts{Queue: Queue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var completed bool
+		if err := f.pool.QueryRow(ctx, `SELECT state='completed' FROM `+jobs+` WHERE id=$1`, other.Job.ID).Scan(&completed); err != nil {
+			t.Fatal(err)
+		}
+		if completed {
+			break
+		}
+		select {
+		case event := <-delivered:
+			t.Fatalf("delivery overtook the held subscriber: %+v", event)
+		case <-poll.C:
+		case <-ctx.Done():
+			t.Fatal("snoozed delivery did not free its worker slot:", ctx.Err())
+		}
+	}
+	select {
+	case event := <-delivered:
+		t.Fatalf("delivery overtook the held subscriber: %+v", event)
+	default:
 	}
 	unblock()
 	want := map[string]bool{first: true, second: true}
@@ -265,6 +294,9 @@ func TestCatalogEventsDeliverWithPeriodicJobsDisabled(t *testing.T) {
 		select {
 		case event := <-delivered:
 			if event.Type == EventContentCreated {
+				if event.ContentID == second && want[first] {
+					t.Fatal("second event arrived before the first")
+				}
 				delete(want, event.ContentID)
 			}
 		case <-ctx.Done():
