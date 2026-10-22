@@ -420,6 +420,9 @@ func (o *opRun) put(op Op) error {
 			return nil // unchanged source and edit
 		}
 	}
+	if !o.trusted && o.k.Versions {
+		delete(m.Meta, "fork_failed") // versions: an editor's own upload settles a fork that gave up
+	}
 	f.Pending = k.Presets(f.Path, m.Hidden)
 	return o.place(g, i, f, op.Index)
 }

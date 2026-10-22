@@ -32,7 +32,7 @@ type Fork struct {
 const (
 	forkMeta       = "fork"        // the destination's barrier while it is copied
 	forkedMeta     = "forked"      // a finished fork's receipt
-	forkFailedMeta = "fork_failed" // the last fork's failure, until a fork finishes
+	forkFailedMeta = "fork_failed" // the last fork's failure, until a fork finishes or an editor uploads (media's put)
 )
 
 type forkIntent struct {
