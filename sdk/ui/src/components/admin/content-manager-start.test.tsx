@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
@@ -51,7 +51,8 @@ function blogServer() {
     if (path === "/manage" || path === "/manage/blog") return Response.json([post]);
     if (path === "/contents/p1" && (init?.method ?? "GET") === "GET") return Response.json(post);
     if (path === "/contents/p1/text/en" && init?.method === "PUT") {
-      const text = JSON.parse(String(init.body));
+      // Like the server, the stored body is normalized.
+      const text = { ...JSON.parse(String(init.body)), body: String(JSON.parse(String(init.body)).body ?? "").trim() };
       writes.push(`text:${text.title}`);
       post = { ...post, title: text.title, text: { en: text } } as Content;
       return Response.json(post);
@@ -82,4 +83,17 @@ it("asks before switching language discards a post's unsaved text", async () => 
   await user.click(await screen.findByRole("option", { name: "de" }));
   expect(await screen.findByText("Unsaved changes in this language will be discarded.")).toBeVisible();
   expect(screen.getByLabelText("Title")).toHaveValue("Unsaved");
+});
+
+it("takes the server's normalized text back after saving, so nothing reads as unsaved", async () => {
+  const user = userEvent.setup();
+  const { writes } = blogServer();
+  fireEvent.change(await screen.findByLabelText("Body"), { target: { value: "Hello\n" } });
+  const form = screen.getByLabelText("Body").closest("form")!;
+  fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(writes).toEqual(["text:Old title"]));
+  await waitFor(() => expect(screen.getByLabelText("Body")).toHaveValue("Hello"));
+  await user.click(screen.getByRole("combobox", { name: "Language" }));
+  await user.click(await screen.findByRole("option", { name: "de" }));
+  expect(screen.queryByText("Unsaved changes in this language will be discarded.")).toBeNull();
 });
