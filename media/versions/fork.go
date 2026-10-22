@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -29,8 +30,9 @@ type Fork struct {
 }
 
 const (
-	forkMeta   = "fork"   // the destination's barrier while it is copied
-	forkedMeta = "forked" // a finished fork's receipt
+	forkMeta       = "fork"        // the destination's barrier while it is copied
+	forkedMeta     = "forked"      // a finished fork's receipt
+	forkFailedMeta = "fork_failed" // the last fork's failure, until a fork finishes
 )
 
 type forkIntent struct {
@@ -40,9 +42,23 @@ type forkIntent struct {
 	Segments bool   `json:"segments,omitempty"`
 }
 
-// errForkConflict is a fork whose destination holds other media, or whose
-// source changed while it was copied: discard the destination and fork again.
-var errForkConflict = errors.New("versions: fork destination has other media or its source changed")
+// A fork whose destination holds other media, or whose source changed while
+// it was copied, gives up: discard the destination and fork again.
+var (
+	errForkConflict = errors.New("versions: fork destination has other media")
+	errForkSource   = errors.New("versions: fork source changed while it was copied")
+)
+
+// forkFailure is a failed fork's receipt, naming the fork to try again.
+// Reason is "destination" (errForkConflict), "source" (errForkSource) or
+// "error" (out of retries).
+type forkFailure struct {
+	From     string    `json:"from"`
+	Playback bool      `json:"playback,omitempty"`
+	Segments bool      `json:"segments,omitempty"`
+	Reason   string    `json:"reason"`
+	At       time.Time `json:"at"`
+}
 
 // ForkTx queues forks in tx; each runs as a durable job, and its destination
 // takes no other writes until it finishes.
@@ -77,6 +93,7 @@ func forkSource(k *media.Kind, m *media.Manifest, playback bool) (string, []medi
 	meta := maps.Clone(m.Meta)
 	delete(meta, forkMeta)
 	delete(meta, forkedMeta)
+	delete(meta, forkFailedMeta)
 	if rm, ok := readerMetaOf(m); ok && !playback {
 		rm.Background, rm.Foreground = nil, nil
 		meta[readerMeta] = rm
@@ -155,8 +172,12 @@ func (s *Service) fork(ctx context.Context, a forkArgs) error {
 		}
 		return errForkConflict
 	}
-	if !pending && dest != nil && (len(dest.Files) > 0 || len(dest.Meta) > 0) {
-		return errForkConflict
+	if !pending && dest != nil {
+		meta := maps.Clone(dest.Meta)
+		delete(meta, forkFailedMeta)
+		if len(dest.Files) > 0 || len(meta) > 0 {
+			return errForkConflict
+		}
 	}
 	from, _, err := s.m.Manifests.Get(ctx, sref)
 	if errors.Is(err, media.ErrNotFound) {
@@ -173,6 +194,9 @@ func (s *Service) fork(ctx context.Context, a forkArgs) error {
 	}
 	want := forkIntent{From: a.From, Snapshot: snap, Playback: a.Playback, Segments: a.Segments}
 	if pending && prior != want {
+		if prior.From == want.From && prior.Playback == want.Playback && prior.Segments == want.Segments {
+			return errForkSource
+		}
 		return errForkConflict
 	}
 	if !pending {
@@ -208,7 +232,7 @@ func (s *Service) fork(ctx context.Context, a forkArgs) error {
 		now = &media.Manifest{V: media.ManifestVersion}
 	}
 	if again, _, _, err := forkSource(k, now, a.Playback); err != nil || again != snap {
-		return errors.Join(errForkConflict, err)
+		return errors.Join(errForkSource, err)
 	}
 	err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 		if a.Segments {
@@ -225,9 +249,38 @@ AND NOT EXISTS (SELECT 1 FROM `+s.t.segments+` WHERE tenant_id = $1 AND version_
 	}
 	_, err = s.m.Manifests.EditExisting(ctx, dref, func(m *media.Manifest) error {
 		delete(m.Meta, forkMeta)
+		delete(m.Meta, forkFailedMeta)
 		m.Meta[forkedMeta] = want
 		return nil
 	})
+	return err
+}
+
+// forkFailed ends a fork that gave up, recording why. The destination held
+// nothing before this fork's barrier, so the barrier goes with the metadata
+// it copied; files it copied stay for the editor to remove.
+func (s *Service) forkFailed(ctx context.Context, a forkArgs, reason string) error {
+	dst := Target{Content: a.Content, Version: a.Version}
+	v, err := s.one(ctx, dst)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	ref, err := s.ref(v.Kind, dst)
+	if err != nil {
+		return err
+	}
+	_, err = s.m.Manifests.Edit(ctx, ref, func(m *media.Manifest) error {
+		if p, ok := intent(m, forkMeta); ok && p.From == a.From && p.Playback == a.Playback && p.Segments == a.Segments || m.Meta == nil {
+			m.Meta = map[string]any{}
+		}
+		m.Meta[forkFailedMeta] = forkFailure{From: a.From, Playback: a.Playback, Segments: a.Segments, Reason: reason, At: time.Now().UTC()}
+		return nil
+	})
+	if errors.Is(err, media.ErrNotFound) {
+		return nil
+	}
 	return err
 }
 

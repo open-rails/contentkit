@@ -217,10 +217,29 @@ func (w *forkWorker) Timeout(*river.Job[forkArgs]) time.Duration { return time.H
 
 func (w *forkWorker) Work(ctx context.Context, job *river.Job[forkArgs]) error {
 	err := w.s.fork(ctx, job.Args)
-	if errors.Is(err, errForkConflict) {
-		return river.JobCancel(err)
+	reason := ""
+	switch {
+	case errors.Is(err, errForkConflict):
+		reason = "destination"
+	case errors.Is(err, errForkSource):
+		reason = "source"
+	default:
+		err = outcome(err)
+		var cancel *rivertype.JobCancelError
+		var snooze *rivertype.JobSnoozeError
+		if err == nil || job.Attempt < job.MaxAttempts || errors.As(err, &cancel) || errors.As(err, &snooze) {
+			return err
+		}
+		// River discards the job after this attempt.
+		if ferr := w.s.forkFailed(ctx, job.Args, "error"); ferr != nil {
+			return errors.Join(err, ferr)
+		}
+		return err
 	}
-	return outcome(err)
+	if ferr := w.s.forkFailed(ctx, job.Args, reason); ferr != nil {
+		return ferr
+	}
+	return river.JobCancel(err)
 }
 
 type recoverWorker struct {
