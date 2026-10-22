@@ -13,8 +13,10 @@ const pages: FileInfo[] = ["cover.png", "00a.png", "06-07.png"].map((name) => ({
 const rule = { path: "pages/{name}", page: true, types: ["image/png"], max_bytes: 100 };
 const titleSeed = { title: "Original" };
 
-function fixture(fail = false) {
+function fixture(fail = false, renditions = 0) {
   const stored = pages.map((file) => ({ ...file }));
+  // Derived files are listed beside uploads, as a real version's renditions are.
+  const derived: FileInfo[] = Array.from({ length: renditions }, (_, i) => ({ path: `low-res/${i}.webp`, type: "image/webp" }));
   const commit = vi.fn(async (_ref: unknown, ops: Op[]) => {
     if (fail) throw new Error("save failed");
     for (const op of ops) {
@@ -25,7 +27,11 @@ function fixture(fail = false) {
     }
     return stored.map((file) => ({ ...file }));
   });
-  const read = vi.fn(async () => ({ files: stored, total: stored.length, limit: 200, offset: 0, uploads: [rule] }));
+  // Like the server, every read lists all files; offset and limit only pick which get URLs.
+  const read = vi.fn(async (_ref: unknown, o: { offset?: number; limit?: number }) => {
+    const files = [...stored, ...derived];
+    return { files, total: files.length, limit: Math.min(o.limit || 50, 200), offset: o.offset ?? 0, uploads: [rule] };
+  });
   const client = { media: { commit, read } } as unknown as ContentKitClient;
   const source = { ref: { kind: "gallery", id: "gallery", version: "edition" }, groups: [{ path: rule.path, rule, files: pages }], read: { reload: vi.fn() } } as unknown as UseMediaFolder;
   function Editor() {
@@ -70,6 +76,20 @@ it("stages reorder, deletion and filename changes locally and commits once on Sa
     { op: "move", path: "pages/spread.png", index: 0 },
   ]);
   await waitFor(() => expect(screen.getByText("Undo")).toBeDisabled());
+});
+
+it("saves edits to a version listing more than 200 files", async () => {
+  const { commit, read } = fixture(false, 250);
+  fireEvent.click(screen.getByText("Rename"));
+  fireEvent.click(screen.getByText("Move"));
+  fireEvent.click(screen.getByText("Save"));
+  await waitFor(() => expect(commit).toHaveBeenCalledOnce());
+  expect(read).toHaveBeenCalledOnce();
+  expect(commit.mock.calls[0]![1]).toEqual([
+    { op: "rename", path: "pages/06-07.png", to: "pages/spread.png" },
+    { op: "move", path: "pages/00a.png", index: 0 },
+    { op: "move", path: "pages/spread.png", index: 1 },
+  ]);
 });
 
 it("keeps shared undo/redo and dirty drafts after a failed save", async () => {
