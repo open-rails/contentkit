@@ -7,7 +7,7 @@ import { acceptOf, isPattern } from "../../client/media/rules.js";
 import type { Progress } from "../../client/media/client.js";
 import { samePath } from "../../client/media/client.js";
 import { isProcessing } from "../../client/media/windows.js";
-import { useLanguageName, useMessages } from "../../i18n/context.js";
+import { useMessages } from "../../i18n/context.js";
 import { useFlowClient } from "../../react/admin.js";
 import { useContentKitClient, useErrorReporter, useGuarded, type ContentKitErrorHandler } from "../../react/context.js";
 import { usePublicImage } from "../../react/public.js";
@@ -57,7 +57,7 @@ export function videoPaths(rules: readonly UploadRule[]): { source?: string; pos
 }
 
 type ItemState = "ready" | "processing" | "failed" | "empty";
-const choices = (list?: readonly Choice[], name: (code: string) => string = (c) => c) => (list ?? []).map((c) => (typeof c === "string" ? { value: c, label: name(c) } : c));
+const choices = (list?: readonly Choice[]) => (list ?? []).map((c) => (typeof c === "string" ? { value: c, label: c } : c));
 const under = (pattern: string) => pattern.slice(0, pattern.indexOf("{name}"));
 
 /**
@@ -222,8 +222,7 @@ function PosterSection({ item, path, video, preset, client, onError }: { item: R
 function Subtitles({ item, pattern, accept, files, languages: offered, client, onError }: { item: RefBody; pattern: string; accept?: string; files: FileInfo[]; languages?: readonly Choice[] } & Inner) {
   const { t } = useMessages();
   const ids = useId();
-  const languageName = useLanguageName();
-  const languages = choices(offered, languageName);
+  const languages = choices(offered);
   const [lang, setLang] = useState(languages[0]?.value ?? "");
   const [label, setLabel] = useState("");
   const [forced, setForced] = useState(false);
