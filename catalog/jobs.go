@@ -501,9 +501,25 @@ type publishDueArgs struct{}
 
 func (publishDueArgs) Kind() string { return "contentkit_catalog_publish_due" }
 
-type deliverEventsArgs struct{}
+type deliverEventsArgs struct {
+	After int64 `json:"after,omitempty"`
+}
 
-func (deliverEventsArgs) Kind() string { return "contentkit_catalog_deliver_events" }
+func (deliverEventsArgs) Kind() string                      { return "contentkit_catalog_deliver_events" }
+func (a deliverEventsArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
+
+type deliverEventsWorker struct {
+	river.WorkerDefaults[deliverEventsArgs]
+	s *Store
+}
+
+func (w *deliverEventsWorker) Work(ctx context.Context, job *river.Job[deliverEventsArgs]) error {
+	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
+		return err
+	}
+	_, err := w.s.DeliverEvents(ctx)
+	return err
+}
 
 type refreshCountsArgs struct{}
 
@@ -533,8 +549,8 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 
 // RiverJobs contributes the catalog's periodic jobs to the engine's River
 // client: scheduled publication and free_after releases (every 30s), event
-// delivery (5s), interaction counts (5m), purging deleted content (1h) and
-// expiring drafts (10m).
+// delivery recovery (5m; writes enqueue immediately), interaction counts (5m),
+// purging deleted content (1h) and expiring drafts (10m).
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-catalog", func(_ context.Context, cfg *river.Config) error {
 		if q, ok := cfg.Queues[Queue]; ok && q.MaxWorkers < 1 {
@@ -550,7 +566,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &jobWorker[publishDueArgs]{run: s.PublishDue}) },
 			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &jobWorker[deliverEventsArgs]{run: s.DeliverEvents})
+				return river.AddWorkerSafely(cfg.Workers, &deliverEventsWorker{s: s})
 			},
 			func() error {
 				return river.AddWorkerSafely(cfg.Workers, &jobWorker[refreshCountsArgs]{run: s.RefreshCounts})
@@ -571,11 +587,21 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,
 			periodic("contentkit_catalog_publish_due", 30*time.Second, publishDueArgs{}),
-			periodic("contentkit_catalog_deliver_events", 5*time.Second, deliverEventsArgs{}),
+			periodic("contentkit_catalog_deliver_events", 5*time.Minute, deliverEventsArgs{}),
 			periodic("contentkit_catalog_refresh_counts", 5*time.Minute, refreshCountsArgs{}),
 			periodic("contentkit_catalog_purge_deleted", time.Hour, purgeDeletedArgs{}),
 			periodic("contentkit_catalog_expire_drafts", 10*time.Minute, expireDraftsArgs{}),
 			periodic("contentkit_catalog_release_free", 30*time.Second, releaseFreeArgs{}))
 		return nil
-	}, nil, nil)
+	}, func(_ context.Context, binding riverhelpers.Binding) error {
+		s.mu.Lock()
+		s.jobs = binding.Client
+		s.mu.Unlock()
+		return nil
+	}, func() error {
+		s.mu.Lock()
+		s.jobs = nil
+		s.mu.Unlock()
+		return nil
+	})
 }

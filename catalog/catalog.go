@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/helpers/cache"
+	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
@@ -143,6 +144,7 @@ type Store struct {
 
 	mu          sync.Mutex
 	subscribers []Subscriber
+	jobs        *river.Client[pgx.Tx]
 }
 
 type tables struct {

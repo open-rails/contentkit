@@ -5,6 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/media"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 )
 
 // Event types written to the outbox.
@@ -73,7 +78,28 @@ func (s *Store) emit(ctx context.Context, q Querier, events ...Event) error {
 	_, err := q.Exec(ctx, `INSERT INTO `+s.t.events+` (tenant_id, type, entity_id, payload)
  SELECT $1, t, e, p::jsonb FROM unnest($2::text[], $3::text[], $4::text[]) WITH ORDINALITY AS x(t, e, p, n) ORDER BY n`,
 		s.tenant, types, entities, payloads)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.enqueueEvents(ctx, q)
+}
+
+// Queue delivery with the outbox write. A running delivery may already have
+// read its last batch, so InsertOnce retains one follow-up instead of losing
+// the wake-up. An unbound/older producer is covered by the recovery sweep.
+func (s *Store) enqueueEvents(ctx context.Context, q Querier) error {
+	s.mu.Lock()
+	client := s.jobs
+	s.mu.Unlock()
+	if client == nil {
+		return nil
+	}
+	return media.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+		if tx, ok := q.(pgx.Tx); ok {
+			return client.InsertTx(ctx, tx, args, opts)
+		}
+		return client.Insert(ctx, args, opts)
+	}, deliverEventsArgs{}, river.InsertOpts{Queue: Queue, MaxAttempts: 3})
 }
 
 // eventBatch bounds one delivery.

@@ -11,6 +11,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
+	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
@@ -47,6 +49,8 @@ type Options struct {
 type Store struct {
 	o                      Options
 	table, items, versions string
+	mu                     sync.Mutex
+	jobs                   *river.Client[pgx.Tx]
 }
 
 func New(o Options) (*Store, error) {

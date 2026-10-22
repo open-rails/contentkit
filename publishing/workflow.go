@@ -80,12 +80,23 @@ func (s *Store) Complete(ctx context.Context, actor access.Actor, id string) (Op
 		}
 		return r.Operation, err
 	}
-	tag, err = s.o.Pool.Exec(ctx, `UPDATE `+s.table+` SET state='processing',progress='{"stage":"importing","completed":0,"total":0}',updated_at=now() WHERE tenant_id=$1 AND id=$2 AND lease_id=$3`, s.o.Tenant, id, lease)
+	tx, err := s.o.Pool.Begin(ctx)
+	if err != nil {
+		return r.Operation, err
+	}
+	defer tx.Rollback(ctx)
+	tag, err = tx.Exec(ctx, `UPDATE `+s.table+` SET state='processing',progress='{"stage":"importing","completed":0,"total":0}',updated_at=now() WHERE tenant_id=$1 AND id=$2 AND lease_id=$3`, s.o.Tenant, id, lease)
 	if err != nil {
 		return r.Operation, err
 	}
 	if tag.RowsAffected() != 1 {
 		return r.Operation, &OperationError{Code: "operation_busy", Message: "operation lease changed while completing; retry", Retryable: true}
+	}
+	if err = s.enqueueOperation(ctx, tx, id); err != nil {
+		return r.Operation, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return r.Operation, err
 	}
 	r, err = s.load(ctx, s.o.Pool, id)
 	return r.Operation, err
@@ -97,8 +108,9 @@ func (s *Store) release(ctx context.Context, id, lease string) {
 	_, _ = s.o.Pool.Exec(clean, `UPDATE `+s.table+` SET lease_id=NULL,lease_until=NULL WHERE tenant_id=$1 AND id=$2 AND lease_id=$3`, s.o.Tenant, id, lease)
 }
 
-// Reconcile advances a bounded batch independently of HTTP traffic. Repeating
-// it after a crash is safe; River's periodic contribution supplies recovery.
+// Reconcile queues monitors for a bounded batch independently of HTTP traffic.
+// Without a bound fleet it advances the batch inline. Repeating it after a
+// crash is safe; River's periodic contribution supplies recovery.
 func (s *Store) Reconcile(ctx context.Context) error {
 	rows, err := s.o.Pool.Query(ctx, `SELECT operations.id::text FROM `+s.table+` operations WHERE tenant_id=$1 AND (state IN ('processing','publishing','review_required') OR state='blocked' AND failure->>'retryable'='true' OR state='scheduled' AND publish_at<=$2) AND (lease_until IS NULL OR lease_until<now()) ORDER BY operations.reconcile_at,operations.id LIMIT 25`, s.o.Tenant, s.o.Clock())
 	if err != nil {
@@ -110,7 +122,13 @@ func (s *Store) Reconcile(ctx context.Context) error {
 	}
 	var all error
 	for _, id := range ids {
-		if err := s.reconcile(ctx, id); err != nil {
+		var err error
+		if s.client() != nil {
+			err = s.recoverOperation(ctx, id)
+		} else {
+			err = s.reconcile(ctx, id)
+		}
+		if err != nil {
 			s.o.Logger.WarnContext(ctx, "publishing operation will retry", "operation", id, "error", err)
 			all = errors.Join(all, err)
 		}

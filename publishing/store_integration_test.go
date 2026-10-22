@@ -51,14 +51,18 @@ type fixture struct {
 	s      *Store
 	actor  access.Actor
 	schema string
+	jobs   *media.Jobs
 }
 
-func newFixture(t *testing.T) fixture {
+func newFixture(t *testing.T, tune ...func(*pgxpool.Config)) fixture {
 	t.Helper()
 	env := mediatest.Open(t)
 	schema := env.ContentSchema()
 	pc := env.Pool().Config()
 	pc.MaxConns = 1
+	for _, configure := range tune {
+		configure(pc)
+	}
 	pool, err := pgxpool.NewWithConfig(t.Context(), pc)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +108,7 @@ func newFixture(t *testing.T) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fixture{s: s, actor: testauth.Actor(access.Actor{ID: "publisher"}, roles), schema: schema}
+	return fixture{s: s, actor: testauth.Actor(access.Actor{ID: "publisher"}, roles), schema: schema, jobs: jobs}
 }
 
 func request() Request {
