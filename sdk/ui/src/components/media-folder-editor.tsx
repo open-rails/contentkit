@@ -19,7 +19,7 @@ import { useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEve
 import type { ContentKitUiAppearance } from "../appearance.js";
 import type { AspectRatio } from "../client/aspect.js";
 import { failureError } from "../client/errors.js";
-import { isAudioType, isImageType, isSubtitleType, isVideoType } from "../client/gallery.js";
+import { formatDuration, isAudioType, isImageType, isSubtitleType, isVideoType } from "../client/gallery.js";
 import type { FileInfo, RefBody, UploadRule } from "../client/generated/wire.js";
 import { stem } from "../client/media/client.js";
 import type { QueueItem } from "../client/media/queue.js";
@@ -27,6 +27,7 @@ import { acceptOf, ratioLabel, ruleFor } from "../client/media/rules.js";
 import { isProcessing, pageRemoved } from "../client/media/windows.js";
 import { useMessages } from "../i18n/context.js";
 import { megabytes, type Translator } from "../i18n/messages.js";
+import { AudioPreview } from "./admin/page-picker.js";
 import { useEditorCrop } from "../react/crop.js";
 import { nameIn, thumbnailOf, useMediaFolder, type FolderGroup, type MediaFolderOptions, type UseMediaFolder } from "../react/folder.js";
 import { ContentKitUiRoot } from "../scope.js";
@@ -705,6 +706,11 @@ function UploadRow({
   const name = nameIn(group, f.path);
   const busy = isProcessing(f);
   const thumb = useMemo(() => thumbnailOf(folder.read.read, f), [folder.read.read, f]);
+  // Audio plays its converted M4A once there is one, else the upload.
+  const playback = useMemo(() => (kind === "audio" ? folder.read.read?.files.find((x) => x.from === f.path && x.url && x.path.endsWith("/audio.m4a")) : undefined), [kind, folder.read.read, f.path]);
+  const known = f.dur || playback?.dur;
+  const [loaded, setLoaded] = useState<number>();
+  const length = kind === "audio" && (known || loaded);
   const locked = disabled || folder.updating;
   const failure = f.failed ? errorText(failureError(f.failed)) : undefined;
   return (
@@ -728,6 +734,11 @@ function UploadRow({
               {name}
             </span>
           )}
+          {length ? (
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums" data-ckui="audio-length">
+              {formatDuration(length)}
+            </span>
+          ) : null}
           {f.edit && (
             <span className="shrink-0 rounded-sm border border-border px-1.5 text-[11px] text-muted-foreground" data-ckui="edited">
               {t("folder.edited")}
@@ -745,6 +756,7 @@ function UploadRow({
       </div>
       <span className={cn("flex shrink-0 flex-wrap items-center gap-0.5",grid&&"col-span-2 justify-end")} data-ckui="upload-actions">
         {actions}
+        {kind === "audio" && <AudioPreview url={playback?.url ?? f.url} label={stem(name)} onDuration={known ? undefined : setLoaded} />}
         {kind === "image" && (
           <Button variant="ghost" size="icon-sm" aria-label={t("folder.crop")} title={t("folder.crop")} disabled={locked || !!f.staged || !f.size} onClick={() => onCrop(f.path)}>
             <HugeiconsIcon icon={CropIcon} strokeWidth={2} />

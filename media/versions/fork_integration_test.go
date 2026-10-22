@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
@@ -48,6 +50,73 @@ func TestFork(t *testing.T) {
 	}
 	if p := s.plan(s.creator, from, func(*versions.ReaderPlan) bool { return true }); p.Publication != src.Publication {
 		t.Fatal("the source was republished")
+	}
+}
+
+// A fork that gives up leaves a failure receipt in place of its barrier, so
+// the destination takes uploads again; a later fork clears it.
+func TestForkFailure(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	c, from := gallery(t, s)
+	s.plan(s.creator, from, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
+	to := s.version(c)
+	ref := s.ref("gallery", to)
+	path := "/v1/contents/" + c + "/versions/" + to.Version + "/fork"
+	body := versions.ForkBody{From: from.Version, Playback: true}
+	failed := func(reason string) {
+		t.Helper()
+		eventually(t, "the failure receipt", time.Minute, func() bool {
+			f, _ := s.manifest(ref).Meta["fork_failed"].(map[string]any)
+			return f["from"] == from.Version && f["playback"] == true && f["reason"] == reason && f["at"] != nil
+		})
+		if m := s.manifest(ref); m.Meta["fork"] != nil || m.Meta["forked"] != nil {
+			t.Fatalf("failed fork's manifest %v", m.Meta)
+		}
+		// The job records its failure before it ends; until then it absorbs a retry.
+		eventually(t, "the fork to end", time.Minute, func() bool {
+			var running int
+			if err := s.pool.QueryRow(s.ctx, `SELECT count(*) FROM `+pgx.Identifier{s.host, "river_job"}.Sanitize()+`
+WHERE kind = 'contentkit_version_fork' AND finalized_at IS NULL`).Scan(&running); err != nil {
+				t.Fatal(err)
+			}
+			return running == 0
+		})
+	}
+	// The destination gained media before the copy began.
+	s.mustUpload(s.creator, ref, "originals/own", "image/png", pngOf(t, 30, 40, 99))
+	if resp, b := s.call(s.creator, "POST", path, body); resp.StatusCode != 202 {
+		t.Fatalf("fork: %d %s", resp.StatusCode, b)
+	}
+	failed("destination")
+	// The source changed after this fork's barrier was written: the barrier
+	// goes with the metadata it copied, and uploads are taken again.
+	if _, err := s.ms.EditExisting(s.ctx, ref, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": "copied", "fork": map[string]any{"from": from.Version, "snapshot": "stale", "playback": true}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.upload(s.creator, ref, "originals/blocked", "image/png", pngOf(t, 30, 40, 98)); err == nil {
+		t.Fatal("an upload during a fork")
+	}
+	if resp, b := s.call(s.creator, "POST", path, body); resp.StatusCode != 202 {
+		t.Fatalf("fork: %d %s", resp.StatusCode, b)
+	}
+	failed("source")
+	if m := s.manifest(ref); m.Meta["title"] != nil {
+		t.Fatalf("the failed fork kept its copied metadata %v", m.Meta)
+	}
+	s.mustUpload(s.creator, ref, "originals/after", "image/png", pngOf(t, 30, 40, 97))
+	// Emptied, the destination forks again, and the receipt replaces the failure.
+	s.commit(s.creator, ref, media.Op{Op: media.OpRemove, Path: "originals/own.png", Takedown: true}, media.Op{Op: media.OpRemove, Path: "originals/after.png", Takedown: true})
+	// Its automatic cover goes with the pages.
+	eventually(t, "the emptied destination", time.Minute, func() bool { return len(s.manifest(ref).Files) == 0 })
+	if resp, b := s.call(s.creator, "POST", path, body); resp.StatusCode != 202 {
+		t.Fatalf("retry: %d %s", resp.StatusCode, b)
+	}
+	eventually(t, "the retried fork", time.Minute, func() bool { return s.manifest(ref).Meta["forked"] != nil })
+	if m := s.manifest(ref); m.Meta["fork_failed"] != nil || m.Meta["fork"] != nil || len(files(m, "originals/")) != 5 {
+		t.Fatalf("retried fork's manifest %v %v", m.Meta, files(m, "originals/"))
 	}
 }
 

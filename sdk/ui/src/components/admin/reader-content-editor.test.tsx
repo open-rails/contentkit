@@ -3,7 +3,7 @@ import "../../test/dom.js";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { createContentKitClient } from "../../client/index.js";
 import type { Content, ContentModel, ContentMemberships, FileInfo, GroupCard, ReadResult, Version } from "../../client/generated/wire.js";
 import { ContentEditor, ContentManager } from "./content-manager.js";
@@ -73,7 +73,7 @@ const read = (files: FileInfo[] = [page]): ReadResult => ({
 const links: ContentMemberships = { content_id: "c1", memberships: [], entities: [] };
 
 type Call = { method: string; path: string; body: unknown };
-function server(options: { failText?: boolean; failPublish?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean; model?: ContentModel; versions?: Version[] } = {}) {
+function server(options: { failText?: boolean; failPublish?: boolean; failFork?: boolean; media?: ReadResult; memberships?: Promise<ContentMemberships>; noText?: boolean; model?: ContentModel; versions?: Version[] } = {}) {
   let item = gallery();
   if (options.versions) item.versions = options.versions;
   let memberState: ContentMemberships | undefined;
@@ -136,6 +136,16 @@ function server(options: { failText?: boolean; failPublish?: boolean; media?: Re
       return Response.json(item);
     }
     if (method === "GET" && path === "/typeahead") return Response.json({ contents: [], entities: [] });
+    if (method === "POST" && path === "/contents/c1/versions") {
+      const n = item.versions.length + 1;
+      const added: Version = { ...edition, id: `v${n}`, code: `VERSION${n}`, position: n, languages: body.languages, state: "draft", has_audio: false, segments: [], pages: 0 };
+      item = { ...item, versions: [...item.versions, added] };
+      return Response.json(added);
+    }
+    if (method === "POST" && /^\/contents\/c1\/versions\/[^/]+\/fork$/.test(path)) {
+      if (options.failFork) return Response.json({ code: "conflict", error: "The version has other media" }, { status: 409 });
+      return Response.json({ status: "pending" }, { status: 202 });
+    }
     return Response.json({ code: "not_found", error: `Unexpected ${method} ${path}` }, { status: 404 });
   });
   const client = createContentKitClient({ baseUrl: "", fetch: fetch as typeof globalThis.fetch });
@@ -513,6 +523,172 @@ it("refreshes pages and notices after asynchronous ZIP extraction replaces the a
   expect(s.calls.filter((call) => call.path.endsWith("/page-notices")).length).toBeGreaterThan(1);
 });
 
+
+it("plays each Files audio upload from its M4A rendition, one at a time, and shows its length", async () => {
+  const playing = new Set<HTMLMediaElement>();
+  onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+  vi.spyOn(HTMLMediaElement.prototype, "paused", "get").mockImplementation(function (this: HTMLMediaElement) { return !playing.has(this); });
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(async function (this: HTMLMediaElement) { playing.add(this); fireEvent.play(this); });
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(function (this: HTMLMediaElement) { if (playing.delete(this)) fireEvent.pause(this); });
+  const media = read([
+    page,
+    { path: "audio/001.mp3", type: "audio/mpeg", upload: true, url: "https://test.invalid/001.mp3", size: 10, dur: 83.4 },
+    { path: "audio/001/audio.m4a", type: "audio/mp4", from: "audio/001.mp3", url: "https://test.invalid/001.m4a", size: 8, dur: 83.4 },
+    { path: "audio/002.mp3", type: "audio/mpeg", upload: true, url: "https://test.invalid/002.mp3", size: 10 },
+    { path: "video/clip.mp4", type: "video/mp4", upload: true, url: "https://test.invalid/clip.mp4", size: 10, dur: 30 },
+  ]);
+  media.uploads!.push({ path: "audio/{name}", types: ["audio/mpeg"], max_bytes: 10_000_000 }, { path: "video/{name}", types: ["video/mp4"], max_bytes: 10_000_000 });
+  const s = server({ media });
+  const user = userEvent.setup();
+  const { container } = render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  const first = await screen.findByRole("button", { name: "Play 001" });
+  const second = screen.getByRole("button", { name: "Play 002" });
+  const [a1, a2] = [...container.querySelectorAll<HTMLAudioElement>("audio[data-ckui=audio-preview]")];
+  expect(a1).toHaveAttribute("src", "https://test.invalid/001.m4a");
+  expect(a1).toHaveAttribute("preload", "none");
+  expect(a2).toHaveAttribute("src", "https://test.invalid/002.mp3");
+  expect(a2).toHaveAttribute("preload", "metadata");
+  const row = (path: string) => container.querySelector<HTMLElement>(`[data-ckui=upload-row][data-path="${path}"]`)!;
+  expect(within(row("audio/001.mp3")).getByText("1:23")).toBeVisible();
+  expect(row("audio/002.mp3").querySelector("[data-ckui=audio-length]")).toBeNull();
+  expect(row("video/clip.mp4").querySelector("[data-ckui=audio-length]")).toBeNull();
+  Object.defineProperty(a2, "duration", { value: 65 });
+  fireEvent.loadedMetadata(a2!);
+  expect(await within(row("audio/002.mp3")).findByText("1:05")).toBeVisible();
+
+  await user.click(first);
+  expect(screen.getByRole("button", { name: "Pause 001" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(second);
+  expect(screen.getByRole("button", { name: "Pause 002" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Play 001" })).toHaveAttribute("aria-pressed", "false");
+  await user.click(screen.getByRole("button", { name: "Pause 002" }));
+  expect(screen.getByRole("button", { name: "Play 002" })).toHaveAttribute("aria-pressed", "false");
+  expect(playing.size).toBe(0);
+});
+
+const segment = { position: 0, title: "Chapter one", start: 0, end: 1, released: true };
+
+async function addVersionFrom(s: ReturnType<typeof server>, user: ReturnType<typeof userEvent.setup>, start?: string) {
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  await screen.findByLabelText("Title");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Add version" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Add version" }));
+  const dialog = await screen.findByRole("dialog", { name: "Add version" });
+  await user.click(within(dialog).getByRole("combobox", { name: "Version language" }));
+  await user.click(await screen.findByRole("option", { name: "Japanese" }));
+  if (start) {
+    await user.click(within(dialog).getByRole("combobox", { name: "Start from" }));
+    await user.click(await screen.findByRole("option", { name: start }));
+  }
+  return dialog;
+}
+
+it("adds a version from a sibling: creates it, then copies its files, audio and chapters as ticked, and opens it once copied", async () => {
+  const s = server({ versions: [{ ...edition, label: "Edition one", has_audio: true, segments: [segment] }] });
+  let forked = false;
+  s.media.mockImplementation(async (ref) => (ref.version === "v2" ? { ...read(forked ? [page] : []), meta: forked ? { forked: { from: "v1" } } : {} } : read()));
+  const user = userEvent.setup();
+  const dialog = await addVersionFrom(s, user, "Edition one");
+  expect(within(dialog).getByRole("checkbox", { name: "Copy audio" })).toBeChecked();
+  const chapters = within(dialog).getByRole("checkbox", { name: "Copy chapters" });
+  expect(chapters).not.toBeChecked();
+  await user.click(chapters);
+  await user.click(within(dialog).getByRole("button", { name: "Add version" }));
+  expect(await within(dialog).findByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
+  expect(writes(s).map((c) => [c.method, c.path, c.body])).toEqual([
+    ["POST", "/contents/c1/versions", { languages: ["ja"] }],
+    ["POST", "/contents/c1/versions/v2/fork", { from: "v1", playback: true, segments: true }],
+  ]);
+  expect(within(dialog).getByRole("button", { name: "Add version" })).toBeDisabled();
+  forked = true;
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add version" })).toBeNull(), { timeout: 4_000 });
+  expect(screen.getByRole("combobox", { name: "Versions" })).toHaveTextContent("ja");
+});
+
+it("follows a copy after its dialog closes: the added version keeps uploads blocked and shows the copy until its receipt, then reads its files and chapters again", async () => {
+  const s = server({ versions: [{ ...edition, label: "Edition one" }] });
+  let forked = false;
+  s.media.mockImplementation(async (ref) => (ref.version === "v2" ? { ...read(forked ? [page] : []), meta: forked ? { forked: { from: "v1" } } : {} } : read()));
+  const user = userEvent.setup();
+  const dialog = await addVersionFrom(s, user, "Edition one");
+  await user.click(within(dialog).getByRole("button", { name: "Add version" }));
+  expect(await within(dialog).findByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add version" })).toBeNull());
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Versions" })).toHaveTextContent("ja"));
+  // No barrier yet: the workspace follows the copy itself.
+  expect(await screen.findByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
+  expect(screen.getByLabelText("Gallery files")).toBeDisabled();
+  const reads = () => s.calls.filter((c) => c.method === "GET" && c.path === "/contents/c1").length;
+  const before = reads();
+  forked = true;
+  await waitFor(() => expect(screen.queryByText("Copying files from Edition one. This can take a moment.")).toBeNull(), { timeout: 5_000 });
+  await waitFor(() => expect(document.querySelector(`[data-ckui=page-tile][data-path="pages/001.png"]`)).not.toBeNull());
+  expect(screen.getByLabelText("Gallery files")).toBeEnabled();
+  await waitFor(() => expect(reads()).toBeGreaterThan(before));
+}, 15_000);
+
+it("ends a failed copy in the dialog with its reason, and Try again forks again past the failure it replaces", async () => {
+  const s = server({ versions: [{ ...edition, label: "Edition one" }] });
+  let failure = { from: "v1", reason: "destination", at: "2026-10-22T10:00:00Z" };
+  s.media.mockImplementation(async (ref) => (ref.version === "v2" ? { ...read([]), meta: { fork_failed: failure } } : read()));
+  const user = userEvent.setup();
+  const dialog = await addVersionFrom(s, user, "Edition one");
+  await user.click(within(dialog).getByRole("button", { name: "Add version" }));
+  expect(await within(dialog).findByText("The copy from Edition one failed: this version already has other files. Remove them, then try again.")).toBeVisible();
+  expect(within(dialog).queryByRole("status")).toBeNull();
+  await user.click(within(dialog).getByRole("button", { name: "Try again" }));
+  // The failure it retries is not this copy's end.
+  expect(await within(dialog).findByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
+  expect(writes(s).filter((c) => c.path.endsWith("/fork"))).toHaveLength(2);
+  await act(() => new Promise((done) => setTimeout(done, 2_500)));
+  expect(within(dialog).getByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
+  failure = { from: "v1", reason: "source", at: "2026-10-22T10:05:00Z" };
+  expect(await within(dialog).findByText("The copy from Edition one failed: the original changed while it was copied. Remove the copied files, then try again.", {}, { timeout: 3_000 })).toBeVisible();
+}, 15_000);
+
+it("shows a version's failed copy with its reason, takes uploads, and Try again re-sends that fork", async () => {
+  const s = server({ versions: [edition, { ...edition, id: "v2", code: "VERSION2", position: 2, label: "Edition two", languages: ["ja"] }] });
+  let meta: Record<string, unknown> = { fork_failed: { from: "v2", playback: true, reason: "error", at: "2026-10-22T10:00:00Z" } };
+  s.media.mockImplementation(async (ref) => ({ ...read(), meta: ref.version === "v1" ? meta : {} }));
+  const user = userEvent.setup();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  expect(await screen.findByText("The copy from Edition two failed: something went wrong while copying.")).toBeVisible();
+  expect(screen.getByLabelText("Gallery files")).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("Copying files from Edition two. This can take a moment.")).toBeVisible();
+  expect(screen.queryByText("The copy from Edition two failed: something went wrong while copying.")).toBeNull();
+  expect(screen.getByLabelText("Gallery files")).toBeDisabled();
+  expect(writes(s).map((c) => [c.method, c.path, c.body])).toEqual([["POST", "/contents/c1/versions/v1/fork", { from: "v2", playback: true }]]);
+  meta = { forked: { from: "v2" } };
+  await waitFor(() => expect(screen.queryByText("Copying files from Edition two. This can take a moment.")).toBeNull(), { timeout: 5_000 });
+  expect(screen.getByLabelText("Gallery files")).toBeEnabled();
+}, 15_000);
+
+it("adds an empty version when no Start from is chosen, without a fork", async () => {
+  const s = server({ versions: [{ ...edition, label: "Edition one", has_audio: true, segments: [segment] }] });
+  const user = userEvent.setup();
+  const dialog = await addVersionFrom(s, user);
+  expect(within(dialog).queryByRole("checkbox")).toBeNull();
+  await user.click(within(dialog).getByRole("button", { name: "Add version" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add version" })).toBeNull());
+  expect(writes(s).map((c) => [c.method, c.path])).toEqual([["POST", "/contents/c1/versions"]]);
+});
+
+it("keeps the added version and offers a retry when its copy is refused", async () => {
+  const s = server({ failFork: true, versions: [{ ...edition, label: "Edition one" }] });
+  const user = userEvent.setup();
+  const dialog = await addVersionFrom(s, user, "Edition one");
+  expect(within(dialog).queryByRole("checkbox")).toBeNull();
+  await user.click(within(dialog).getByRole("button", { name: "Add version" }));
+  expect(await within(dialog).findByText("The version was added, but its files couldn't be copied: This changed elsewhere. Reload and try again.")).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(writes(s).filter((c) => c.path.endsWith("/fork"))).toHaveLength(2));
+  expect(writes(s).filter((c) => c.path === "/contents/c1/versions")).toHaveLength(1);
+  expect(writes(s).at(-1)!.body).toEqual({ from: "v1", playback: false, segments: false });
+});
 
 it("the reader workspace follows the host's subscription-only model", async () => {
   const limited: ContentModel = { ...model, tiers: ["premium"], kinds: { gallery: { ...model.kinds.gallery!, access_levels: ["public", "tier"], comment_modes: ["open"] } } };
