@@ -67,14 +67,14 @@ func resolveChapterStarts(segs []segment, pages []page) ([]segment, error) {
 		g := &out[i]
 		matches := positions[g.StartPage]
 		if g.StartPage == "" || len(matches) == 0 {
-			return nil, fmt.Errorf("%w: chapter %d starting page %q is missing; repair chapter starts", ErrInvalid, g.Position, g.StartPage)
+			return nil, fmt.Errorf("%w: chapter %d's start page is missing; choose another page", ErrInvalid, g.Position+1)
 		}
 		if len(matches) != 1 {
-			return nil, fmt.Errorf("%w: chapter %d starting page hash is duplicated; repair chapter starts", ErrInvalid, g.Position)
+			return nil, fmt.Errorf("%w: chapter %d's start page appears more than once; choose another page", ErrInvalid, g.Position+1)
 		}
 		at := matches[0]
 		if at <= previous {
-			return nil, fmt.Errorf("%w: chapter %d starting pages are duplicated or out of order; repair chapter starts", ErrInvalid, g.Position)
+			return nil, fmt.Errorf("%w: chapter %d must start after the chapter before it", ErrInvalid, g.Position+1)
 		}
 		g.Start, g.End = at, len(pages)
 		if i > 0 {

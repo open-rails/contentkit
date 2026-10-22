@@ -313,11 +313,11 @@ func checkSegments(ss []Segment) ([]Segment, error) {
 		if anchored {
 			digest, err := hex.DecodeString(sg.StartPage)
 			if seen[sg.StartPage] || err != nil || len(digest) != 32 || strings.ToLower(sg.StartPage) != sg.StartPage {
-				return nil, invalid("chapter %d: invalid or duplicate starting page", i)
+				return nil, invalid("chapter %d: invalid or duplicate starting page", i+1)
 			}
 			seen[sg.StartPage] = true
 			if sg.Start != 0 || sg.End != 0 {
-				return nil, invalid("chapter %d: page starts do not take numeric ranges", i)
+				return nil, invalid("chapter %d: page starts do not take numeric ranges", i+1)
 			}
 		} else if sg.Start < 0 || sg.End <= sg.Start {
 			return nil, invalid("segment %d: start must be >= 0 and end > start", i)
