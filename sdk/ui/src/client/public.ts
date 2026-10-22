@@ -2,12 +2,13 @@ import type { AspectRatio } from "./aspect.js";
 import { sortRenditions, type Rendition } from "./rendition.js";
 
 /**
- * A public file's URL, as media.PublicURL: `{base}/v1/{namespace}/{kind}/{id}[/{version}]/public/{name}`.
+ * A public file's URL, as media.PublicURL: `{base}/v1/{namespace}/{kind}/{owner}/public/{name}`.
+ * The owner is the version when supplied, otherwise the unversioned item ID.
  * A server-provided root selects a scoped tenant/app path; otherwise namespace is used.
  * Pass an actual published name, not a preset template for a current image.
  */
 export function publicURL(base: string, namespace: string, kind: string, id: string, name: string, version?: string, root?: string): string {
-  return `${base.replace(/\/+$/, "")}/v1/${root ?? `${namespace}/`}${kind}/${id}${version ? `/${version}` : ""}/public/${name}`;
+  return `${base.replace(/\/+$/, "")}/v1/${root ?? `${namespace}/`}${kind}/${version || id}/public/${name}`;
 }
 
 /** Each `{key}` of template replaced by vars[key] ("" when missing), as the registry's templates fill. */
