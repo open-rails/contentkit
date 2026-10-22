@@ -181,6 +181,8 @@ export const admin: typeof en = {
     slugAuto: "Aus dem Titel",
     publishAt: "Geht live (optional)",
     description: "Auszug",
+    postSummary: "Zusammenfassung (optional)",
+    postSummaryHelp: "Wird in Beitragslisten angezeigt. Leer lassen, um einen Auszug aus dem Beitrag zu verwenden.",
     body: "Text",
     bodyPlaceholder: "Schreib den Beitrag…",
     imagesAfterCreate: "Erstelle den Entwurf, um ein Titelbild und Bilder hinzuzufügen.",

@@ -181,6 +181,8 @@ export const admin: typeof en = {
     slugAuto: "根据标题生成",
     publishAt: "上线时间（可选）",
     description: "摘要",
+    postSummary: "摘要（可选）",
+    postSummaryHelp: "用于文章列表。留空时使用正文摘录。",
     body: "正文",
     bodyPlaceholder: "撰写文章…",
     imagesAfterCreate: "创建草稿后即可添加封面和图片。",

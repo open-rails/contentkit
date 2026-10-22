@@ -181,6 +181,8 @@ export const admin: typeof en = {
     slugAuto: "A partir del título",
     publishAt: "Se publica (opcional)",
     description: "Extracto",
+    postSummary: "Resumen (opcional)",
+    postSummaryHelp: "Se muestra en las listas de publicaciones. Déjalo vacío para usar un extracto de la publicación.",
     body: "Cuerpo",
     bodyPlaceholder: "Escribe la publicación…",
     imagesAfterCreate: "Crea el borrador para añadir una portada e imágenes.",

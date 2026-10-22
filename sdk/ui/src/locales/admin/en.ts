@@ -180,6 +180,8 @@ export const admin = {
     slugAuto: "From the title",
     publishAt: "Goes live (optional)",
     description: "Description",
+    postSummary: "Summary (optional)",
+    postSummaryHelp: "Used in post listings. Leave blank to use an excerpt from the post.",
     body: "Body",
     bodyPlaceholder: "Write…",
     imagesAfterCreate: "Create the draft to add a cover and images.",

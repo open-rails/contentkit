@@ -699,7 +699,8 @@ export interface ContentEditorProps {
 }
 
 /**
- * One content item for its creators and staff: title, description,
+ * One content item for its creators and staff: title, listing summary for
+ * posts (description for other kinds),
  * schedule, cover and body per language, publish, unpublish and delete;
  * then listing and attributes, access rule and price, versions and groups.
  */
@@ -735,6 +736,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   // A hidden version's cover is edited here; a visible version's in its own form.
   const model = useKinds({ client }).kinds;
   const hidden = !!model?.kinds[kind]?.versions.hidden;
+  const post = model?.kinds[kind]?.presentation === "post";
   const report = useErrorReporter(onError);
   // The body is kept as stored (image references); the editor shows it with URLs.
   const [form, setForm] = useState<Form | null>(id ? null : empty);
@@ -854,42 +856,43 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
           </AlertDescription>
         </Alert>
       )}
-      {languages.length > 1 && (
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${ids}-lang`}>{t("contentManager.language")}</Label>
-          <Select
-            value={language}
-            onValueChange={(v) => {
-              setLanguage(String(v ?? ""));
-              setForm(item ? null : empty);
-            }}
-          >
-            <SelectTrigger id={`${ids}-lang`} className="w-full">
-              <SelectValue>{(v: string) => languages.find((l) => l.value === v)?.label ?? v}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {languages.map((l) => (
-                <SelectItem key={l.value} value={l.value}>
-                  {l.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
       <div className="grid gap-1.5">
         <Label htmlFor={`${ids}-title`}>{t("contentManager.itemTitle")}</Label>
         <Input id={`${ids}-title`} value={f.title} required maxLength={300} onChange={(e) => set({ title: e.target.value })} />
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="grid gap-1.5">
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="grid w-64 max-w-full gap-1.5">
           <Label htmlFor={`${ids}-publish`}>{t("contentManager.publishAt")}</Label>
           <Input id={`${ids}-publish`} type="datetime-local" value={f.publishAt} onChange={(e) => set({ publishAt: e.target.value })} />
         </div>
+        {languages.length > 1 && (
+          <div className="grid w-44 max-w-full gap-1.5">
+            <Label htmlFor={`${ids}-lang`}>{t("contentManager.language")}</Label>
+            <Select
+              value={language}
+              onValueChange={(v) => {
+                setLanguage(String(v ?? ""));
+                setForm(item ? null : empty);
+              }}
+            >
+              <SelectTrigger id={`${ids}-lang`} className="w-full">
+                <SelectValue>{(v: string) => languages.find((l) => l.value === v)?.label ?? v}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {languages.map((l) => (
+                  <SelectItem key={l.value} value={l.value}>
+                    {l.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
       <div className="grid gap-1.5">
-        <Label htmlFor={`${ids}-description`}>{t("contentManager.description")}</Label>
-        <Textarea id={`${ids}-description`} rows={2} value={f.description} onChange={(e) => set({ description: e.target.value })} />
+        <Label htmlFor={`${ids}-description`}>{t(post ? "contentManager.postSummary" : "contentManager.description")}</Label>
+        <Textarea id={`${ids}-description`} aria-describedby={post ? `${ids}-summary-help` : undefined} rows={2} value={f.description} onChange={(e) => set({ description: e.target.value })} />
+        {post && <p id={`${ids}-summary-help`} className="text-xs text-muted-foreground">{t("contentManager.postSummaryHelp")}</p>}
       </div>
       {(hidden || !item) && <Cover item={item} src={ed.coverSrc} saving={ed.saving} onFile={(file) => void ed.setCover(file).catch(fail)} />}
       <div className="grid gap-1.5">

@@ -181,6 +181,8 @@ export const admin: typeof en = {
     slugAuto: "제목에서 생성",
     publishAt: "공개 시각(선택)",
     description: "요약",
+    postSummary: "요약(선택)",
+    postSummaryHelp: "게시물 목록에 표시됩니다. 비워 두면 게시물 본문의 일부를 사용합니다.",
     body: "본문",
     bodyPlaceholder: "게시물을 작성하세요…",
     imagesAfterCreate: "임시 저장본을 만들면 표지와 이미지를 추가할 수 있습니다.",

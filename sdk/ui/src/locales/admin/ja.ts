@@ -181,6 +181,8 @@ export const admin: typeof en = {
     slugAuto: "タイトルから作成",
     publishAt: "公開日時（任意）",
     description: "抜粋",
+    postSummary: "要約（任意）",
+    postSummaryHelp: "投稿一覧に表示されます。空欄の場合は本文の抜粋を使用します。",
     body: "本文",
     bodyPlaceholder: "投稿を書く…",
     imagesAfterCreate: "下書きを作成すると、カバーと画像を追加できます。",
