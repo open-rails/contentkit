@@ -514,6 +514,46 @@ it("refreshes pages and notices after asynchronous ZIP extraction replaces the a
 });
 
 
+it("plays each Files audio upload from its M4A rendition, one at a time, and shows its length", async () => {
+  const playing = new Set<HTMLMediaElement>();
+  vi.spyOn(HTMLMediaElement.prototype, "paused", "get").mockImplementation(function (this: HTMLMediaElement) { return !playing.has(this); });
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(async function (this: HTMLMediaElement) { playing.add(this); fireEvent.play(this); });
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(function (this: HTMLMediaElement) { if (playing.delete(this)) fireEvent.pause(this); });
+  const media = read([
+    page,
+    { path: "audio/001.mp3", type: "audio/mpeg", upload: true, url: "https://test.invalid/001.mp3", size: 10, dur: 83.4 },
+    { path: "audio/001/audio.m4a", type: "audio/mp4", from: "audio/001.mp3", url: "https://test.invalid/001.m4a", size: 8, dur: 83.4 },
+    { path: "audio/002.mp3", type: "audio/mpeg", upload: true, url: "https://test.invalid/002.mp3", size: 10 },
+  ]);
+  media.uploads!.push({ path: "audio/{name}", types: ["audio/mpeg"], max_bytes: 10_000_000 });
+  const s = server({ media });
+  const user = userEvent.setup();
+  const { container } = render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  const first = await screen.findByRole("button", { name: "Play 001" });
+  const second = screen.getByRole("button", { name: "Play 002" });
+  const [a1, a2] = [...container.querySelectorAll<HTMLAudioElement>("audio[data-ckui=audio-preview]")];
+  expect(a1).toHaveAttribute("src", "https://test.invalid/001.m4a");
+  expect(a1).toHaveAttribute("preload", "none");
+  expect(a2).toHaveAttribute("src", "https://test.invalid/002.mp3");
+  expect(a2).toHaveAttribute("preload", "metadata");
+  const row = (path: string) => container.querySelector<HTMLElement>(`[data-ckui=upload-row][data-path="${path}"]`)!;
+  expect(within(row("audio/001.mp3")).getByText("1:23")).toBeVisible();
+  expect(row("audio/002.mp3").querySelector("[data-ckui=audio-length]")).toBeNull();
+  Object.defineProperty(a2, "duration", { value: 65 });
+  fireEvent.loadedMetadata(a2!);
+  expect(await within(row("audio/002.mp3")).findByText("1:05")).toBeVisible();
+
+  await user.click(first);
+  expect(screen.getByRole("button", { name: "Pause 001" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(second);
+  expect(screen.getByRole("button", { name: "Pause 002" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Play 001" })).toHaveAttribute("aria-pressed", "false");
+  await user.click(screen.getByRole("button", { name: "Pause 002" }));
+  expect(screen.getByRole("button", { name: "Play 002" })).toHaveAttribute("aria-pressed", "false");
+  expect(playing.size).toBe(0);
+  vi.restoreAllMocks();
+});
+
 it("the reader workspace follows the host's subscription-only model", async () => {
   const limited: ContentModel = { ...model, tiers: ["premium"], kinds: { gallery: { ...model.kinds.gallery!, access_levels: ["public", "tier"], comment_modes: ["open"] } } };
   const s = server({ model: limited });

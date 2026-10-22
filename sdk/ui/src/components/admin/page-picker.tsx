@@ -148,8 +148,8 @@ export function PagePicker({ label, pages, value, extras = [], onChange, classNa
   );
 }
 
-/** A play/pause button for one audio URL; one preview plays at a time. */
-export function AudioPreview({ url, label }: { url?: string; label: string }) {
+/** A play/pause button for one audio URL; one preview plays at a time. onDuration loads the file's metadata for its length. */
+export function AudioPreview({ url, label, onDuration }: { url?: string; label: string; onDuration?: (seconds: number) => void }) {
   const { t } = useMessages();
   const audio = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -168,7 +168,7 @@ export function AudioPreview({ url, label }: { url?: string; label: string }) {
       <Button type="button" size="icon-sm" variant="ghost" aria-label={t(playing ? "pagePicker.pause" : "pagePicker.play", { name: label })} aria-pressed={playing} onClick={toggle}>
         <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} strokeWidth={2} className="size-4" />
       </Button>
-      <audio ref={audio} src={url} preload="none" data-ckui="audio-preview" onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
+      <audio ref={audio} src={url} preload={onDuration ? "metadata" : "none"} data-ckui="audio-preview" onLoadedMetadata={(e) => Number.isFinite(e.currentTarget.duration) && onDuration?.(e.currentTarget.duration)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
     </>
   );
 }
