@@ -97,6 +97,7 @@ func TestVersionFolders(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer tx.Rollback(s.ctx)
 		if err := s.svc.DeleteTx(s.ctx, tx, targets); err != nil {
 			t.Fatal(err)
 		}
