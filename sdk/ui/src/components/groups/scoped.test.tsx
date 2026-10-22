@@ -74,3 +74,15 @@ it("GroupBanner: a character links its series and a series shows its characters"
   render(<GroupBanner group={{ ...base, id: "s1", kind: "series", name: "Bleach" } as unknown as GroupDetail} />, { wrapper: wrap(s.client) });
   expect(await screen.findByRole("link", { name: /Character 1/ })).toHaveAttribute("href", "/en/characters/C1");
 });
+
+it("GroupBanner: a cover tile only for a group with a cover image", () => {
+  const s = setup([]);
+  const base = { id: "t1", kind: "tag", slug: "romance", name: "Romance", internal: false, state: "active", attributes: {}, names: [], text: [], children: [], edges: [], counts: [], created_at: "", updated_at: "", revision: 1 };
+  const { container, unmount } = render(<GroupBanner group={base as unknown as GroupDetail} />, { wrapper: wrap(s.client) });
+  expect(container.querySelector("[data-ckui=group-cover]")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Romance" })).toBeVisible();
+  unmount();
+  const covered = { ...base, cover: { renditions: [{ url: "https://cdn.test/romance.webp", w: 900, h: 300 }] } };
+  const next = render(<GroupBanner group={covered as unknown as GroupDetail} />, { wrapper: wrap(s.client) });
+  expect(next.container.querySelector("[data-ckui=group-cover]")).not.toBeNull();
+});
