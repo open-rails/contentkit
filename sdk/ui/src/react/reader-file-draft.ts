@@ -91,14 +91,9 @@ export function useReaderFileDraft(source: UseMediaFolder, client: ContentKitCli
     if (!source.ref || !draft.dirty.length) return;
     requireFreshRead();
     const state = draft.get();
-    const files: FileInfo[] = [];
-    let offset = 0, total: number;
-    do {
-      const read = await client.media.read(source.ref, { editor: true, offset, limit: 200 });
-      files.push(...read.files.filter((f) => f.upload));
-      total = read.total;
-      offset += read.limit || 200;
-    } while (offset < total);
+    // A read lists every file; offset and limit only choose which get URLs.
+    const read = await client.media.read(source.ref, { editor: true, limit: 1 });
+    const files = read.files.filter((f) => f.upload);
     // The API has no caller-supplied manifest revision. Refuse a stale draft
     // before issuing mutations; appended files can safely remain appended.
     for (const g of source.groups.filter((g) => g.rule?.page)) {
