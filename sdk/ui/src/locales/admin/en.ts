@@ -298,8 +298,7 @@ export const admin = {
   },
   readerManifest: {
     title: "Reader manifest",
-    pending: "This version is being published; its manifest can be edited once it is.",
-    loadFailed: "The reader plan couldn't be loaded.",
+    loadFailed: "This version's files couldn't be loaded.",
     summary: "{pages} pages and {files} audio files, in reading order.",
     anchors: "Scroll anchors",
     addAnchor: "Add anchor",

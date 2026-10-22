@@ -299,8 +299,7 @@ export const admin: typeof en = {
   },
   readerManifest: {
     title: "Reader-Manifest",
-    pending: "Diese Version wird veröffentlicht; ihr Manifest lässt sich danach bearbeiten.",
-    loadFailed: "Der Leseplan konnte nicht geladen werden.",
+    loadFailed: "Die Dateien dieser Version konnten nicht geladen werden.",
     summary: "{pages} Seiten und {files} Audiodateien in Lesereihenfolge.",
     anchors: "Scroll-Anker",
     addAnchor: "Anker hinzufügen",

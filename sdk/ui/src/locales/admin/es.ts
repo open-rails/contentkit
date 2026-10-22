@@ -299,8 +299,7 @@ export const admin: typeof en = {
   },
   readerManifest: {
     title: "Manifiesto del lector",
-    pending: "Esta versión se está publicando; su manifiesto se podrá editar cuando termine.",
-    loadFailed: "No se pudo cargar el plan de lectura.",
+    loadFailed: "No se pudieron cargar los archivos de esta versión.",
     summary: "{pages} páginas y {files} archivos de audio, en orden de lectura.",
     anchors: "Anclas de desplazamiento",
     addAnchor: "Añadir ancla",

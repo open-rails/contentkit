@@ -4,8 +4,6 @@ import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, t
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
 import type { Content, ContentModel, Rule, Segment, SegmentInput, Version, VersionState } from "../../client/generated/wire.js";
-import { ruleFor } from "../../client/media/rules.js";
-import { pageRemoved } from "../../client/media/windows.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useKinds } from "../../react/groups.js";
@@ -20,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { Switch } from "#ckui/ui/switch";
 import { ReaderManifestEditor } from "../admin/reader-manifest.js";
 import { PageNotices } from "../admin/page-notices.js";
-import { PagePicker, usePlanMedia } from "../admin/page-picker.js";
+import { ALL_EDITOR_FILES, editorMedia, PagePicker, usePlanMedia } from "../admin/page-picker.js";
 import { useReaderPlan } from "../../react/versions.js";
 import { VideoMediaEditor, videoPaths } from "../admin/media-item-panel.js";
 import { Skeleton } from "#ckui/ui/skeleton";
@@ -664,7 +662,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
       {chapters && spec?.segments && <SegmentsEditor content={content} version={v} {...p} />}
       {media && <VersionCover content={content} version={v} {...p} />}
       {media && <VersionMedia content={content} version={v} model={model} {...p} />}
-      {media && spec?.presentation === "reader" && <ReaderManifestEditor content={content.id} version={v.id} client={p.client} onError={p.onError} />}
+      {media && spec?.presentation === "reader" && <ReaderManifestEditor kind={content.kind} content={content.id} version={v.id} client={p.client} onError={p.onError} />}
     </div>
   );
 }
@@ -758,28 +756,13 @@ export function SegmentsEditor(p: SegmentsEditorProps) {
 }
 
 type ChapterRow = { title: string; startPage: string; release: string };
-const ALL_EDITOR_FILES = { start: 0, end: Number.MAX_SAFE_INTEGER, chunk: 200 };
 
 function ReaderChaptersEditor({ content, version, heading = true, ...p }: SegmentsEditorProps) {
   const { t } = useMessages();
   const coordinated = useContext(EditorSaveContext) !== null;
   const client = useContentKitClient(p.client);
   const read = useMediaRead({ kind: content.kind, id: content.id, version: version.id }, { editor: true, window: ALL_EDITOR_FILES, client });
-  const pages = useMemo(() => {
-    const files = read.read?.files ?? [], rules = read.read?.uploads ?? [];
-    const sources = files.filter((file) => file.upload && !file.unattached && file.page_id && ruleFor(rules, file.path)?.page && !pageRemoved(file));
-    const counts = new Map<string, number>();
-    for (const file of sources) counts.set(file.page_id!, (counts.get(file.page_id!) ?? 0) + 1);
-    const previews = new Map<string, (typeof files)[number]>();
-    for (const file of files) {
-      if (file.upload || !file.from || !file.url || !file.type.startsWith("image/")) continue;
-      const previous = previews.get(file.from);
-      if (!previous || (file.w ?? Infinity) * (file.h ?? Infinity) < (previous.w ?? Infinity) * (previous.h ?? Infinity)) previews.set(file.from, file);
-    }
-    return sources.map((file) => {
-      return { id: file.page_id!, label: file.path.split("/").at(-1) ?? file.path, url: previews.get(file.path)?.url, disabled: counts.get(file.page_id!)! > 1 };
-    });
-  }, [read.read]);
+  const pages = useMemo(() => editorMedia(read.read).pages, [read.read]);
   const rowsOf = useCallback((value: Version): ChapterRow[] => value.segments.map((segment) => ({
     title: segment.title ?? "",
     startPage: segment.start_page || pages[segment.start]?.id || "",

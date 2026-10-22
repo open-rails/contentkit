@@ -299,8 +299,7 @@ export const admin: typeof en = {
   },
   readerManifest: {
     title: "阅读器清单",
-    pending: "此版本正在发布；发布后即可编辑其清单。",
-    loadFailed: "无法加载阅读计划。",
+    loadFailed: "无法加载此版本的文件。",
     summary: "按阅读顺序共 {pages} 页、{files} 个音频文件。",
     anchors: "滚动锚点",
     addAnchor: "添加锚点",

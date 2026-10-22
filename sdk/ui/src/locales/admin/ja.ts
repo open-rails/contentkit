@@ -299,8 +299,7 @@ export const admin: typeof en = {
   },
   readerManifest: {
     title: "リーダーマニフェスト",
-    pending: "このバージョンは公開処理中です。完了後にマニフェストを編集できます。",
-    loadFailed: "リーダープランを読み込めませんでした。",
+    loadFailed: "このバージョンのファイルを読み込めませんでした。",
     summary: "読む順で {pages} ページ、音声 {files} 件。",
     anchors: "スクロールアンカー",
     addAnchor: "アンカーを追加",

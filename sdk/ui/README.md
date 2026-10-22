@@ -850,11 +850,12 @@ The host still owns navigation outside the flow, including browser Back handling
   existing reader behavior until the same Save. The display-title field follows
   the edition's staged language, and preserves titles in other languages.
 
-- **`ReaderManifestEditor`**: a reader version's manifest over its published
-  pages and audio: scroll anchors, audio cues (matched to pages or anchors by
-  file name in one step), background tracks and auto-advance. Page order is
-  the version's media order. `ContentManager` shows it under each version of
-  a `reader` kind. Props: `content`, `version`.
+- **`ReaderManifestEditor`**: a reader version's manifest over its current
+  pages and audio uploads, published or not, seeded from the stored manifest:
+  scroll anchors, audio cues (matched to pages or anchors by file name in one
+  step), background tracks and auto-advance. Page order is the version's media
+  order. `ContentManager` shows it under each version of a `reader` kind.
+  Props: `kind`, `content`, `version`.
 
 - **`MediaItemPanel`**: one video item for its editors: encode state and
   progress, failures with their reason, replace the source, subtitle

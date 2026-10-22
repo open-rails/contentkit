@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient, type ContentKitClient } from "../../client/index.js";
-import type { BannedWord, IPBan, ReaderMeta, ReaderPlan } from "../../client/generated/wire.js";
+import type { BannedWord, FileInfo, IPBan, ReaderMeta, ReadResult } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/index.js";
 import { CommentModeration, ReaderManifestEditor } from "../../index.js";
 
@@ -103,33 +103,39 @@ it("CommentModeration: without root:comments:moderate the rule sections say so",
 });
 
 const hash = (name: string) => name.padStart(64, "0");
-const page = (name: string) => ({ id: hash(name), name, w: 800, h: 1200, files: { low: `low/${name}.webp` } });
-const plan = (reader?: ReaderMeta): ReaderPlan => ({
-  content_id: "c1",
-  version_id: "v1",
-  publication_id: "p1",
-  pages: 3,
-  segments: [{ start: 0, end: 3, released: true, locked: false, pages: [page("001"), page("002"), page("003")] }],
-  previews: [],
-  playback: { item: { kind: "gallery.published", id: "pb" }, tracks: ["001", "003", "theme"].map((name) => ({ name, path: `listen/${name}/` })) },
-  reader,
-});
+/** An editor read of an unpublished version: three pages with thumbnails, three audio uploads (theme converted) and the stored manifest. */
+const read = (reader?: ReaderMeta): ReadResult => {
+  const files: FileInfo[] = [
+    ...["001", "002", "003"].flatMap((name): FileInfo[] => [
+      { path: `pages/${name}.png`, type: "image/png", upload: true, page_id: hash(name) },
+      { path: `thumb/${name}.webp`, type: "image/webp", from: `pages/${name}.png`, url: `https://test.invalid/thumb/${name}.webp`, w: 100, h: 150 },
+    ]),
+    ...["001", "003", "theme"].map((name): FileInfo => ({ path: `audio/${name}.mp3`, type: "audio/mpeg", upload: true })),
+    { path: "listen/theme/audio.m4a", type: "audio/mp4", from: "audio/theme.mp3", url: "https://test.invalid/theme.m4a" },
+  ];
+  return {
+    files, total: files.length, offset: 0, limit: 200, expires: 0, access: "full", meta: reader ? { reader } : undefined,
+    uploads: [{ path: "pages/{name}", types: ["image/png"], max_bytes: 1000, page: true }, { path: "audio/{name}", types: ["audio/mpeg"], max_bytes: 1000 }],
+  };
+};
 
-it("ReaderManifestEditor: matches audio to pages, adds an anchor, refuses a bad offset, saves the manifest and reads the plan again", async () => {
+it("ReaderManifestEditor: matches audio to pages, adds an anchor, refuses a bad offset, saves the manifest and reads the files again", async () => {
   let stored: ReaderMeta = { schema_version: 1, anchors: [{ id: "a1", page: hash("002"), offset_percent: 50 }], background: [{ file: "theme", loop: true }], foreground: [] };
-  const s = server({
-    "GET /contents/c1/versions/v1/reader": () => plan(stored),
-    "PUT /contents/c1/versions/v1/reader": ({ body }) => void (stored = body as ReaderMeta),
-  });
+  const s = server({ "PUT /contents/c1/versions/v1/reader": ({ body }) => void (stored = body as ReaderMeta) });
+  const media = vi.spyOn(s.client.media, "read").mockImplementation(async () => read(stored));
   const user = userEvent.setup();
-  render(<ReaderManifestEditor content="c1" version="v1" />, { wrapper: wrap(s.client) });
+  render(<ReaderManifestEditor kind="gallery" content="c1" version="v1" />, { wrapper: wrap(s.client) });
   expect(await screen.findByText("3 pages and 3 audio files, in reading order.")).toBeInTheDocument();
+  expect(media).toHaveBeenCalledWith({ kind: "gallery", id: "c1", version: "v1" }, expect.objectContaining({ editor: true }));
+  expect(s.calls).not.toContain("GET /contents/c1/versions/v1/reader");
   expect(screen.getByLabelText("Anchor 1 id")).toHaveValue("a1");
+  expect(screen.getByRole("button", { name: "Anchor 1 page" }).querySelector("img")).toHaveAttribute("src", "https://test.invalid/thumb/002.webp");
+  expect(screen.getByRole("button", { name: "Play theme" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
   await user.click(screen.getByRole("button", { name: "Match audio to pages" }));
   expect(screen.getByText("Matched 2 audio files to pages or anchors.")).toBeInTheDocument();
-  expect(screen.getByText("Pages without audio: 002")).toBeInTheDocument();
+  expect(screen.getByText("Pages without audio: 002.png")).toBeInTheDocument();
   expect(screen.getByText("Audio matching no page or anchor: theme")).toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: "Add anchor" }));
@@ -141,6 +147,7 @@ it("ReaderManifestEditor: matches audio to pages, adds an anchor, refuses a bad 
   fireEvent.change(screen.getByLabelText("Auto-advance (seconds, optional)"), { target: { value: "6" } });
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
 
+  const reads = media.mock.calls.length;
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText("Manifest saved.")).toBeInTheDocument();
   expect(s.bodies["PUT /contents/c1/versions/v1/reader"]).toEqual([
@@ -158,13 +165,20 @@ it("ReaderManifestEditor: matches audio to pages, adds an anchor, refuses a bad 
       ],
     },
   ]);
-  await waitFor(() => expect(s.calls.filter((c) => c === "GET /contents/c1/versions/v1/reader")).toHaveLength(2));
+  await waitFor(() => expect(media.mock.calls.length).toBeGreaterThan(reads));
   expect(screen.getByLabelText("Anchor 2 offset (%)")).toHaveValue(25);
 });
 
-it("ReaderManifestEditor: a version still being published waits for it", async () => {
-  const s = server({ "GET /contents/c1/versions/v1/reader": () => json(202, { status: "pending" }) });
-  render(<ReaderManifestEditor content="c1" version="v1" />, { wrapper: wrap(s.client) });
-  expect(await screen.findByText("This version is being published; its manifest can be edited once it is.")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+it("ReaderManifestEditor: seeds every stored cue and flags one naming audio the version no longer has", async () => {
+  const stored: ReaderMeta = { schema_version: 1, anchors: [], background: [{ file: "gone" }], foreground: [{ file: "003", page: hash("003") }] };
+  const s = server({ "PUT /contents/c1/versions/v1/reader": () => undefined });
+  vi.spyOn(s.client.media, "read").mockImplementation(async () => read(stored));
+  const user = userEvent.setup();
+  render(<ReaderManifestEditor kind="gallery" content="c1" version="v1" />, { wrapper: wrap(s.client) });
+  expect(await screen.findByRole("combobox", { name: "Cue 1 audio" })).toHaveTextContent("003");
+  expect(screen.getByText("Track 1: names audio this version doesn't have.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Remove track 1" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByText("Manifest saved.")).toBeInTheDocument();
+  expect(s.bodies["PUT /contents/c1/versions/v1/reader"]).toEqual([{ schema_version: 1, anchors: [], background: [], foreground: [{ file: "003", page: hash("003") }] }]);
 });

@@ -299,8 +299,7 @@ export const admin: typeof en = {
   },
   readerManifest: {
     title: "리더 매니페스트",
-    pending: "이 버전은 게시 중입니다. 완료되면 매니페스트를 편집할 수 있습니다.",
-    loadFailed: "리더 플랜을 불러오지 못했습니다.",
+    loadFailed: "이 버전의 파일을 불러오지 못했습니다.",
     summary: "읽는 순서대로 {pages}페이지, 오디오 {files}개.",
     anchors: "스크롤 앵커",
     addAnchor: "앵커 추가",

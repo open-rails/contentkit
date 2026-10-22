@@ -679,7 +679,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 <summary className="cursor-pointer font-medium">{t("readerEditor.readerTools")}</summary>
                 <div hidden={!toolsExpanded} className="mt-4 grid gap-4">
                   <div ref={setVersionReaderTarget} data-ckui="version-reader-settings" />
-                  {toolsOpened.includes(version.id) && <ReaderManifestEditor key={`${version.id}:${draftGeneration}`} content={item.id} version={version.id} client={client} onError={p.onError} />}
+                  {toolsOpened.includes(version.id) && <ReaderManifestEditor key={`${version.id}:${draftGeneration}`} kind={item.kind} content={item.id} version={version.id} client={client} onError={p.onError} />}
                 </div>
               </details>
             )}
