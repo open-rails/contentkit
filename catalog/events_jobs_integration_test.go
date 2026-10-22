@@ -190,6 +190,34 @@ func TestCatalogEventRecoveryFindsUnboundProducer(t *testing.T) {
 	if delivered == 0 {
 		t.Fatal("recovery lost events written before the producer was bound")
 	}
+	var old int64
+	if err := f.pool.QueryRow(f.ctx, `UPDATE `+f.s.t.events+` SET delivered_at=$1 WHERE tenant_id=$2 RETURNING id`, f.s.now().Add(-deliveredRetention-time.Hour), tenant).Scan(&old); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := f.s.begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(f.ctx)
+	if _, err := tx.Exec(f.ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "contentkit:catalog:events:"+f.schema+":"+tenant); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := f.s.DeliverEvents(f.ctx); n != 0 || !errors.Is(err, ErrEventDeliveryBusy) {
+		t.Fatalf("busy delivery = %d, %v; want 0, ErrEventDeliveryBusy", n, err)
+	}
+	var exists bool
+	if err := f.pool.QueryRow(f.ctx, `SELECT EXISTS (SELECT 1 FROM `+f.s.t.events+` WHERE tenant_id=$1 AND id=$2)`, tenant, old).Scan(&exists); err != nil || !exists {
+		t.Fatalf("busy delivery retained old event = %v: %v", exists, err)
+	}
+	if err := tx.Rollback(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := f.s.DeliverEvents(f.ctx); n != 0 || err != nil {
+		t.Fatalf("empty delivery = %d, %v; want 0, nil", n, err)
+	}
+	if err := f.pool.QueryRow(f.ctx, `SELECT EXISTS (SELECT 1 FROM `+f.s.t.events+` WHERE tenant_id=$1 AND id=$2)`, tenant, old).Scan(&exists); err != nil || exists {
+		t.Fatalf("empty delivery retained old event = %v: %v", exists, err)
+	}
 }
 
 func TestCatalogEventsDeliverWithPeriodicJobsDisabled(t *testing.T) {

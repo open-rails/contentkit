@@ -121,12 +121,9 @@ func (s *Store) DeliverEvents(ctx context.Context) (int, error) {
 	s.mu.Lock()
 	subs := append([]Subscriber(nil), s.subscribers...)
 	s.mu.Unlock()
-	if _, err := s.pool.Exec(ctx, `DELETE FROM `+s.t.events+` WHERE tenant_id = $1 AND delivered_at < $2`, s.tenant, s.now().Add(-deliveredRetention)); err != nil {
-		return 0, err
-	}
 	total := 0
 	for {
-		n, err := s.deliverBatch(ctx, subs)
+		n, err := s.deliverBatch(ctx, subs, total == 0)
 		total += n
 		if err != nil || n < eventBatch {
 			return total, err
@@ -134,7 +131,7 @@ func (s *Store) DeliverEvents(ctx context.Context) (int, error) {
 	}
 }
 
-func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber) (int, error) {
+func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber, prune bool) (int, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, err
@@ -147,6 +144,11 @@ func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber) (int, error
 	}
 	if !locked {
 		return 0, ErrEventDeliveryBusy
+	}
+	if prune {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.events+` WHERE tenant_id = $1 AND delivered_at < $2`, s.tenant, s.now().Add(-deliveredRetention)); err != nil {
+			return 0, err
+		}
 	}
 	rows, err := tx.Query(ctx, `SELECT id, type, payload, created_at FROM `+s.t.events+`
  WHERE tenant_id = $1 AND delivered_at IS NULL ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`, s.tenant, eventBatch)
@@ -171,8 +173,11 @@ func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber) (int, error
 		batch, ids = append(batch, e), append(ids, e.ID)
 	}
 	rows.Close()
-	if err := rows.Err(); err != nil || len(batch) == 0 {
+	if err := rows.Err(); err != nil {
 		return 0, err
+	}
+	if len(batch) == 0 {
+		return 0, tx.Commit(ctx)
 	}
 	for _, sub := range subs {
 		if err := sub(ctx, batch); err != nil {
