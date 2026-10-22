@@ -45,6 +45,19 @@ func (s *items) put(k contentref.ContentKey, it item) {
 	s.m[k] = it
 }
 
+// versionOwner resolves this harness's fixture identity after storage paths
+// stopped carrying the logical parent. A different kind never shares it.
+func (s *items) versionOwner(kind, version string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, it := range s.m {
+		if it.Kind == kind && it.Version == version {
+			return it.ID
+		}
+	}
+	return ""
+}
+
 func (s *items) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

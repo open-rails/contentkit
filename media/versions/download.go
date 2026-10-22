@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/url"
 	"path"
 	"slices"
@@ -260,12 +261,16 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	case !d.res.Visible:
 		return nil, ErrNotFound
 	}
+	z := private(k, k.Download)
+	lazy := z != nil && k.LazyZip(z)
+	if lazy && downloadablePages(d, math.MaxInt) == 0 || !lazy && !d.whole() {
+		return nil, ErrForbidden
+	}
 	item, m, err := s.downloadItem(ctx, k, t)
 	if err != nil {
 		return nil, err
 	}
 
-	z := private(k, k.Download)
 	var pages []media.File
 	if z != nil && k.LazyZip(z) {
 		if pages, err = zipPages(k, z, m); err != nil {

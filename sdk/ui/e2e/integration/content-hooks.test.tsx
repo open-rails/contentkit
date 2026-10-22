@@ -291,9 +291,9 @@ describe("content hooks against the real ContentKit", () => {
       await waitFor(async () => {
         const p = await client().contents.get(id, "en");
         url = p.images?.[name] ?? "";
-        expect(url).toContain(`/blog/${id}/${vid}/private/`);
+        expect(url).toContain(`/blog/${vid}/private/`);
         expect(p.body).toBe(page(url, " More."));
-        expect(p.cover?.url).toMatch(new RegExp(`/blog/${id}/${vid}/public/cover-i-`));
+        expect(p.cover?.url).toMatch(new RegExp(`/blog/${vid}/public/cover-i-`));
       }, slow);
       expect((await fetch(url)).status).toBe(200);
       return url;

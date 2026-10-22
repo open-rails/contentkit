@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -245,8 +244,8 @@ func TestReaderMeta(t *testing.T) {
 }
 
 // Downloads stream a cached archive, or a fresh copy with the pages the
-// host's policy names marked, to viewers who open every page, within their
-// bucket's quota.
+// host's policy names marked, for each viewer's released and authorized page
+// prefix, within their bucket's quota.
 func TestDownload(t *testing.T) {
 	s := newSite(t, siteOptions{policy: marker{}, downloads: versions.Downloads{
 		User:  []versions.Quota{{Limit: 5, Per: time.Hour}},
@@ -315,8 +314,31 @@ func TestDownload(t *testing.T) {
 	}
 	s.exec(`INSERT INTO `+s.table("content_segments")+` (tenant_id, version_id, position, start_index, end_index, release_at)
 VALUES ($1, $2, 1, 2, 3, now() + interval '1 hour')`, s.tenant, v.Version)
-	if _, err := s.svc.Download(s.ctx, s.fan, v); !errors.Is(err, versions.ErrForbidden) {
-		t.Fatalf("a download with a segment unreleased: %v", err)
+	partial, err := s.svc.Download(s.ctx, s.stranger, v)
+	if err != nil {
+		t.Fatalf("released-page download: %v", err)
+	}
+	partialPath := strings.TrimSuffix(path, "download") + partial.URL
+	resp, b = s.call(access.Actor{}, "GET", partialPath, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("released-page archive: %d %s", resp.StatusCode, b)
+	}
+	part := entries(b)
+	if len(part) != 2 || part["a.webp"] == nil || part["b.webp"] == nil || part["c.webp"] != nil {
+		t.Fatalf("unreleased page entered the ZIP: %v", keys(part))
+	}
+	s.exec(`UPDATE `+s.table("content_segments")+` SET release_at=now()-interval '1 second' WHERE tenant_id=$1 AND version_id=$2`, s.tenant, v.Version)
+	released, err := s.svc.Download(s.ctx, s.stranger, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, b = s.call(access.Actor{}, "GET", strings.TrimSuffix(path, "download")+released.URL, nil)
+	if resp.StatusCode != 200 || len(entries(b)) != 3 {
+		t.Fatalf("newly released ZIP: %d %s", resp.StatusCode, b)
+	}
+	resp, b = s.call(access.Actor{}, "GET", partialPath, nil)
+	if resp.StatusCode != 200 || len(entries(b)) != 2 {
+		t.Fatalf("old partial ticket widened after release: %d %s", resp.StatusCode, b)
 	}
 }
 

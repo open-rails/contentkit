@@ -497,7 +497,7 @@ func TestDerivedCoversAndPreviews(t *testing.T) {
 	coverOf("originals/001.png")
 	eventually(t, "the public cover", 2*time.Minute, func() bool {
 		got, err := s.svc.Covers(s.ctx, []versions.CoverOf{{Kind: "gallery", ID: c}})
-		return err == nil && len(got[0]) > 0 && strings.Contains(got[0][0].URL, "/gallery/"+c+"/"+v.Version+"/public/cover-")
+		return err == nil && len(got[0]) > 0 && strings.Contains(got[0][0].URL, "/gallery/"+v.Version+"/public/cover-")
 	})
 	s.mustUpload(s.creator, ref, "originals/001", "image/png", pngOf(t, 30, 40, 9))
 	coverOf("originals/001.png")

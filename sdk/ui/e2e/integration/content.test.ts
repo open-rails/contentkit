@@ -93,16 +93,16 @@ describe("content modules against the real ContentKit", () => {
     expect((await editor.contents.inlineImage(post.id, vid, img.name)).ref).toBe(img.ref);
     const withImage = await editor.contents.putText(post.id, "en", { title: "Pictures", body: `see ${img.ref} twice ${img.ref}` });
     const url = withImage.images?.[img.name] ?? "";
-    expect(url).toContain(`/v1/${cfg.namespace}/blog/${post.id}/${vid}/private/`);
+    expect(url).toContain(`/v1/${cfg.namespace}/blog/${vid}/private/`);
     expect(withImage.body).toBe(`see ${url} twice ${url}`);
     const read = await ck().contents.get(post.id, "en");
-    expect(read.images?.[img.name]).toContain(`/blog/${post.id}/${vid}/private/`);
+    expect(read.images?.[img.name]).toContain(`/blog/${vid}/private/`);
     expect((await fetch(read.images![img.name]!)).status).toBe(200);
     await expect(editor.media.uploadInline({ kind: "blog", id: post.id }, png())).rejects.toMatchObject({ code: "invalid_request" });
 
     const up = await editor.media.uploadNamed(folder, png(), { path: await editor.media.presetPath("blog", "cover", png()) });
     const covered = await editor.contents.setCover(post.id, vid, up.name);
-    expect(covered.cover).toMatchObject({ image: up.name, url: expect.stringMatching(new RegExp(`/blog/${post.id}/${vid}/public/cover-${up.name}-`)) });
+    expect(covered.cover).toMatchObject({ image: up.name, url: expect.stringMatching(new RegExp(`/blog/${vid}/public/cover-${up.name}-`)) });
     expect((await editor.contents.setCover(post.id, vid, null)).cover?.image).toBeUndefined();
 
     // Only the item's editors upload to its folder.

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
 
@@ -21,7 +22,7 @@ import (
 // (drop; hold, for the media worker's requests), or at ContentKit's API (api).
 type rule struct {
 	ID int `json:"id"`
-	// Item is the item id the request's path names; empty matches any.
+	// Item is a logical fixture parent or explicit storage owner; empty matches any.
 	Item string `json:"item,omitempty"`
 	// Dest matches Sec-Fetch-Dest: "empty" is fetch and XHR (hls.js),
 	// "image" an <img>; empty matches any.
@@ -113,13 +114,14 @@ func (f *faults) match(r *http.Request, part int, kinds ...string) *rule {
 // matchBody is match where the item may also be named in body (the upload
 // API carries the ref in its JSON).
 func (f *faults) matchBody(r *http.Request, body string, part int, kinds ...string) *rule {
+	parent := f.storageParent(r.URL.Path)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, x := range f.rules {
 		if (x.Times > 0 && x.Hits >= x.Times) || !contains(kinds, x.Fault) {
 			continue
 		}
-		if x.Item != "" && !strings.Contains(r.URL.Path+"/", "/"+x.Item+"/") && !strings.Contains(body, `"`+x.Item+`"`) {
+		if x.Item != "" && x.Item != parent && !strings.Contains(r.URL.Path+"/", "/"+x.Item+"/") && !strings.Contains(body, `"`+x.Item+`"`) {
 			continue
 		}
 		if x.Dest != "" && r.Header.Get("Sec-Fetch-Dest") != x.Dest {
@@ -142,6 +144,26 @@ func (f *faults) matchBody(r *http.Request, body string, part int, kinds ...stri
 		return &c
 	}
 	return nil
+}
+
+func (f *faults) storageParent(path string) string {
+	if f.h == nil || f.h.items == nil {
+		return ""
+	}
+	key := strings.TrimPrefix(path, "/")
+	switch {
+	case strings.HasPrefix(key, "v1/"):
+		key = strings.TrimPrefix(key, "v1/")
+	case f.h.bucket != "" && strings.HasPrefix(key, f.h.bucket+"/"):
+		key = strings.TrimPrefix(key, f.h.bucket+"/")
+	default:
+		return ""
+	}
+	parsed, ok := layout.Parse(key)
+	if !ok || parsed.Namespace != tenant || parsed.Version != "" {
+		return ""
+	}
+	return f.h.items.versionOwner(parsed.Kind, parsed.ID)
 }
 
 func contains(s []string, v string) bool {
@@ -205,13 +227,19 @@ func (f *faults) gatewayProxy(gateway *url.URL) http.Handler {
 // ago, as a stale grant reaches the gateway.
 func (f *faults) expire(r *http.Request) *http.Request {
 	r = r.Clone(r.Context())
-	// /v1/{ns}/{kind}/{id}/private/{blob}
-	p := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
-	if len(p) < 5 {
+	key := strings.TrimPrefix(r.URL.Path, layout.URLPrefix)
+	parsed, ok := layout.Parse(key)
+	if !ok {
 		return r
 	}
 	q := r.URL.Query()
-	q.Set("t", f.h.ring.Sign(token.ItemScope(p[1], p[2], p[3], ""), time.Now().Add(-time.Hour)))
+	scope := strings.TrimSuffix(parsed.Folder(), "/")
+	if parsed.Area == layout.AreaDownload {
+		scope = token.DownloadScope(key)
+	} else if f.h.ring.VerifyScope(q.Get("t"), token.PrivateFileScope(key), time.Now()) == nil {
+		scope = token.PrivateFileScope(key)
+	}
+	q.Set("t", f.h.ring.Sign(scope, time.Now().Add(-time.Hour)))
 	r.URL.RawQuery = q.Encode()
 	return r
 }

@@ -3,6 +3,7 @@ package versions_test
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -53,14 +54,27 @@ func TestChapterHashAnchorsPreservePublishedAccess(t *testing.T) {
 	last := sourcePageID(t, s, ref, "originals/003.png")
 	s.exec(`INSERT INTO `+s.table("content_segments")+` (tenant_id,version_id,position,title,start_page,release_at)
  VALUES ($1,$2,0,'Released',$3,NULL),($1,$2,1,'Future',$4,now()+interval '1 hour')`, s.tenant, v.Version, first, last)
-	// The old publication was one whole item. New chapter rules cannot make
-	// that whole old item expose the unreleased final page.
-	old, err := s.reg.Ref(before.Segments[0].Item.Kind, before.Segments[0].Item.ID)
+	// An existing plan still names the same version. Its next grant must obey
+	// the edited chapter boundaries without creating another storage item.
+	item := before.Segments[0].Item
+	if item == nil {
+		t.Fatal("published pages have no version item")
+	}
+	old, err := s.reg.VersionRef(item.Kind, item.ID, item.Version)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.reader.Read(s.ctx, old, s.fan, media.ReadOptions{}); err == nil {
-		t.Fatal("old full publication exposed an unreleased chapter")
+	grant, err := s.reader.Grant(s.ctx, old, s.fan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstFile, firstOK := s.manifest(ref).Get("low-res/001.webp")
+	lastFile, lastOK := s.manifest(ref).Get("low-res/003.webp")
+	if !firstOK || !lastOK || grant.Full() || !grant.Allowed(firstFile) || grant.Allowed(lastFile) {
+		t.Fatal("the current file grant does not match the released chapter prefix")
+	}
+	if _, err := grant.URL(lastFile, false); !errors.Is(err, media.ErrNotAllowed) {
+		t.Fatalf("unreleased page received a signed URL: %v", err)
 	}
 	republish := func() {
 		t.Helper()
@@ -69,11 +83,19 @@ func TestChapterHashAnchorsPreservePublishedAccess(t *testing.T) {
 		}
 	}
 	republish()
-	s.plan(s.fan, v, func(p *versions.ReaderPlan) bool {
+	updated := s.plan(s.fan, v, func(p *versions.ReaderPlan) bool {
 		return len(p.Segments) == 2 && p.Segments[0].End == 2 && p.Segments[1].Locked
 	})
-	if _, err := s.svc.Download(s.ctx, s.fan, v); !errors.Is(err, versions.ErrForbidden) {
-		t.Fatalf("unreleased chapter download: %v", err)
+	if updated.Publication != before.Publication {
+		t.Fatal("chapter boundaries rebuilt the immutable file snapshot")
+	}
+	download, err := s.svc.Download(s.ctx, s.fan, v)
+	if err != nil {
+		t.Fatalf("released chapter download: %v", err)
+	}
+	u, err := url.Parse(download.URL)
+	if err != nil || u.Query().Get("pages") != "2" {
+		t.Fatalf("download exceeded the released prefix: %+v %v", download, err)
 	}
 	// A new source inserted before the same hash changes only the derived end.
 	s.mustUpload(s.creator, ref, "originals/004", "image/png", pngOf(t, 30, 40, 4))

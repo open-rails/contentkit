@@ -131,7 +131,7 @@ func TestGroupMedia(t *testing.T) {
 		t.Helper()
 		eventually(t, "the member's cover from "+v.Version, 2*time.Minute, func() bool {
 			d, _ = store.Detail(s.ctx, tag.ID, "en")
-			return d.Cover != nil && len(d.Cover.Renditions) > 0 && strings.Contains(d.Cover.Renditions[0].URL, "/gallery/"+c+"/"+v.Version+"/public/cover-")
+			return d.Cover != nil && len(d.Cover.Renditions) > 0 && strings.Contains(d.Cover.Renditions[0].URL, "/gallery/"+v.Version+"/public/cover-")
 		})
 	}
 	coverOf(a)

@@ -57,7 +57,7 @@ func TestEditionsCarryTheirOwnCovers(t *testing.T) {
 			t.Fatal(err)
 		}
 		cover[v.ID] = publish(t, w, item, plan.Path, "cover").Renditions[0].URL
-		if !strings.Contains(cover[v.ID], "/album/"+c.ID+"/"+v.ID+"/public/") {
+		if !strings.HasPrefix(cover[v.ID], "https://media.test/v1/"+w.tenant+"/album/"+v.ID+"/public/") {
 			t.Fatalf("version %s cover at %s", v.ID, cover[v.ID])
 		}
 	}
@@ -270,7 +270,7 @@ func TestBodyImagesLiveInEachVersion(t *testing.T) {
 	var opened catalog.Content
 	f.want(http.StatusOK, premiumToken, "GET", "/contents/"+c.ID+"?language=en", nil, &opened)
 	u, ok := opened.Images[name]
-	if !ok || !strings.Contains(opened.Body, u) || !strings.Contains(u, "/album/"+c.ID+"/"+a.ID+"/private/") || fetch(u) != http.StatusOK {
+	if !ok || !strings.Contains(opened.Body, u) || !strings.HasPrefix(u, "https://media.test/v1/"+w.tenant+"/album/"+a.ID+"/private/") || fetch(u) != http.StatusOK {
 		t.Fatalf("the opener's body %+v", opened)
 	}
 	if strings.Contains(u, "t=") && fetch(strings.Split(u, "?")[0]) == http.StatusOK {
@@ -283,7 +283,7 @@ func TestBodyImagesLiveInEachVersion(t *testing.T) {
 	var free catalog.Content
 	f.want(http.StatusOK, stranger, "GET", "/contents/"+c.ID+"?language=en", nil, &free)
 	u, ok = free.Images[name]
-	if !ok || !strings.Contains(u, "/"+a.ID+"/private/") || fetch(u) != http.StatusOK {
+	if !ok || !strings.HasPrefix(u, "https://media.test/v1/"+w.tenant+"/album/"+a.ID+"/private/") || fetch(u) != http.StatusOK {
 		t.Fatalf("the free version's body %+v", free)
 	}
 	item, _ := w.reg.Item(itemOf(b.ID))

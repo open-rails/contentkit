@@ -1,6 +1,7 @@
 package versions_test
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"strings"
@@ -17,14 +18,14 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// A content kind's media lives in one folder per version, each its own item
-// with its own token; the content's folder holds no item.
+// A content kind's media lives in one flat folder per version, each its own
+// item with its own token; the content has no storage folder.
 func TestVersionFolders(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	c := s.content("gallery", `{"level":"public"}`)
 	v1, v2 := s.version(c), s.version(c)
 	r1, r2 := s.ref("gallery", v1), s.ref("gallery", v2)
-	if item, err := s.reg.Item(r1); err != nil || item.Prefix() != s.tenant+"/gallery/"+c+"/"+v1.Version+"/" {
+	if item, err := s.reg.Item(r1); err != nil || item.Prefix() != s.tenant+"/gallery/"+v1.Version+"/" {
 		t.Fatalf("%s: %q %v", r1, item.Prefix(), err)
 	}
 	if _, err := s.reg.VersionRef("gallery", c, ""); err == nil {
@@ -37,20 +38,30 @@ func TestVersionFolders(t *testing.T) {
 		t.Fatal("a kind without versions took a versioned ref")
 	}
 
-	// Every object belongs to exactly one of the versions' folders.
+	// Every object belongs to exactly one flat version folder, never a
+	// parent-owned folder or a nested parent/version path.
 	folders := map[string]int{}
+	for _, version := range []versions.Target{v1, v2} {
+		prefix := s.tenant + "/gallery/" + version.Version + "/"
+		for o, err := range s.Store.List(s.ctx, prefix) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			k, ok := layout.Parse(o.Key)
+			if !ok || k.ID != version.Version || k.Version != "" || k.Folder() != prefix {
+				t.Fatalf("object is not owned directly by its version: %s", o.Key)
+			}
+			folders[k.Folder()]++
+		}
+	}
+	if len(folders) != 2 {
+		t.Fatalf("folders %v", folders)
+	}
 	for o, err := range s.Store.List(s.ctx, s.tenant+"/gallery/"+c+"/") {
 		if err != nil {
 			t.Fatal(err)
 		}
-		k, ok := layout.Parse(o.Key)
-		if !ok {
-			t.Fatalf("unparsed key %s", o.Key)
-		}
-		folders[k.Folder()]++
-	}
-	if len(folders) != 2 {
-		t.Fatalf("folders %v", folders)
+		t.Fatalf("database-only parent owns an object: %s", o.Key)
 	}
 
 	// A version's read grants its folder alone.
@@ -195,11 +206,20 @@ FROM `+pubs+` p WHERE p.tenant_id = $1 AND p.version_id = $2 AND p.state = 'curr
 	if err := deleter.QueryRow(s.ctx, `SELECT pg_backend_pid()`).Scan(&deleterPID); err != nil {
 		t.Fatal(err)
 	}
+	deleteCtx, cancelDelete := context.WithTimeout(s.ctx, 15*time.Second)
 	done := make(chan error, 1)
-	go func() { done <- s.svc.DeleteTx(s.ctx, deleter, []versions.Target{{Content: c}}) }()
+	joined := false
+	defer func() {
+		cancelDelete()
+		if !joined {
+			<-done
+		}
+	}()
+	go func() { done <- s.svc.DeleteTx(deleteCtx, deleter, []versions.Target{{Content: c}}) }()
 	for blocked := false; !blocked; time.Sleep(10 * time.Millisecond) {
 		select {
 		case err := <-done:
+			joined = true
 			t.Fatalf("deletion did not wait for the publisher: %v", err)
 		default:
 		}
@@ -210,13 +230,15 @@ FROM `+pubs+` p WHERE p.tenant_id = $1 AND p.version_id = $2 AND p.state = 'curr
 
 	// Retiring a snapshot changes metadata only. The waiting deletion then
 	// owns the same version before it retires the canonical media item.
-	if _, err := publisher.Exec(s.ctx, `UPDATE `+pubs+` SET state = 'retired' WHERE tenant_id = $1 AND id = $2`, s.tenant, pub); err != nil {
+	if _, err := publisher.Exec(s.ctx, `DELETE FROM `+pubs+` WHERE tenant_id = $1 AND id = $2`, s.tenant, pub); err != nil {
 		t.Fatalf("publisher: %v", err)
 	}
 	if err := publisher.Commit(s.ctx); err != nil {
 		t.Fatalf("publisher: %v", err)
 	}
-	if err := <-done; err != nil {
+	err = <-done
+	joined = true
+	if err != nil {
 		t.Fatalf("deletion: %v", err)
 	}
 	if err := deleter.Commit(s.ctx); err != nil {

@@ -479,10 +479,22 @@ func (d *downloads) pages(c catalog.Content, n int) []byte {
 	var pages []map[string]any
 	for _, f := range m.Files {
 		if f.IsUpload() && strings.HasPrefix(f.Path, "pages/") {
-			pages = append(pages, map[string]any{"path": f.Path, "source": f.Key()})
+			var files []map[string]any
+			for _, preset := range k.Publish.Renditions {
+				for _, output := range m.Files {
+					if output.From == f.Path && output.Preset == preset {
+						files = append(files, map[string]any{"preset": preset, "path": output.Path, "blob": output.Blob,
+							"type": output.Type, "size": output.Size, "w": output.W, "h": output.H})
+					}
+				}
+			}
+			if len(files) != len(k.Publish.Renditions) {
+				t.Fatalf("missing reader renditions for %s", f.Path)
+			}
+			pages = append(pages, map[string]any{"path": f.Path, "source": f.Key(), "files": files})
 		}
 	}
-	snapshot, _ := json.Marshal(map[string]any{"pages": pages, "spans": []any{}})
+	snapshot, _ := json.Marshal(map[string]any{"pages": pages})
 	if _, err := d.w.pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{d.w.schema, "content_version_publications"}.Sanitize()+`
 	(tenant_id,id,version_id,kind,state,source) VALUES ($1,$2,$3,'pages','current',$4)`, d.w.tenant, contentref.NewID(), c.Versions[0].ID, snapshot); err != nil {
 		t.Fatal(err)
@@ -605,12 +617,26 @@ func TestBookDownloadsMarkThePolicysPages(t *testing.T) {
 		t.Fatal("anonymous download source bytes changed")
 	}
 
-	// The viewing token opens the web rendition, never the originals, the
-	// full-resolution pages or the zip.
+	// An actual reader grant opens the requested web rendition, never other
+	// files in the version. Do not manufacture an obsolete whole-folder token.
 	ref, _ := d.w.reg.VersionRef("book", free.ID, free.Versions[0].ID)
 	item, _ := d.w.reg.Item(ref)
 	m, _, _ := d.w.jobs.Manifests().Get(t.Context(), ref)
-	viewing := d.ring.Sign(token.ItemScope(ref.TenantID, ref.ContentKind, ref.ContentID, ref.Version()), time.Now().Add(time.Hour))
+	var read media.ReadResult
+	d.f.want(http.StatusOK, "", "GET", "/media/book/"+free.ID+"/versions/"+free.Versions[0].ID+"?path=read%2F001.webp", nil, &read)
+	var viewing *url.URL
+	for _, file := range read.Files {
+		if file.Path == "read/001.webp" && file.URL != "" {
+			var err error
+			viewing, err = url.Parse(file.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if viewing == nil || viewing.RawQuery == "" {
+		t.Fatalf("reader did not return an exact-file grant: %+v", read)
+	}
 	for p, want := range map[string]int{"read/001.webp": http.StatusOK, "pages/001.png": http.StatusNotFound,
 		"high/001.webp": http.StatusNotFound, "download/pages.zip": http.StatusNotFound} {
 		f, ok := m.Get(p)
@@ -618,7 +644,7 @@ func TestBookDownloadsMarkThePolicysPages(t *testing.T) {
 			t.Fatalf("no %s", p)
 		}
 		key, _ := item.Blob(f.Blob)
-		if status, _, _ := d.fetch("https://media.test/v1/" + key + "?t=" + viewing); status != want {
+		if status, _, _ := d.fetch("https://media.test/v1/" + key + "?" + viewing.RawQuery); status != want {
 			t.Fatalf("the viewing token on %s: %d, want %d", p, status, want)
 		}
 	}

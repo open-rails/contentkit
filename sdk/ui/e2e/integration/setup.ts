@@ -149,7 +149,8 @@ export async function item(h: Harness, kind: string, owner: TestUser | null, o: 
 
 
 /** An item's storage folder as media URLs name it: "{kind}/{id}", a version's "{kind}/{id}/{version}". */
-export const itemFolder = (ref: RefBody) => (ref.version ? `${ref.kind}/${ref.id}/${ref.version}` : `${ref.kind}/${ref.id}`);
+// Expected physical storage owner; logical API routes retain the parent ID.
+export const itemFolder = (ref: RefBody) => `${ref.kind}/${ref.version || ref.id}`;
 
 /** A real PNG, each seed distinct, as Node's File (jsdom's Blob is no body Node's fetch can send). */
 export function png(name: string, seed = 1, w = 48, h = 32): File {
