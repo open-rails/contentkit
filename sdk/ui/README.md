@@ -847,14 +847,16 @@ The host still owns navigation outside the flow, including browser Back handling
   restoration remain for hidden-version kinds. Trait toggles are omitted in the reader workspace; version
   tags use the ordinary entity picker. Reading layout lives under Reader tools
   when the kind declares `manhwa_style`; Paged / Continuous vertical stages that
-  existing reader behavior until the same Save. The display-title field follows
+  existing reader behavior until the same Save. Kinds with an audio upload show
+  an Audio section beside Chapters for cues, anchors and background tracks. The display-title field follows
   the edition's staged language, and preserves titles in other languages.
 
-- **`ReaderManifestEditor`**: a reader version's manifest over its published
-  pages and audio: scroll anchors, audio cues (matched to pages or anchors by
-  file name in one step), background tracks and auto-advance. Page order is
-  the version's media order. `ContentManager` shows it under each version of
-  a `reader` kind. Props: `content`, `version`.
+- **`ReaderManifestEditor`**: a reader version's manifest over its current
+  pages and audio uploads, published or not, seeded from the stored manifest:
+  scroll anchors, audio cues (matched to pages or anchors by file name in one
+  step), background tracks and auto-advance. Page order is the version's media
+  order. `ContentManager` shows it under each version of a `reader` kind.
+  Props: `kind`, `content`, `version`.
 
 - **`MediaItemPanel`**: one video item for its editors: encode state and
   progress, failures with their reason, replace the source, subtitle

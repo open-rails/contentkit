@@ -33,8 +33,9 @@ function fixture(presentation:'reader'|'player'='reader'){
   return Response.json({code:'not_found',error:'Unexpected request'},{status:404});
  });
  const client=createContentKitClient({baseUrl:'',fetch:fetch as typeof globalThis.fetch});
- const read:ReadResult={files:[{path:'pages/01.png',page_id:hash,type:'image/png',upload:true}],total:1,offset:0,limit:200,expires:0,access:'full',uploads:[{path:'pages/{name}',types:['image/png'],max_bytes:1000,page:true}]};
- vi.spyOn(client.media,'read').mockResolvedValue(read);
+ // An unpublished edition: its current page and audio upload, and the stored manifest.
+ const read=():ReadResult=>({files:[{path:'pages/01.png',page_id:hash,type:'image/png',upload:true},{path:'audio/01.mp3',type:'audio/mpeg',upload:true}],total:2,offset:0,limit:200,expires:0,access:'full',meta:{reader:stored},uploads:[{path:'pages/{name}',types:['image/png'],max_bytes:1000,page:true},{path:'audio/{name}',types:['audio/mpeg'],max_bytes:1000}]});
+ vi.spyOn(client.media,'read').mockImplementation(async()=>read());
  return{client,writes};
 }
 
@@ -71,7 +72,7 @@ it.each(['reader','player'] as const)('coordinated %s chapters stage, undo and s
 
 it('coordinated reader metadata ignores Enter/submit and uses parent undo and Save',async()=>{
  const s=fixture(),user=userEvent.setup(),containingSubmit=vi.fn();
- render(<div onSubmit={containingSubmit}><Coordinated><ReaderManifestEditor content='c1' version='v1' client={s.client}/></Coordinated></div>);
+ render(<div onSubmit={containingSubmit}><Coordinated><ReaderManifestEditor kind='gallery' content='c1' version='v1' client={s.client}/></Coordinated></div>);
  const input=await screen.findByLabelText('Auto-advance (seconds, optional)');
  fireEvent.change(input,{target:{value:'6'}});
  await user.click(input);await user.keyboard('{Enter}');
@@ -86,6 +87,18 @@ it('coordinated reader metadata ignores Enter/submit and uses parent undo and Sa
  await user.click(screen.getByRole('button',{name:'Save all'}));
  await waitFor(()=>expect(s.writes).toHaveLength(1));
  expect(s.writes[0]).toMatchObject({path:'/contents/c1/versions/v1/reader',body:{defaults:{auto_advance_seconds:6}}});
+});
+
+it('coordinated reader audio cues an unpublished edition\'s current files through the parent Save',async()=>{
+ const s=fixture(),user=userEvent.setup();
+ render(<Coordinated><ReaderManifestEditor kind='gallery' content='c1' version='v1' client={s.client}/></Coordinated>);
+ expect(await screen.findByText('1 pages and 1 audio files, in reading order.')).toBeInTheDocument();
+ await user.click(screen.getByRole('button',{name:'Add cue'}));
+ expect(screen.getByRole('combobox',{name:'Cue 1 audio'})).toHaveTextContent('01');
+ expect(s.writes).toEqual([]);
+ await user.click(screen.getByRole('button',{name:'Save all'}));
+ await waitFor(()=>expect(s.writes).toHaveLength(1));
+ expect(s.writes[0]).toEqual({path:'/contents/c1/versions/v1/reader',body:{schema_version:1,anchors:[],background:[],foreground:[{file:'01',page:hash}]}});
 });
 
 it.each([false,true])('coordinated offer edits defer selling/repricing to the parent (active=%s)',async active=>{

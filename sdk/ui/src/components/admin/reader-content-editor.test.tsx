@@ -840,6 +840,26 @@ it("stages continuous reading layout in Reader tools and preserves unrelated edi
   expect(s.item.versions[0]?.state).toBe("published");
 });
 
+it("shows Audio as its own section beside Chapters for a kind with audio uploads, outside Reader tools", async () => {
+  const media = read([{ ...page, page_id: "a".repeat(64) }, { path: "audio/001.mp3", type: "audio/mpeg", upload: true }]);
+  const s = server({ media: { ...media, uploads: [...media.uploads!, { path: "audio/{name}", types: ["audio/mpeg"], max_bytes: 10_000_000 }] } });
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION1" />);
+  const audio = (await screen.findByRole("heading", { name: "Audio", level: 2 })).closest("section")!;
+  expect(audio.closest("details")).toBeNull();
+  expect(within(audio).getByText(/a cue plays one file when the reader reaches its page or anchor/)).toBeVisible();
+  expect(within(audio).getByText(/An anchor marks a point partway down a page/)).toBeVisible();
+  expect(within(audio).getByText(/Tracks on the same layer replace each other/)).toBeVisible();
+  expect(await within(audio).findByText(/1 pages and 1 audio files/)).toBeVisible();
+  expect(screen.queryByText("Reader tools")).toBeNull();
+});
+
+it("leaves the Audio section out for a kind without audio uploads", async () => {
+  const s = server();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" versionCode="VERSION1" />);
+  expect(await screen.findByRole("heading", { name: "Chapters", level: 2 })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Audio" })).toBeNull();
+});
+
 it("deletes the last edition, opens it from Trash, and restores only that edition as a private draft", async () => {
   const direct: ContentModel = { ...model, kinds: { gallery: { ...model.kinds.gallery!, access_scope: "version" } } };
   const s = server({ model: direct }), user = userEvent.setup();

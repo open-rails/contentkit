@@ -3,10 +3,10 @@ import { useContext, useId, useMemo, useRef, useState, type ReactNode } from "re
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { Anchor, BackgroundCue, ForegroundCue, ReaderMeta } from "../../client/generated/wire.js";
-import { emptyReaderMeta, matchAudio, readerMetaProblems, readerNames, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "../../client/reader-meta.js";
+import { emptyReaderMeta, hashPageNames, matchAudio, readerMetaProblems, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "../../client/reader-meta.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
-import { useReaderPlan } from "../../react/versions.js";
+import { useMediaRead } from "../../react/read.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Input } from "#ckui/ui/input";
@@ -17,15 +17,19 @@ import { ErrorLine, useAction } from "../social/parts.js";
 import { EditorSaveContext, useEditorSaveTask } from "../content/editor-save.js";
 import { useDraft } from "../../react/use-draft.js";
 import { LoadFailed, Rows } from "./shell.js";
-import { AudioPreview, PagePicker, usePlanMedia, type PlanMedia } from "./page-picker.js";
+import { ALL_EDITOR_FILES, AudioPreview, editorMedia, PagePicker, type PlanMedia } from "./page-picker.js";
 
 export interface ReaderManifestEditorProps {
+  /** The content's kind, which addresses the version's media item. */
+  kind: string;
   content: string;
   version: string;
   client?: ContentKitClient;
   onError?: ContentKitErrorHandler;
   className?: string;
   appearance?: ContentKitUiAppearance;
+  /** Show its title; off where the host's section already names it. Default true. */
+  heading?: boolean;
 }
 
 const NONE = "__none__";
@@ -53,19 +57,24 @@ const num = (v: string): number => (v.trim() === "" ? Number.NaN : Number(v));
 const shown = (n: number | undefined) => (n === undefined || Number.isNaN(n) ? "" : String(n));
 
 /**
- * Editors: a reader version's manifest over its published pages and audio:
+ * Editors: a reader version's manifest over its current pages and audio
+ * uploads (published or not), seeded from the stored manifest:
  * scroll anchors, foreground cues (one track at a page or anchor, matched
  * from file names in one step), background tracks over a range, and the
  * auto-advance default. Page order is the version's media order.
  */
-export function ReaderManifestEditor({ content, version, client: own, onError, className, appearance }: ReaderManifestEditorProps) {
+export function ReaderManifestEditor({ kind, content, version, client: own, onError, className, appearance, heading = true }: ReaderManifestEditorProps) {
   const { t } = useMessages();
   const coordinated = useContext(EditorSaveContext) !== null;
   const client = useContentKitClient(own);
-  const plan = useReaderPlan(content, version, { client });
-  const names = useMemo<ReaderNames>(() => (plan.plan ? readerNames(plan.plan) : { pages: [], files: [] }), [plan.plan]);
-  const media = usePlanMedia(plan.plan, client);
-  const seed = useMemo(() => ({ meta: plan.plan ? (plan.plan.reader ? structuredClone(plan.plan.reader) : emptyReaderMeta()) : null }), [plan.plan]);
+  const read = useMediaRead({ kind, id: content, version }, { editor: true, window: ALL_EDITOR_FILES, client });
+  const media = useMemo(() => editorMedia(read.read), [read.read]);
+  const names = useMemo<ReaderNames>(() => ({ pages: media.pages, files: media.files }), [media]);
+  const seed = useMemo(() => {
+    if (!read.read) return { meta: null };
+    const stored = read.read.meta?.reader as ReaderMeta | undefined;
+    return { meta: stored?.schema_version === 1 ? hashPageNames(structuredClone(stored), media.pages) : emptyReaderMeta() };
+  }, [read.read, media.pages]);
   const draft = useDraft(seed);
   const meta = draft.value.meta;
   const dirty = draft.dirty.length > 0;
@@ -82,30 +91,33 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
     if(!meta||problems.length)return false;
     setSaved(false);const snapshot=meta, settle=draft.checkpoint();
     const ok=await save.run(async()=>{await client.versions.setReader(content,version,clean(snapshot));return true;});
-    if(!ok||latest.current!==snapshot)return false;
+    if(!ok)return false;
+    read.reload();
+    if(latest.current!==snapshot)return false;
     if(!settle({meta:snapshot}))return false;
     setSaved(true);return true;
   };
   useEditorSaveTask(`reader-meta:${version}`,{label:t("readerManifest.title"),dirty,pending:save.pending,valid:!problems.length,save:submit,order:30});
   const body = (() => {
-    if (plan.loading && !plan.plan && !plan.pending) return <Rows count={2} />;
-    if (plan.pending) return <p className="text-muted-foreground">{t("readerManifest.pending")}</p>;
-    if (plan.error && !plan.plan) return <LoadFailed error={plan.error} message={t("readerManifest.loadFailed")} retry={plan.reload} />;
+    if (read.error && !read.read) return <LoadFailed error={read.error} message={t("readerManifest.loadFailed")} retry={read.reload} />;
+    if (!read.read) return <Rows count={2} />;
     if (!meta) return null;
     const anchors = meta.anchors ?? [];
     const anchorIds = anchors.map((a) => a.id).filter(Boolean);
     return (
       <form className="grid gap-4" onSubmit={(event)=>{event.preventDefault();if (coordinated) event.stopPropagation();else void submit();}}>
-        <p className="text-muted-foreground">{t("readerManifest.summary", { pages: names.pages.length, files: names.files.length })}</p>
+        <p className="text-muted-foreground">
+          {t("readerManifest.summary", { pages: names.pages.length, files: names.files.length })} {!names.files.length && t("readerManifest.noAudio")}
+        </p>
         <Defaults meta={meta} edit={edit} />
-        <Group title={t("readerManifest.anchors")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
+        <Group title={t("readerManifest.anchors")} help={t("readerManifest.anchorsHelp")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
           onAdd={() => edit((m) => ({ ...m, anchors: [...(m.anchors ?? []), { id: nextId(m.anchors ?? []), page: names.pages[0]!.id, offset_percent: 0 }] }))}>
           {anchors.map((a, i) => (
             <AnchorRow key={i} index={i} anchor={a} media={media} onChange={(next) => edit((m) => ({ ...m, anchors: replace(m.anchors, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, anchors: drop(m.anchors, i) }))} />
           ))}
         </Group>
-        <Group title={t("readerManifest.foreground")} add={t("readerManifest.addCue")} disabled={!names.files.length || !names.pages.length}
+        <Group title={t("readerManifest.foreground")} help={t("readerManifest.foregroundHelp")} add={t("readerManifest.addCue")} disabled={!names.files.length || !names.pages.length}
           onAdd={() => edit((m) => ({ ...m, foreground: [...(m.foreground ?? []), { file: names.files[0]!, page: names.pages[0]!.id }] }))}
           extra={
             <Button type="button" size="sm" variant="outline" disabled={!names.files.length} onClick={() => {
@@ -122,7 +134,7 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
               onRemove={() => edit((m) => ({ ...m, foreground: drop(m.foreground, i) }))} />
           ))}
         </Group>
-        <Group title={t("readerManifest.background")} add={t("readerManifest.addTrack")} disabled={!names.files.length}
+        <Group title={t("readerManifest.background")} help={t("readerManifest.backgroundHelp")} add={t("readerManifest.addTrack")} disabled={!names.files.length}
           onAdd={() => edit((m) => ({ ...m, background: [...(m.background ?? []), { file: names.files[0]! }] }))}>
           {(meta.background ?? []).map((c, i) => (
             <BackgroundRow key={i} index={i} cue={c} names={names} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, background: replace(m.background, i, next) }))}
@@ -150,7 +162,8 @@ export function ReaderManifestEditor({ content, version, client: own, onError, c
   })();
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-3 text-sm", className)} data-ckui="reader-manifest">
-      <h4 className="font-medium">{t("readerManifest.title")}</h4>
+      {heading && <h4 className="font-medium">{t("readerManifest.title")}</h4>}
+      <p className="text-pretty text-muted-foreground">{t("readerManifest.help")}</p>
       {body}
     </ContentKitUiRoot>
   );
@@ -166,10 +179,11 @@ function nextId(anchors: readonly Anchor[]): string {
 const replace = <T,>(list: T[] | undefined, i: number, next: T): T[] => (list ?? []).map((x, j) => (j === i ? next : x));
 const drop = <T,>(list: T[] | undefined, i: number): T[] => (list ?? []).filter((_, j) => j !== i);
 
-function Group({ title, add, disabled, onAdd, extra, children }: { title: string; add: string; disabled: boolean; onAdd: () => void; extra?: ReactNode; children: ReactNode }) {
+function Group({ title, help, add, disabled, onAdd, extra, children }: { title: string; help: string; add: string; disabled: boolean; onAdd: () => void; extra?: ReactNode; children: ReactNode }) {
   return (
     <fieldset className="grid gap-2 rounded-md border border-border p-3">
       <legend className="px-1 font-medium">{title}</legend>
+      <p className="text-pretty text-xs text-muted-foreground">{help}</p>
       {children}
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onAdd}>

@@ -3,7 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ContentKitClient } from "../../client/client.js";
-import type { ReaderPlan } from "../../client/generated/wire.js";
+import { isAudioType } from "../../client/gallery.js";
+import type { ReaderPlan, ReadResult, UploadRule } from "../../client/generated/wire.js";
+import { stem } from "../../client/media/client.js";
+import { isPattern, ruleDir, ruleFor } from "../../client/media/rules.js";
+import { pageRemoved } from "../../client/media/windows.js";
 import { useMessages } from "../../i18n/context.js";
 import { Button } from "#ckui/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
@@ -74,6 +78,43 @@ export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient):
   const counts = new Map<string, number>();
   for (const p of allPages) counts.set(p.id, (counts.get(p.id) ?? 0) + 1);
   return { pages: allPages.map((p) => ({ id: p.id, label: p.name, disabled: counts.get(p.id) !== 1, url: ready ? urls.pages.get(p.id) : undefined })), audio: ready ? urls.audio : new Map() };
+}
+
+/** Every file of an editor read, in shared chunks. */
+export const ALL_EDITOR_FILES = { start: 0, end: Number.MAX_SAFE_INTEGER, chunk: 200 };
+
+/** A {name} upload of audio: the source a kind's playback preset converts. */
+export const isAudioRule = (rule: UploadRule) => isPattern(rule.path) && !rule.page && rule.types.some(isAudioType);
+
+/**
+ * An editor read's current pages (attached, included page uploads by source
+ * hash, with their smallest image rendition) and audio uploads by {name} with
+ * a playable URL (the M4A rendition, else the upload): what the server checks
+ * reader metadata against, before or after any publication.
+ */
+export function editorMedia(read: ReadResult | null): PlanMedia & { files: string[] } {
+  const files = read?.files ?? [], rules = read?.uploads ?? [];
+  const sources = files.filter((file) => file.upload && !file.unattached && file.page_id && ruleFor(rules, file.path)?.page && !pageRemoved(file));
+  const counts = new Map<string, number>();
+  for (const file of sources) counts.set(file.page_id!, (counts.get(file.page_id!) ?? 0) + 1);
+  const previews = new Map<string, (typeof files)[number]>();
+  for (const file of files) {
+    if (file.upload || !file.from || !file.url || !file.type.startsWith("image/")) continue;
+    const previous = previews.get(file.from);
+    if (!previous || (file.w ?? Infinity) * (file.h ?? Infinity) < (previous.w ?? Infinity) * (previous.h ?? Infinity)) previews.set(file.from, file);
+  }
+  const pages = sources.map((file) => ({ id: file.page_id!, label: file.path.split("/").at(-1) ?? file.path, url: previews.get(file.path)?.url, disabled: counts.get(file.page_id!)! > 1 }));
+  const m4a = new Map(files.flatMap((f) => (f.from && f.url && f.path.endsWith("/audio.m4a") ? [[f.from, f.url] as const] : [])));
+  const audio = new Map<string, string>(), names = new Set<string>();
+  for (const file of files) {
+    const rule = file.upload && !file.unattached ? ruleFor(rules, file.path) : undefined;
+    if (!rule || !isAudioRule(rule)) continue;
+    const name = stem(file.path).slice(ruleDir(rule.path).length);
+    names.add(name);
+    const url = m4a.get(file.path) ?? file.url;
+    if (url && !audio.has(name)) audio.set(name, url);
+  }
+  return { pages, audio, files: [...names] };
 }
 
 /**
