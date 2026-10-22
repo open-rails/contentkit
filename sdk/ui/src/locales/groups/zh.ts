@@ -134,6 +134,7 @@ export const groups: typeof en = {
     noKinds: "此站点没有分组类型。",
     back: "返回列表",
     new: "新建：{kind}",
+    newShort: "新建",
     sort: "排序",
     sort_name: "按名称",
     sort_count: "内容最多",

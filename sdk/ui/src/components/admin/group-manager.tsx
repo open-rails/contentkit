@@ -144,8 +144,8 @@ function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize
     <div className="grid gap-4" data-ckui="group-list" data-kind={kind}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold">{label}</h2>
-        <Button size="sm" onClick={() => loc.go(`${kind}/new`)}>
-          {t("groupManager.new", { kind: label })}
+        <Button size="sm" aria-label={t("groupManager.new", { kind: label })} onClick={() => loc.go(`${kind}/new`)}>
+          {t("groupManager.newShort")}
         </Button>
       </div>
       <div className="flex gap-2" role="group" aria-label={label}>

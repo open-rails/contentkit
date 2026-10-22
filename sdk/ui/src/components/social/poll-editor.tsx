@@ -6,7 +6,7 @@ import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import type { Poll, PollKind, PollOption, PollUpdate } from "../../client/generated/wire.js";
 import type { ContentKitUiAppearance } from "../../appearance.js";
-import { useMessages } from "../../i18n/context.js";
+import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { usePollEditor } from "../../react/polls.js";
 import { ContentKitUiRoot } from "../../scope.js";
@@ -166,7 +166,8 @@ function CreateFields(p: {
 }) {
   const { t } = useMessages();
   const ids = useId();
-  const langs = useMemo(() => (p.languages ?? []).map((l) => (typeof l === "string" ? { value: l, label: l } : l)), [p.languages]);
+  const languageName = useLanguageName();
+  const langs = useMemo(() => (p.languages ?? []).map((l) => (typeof l === "string" ? { value: l, label: languageName(l) } : l)), [p.languages, languageName]);
   const [question, setQuestion] = useState("");
   const [language, setLanguage] = useState(p.defaultLanguage ?? langs[0]?.value ?? "en");
   const [kind, setKind] = useState<PollKind>("multiple_choice");
