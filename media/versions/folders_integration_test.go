@@ -97,6 +97,7 @@ func TestVersionFolders(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer tx.Rollback(s.ctx)
 		if err := s.svc.DeleteTx(s.ctx, tx, targets); err != nil {
 			t.Fatal(err)
 		}
@@ -117,6 +118,79 @@ func TestVersionFolders(t *testing.T) {
 	}
 	del(versions.Target{Content: c})
 	eventually(t, "content deleted", time.Minute, gone(r1))
+}
+
+// Deleting a content waits for a publisher holding its version, as a
+// promotion does while it retires a publication the deletion retires too,
+// instead of deadlocking with it.
+func TestDeleteWaitsForPublisher(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	c := s.content("gallery", `{"level":"public"}`)
+	v := s.version(c)
+	s.mustUpload(s.creator, s.ref("gallery", v), "originals/001", "image/png", pngOf(t, 30, 40, 1))
+	pubs, items := s.table("content_version_publications"), s.table("content_version_publication_items")
+	var pub, item string
+	eventually(t, "a current publication and a drained queue", 2*time.Minute, func() bool {
+		var busy bool
+		err := s.pool.QueryRow(s.ctx, `SELECT p.id, i.id, EXISTS (SELECT 1 FROM `+pgx.Identifier{s.host, "river_job"}.Sanitize()+`
+ WHERE state NOT IN ('completed', 'cancelled', 'discarded') AND kind <> 'contentkit_media_sweep')
+FROM `+pubs+` p JOIN `+items+` i ON i.tenant_id = p.tenant_id AND i.publication_id = p.id
+WHERE p.tenant_id = $1 AND p.version_id = $2 AND p.state = 'current'`, s.tenant, v.Version).Scan(&pub, &item, &busy)
+		return err == nil && !busy
+	})
+
+	// A publisher holds the version, then its publication, as promoteTx does.
+	publisher, err := s.pool.Begin(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer publisher.Rollback(s.ctx)
+	var publisherPID uint32
+	if err := publisher.QueryRow(s.ctx, `SELECT pg_backend_pid()`).Scan(&publisherPID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publisher.Exec(s.ctx, `SELECT FROM `+s.table("content_versions")+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.tenant, v.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publisher.Exec(s.ctx, `SELECT FROM `+pubs+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.tenant, pub); err != nil {
+		t.Fatal(err)
+	}
+
+	deleter, err := s.pool.Begin(s.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deleter.Rollback(s.ctx)
+	var deleterPID uint32
+	if err := deleter.QueryRow(s.ctx, `SELECT pg_backend_pid()`).Scan(&deleterPID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.svc.DeleteTx(s.ctx, deleter, []versions.Target{{Content: c}}) }()
+	for blocked := false; !blocked; time.Sleep(10 * time.Millisecond) {
+		select {
+		case err := <-done:
+			t.Fatalf("deletion did not wait for the publisher: %v", err)
+		default:
+		}
+		if err := s.pool.QueryRow(s.ctx, `SELECT $2::int = ANY(pg_blocking_pids($1::int))`, deleterPID, publisherPID).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The publisher retires that publication's item, then commits.
+	if err := s.jobs.DeleteItemsTx(s.ctx, publisher, media.Deletion{Ref: contentref.New(s.tenant, "gallery.published", item)}); err != nil {
+		t.Fatalf("publisher: %v", err)
+	}
+	if err := publisher.Commit(s.ctx); err != nil {
+		t.Fatalf("publisher: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("deletion: %v", err)
+	}
+	if err := deleter.Commit(s.ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // Editors of a content write its items: staff and its creators; a person
