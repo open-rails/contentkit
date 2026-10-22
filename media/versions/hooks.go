@@ -199,7 +199,7 @@ func (s *Service) resolvePublished(ctx context.Context, refs []contentref.Conten
 // (a playback publication's id).
 func (s *Service) pubItems(ctx context.Context, ids []string) (map[string]pubItem, error) {
 	rows, err := s.o.Pool.Query(ctx, `SELECT i.id, p.id, p.kind, c.kind, v.content_id, p.version_id, p.state = 'current', i.start_index, i.end_index,
-	CASE jsonb_typeof(p.source->'pages') WHEN 'array' THEN jsonb_array_length(p.source->'pages') ELSE 0 END, p.source
+	jsonb_array_length(p.source->'pages'), p.source
 FROM `+s.t.pubItems+` i JOIN `+s.t.publications+` p ON p.tenant_id = i.tenant_id AND p.id = i.publication_id
 JOIN `+s.t.versions+` v ON v.tenant_id = p.tenant_id AND v.id = p.version_id
 JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id

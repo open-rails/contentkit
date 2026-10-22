@@ -120,7 +120,7 @@ func pagesOf(k *media.Kind, m *media.Manifest) ([]page, error) {
 	if m.Meta[forkMeta] != nil || len(imports(k, m)) > 0 {
 		return nil, ErrNotReady
 	}
-	var out []page
+	out := []page{} // never nil: snapshots store pages as an array, which SQL counts
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Pages, f.Path) {
 			continue
@@ -397,9 +397,6 @@ func (s *Service) snapshotPages(ctx context.Context, q querier, k *media.Kind, v
 	resolved, err := resolveChapterStarts(segs[v.Version], pages)
 	if err != nil {
 		return pagesSnapshot{}, err
-	}
-	if pages == nil {
-		pages = []page{} // snapshot JSON keeps pages an array; SQL counts them
 	}
 	return pagesSnapshot{Pages: pages, Spans: spans(resolved, len(pages))}, nil
 }

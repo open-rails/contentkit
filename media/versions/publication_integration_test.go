@@ -258,6 +258,27 @@ func TestFirstPagesReplaceAPagelessPublication(t *testing.T) {
 	if pages != "array" {
 		t.Fatalf("the pageless publication stores pages as %q, not an array", pages)
 	}
+	// The go-live gate compares its own snapshot with that publication: an
+	// audio-only version stops pending once both of its publications are current.
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		tx, err := s.pool.Begin(s.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending, err := s.svc.PendingTx(s.ctx, tx, []versions.Target{v})
+		_ = tx.Rollback(s.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pending) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			s.dumpJobs()
+			t.Fatalf("a published audio-only version is pending: %+v", pending)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	// Publications written before the fix hold null pages; they must not
 	// block the next one.
 	if _, err := s.pool.Exec(s.ctx, `UPDATE `+s.table("content_version_publications")+` SET source = jsonb_set(source, '{pages}', 'null')
