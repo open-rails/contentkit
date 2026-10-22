@@ -369,10 +369,11 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 }
 
 type manifestMutation struct {
-	lifecycle bool // only deletion, explicit reset and restore may edit a tombstone
-	commit    manifestCommit
-	effects   journalEffects
-	quota     int64
+	lifecycle  bool // only deletion, explicit reset and restore may edit a tombstone
+	layoutCopy bool // a verified storage migration preserves the raw snapshot, including historical file order
+	commit     manifestCommit
+	effects    journalEffects
+	quota      int64
 }
 
 // replayCommit resolves a known request before any copy or new-item policy
@@ -468,7 +469,9 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	if !mutation.lifecycle && (next.Deleted != cur.Deleted || next.Incarnation != cur.Incarnation) {
 		return nil, false, errors.New("media: only explicit lifecycle operations can change incarnation or deletion")
 	}
-	item.kind.Normalize(next)
+	if !mutation.layoutCopy {
+		item.kind.Normalize(next)
+	}
 	if err := next.Validate(); err != nil {
 		return nil, false, err
 	}

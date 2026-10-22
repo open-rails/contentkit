@@ -103,9 +103,12 @@ func PlanLayoutMigration(ctx context.Context, source *Manifests, target *Registr
 		if err = settledLayout(ctx, source, from, cur, flattening(mapping, from, to.Prefix())); err != nil {
 			return nil, err
 		}
-		normalized := cur.Clone()
-		to.kind.Normalize(normalized)
-		if digestManifest(normalized) != digestManifest(cur) {
+		// Old stored metadata need not be a fixed point of today's normalizer.
+		// Compare how both kinds interpret it without rewriting the snapshot.
+		sourceNormalized, targetNormalized := cur.Clone(), cur.Clone()
+		from.kind.Normalize(sourceNormalized)
+		to.kind.Normalize(targetNormalized)
+		if digestManifest(targetNormalized) != digestManifest(sourceNormalized) {
 			return nil, errors.New("media: destination kind changes source manifest semantics")
 		}
 		e := LayoutEntry{Mapping: mapping, SourceFolder: from.Prefix(), TargetFolder: to.Prefix(), SourceETag: etag, Manifest: cur.Clone()}
@@ -240,7 +243,7 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 		if err = verifyLayoutSource(ctx, source, from, e); err != nil {
 			return err
 		}
-		mutation := &manifestMutation{lifecycle: true, commit: commit}
+		mutation := &manifestMutation{lifecycle: true, layoutCopy: true, commit: commit}
 		_, err = target.manifests.editOperation(ctx, to.Ref(), false, bound{}, mutation, func(cur *Manifest) error {
 			if head, err := target.cfg.Store.Head(ctx, to.ManifestKey()); err == nil {
 				if resumeETag == "" || head.ETag != resumeETag {
