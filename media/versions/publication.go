@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -18,14 +17,8 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// A version reaches viewers through publications: frozen snapshots of its
-// media copied into immutable items of its kind's published kind, so a
-// grant never opens originals, archives or another segment. A pages
-// publication has one item per span (a segment's pages, or pages outside
-// every segment); a playback publication is one item holding the version's
-// audio. A publication is built beside the current one and replaces it once
-// complete; an edit that removes or replaces what the current one shows
-// withdraws it at once.
+// A publication is an immutable metadata snapshot of ready files in the
+// version's own manifest. Chapters never create storage items or copy files.
 const (
 	kindPages    = "pages"
 	kindPlayback = "playback"
@@ -38,7 +31,6 @@ const pageCount = `CASE jsonb_typeof(source->'pages') WHEN 'array' THEN jsonb_ar
 // pagesSnapshot is a version's pages as a publication freezes them.
 type pagesSnapshot struct {
 	Pages []page `json:"pages"`
-	Spans []span `json:"spans"`
 }
 
 type page struct {
@@ -52,8 +44,7 @@ type page struct {
 	Files      []rendition `json:"files"`  // Publish.Renditions, in order
 }
 
-// rendition is a finished file, at the same path in the version's item and
-// in its published item.
+// rendition identifies an existing immutable file in the version's item.
 type rendition struct {
 	Preset string  `json:"preset,omitempty"`
 	Path   string  `json:"path"`
@@ -161,7 +152,6 @@ func tracksOf(k *media.Kind, m *media.Manifest) ([]track, error) {
 		return nil, ErrNotReady
 	}
 	a := private(k, k.Publish.Playback)
-	dir := strings.TrimSuffix(a.To, "{name}/")
 	out := []track{}
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached || !inPattern(a.From, f.Path) {
@@ -177,7 +167,7 @@ func tracksOf(k *media.Kind, m *media.Manifest) ([]track, error) {
 		t := track{Name: name, Upload: f.Path, Source: f.Key()}
 		for _, o := range m.Outputs(f.Path, a.Name) {
 			if strings.HasSuffix(o.Path, "/audio.m4a") && o.Blob != "" && !o.Gone && o.Size > 0 {
-				t.File = rendition{Path: dir + name + ".m4a", Blob: o.Blob, Type: o.Type, Size: o.Size, Dur: o.Dur}
+				t.File = rendition{Path: o.Path, Blob: o.Blob, Type: o.Type, Size: o.Size, Dur: o.Dur}
 			}
 		}
 		if t.File.Blob == "" {
@@ -215,16 +205,9 @@ func (s *Service) lockVersion(ctx context.Context, tx pgx.Tx, v Target) error {
 
 // pubRow is one publication.
 type pubRow struct {
-	ID       string
-	State    string
-	Source   []byte
-	Previews *int
-	Items    []itemRow
-}
-
-type itemRow struct {
-	ID string
-	span
+	ID     string
+	State  string
+	Source []byte
 }
 
 func (s *Service) loadPub(ctx context.Context, q querier, id string) (*pubRow, error) {
@@ -235,7 +218,6 @@ func (s *Service) loadPub(ctx context.Context, q querier, id string) (*pubRow, e
 	return p, err
 }
 
-// current is v's current publication of kind, nil without one.
 func (s *Service) current(ctx context.Context, q querier, v Target, kind string) (*pubRow, error) {
 	p, err := s.readPub(ctx, q, "p.version_id = $2 AND p.kind = $3 AND p.state = 'current'", v.Version, kind)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -244,60 +226,25 @@ func (s *Service) current(ctx context.Context, q querier, v Target, kind string)
 	return p, err
 }
 
-// The publication and its items share one snapshot even during withdrawal.
 func (s *Service) readPub(ctx context.Context, q querier, where string, args ...any) (*pubRow, error) {
 	p := &pubRow{}
-	var items []byte
-	err := q.QueryRow(ctx, `SELECT p.id, p.state, p.source, p.previews,
- (SELECT coalesce(json_agg(json_build_object('id', i.id, 'segment', i.segment,
- 'start', i.start_index, 'end', i.end_index) ORDER BY i.start_index), '[]'::json)
- FROM `+s.t.pubItems+` i WHERE i.tenant_id = p.tenant_id AND i.publication_id = p.id)
- FROM `+s.t.publications+` p WHERE p.tenant_id = $1 AND `+where,
-		append([]any{s.o.Tenant}, args...)...).Scan(&p.ID, &p.State, &p.Source, &p.Previews, &items)
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(items, &p.Items); err != nil {
-		return nil, err
-	}
-	return p, nil
+	err := q.QueryRow(ctx, `SELECT p.id,p.state,p.source FROM `+s.t.publications+` p WHERE p.tenant_id=$1 AND `+where, append([]any{s.o.Tenant}, args...)...).Scan(&p.ID, &p.State, &p.Source)
+	return p, err
 }
 
-// publishedRef is the ref of a published item of k.
-func (s *Service) publishedRef(k *media.Kind, id string) contentref.ContentRef {
-	return contentref.New(k.NS(), k.Name+media.PublishedSuffix, id)
-}
-
-// retireTx drops publications: their rows, and their items through media's
-// queued deletion.
-func (s *Service) retireTx(ctx context.Context, tx pgx.Tx, k *media.Kind, ids []string) error {
+// Retiring metadata never touches a source file or creates a storage job.
+func (s *Service) retireTx(ctx context.Context, tx pgx.Tx, _ *media.Kind, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `SELECT i.id FROM `+s.t.pubItems+` i WHERE i.tenant_id = $1 AND i.publication_id = ANY($2)
-UNION ALL SELECT p.id FROM `+s.t.publications+` p WHERE p.tenant_id = $1 AND p.id = ANY($2) AND p.kind = 'playback'`, s.o.Tenant, ids)
-	if err != nil {
-		return err
-	}
-	items, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return err
-	}
-	var del []media.Deletion
-	for _, id := range items {
-		del = append(del, media.Deletion{Ref: s.publishedRef(k, id)})
-	}
-	if err := s.m.Jobs.DeleteItemsTx(ctx, tx, del...); err != nil {
-		return err
-	}
-	_, err = tx.Exec(ctx, `DELETE FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = ANY($2)`, s.o.Tenant, ids)
+	_, err := tx.Exec(ctx, `DELETE FROM `+s.t.publications+` WHERE tenant_id=$1 AND id=ANY($2)`, s.o.Tenant, ids)
 	return err
 }
 
 // prepareTx records v's publication of kind showing source: the current one
 // when it already does (true), else the one being built, replacing a build
 // of another source.
-func (s *Service) prepareTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, kind string, source any, items []span) (string, bool, error) {
+func (s *Service) prepareTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, kind string, source any) (string, bool, error) {
 	body, err := json.Marshal(source)
 	if err != nil {
 		return "", false, err
@@ -333,12 +280,6 @@ WHERE tenant_id = $1 AND version_id = $2 AND kind = $3`, s.o.Tenant, v.Version, 
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.publications+` (tenant_id, id, version_id, kind, source) VALUES ($1, $2, $3, $4, $5)`,
 		s.o.Tenant, id, v.Version, kind, body); err != nil {
 		return "", false, err
-	}
-	for _, sp := range items {
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.pubItems+` (tenant_id, id, publication_id, segment, start_index, end_index)
-VALUES ($1, $2, $3, $4, $5, $6)`, s.o.Tenant, contentref.NewID(), id, sp.Segment, sp.Start, sp.End); err != nil {
-			return "", false, err
-		}
 	}
 	return id, false, nil
 }
@@ -380,25 +321,14 @@ func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Tar
 	return err == nil, err
 }
 
-// snapshotPages is v's pages snapshot now, with its segments' spans.
-func (s *Service) snapshotPages(ctx context.Context, q querier, k *media.Kind, v Target) (pagesSnapshot, error) {
+// snapshotPages records only ready source renditions, not chapter boundaries.
+func (s *Service) snapshotPages(ctx context.Context, _ querier, k *media.Kind, v Target) (pagesSnapshot, error) {
 	m, err := s.manifest(ctx, k, v)
 	if err != nil {
 		return pagesSnapshot{}, err
 	}
 	pages, err := pagesOf(k, m)
-	if err != nil {
-		return pagesSnapshot{}, err
-	}
-	segs, err := s.segments(ctx, q, []string{v.Version})
-	if err != nil {
-		return pagesSnapshot{}, err
-	}
-	resolved, err := resolveChapterStarts(segs[v.Version], pages)
-	if err != nil {
-		return pagesSnapshot{}, err
-	}
-	return pagesSnapshot{Pages: pages, Spans: spans(resolved, len(pages))}, nil
+	return pagesSnapshot{Pages: pages}, err
 }
 
 // manifest is v's item's manifest; an empty one before its first upload.
@@ -414,63 +344,25 @@ func (s *Service) manifest(ctx context.Context, k *media.Kind, v Target) (*media
 	return m, err
 }
 
-// publishPages builds v's pages publication and makes it current; false
-// while its items are still being placed.
+// publishPages snapshots existing ready files. It performs no object writes.
 func (s *Service) publishPages(ctx context.Context, k *media.Kind, v Target) (bool, error) {
-	id, current, err := s.underSource(ctx, v, func(tx pgx.Tx) (string, bool, error) {
+	_, ok, err := s.underSource(ctx, v, func(tx pgx.Tx) (string, bool, error) {
 		snap, err := s.snapshotPages(ctx, tx, k, v)
 		if err != nil {
 			return "", false, err
 		}
-		return s.prepareTx(ctx, tx, k, v, kindPages, snap, snap.Spans)
+		id, current, err := s.prepareTx(ctx, tx, k, v, kindPages, snap)
+		if err != nil || current {
+			return id, current, err
+		}
+		current, err = s.promoteTx(ctx, tx, k, v, kindPages, id)
+		return id, current, err
 	})
-	if err != nil || current {
-		return current, err
-	}
-	p, err := s.loadPub(ctx, s.o.Pool, id)
-	if err != nil {
-		return false, err
-	}
-	var snap pagesSnapshot
-	if err := json.Unmarshal(p.Source, &snap); err != nil {
-		return false, err
-	}
-	src, err := s.ref(k.Name, v)
-	if err != nil {
-		return false, err
-	}
-	complete := true
-	for _, it := range p.Items {
-		var files [][]rendition
-		for _, pg := range snap.Pages[it.Start:it.End] {
-			files = append(files, pg.Files)
-		}
-		done, err := s.fill(ctx, src, s.publishedRef(k, it.ID), files)
-		if err != nil {
-			return false, err
-		}
-		complete = complete && done
-	}
-	if !complete {
-		return false, nil
-	}
-	_, current, err = s.underSource(ctx, v, func(tx pgx.Tx) (string, bool, error) {
-		now, err := s.snapshotPages(ctx, tx, k, v)
-		if err != nil {
-			return "", false, err
-		}
-		if !sameJSON(now, snap) {
-			return "", false, s.retireTx(ctx, tx, k, []string{id})
-		}
-		ok, err := s.promoteTx(ctx, tx, k, v, kindPages, id)
-		return "", ok, err
-	})
-	return current, err
+	return ok, err
 }
 
-// publishPlayback builds v's playback publication and makes it current.
 func (s *Service) publishPlayback(ctx context.Context, k *media.Kind, v Target) (bool, error) {
-	id, current, err := s.underSource(ctx, v, func(tx pgx.Tx) (string, bool, error) {
+	_, ok, err := s.underSource(ctx, v, func(tx pgx.Tx) (string, bool, error) {
 		m, err := s.manifest(ctx, k, v)
 		if err != nil {
 			return "", false, err
@@ -479,52 +371,14 @@ func (s *Service) publishPlayback(ctx context.Context, k *media.Kind, v Target) 
 		if err != nil {
 			return "", false, err
 		}
-		return s.prepareTx(ctx, tx, k, v, kindPlayback, playbackSnapshot{Tracks: tracks}, nil)
+		id, current, err := s.prepareTx(ctx, tx, k, v, kindPlayback, playbackSnapshot{Tracks: tracks})
+		if err != nil || current {
+			return id, current, err
+		}
+		current, err = s.promoteTx(ctx, tx, k, v, kindPlayback, id)
+		return id, current, err
 	})
-	if err != nil || current {
-		return current, err
-	}
-	p, err := s.loadPub(ctx, s.o.Pool, id)
-	if err != nil {
-		return false, err
-	}
-	var snap playbackSnapshot
-	if err := json.Unmarshal(p.Source, &snap); err != nil {
-		return false, err
-	}
-	src, err := s.ref(k.Name, v)
-	if err != nil {
-		return false, err
-	}
-	complete := true
-	if len(snap.Tracks) > 0 {
-		files := make([][]rendition, len(snap.Tracks))
-		for i, t := range snap.Tracks {
-			files[i] = []rendition{t.File}
-		}
-		if complete, err = s.fill(ctx, src, s.publishedRef(k, id), files); err != nil {
-			return false, err
-		}
-	}
-	if !complete {
-		return false, nil
-	}
-	_, current, err = s.underSource(ctx, v, func(tx pgx.Tx) (string, bool, error) {
-		m, err := s.manifest(ctx, k, v)
-		if err != nil {
-			return "", false, err
-		}
-		tracks, err := tracksOf(k, m)
-		if err != nil {
-			return "", false, err
-		}
-		if !sameJSON(playbackSnapshot{Tracks: tracks}, snap) {
-			return "", false, s.retireTx(ctx, tx, k, []string{id})
-		}
-		ok, err := s.promoteTx(ctx, tx, k, v, kindPlayback, id)
-		return "", ok, err
-	})
-	return current, err
+	return ok, err
 }
 
 // underSource runs fn in a transaction holding v's source lock and row.
@@ -550,96 +404,6 @@ func sameJSON(a, b any) bool {
 	return err1 == nil && err2 == nil && bytes.Equal(x, y)
 }
 
-// fill brings a published item to files, each row at its index in its
-// upload group, and reports it complete: every file there, at its position,
-// with its bytes. Missing files are copied from src's outputs (OpCopy, a
-// server-side copy: nothing is staged, so the worker has nothing to place)
-// and ordered in one commit; a complete item takes none. A file already
-// there with other bytes retires nothing here; the item is left to its
-// publication's retirement.
-func (s *Service) fill(ctx context.Context, src, dst contentref.ContentRef, files [][]rendition) (bool, error) {
-	m, _, err := s.m.Manifests.Get(ctx, dst)
-	if err != nil && !errors.Is(err, media.ErrNotFound) {
-		return false, err
-	}
-	if complete(m, files) {
-		return true, nil
-	}
-	from, _, err := s.m.Manifests.Get(ctx, src)
-	if errors.Is(err, media.ErrNotFound) {
-		return false, fmt.Errorf("%w: %s is gone", errRetired, src)
-	} else if err != nil {
-		return false, err
-	}
-	outputs := map[string]string{} // blob -> its output's path in src
-	for _, f := range from.Files {
-		if !f.IsUpload() && f.Blob != "" && !f.Gone {
-			outputs[f.Blob] = f.Path
-		}
-	}
-	var copies, order []media.Op
-	for i, row := range files {
-		for _, r := range row {
-			at := i
-			order = append(order, media.Op{Op: media.OpMove, Path: r.Path, Index: &at})
-			if m != nil {
-				if f, ok := m.Get(r.Path); ok {
-					if !sameBlob(f.Blob, r.Blob) {
-						return false, fmt.Errorf("%w: %s holds other bytes at %s", errRetired, dst, r.Path)
-					}
-					continue
-				}
-			}
-			path, ok := outputs[r.Blob]
-			if !ok {
-				return false, fmt.Errorf("%w: %s no longer holds %s", errRetired, src, r.Blob)
-			}
-			copies = append(copies, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: src.ContentID, Version: src.Version(), Path: path}, To: r.Path})
-		}
-	}
-	for batch := range slices.Chunk(append(copies, order...), 1000) {
-		if m, err = s.m.Uploads.Commit(ctx, system, dst, uuid.NewString(), batch); err != nil {
-			return false, err
-		}
-	}
-	return complete(m, files), nil
-}
-
-// complete reports an item holding exactly files, placed, in order.
-func complete(m *media.Manifest, files [][]rendition) bool {
-	if m == nil {
-		return false
-	}
-	n := 0
-	for _, f := range m.Files {
-		if f.IsUpload() {
-			n++
-		}
-	}
-	want := 0
-	last := map[string]int{}
-	for _, row := range files {
-		for _, r := range row {
-			want++
-			i := m.Find(r.Path)
-			if i < 0 {
-				return false
-			}
-			f := m.Files[i]
-			group := r.Path[:strings.LastIndexByte(r.Path, '/')+1]
-			if prev, ok := last[group]; ok && i <= prev {
-				return false
-			}
-			last[group] = i
-			if f.Staged != "" || len(f.Pending) > 0 || f.Unattached || f.Gone || f.Fail() != nil || f.Edit != nil ||
-				!sameBlob(f.Blob, r.Blob) || f.Size != r.Size {
-				return false
-			}
-		}
-	}
-	return n == want
-}
-
 // sameBlob reports two allocations of the same bytes.
 func sameBlob(a, b string) bool {
 	da, okA := layout.BlobDigest(a)
@@ -649,7 +413,7 @@ func sameBlob(a, b string) bool {
 
 // withdrawStaleTx withdraws v's publications showing pages or audio m no
 // longer has, as uploaded: a removal, a replacement or an edit. It reports
-// whether the pages publication went, whose previews go with it.
+// whether the pages snapshot was withdrawn.
 func (s *Service) withdrawStaleTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, m *media.Manifest) (bool, error) {
 	have := map[string]string{}
 	for _, f := range m.Files {
@@ -667,7 +431,8 @@ func (s *Service) withdrawStaleTx(ctx context.Context, tx pgx.Tx, k *media.Kind,
 	}
 	all, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
 		var x row
-		return x, r.Scan(&x.id, &x.kind, &x.source)
+		err := r.Scan(&x.id, &x.kind, &x.source)
+		return x, err
 	})
 	if err != nil {
 		return false, err

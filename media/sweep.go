@@ -70,7 +70,7 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 }
 
 func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
-	item, err := j.cfg.Registry.folderItem(prefix)
+	item, err := j.itemForFolder(ctx, prefix)
 	if err != nil {
 		return SweepResult{}, err
 	}
@@ -78,15 +78,26 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 	err = j.manifests.cleanup(ctx, item, false, func(m *Manifest, _ bool) (journalEffects, error) {
 		now := j.cfg.Now()
 		keep := j.keeps(item, m)
-		protected, err := j.manifests.protectedAllocations(ctx, item, now, j.cfg.Grace)
+		protected, err := j.manifests.allocationDeadlines(ctx, item, j.cfg.Grace)
 		if err != nil {
 			return journalEffects{}, err
 		}
 		var effects journalEffects
+		seen := map[string]bool{}
+		// An allocated upload can still be on its way to storage. Keep its
+		// cleanup obligation until the same grace that protects its writer.
+		for key, until := range protected {
+			if parsed, ok := layout.Parse(key); ok && !keep[parsed.Area+"/"+parsed.Name] {
+				if left := until.Sub(now); left > 0 && (result.Wait == 0 || left < result.Wait) {
+					result.Wait = left + time.Second
+				}
+			}
+		}
 		for o, err := range j.cfg.Store.List(ctx, prefix) {
 			if err != nil {
 				return journalEffects{}, err
 			}
+			seen[o.Key] = true
 			k, ok := layout.Parse(o.Key)
 			if !ok || k.Folder() != prefix || k.Area == layout.AreaManifest || keep[k.Area+"/"+k.Name] {
 				continue
@@ -95,11 +106,13 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 			case layout.AreaPublic:
 				effects.Public = append(effects.Public, o.Key)
 			case layout.AreaTemp:
-				if !now.Before(o.LastModified.Add(j.cfg.TempTTL)) {
+				if left := o.LastModified.Add(j.cfg.TempTTL).Sub(now); left <= 0 {
 					effects.Private = append(effects.Private, o.Key)
+				} else if result.Wait == 0 || left < result.Wait {
+					result.Wait = left + time.Second
 				}
 			case layout.AreaPrivate, layout.AreaDownload:
-				if until, ok := protected[o.Key]; ok {
+				if until, ok := protected[o.Key]; ok && until.After(now) {
 					if left := until.Sub(now); result.Wait == 0 || left < result.Wait {
 						result.Wait = left + time.Second
 					}
@@ -110,6 +123,21 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 				} else if result.Wait == 0 || left < result.Wait {
 					result.Wait = left + time.Second
 				}
+			}
+		}
+		for key, until := range protected {
+			k, ok := layout.Parse(key)
+			if ok && !seen[key] && !keep[k.Area+"/"+k.Name] && !until.After(now) {
+				effects.Private = append(effects.Private, key)
+			}
+		}
+		for _, key := range effects.Private {
+			if _, live := protected[key]; live {
+				// One bounded follow-up catches a PUT that was already issued
+				// when this allocation was retired, including absent objects.
+				effects.CleanupAt = now.Add(j.cfg.LateUploadWindow)
+				effects.CleanupDelete = true
+				break
 			}
 		}
 		result.Deleted = append(slices.Clone(effects.Public), effects.Private...)
@@ -284,7 +312,10 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 		}
 		f := folders[prefix]
 		if f == nil {
-			_, err := j.cfg.Registry.folderItem(prefix)
+			item, err := j.itemForFolder(ctx, prefix)
+			if err == nil {
+				ref = item.Ref()
+			}
 			f = &OrphanFolder{Prefix: prefix, ID: id, ref: ref, ValidID: err == nil}
 			folders[prefix] = f
 		}
@@ -315,8 +346,14 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 				continue
 			}
 			if s.Delete {
+				if k.Versions && !f.ValidID {
+					return rep, fmt.Errorf("media: cannot delete version folder without a canonical journal owner: %s", f.Prefix)
+				}
 				if f.ValidID {
-					item, _ := j.cfg.Registry.Item(f.ref)
+					item, err := j.itemForFolder(ctx, f.Prefix)
+					if err != nil {
+						return rep, err
+					}
 					m, _, err := j.manifests.get(ctx, item.ManifestKey())
 					if errors.Is(err, ErrUpgradeRequired) {
 						continue // never deleted before the upgrade reads it

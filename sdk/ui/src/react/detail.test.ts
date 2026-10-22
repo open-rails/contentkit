@@ -36,3 +36,10 @@ it("editionOf applies the rule to the versions given, live or not", () => {
   expect(editionOf([v("b", 1, ["en"], false), v("a", 0, ["ja"], false)], "en")?.id).toBe("b");
   expect(editionOf([], "en")).toBeNull();
 });
+
+it("preserves the server's explicitly selected single edition without choosing an unseen sibling", () => {
+  const draft = v("draft", 0, ["ja"], false);
+  const selected = { ...content([draft]), selected_version_id: draft.id };
+  expect(defaultVersion(selected, "en")).toBe(draft);
+  expect(defaultVersion({ ...selected, selected_version_id: "missing" }, "en")).toBeNull();
+});

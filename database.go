@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgconn"
 	"net"
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	notifypg "github.com/open-rails/helpers/notify/postgres"
@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/migratekit"
 	"github.com/open-rails/migratekit/chmigrate"
 
+	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/signal"
@@ -180,6 +181,13 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 		if err := workqueue.Validate(ctx, e.pool, m.WorkerSchema); err != nil {
 			return required(err)
 		}
+		reg, journal, err := e.cleanupStorage()
+		if err != nil {
+			return required(err)
+		}
+		if err := media.ValidateCleanupMigration(ctx, e.pool, reg, journal, e.riverSchema); err != nil {
+			return required(err)
+		}
 	}
 	if err := e.avatarPlacement(ctx, false); err != nil {
 		if errors.Is(err, ErrAvatarPlacement) {
@@ -194,6 +202,34 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 		return required(err)
 	}
 	return nil
+}
+
+// cleanupStorage resolves only the registry and journal routes; migration and
+// startup validation must not need an object-store connection or live workers.
+func (e *Engine) cleanupStorage() (*media.Registry, *media.PGJournal, error) {
+	cfg, err := e.cfg.MediaKinds()
+	if err != nil {
+		return nil, nil, err
+	}
+	reg, err := media.NewRegistry(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	journal, err := media.NewPGJournal(e.pool, e.schema, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if account, ok := e.accountMediaStorage(); ok {
+		shared, err := media.NewPGJournal(e.pool, account.Schema, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		journal, err = media.RouteJournal(journal, shared, e.accountMediaPartition())
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return reg, journal, nil
 }
 
 // Connectivity, cancellation, resource pressure and server shutdown are retryable

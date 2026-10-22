@@ -73,6 +73,8 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 			return nil
 		}
 		mutation.effects.Deletion = true
+		mutation.effects.CleanupAt = j.cfg.Now().Add(j.cfg.LateUploadWindow)
+		mutation.effects.CleanupDelete = true
 		keys, err := j.manifests.allocationKeys(ctx, item)
 		if err != nil {
 			return err

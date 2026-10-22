@@ -19,7 +19,6 @@ func TestPublicationReadSurvivesWithdrawal(t *testing.T) {
 	schema := pgtest.Schema(t, ctx, pool)
 	s := &Service{o: Options{Tenant: "snapshot", Pool: pool}, t: tables{
 		publications: pgxIdent(schema, "content_version_publications"),
-		pubItems:     pgxIdent(schema, "content_version_publication_items"),
 	}}
 	exec := func(sql string, args ...any) {
 		t.Helper()
@@ -30,21 +29,18 @@ func TestPublicationReadSurvivesWithdrawal(t *testing.T) {
 	for _, tenant := range []string{"snapshot", "other"} {
 		exec(`INSERT INTO `+pgxIdent(schema, "content_items")+` (tenant_id, id, kind) VALUES ($1, 'content', 'gallery')`, tenant)
 		exec(`INSERT INTO `+pgxIdent(schema, "content_versions")+` (tenant_id, id, content_id, languages) VALUES ($1, 'version', 'content', ARRAY['en'])`, tenant)
-		exec(`INSERT INTO `+s.t.publications+` (tenant_id, id, version_id, kind, state, source, previews)
- VALUES ($1, 'publication', 'version', 'pages', 'current', '{"pages":[]}', 3)`, tenant)
-		exec(`INSERT INTO `+s.t.pubItems+` (tenant_id, id, publication_id, segment, start_index, end_index)
- VALUES ($1, 'second', 'publication', 2, 2, 5), ($1, 'first', 'publication', NULL, 0, 2)`, tenant)
+		exec(`INSERT INTO `+s.t.publications+` (tenant_id, id, version_id, kind, state, source)
+ VALUES ($1, 'publication', 'version', 'pages', 'current', '{"pages":[]}')`, tenant)
+
 	}
 	q := &withdrawingQuery{Pool: pool, withdraw: func() {
 		exec(`DELETE FROM ` + s.t.publications + ` WHERE tenant_id = 'snapshot' AND id = 'publication'`)
 	}}
 	p, err := s.current(ctx, q, Target{Content: "content", Version: "version"}, kindPages)
-	if err != nil || p == nil || p.ID != "publication" || len(p.Items) != 2 || p.Previews == nil || *p.Previews != 3 {
+	if err != nil || p == nil || p.ID != "publication" {
 		t.Fatalf("withdrawal split the reader snapshot: %+v %v", p, err)
 	}
-	if p.Items[0].ID != "first" || p.Items[0].Segment != nil || p.Items[1].ID != "second" || p.Items[1].Segment == nil || *p.Items[1].Segment != 2 {
-		t.Fatalf("publication items changed: %+v", p.Items)
-	}
+
 	if p, err := s.current(ctx, pool, Target{Content: "content", Version: "version"}, kindPages); err != nil || p != nil {
 		t.Fatalf("withdrawn publication is current: %+v %v", p, err)
 	}

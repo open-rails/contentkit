@@ -3,11 +3,8 @@ package versions
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"math"
 	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/open-rails/contentkit/access"
@@ -16,13 +13,9 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// ReaderPlan is how a viewer reads a version: its current publication's
-// segments, each with its release state and, when the viewer opens it, the
-// published item to read through the media read API; the public previews
-// of a locked version; the playback item; and the reader metadata naming
-// what the viewer can read. It signs nothing. A viewer locked out of a
-// version whose kind's locked view hides its length gets neither its page
-// count (absent) nor its locked segments.
+// ReaderPlan is a ready version snapshot with live chapter metadata. Released
+// spans select existing files in the same canonical version; their URLs are
+// signed on demand. Locked previews sign only their permitted renditions.
 type ReaderPlan struct {
 	Content     string        `json:"content_id"`
 	Version     string        `json:"version_id"`
@@ -32,6 +25,7 @@ type ReaderPlan struct {
 	Previews    []PlanPreview `json:"previews"`
 	Playback    *PlanPlayback `json:"playback,omitempty"`
 	Reader      *ReaderMeta   `json:"reader,omitempty"`
+	Expires     int64         `json:"expires,omitempty"` // signed preview URL expiry, Unix seconds
 }
 
 // PlanSegment is one span of pages: a segment's (Position set) or pages
@@ -90,6 +84,17 @@ type decision struct {
 	pages    int
 	anchored bool
 	now      time.Time
+}
+
+func previewPageCount(k *media.Kind, d decision, total int) int {
+	if k.Publish.Previews == "" {
+		return 0
+	}
+	spec := public(k, k.Publish.Previews)
+	if spec == nil {
+		return 0
+	}
+	return max(0, min(total, released(d.segs, total, d.now), d.preview.Pages, spec.First))
 }
 
 // shows reports pages [start, end) shown: released, or to an editor.
@@ -153,7 +158,8 @@ func (s *Service) decisions(ctx context.Context, actor access.Actor, kind string
 	return out, nil
 }
 
-// Plan is t's reader plan for actor.
+// Plan derives chapter spans from current metadata over an immutable file
+// snapshot. Every span reads the same canonical version item.
 func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*ReaderPlan, error) {
 	v, err := s.one(ctx, t)
 	if err != nil {
@@ -180,13 +186,39 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		return nil, err
 	}
 	d := ds[t]
-	switch {
-	case !d.res.Visible:
+	if !d.res.Visible {
 		return nil, ErrNotFound
-	case p == nil:
+	}
+	if p == nil {
 		return nil, ErrNotReady
 	}
-	cut := released(d.segs, d.pages, d.now)
+	ref, err := s.ref(k.Name, t)
+	if err != nil {
+		return nil, err
+	}
+	m, _, err := s.m.Manifests.Get(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	paths := map[string]string{}
+	for _, f := range m.Files {
+		if f.Blob != "" && !f.Gone {
+			paths[f.Blob] = f.Path
+		}
+	}
+	// Paths are mutable display metadata; a snapshot grants only its exact
+	// immutable blobs. A renamed file still resolves without broadening access.
+	for i := range snap.Pages {
+		for j := range snap.Pages[i].Files {
+			r := &snap.Pages[i].Files[j]
+			if path, ok := paths[r.Blob]; ok {
+				r.Path = path
+			} else {
+				return nil, ErrNotReady
+			}
+		}
+	}
+	cut := released(d.segs, len(snap.Pages), d.now)
 	length := d.res.Accessible || d.res.Editor || s.o.Kinds.Kinds[v.Kind].LockedView().Shows(kinds.ShowLength)
 	plan := &ReaderPlan{Content: t.Content, Version: t.Version, Publication: p.ID, Segments: []PlanSegment{}, Previews: []PlanPreview{}}
 	if length {
@@ -197,20 +229,20 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 	for _, g := range d.segs {
 		byPos[g.Position] = g
 	}
+	item := &media.RefBody{Kind: ref.ContentKind, ID: ref.ContentID, Version: ref.Version()}
 	readable := map[string]bool{}
-	for _, it := range p.Items {
-		seg := PlanSegment{Position: it.Segment, Start: it.Start, End: it.End, Released: it.End <= cut,
-			Locked: !d.shows(it.End) || !d.opens(it.End)}
-		if it.Segment != nil {
-			seg.Title, seg.ReleaseAt = byPos[*it.Segment].Title, byPos[*it.Segment].ReleaseAt
+	for _, span := range spans(d.segs, len(snap.Pages)) {
+		seg := PlanSegment{Position: span.Segment, Start: span.Start, End: span.End, Released: span.End <= cut, Locked: !d.shows(span.End) || !d.opens(span.End)}
+		if span.Segment != nil {
+			g := byPos[*span.Segment]
+			seg.Title, seg.ReleaseAt = g.Title, g.ReleaseAt
 		}
 		if seg.Locked && !length {
 			continue
 		}
 		if !seg.Locked {
-			ref := s.publishedRef(k, it.ID)
-			seg.Item = &media.RefBody{Kind: ref.ContentKind, ID: ref.ContentID}
-			for _, pg := range snap.Pages[it.Start:it.End] {
+			seg.Item = item
+			for _, pg := range snap.Pages[span.Start:span.End] {
 				name := pg.Name
 				if name == "" {
 					name = k.NameOf(pg.Path)
@@ -225,28 +257,43 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		}
 		plan.Segments = append(plan.Segments, seg)
 	}
-	ref, err := s.ref(k.Name, t)
-	if err != nil {
-		return nil, err
-	}
 	if k.Publish.Previews != "" {
-		images, err := s.m.Manifests.Images(ctx, media.ImageQuery{Ref: ref, Preset: k.Publish.Previews})
-		if err != nil {
-			return nil, err
+		count := previewPageCount(k, d, len(snap.Pages))
+		requested := make([]string, 0, count)
+		for _, pg := range snap.Pages[:count] {
+			if len(pg.Files) > 0 {
+				requested = append(requested, pg.Files[0].Path)
+			}
 		}
-		dir := previewDir(k)
-		for _, im := range images[0] {
-			n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(im.From, dir), ".webp"))
-			if err != nil || n < 1 || n > min(cut, d.pages, d.preview.Pages) || len(im.Renditions) == 0 {
+		urls := map[string]string{}
+		for batch := range slices.Chunk(requested, 64) {
+			read, err := s.m.Reader.Read(ctx, ref, actor, media.ReadOptions{Paths: batch})
+			if err != nil {
+				return nil, err
+			}
+			if plan.Expires == 0 || read.Expires < plan.Expires {
+				plan.Expires = read.Expires
+			}
+			for _, f := range read.Files {
+				if f.URL != "" {
+					urls[f.Path] = f.URL
+				}
+			}
+		}
+		for i, pg := range snap.Pages[:count] {
+			if len(pg.Files) == 0 {
 				continue
 			}
-			pg := snap.Pages[n-1]
-			r := im.Renditions[len(im.Renditions)-1]
+			r := pg.Files[0]
+			url := urls[r.Path]
+			if url == "" {
+				continue
+			}
 			name := pg.Name
 			if name == "" {
 				name = k.NameOf(pg.Path)
 			}
-			plan.Previews = append(plan.Previews, PlanPreview{ID: sourcePageHash(pg), Index: n - 1, Name: name, URL: r.URL, W: r.W, H: r.H})
+			plan.Previews = append(plan.Previews, PlanPreview{ID: sourcePageHash(pg), Index: i, Name: name, URL: url, W: r.W, H: r.H})
 			readable[sourcePageHash(pg)] = true
 		}
 	}
@@ -262,24 +309,21 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 				return nil, err
 			}
 			if len(tracks.Tracks) > 0 {
-				item := s.publishedRef(k, pb.ID)
-				plan.Playback = &PlanPlayback{Item: media.RefBody{Kind: item.ContentKind, ID: item.ContentID}}
+				plan.Playback = &PlanPlayback{Item: *item}
 				for _, tr := range tracks.Tracks {
-					plan.Playback.Tracks = append(plan.Playback.Tracks, PlanTrack{Name: tr.Name, Path: tr.File.Path, Duration: tr.File.Dur})
+					path, ok := paths[tr.File.Blob]
+					if !ok {
+						return nil, ErrNotReady
+					}
+					plan.Playback.Tracks = append(plan.Playback.Tracks, PlanTrack{Name: tr.Name, Path: path, Duration: tr.File.Dur})
 					files[tr.Name] = true
 				}
 			}
 		}
 	}
-	m, _, err := s.m.Manifests.Get(ctx, ref)
-	if err != nil && !errors.Is(err, media.ErrNotFound) {
-		return nil, err
-	}
-	if m != nil {
-		if rm, ok := readerMetaOf(m); ok {
-			kept := rm.hashPages(snap.Pages).filter(readable, files)
-			plan.Reader = &kept
-		}
+	if rm, ok := readerMetaOf(m); ok {
+		kept := rm.hashPages(snap.Pages).filter(readable, files)
+		plan.Reader = &kept
 	}
 	return plan, nil
 }

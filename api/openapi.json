@@ -4060,6 +4060,73 @@
         ]
       }
     },
+    "/v1/versions/{vid}": {
+      "get": {
+        "tags": [
+          "contents"
+        ],
+        "summary": "A version by its globally generated id: returns its parent content detail with only this edition selected, including shared and version-specific entities. The same visibility and access rules apply as on the parent's page; hidden versions never fall back to a sibling.",
+        "parameters": [
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language to show text in; the site's first language, then any, when it has none",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Content"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "contents",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:contents",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/contents/{id}/versions/{vid}": {
       "get": {
         "tags": [
@@ -6097,7 +6164,7 @@
         "tags": [
           "media"
         ],
-        "summary": "An item's files under a prefix in manifest order, each with a URL (and the item cookie is set); without access none, only its public files and whether it holds locked ones.",
+        "summary": "Authorized files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Restricted grants use exact-file URL tokens; whole-item grants may use a cookie. Unreadable files are omitted.",
         "parameters": [
           {
             "name": "kind",
@@ -6121,6 +6188,19 @@
             "description": "only files under this path prefix, e.g. low-res/",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "at most 64 exact paths to sign, without offset or limit; all authorized metadata remains listed",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           {
@@ -8683,7 +8763,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication.",
+        "summary": "A version's reader plan: its segments with their release state, the canonical version item for released spans, signed previews of a locked version, playback and reader metadata. 202 while it has no current publication.",
         "parameters": [
           {
             "name": "id",
@@ -8878,7 +8958,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
+        "summary": "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
         "parameters": [
           {
             "name": "id",
@@ -9044,6 +9124,14 @@
             "name": "revision",
             "in": "query",
             "description": "the exact ordered source revision",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pages",
+            "in": "query",
+            "description": "the exact authorized ZIP page count",
             "schema": {
               "type": "string"
             }
@@ -14004,6 +14092,9 @@
               "$ref": "#/components/schemas/Version"
             }
           },
+          "selected_version_id": {
+            "type": "string"
+          },
           "viewer": {
             "$ref": "#/components/schemas/ViewerState"
           },
@@ -18430,6 +18521,9 @@
           },
           "reader": {
             "$ref": "#/components/schemas/ReaderMeta"
+          },
+          "expires": {
+            "type": "integer"
           }
         },
         "required": [
@@ -19773,6 +19867,7 @@
         "type": "string",
         "enum": [
           "full",
+          "partial",
           "none"
         ]
       },

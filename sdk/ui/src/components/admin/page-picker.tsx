@@ -4,7 +4,7 @@ import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ContentKitClient } from "../../client/client.js";
 import { isAudioType } from "../../client/gallery.js";
-import type { ReaderPlan, ReadResult, UploadRule } from "../../client/generated/wire.js";
+import type { ReaderPlan, ReadResult, RefBody, UploadRule } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
 import { isPattern, ruleDir, ruleFor } from "../../client/media/rules.js";
 import { pageRemoved } from "../../client/media/windows.js";
@@ -36,7 +36,6 @@ export interface PlanMedia {
 
 // The smallest rendition: "thumb" when configured, else the last preset by name.
 const thumbOf = (files: Record<string, string>) => files.thumb ?? files[Object.keys(files).sort().at(-1) ?? ""];
-const dir = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
 
 /** A reader plan's pages with thumbnails and its audio with URLs, read once per plan (thumbnails are a convenience: names work without them). */
 export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient): PlanMedia {
@@ -47,31 +46,40 @@ export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient):
     const ctrl = new AbortController();
     const pages = new Map<string, string>(),
       audio = new Map<string, string>();
-    const reads = plan.segments.flatMap((s) => {
-      const first = s.pages?.[0] && thumbOf(s.pages[0].files);
-      if (!s.item || !first) return [];
-      return [
-        client.media.read(s.item, { prefix: dir(first), limit: s.pages!.length, signal: ctrl.signal }).then((r) => {
+    const reads: (() => Promise<void>)[] = [];
+    const enqueue = (item: RefBody, paths: string[], apply: (read: ReadResult) => void) => {
+      const unique = [...new Set(paths)];
+      for (let i = 0; i < unique.length; i += 64) {
+        const batch = unique.slice(i, i + 64);
+        reads.push(async () => apply(await client.media.read(item, { paths: batch, signal: ctrl.signal })));
+      }
+    };
+    for (const s of plan.segments) {
+      if (!s.item) continue;
+      enqueue(s.item, (s.pages ?? []).flatMap((p) => thumbOf(p.files) ? [thumbOf(p.files)!] : []), (r) => {
           const byPath = new Map(r.files.flatMap((f) => (f.url ? [[f.path, f.url] as const] : [])));
           for (const p of s.pages ?? []) {
             const url = byPath.get(thumbOf(p.files) ?? "");
             if (url) pages.set(p.id, url);
           }
-        }),
-      ];
-    });
+      });
+    }
     const playback = plan.playback;
     if (playback?.tracks.length)
-      reads.push(
-        client.media.read(playback.item, { limit: playback.tracks.length, signal: ctrl.signal }).then((r) => {
+      enqueue(playback.item, playback.tracks.map((t) => t.path), (r) => {
           const byPath = new Map(r.files.flatMap((f) => (f.url ? [[f.path, f.url] as const] : [])));
           for (const t of playback.tracks) {
             const url = byPath.get(t.path);
             if (url) audio.set(t.name, url);
           }
-        }),
-      );
-    void Promise.allSettled(reads).then(() => !ctrl.signal.aborted && setUrls({ plan, pages, audio }));
+      });
+    void Promise.all(Array.from({ length: Math.min(4, reads.length) }, async () => {
+      while (!ctrl.signal.aborted) {
+        const read = reads.shift();
+        if (!read) return;
+        try { await read(); } catch { /* A missing preview must not prevent the remaining page choices. */ }
+      }
+    })).then(() => !ctrl.signal.aborted && setUrls({ plan, pages, audio }));
     return () => ctrl.abort();
   }, [plan, client]);
   const ready = urls.plan === plan;

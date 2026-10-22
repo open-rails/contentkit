@@ -964,6 +964,27 @@ func (c *Client) GetContent(ctx context.Context, id string, q GetContentQuery) (
 	return out, err
 }
 
+// GetVersionQuery is the query of GetVersion.
+type GetVersionQuery struct {
+	// the language to show text in; the site's first language, then any, when it has none
+	Language string
+}
+
+func (q GetVersionQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetVersion is GET /v1/versions/{vid} (public). A version by its globally generated id: returns its parent content detail with only this edition selected, including shared and version-specific entities. The same visibility and access rules apply as on the parent's page; hidden versions never fall back to a sibling.
+func (c *Client) GetVersion(ctx context.Context, vid string, q GetVersionQuery) (catalog.Content, error) {
+	var out catalog.Content
+	err := c.call(ctx, http.MethodGet, expand("/v1/versions/{vid}", "{vid}", url.PathEscape(vid)), q.values(), nil, &out)
+	return out, err
+}
+
 // GetContentVersionQuery is the query of GetContentVersion.
 type GetContentVersionQuery struct {
 	// the language to show text in; the site's first language, then any, when it has none
@@ -1361,6 +1382,8 @@ func (c *Client) GetMediaPresets(ctx context.Context) ([]media.PresetRule, error
 type GetMediaQuery struct {
 	// only files under this path prefix, e.g. low-res/
 	Prefix string
+	// at most 64 exact paths to sign, without offset or limit; all authorized metadata remains listed
+	Path []string
 	// files to skip before the URLs start
 	Offset int
 	// files that get URLs
@@ -1375,6 +1398,9 @@ func (q GetMediaQuery) values() url.Values {
 	v := url.Values{}
 	if q.Prefix != "" {
 		v.Set("prefix", q.Prefix)
+	}
+	for _, s := range q.Path {
+		v.Add("path", s)
 	}
 	if q.Offset != 0 {
 		v.Set("offset", fmt.Sprint(q.Offset))
@@ -1391,7 +1417,7 @@ func (q GetMediaQuery) values() url.Values {
 	return v
 }
 
-// GetMedia is GET /v1/media/{kind}/{id} (public). An item's files under a prefix in manifest order, each with a URL (and the item cookie is set); without access none, only its public files and whether it holds locked ones.
+// GetMedia is GET /v1/media/{kind}/{id} (public). Authorized files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Restricted grants use exact-file URL tokens; whole-item grants may use a cookie. Unreadable files are omitted.
 func (c *Client) GetMedia(ctx context.Context, kind string, id string, q GetMediaQuery) (media.ReadResult, error) {
 	var out media.ReadResult
 	err := c.call(ctx, http.MethodGet, expand("/v1/media/{kind}/{id}", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), q.values(), nil, &out)
@@ -2048,7 +2074,7 @@ func (c *Client) PostContentVersionPageNoticeRestore(ctx context.Context, id str
 	return out, err
 }
 
-// GetContentVersionReader is GET /v1/contents/{id}/versions/{version}/reader (public). A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication.
+// GetContentVersionReader is GET /v1/contents/{id}/versions/{version}/reader (public). A version's reader plan: its segments with their release state, the canonical version item for released spans, signed previews of a locked version, playback and reader metadata. 202 while it has no current publication.
 func (c *Client) GetContentVersionReader(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/reader", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }
@@ -2065,7 +2091,7 @@ func (c *Client) PostContentVersionFork(ctx context.Context, id string, version 
 	return out, err
 }
 
-// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Every segment released and the version open. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
+// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
 func (c *Client) GetContentVersionDownload(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/download", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }
@@ -2090,6 +2116,8 @@ type GetContentVersionArchiveQuery struct {
 	Name string
 	// the exact ordered source revision
 	Revision string
+	// the exact authorized ZIP page count
+	Pages string
 	// the download's ticket
 	Ticket string
 }
@@ -2122,6 +2150,9 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	}
 	if q.Revision != "" {
 		v.Set("revision", q.Revision)
+	}
+	if q.Pages != "" {
+		v.Set("pages", q.Pages)
 	}
 	if q.Ticket != "" {
 		v.Set("ticket", q.Ticket)

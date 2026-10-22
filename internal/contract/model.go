@@ -54,7 +54,7 @@ var enums = []enum{
 	{"ErrorCode", errorCodeNames(), []string{"contract.ErrorReply.code", "media.Failure.code"}},
 	{"OpName", []string{media.OpPut, media.OpEdit, media.OpMove, media.OpRename, media.OpRemove, media.OpAttach,
 		media.OpCopy, media.OpFrame, media.OpMeta, media.OpRegenerate}, []string{"media.Op.op"}},
-	{"Access", []string{media.AccessFull, media.AccessNone}, []string{"media.ReadResult.access"}},
+	{"Access", []string{media.AccessFull, media.AccessPartial, media.AccessNone}, []string{"media.ReadResult.access"}},
 	{"ItemState", []string{media.StateReady, media.StateProcessing, media.StateFailed}, []string{"media.ReadResult.state"}},
 	{"EncodePhase", media.EncodePhases, []string{"media.EncodeProgress.phase"}},
 	{"PollKind", []string{content.PollMultipleChoice, content.PollFreeText}, []string{"content.Poll.kind", "content.PollInput.kind"}},

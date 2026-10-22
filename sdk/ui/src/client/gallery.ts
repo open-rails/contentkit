@@ -52,7 +52,7 @@ export function galleryItems(read: ReadResult | null | undefined): GalleryItem[]
   const full = read.access === "full";
   const dirs = read.hls ?? [];
   const dirOf = (f: FileInfo) => dirs.find((d) => f.path.startsWith(d));
-  const previews = full ? [] : (read.previews ?? []);
+  const previews = full || read.access === "partial" ? [] : (read.previews ?? []);
   const items: GalleryItem[] = previews.map((url, i) => ({ kind: "image", key: `preview/${i + 1}`, file: { path: `preview/${i + 1}`, type: "image/webp", url }, aspect: 1 }));
   const seen = new Set<string>();
   for (const f of read.files) {

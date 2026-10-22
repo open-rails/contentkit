@@ -63,13 +63,15 @@ const NONE: readonly ReadEntry[] = [];
  * provider) it only shows a supplied read.
  */
 export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRead {
-  const { read: given, client: own, prefix, offset, limit, download, editor, window, refresh: refreshing = true } = o;
+  const { read: given, client: own, prefix, paths, offset, limit, download, editor, window, refresh: refreshing = true } = o;
   const poll = o.poll ?? (editor ? POLL : false);
   const client = useOptionalContentKitClient(own);
   const scope = useReadScope();
   const store = client ? storeFor(client) : null;
   const chunk = window?.chunk ?? READ_CHUNK;
-  const base = scope + readKey(ref, { prefix, download, editor }) + (window ? `#${chunk}` : `#${offset ?? 0}:${limit ?? 0}`);
+  const selection = JSON.stringify([...new Set(paths ?? [])].sort());
+  const retainPrevious = !!window || paths !== undefined;
+  const base = scope + readKey(ref, { prefix, download, editor }) + (paths !== undefined ? "#paths" : window ? `#${chunk}` : `#${offset ?? 0}:${limit ?? 0}`);
 
   // Keep one placeholder, never subscriptions for the reader's visit history.
   const [previous, setPrevious] = useState<{ base: string; store: typeof store; read: ReadResult | null; n?: number }>({ base, store, read: null });
@@ -79,13 +81,19 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   // Until the first read states the total, only the window's first chunk.
   const wanted = window ? chunkOffsets(window.start, window.end, known ?? window.start + 1, chunk) : [];
   const offsets = window ? (wanted.length ? wanted : [0]) : [offset ?? 0];
-  const windows = useMemo(
-    () => offsets.map((off) => ({ offset: off, limit: window ? chunk : limit })),
+  const windows = useMemo<ReadOptions[]>(
+    () => {
+      if (paths !== undefined) {
+        const selected = [...new Set(paths)].sort();
+        return Array.from({ length: Math.ceil(selected.length / 64) }, (_, i) => ({ paths: selected.slice(i * 64, (i + 1) * 64) }));
+      }
+      return offsets.map((off) => ({ offset: off, limit: window ? chunk : limit }));
+    },
     // Window identity depends on its values, not the caller's array identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [offsets.join(","), window ? chunk : limit],
+    [offsets.join(","), window ? chunk : limit, selection, paths === undefined],
   );
-  const keys = useMemo(() => windows.map((w) => scope + readKey(ref, { prefix, download, editor, offset: w.offset, limit: w.limit })), [scope, windows, ref.kind, ref.id, ref.version, prefix, download, editor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const keys = useMemo(() => windows.map((w) => scope + readKey(ref, { prefix, download, editor, ...w })), [scope, windows, ref.kind, ref.id, ref.version, prefix, download, editor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A supplied read is shown until reload() asks the server or set() replaces it.
   const [requested, setRequested] = useState<{ base: string; given?: ReadResult | null } | null>(null);
@@ -120,12 +128,12 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   const failed = entries.some((e) => !!e.error);
   useEffect(() => {
     const read = failed ? null : merged;
-    if (window && (failed || merged || (entries.length && entries.every((e) => e.loaded)))) {
+    if (retainPrevious && (failed || merged || (entries.length && entries.every((e) => e.loaded)))) {
       setPrevious((prev) => prev.base === base && prev.store === store && prev.read === read ? prev : {
         base, store, read, n: merged?.total ?? (prev.base === base && prev.store === store ? prev.n : undefined),
       });
     }
-  }, [!!window, merged, failed, entries, base, store]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [retainPrevious, merged, failed, entries, base, store]);
 
   const reload = useCallback(() => {
     if (given !== undefined) setRequested({ base, given });
@@ -151,7 +159,7 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   else if (!entries.length) read = given ?? null;
   else {
     const loaded = entries.every((e) => e.loaded);
-    read = merged ?? (loaded ? null : (given ?? (window && same && !failed ? previous.read : null)));
+    read = merged ?? (loaded ? null : (given ?? (retainPrevious && same && !failed ? previous.read : null)));
     loading = entries.some((e) => e.loading || !e.loaded);
     error = entries.find((e) => e.error)?.error;
   }

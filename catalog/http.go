@@ -41,6 +41,10 @@ var routes = []httpapi.Route[*Store]{
 		Doc:   "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state.",
 		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleGet)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
+		Doc:   "A version by its globally generated id: returns its parent content detail with only this edition selected, including shared and version-specific entities. The same visibility and access rules apply as on the parent's page; hidden versions never fall back to a sibling.",
+		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeNotFound}},
+		Serve: httpapi.H((*Store).handleLookupVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
 		Doc:   "One version of a content item as the viewer sees it, with its segments and access decision; vid is its id or code.",
 		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeNotFound}},
@@ -355,6 +359,22 @@ func (s *Store) handleTotals(w http.ResponseWriter, r *http.Request) {
 
 func (s *Store) handleGet(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, r, http.StatusOK, r.PathValue("id"))
+}
+
+func (s *Store) handleLookupVersion(w http.ResponseWriter, r *http.Request) {
+	viewer, err := s.viewer(r, ViewerOptions{})
+	var item *Content
+	if err == nil {
+		item, err = s.LookupVersion(r.Context(), viewer, r.PathValue("vid"))
+	}
+	if err == nil {
+		err = s.fillStanding(r.Context(), viewer.actor, []*Content{item})
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
 }
 
 func (s *Store) handleGetVersion(w http.ResponseWriter, r *http.Request) {

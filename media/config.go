@@ -63,12 +63,11 @@ type Kind struct {
 	Namespace string `json:"namespace,omitempty"`
 	// Account places this kind in the tenant account root of a scoped registry.
 	Account bool `json:"account,omitempty"`
-	// Versions marks a content kind (ForContent): its items are its
-	// contents' versions, {kind, content, version}; a content has no item of
-	// its own.
+	// Versions marks a content kind (ForContent). Each version owns its
+	// folder; its parent content exists in the catalog, not in storage.
 	Versions bool `json:"versions,omitempty"`
-	// Publish publishes a Versions kind's versions to viewers through
-	// immutable items of the kind {Name}.published (Publish).
+	// Publish describes the existing files a version's reader can use.
+	// Published snapshots contain metadata, not separate media folders.
 	Publish *Publish `json:"publish,omitempty"`
 	Uploads []Upload `json:"uploads"`
 	// KeepOriginals keeps an upload's blob once its private outputs exist;
@@ -119,12 +118,9 @@ type Upload struct {
 	Video *VideoLimits `json:"video,omitempty"`
 }
 
-// Publish is how a Versions kind's versions reach viewers: never through
-// their own items, which hold originals and archives, but through items of
-// the derived kind {Name}.published. Each segment of a version's pages (its
-// chapters, or one for all) is one such item holding each page's
-// Renditions; the version's audio is one playback item. Grants open one of
-// them at a time.
+// Publish declares which existing version files a reader may consume. Its
+// immutable metadata snapshot contains no chapter folders or duplicated files;
+// chapter boundaries and release dates are evaluated when the reader asks.
 type Publish struct {
 	// Pages is the {name} upload of the version's ordered pages:
 	// "originals/{name}".
@@ -132,12 +128,10 @@ type Publish struct {
 	// Renditions are the private image presets from Pages a reader reads,
 	// the first at reading size: "low", "thumb".
 	Renditions []string `json:"renditions"`
-	// Previews is the public preset (First > 0, from a {name} WebP upload)
-	// that shows a locked version's leading released pages, filled with
-	// copies of their first rendition.
+	// Previews names the legacy preview policy preset (First caps its count).
+	// Reader plans sign existing renditions; no preview uploads are created.
 	Previews string `json:"previews,omitempty"`
-	// Playback is the private Audio preset whose M4As make the version's
-	// playback item.
+	// Playback is the private Audio preset whose existing M4As the reader uses.
 	Playback string `json:"playback,omitempty"`
 	// Import is the {name} upload of page archives (application/zip),
 	// expanded into Pages in name order.
@@ -147,7 +141,8 @@ type Publish struct {
 	Download string `json:"download,omitempty"`
 }
 
-// PublishedSuffix names the derived kind of a Publish kind's viewer items.
+// PublishedSuffix is retained only to identify retired legacy storage during
+// migration. New registries never register a kind with this suffix.
 const PublishedSuffix = ".published"
 
 // VideoLimits bound what one video or audio upload may cost the worker; an

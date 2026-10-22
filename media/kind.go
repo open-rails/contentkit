@@ -19,11 +19,7 @@ type kindState struct {
 	ns       string
 	scope    layout.Scope
 	patterns []pattern // parallel to Uploads
-	of       *Kind     // a published kind's Publish kind
 }
-
-// Of is a published kind's Publish kind, nil for any other.
-func (k *Kind) Of() *Kind { return k.of }
 
 // IsBody reports path an upload of a Body upload: one of the body's images.
 func (k *Kind) IsBody(path string) bool {
@@ -32,97 +28,81 @@ func (k *Kind) IsBody(path string) bool {
 }
 
 // levels validates a Versions kind's downloads and body images and derives
-// its published kind (nil without Publish).
-func (k *Kind) levels() (*Kind, error) {
+// its reader publication configuration.
+func (k *Kind) levels() error {
 	if !k.Versions {
 		if slices.ContainsFunc(k.Uploads, func(u Upload) bool { return u.Body }) || k.Publish != nil {
-			return nil, errors.New("Body uploads and Publish need Versions")
+			return errors.New("Body uploads and Publish need Versions")
 		}
-		return nil, nil
+		return nil
 	}
 	if err := k.validateDownloads(); err != nil {
-		return nil, err
+		return err
 	}
 	for _, u := range k.Uploads {
 		if !u.Body {
 			continue
 		}
-		// A publishing kind's private files reach viewers through published items alone.
+		// Body images remain private and are selected by the reader grant.
 		image := slices.ContainsFunc(k.Private, func(p Private) bool { return p.From == u.Path && p.Image != nil && !p.HostOnly })
 		switch {
 		case !u.Named || !image:
-			return nil, fmt.Errorf("body upload %q needs Named and a private image preset", u.Path)
-		case k.Publish != nil:
-			return nil, fmt.Errorf("body upload %q: a publishing kind's private files open only through published items", u.Path)
+			return fmt.Errorf("body upload %q needs Named and a private image preset", u.Path)
 		case slices.ContainsFunc(k.Public, func(p Public) bool { return p.From == u.Path }):
-			return nil, fmt.Errorf("body upload %q: body images have no public files", u.Path)
+			return fmt.Errorf("body upload %q: body images have no public files", u.Path)
 		}
 	}
 	if k.Publish == nil {
-		return nil, nil
+		return nil
 	}
-	pub, err := k.published()
-	if err != nil {
-		return nil, fmt.Errorf("Publish: %w", err)
-	}
-	pub.of = k
-	return pub, nil
+	return k.validatePublish()
 }
 
-// published validates Publish and derives its kind.
-func (k *Kind) published() (*Kind, error) {
+// validatePublish checks the existing version renditions; it creates no media
+// kind or storage folder. Chapter boundaries are reader metadata only.
+func (k *Kind) validatePublish() error {
 	p := k.Publish
 	pages := k.uploadIndex(p.Pages)
 	if pages < 0 || k.patterns[pages].literal != "" || k.Uploads[pages].Named || !k.feedsImages(p.Pages) {
-		return nil, fmt.Errorf("Pages %q is no {name} image upload of versions", p.Pages)
+		return fmt.Errorf("Pages %q is no {name} image upload of versions", p.Pages)
 	}
-	maxBytes := max(k.Uploads[pages].MaxBytes, 64<<20)
-	out := &Kind{Name: k.Name + PublishedSuffix, Namespace: k.Namespace, Account: k.Account, KeepOriginals: true, ServeOriginals: true}
-	out.ns, out.scope = k.ns, k.scope
 	if len(p.Renditions) == 0 {
-		return nil, errors.New("needs Renditions")
+		return errors.New("needs Renditions")
 	}
 	for _, name := range p.Renditions {
 		r := k.private(name)
 		if r == nil || r.Image == nil || r.From != p.Pages || !strings.HasSuffix(r.To, nameVar+".webp") || slices.Contains(k.Downloads, name) {
-			return nil, fmt.Errorf("rendition %q is no image preset from Pages to {dir}{name}.webp outside Downloads", name)
+			return fmt.Errorf("rendition %q is no image preset from Pages to {dir}{name}.webp outside Downloads", name)
 		}
-		dir := strings.TrimSuffix(r.To, nameVar+".webp")
-		out.Uploads = append(out.Uploads, Upload{Path: dir + nameVar, Types: []string{"image/webp"}, MaxBytes: maxBytes})
 	}
 	if p.Previews != "" {
 		pv := k.public(p.Previews)
 		if pv == nil || pv.First == 0 || !slices.Contains(k.Uploads[k.uploadIndex(pv.From)].Types, "image/webp") {
-			return nil, fmt.Errorf("Previews %q is no preview preset (First) of a WebP upload", p.Previews)
+			return fmt.Errorf("Previews %q is no preview preset (First) of a WebP upload", p.Previews)
 		}
 	}
 	if p.Playback != "" {
 		a := k.private(p.Playback)
-		dir, ok := "", false
+		ok := false
 		if a != nil {
-			dir, ok = strings.CutSuffix(a.To, nameVar+"/")
+			_, ok = strings.CutSuffix(a.To, nameVar+"/")
 		}
 		if a == nil || a.Audio == nil || !ok {
-			return nil, fmt.Errorf("Playback %q is no Audio preset to {dir}{name}/", p.Playback)
+			return fmt.Errorf("Playback %q is no Audio preset to {dir}{name}/", p.Playback)
 		}
-		src := k.Uploads[k.uploadIndex(a.From)]
-		out.Uploads = append(out.Uploads, Upload{Path: dir + nameVar, Types: []string{"audio/mp4"}, MaxBytes: max(src.MaxBytes, 64<<20)})
 	}
 	if p.Import != "" {
 		i := k.uploadIndex(p.Import)
 		if i < 0 || k.patterns[i].literal != "" || !slices.Equal(k.Uploads[i].Types, []string{"application/zip"}) {
-			return nil, fmt.Errorf("Import %q is no {name} upload of application/zip", p.Import)
+			return fmt.Errorf("Import %q is no {name} upload of application/zip", p.Import)
 		}
 	}
 	if p.Download != "" {
 		if z := k.private(p.Download); z == nil || z.Zip == "" || !z.HostOnly {
-			return nil, fmt.Errorf("Download %q is no HostOnly Zip preset", p.Download)
+			return fmt.Errorf("Download %q is no HostOnly Zip preset", p.Download)
 		}
 	}
-	if err := out.validate(); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return nil
 }
 
 // upload finds the Upload a path (stem plus optional extension) belongs to:

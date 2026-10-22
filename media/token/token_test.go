@@ -243,3 +243,39 @@ func TestScopedTokensBindTenantAppAndAccountRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPrivateFileTokenDoesNotAuthorizeSiblingsOrDownloads(t *testing.T) {
+	r := ring(t, k1, nil)
+	now := time.Unix(1_800_000_000, 0)
+	exp := now.Add(time.Hour)
+	root := "tenant/11111111-1111-4111-8111-111111111111/app/22222222-2222-4222-8222-222222222222/gallery/123/v1"
+	blob := "sha256-" + strings.Repeat("a", 64)
+	key := root + "/private/" + blob
+	tok := r.Sign(token.PrivateFileScope(key), exp)
+	if strings.Contains(token.PrivateFileScope(key), ":") {
+		t.Fatal("private file scopes must not overlap host ticket scopes")
+	}
+	if err := r.VerifyPrivate(tok, key, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, other := range []string{
+		root + "/private/sha256-" + strings.Repeat("b", 64),
+		strings.Replace(key, "/v1/", "/v2/", 1),
+		strings.Replace(key, "/gallery/123/", "/gallery/124/", 1),
+		strings.Replace(key, "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333", 1),
+		strings.Replace(key, "11111111-1111-4111-8111-111111111111", "44444444-4444-4444-8444-444444444444", 1),
+	} {
+		if err := r.VerifyPrivate(tok, other, now); !errors.Is(err, token.ErrInvalid) {
+			t.Fatalf("file token authorized another object %s: %v", other, err)
+		}
+	}
+	if err := r.VerifyPrivate(tok, key, exp); !errors.Is(err, token.ErrExpired) {
+		t.Fatalf("expired file token: %v", err)
+	}
+	if err := r.VerifyDownload(tok, root+"/download/"+blob, now); !errors.Is(err, token.ErrInvalid) {
+		t.Fatalf("private token opened an original/archive: %v", err)
+	}
+	if err := r.VerifyPrivate(tok, root+"/public/cover.webp", now); !errors.Is(err, token.ErrInvalid) {
+		t.Fatalf("private token accepted outside its area: %v", err)
+	}
+}

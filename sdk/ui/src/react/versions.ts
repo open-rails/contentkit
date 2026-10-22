@@ -28,10 +28,19 @@ export function nextRelease(plan: ReaderPlan | null, now = Date.now()): number |
   return at.length ? Math.min(...at) : null;
 }
 
+/** Refresh signed previews before expiry, or sooner for a chapter release. */
+export function nextReaderRefresh(plan: ReaderPlan | null, now = Date.now()): number | null {
+  const release = nextRelease(plan, now);
+  if (!plan?.expires) return release;
+  const renewal = Math.max(now + 5000, plan.expires * 1000 - 60_000);
+  return release === null ? renewal : Math.min(release, renewal);
+}
+
 /**
  * A version's reader plan for this viewer: its segments (released or not,
  * open or locked), previews, playback item and reader metadata. It asks again
- * while the version is being published and when its next segment is released.
+ * while the version is being published, when its next segment is released,
+ * and before signed preview URLs expire.
  */
 export function useReaderPlan(content: string | null | undefined, version: string | null | undefined, o: { poll?: number; client?: ContentKitClient } = {}): UseReaderPlan {
   const { client, store, scope } = useContentScope(o.client);
@@ -42,7 +51,7 @@ export function useReaderPlan(content: string | null | undefined, version: strin
   const { data, reload } = r;
   // Every answer schedules the next look: a pending one polls, a plan waits for its next release.
   useEffect(() => {
-    const at = isPending(data) ? Date.now() + (o.poll ?? 5000) : nextRelease(data ? (data as ReaderPlan) : null);
+    const at = isPending(data) ? Date.now() + (o.poll ?? 5000) : nextReaderRefresh(data ? (data as ReaderPlan) : null);
     if (at === null) return;
     const t = setTimeout(reload, Math.min(MAX_DELAY, Math.max(0, at - Date.now()) + 500));
     return () => clearTimeout(t);
@@ -69,12 +78,16 @@ export interface UseSegmentPages {
 }
 
 /**
- * An open segment's pages with URLs of one rendition, read through its
- * published item (windowed for long segments, refreshed before the URLs expire).
+ * An open segment's pages with URLs of one rendition. The local page window
+ * selects exact paths in the version's shared media item; chapter boundaries
+ * never change those paths. Active URLs refresh before expiry.
  */
 export function useSegmentPages(segment: PlanSegment | null | undefined, rendition: string, o: { window?: ReadWindow; client?: ContentKitClient } = {}): UseSegmentPages {
   const item = segment?.item ?? null;
-  const read = useMediaRead(item ?? { kind: "", id: "" }, { window: o.window, read: item ? undefined : null, client: o.client });
+  const start = Math.max(0, o.window?.start ?? 0);
+  const selected = (segment?.pages ?? []).slice(start, Math.max(start, o.window?.end ?? 50));
+  const paths = selected.flatMap((p) => p.files[rendition] ? [p.files[rendition]!] : []);
+  const read = useMediaRead(item ?? { kind: "", id: "" }, { paths, read: item && paths.length ? undefined : null, client: o.client });
   const pages = useMemo(() => {
     const urls = new Map((read.read?.files ?? []).flatMap((f) => (f.url ? [[f.path, f.url] as const] : [])));
     return (segment?.pages ?? []).map((p) => {

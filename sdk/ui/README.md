@@ -787,7 +787,7 @@ selected version. Version navigation warns before discarding unsaved changes.
 The host still owns navigation outside the flow, including browser Back handling.
 
 - **`ContentManager`**: the items of one `kind` the caller manages, by
-  state and text, deleted ones to restore; title, slug, description,
+  state and text, deleted ones to restore; title, slug, summary/description,
   schedule, cover and body with inline images per language; publish or
   unpublish; the moderation state. Props: `kind`, `languages`,
   `renderEditor` (`richTextEditor` from `/editor`, or the host's; a plain
@@ -796,6 +796,14 @@ The host still owns navigation outside the flow, including browser Back handling
   `{ one: "gallery", other: "galleries" }`: the list heading, with its first
   letter capitalized, the New button and the empty state; generic wording
   without it). `useContentManagerAccess()`.
+
+  Post editors label the preview text **Summary (optional)**. A supplied
+  summary becomes the list excerpt; otherwise ContentKit extracts the opening
+  plain text from the post body (HTML, plain text or Quill Delta), without image
+  embeds or formatting metadata. The shared storage/API field remains
+  `description`, also used by other kinds. The list API exposes the resolved
+  `excerpt`; `PostList.excerptLength` limits its displayed length (220 characters
+  by default). A locked post never exposes its body through this fallback.
 
   ```tsx
   import { richTextEditor } from "@openrails/contentkit-ui/editor";

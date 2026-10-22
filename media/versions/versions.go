@@ -2,8 +2,8 @@
 // items are its versions, {kind, content, version}; a content has none of
 // its own. This package answers media's
 // hooks from the content model (who uploads, who reads, the facts a
-// version's media yields), publishes versions to viewers (segment items,
-// previews, playback), forks and imports versions' media, copies body
+// version's media yields), records immutable ready-file snapshots for viewers
+// (chapter metadata, signed previews and playback), forks and imports versions' media, copies body
 // images between versions, and serves the reader plan, reader metadata and
 // downloads.
 //
@@ -98,7 +98,7 @@ type Service struct {
 }
 
 type tables struct {
-	items, versions, segments, publications, pubItems, groups, facets string
+	items, versions, segments, publications, groups, facets string
 }
 
 // New validates o. Build the media runtime with Hooks, then Bind it.
@@ -120,7 +120,7 @@ func New(o Options) (*Service, error) {
 	}
 	q := func(t string) string { return pgxIdent(o.Schema, t) }
 	s := &Service{o: o, t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"),
-		publications: q("content_version_publications"), pubItems: q("content_version_publication_items"), groups: q("content_groups"), facets: q("content_facets")}}
+		publications: q("content_version_publications"), groups: q("content_groups"), facets: q("content_facets")}}
 	var err error
 	if s.dl, err = newQuotas(o.Downloads, o.Kinds.Tiers, o.Logger, o.Now); err != nil {
 		return nil, err

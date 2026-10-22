@@ -18,6 +18,8 @@ import { checkRef } from "./ref.js";
 export interface ReadOptions {
   /** Only files under this path prefix, e.g. "low-res/". */
   prefix?: string;
+  /** Sign these file paths (at most 64), without granting access to other files. Do not combine with offset/limit. */
+  paths?: readonly string[];
   /** The range of files that get URLs. */
   offset?: number;
   limit?: number;
@@ -64,6 +66,7 @@ export class MediaApi {
   async read(ref: RefBody, o: ReadOptions = {}, signal?: AbortSignal) {
     const q = new URLSearchParams();
     if (o.prefix) q.set("prefix", o.prefix);
+    for (const path of o.paths ?? []) q.append("path", path);
     if (o.offset) q.set("offset", String(o.offset));
     if (o.limit) q.set("limit", String(o.limit));
     if (o.download) q.set("download", "1");

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -26,6 +27,9 @@ var ErrLayoutChanged = errors.New("media: layout migration checkpoint changed")
 // The caller must establish that ownership from catalog metadata beforehand.
 type LayoutMapping struct {
 	From, To contentref.ContentRef
+	// SourceFolder is an optional historical nested version folder. It must
+	// exactly match From's old parent/version path; arbitrary roots are refused.
+	SourceFolder string `json:"source_folder,omitempty"`
 	// Owner preserves a charged app/group quota owner. Account kinds default to
 	// their account ID; empty for other kinds means the source was uncharged.
 	Owner string `json:"owner,omitempty"`
@@ -50,6 +54,7 @@ type LayoutEntry struct {
 	SourceETag   string         `json:"source_etag"`
 	Manifest     *Manifest      `json:"manifest"`
 	Objects      []LayoutObject `json:"objects"`
+	ErasureFence bool           `json:"erasure_fence,omitempty"`
 }
 type LayoutObject struct {
 	Source, Target string
@@ -73,7 +78,7 @@ func PlanLayoutMigration(ctx context.Context, source *Manifests, target *Registr
 	plan := &LayoutPlan{Version: 1, Roots: layoutRoots(target)}
 	seen := map[string]bool{}
 	for _, mapping := range mappings {
-		from, err := migrationSource(source.reg, mapping.From)
+		from, err := migrationSource(source.reg, mapping.From, mapping.SourceFolder)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +100,7 @@ func PlanLayoutMigration(ctx context.Context, source *Manifests, target *Registr
 		if err != nil {
 			return nil, err
 		}
-		if err = settledLayout(ctx, source, from, cur); err != nil {
+		if err = settledLayout(ctx, source, from, cur, flattening(mapping, from, to.Prefix())); err != nil {
 			return nil, err
 		}
 		normalized := cur.Clone()
@@ -104,7 +109,14 @@ func PlanLayoutMigration(ctx context.Context, source *Manifests, target *Registr
 			return nil, errors.New("media: destination kind changes source manifest semantics")
 		}
 		e := LayoutEntry{Mapping: mapping, SourceFolder: from.Prefix(), TargetFolder: to.Prefix(), SourceETag: etag, Manifest: cur.Clone()}
-		for _, key := range layoutObjects(from, cur) {
+		if cur.Deleted {
+			if _, err := source.store.Head(ctx, from.PublicPrefix()+layout.ErasureFenceName); err == nil {
+				e.ErasureFence = true
+			} else if !errors.Is(err, ErrNotFound) {
+				return nil, err
+			}
+		}
+		for _, key := range layoutEntryObjects(from, e) {
 			obj, err := hashObject(ctx, source.store, key)
 			if err != nil {
 				return nil, err
@@ -132,7 +144,7 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 		if e.Manifest == nil {
 			return ErrLayoutChanged
 		}
-		from, err := migrationSource(source.reg, e.Mapping.From)
+		from, err := migrationSource(source.reg, e.Mapping.From, e.Mapping.SourceFolder)
 		if err != nil {
 			return err
 		}
@@ -146,25 +158,55 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 		if err = verifyLayoutSource(ctx, source, from, e); err != nil {
 			return err
 		}
-		cur, _, err := target.manifests.get(ctx, to.ManifestKey())
-		if err == nil {
-			if digestManifest(cur) != digestManifest(e.Manifest) {
-				return fmt.Errorf("%w: destination %s", ErrLayoutChanged, to.Prefix())
-			}
-			if err = settledLayout(ctx, target.manifests, to, cur); err != nil {
+		encoded, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		fingerprint := sha256.Sum256(encoded)
+		commit := manifestCommit{ID: uuid.NewSHA1(uuid.NameSpaceURL, fingerprint[:]), Ref: to.Ref(), Folder: to.Prefix(),
+			Actor: "migration:layout", Fingerprint: fingerprint}
+		prior, err := target.cfg.Journal.existing(ctx, commit)
+		if err != nil {
+			return err
+		}
+		if prior != nil {
+			if err := target.manifests.Recover(ctx, to.Ref()); err != nil {
 				return err
 			}
-			for _, o := range e.Objects {
-				if err = verifyLayoutObject(ctx, target.cfg.Store, o.Target, o); err != nil {
+			prior, err = target.cfg.Journal.existing(ctx, commit)
+			if err != nil {
+				return err
+			}
+		}
+		cur, currentETag, err := target.manifests.get(ctx, to.ManifestKey())
+		resumeETag := ""
+		if err == nil {
+			if digestManifest(cur) != digestManifest(e.Manifest) {
+				// A failed first PUT is recovered by writing an empty fence.
+				// Only this exact migration's absent attempt may replace it.
+				empty := &Manifest{V: ManifestVersion, Hidden: true, Incarnation: layoutRecoveryIncarnation(commit.ID), Files: []File{}}
+				if prior == nil || prior.State != "absent" || cur.Receipt != nil || digestManifest(cur) != digestManifest(empty) {
+					return fmt.Errorf("%w: destination %s", ErrLayoutChanged, to.Prefix())
+				}
+				resumeETag = currentETag
+			} else {
+				if err = settledLayout(ctx, target.manifests, to, cur, flattening(e.Mapping, from, to.Prefix())); err != nil {
 					return err
 				}
+				for _, o := range e.Objects {
+					if err = verifyLayoutObject(ctx, target.cfg.Store, o.Target, o); err != nil {
+						return err
+					}
+				}
+				continue
 			}
-			continue
-		}
-		if !errors.Is(err, ErrNotFound) {
+		} else if !errors.Is(err, ErrNotFound) {
 			return err
 		}
 		allowed := map[string]bool{}
+		if resumeETag != "" {
+			allowed[to.ManifestKey()] = true
+		}
 		for _, o := range e.Objects {
 			allowed[o.Target] = true
 		}
@@ -180,7 +222,10 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 				return fmt.Errorf("%w: unexpected destination object %s", ErrLayoutChanged, obj.Key)
 			}
 		}
-		expected := layoutObjects(from, e.Manifest)
+		if e.ErasureFence && !e.Manifest.Deleted {
+			return ErrLayoutChanged
+		}
+		expected := layoutEntryObjects(from, e)
 		if len(expected) != len(e.Objects) {
 			return ErrLayoutChanged
 		}
@@ -195,12 +240,16 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 		if err = verifyLayoutSource(ctx, source, from, e); err != nil {
 			return err
 		}
-		mutation := &manifestMutation{lifecycle: true, commit: manifestCommit{ID: uuid.New(), Fingerprint: sha256.Sum256([]byte("layout-migration:" + e.SourceETag + ":" + e.TargetFolder))}}
+		mutation := &manifestMutation{lifecycle: true, commit: commit}
 		_, err = target.manifests.editOperation(ctx, to.Ref(), false, bound{}, mutation, func(cur *Manifest) error {
-			if _, err := target.cfg.Store.Head(ctx, to.ManifestKey()); err == nil {
-				return ErrLayoutChanged
+			if head, err := target.cfg.Store.Head(ctx, to.ManifestKey()); err == nil {
+				if resumeETag == "" || head.ETag != resumeETag {
+					return ErrLayoutChanged
+				}
 			} else if !errors.Is(err, ErrNotFound) {
 				return err
+			} else if resumeETag != "" {
+				return ErrLayoutChanged
 			}
 			if len(cur.Files) > 0 || cur.Deleted {
 				return ErrLayoutChanged
@@ -213,11 +262,17 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 					keys = append(keys, o.Target)
 				}
 			}
-			if err := target.cfg.Journal.allocateRestore(ctx, mutation.commit, next.Incarnation, keys); err != nil {
+			if err := target.cfg.Journal.allocateLayout(ctx, mutation.commit, next.Incarnation, keys); err != nil {
 				return err
 			}
 			mutation.effects.Incarnation = next.Incarnation
-			mutation.effects.Settlement = Settlement{Tenant: to.Ref().TenantID, Owner: e.Mapping.Owner, Delta: next.uploadBytes()}
+			delta := next.uploadBytes()
+			if flattening(e.Mapping, from, to.Prefix()) {
+				// Moving the same logical version does not create more owned
+				// content. Its old allocation cleanup must not refund it either.
+				delta = 0
+			}
+			mutation.effects.Settlement = Settlement{Tenant: to.Ref().TenantID, Owner: e.Mapping.Owner, Delta: delta}
 			*cur = *next
 			return nil
 		})
@@ -226,6 +281,41 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 		}
 	}
 	return nil
+}
+
+// The journal operation and a separate UUID domain bind a missing-target
+// recovery fence to this migration, even if the process dies before retrying.
+func layoutRecoveryIncarnation(operation uuid.UUID) string {
+	return uuid.NewSHA1(operation, []byte("contentkit:layout-migration:recovery-fence")).String()
+}
+
+// Retrying the same copy can reuse only its same-incarnation, still-live
+// allocations. Retired keys and different owners never become live again.
+func (j *PGJournal) allocateLayout(ctx context.Context, c manifestCommit, incarnation string, keys []string) error {
+	j = j.forTenant(c.Ref.TenantID)
+	return pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
+		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
+		if err != nil {
+			return err
+		}
+		if found.Lease != c.Lease || found.State != "open" {
+			return ErrCommitPending
+		}
+		var count int
+		err = tx.QueryRow(ctx, `WITH saved AS (
+INSERT INTO `+j.allocations+` AS a(tenant_id,folder_prefix,object_key,incarnation)
+SELECT $1,$2,key,$3 FROM unnest($4::text[]) AS key
+ON CONFLICT(tenant_id,object_key) DO UPDATE SET incarnation=EXCLUDED.incarnation
+WHERE a.folder_prefix=EXCLUDED.folder_prefix AND a.incarnation=EXCLUDED.incarnation AND a.retired_at IS NULL
+RETURNING 1) SELECT count(*) FROM saved`, c.Ref.TenantID, c.Folder, incarnation, keys).Scan(&count)
+		if err != nil {
+			return err
+		}
+		if count != len(keys) {
+			return ErrAllocationRetired
+		}
+		return nil
+	})
 }
 
 // VerifyLayoutRollback is a read-only gate for switching back to the preserved
@@ -245,12 +335,16 @@ func VerifyLayoutRollback(ctx context.Context, source *Manifests, target *Jobs, 
 		if e.Manifest == nil {
 			return ErrLayoutChanged
 		}
-		from, err := migrationSource(source.reg, e.Mapping.From)
+		from, err := migrationSource(source.reg, e.Mapping.From, e.Mapping.SourceFolder)
 		if err != nil {
 			return err
 		}
 		if err = verifyLayoutSource(ctx, source, from, e); err != nil {
 			return err
+		}
+		expected[from.ManifestKey()] = true
+		for _, object := range e.Objects {
+			expected[object.Source] = true
 		}
 		to, err := target.cfg.Registry.Item(e.Mapping.To)
 		if err != nil {
@@ -263,7 +357,7 @@ func VerifyLayoutRollback(ctx context.Context, source *Manifests, target *Jobs, 
 		if digestManifest(cur) != digestManifest(e.Manifest) {
 			return fmt.Errorf("%w: post-copy edit in %s", ErrLayoutChanged, to.Prefix())
 		}
-		if err = settledLayout(ctx, target.manifests, to, cur); err != nil {
+		if err = settledLayout(ctx, target.manifests, to, cur, flattening(e.Mapping, from, to.Prefix())); err != nil {
 			return err
 		}
 		if err = layoutRootQuiet(ctx, target.manifests.journal.forTenant(to.Ref().TenantID), to.Ref().TenantID); err != nil {
@@ -295,19 +389,35 @@ func VerifyLayoutRollback(ctx context.Context, source *Manifests, target *Jobs, 
 	}
 	return nil
 }
-func migrationSource(reg *Registry, ref contentref.ContentRef) (Item, error) {
+func migrationSource(reg *Registry, ref contentref.ContentRef, sourceFolder string) (Item, error) {
 	item, err := reg.Item(ref)
 	if err == nil {
+		if sourceFolder != "" && sourceFolder != item.Prefix() {
+			if !item.Kind().Versions || ref.Version() == "" || sourceFolder != item.Kind().nestedPrefix(ref.ContentID, ref.Version()) {
+				return Item{}, ErrLayoutChanged
+			}
+			item.prefix = sourceFolder
+		}
 		return item, nil
 	}
 	k, e := reg.Kind(ref.ContentKind)
 	if e != nil || !reg.cfg.Scope.IsZero() || !k.Versions || ref.Version() != "" || ref.TenantID != k.ns || contentref.ValidateID(ref.ContentID) != nil {
 		return Item{}, err
 	}
-	return Item{ref: ref, kind: k, prefix: k.prefix(ref.ContentID, "")}, nil
+	prefix := k.nestedPrefix(ref.ContentID, "")
+	if sourceFolder != "" && sourceFolder != prefix {
+		return Item{}, ErrLayoutChanged
+	}
+	return Item{ref: ref, kind: k, prefix: prefix}, nil
 }
-func settledLayout(ctx context.Context, m *Manifests, item Item, cur *Manifest) error {
-	if cur == nil || cur.V != ManifestVersion || cur.Deleted || cur.Full || cur.Incarnation == "" {
+func flattening(mapping LayoutMapping, source Item, targetPrefix string) bool {
+	return mapping.From.Equal(mapping.To) && mapping.From.Version() != "" &&
+		mapping.SourceFolder == source.Kind().nestedPrefix(mapping.From.ContentID, mapping.From.Version()) &&
+		source.Prefix() != targetPrefix
+}
+
+func settledLayout(ctx context.Context, m *Manifests, item Item, cur *Manifest, allowDeleted bool) error {
+	if cur == nil || cur.V != ManifestVersion || cur.Deleted && !allowDeleted || cur.Full || cur.Incarnation == "" {
 		return errors.New("media: source must be an upgraded live manifest")
 	}
 	if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
@@ -368,6 +478,15 @@ func layoutObjects(item Item, m *Manifest) []string {
 	slices.Sort(out)
 	return out
 }
+func layoutEntryObjects(item Item, entry LayoutEntry) []string {
+	keys := layoutObjects(item, entry.Manifest)
+	if entry.ErasureFence {
+		keys = append(keys, item.PublicPrefix()+layout.ErasureFenceName)
+		slices.Sort(keys)
+	}
+	return keys
+}
+
 func verifyLayoutSource(ctx context.Context, m *Manifests, item Item, e LayoutEntry) error {
 	cur, etag, err := m.get(ctx, item.ManifestKey())
 	if err != nil {
@@ -376,7 +495,7 @@ func verifyLayoutSource(ctx context.Context, m *Manifests, item Item, e LayoutEn
 	if etag != e.SourceETag || digestManifest(cur) != digestManifest(e.Manifest) {
 		return fmt.Errorf("%w: source %s", ErrLayoutChanged, item.Prefix())
 	}
-	return settledLayout(ctx, m, item, cur)
+	return settledLayout(ctx, m, item, cur, flattening(e.Mapping, item, e.TargetFolder))
 }
 func hashObject(ctx context.Context, s Store, key string) (LayoutObject, error) {
 	r, obj, err := s.Get(ctx, key, GetOptions{})

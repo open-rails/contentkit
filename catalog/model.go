@@ -232,6 +232,9 @@ type Content struct {
 	// are carried by each Version.Groups, never merged across editions here.
 	Groups   []GroupSummary `json:"entities"`
 	Versions []Version      `json:"versions"`
+	// SelectedVersionID is the edition selected for this response: the direct
+	// version lookup's edition, or the default among the visible versions.
+	SelectedVersionID string `json:"selected_version_id,omitempty"`
 	// Viewer is the signed-in reader's standing with the item, to resume
 	// it; each version carries its own.
 	Viewer *ViewerState `json:"viewer,omitempty"`

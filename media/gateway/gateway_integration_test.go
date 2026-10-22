@@ -667,3 +667,24 @@ func TestBinary(t *testing.T) {
 		t.Fatal("no graceful shutdown")
 	}
 }
+
+func TestExactFileTokenThroughGateway(t *testing.T) {
+	f := seed(t)
+	srv := serve(t, f.config(t))
+	exp := time.Now().Add(time.Hour)
+	tok := ring(t, k2, &k1).Sign(token.PrivateFileScope(f.key("gallery/456/private/"+sha("a"))), exp)
+	allowed := withQuery(f.path("gallery/456/private/"+sha("a")), "t", tok)
+	expect(t, do(t, srv, http.MethodGet, allowed, nil), http.StatusOK, bodyA)
+	for _, path := range []string{
+		"gallery/456/private/" + sha("b"),
+		"gallery/789/private/" + sha("c"),
+		"gallery/456/v1/private/" + sha("v"),
+		"gallery/456/download/" + sha("o"),
+		"gallery/456/v1/download/" + sha("z"),
+	} {
+		got := do(t, srv, http.MethodGet, withQuery(f.path(path), "t", tok), nil)
+		if got.status != http.StatusNotFound || got.header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("exact file token widened to %s: %d %v", path, got.status, got.header)
+		}
+	}
+}

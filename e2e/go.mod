@@ -1,11 +1,11 @@
 module github.com/open-rails/contentkit/e2e
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.31.0
+	github.com/open-rails/authkit v1.33.0
 	github.com/open-rails/contentkit v0.108.0
 	github.com/open-rails/contentkit/adapters/authkit v0.9.0
 	github.com/open-rails/contentkit/adapters/openrails v0.5.3

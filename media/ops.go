@@ -524,30 +524,6 @@ func (o *opRun) frame(op Op) error {
 	return o.place(g, i, f, nil)
 }
 
-// copyKind is the kind k's copies read from: the kind a published kind
-// publishes, else k.
-func copyKind(k *Kind) *Kind {
-	if k.of != nil {
-		return k.of
-	}
-	return k
-}
-
-// copySource is what a copy into an item of k brings from m's path: an
-// upload with its outputs; into a published item, a finished output alone,
-// as an upload.
-func copySource(k *Kind, m *Manifest, path string) []File {
-	files := copyFiles(m, path)
-	if len(files) > 0 || k.of == nil {
-		return files
-	}
-	f, ok := m.Get(path)
-	if !ok || f.IsUpload() || f.Blob == "" || f.Gone || f.Track != nil {
-		return nil
-	}
-	return []File{{Path: f.Path, Blob: f.Blob, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur}}
-}
-
 // copyFiles snapshots an upload and its derived files before an edit moves them.
 func copyFiles(m *Manifest, path string) []File {
 	f, ok := m.Get(path)

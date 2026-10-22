@@ -58,9 +58,9 @@ func eq[T comparable](a, b []T) bool {
 	return true
 }
 
-// A version is published as one immutable item per segment: grants open
-// released segments to whoever opens the version, previews show a locked
-// version's leading released pages, and audio waits for every segment.
+// Chapters select files from one canonical version. Reader grants open only
+// released renditions, previews contain leading low-resolution pages, and
+// audio waits for every chapter; editors retain the full version.
 func TestPublication(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	c, v := gallery(t, s)
@@ -83,29 +83,66 @@ func TestPublication(t *testing.T) {
 		t.Fatalf("anonymous plan %+v", public)
 	}
 
-	// Reads of the published items follow the plan.
-	read := func(a access.Actor, ref media.RefBody) (*media.ReadResult, error) {
-		r, err := s.reg.Ref(ref.Kind, ref.ID)
+	canonical := media.RefBody{Kind: "gallery", ID: c, Version: v.Version}
+	for _, segment := range editor.Segments {
+		if segment.Item == nil || *segment.Item != canonical {
+			t.Fatalf("chapter uses another storage item: %+v", segment.Item)
+		}
+	}
+	// A requested path selects URLs, not permissions. All allowed metadata
+	// remains visible, but no other file receives a URL in that request.
+	read := func(a access.Actor, ref media.RefBody, paths ...string) (*media.ReadResult, error) {
+		r, err := s.reg.VersionRef(ref.Kind, ref.ID, ref.Version)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return s.reader.Read(s.ctx, r, a, media.ReadOptions{})
+		return s.reader.Read(s.ctx, r, a, media.ReadOptions{Paths: paths})
 	}
 	first, third := *editor.Segments[0].Item, *editor.Segments[2].Item
-	if res, err := read(s.fan, first); err != nil || res.Access != media.AccessFull || len(res.Files) != 4 || res.Files[0].URL == "" {
-		t.Fatalf("fan reads a released segment: %+v %v", res, err)
+	firstLow := editor.Segments[0].Pages[0].Files["low"]
+	futureLow := editor.Segments[2].Pages[0].Files["low"]
+	if res, err := read(s.fan, first, firstLow); err != nil || res.Access != media.AccessPartial || len(res.Files) != 8 {
+		t.Fatalf("fan reads released renditions: %+v %v", res, err)
+	} else {
+		for _, file := range res.Files {
+			if (file.Path == firstLow) != (file.URL != "") || file.Path == futureLow || strings.HasPrefix(file.Path, "originals/") || strings.HasPrefix(file.Path, "high/") {
+				t.Fatalf("reader received an unrequested or forbidden file: %+v", file)
+			}
+		}
 	}
-	if res, err := read(anon, first); err != nil || res.Access != media.AccessNone {
-		t.Fatalf("anonymous reads a locked segment: %+v %v", res, err)
+	if res, err := read(anon, first); err != nil || res.Access != media.AccessPartial || len(res.Files) != 3 {
+		t.Fatalf("anonymous preview: %+v %v", res, err)
+	} else {
+		for _, file := range res.Files {
+			if !strings.HasPrefix(file.Path, "low-res/") || file.URL == "" {
+				t.Fatalf("preview exposed more than a low-resolution page: %+v", file)
+			}
+		}
 	}
-	if _, err := read(s.fan, third); !errors.Is(err, media.ErrNotVisible) {
-		t.Fatalf("fan reads an unreleased segment: %v", err)
+	if res, err := read(s.fan, third, futureLow); err != nil {
+		t.Fatal(err)
+	} else {
+		for _, file := range res.Files {
+			if file.Path == futureLow || file.URL != "" {
+				t.Fatalf("requesting an unreleased path granted access: %+v", file)
+			}
+		}
 	}
-	if res, err := read(s.creator, third); err != nil || res.Access != media.AccessFull {
+	if res, err := read(s.creator, third, futureLow); err != nil || res.Access != media.AccessFull {
 		t.Fatalf("editor reads an unreleased segment: %+v %v", res, err)
 	}
-	if g, err := s.reader.Grant(s.ctx, s.ref("gallery", v), s.fan); err != nil || g.Full() {
-		t.Fatalf("fan opened the version's originals: %v", err)
+	grant, err := s.reader.Grant(s.ctx, s.ref("gallery", v), s.fan)
+	if err != nil || grant.Full() || grant.Cookie() != nil {
+		t.Fatalf("fan acquired whole-version access: %+v %v", grant, err)
+	}
+	for _, path := range []string{"originals/001.png", "high/001.webp", futureLow} {
+		file, ok := grant.Manifest.Get(path)
+		if !ok {
+			t.Fatalf("missing denial fixture %q", path)
+		}
+		if _, err := grant.URL(file, false); !errors.Is(err, media.ErrNotAllowed) {
+			t.Fatalf("fan opened forbidden %s: %v", path, err)
+		}
 	}
 
 	// The first segment free: anyone reads it.
@@ -113,7 +150,7 @@ func TestPublication(t *testing.T) {
 	if p := s.plan(anon, v, func(*versions.ReaderPlan) bool { return true }); !eq(locks(p), []bool{false, true, true}) {
 		t.Fatalf("free segment plan %v", locks(p))
 	}
-	if res, err := read(anon, first); err != nil || res.Access != media.AccessFull {
+	if res, err := read(anon, first); err != nil || res.Access != media.AccessPartial || len(res.Files) != 5 {
 		t.Fatalf("anonymous reads a free segment: %+v %v", res, err)
 	}
 
@@ -122,14 +159,27 @@ func TestPublication(t *testing.T) {
 		s.tenant, v.Version)
 	fan = s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
 	if !eq(locks(fan), []bool{false, false, false}) || !fan.Segments[2].Released || fan.Playback.Tracks[0].Name != "theme" ||
-		fan.Playback.Tracks[0].Path != "listen/theme.m4a" {
+		fan.Playback.Tracks[0].Path != "listen/theme/audio.m4a" || fan.Publication != editor.Publication || fan.Playback.Item != canonical {
 		t.Fatalf("released plan %+v", fan)
 	}
-	if res, err := read(s.fan, fan.Playback.Item); err != nil || res.Access != media.AccessFull || len(res.Files) != 1 {
+	track := fan.Playback.Tracks[0].Path
+	if res, err := read(s.fan, fan.Playback.Item, track); err != nil || res.Access != media.AccessPartial || len(res.Files) != 11 {
 		t.Fatalf("fan reads the playback item: %+v %v", res, err)
+	} else {
+		for _, file := range res.Files {
+			if (file.Path == track) != (file.URL != "") {
+				t.Fatalf("audio request issued another file URL: %+v", file)
+			}
+		}
 	}
-	if res, err := read(s.stranger, fan.Playback.Item); err == nil && res.Access == media.AccessFull {
-		t.Fatal("a stranger opened the playback item")
+	if res, err := read(s.stranger, fan.Playback.Item, track); err != nil {
+		t.Fatal(err)
+	} else {
+		for _, file := range res.Files {
+			if file.Path == track || file.URL != "" {
+				t.Fatal("a stranger opened the playback file")
+			}
+		}
 	}
 
 	// The reader plan route serves the same.
@@ -143,12 +193,11 @@ func TestPublication(t *testing.T) {
 	}
 }
 
-// Publishers racing on one version agree: once one of them reports it
-// published, its pages publication is current.
+// Chapter edits need no new file snapshot, even when publishers race.
 func TestRacingPublishers(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	_, v := gallery(t, s)
-	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
+	initial := s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
 	current := func() int {
 		var n int
 		if err := s.pool.QueryRow(s.ctx, `SELECT count(*) FROM `+s.table("content_version_publications")+`
@@ -158,7 +207,7 @@ WHERE tenant_id = $1 AND version_id = $2 AND kind = 'pages' AND state = 'current
 		return n
 	}
 	for round := range 6 {
-		// Other spans: a new build.
+		// Other chapter spans: the same immutable files.
 		s.exec(`UPDATE `+s.table("content_segments")+` SET end_index = $3 WHERE tenant_id = $1 AND version_id = $2 AND position = 1`,
 			s.tenant, v.Version, 1+round%2)
 		errs := make([]error, 4)
@@ -176,6 +225,9 @@ WHERE tenant_id = $1 AND version_id = $2 AND kind = 'pages' AND state = 'current
 		}
 		if n := current(); published && n != 1 {
 			t.Fatalf("round %d: published, with %d current pages publications", round, n)
+		}
+		if plan := s.plan(s.creator, v, func(*versions.ReaderPlan) bool { return true }); plan.Publication != initial.Publication {
+			t.Fatalf("chapter edit rebuilt the file snapshot: %s -> %s", initial.Publication, plan.Publication)
 		}
 	}
 }
@@ -298,6 +350,10 @@ func TestWithdrawal(t *testing.T) {
 	_, v := gallery(t, s)
 	ref := s.ref("gallery", v)
 	before := s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 3 })
+	removed, ok := s.manifest(ref).Get(before.Segments[0].Pages[1].Files["low"])
+	if !ok {
+		t.Fatal("missing released-page rendition")
+	}
 	s.commit(s.staff, ref, media.Op{Op: media.OpRemove, Path: "originals/002.png", Takedown: true})
 	if _, err := s.svc.Plan(s.ctx, s.fan, v); !errors.Is(err, versions.ErrNotReady) {
 		t.Fatalf("the withdrawn publication still plans: %v", err)
@@ -305,12 +361,25 @@ func TestWithdrawal(t *testing.T) {
 	if left := files(s.manifest(ref), "previews/"); len(left) != 0 {
 		t.Fatalf("previews kept: %v", left)
 	}
-	old, err := s.reg.Ref(before.Segments[0].Item.Kind, before.Segments[0].Item.ID)
+	old, err := s.reg.VersionRef(before.Segments[0].Item.Kind, before.Segments[0].Item.ID, before.Segments[0].Item.Version)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.reader.Read(s.ctx, old, s.creator, media.ReadOptions{}); !errors.Is(err, media.ErrNotVisible) {
-		t.Fatalf("a withdrawn item reads: %v", err)
+	grant, err := s.reader.Grant(s.ctx, old, s.fan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grant.URL(removed, false); !errors.Is(err, media.ErrNotAllowed) {
+		t.Fatalf("a withdrawn page still gets a reader grant: %v", err)
+	}
+	if res, err := s.reader.Read(s.ctx, old, s.creator, media.ReadOptions{Editor: true}); err != nil || res.Access != media.AccessFull {
+		t.Fatalf("withdrawal made the canonical editor item inaccessible: %+v %v", res, err)
+	} else {
+		for _, file := range res.Files {
+			if file.Path == removed.Path {
+				t.Fatalf("removed rendition remained in the canonical item: %+v", file)
+			}
+		}
 	}
 	after := s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 4 })
 	if after.Publication == before.Publication || len(after.Segments) != 2 || after.Segments[0].Pages[1].Name != "003" {
@@ -327,8 +396,53 @@ func TestWithdrawal(t *testing.T) {
 	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 5 })
 }
 
-// Previews follow releases: the recovery pass widens them once a segment
-// releases.
+// Replacing a source at the same display path never grants its old rendition
+// through the new canonical version. A later snapshot uses the new bytes.
+func TestSourceReplacementWithdrawsFileGrants(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	ref := s.ref("gallery", v)
+	s.mustUpload(s.creator, ref, "originals/001", "image/png", pngOf(t, 30, 40, 1))
+	before := s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 1 })
+	old, ok := s.manifest(ref).Get(before.Segments[0].Pages[0].Files["low"])
+	if !ok {
+		t.Fatal("missing first rendition")
+	}
+	grant, err := s.reader.Grant(s.ctx, ref, s.fan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grant.URL(old, false); err != nil {
+		t.Fatalf("initial rendition was not granted: %v", err)
+	}
+	s.mustUpload(s.creator, ref, "originals/001", "image/png", pngOf(t, 30, 40, 2))
+	grant, err = s.reader.Grant(s.ctx, ref, s.fan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grant.URL(old, false); !errors.Is(err, media.ErrNotAllowed) {
+		t.Fatalf("replacement still granted the old rendition: %v", err)
+	}
+	after := s.plan(s.fan, v, func(p *versions.ReaderPlan) bool {
+		return p.Publication != before.Publication && len(p.Segments) == 1 && len(p.Segments[0].Pages) == 1
+	})
+	current, ok := s.manifest(ref).Get(after.Segments[0].Pages[0].Files["low"])
+	if !ok || current.Blob == old.Blob {
+		t.Fatalf("replacement reused its old rendition: %+v", current)
+	}
+	grant, err = s.reader.Grant(s.ctx, ref, s.fan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grant.URL(current, false); err != nil {
+		t.Fatalf("new rendition was not granted: %v", err)
+	}
+	if _, err := grant.URL(old, false); !errors.Is(err, media.ErrNotAllowed) {
+		t.Fatalf("new publication revived the old rendition: %v", err)
+	}
+}
+
+// Previews follow release metadata immediately, without media jobs.
 func TestPreviewsFollowReleases(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	c := s.content("gallery", `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`)
@@ -344,71 +458,7 @@ func TestPreviewsFollowReleases(t *testing.T) {
 	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 1 })
 	s.exec(`UPDATE `+s.table("content_segments")+` SET release_at = now() - interval '1 second' WHERE tenant_id = $1 AND version_id = $2 AND position = 2`,
 		s.tenant, v.Version)
-	if err := versions.RecoverPublications(s.svc, s.ctx); err != nil {
-		t.Fatal(err)
-	}
 	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 3 })
-}
-
-// A recovery pass bounds builds and preview refreshes separately, so builds
-// that stay blocked cannot keep a released preview from refreshing.
-func TestRecoveryRequeuesBuildsAndPreviewsSeparately(t *testing.T) {
-	s := newSite(t, siteOptions{})
-	c := s.content("gallery", `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`)
-	v := s.version(c)
-	ref := s.ref("gallery", v)
-	for i := range 4 {
-		s.mustUpload(s.creator, ref, fmt.Sprintf("originals/%03d", i+1), "image/png", pngOf(t, 30, 40, uint8(i+1)))
-	}
-	later := time.Now().Add(time.Hour)
-	s.segment(v, 1, 0, 1, nil)
-	s.segment(v, 2, 1, 4, &later)
-	anon := access.Actor{Anonymous: true, IP: "203.0.113.6"}
-	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 1 })
-
-	stuck := s.version(s.content("gallery", `{"level":"public"}`))
-	s.mustUpload(s.creator, s.ref("gallery", stuck), "originals/001", "image/png", pngOf(t, 30, 40, 9))
-	s.plan(anon, stuck, func(p *versions.ReaderPlan) bool { return true })
-	jobs := pgx.Identifier{s.host, "river_job"}.Sanitize()
-	// A publish still waiting would absorb the requeue, so let them finish.
-	for deadline := time.Now().Add(time.Minute); ; time.Sleep(100 * time.Millisecond) {
-		var waiting int
-		if err := s.pool.QueryRow(s.ctx, `SELECT count(*) FROM `+jobs+` WHERE kind = 'contentkit_version_publish'
- AND state IN ('available', 'pending', 'running', 'retryable', 'scheduled')`).Scan(&waiting); err != nil {
-			t.Fatal(err)
-		}
-		if waiting == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%d publish jobs still waiting", waiting)
-		}
-	}
-	s.exec(`UPDATE `+s.table("content_version_publications")+` SET state = 'building', created_at = now() - interval '1 hour'
- WHERE tenant_id = $1 AND version_id = $2`, s.tenant, stuck.Version)
-
-	// Release the second segment only now, so no earlier publish has already
-	// refreshed its previews.
-	s.exec(`UPDATE `+s.table("content_segments")+` SET release_at = now() - interval '1 second' WHERE tenant_id = $1 AND version_id = $2 AND position = 2`,
-		s.tenant, v.Version)
-	defer versions.SetRecoveryBatch(1)()
-	var before int64
-	if err := s.pool.QueryRow(s.ctx, `SELECT coalesce(max(id), 0) FROM `+jobs).Scan(&before); err != nil {
-		t.Fatal(err)
-	}
-	if err := versions.RecoverPublications(s.svc, s.ctx); err != nil {
-		t.Fatal(err)
-	}
-	for _, target := range []versions.Target{v, stuck} {
-		var queued int
-		if err := s.pool.QueryRow(s.ctx, `SELECT count(*) FROM `+jobs+`
- WHERE kind = 'contentkit_version_publish' AND args->>'version' = $1 AND id > $2`, target.Version, before).Scan(&queued); err != nil {
-			t.Fatal(err)
-		}
-		if queued == 0 {
-			t.Errorf("version %s was not requeued", target.Version)
-		}
-	}
 }
 
 // Reader content gets what its host never uploads: each version a cover from

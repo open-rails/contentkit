@@ -10,7 +10,7 @@ export const MIN_PART_SIZE = 8388608;
 export const MAX_PART_SIZE = 16777216;
 
 export type OpName = "put" | "edit" | "move" | "rename" | "remove" | "attach" | "copy" | "frame" | "meta" | "regenerate";
-export type Access = "full" | "none";
+export type Access = "full" | "partial" | "none";
 export type ItemState = "ready" | "processing" | "failed";
 export type EncodePhase = "queued" | "downloading" | "probing" | "encoding" | "muxing" | "uploading" | "publishing" | "images";
 export type PollKind = "multiple_choice" | "free_text";
@@ -401,6 +401,7 @@ export interface Content {
   creators: Creator[];
   entities: GroupSummary[];
   versions: Version[];
+  selected_version_id?: string;
   viewer?: ViewerState;
   editor: boolean;
   text?: Record<string, CatalogText>;
@@ -1738,6 +1739,7 @@ export interface ReaderPlan {
   previews: PlanPreview[];
   playback?: PlanPlayback;
   reader?: ReaderMeta;
+  expires?: number;
 }
 
 export interface RecentSearch {

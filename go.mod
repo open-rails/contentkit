@@ -1,6 +1,6 @@
 module github.com/open-rails/contentkit
 
-go 1.26.9
+go 1.26.10
 
 // Premature v1 tags: ContentKit is pre-stable; use the latest v0.x release.
 // v1.1.2 is a withdrawal-only marker and retracts itself.
@@ -19,7 +19,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.31.0
+	github.com/open-rails/authkit v1.33.0
 	github.com/open-rails/helpers v1.14.1
 	github.com/open-rails/migratekit v1.11.2
 	github.com/prometheus/client_golang v1.24.1

@@ -25,10 +25,10 @@ type Registry struct {
 	cfg      Config
 	declared int // cfg.Kinds[:declared] are c's
 	kinds    map[string]*Kind
-	all      []*Kind // cfg.Kinds, then the published kinds
+	all      []*Kind // declared storage kinds
 }
 
-// NewRegistry validates c and derives its kinds' published kinds.
+// NewRegistry validates c and its version reader configuration.
 func NewRegistry(c Config) (*Registry, error) {
 	if !c.Scope.IsZero() {
 		if !c.Scope.Valid() || c.Scope.AppID == "" || c.Namespace != "" && c.Namespace != c.Scope.Partition() {
@@ -60,7 +60,6 @@ func NewRegistry(c Config) (*Registry, error) {
 	kinds := slices.Clone(c.Kinds)
 	r := &Registry{cfg: c, declared: len(c.Kinds), kinds: make(map[string]*Kind, len(kinds))}
 	r.cfg.Kinds = make([]Kind, len(kinds))
-	var derived []*Kind
 	for i, k := range kinds {
 		if _, dup := r.kinds[k.Name]; dup {
 			return nil, fmt.Errorf("media: duplicate kind %q", k.Name)
@@ -85,23 +84,12 @@ func NewRegistry(c Config) (*Registry, error) {
 		} else if k.Account {
 			return nil, fmt.Errorf("media: account kind %q requires Scope", k.Name)
 		}
-		pub, err := k.levels()
-		if err != nil {
+		if err := k.levels(); err != nil {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 		}
 		r.cfg.Kinds[i] = k
 		r.kinds[k.Name] = &r.cfg.Kinds[i]
 		r.all = append(r.all, &r.cfg.Kinds[i])
-		if pub != nil {
-			derived = append(derived, pub)
-		}
-	}
-	for _, k := range derived {
-		if _, dup := r.kinds[k.Name]; dup {
-			return nil, fmt.Errorf("media: kind %q is %s's published kind", k.Name, k.of.Name)
-		}
-		r.kinds[k.Name] = k
-		r.all = append(r.all, k)
 	}
 	if a := c.Avatars; a != (Avatars{}) {
 		k, ok := r.kinds[a.Kind]
@@ -134,8 +122,7 @@ func (r *Registry) Kind(name string) (*Kind, error) {
 	return k, nil
 }
 
-// Kinds are the registered kinds: the declared ones, then the published
-// kinds derived from them.
+// Kinds are the declared storage kinds; reader chapters create no kinds.
 func (r *Registry) Kinds() []*Kind { return slices.Clone(r.all) }
 
 // Namespaces are the namespaces the app's items live in: its own, then the
@@ -207,7 +194,8 @@ func (r *Registry) Item(ref contentref.ContentRef) (Item, error) {
 func (i Item) Ref() contentref.ContentRef { return i.ref }
 func (i Item) Kind() *Kind                { return i.kind }
 
-// Prefix is the folder, "{namespace}/{kind}/{id}/".
+// Prefix is the physical owner folder. Versioned kinds use the version ID;
+// the parent content ID remains only in Ref and the catalog.
 func (i Item) Prefix() string        { return i.prefix }
 func (i Item) ManifestKey() string   { return i.prefix + layout.ManifestName }
 func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/" }
@@ -321,6 +309,15 @@ func (k *Kind) root() string {
 	return k.ns + "/"
 }
 func (k *Kind) prefix(id, version string) string {
+	if k.Versions && version != "" {
+		id, version = version, ""
+	}
+	return k.nestedPrefix(id, version)
+}
+
+// nestedPrefix is the historical path shape, used only to verify migrations
+// and cleanup receipts. A version's live storage owner is its version ID.
+func (k *Kind) nestedPrefix(id, version string) string {
 	if !k.scope.IsZero() {
 		return k.scope.Prefix(k.Name, id, version)
 	}

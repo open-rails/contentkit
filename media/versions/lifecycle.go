@@ -23,12 +23,9 @@ func (s *Service) ExposeTx(ctx context.Context, tx pgx.Tx, targets []Target) err
 }
 
 // RepublishTx queues versions' publication after their segments changed.
-func (s *Service) RepublishTx(ctx context.Context, tx pgx.Tx, versions []Target) error {
-	for _, v := range versions {
-		if err := s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version}); err != nil {
-			return err
-		}
-	}
+func (s *Service) RepublishTx(context.Context, pgx.Tx, []Target) error {
+	// Access and chapters are queried live. They do not alter the immutable
+	// ready-file snapshot or require media processing.
 	return nil
 }
 

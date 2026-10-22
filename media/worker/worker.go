@@ -179,7 +179,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
 		}
 	}
-	host, err := media.NewHostQueue(c.Pool, c.Kinds, c.HostSchema, c.HostQueue, c.Grace)
+	host, err := media.NewHostQueue(c.Pool, c.Kinds, c.HostSchema, c.HostQueue)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,10 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return nil, err
 		}
 	}
-	manifests, err := media.NewManifests(c.Store, c.Kinds, media.ManifestOptions{Locker: media.PGLocker(c.Pool), Journal: journal, Sweeps: host})
+	if err := media.ValidateVersionStorageMigration(ctx, c.Kinds, journal); err != nil {
+		return nil, fmt.Errorf("media/worker: version storage migration required: %w", err)
+	}
+	manifests, err := media.NewManifests(c.Store, c.Kinds, media.ManifestOptions{Locker: media.PGLocker(c.Pool), Journal: journal, CleanupGrace: c.Grace})
 	if err != nil {
 		return nil, err
 	}

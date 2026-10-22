@@ -62,6 +62,9 @@ func TestVersionFolders(t *testing.T) {
 		f, ok := s.manifest(r1).Get("low-res/001.webp")
 		return ok && f.Blob != ""
 	})
+	for _, version := range []versions.Target{v1, v2} {
+		s.plan(s.fan, version, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 1 })
+	}
 	g, err := s.reader.Grant(s.ctx, r1, s.creator)
 	if err != nil || !g.Full() {
 		t.Fatalf("editor grant: %v", err)
@@ -78,9 +81,38 @@ func TestVersionFolders(t *testing.T) {
 	if err := ring.VerifyPrivate(tok, key, time.Now()); err != nil {
 		t.Fatalf("version token on its blob: %v", err)
 	}
-	other := s.manifest(r2).Files[0].Blob
-	if err := ring.VerifyPrivate(tok, s.tenant+"/gallery/"+c+"/"+v2.Version+"/private/"+other, time.Now()); err == nil {
+	sibling, _ := s.reg.Item(r2)
+	other, err := sibling.Blob(s.manifest(r2).Files[0].Blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ring.VerifyPrivate(tok, other, time.Now()); err == nil {
 		t.Fatal("a version's token opened its sibling")
+	}
+	reader, err := s.reader.Grant(s.ctx, r1, s.fan)
+	if err != nil || reader.Full() {
+		t.Fatalf("reader acquired a whole-version token: %v", err)
+	}
+	readURL, err := reader.URL(f, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readParsed, _ := url.Parse(readURL)
+	readToken := readParsed.Query().Get("t")
+	if err := ring.VerifyPrivate(readToken, key, time.Now()); err != nil {
+		t.Fatalf("reader token rejected its exact file: %v", err)
+	}
+	thumb, ok := s.manifest(r1).Get("thumb/001.webp")
+	if !ok {
+		t.Fatal("missing sibling rendition")
+	}
+	item, _ := s.reg.Item(r1)
+	thumbKey, err := item.Blob(thumb.Blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ring.VerifyPrivate(readToken, thumbKey, time.Now()); err == nil {
+		t.Fatal("a reader file token opened another rendition in the same version")
 	}
 	if resp, body := s.call(access.Actor{}, "GET", "/media/gallery/"+c+"/versions/"+v1.Version, nil); resp.StatusCode != 200 ||
 		!strings.Contains(string(body), `"preset":"cover"`) {
@@ -120,22 +152,20 @@ func TestVersionFolders(t *testing.T) {
 	eventually(t, "content deleted", time.Minute, gone(r1))
 }
 
-// Deleting a content waits for a publisher holding its version, as a
-// promotion does while it retires a publication the deletion retires too,
-// instead of deadlocking with it.
+// Deleting content waits for a publisher holding its version and metadata
+// snapshot, instead of taking the locks in reverse order and deadlocking.
 func TestDeleteWaitsForPublisher(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	c := s.content("gallery", `{"level":"public"}`)
 	v := s.version(c)
 	s.mustUpload(s.creator, s.ref("gallery", v), "originals/001", "image/png", pngOf(t, 30, 40, 1))
-	pubs, items := s.table("content_version_publications"), s.table("content_version_publication_items")
-	var pub, item string
+	pubs := s.table("content_version_publications")
+	var pub string
 	eventually(t, "a current publication and a drained queue", 2*time.Minute, func() bool {
 		var busy bool
-		err := s.pool.QueryRow(s.ctx, `SELECT p.id, i.id, EXISTS (SELECT 1 FROM `+pgx.Identifier{s.host, "river_job"}.Sanitize()+`
- WHERE state NOT IN ('completed', 'cancelled', 'discarded') AND kind <> 'contentkit_media_sweep')
-FROM `+pubs+` p JOIN `+items+` i ON i.tenant_id = p.tenant_id AND i.publication_id = p.id
-WHERE p.tenant_id = $1 AND p.version_id = $2 AND p.state = 'current'`, s.tenant, v.Version).Scan(&pub, &item, &busy)
+		err := s.pool.QueryRow(s.ctx, `SELECT p.id, EXISTS (SELECT 1 FROM `+pgx.Identifier{s.host, "river_job"}.Sanitize()+`
+ WHERE state NOT IN ('completed', 'cancelled', 'discarded') AND kind <> 'contentkit_media_cleanup_due')
+FROM `+pubs+` p WHERE p.tenant_id = $1 AND p.version_id = $2 AND p.state = 'current'`, s.tenant, v.Version).Scan(&pub, &busy)
 		return err == nil && !busy
 	})
 
@@ -178,8 +208,9 @@ WHERE p.tenant_id = $1 AND p.version_id = $2 AND p.state = 'current'`, s.tenant,
 		}
 	}
 
-	// The publisher retires that publication's item, then commits.
-	if err := s.jobs.DeleteItemsTx(s.ctx, publisher, media.Deletion{Ref: contentref.New(s.tenant, "gallery.published", item)}); err != nil {
+	// Retiring a snapshot changes metadata only. The waiting deletion then
+	// owns the same version before it retires the canonical media item.
+	if _, err := publisher.Exec(s.ctx, `UPDATE `+pubs+` SET state = 'retired' WHERE tenant_id = $1 AND id = $2`, s.tenant, pub); err != nil {
 		t.Fatalf("publisher: %v", err)
 	}
 	if err := publisher.Commit(s.ctx); err != nil {
@@ -194,8 +225,8 @@ WHERE p.tenant_id = $1 AND p.version_id = $2 AND p.state = 'current'`, s.tenant,
 }
 
 // Editors of a content write its items: staff and its creators; a person
-// writes their own avatar; nobody but publication writes published items
-// and preview copies.
+// writes their own avatar; derived renditions and preview copies are never
+// upload targets, and there is no separate published-item content kind.
 func TestUploadRights(t *testing.T) {
 	s := newSite(t, siteOptions{})
 	c := s.content("gallery", `{"level":"public"}`)
@@ -228,9 +259,6 @@ func TestUploadRights(t *testing.T) {
 		"a stray version": func() error {
 			return s.upload(s.creator, s.ref("gallery", versions.Target{Content: c, Version: other.Version}), "originals/x", "image/png", page)
 		},
-		"published item": func() error {
-			return s.upload(s.staff, contentref.New(s.tenant, "gallery.published", contentref.NewID()), "low-res/x", "image/webp", page)
-		},
 		"another's avatar": func() error {
 			return s.upload(s.stranger, contentref.New(s.tenant, "user", s.creator.ID), "avatar", "image/png", page)
 		},
@@ -241,6 +269,9 @@ func TestUploadRights(t *testing.T) {
 	}
 	if err := s.upload(s.stranger, contentref.New(s.tenant, "user", s.stranger.ID), "avatar", "image/png", page); err != nil {
 		t.Fatalf("own avatar: %v", err)
+	}
+	if _, err := s.reg.Kind("gallery.published"); err == nil {
+		t.Fatal("registry retained a separate published-item kind")
 	}
 }
 

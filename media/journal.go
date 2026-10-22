@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -37,6 +38,7 @@ type PGJournal struct {
 	publications string
 	upgrades     string
 	upgradeFails string
+	cleanup      string
 	limiter      *PGLimiter
 	queue        TransactionalProcessQueue
 	routes       map[string]*PGJournal
@@ -56,22 +58,28 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 		publications: pgx.Identifier{schema, "content_media_publications"}.Sanitize(),
 		upgrades:     pgx.Identifier{schema, "content_media_upgrades"}.Sanitize(),
 		upgradeFails: pgx.Identifier{schema, "content_media_upgrade_failures"}.Sanitize(),
+		cleanup:      pgx.Identifier{schema, "content_media_cleanup"}.Sanitize(),
 		limiter:      limiter, queue: queue}, nil
 }
 
 type journalEffects struct {
-	Deletion    bool        `json:"deletion,omitempty"`    // explicit purge may fence an unreadable root without decoding it
-	Cleanup     bool        `json:"cleanup,omitempty"`     // allocation retirement, no manifest PUT
-	Allocate    []string    `json:"allocate,omitempty"`    // physical names owned before a producer sends bytes
-	Adopt       []string    `json:"adopt,omitempty"`       // a legacy item's existing objects, owned by the upgrade's incarnation
-	Incarnation string      `json:"incarnation,omitempty"` // allocation lifetime, read from S3 under this lease
-	Settlement  Settlement  `json:"settlement"`
-	Cancel      bool        `json:"cancel,omitempty"`
-	Process     *ProcessJob `json:"process,omitempty"`
-	Public      []string    `json:"public,omitempty"`  // exact retired public names, selected before PUT
-	Mirror      []Mirror    `json:"mirror,omitempty"`  // Stable presets' new current files, copied to their logical names
-	Private     []string    `json:"private,omitempty"` // exact takedown targets, selected before PUT
-	Notify      bool        `json:"notify,omitempty"`  // host's idempotent ItemCommitted hook still needs delivery
+	VersionStoragePlan *versionStoragePlan       `json:"version_storage_plan,omitempty"`
+	VersionStorage     *versionStorageRetirement `json:"version_storage,omitempty"`
+	LegacyPublication  *legacyPublication        `json:"legacy_publication,omitempty"`
+	CleanupAt          time.Time                 `json:"cleanup_at,omitempty"`
+	CleanupDelete      bool                      `json:"cleanup_delete,omitempty"` // repeat this operation's exact retired targets
+	Deletion           bool                      `json:"deletion,omitempty"`       // explicit purge may fence an unreadable root without decoding it
+	Cleanup            bool                      `json:"cleanup,omitempty"`        // allocation retirement, no manifest PUT
+	Allocate           []string                  `json:"allocate,omitempty"`       // physical names owned before a producer sends bytes
+	Adopt              []string                  `json:"adopt,omitempty"`          // a legacy item's existing objects, owned by the upgrade's incarnation
+	Incarnation        string                    `json:"incarnation,omitempty"`    // allocation lifetime, read from S3 under this lease
+	Settlement         Settlement                `json:"settlement"`
+	Cancel             bool                      `json:"cancel,omitempty"`
+	Process            *ProcessJob               `json:"process,omitempty"`
+	Public             []string                  `json:"public,omitempty"`  // exact retired public names, selected before PUT
+	Mirror             []Mirror                  `json:"mirror,omitempty"`  // Stable presets' new current files, copied to their logical names
+	Private            []string                  `json:"private,omitempty"` // exact takedown targets, selected before PUT
+	Notify             bool                      `json:"notify,omitempty"`  // host's idempotent ItemCommitted hook still needs delivery
 }
 
 // prepareCleanup retires exact allocations while the operation still owns
@@ -142,6 +150,11 @@ func (j *PGJournal) begin(ctx context.Context, c manifestCommit) (manifestCommit
 		return c, err
 	}
 	err = pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
+		if c.Ref.Version() != "" {
+			if err := j.checkFolderOwner(ctx, tx, Item{ref: c.Ref, prefix: c.Folder}, false); err != nil {
+				return err
+			}
+		}
 		_, err := tx.Exec(ctx, `INSERT INTO `+j.table+`
 (tenant_id, operation_id, content_kind, content_id, content_version_id, folder_prefix, actor_id, fingerprint, lease_id, effects)
 VALUES ($1, $2, $3, $4, $10, $5, $6, $7, $8, $9) ON CONFLICT (tenant_id, operation_id) DO NOTHING`,
@@ -412,6 +425,15 @@ func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, 
 		state := "absent"
 		if applied {
 			state = "applied"
+			if !found.Effects.CleanupAt.IsZero() {
+				var operations []uuid.UUID
+				if found.Effects.CleanupDelete {
+					operations = []uuid.UUID{found.ID}
+				}
+				if err := j.scheduleCleanupTx(ctx, tx, found.Ref, found.Folder, found.Effects.CleanupAt, operations, false); err != nil {
+					return err
+				}
+			}
 		}
 		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = $3, updated_at = now()
 WHERE tenant_id = $1 AND operation_id = $2`, found.Ref.TenantID, found.ID, state)

@@ -14,9 +14,11 @@ export function liveVersions(c: Content | null | undefined): Version[] {
 /**
  * The version a reader of language opens by default: the first live one by
  * position serving it, else the first live one. The server picks cards'
- * versions, covers and meta by the same rule.
+ * versions, covers and meta by the same rule. An explicit single-version
+ * response preserves the server's selection, including an authorized draft.
  */
 export function defaultVersion(c: Content | null | undefined, language?: string): Version | null {
+  if (c?.versions.length === 1 && c.versions[0]!.id === c.selected_version_id) return c.versions[0]!;
   return editionOf(liveVersions(c), language);
 }
 

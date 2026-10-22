@@ -1,5 +1,5 @@
 # Build from the repository root: docker build -f server/cmd/contentkit/Dockerfile .
-FROM --platform=$BUILDPLATFORM golang:1.26.9 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.10 AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./

@@ -347,6 +347,7 @@ func (m *Manifests) upgradeItem(ctx context.Context, ref contentref.ContentRef) 
 		return upgradeNone, err
 	}
 	c.ETag = etag
+	effects.CleanupAt = time.Now().Add(m.cleanupGrace)
 	if err := m.journal.prepare(ctx, &c, effects, 0); err != nil {
 		if c.State == "open" {
 			err = errors.Join(err, m.journal.finish(context.WithoutCancel(ctx), c, false, nil))
@@ -379,9 +380,6 @@ func (m *Manifests) upgradeItem(ctx context.Context, ref contentref.ContentRef) 
 	defer cancel()
 	if err := m.finishCommit(settleCtx, item, c, true, next); err != nil {
 		return upgradeConverted, err
-	}
-	if m.sweeps != nil {
-		_ = m.sweeps.ScheduleSweep(ctx, ref) // the periodic pass backs it up
 	}
 	return upgradeConverted, nil
 }

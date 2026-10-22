@@ -130,13 +130,14 @@ WHERE tenant_id = $1 AND folder_prefix = $2`, item.Ref().TenantID, item.Prefix()
 	return keys, rows.Err()
 }
 
-// protectedAllocations gives an unrecorded producer its bounded grace period,
-// including the interval before its object exists. Retired keys get no grace.
-func (m *Manifests) protectedAllocations(ctx context.Context, item Item, now time.Time, grace time.Duration) (map[string]time.Time, error) {
+// allocationDeadlines includes expired allocations: a cleaner must retire even
+// an absent object and retain its exact key for the late-upload pass. Otherwise
+// a producer could upload after the only cleanup obligation was acknowledged.
+func (m *Manifests) allocationDeadlines(ctx context.Context, item Item, grace time.Duration) (map[string]time.Time, error) {
 	journal := m.journal.forTenant(item.Ref().TenantID)
 	rows, err := journal.pool.Query(ctx, `SELECT object_key, created_at FROM `+journal.allocations+`
-WHERE tenant_id = $1 AND folder_prefix = $2 AND retired_at IS NULL AND created_at > $3`,
-		item.Ref().TenantID, item.Prefix(), now.Add(-grace))
+WHERE tenant_id = $1 AND folder_prefix = $2 AND retired_at IS NULL`,
+		item.Ref().TenantID, item.Prefix())
 	if err != nil {
 		return nil, fmt.Errorf("media: allocation protection: %w", err)
 	}

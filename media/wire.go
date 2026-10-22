@@ -127,10 +127,11 @@ type ErrorReply struct {
 	Details    *ErrorDetails `json:"details,omitempty"`     // image refusals
 }
 
-// Access levels in ReadResult: an item's private files are all or nothing.
+// Access levels in ReadResult. Restricted grants expose only authorized files.
 const (
-	AccessFull = "full" // every private file
-	AccessNone = "none" // public files only (previews)
+	AccessFull    = "full"    // whole-item private access
+	AccessPartial = "partial" // exact authorized private files only
+	AccessNone    = "none"    // public files only (previews)
 )
 
 // ReadResult is the read API's answer: the files under the requested prefix

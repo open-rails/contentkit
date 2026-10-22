@@ -25,12 +25,11 @@ import (
 
 // JobsConfig configures media's River jobs in the host.
 type JobsConfig struct {
-	Store        Store
-	Registry     *Registry
-	Locker       Locker       // serializes manifest edits and sweep deletion; required
-	Journal      *PGJournal   // same ContentKit journal used by the uploader and media worker; required
-	ErasureQueue *HostQueue   // optional insert-only late-erasure queue; allows recovery without starting workers
-	Processes    ProcessQueue // the worker's queue (workqueue.Queue): Expose and Regenerate render through it
+	Store     Store
+	Registry  *Registry
+	Locker    Locker       // serializes manifest edits and sweep deletion; required
+	Journal   *PGJournal   // same ContentKit journal used by the uploader and media worker; required
+	Processes ProcessQueue // the worker's queue (workqueue.Queue): Expose and Regenerate render through it
 	// Pool is the host database Hooks.ItemReady's transaction runs on;
 	// required with ItemReady.
 	Pool *pgxpool.Pool
@@ -41,11 +40,12 @@ type JobsConfig struct {
 	// TempTTL is how long temp/ objects (in-flight server-side writes) are
 	// kept; above the bucket's 1-day abort-incomplete rule. Default 48 h.
 	TempTTL time.Duration
-	// SweepInterval is the periodic pass over every folder. Default 24 h.
-	SweepInterval time.Duration
-	// LateUploadWindow delays a folder deletion's second pass, which removes
-	// uploads that land after the first; above the presign TTL and the
-	// 1-day multipart rule. Default 25 h.
+	// CleanupInterval is the interval between bounded due-cleanup passes.
+	// Idle passes query PostgreSQL without listing the bucket. Default 24 h.
+	CleanupInterval time.Duration
+	// LateUploadWindow retains exact-key cleanup after folder deletion or
+	// allocation retirement, catching writes that land after the first pass;
+	// above the presign TTL and 1-day multipart rule. Default 25 h.
 	LateUploadWindow time.Duration
 	Limiter          *PGLimiter // optional; must share the journal's pool and schema
 	Queue            string     // default DefaultQueue
@@ -75,9 +75,6 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	if cfg.Store == nil || cfg.Registry == nil || cfg.Locker == nil || cfg.Journal == nil {
 		return nil, errors.New("media: Jobs needs a Store, a Registry, a Locker and a Journal")
 	}
-	if cfg.ErasureQueue != nil && (cfg.ErasureQueue.reg != cfg.Registry || cfg.ErasureQueue.pool != cfg.Journal.pool) {
-		return nil, errors.New("media: erasure queue must use the registry and journal database")
-	}
 	if (cfg.Registry.cfg.Hooks.ItemReady != nil || cfg.Registry.cfg.Hooks.ItemProgressed != nil) && cfg.Pool == nil {
 		return nil, errors.New("media: Hooks.ItemReady and Hooks.ItemProgressed need JobsConfig.Pool")
 	}
@@ -90,8 +87,8 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	if cfg.TempTTL <= 0 {
 		cfg.TempTTL = 48 * time.Hour
 	}
-	if cfg.SweepInterval <= 0 {
-		cfg.SweepInterval = 24 * time.Hour
+	if cfg.CleanupInterval <= 0 {
+		cfg.CleanupInterval = 24 * time.Hour
 	}
 	if cfg.LateUploadWindow <= 0 {
 		cfg.LateUploadWindow = 25 * time.Hour
@@ -110,7 +107,7 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	}
 	j := &Jobs{cfg: cfg}
 	var err error
-	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, Journal: cfg.Journal, Sweeps: j}); err != nil {
+	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, Journal: cfg.Journal, CleanupGrace: cfg.Grace}); err != nil {
 		return nil, err
 	}
 	return j, nil
@@ -145,8 +142,7 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			cfg.Queues[j.cfg.Queue] = river.QueueConfig{MaxWorkers: j.cfg.MaxWorkers}
 		}
 		for _, add := range []func() error{
-			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepWorker{j: j}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepPassWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &cleanupDueWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &exposeWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &readyWorker{j: j}) },
@@ -158,12 +154,14 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 				return err
 			}
 		}
-		interval := j.cfg.SweepInterval
+		interval := j.cfg.CleanupInterval
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(interval),
 			func() (river.JobArgs, *river.InsertOpts) {
-				return sweepPassArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, MaxAttempts: 3,
-					UniqueOpts: river.UniqueOpts{ByPeriod: interval}}
-			}, &river.PeriodicJobOpts{ID: "contentkit_media_sweep_pass"}))
+				args := cleanupDueArgs{}
+				opts := args.InsertOpts()
+				opts.Queue, opts.MaxAttempts = j.cfg.Queue, 3
+				return args, &opts
+			}, &river.PeriodicJobOpts{ID: "contentkit_media_cleanup_due", RunOnStart: true}))
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(time.Minute),
 			func() (river.JobArgs, *river.InsertOpts) {
 				return recoverArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, MaxAttempts: 3,
@@ -227,14 +225,16 @@ func (j *Jobs) waitFor(ctx context.Context, id int64) error {
 	return WaitFor(ctx, c, id)
 }
 
-// ScheduleSweep sweeps the item's folder after the grace period; a sweep
-// already waiting for the folder absorbs it. Manifests calls it on every edit.
+// ScheduleSweep records one due-cleanup obligation, without creating a River
+// job. Successful manifest edits already record this atomically themselves.
 func (j *Jobs) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error {
 	item, err := j.cfg.Registry.Item(ref)
 	if err != nil {
 		return err
 	}
-	return InsertOnce(ctx, j.Insert, sweepArgs{Prefix: item.Prefix()}, river.InsertOpts{ScheduledAt: j.cfg.Now().Add(j.cfg.Grace)})
+	return pgx.BeginFunc(ctx, j.cfg.Journal.pool, func(tx pgx.Tx) error {
+		return j.cfg.Journal.scheduleCleanupTx(ctx, tx, item.Ref(), item.Prefix(), j.cfg.Now().Add(j.cfg.Grace), nil, false)
+	})
 }
 
 // Deletion is one item to delete. Owner is its quota owner (UploadGrant.Owner),
@@ -371,7 +371,17 @@ func (j *Jobs) itemFolders(ctx context.Context, k *Kind) iter.Seq2[contentref.Co
 				continue
 			}
 			last = key.Folder()
-			if ref, err := parseFolder(last); err == nil && !yield(ref, nil) {
+			if k.Versions && key.Version != "" {
+				continue // retained nested source folders belong only to migration/cleanup
+			}
+			item, err := j.itemForFolder(ctx, last)
+			if err != nil {
+				if !yield(contentref.ContentRef{}, err) {
+					return
+				}
+				continue
+			}
+			if !yield(item.Ref(), nil) {
 				return
 			}
 		}
@@ -406,39 +416,6 @@ func (j *Jobs) Regenerate(ctx context.Context, kind, preset string) (int, error)
 	return n, nil
 }
 
-type sweepArgs struct {
-	Prefix string `json:"prefix"`
-	After  int64  `json:"after,omitempty"` // the running sweep this one follows
-}
-
-func (sweepArgs) Kind() string                      { return "contentkit_media_sweep" }
-func (a sweepArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
-
-type sweepWorker struct {
-	river.WorkerDefaults[sweepArgs]
-	j *Jobs
-}
-
-func (w *sweepWorker) Timeout(*river.Job[sweepArgs]) time.Duration { return 15 * time.Minute }
-
-func (w *sweepWorker) Work(ctx context.Context, job *river.Job[sweepArgs]) (err error) {
-	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
-	if _, err := parseFolder(job.Args.Prefix); err != nil {
-		return river.JobCancel(err)
-	}
-	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
-		return err
-	}
-	res, err := w.j.sweep(ctx, job.Args.Prefix)
-	if err != nil {
-		return err
-	}
-	if res.Wait > 0 {
-		return river.JobSnooze(res.Wait)
-	}
-	return nil
-}
-
 type recoverArgs struct{}
 
 func (recoverArgs) Kind() string { return "contentkit_media_recover" }
@@ -456,28 +433,10 @@ func (w *recoverWorker) Work(ctx context.Context, job *river.Job[recoverArgs]) (
 	return err
 }
 
-type sweepPassArgs struct{}
-
-func (sweepPassArgs) Kind() string { return "contentkit_media_sweep_pass" }
-
-type sweepPassWorker struct {
-	river.WorkerDefaults[sweepPassArgs]
-	j *Jobs
-}
-
-func (w *sweepPassWorker) Timeout(*river.Job[sweepPassArgs]) time.Duration { return 6 * time.Hour }
-
-func (w *sweepPassWorker) Work(ctx context.Context, job *river.Job[sweepPassArgs]) (err error) {
-	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
-	return w.j.SweepAll(ctx)
-}
-
 type deleteFolderArgs struct {
 	Prefix      string `json:"prefix"`
-	Final       bool   `json:"final,omitempty"`
 	Owner       string `json:"owner,omitempty"`
 	Incarnation string `json:"incarnation,omitempty"`
-	Operation   string `json:"operation,omitempty"` // first pass's exact cleanup targets
 }
 
 func (deleteFolderArgs) Kind() string { return "contentkit_media_delete_folder" }
@@ -494,16 +453,12 @@ func (w *deleteFolderWorker) Timeout(*river.Job[deleteFolderArgs]) time.Duration
 func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFolderArgs]) (err error) {
 	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
 	a := job.Args
-	item, err := w.j.cfg.Registry.folderItem(a.Prefix)
+	item, err := w.j.itemForFolder(ctx, a.Prefix)
+	if errors.Is(err, ErrLayoutChanged) {
+		return err
+	}
 	if err != nil {
 		return river.JobCancel(err)
-	}
-	if a.Final {
-		operation, err := uuid.Parse(a.Operation)
-		if err != nil {
-			return river.JobCancel(err)
-		}
-		return w.j.repeatDeletion(ctx, item, operation)
 	}
 	if a.Incarnation == "" {
 		return river.JobCancel(errors.New("media: queued deletion needs an incarnation"))
@@ -512,9 +467,7 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 	if err := w.j.deleteItem(ctx, item, a.Owner, operation, a.Incarnation, time.Time{}); err != nil {
 		return err
 	}
-	_, err = w.j.Insert(ctx, deleteFolderArgs{Prefix: a.Prefix, Final: true, Operation: operation.String()}, &river.InsertOpts{
-		ScheduledAt: w.j.cfg.Now().Add(w.j.cfg.LateUploadWindow), UniqueOpts: PendingOnce})
-	return err
+	return nil
 }
 
 // readyArgs asks the host to report an item's settled readiness
@@ -596,48 +549,33 @@ func (j *Jobs) purge(ctx context.Context, keys []string) {
 }
 
 // HostQueue is the media worker's handle on the host's River schema: it
-// inserts the jobs the host runs on the worker's behalf (a folder's sweep
-// after an edit, ItemReady and PurgePublic relays). It inserts only.
+// inserts ItemReady, PurgePublic and Expose relays on the worker's behalf.
+// Cleanup is recorded in the shared journal, without queueing a relay.
 type HostQueue struct {
-	pool   *pgxpool.Pool
 	client *river.Client[pgx.Tx]
 	reg    *Registry
 	queue  string
-	grace  time.Duration
 }
 
 // NewHostQueue targets the host's River schema ("" is the connection's
-// search path) and media queue ("" is DefaultQueue); grace is the host's
-// JobsConfig.Grace (default 24 h).
-func NewHostQueue(pool *pgxpool.Pool, reg *Registry, schema, queue string, grace time.Duration) (*HostQueue, error) {
+// search path) and media queue ("" is DefaultQueue).
+func NewHostQueue(pool *pgxpool.Pool, reg *Registry, schema, queue string) (*HostQueue, error) {
 	if pool == nil || reg == nil {
 		return nil, errors.New("media: HostQueue needs a pool and a Registry")
 	}
 	if queue == "" {
 		queue = DefaultQueue
 	}
-	if grace <= 0 {
-		grace = 24 * time.Hour
-	}
 	c, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema})
 	if err != nil {
 		return nil, err
 	}
-	return &HostQueue{pool: pool, client: c, reg: reg, queue: queue, grace: grace}, nil
+	return &HostQueue{client: c, reg: reg, queue: queue}, nil
 }
 
 func (h *HostQueue) insert(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 	o.Queue = h.queue
 	return h.client.Insert(ctx, args, o)
-}
-
-// ScheduleSweep implements SweepScheduler like Jobs.ScheduleSweep.
-func (h *HostQueue) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error {
-	item, err := h.reg.Item(ref)
-	if err != nil {
-		return err
-	}
-	return InsertOnce(ctx, h.insert, sweepArgs{Prefix: item.Prefix()}, river.InsertOpts{ScheduledAt: time.Now().Add(h.grace)})
 }
 
 // Ready asks the host to report ref's readiness (Hooks.ItemReady) once it

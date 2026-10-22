@@ -5,8 +5,9 @@
 //
 // An item token's scope is an item's, "{ns}/{kind}/{id}" or a version's
 // "{ns}/{kind}/{id}/{version}": every file in the item's private/ or none. A
-// download token's is one key in an item's download/, which no item token
-// opens. Tokens are bearer tokens, revoked only by expiry.
+// private-file token covers one immutable key, never its siblings. A download
+// token covers one key in download/, which neither private token opens.
+// Tokens are bearer tokens, revoked only by expiry.
 package token
 
 import (
@@ -133,12 +134,19 @@ func (r Ring) Sign(scope string, exp time.Time) string {
 	return r.current.ID + "." + e + "." + mac(r.current.Secret, scope, e)
 }
 
-// VerifyPrivate checks tok for the private object key
-// "{ns}/{kind}/{id}[/{version}]/private/{name}" at now: its item's token.
+// PrivateFileScope covers one private object key, including tenant, app, kind,
+// item and version. Its domain separator keeps it distinct from download and
+// whole-item scopes.
+func PrivateFileScope(key string) string { return "private-file|" + key }
+
+// VerifyPrivate checks an exact-file or whole-item token for a private key.
 func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
 	k, area, ok := keyFolder(key)
 	if !ok || area != layout.AreaPrivate {
 		return ErrInvalid
+	}
+	if err := r.VerifyScope(tok, PrivateFileScope(key), now); !errors.Is(err, ErrInvalid) {
+		return err
 	}
 	return r.VerifyScope(tok, strings.TrimSuffix(k.Folder(), "/"), now)
 }

@@ -48,7 +48,7 @@ const IDLE: ReadEntry = { read: null, loading: false, loaded: false };
 const RATE_LIMIT_RETRIES = 3;
 
 export function readKey(ref: RefBody, o: ReadOptions = {}): string {
-  return JSON.stringify([ref.kind, ref.id, ref.version ?? "", o.prefix ?? "", o.offset ?? 0, o.limit ?? 0, !!o.download, !!o.editor]);
+  return JSON.stringify([ref.kind, ref.id, ref.version ?? "", o.prefix ?? "", o.offset ?? 0, o.limit ?? 0, !!o.download, !!o.editor, [...new Set(o.paths ?? [])].sort()]);
 }
 
 /** The read with the upload at path replaced by file in place (appended when new, removed when null). */

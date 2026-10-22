@@ -341,6 +341,24 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if err := workqueue.Migrate(ctx, e.pool, m.WorkerSchema); err != nil {
 			return fmt.Errorf("contentkit: media worker queue migrations: %w", err)
 		}
+		reg, journal, err := e.cleanupStorage()
+		if err != nil {
+			return err
+		}
+		ttl, window := m.Delivery.TTL, m.Delivery.Window
+		if ttl <= 0 {
+			ttl = time.Hour
+		}
+		if window <= 0 {
+			window = token.DefaultWindow
+		}
+		retention := max(24*time.Hour, ttl+window+time.Second)
+		if err := media.MigrateCleanup(ctx, e.pool, reg, journal, e.riverSchema, retention); err != nil {
+			return fmt.Errorf("contentkit: media cleanup migration: %w", err)
+		}
+		if err := versions.MigrateReaderSnapshots(ctx, e.pool, e.schema, e.cfg.Tenant, e.riverSchema, reg); err != nil {
+			return fmt.Errorf("contentkit: reader snapshot migration: %w", err)
+		}
 	}
 	return nil
 }
@@ -455,6 +473,9 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 			return nil, err
 		}
 	}
+	if err := media.ValidateVersionStorageMigration(ctx, m.reg, journal); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMigrationsRequired, err)
+	}
 	limiter, err := e.groupLimiter()
 	if err != nil {
 		return nil, err
@@ -466,11 +487,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		}
 		limiter = media.RouteLimiter(limiter, accountLimiter, e.accountMediaPartition())
 	}
-	erasureQueue, err := media.NewHostQueue(e.pool, m.reg, e.riverSchema, "", 0)
-	if err != nil {
-		return nil, err
-	}
-	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal, ErasureQueue: erasureQueue,
+	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal,
 		Processes: m.queue, Pool: e.pool, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
 		return nil, err
 	}

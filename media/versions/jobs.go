@@ -51,11 +51,6 @@ type forkArgs struct {
 
 func (forkArgs) Kind() string { return "contentkit_version_fork" }
 
-// recoverArgs requeues builds left behind and previews a release changed.
-type recoverArgs struct{}
-
-func (recoverArgs) Kind() string { return "contentkit_version_publish_recovery" }
-
 // RiverJobs contributes the versions' workers, queue and recovery pass to
 // the host's River composition, beside media's own.
 func (s *Service) RiverJobs() riverhelpers.Contribution {
@@ -65,7 +60,6 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &importWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &forkWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &bodyCopyWorker{s: s}) },
-			func(w *river.Workers) error { return river.AddWorkerSafely(w, &recoverWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &playableWorker{s: s}) },
 		} {
 			if err := add(cfg.Workers); err != nil {
@@ -75,10 +69,6 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 		if _, ok := cfg.Queues[Queue]; !ok {
 			cfg.Queues[Queue] = river.QueueConfig{MaxWorkers: 2}
 		}
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(time.Minute),
-			func() (river.JobArgs, *river.InsertOpts) {
-				return recoverArgs{}, &river.InsertOpts{Queue: Queue, UniqueOpts: media.PendingOnce}
-			}, &river.PeriodicJobOpts{ID: "contentkit_version_publish_recovery"}))
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(24*time.Hour),
 			func() (river.JobArgs, *river.InsertOpts) {
 				return playableArgs{}, &river.InsertOpts{Queue: Queue, UniqueOpts: media.PendingOnce}
@@ -146,8 +136,7 @@ func (w *publishWorker) Work(ctx context.Context, job *river.Job[publishArgs]) e
 	return outcome(w.s.publish(ctx, Target{Content: job.Args.Content, Version: job.Args.Version}))
 }
 
-// publish brings v's pages publication, previews, automatic cover and
-// playback to its media.
+// publish records ready-file snapshots and the independent cover teaser.
 func (s *Service) publish(ctx context.Context, t Target) error {
 	v, err := s.one(ctx, t)
 	if err != nil {
@@ -155,6 +144,9 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 	}
 	k, err := s.published(v)
 	if err != nil {
+		return err
+	}
+	if err := s.removeLegacyPreviews(ctx, k, t); err != nil {
 		return err
 	}
 	// The first presign creates the manifest before any upload; publishing it
@@ -175,9 +167,6 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 	}
 	if !ready {
 		return ErrNotReady
-	}
-	if err := s.applyPreviews(ctx, k, t); err != nil {
-		return err
 	}
 	if err := s.applyCover(ctx, k, t); err != nil {
 		return err
@@ -240,53 +229,4 @@ func (w *forkWorker) Work(ctx context.Context, job *river.Job[forkArgs]) error {
 		return ferr
 	}
 	return river.JobCancel(err)
-}
-
-type recoverWorker struct {
-	river.WorkerDefaults[recoverArgs]
-	s *Service
-}
-
-func (w *recoverWorker) Work(ctx context.Context, _ *river.Job[recoverArgs]) error {
-	return w.s.recoverPublications(ctx)
-}
-
-// recoveryBatch bounds each kind of work one recovery pass requeues.
-var recoveryBatch = 500
-
-// recoverPublications requeues builds a minute old and current pages whose
-// previews a segment's release since outdated. Each kind has its own bound, so
-// builds that stay blocked cannot crowd out preview refreshes, which have no
-// other trigger.
-func (s *Service) recoverPublications(ctx context.Context) error {
-	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-		seen := map[Target]bool{}
-		for _, pending := range []string{
-			`p.state = 'building' AND p.created_at < now() - interval '1 minute'`,
-			`p.kind = 'pages' AND p.state = 'current' AND (p.previews_at IS NULL OR EXISTS (SELECT 1 FROM ` + s.t.segments + ` g
-		WHERE g.tenant_id = p.tenant_id AND g.version_id = p.version_id AND g.release_at <= now() AND g.release_at > p.previews_at))`,
-		} {
-			rows, err := tx.Query(ctx, `SELECT DISTINCT v.content_id, v.id FROM `+s.t.publications+` p
-JOIN `+s.t.versions+` v ON v.tenant_id = p.tenant_id AND v.id = p.version_id
-WHERE p.tenant_id = $1 AND `+pending+`
-LIMIT $2`, s.o.Tenant, recoveryBatch)
-			if err != nil {
-				return err
-			}
-			due, err := pgx.CollectRows(rows, pgx.RowToStructByPos[Target])
-			if err != nil {
-				return err
-			}
-			for _, t := range due {
-				if seen[t] {
-					continue
-				}
-				seen[t] = true
-				if err := s.enqueueTx(ctx, tx, publishArgs{Content: t.Content, Version: t.Version}); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
 }

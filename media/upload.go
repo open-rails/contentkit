@@ -698,7 +698,7 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 			t.Path, _ = splitExt(op.Path)
 		}
 		if op.Op == OpCopy {
-			src, err := u.reg.VersionRef(copyKind(item.Kind()).Name, op.From.ID, op.From.Version)
+			src, err := u.reg.VersionRef(item.Kind().Name, op.From.ID, op.From.Version)
 			if err != nil {
 				return UploadGrant{}, uploadErr(CodeInvalid, "copy from %q: not a media item of this kind", op.From.ID)
 			}
@@ -821,7 +821,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		if op.Op != OpCopy {
 			continue
 		}
-		src, err := u.reg.VersionRef(copyKind(item.Kind()).Name, op.From.ID, op.From.Version)
+		src, err := u.reg.VersionRef(item.Kind().Name, op.From.ID, op.From.Version)
 		if err != nil {
 			return nil, nil, uploadErr(CodeInvalid, "copy from %q: not a media item of this kind", op.From.ID)
 		}
@@ -838,7 +838,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 			}
 			manifest[src.Key()] = m
 		}
-		files := copySource(item.Kind(), m, op.From.Path)
+		files := copyFiles(m, op.From.Path)
 		if len(files) == 0 {
 			return nil, nil, uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 		}

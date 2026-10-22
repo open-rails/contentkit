@@ -249,7 +249,7 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		k := strings.TrimPrefix(parsed.Path, "/v1/")
-		if !strings.HasPrefix(k, env.Tenant+"/blog/"+c.ID+"/"+c.Versions[0].ID+"/private/") || ring.VerifyPrivate(parsed.Query().Get("t"), k, time.Now()) != nil {
+		if !strings.HasPrefix(k, env.Tenant+"/blog/"+c.Versions[0].ID+"/private/") || ring.VerifyPrivate(parsed.Query().Get("t"), k, time.Now()) != nil {
 			t.Fatalf("body image URL %s is not the item's signed private file", u)
 		}
 	}

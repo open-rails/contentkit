@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"reflect"
 	"slices"
 	"strconv"
@@ -30,12 +29,6 @@ type Locker interface {
 	Lock(ctx context.Context, key string) (unlock func(), err error)
 }
 
-// SweepScheduler schedules a folder's sweep after an edit: the host's
-// *Jobs, or in the media worker a *HostQueue.
-type SweepScheduler interface {
-	ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error
-}
-
 // ManifestOptions configure Manifests.
 type ManifestOptions struct {
 	// Locker is required: every edit runs under it and uses conditional PUT.
@@ -50,20 +43,20 @@ type ManifestOptions struct {
 	// (MaxManifestBytes) costs 24 MiB; default 128 MiB, at least two of them.
 	CacheBytes int64
 	MaxRetries int // conditional-write attempts per recovery fence; default 16
-	// Sweeps schedules the folder's sweep after every written edit; best
-	// effort (the periodic pass backs it up).
-	Sweeps SweepScheduler
+	// CleanupGrace delays reference-aware cleanup after an edit or allocation.
+	// The deadline commits with the journal outcome; default 24 hours.
+	CleanupGrace time.Duration
 }
 
 // Manifests reads and edits item manifests.
 type Manifests struct {
-	store   Store
-	reg     *Registry
-	locker  Locker
-	journal *PGJournal
-	sweeps  SweepScheduler
-	retries int
-	cache   *manifestCache
+	store        Store
+	reg          *Registry
+	locker       Locker
+	journal      *PGJournal
+	cleanupGrace time.Duration
+	retries      int
+	cache        *manifestCache
 }
 
 var ErrManifestConflict = errors.New("media: manifest edit kept conflicting")
@@ -97,7 +90,10 @@ func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, er
 	if o.MaxRetries <= 0 {
 		o.MaxRetries = 16
 	}
-	return &Manifests{store: store, reg: reg, locker: o.Locker, journal: o.Journal, sweeps: o.Sweeps, retries: o.MaxRetries,
+	if o.CleanupGrace <= 0 {
+		o.CleanupGrace = 24 * time.Hour
+	}
+	return &Manifests{store: store, reg: reg, locker: o.Locker, journal: o.Journal, cleanupGrace: o.CleanupGrace, retries: o.MaxRetries,
 		cache: newManifestCache(o.CacheBytes)}, nil
 }
 
@@ -133,6 +129,11 @@ func (m *Manifests) Get(ctx context.Context, ref contentref.ContentRef) (*Manife
 		return nil, "", err
 	}
 	cur, etag, err := m.get(ctx, item.ManifestKey())
+	if err == nil && ref.Version() != "" {
+		if ownerErr := m.journal.checkFolderOwner(ctx, m.journal.pool, item, true); ownerErr != nil {
+			return nil, etag, ownerErr
+		}
+	}
 	if err == nil && cur.Deleted {
 		return nil, etag, ErrNotFound
 	}
@@ -286,6 +287,9 @@ func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, sel
 	if publicOnly && (len(effects.Private) != 0 || len(effects.Allocate) != 0) {
 		return errors.New("media: public cleanup cannot alter private allocation ownership")
 	}
+	if len(effects.Allocate) > 0 {
+		effects.CleanupAt = time.Now().Add(m.cleanupGrace)
+	}
 	// The projection is asserted before any DELETE: a file it names is never
 	// one this cleanup retires.
 	if err := m.journal.prepareCleanup(ctx, &c, effects, projectionOf(item, cur).without(item, effects.Public)); err != nil {
@@ -427,18 +431,13 @@ func (m *Manifests) editOperation(ctx context.Context, ref contentref.ContentRef
 		cur, _, err := m.get(ctx, key)
 		return cur, err
 	}
-	out, written, err := m.try(ctx, item, existing, b, mutation, fn)
+	out, _, err := m.try(ctx, item, existing, b, mutation, fn)
 	if mutation.commit.State == "open" {
 		var proj *projection
 		if err == nil {
 			proj = projectionOf(item, out) // unchanged and read under the lock
 		}
 		err = errors.Join(err, m.journal.finish(ctx, mutation.commit, err == nil, proj))
-	}
-	if err == nil && written && m.sweeps != nil {
-		if serr := m.sweeps.ScheduleSweep(ctx, ref); serr != nil {
-			slog.WarnContext(ctx, "media: schedule sweep", "key", key, "error", serr)
-		}
 	}
 	return out, err
 }
@@ -521,6 +520,9 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	if mutation.effects.Process != nil && next.Full && !publicPending(item.Kind(), next) {
 		mutation.effects.Process = nil
 	}
+	if mutation.effects.CleanupAt.IsZero() {
+		mutation.effects.CleanupAt = time.Now().Add(m.cleanupGrace)
+	}
 	if err := m.journal.prepare(ctx, &mutation.commit, mutation.effects, mutation.quota); err != nil {
 		return nil, false, err
 	}
@@ -598,12 +600,22 @@ func (m *Manifests) recoverLocked(ctx context.Context, item Item) (*Manifest, bo
 }
 
 func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operation *uuid.UUID) (*Manifest, bool, error) {
+	if item.Ref().Version() != "" {
+		// Recovery runs before begin, so the owner check there is too late:
+		// a different parent must not freeze or settle this version's work.
+		if err := m.journal.checkFolderOwner(ctx, m.journal.pool, item, false); err != nil {
+			return nil, false, err
+		}
+	}
 	if err := RequireConditionalPut(ctx, m.store); err != nil {
 		return nil, false, err
 	}
 	commit, err := m.journal.freeze(ctx, item.Ref().TenantID, item.Prefix(), operation)
 	if err != nil || commit == nil {
 		return nil, false, err
+	}
+	if !commit.Ref.Equal(item.Ref()) || commit.Folder != item.Prefix() {
+		return nil, false, ErrCommitIdentity
 	}
 	if commit.Effects.Cleanup {
 		return nil, true, m.finishCommit(ctx, item, *commit, true, nil)
@@ -612,6 +624,9 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 		cur, etag, err := m.get(ctx, item.ManifestKey())
 		if errors.Is(err, ErrNotFound) {
 			cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}, ""
+			if commit.Actor == "migration:layout" {
+				cur.Incarnation = layoutRecoveryIncarnation(commit.ID)
+			}
 		} else if errors.Is(err, ErrManifestUnreadable) && commit.Effects.Deletion {
 			if err := m.fenceUnreadable(ctx, item); errors.Is(err, ErrPreconditionFailed) {
 				continue

@@ -2,6 +2,7 @@ package media_test
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -70,11 +71,11 @@ func TestVersionsKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	vi, _ := reg.Item(ver)
-	if vi.Prefix() != "site/book/"+content+"/"+version+"/" {
+	if vi.Prefix() != "site/book/"+version+"/" {
 		t.Fatalf("folder %s", vi.Prefix())
 	}
-	// Body images live in a version's private/: a Named upload with a private
-	// image preset and no public one, of a kind that publishes nothing.
+	// Body images are named uploads with a private image preset and no public
+	// one. They can coexist with a publishing kind's other page uploads.
 	pngs := []string{"image/png"}
 	post := func() media.Kind {
 		return media.Kind{Name: "post", Versions: true, Uploads: []media.Upload{{Path: "inline/{name}", Body: true, Named: true, Max: 10, Types: pngs, MaxBytes: 1 << 20}},
@@ -93,12 +94,6 @@ func TestVersionsKind(t *testing.T) {
 		"a public preset": func(k *media.Kind) {
 			k.Public = []media.Public{{Name: "inline", From: "inline/{name}", To: "{name}.webp"}}
 		},
-		"a publishing kind": func(k *media.Kind) {
-			b := bookKind()
-			b.Uploads, b.Private = append(b.Uploads, k.Uploads...), append(b.Private, k.Private...)
-			*k = b
-			k.Versions = true
-		},
 	} {
 		k := post()
 		mutate(&k)
@@ -106,10 +101,20 @@ func TestVersionsKind(t *testing.T) {
 			t.Errorf("body image with %s: accepted", name)
 		}
 	}
+	withBody := bookKind()
+	withBody.Versions = true
+	body := post()
+	withBody.Uploads = append(withBody.Uploads, body.Uploads...)
+	withBody.Private = append(withBody.Private, body.Private...)
+	if combined, err := media.NewRegistry(media.Config{Namespace: "site", Kinds: []media.Kind{withBody}}); err != nil {
+		t.Fatalf("private body images cannot coexist with publishing pages: %v", err)
+	} else if kind, _ := combined.Kind("book"); !kind.IsBody("inline/i-01920000-0000-7000-8000-000000000001.png") || len(combined.Kinds()) != 1 {
+		t.Fatal("publishing body images changed the declared kind model")
+	}
 	if len(vi.Kind().Uploads) != 5 || vi.Kind().Uploads[0].Path != "cover" || len(vi.Kind().Public) != 2 || vi.Kind().Public[1].Name != "preview" {
 		t.Fatalf("version uploads %+v", vi.Kind().Uploads)
 	}
-	if got := reg.PublicURL(ver, "preview-1.webp"); got != "/v1/site/book/"+content+"/"+version+"/public/preview-1.webp" {
+	if got := reg.PublicURL(ver, "preview-1.webp"); got != "/v1/site/book/"+version+"/public/preview-1.webp" {
 		t.Fatalf("version URL %s", got)
 	}
 	for _, bad := range []contentref.ContentRef{
@@ -120,19 +125,11 @@ func TestVersionsKind(t *testing.T) {
 			t.Fatalf("%s took", bad)
 		}
 	}
-	// The published kind: each rendition's and the audio's files, served whole.
-	pub, err := reg.Kind("book" + media.PublishedSuffix)
-	if err != nil || pub.Of() == nil || pub.Of().Name != "book" || !pub.ServeOriginals {
-		t.Fatalf("published kind %+v %v", pub, err)
+	// Reader chapters never manufacture a second storage kind.
+	if _, err := reg.Kind("book" + media.PublishedSuffix); !errors.Is(err, media.ErrUnknownKind) {
+		t.Fatalf("unexpected derived storage kind: %v", err)
 	}
-	var paths []string
-	for _, u := range pub.Uploads {
-		paths = append(paths, u.Path+"="+strings.Join(u.Types, ","))
-	}
-	if strings.Join(paths, " ") != "read/{name}=image/webp thumb/{name}=image/webp listen/{name}=audio/mp4" {
-		t.Fatalf("published uploads %v", paths)
-	}
-	// The worker's registry derives them again.
+	// The worker receives the same declared kinds on decoding.
 	b, err := json.Marshal(reg)
 	if err != nil || strings.Contains(string(b), media.PublishedSuffix) {
 		t.Fatalf("registry JSON carries derived kinds: %v", err)

@@ -71,10 +71,9 @@ type ReaderOptions struct {
 	Now      func() time.Time
 }
 
-// Reader answers the read API and HLS playlists: one Resolve per item. An
-// item's private files are all or nothing: a viewer with access gets one
-// token that opens every one of them; anyone else gets none, and sees only
-// the item's public files (covers, previews).
+// Reader answers reads and playlists after one trusted resolution per item.
+// Whole-item grants use a folder token; restricted grants sign only approved
+// immutable objects and never issue a folder cookie.
 type Reader struct {
 	o       ReaderOptions
 	reg     *Registry
@@ -149,7 +148,8 @@ type Grant struct {
 	Resolution resolve.Resolution
 	Manifest   *Manifest
 	Expires    time.Time
-	item       string // the item token; "" without access
+	item       string          // whole-item token only; never issued for a restricted grant
+	files      map[string]bool // exact private blob allowlist, nil for whole-item grants
 	actor      access.Actor
 	r          *Reader
 }
@@ -158,7 +158,7 @@ type Grant struct {
 // resolver error denies (ErrResolve); an invisible item is ErrNotVisible. A
 // visible item without a manifest has no files. A viewer with access who
 // has opened too many items this hour (ReaderOptions.Issuance) gets a
-// LimitError (ErrRateLimited) instead of the item's token; an anonymous
+// LimitError (ErrRateLimited) instead of a media grant; an anonymous
 // actor with access must carry Actor.IP (ErrNoViewerKey).
 func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (*Grant, error) {
 	item, err := r.reg.Item(ref)
@@ -173,7 +173,8 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 		return nil, ErrNotVisible
 	}
 	scope := strings.TrimSuffix(item.Prefix(), "/")
-	if res.Full() || res.Editor {
+	restricted := !res.Editor && (res.MediaFiles != nil || item.Kind().Versions && item.Kind().Publish != nil)
+	if res.Full() || res.Editor || len(res.MediaFiles) > 0 {
 		if err := r.issue.allow(ctx, actor, res.Editor, scope); err != nil {
 			return nil, err
 		}
@@ -186,14 +187,22 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	}
 	g := &Grant{Item: item, Resolution: res, Manifest: man, actor: actor, r: r,
 		Expires: token.Expiry(r.o.Now(), r.o.Delivery.TTL, r.o.Delivery.Window)}
-	if res.Full() || res.Editor {
+	if restricted {
+		g.files = make(map[string]bool)
+		for _, f := range man.Files {
+			area, _, valid := layout.SplitBlobRef(f.Blob)
+			if valid && area == layout.AreaPrivate && res.MediaFiles[f.Blob] && g.restrictedFile(f) {
+				g.files[f.Blob] = true
+			}
+		}
+	} else if res.Full() || res.Editor {
 		g.item = r.ring.Sign(scope, g.Expires)
 	}
 	return g, nil
 }
 
-// Full reports access to the item's private files: the resolver's verdict,
-// or an editor's.
+// Full reports whole-item private access. A restricted viewer can instead
+// receive individual URLs through Allowed and URL without any folder token.
 func (g *Grant) Full() bool { return g.item != "" }
 
 // Editor reports an editor's grant.
@@ -204,7 +213,20 @@ func (g *Grant) Editor() bool { return g.Resolution.Editor }
 // ServeOriginals; HostOnly presets, files in download/ (Kind.Downloads),
 // unattached files and frames not grabbed yet never.
 func (g *Grant) Allowed(f File) bool {
+	if g.files != nil {
+		return g.files[f.Blob] && g.restrictedFile(f)
+	}
 	return g.Full() && f.Blob != "" && g.listed(f)
+}
+
+func (g *Grant) restrictedFile(f File) bool {
+	if f.IsUpload() {
+		return false // originals require the separate download authorization
+	}
+	if p := g.Item.Kind().private(f.Preset); p != nil && p.Zip != "" {
+		return false
+	}
+	return f.Blob != "" && g.listed(f)
 }
 
 // Cookie is the item cookie for a viewer with access in cookie mode, else nil.
@@ -253,8 +275,9 @@ func (g *Grant) cookie() bool {
 	return g.r.o.Delivery.Mode == DeliverCookie && g.actor.Kind != auth.SubjectApplication
 }
 
-// url is the URL of the item's blob: plain under the item cookie, else with
-// the item token. A download adds dl, its name: unsigned, since the token
+// url signs one exact approved object for restricted grants. Whole-item URLs
+// are plain under the item cookie, or carry the item token. A download adds
+// dl, its name: unsigned, since the token
 // already opens the file and the gateway only accepts a name of the file's
 // type.
 func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
@@ -263,7 +286,12 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 		return "", err
 	}
 	q := url.Values{}
-	if !cookie {
+	if g.files != nil {
+		if !g.files[blob] {
+			return "", ErrNotAllowed
+		}
+		q.Set("t", g.r.ring.Sign(token.PrivateFileScope(key), g.Expires))
+	} else if !cookie {
 		q.Set("t", g.item)
 	}
 	if dl && download != "" {
@@ -352,7 +380,7 @@ func (r *Registry) editorViews(m *Manifest) map[string]bool {
 // uploads' (Upload.Named) first private images, by name: how an opened
 // content's body shows images that have no public files. Names without one,
 // and every name for a viewer the item does not open to, are absent. The URLs
-// carry the item token (Delivery's cookie mode is not assumed).
+// carry the applicable exact-file or item token (cookie mode is not assumed).
 func (r *Reader) NamedURLs(ctx context.Context, ref contentref.ContentRef, actor access.Actor, names []string) (map[string]string, error) {
 	out := map[string]string{}
 	if len(names) == 0 {
@@ -362,12 +390,12 @@ func (r *Reader) NamedURLs(ctx context.Context, ref contentref.ContentRef, actor
 	if errors.Is(err, ErrNotVisible) {
 		return out, nil
 	}
-	if err != nil || !g.Full() {
+	if err != nil {
 		return out, err
 	}
 	k := g.Item.Kind()
 	for _, f := range g.Manifest.Files {
-		if f.IsUpload() || f.Blob == "" || !g.listed(f) {
+		if f.IsUpload() || !g.Allowed(f) {
 			continue
 		}
 		p := k.private(f.Preset)
@@ -390,7 +418,11 @@ func (r *Reader) NamedURLs(ctx context.Context, ref contentref.ContentRef, actor
 type ReadOptions struct {
 	Prefix        string // only files under this path prefix ("low-res/")
 	Offset, Limit int    // the range that gets URLs
-	Download      bool   // URLs serve each file as a download under its name
+	// Paths selects at most 64 exact file paths to receive URLs, independent
+	// of ordinal position. All allowed metadata remains in manifest order.
+	// It cannot be combined with a nonzero Offset or Limit.
+	Paths    []string
+	Download bool // URLs serve each file as a download under its name
 	// Editor adds an editor's uploads with their edit, frame, meta,
 	// pending, failure, editor view and retained source URL, unattached ones
 	// included. Source URLs are independent of the viewer's ServeOriginals.
@@ -407,10 +439,25 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	if o.Offset < 0 || o.Limit < 0 {
 		return nil, nil, fmt.Errorf("%w: negative offset or limit", ErrInvalidRequest)
 	}
-	if o.Limit == 0 {
-		o.Limit = r.o.DefaultLimit
+	var paths map[string]bool
+	if len(o.Paths) > 0 {
+		if len(o.Paths) > 64 || o.Offset != 0 || o.Limit != 0 {
+			return nil, nil, fmt.Errorf("%w: at most 64 paths, without offset or limit", ErrInvalidRequest)
+		}
+		paths = make(map[string]bool, len(o.Paths))
+		for _, p := range o.Paths {
+			if p == "" {
+				return nil, nil, fmt.Errorf("%w: empty path", ErrInvalidRequest)
+			}
+			paths[p] = true
+		}
+		o.Limit = len(paths)
+	} else {
+		if o.Limit == 0 {
+			o.Limit = r.o.DefaultLimit
+		}
+		o.Limit = min(o.Limit, r.o.MaxLimit)
 	}
-	o.Limit = min(o.Limit, r.o.MaxLimit)
 	if o.Editor {
 		ctx = resolve.WithEditorRead(ctx)
 	}
@@ -422,12 +469,19 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	out := &ReadResult{Access: AccessNone, Offset: o.Offset, Limit: o.Limit, Expires: g.Expires.Unix(), Files: []FileInfo{}, Cookie: g.Cookie()}
 	if g.Full() {
 		out.Access, out.Meta = AccessFull, g.Manifest.Meta
+	} else if len(g.files) > 0 {
+		out.Access = AccessPartial
 	}
 	k := g.Item.Kind()
-	for _, n := range k.previewNames(g.Manifest) {
-		out.Previews = append(out.Previews, g.r.base+layout.URLPrefix+g.Item.PublicPrefix()+n)
+	if editor || k.Publish == nil {
+		for _, n := range k.previewNames(g.Manifest) {
+			out.Previews = append(out.Previews, g.r.base+layout.URLPrefix+g.Item.PublicPrefix()+n)
+		}
 	}
 	out.Public = r.reg.publicImages(g.Item, g.Manifest)
+	if !editor && k.Publish != nil {
+		out.Public = slices.DeleteFunc(out.Public, func(p PublicImage) bool { return p.Preset == k.Publish.Previews })
+	}
 	if editor {
 		out.State, out.Full, out.Uploads = k.Readiness(g.Manifest).State, g.Manifest.Full, k.UploadRules()
 		if out.State == StateReady && slices.ContainsFunc(g.Manifest.Files, func(f File) bool { return importPending(k, f) }) {
@@ -442,7 +496,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		// A viewer is listed only what it opens: without access nothing, so
 		// no path, size or count tells what the item holds.
 		if !editor && !g.Allowed(f) {
-			out.Locked = out.Locked || !g.Full() && f.Blob != "" && g.listed(f)
+			out.Locked = out.Locked || f.Blob != "" && g.listed(f)
 			continue
 		}
 		n := out.Total
@@ -456,7 +510,8 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		case editor:
 			fi.From = f.From
 		}
-		if n >= o.Offset && n < o.Offset+o.Limit {
+		sign := paths[f.Path] || paths == nil && n >= o.Offset && n < o.Offset+o.Limit
+		if sign {
 			switch {
 			case editor && f.IsUpload() && f.Blob != "" && !f.Gone:
 				fi.URL, err = g.editorSourceURL(f, o.Download)
@@ -467,7 +522,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 				return nil, nil, err
 			}
 		}
-		if editor && f.IsUpload() && n >= o.Offset && n < o.Offset+o.Limit {
+		if editor && f.IsUpload() && sign {
 			if fi.EditorURL, err = views.url(ctx, f); err != nil {
 				return nil, nil, err
 			}

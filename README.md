@@ -56,7 +56,7 @@ another tenant is an error, never remapped.
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`); the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access and offers](#access-and-offers-access-offers)) |
 | `offers` | offers on content, versions and groups, their OpenRails sync job, free group joins and the library |
 | `adapters/openrails` | `access.Billing` over the OpenRails client (its own module) |
-| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and the sweep, deletion, `Expose` and relays as River jobs |
+| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and due cleanup, immediate deletion, `Expose` and relays as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
 | `media/token` | media access tokens, shared by hosts and the media gateway |
@@ -333,26 +333,37 @@ lists the content a viewer bought.
 
 ## Media
 
-Media is an app-defined, self-describing file system in one private bucket;
-no database table records what media exists. The app declares its kinds in
-one registry (`media.Config`); HOST_INTEGRATION "Media" covers the registry,
-commit ops, reads and exposure.
+Media is an app-defined file system in one private bucket. Manifests describe
+the files; PostgreSQL records ownership, committed operations and cleanup.
+The app declares its kinds in one registry (`media.Config`);
+HOST_INTEGRATION "Media" covers the registry, commit ops, reads and exposure.
 
 ```text
-{namespace}/{kind}/{id}/manifest.json         gzip JSON: the ordered file list with provenance; never served
-                       /private/sha256-{hex}  every blob: uploads, derived files, editor views (token)
-                       /public/{name}         app-declared names, e.g. cover-460.webp (anyone)
-                       /temp/{name}           staged uploads (u-{uuid}) and in-flight writes; never served
-{namespace}/{kind}/{id}/{version}/...         a content version's item, laid out alike
-{namespace}/{kind}/_default/public/{name}     a public preset's default image
+tenant/{tenant}/app/{app}/{kind}/{owner}/manifest.json
+                                       /private/{blob}
+                                       /download/{blob}
+                                       /public/{name}
+                                       /temp/{name}
 ```
 
-A content kind's items are its versions, `{kind, content, version}`, each in
-its content's folder, which holds no item of its own: covers and body images
-live in versions too; other kinds' items have no versions. Private blobs are content-addressed and immutable;
-public names carry a generation. Every URL is
-`https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private}/{name}`.
-`media/versions` publishes versions to viewers (see HOST_INTEGRATION "Media").
+For versioned content, `owner` is the version ID. Its parent content ID exists
+only in the database and has no media folder. Covers, pages and body images
+belong to the version. Domain APIs still use `{kind, content, version}` for
+authorization and relationships; storage addressing does not duplicate that
+parent relationship. Other kinds use their own item ID. Shared account media
+uses `tenant/{tenant}/account/` instead of an app root. Legacy single-namespace
+configurations use the same flat owner rule under `{namespace}/`.
+
+Private blobs are content-addressed and immutable; public names carry a
+generation. Media URLs add `/v1/` before the storage key. `media/versions`
+publishes version metadata to viewers (see HOST_INTEGRATION "Media").
+
+`GET /v1/contents/{id}` reads the database-only parent and reports its selected
+default edition in `selected_version_id`. `GET /v1/versions/{vid}` reads a
+specific edition, returning the same parent detail with only that version.
+Shared entities remain in `Content.entities`; version-specific associations
+remain in `Version.entities`. Their effective set is the union, without
+copying shared memberships into each edition.
 
 `Config.Media` is the registry (`media.Config`, without hooks) and how it is
 served; the engine builds the uploads, reads, journal, worker queue and jobs
@@ -418,11 +429,13 @@ always holds the bytes of its name. The optional `UploadLimiter`
 **Media gateway** (`cmd/media-gateway`, `media/gateway`, image
 `ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone
 (`public, max-age=300, stale-while-revalidate=86400`, falling back to the
-kind's `_default` for declared names), `private/sha256-{hex}` with the item's
-token in `?t=` or the `mt` cookie (`private, immutable`), and
+kind's `_default` for declared names), `private/sha256-{hex}` with an authorized
+item token or exact-file token (`private, immutable`), and
 `download/sha256-{hex}-{uuid}` only with a `?t=` download token of that one
 key (the version download route's). An item token opens every private file of
-its item or none, never a download; `?dl={name}` serves the file as a download
+its item or none, never a download. Versioned reader grants use exact-file
+tokens in `?t=` so an older grant cannot open newly uploaded or unreleased
+pages; ordinary whole-item grants may use the `mt` cookie. `?dl={name}` serves the file as a download
 under that name when it has the file's type. Everything else and every denial
 is one `no-store` 404. It keeps no state: rate limit the media host at the
 ingress; the read API limits the items a viewer opens per hour
@@ -537,6 +550,30 @@ require renumbering markers. Missing, duplicated or out-of-order starts require
 repair; authorization resolves them against the exact published snapshot.
 Legacy numeric ranges remain supported for non-reader content.
 
+Chapters are metadata only. Their boundaries, names and release dates never
+copy, repartition or rename image objects. A ready-file snapshot references the
+version's existing immutable renditions; every chapter reads that same version
+item. The server evaluates released pages and access when a reader asks, signs
+only requested authorized files, and excludes original uploads and archives
+from ordinary reader grants. Preview pages use those same existing renditions.
+Reader plans expose their signed-preview expiry so clients can refresh URLs.
+Media reads accept up to 64 repeated `path` query parameters to sign the
+selected permitted files without changing their manifest order. The SDK
+batches larger selections and refreshes active grants before expiry.
+
+A ZIP includes only the released, download-authorized pages, in manifest order.
+Its signed page count and selected-file revision keep an existing ticket from
+widening when another chapter opens. A newly requested ZIP then uses a new
+selection and cache key; personalized watermarked ZIPs remain uncached.
+
+The reader migration retires old per-chapter destinations through the existing
+cleanup ledger. Recorded publication/source ownership fixes each retired prefix;
+ambiguous or unfinished legacy operations block migration. Cleanup waits through
+the greater of the configured reader-token lifetime plus rounding window and
+the cleanup grace, then preserves the late-upload pass. Canonical version source
+files are never retirement targets. Interrupted metadata work uses the existing
+publication job once during migration, rather than a chapter-release poller.
+
 Personalized, watermarked archives stream per request with
 `Cache-Control: private, no-store`; they are never placed in a shared cache.
 Ordinary reader archives use the bounded, on-demand private cache described
@@ -555,15 +592,48 @@ fail with `video_aspect_unsupported`. An `MP4` preset muxes H.264 at one rung wi
 request by the read API. Encode progress comes from
 `workqueue.NewProgressSource` (`ReaderOptions.Progress`).
 
-**Jobs** (`media.Jobs`, composed into the host's River client): the sweep
-collects garbage by manifest reference (unreferenced private blobs a grace
-period old, unexpected public names at once, `temp/` by age); folder
-deletion (with a late-upload second pass and quota release); `Expose`;
-`Regenerate`; `SweepOrphans`; and the worker's relays.
+**Cleanup**: each catalog/account schema stores one `content_media_cleanup`
+record per storage prefix. Manifest edits and upload allocations record the
+deadline in their journal transaction. One daily `contentkit_media_cleanup_due`
+job processes bounded batches; idle runs do not scan the bucket. Cleanup keeps
+current manifest references, honors private/download grace and `temp/` age,
+and retains a future deadline when a file is still too young. Retiring an absent
+allocation also retains a bounded exact-key pass for a late upload. Deletion replaces
+an overlapping sweep and retains every exact late-upload target, including
+across restore. Failures remain due for the next pass without blocking other
+prefixes. A prefix is a media item or version's folder, not necessarily a gallery.
+
+The immediate `contentkit_media_delete_folder` job still performs storage I/O
+and releases quota after a host deletion commits. Its late-upload pass is a
+database deadline, not another delayed River job. Media rendering, `Expose`
+and readiness/cache relays remain asynchronous.
+
+For upgrades from the old per-folder timers, stop old media hosts and workers,
+run the host's normal `MigratePostgres` command, then start the new cohort. The
+migration atomically transfers pending sweep/final-deletion timers and cancels
+them; running old cleanup jobs block migration. Read-only startup rejects
+unmigrated timers. Standalone media hosts call `media.MigrateCleanup` with their
+registry, routed journal and River schema. `SweepAll` and `SweepOrphans` remain
+explicit repair tools, rather than periodic bucket-wide work.
+
+Moving an existing nested version layout to the flat version-owned layout also
+requires the explicit object-store phase, after PostgreSQL migrations and with
+old writers/workers stopped:
+
+```go
+report, err := contentkit.MigrateVersionStorage(ctx, pool, cfg, store)
+```
+
+The pass checkpoints and verifies each copy before scheduling retirement of its
+old keys. A retry resumes those receipts; startup never copies files and refuses
+an incomplete migration. The parent content item keeps its database identity
+and has no storage folder. Deploy a gateway that understands exact-file grants
+before starting hosts that issue them; the new gateway also accepts existing
+folder grants during the transition.
 
 **Paywalls**: media gates each item through `Hooks.Resolver`. Reader grants
-cover a permitted span of an immutable publication, limited by chapter release
-and access rules; source originals remain editor-only. Existing signed URLs
+cover permitted immutable files, limited by chapter release and access rules;
+source originals remain editor-only outside an authorized download. Existing signed URLs
 retain their normal expiry and revocation-window semantics.
 
 **Browser package** (`sdk/ui`, `@openrails/contentkit-ui` on npm, one version

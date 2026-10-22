@@ -3,7 +3,7 @@
 // or /v1/tenant/{tenant}/account/{kind}/{account}/… . Legacy namespace URLs
 // remain available only through explicitly configured Hosts/Buckets.
 //
-// Public renditions are anonymous; private files require the item's token and
+// Public renditions are anonymous; private files require an exact-file or item token and
 // download files require a token for that exact key. Denials use a uniform
 // no-store 404 and token denials precede S3 access. Before serving a scoped
 // item, a HEAD of its reserved public erasure marker rejects permanently erased
@@ -283,8 +283,8 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 
 var errNoToken = errors.New("no token")
 
-// authorize accepts, for a private key, the URL token or any mt cookie (a
-// browser may send several) of its item; for a download key only the URL's
+// authorize accepts exact-file or whole-item private tokens from the URL or
+// an mt cookie (a browser may send several); for a download key only the URL's
 // download token of that key.
 func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
 	now := time.Now()

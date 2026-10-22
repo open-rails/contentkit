@@ -298,7 +298,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 				return false
 			}
 			for _, u := range c.Images {
-				if !strings.Contains(u, "/blog/"+id+"/"+vid+"/private/") || !strings.Contains(u, "t=") || !exists(u) {
+				if !strings.Contains(u, "/blog/"+vid+"/private/") || !strings.Contains(u, "t=") || !exists(u) {
 					return false
 				}
 			}
@@ -306,7 +306,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 			return (before.Cover == nil || u != *before.Cover.URL) && strings.Contains(u, "/public/") && exists(u)
 		})
 		if want := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, c.Images[a], c.Images[b]); c.Body != want ||
-			!strings.Contains(*c.Cover.URL, "/blog/"+id+"/"+vid+"/public/cover-"+cover) || c.Versions[0].Cover == nil || *c.Versions[0].Cover.URL != *c.Cover.URL {
+			!strings.Contains(*c.Cover.URL, "/blog/"+vid+"/public/cover-"+cover) || c.Versions[0].Cover == nil || *c.Versions[0].Cover.URL != *c.Cover.URL {
 			t.Fatalf("%s: %+v", what, c)
 		}
 		var stored string

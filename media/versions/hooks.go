@@ -26,15 +26,13 @@ type resolver struct{ s *Service }
 func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
 	s := r.s
 	out := map[contentref.ContentKey]resolve.Resolution{}
-	var owned, published, grouped, others []contentref.ContentRef
+	var owned, grouped, others []contentref.ContentRef
 	for _, ref := range refs {
 		k, err := s.reg.Kind(ref.ContentKind)
 		switch {
 		case err != nil || ref.TenantID != k.NS() || k.Versions && ref.Version() == "":
 		case k.Versions:
 			owned = append(owned, ref)
-		case k.Of() != nil:
-			published = append(published, ref)
 		case s.isGroupKind(k.Name):
 			grouped = append(grouped, ref)
 		case k.Name == s.reg.Config().Avatars.Kind:
@@ -48,9 +46,6 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		}
 	}
 	if err := s.resolveOwned(ctx, owned, actor, out); err != nil {
-		return nil, err
-	}
-	if err := s.resolvePublished(ctx, published, actor, out); err != nil {
 		return nil, err
 	}
 	if err := s.resolveGroups(ctx, grouped, actor, out); err != nil {
@@ -126,121 +121,83 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 			continue
 		}
 		k, _ := s.reg.Kind(ref.ContentKind)
-		out[ref.Key()] = resolve.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner,
-			Accessible: r.Accessible && k.Publish == nil}
-	}
-	return nil
-}
-
-// pubItem is one published item and what it shows.
-type pubItem struct {
-	id, publication, kind string
-	contentKind           string
-	version               Target
-	current               bool
-	start, end            int
-	pages                 int
-	source                []byte
-}
-
-func (s *Service) resolvePublished(ctx context.Context, refs []contentref.ContentRef, actor access.Actor, out map[contentref.ContentKey]resolve.Resolution) error {
-	if len(refs) == 0 {
-		return nil
-	}
-	ids := make([]string, len(refs))
-	for i, ref := range refs {
-		ids[i] = ref.ContentID
-	}
-	items, err := s.pubItems(ctx, ids)
-	if err != nil {
-		return err
-	}
-	byKind := map[string][]Target{}
-	snapshots := map[Target]pagesSnapshot{}
-	for _, it := range items {
-		if it.current {
-			byKind[it.contentKind] = append(byKind[it.contentKind], it.version)
-			if it.kind == kindPages {
-				var snapshot pagesSnapshot
-				if err := json.Unmarshal(it.source, &snapshot); err != nil {
-					return err
-				}
-				snapshots[it.version] = snapshot
+		rr := resolve.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner, Accessible: r.Accessible}
+		if k.Publish != nil && !r.Editor {
+			files, err := s.readerFiles(ctx, actor, k, found[ref.Key()])
+			if err != nil {
+				return err
 			}
+			rr.MediaFiles = files
 		}
-	}
-	ds := map[Target]decision{}
-	for kind, vs := range byKind {
-		got, err := s.decisions(ctx, actor, kind, vs, snapshots)
-		if err != nil {
-			return err
-		}
-		for t, d := range got {
-			ds[t] = d
-		}
-	}
-	for _, ref := range refs {
-		it, ok := items[ref.ContentID]
-		if !ok || !it.current || ref.ContentKind != it.contentKind+media.PublishedSuffix {
-			continue
-		}
-		d := ds[it.version]
-		switch {
-		case it.kind == kindPlayback && d.whole():
-			out[ref.Key()] = resolve.Resolution{Visible: true, Accessible: true, Editor: d.res.Editor}
-		case it.kind == kindPages && d.shows(it.end):
-			out[ref.Key()] = resolve.Resolution{Visible: true, Accessible: d.opens(it.end), Editor: d.res.Editor}
-		}
+		out[ref.Key()] = rr
 	}
 	return nil
 }
 
-// pubItems loads published items by id: segment items, and playback items
-// (a playback publication's id).
-func (s *Service) pubItems(ctx context.Context, ids []string) (map[string]pubItem, error) {
-	rows, err := s.o.Pool.Query(ctx, `SELECT i.id, p.id, p.kind, c.kind, v.content_id, p.version_id, p.state = 'current', i.start_index, i.end_index,
-	jsonb_array_length(p.source->'pages'), p.source
-FROM `+s.t.pubItems+` i JOIN `+s.t.publications+` p ON p.tenant_id = i.tenant_id AND p.id = i.publication_id
-JOIN `+s.t.versions+` v ON v.tenant_id = p.tenant_id AND v.id = p.version_id
-JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
-WHERE i.tenant_id = $1 AND i.id = ANY($2)
-UNION ALL
-SELECT p.id, p.id, p.kind, c.kind, v.content_id, p.version_id, p.state = 'current', 0, 0, 0, p.source
-FROM `+s.t.publications+` p JOIN `+s.t.versions+` v ON v.tenant_id = p.tenant_id AND v.id = p.version_id
-JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
-WHERE p.tenant_id = $1 AND p.id = ANY($2) AND p.kind = 'playback'`, s.o.Tenant, ids)
+// readerFiles grants immutable blobs from the ready version snapshot. Chapter
+// metadata changes only this selection; it never copies or rearranges storage.
+func (s *Service) readerFiles(ctx context.Context, actor access.Actor, k *media.Kind, target Target) (map[string]bool, error) {
+	allowed := map[string]bool{}
+	p, err := s.current(ctx, s.o.Pool, target, kindPages)
+	if err != nil || p == nil {
+		return allowed, err
+	}
+	var snap pagesSnapshot
+	if err := json.Unmarshal(p.Source, &snap); err != nil {
+		return nil, err
+	}
+	ds, err := s.decisions(ctx, actor, k.Name, []Target{target}, map[Target]pagesSnapshot{target: snap})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := map[string]pubItem{}
-	for rows.Next() {
-		var it pubItem
-		if err := rows.Scan(&it.id, &it.publication, &it.kind, &it.contentKind, &it.version.Content, &it.version.Version, &it.current,
-			&it.start, &it.end, &it.pages, &it.source); err != nil {
+	d := ds[target]
+	cut := released(d.segs, len(snap.Pages), d.now)
+	free := freeEnd(d.segs, d.preview.Segments, len(snap.Pages))
+	preview := previewPageCount(k, d, len(snap.Pages))
+	for i, pg := range snap.Pages {
+		if i >= cut {
+			break
+		}
+		if d.res.Accessible || i < free {
+			for _, r := range pg.Files {
+				allowed[r.Blob] = true
+			}
+		} else if i < preview && len(pg.Files) > 0 {
+			allowed[pg.Files[0].Blob] = true
+		}
+	}
+	if k.Publish.Playback != "" && d.whole() {
+		pb, err := s.current(ctx, s.o.Pool, target, kindPlayback)
+		if err != nil {
 			return nil, err
 		}
-		out[it.id] = it
+		if pb != nil {
+			var playback playbackSnapshot
+			if err := json.Unmarshal(pb.Source, &playback); err != nil {
+				return nil, err
+			}
+			for _, tr := range playback.Tracks {
+				allowed[tr.File.Blob] = true
+			}
+		}
 	}
-	return out, rows.Err()
+	return allowed, nil
 }
 
 type uploads struct{ s *Service }
 
 // CanUpload lets editors of a content (staff, its creators, its owner
 // group's editors) write its items, a group's editors its item, a person
-// their own avatar, and this package alone published items and preview
-// copies. A version being forked takes no other writes.
+// their own avatar. Legacy copied preview paths remain reserved while old
+// versions migrate. A version being forked takes no other writes.
 func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	s := u.s
 	k, err := s.reg.Kind(t.Ref.ContentKind)
 	switch {
 	case err != nil || t.Ref.TenantID != k.NS():
 		return media.UploadGrant{}, nil
-	case isSystem(actor) && (k.Versions || k.Of() != nil):
+	case isSystem(actor) && k.Versions:
 		return media.UploadGrant{Allowed: true, Exempt: true}, nil
-	case k.Of() != nil:
-		return media.UploadGrant{}, nil
 	case k.Versions:
 		return s.canEdit(ctx, actor, k, t)
 	case s.isGroupKind(k.Name):
@@ -379,7 +336,7 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 	if err != nil || !withdraw {
 		return err
 	}
-	return s.withdrawPreviews(ctx, vk, v)
+	return nil
 }
 
 func (s *Service) failed(ctx context.Context, ref contentref.ContentRef, path string, err error) {

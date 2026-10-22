@@ -1,12 +1,12 @@
 module github.com/open-rails/contentkit/server
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.31.0
+	github.com/open-rails/authkit v1.33.0
 	github.com/open-rails/contentkit v0.108.0
 	github.com/open-rails/contentkit/adapters/openrails v0.5.3
 	github.com/open-rails/helpers v1.14.1

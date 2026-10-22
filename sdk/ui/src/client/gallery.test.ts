@@ -27,6 +27,11 @@ it("an audio-only ladder plays its M4A", () => {
   expect(galleryItems(read("full", files, ["listen/song/"]))).toEqual([{ kind: "audio", key: "listen/song/", dir: "listen/song/", file: files[1], aspect: 3 }]);
 });
 
+it("partial access displays permitted pages once, followed by the locked remainder", () => {
+  const items = galleryItems({ ...read("partial", [img(1), img(2)]), previews: ["https://m/public/preview-1.webp"], locked: true });
+  expect(items.map((i) => [i.kind, i.key])).toEqual([["image", "low-res/1.webp"], ["image", "low-res/2.webp"], ["locked", "locked"]]);
+});
+
 it("no access: one uncounted locked item when the read holds locked files, none otherwise", () => {
   expect(galleryItems({ ...read("none", []), locked: true })).toEqual([{ kind: "locked", key: "locked", backdrop: undefined, aspect: 1 }]);
   expect(galleryItems(read("none", []))).toEqual([]);

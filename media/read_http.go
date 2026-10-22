@@ -130,7 +130,7 @@ func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *G
 		return nil, nil, err
 	}
 	q := req.URL.Query()
-	opts := ReadOptions{Prefix: q.Get("prefix"), Download: q.Has("download"), Editor: q.Has("editor")}
+	opts := ReadOptions{Prefix: q.Get("prefix"), Paths: q["path"], Download: q.Has("download"), Editor: q.Has("editor")}
 	for _, p := range []struct {
 		name string
 		dst  *int
@@ -226,6 +226,8 @@ func (g *Grant) logIssued(req *http.Request, log *slog.Logger) {
 	access := AccessNone
 	if g.Full() {
 		access = AccessFull
+	} else if len(g.files) > 0 {
+		access = AccessPartial
 	}
 	attrs := []any{"viewer", g.actor.ID, "anonymous", g.actor.Anonymous, "ref", g.Item.Ref().String(),
 		"path", req.URL.Path, "access", access, "editor", g.Editor(), "expires", g.Expires.Unix()}

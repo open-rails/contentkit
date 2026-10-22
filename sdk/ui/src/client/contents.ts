@@ -44,6 +44,10 @@ export class ContentsClient {
   get(id: string, language?: string, signal?: AbortSignal): Promise<Content> {
     return call(this.http, "GET", "/contents/{id}", { params: { id }, query: { language }, signal });
   }
+  /** The parent detail with one explicitly selected version; never falls back to a sibling. */
+  getByVersion(vid: string, language?: string, signal?: AbortSignal): Promise<Content> {
+    return call(this.http, "GET", "/versions/{vid}", { params: { vid }, query: { language }, signal });
+  }
   version(id: string, vid: string, language?: string, signal?: AbortSignal): Promise<Version> {
     return call(this.http, "GET", "/contents/{id}/versions/{vid}", { params: { id, vid }, query: { language }, signal });
   }

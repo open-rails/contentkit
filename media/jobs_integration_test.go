@@ -624,7 +624,8 @@ func riverHost(t *testing.T, jobs *media.Jobs, pool *pgxpool.Pool) string {
 }
 
 // Both a delayed first pass and the exact-key late-upload pass must leave
-// an explicitly reset item alone. Exercise the actual River workers.
+// an explicitly reset item alone. Exercise the first-pass River worker and
+// the database-backed final cleanup.
 func TestQueuedDeletionCannotEraseResetItem(t *testing.T) {
 	for _, final := range []bool{false, true} {
 		t.Run(fmt.Sprintf("final=%t", final), func(t *testing.T) {
@@ -649,15 +650,16 @@ func TestQueuedDeletionCannotEraseResetItem(t *testing.T) {
 				t.Fatal(err)
 			}
 			if final {
-				waitFor(t, "deletion's scheduled final pass", func() bool {
-					err := pool.QueryRow(t.Context(), "SELECT id FROM "+table+" WHERE kind='contentkit_media_delete_folder' AND args->>'final'='true'").Scan(&target)
+				waitFor(t, "deletion's durable final pass", func() bool {
+					var count int
+					err := pool.QueryRow(t.Context(), "SELECT cardinality(deletion_operations) FROM "+cleanupTable(f)+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&count)
 					if errors.Is(err, pgx.ErrNoRows) {
 						return false
 					}
 					if err != nil {
 						t.Fatal(err)
 					}
-					return true
+					return count > 0
 				})
 			}
 			if err := f.jobs.Purge(t.Context(), media.Deletion{Ref: ref, OperationID: "reset-after-enqueue"}); err != nil {
@@ -666,16 +668,22 @@ func TestQueuedDeletionCannotEraseResetItem(t *testing.T) {
 			f.put(ref, "originals/new.png", "image/png", png(1))
 			newKey, _ := item.Blob(f.fileBlob(ref, "originals/new.png"))
 			f.object(oldKey, string(png(1))) // an old presigned PUT lands after reset
-			if _, err := pool.Exec(t.Context(), "UPDATE "+table+" SET state='available', scheduled_at=now() WHERE id=$1", target); err != nil {
-				t.Fatal(err)
-			}
-			waitFor(t, "delayed deletion completion", func() bool {
-				var state string
-				if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE id=$1", target).Scan(&state); err != nil {
+			if final {
+				if _, err := f.later().CleanupDue(t.Context(), 100); err != nil {
 					t.Fatal(err)
 				}
-				return state == "completed"
-			})
+			} else {
+				if _, err := pool.Exec(t.Context(), "UPDATE "+table+" SET state='available', scheduled_at=now() WHERE id=$1", target); err != nil {
+					t.Fatal(err)
+				}
+				waitFor(t, "delayed deletion completion", func() bool {
+					var state string
+					if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE id=$1", target).Scan(&state); err != nil {
+						t.Fatal(err)
+					}
+					return state == "completed"
+				})
+			}
 			if !f.exists(newKey) || f.fileBlob(ref, "originals/new.png") == "" {
 				t.Fatal("delayed deletion erased the recreated item")
 			}
@@ -718,6 +726,10 @@ func TestHostRecoversInterruptedManifestOnStartup(t *testing.T) {
 	if err != nil || man.Meta["title"] != "landed" {
 		t.Fatalf("recovered manifest: %+v %v", man, err)
 	}
+	var due time.Time
+	if err := pool.QueryRow(t.Context(), "SELECT due_at FROM "+pgx.Identifier{env.ContentSchema(), "content_media_cleanup"}.Sanitize()+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&due); err != nil || !due.After(time.Now()) {
+		t.Fatalf("recovered write lost its atomically recorded cleanup: %s %v", due, err)
+	}
 }
 
 // The worker's relays reach the host's hooks through its media queue:
@@ -745,7 +757,7 @@ func TestHostRelays(t *testing.T) {
 		t.Fatal(err)
 	}
 	schema := riverHost(t, jobs, pool)
-	host, err := media.NewHostQueue(pool, f.reg, schema, "", 0)
+	host, err := media.NewHostQueue(pool, f.reg, schema, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -878,7 +890,7 @@ func TestHostRelaysPlayableProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	schema := riverHost(t, jobs, pool)
-	host, err := media.NewHostQueue(pool, f.reg, schema, "", 0)
+	host, err := media.NewHostQueue(pool, f.reg, schema, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -222,6 +222,7 @@ type ArchiveRequest struct {
 	Editor                       bool
 	Claims                       []string
 	Mark, Name, Revision, Ticket string
+	Pages                        int // exact authorized ZIP prefix; bound into the ticket
 }
 
 // Archive is an authorized page archive ready to stream.
@@ -239,8 +240,8 @@ type Archive struct {
 
 // Download grants t's download to actor, what its kind's download serves
 // (kinds.Kind.Download), as the host's policy allows, and charges it to
-// actor's quota: the version open (or actor edits it) with every segment
-// released. ErrNotFound when the kind serves none, an UnavailableError when
+// actor's quota. Page archives include only the released, authorized prefix;
+// other files require whole-version access. ErrNotFound when the kind serves none, an UnavailableError when
 // the policy refuses, ErrNoDownload when the version has nothing to serve,
 // ErrNotReady while it is placed or produced, a QuotaError past the quota.
 func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*FileDownload, error) {
@@ -258,8 +259,6 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	switch {
 	case !d.res.Visible:
 		return nil, ErrNotFound
-	case !d.whole():
-		return nil, ErrForbidden
 	}
 	item, m, err := s.downloadItem(ctx, k, t)
 	if err != nil {
@@ -291,9 +290,15 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 		if !d.res.Visible {
 			return nil, ErrNotFound
 		}
-		if !d.whole() {
+	}
+	if z != nil && k.LazyZip(z) {
+		allowed := downloadablePages(d, len(pages))
+		if allowed == 0 {
 			return nil, ErrForbidden
 		}
+		pages = pages[:allowed]
+	} else if !d.whole() {
+		return nil, ErrForbidden
 	}
 	title, code := s.title(ctx, v)
 	g, err := s.ask(ctx, actor, v, title, d.res.Editor, len(pages))
@@ -310,13 +315,13 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 		}
 		exp := time.Unix(s.o.Now().Add(ttl).Unix(), 0)
 		marks, revision := joinPages(g.mark), archiveRevision(pages)
-		r := ArchiveRequest{Target: t, Viewer: actor.ID, AccountSet: actor.Account != nil, Kind: actor.Kind, Editor: d.res.Editor, Mark: marks, Name: name, Revision: revision}
+		r := ArchiveRequest{Target: t, Viewer: actor.ID, AccountSet: actor.Account != nil, Kind: actor.Kind, Editor: d.res.Editor, Mark: marks, Name: name, Revision: revision, Pages: len(pages)}
 		if actor.Account != nil {
 			r.Account = actor.Account.ID
 		}
 		r.Claims = archiveTokenClaims(actor, s.o.Kinds.TokenClaims)
 		q := url.Values{"for": {r.Viewer}, "account": {r.Account}, "account_set": {strconv.FormatBool(r.AccountSet)}, "kind": {string(r.Kind)}, "editor": {strconv.FormatBool(r.Editor)}, "mark": {marks}, "name": {name}, "revision": {revision},
-			"ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, r), exp)}}
+			"pages": {strconv.Itoa(r.Pages)}, "ticket": {s.m.Reader.SignTicket(archiveScope(s.o.Tenant, r), exp)}}
 		if len(r.Claims) > 0 {
 			encoded, _ := json.Marshal(r.Claims)
 			q.Set("claims", string(encoded))
@@ -345,6 +350,22 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	return &FileDownload{URL: u, Name: name, Type: f.Type, Size: f.Size, ExpiresAt: exp}, nil
 }
 
+// downloadablePages is a contiguous released prefix. Image-only previews do
+// not grant downloads; free chapters do. Editors retain their explicit access.
+func downloadablePages(d decision, total int) int {
+	if !d.res.Visible {
+		return 0
+	}
+	if d.res.Editor {
+		return total
+	}
+	end := released(d.segs, total, d.now)
+	if !d.res.Accessible {
+		end = min(end, freeEnd(d.segs, d.preview.Segments, total))
+	}
+	return max(0, min(end, total))
+}
+
 // Archive opens the archive a Download granted. The ticket binds its viewer,
 // marks, name and exact ordered source revision. Access, publication, chapter
 // release and policy are checked again, even when its ZIP is already cached.
@@ -354,8 +375,14 @@ func (s *Service) Archive(ctx context.Context, request ArchiveRequest) (*Archive
 	if mark == "" {
 		ok = true
 	}
-	if s.m.Reader == nil || name == "" || revision == "" || !ok ||
-		s.m.Reader.VerifyTicket(request.Ticket, archiveScope(s.o.Tenant, request)) != nil {
+	if s.m.Reader == nil || name == "" || revision == "" || !ok {
+		return nil, ErrNotFound
+	}
+	scope := archiveScope(s.o.Tenant, request)
+	if request.Pages == 0 {
+		scope = legacyArchiveScope(s.o.Tenant, request)
+	}
+	if s.m.Reader.VerifyTicket(request.Ticket, scope) != nil {
 		return nil, ErrNotFound
 	}
 	v, k, err := s.downloadKind(ctx, t)
@@ -402,9 +429,6 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version)
 	if !d.res.Visible {
 		return nil, ErrNotFound
 	}
-	if !d.whole() {
-		return nil, ErrForbidden
-	}
 	z := private(k, k.Download)
 	if z == nil || !k.LazyZip(z) {
 		return nil, ErrNotFound
@@ -416,6 +440,17 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version)
 	if len(files) == 0 {
 		return nil, ErrNoDownload
 	}
+	allowed := downloadablePages(d, len(files))
+	if request.Pages == 0 {
+		if !d.whole() {
+			return nil, ErrForbidden
+		}
+		request.Pages = len(files)
+	}
+	if request.Pages < 0 || request.Pages > allowed {
+		return nil, ErrForbidden
+	}
+	files = files[:request.Pages]
 	if archiveRevision(files) != revision {
 		return nil, ErrNotFound // obtain a fresh grant after any source edit
 	}
@@ -561,6 +596,17 @@ ORDER BY g.kind, g.slug`, s.o.Tenant, v.Content, v.Version, v.Language, s.o.Kind
 // archiveScope binds identity, tenant membership, delegated editor authority
 // and every output selector without ambiguous delimiter concatenation.
 func archiveScope(tenant string, r ArchiveRequest) string {
+	claims := r.Claims
+	if len(claims) == 0 {
+		claims = nil
+	}
+	b, _ := json.Marshal([]any{tenant, r.Content, r.Version, r.Viewer, r.Account, r.AccountSet, r.Kind, r.Editor, r.Mark, r.Name, r.Revision, r.Pages, claims})
+	return "archive:" + string(b)
+}
+
+// legacyArchiveScope accepts only already-issued whole-version tickets. It is
+// never used to mint new tickets, and cannot authorize a partial archive.
+func legacyArchiveScope(tenant string, r ArchiveRequest) string {
 	claims := r.Claims
 	if len(claims) == 0 {
 		claims = nil

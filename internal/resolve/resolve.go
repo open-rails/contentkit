@@ -20,9 +20,15 @@ type Resolution struct {
 	// Visible = live, or edited by the actor. Media's public files (covers,
 	// previews) need only Visible.
 	Visible bool
-	// Accessible = the actor opens it. For media it is all or nothing: every
-	// private file of the item, or none.
+	// Accessible = the actor opens the content. MediaFiles may further limit
+	// which immutable private objects a media read can expose.
 	Accessible bool
+	// MediaFiles limits private media to these exact immutable blob references
+	// from the published snapshot. Nil leaves ordinary whole-item access
+	// unchanged; a non-nil empty map denies every private file. Publishing
+	// kinds require this allowlist for non-editors even when Accessible is true.
+	// This is filled only by trusted resolvers, never a read request.
+	MediaFiles map[string]bool
 	// Editor = the actor may edit the item (staff, its creators, its owner
 	// group's editors): media gives a visible item's editor its private files
 	// whatever Accessible says.

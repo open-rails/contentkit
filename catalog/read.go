@@ -57,6 +57,22 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 	if err != nil {
 		return nil, err
 	}
+	if vid != "" {
+		// A specific edition must not inherit another edition's permission to
+		// disclose the body or locked metadata through the aggregate verdict.
+		for id, iv := range views {
+			selected := *iv
+			selected.versions = slices.DeleteFunc(slices.Clone(iv.versions), func(row facetRow) bool {
+				return versions[row.versionID] == nil
+			})
+			selected.visible = iv.visible && len(selected.versions) > 0
+			views[id] = &selected
+		}
+		visible = slices.DeleteFunc(visible, func(id string) bool { return !views[id].visible })
+		if len(visible) == 0 {
+			return out, nil
+		}
+	}
 	creators, err := s.readCreators(ctx, visible)
 	if err != nil {
 		return nil, err
@@ -139,12 +155,13 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			s.lockVersion(it.kind, &out)
 			c.Versions = append(c.Versions, out)
 		}
-		if s.cfg.Kinds[it.kind].TitlePolicy == kinds.TitleOriginalAndVersion {
-			if selected := DefaultVersion(c.Versions, v.language); selected != nil {
+		if selected := DefaultVersion(c.Versions, v.language); selected != nil {
+			c.SelectedVersionID = selected.ID
+			if s.cfg.Kinds[it.kind].TitlePolicy == kinds.TitleOriginalAndVersion {
 				c.Title = selected.Title
-			} else if it.originalTitle != "" {
-				c.Title = it.originalTitle
 			}
+		} else if s.cfg.Kinds[it.kind].TitlePolicy == kinds.TitleOriginalAndVersion && it.originalTitle != "" {
+			c.Title = it.originalTitle
 		}
 		if b := bodyVersion(c, iv.editor, v.language); b != nil {
 			bodies[id] = b.ID
