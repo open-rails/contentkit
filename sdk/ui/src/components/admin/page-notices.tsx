@@ -67,8 +67,8 @@ export function PageNotices({ content, version, client, onError, className }: Pa
                 {n.pages.map((p) => {
                   const preview = imageURL(p.preview_url);
                   return (
-                    <li key={p.id} className="grid w-16 gap-0.5 text-[11px]" title={p.source_name}>
-                      {preview ? <img src={preview} alt="" loading="lazy" decoding="async" className="aspect-[3/4] w-16 rounded bg-muted object-cover opacity-80" /> : <span className="aspect-[3/4] w-16 rounded bg-muted" />}
+                    <li key={p.id} className="grid w-24 gap-0.5 text-xs" title={p.source_name}>
+                      {preview ? <img src={preview} alt="" loading="lazy" decoding="async" className="aspect-[3/4] w-24 rounded-md bg-muted object-cover opacity-80" /> : <span className="aspect-[3/4] w-24 rounded-md bg-muted" />}
                       <span className="truncate">{p.source_name}</span>
                       <span className="truncate">{t(REASON[p.reason as keyof typeof REASON] ?? REASON.blank)}</span>
                     </li>

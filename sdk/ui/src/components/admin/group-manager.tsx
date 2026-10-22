@@ -15,6 +15,7 @@ import { GroupEditor } from "../groups/editor.js";
 import { GroupMembers, type GroupMembersProps } from "../groups/group-members.js";
 import { labelOf, type Labels } from "../groups/parts.js";
 import { ScopedGroups } from "../groups/scoped.js";
+import { RenditionImg } from "../rendition-img.js";
 import { contentError, useAction } from "../social/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
@@ -217,7 +218,7 @@ function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize
           {groups.items.map((g) => (
             <li key={g.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="group-row" data-slug={g.slug} data-state={deleted ? "deleted" : "active"}>
               {(g.avatar?.renditions?.[0] ?? g.cover?.renditions?.[0]) && (
-                <img src={(g.avatar?.renditions?.[0] ?? g.cover?.renditions?.[0])!.url} alt="" loading="lazy" className={cn("size-9 shrink-0 object-cover", g.avatar?.renditions?.[0] ? "rounded-full" : "rounded-sm")} />
+                <RenditionImg outputs={g.avatar?.renditions?.length ? g.avatar.renditions : g.cover?.renditions} alt="" loading="lazy" className={cn("size-24 shrink-0 object-cover sm:size-28", g.avatar?.renditions?.[0] ? "rounded-full" : "rounded-md")} />
               )}
               <div className="grid min-w-0 flex-1 gap-0.5">
                 <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => loc.go(`${kind}/${g.id}`)}>

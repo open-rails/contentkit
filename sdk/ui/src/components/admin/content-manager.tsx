@@ -645,10 +645,10 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
 /** A row's portrait cover, or a quiet placeholder. */
 function RowCover({ url }: { url?: string }) {
   return url ? (
-    <img src={url} alt="" loading="lazy" className="aspect-[7/10] w-12 shrink-0 rounded-sm bg-muted object-cover" />
+    <img src={url} alt="" loading="lazy" className="aspect-[7/10] w-24 shrink-0 rounded-md bg-muted object-cover sm:w-28" />
   ) : (
-    <span aria-hidden className="grid aspect-[7/10] w-12 shrink-0 place-items-center rounded-sm bg-muted text-muted-foreground">
-      <HugeiconsIcon icon={Image01Icon} strokeWidth={1.5} className="size-5" />
+    <span aria-hidden className="grid aspect-[7/10] w-24 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground sm:w-28">
+      <HugeiconsIcon icon={Image01Icon} strokeWidth={1.5} className="size-8" />
     </span>
   );
 }
@@ -938,7 +938,7 @@ function Cover({ item, src, saving, onFile }: { item: Content | null; src?: stri
       <span className="text-sm font-medium">{t("contentManager.cover")}</span>
       {item ? (
         <div className="flex flex-wrap items-center gap-3">
-          {src ? <img src={src} alt="" className="h-20 w-36 rounded-md border border-border object-cover" /> : <span className="text-muted-foreground">{t("contentManager.noCover")}</span>}
+          {src ? <img src={src} alt="" className="aspect-video w-64 max-w-full rounded-md border border-border object-cover" /> : <span className="text-muted-foreground">{t("contentManager.noCover")}</span>}
           <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => file.current?.click()}>
             {t(src ? "pollEditor.replaceImage" : "contentManager.addCover")}
           </Button>

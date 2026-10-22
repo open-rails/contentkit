@@ -158,7 +158,7 @@ export function GroupImageEditor({ group, slot, crop = true, client, onError, cl
   };
   return (
     <div className={cn("flex flex-wrap items-center gap-3", className)} data-ckui="group-image-editor" data-slot={slot}>
-      {slot === "avatar" ? <GroupAvatar group={shown} src={g.previews.avatar} className="size-16" /> : <GroupCover group={shown} src={g.previews.cover} className="aspect-[3/1] w-48" />}
+      {slot === "avatar" ? <GroupAvatar group={shown} src={g.previews.avatar} className="size-28 shrink-0" /> : <GroupCover group={shown} src={g.previews.cover} className="aspect-[3/1] w-72 max-w-full" />}
       <div className="grid gap-2">
         <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" variant="outline" disabled={save.pending} onClick={() => input.current?.click()}>

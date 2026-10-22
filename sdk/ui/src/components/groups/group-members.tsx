@@ -189,7 +189,7 @@ export function GroupMembers(p: GroupMembersProps) {
           <span className="min-w-0 flex-1">{p.renderContent(x, c)}</span>
         ) : (
           <>
-            {linked(x, thumb(c, "h-12 w-9 rounded-sm"), "shrink-0")}
+            {linked(x, thumb(c, "aspect-[7/10] w-24 rounded-md sm:w-28"), "shrink-0")}
             {linked(x, title(x), cn("min-w-0 flex-1 break-words", !c && "font-mono text-xs"))}
           </>
         )}

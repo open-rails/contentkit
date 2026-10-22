@@ -633,7 +633,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background/95 p-4 shadow-sm">
           <button
             type="button"
-            className="h-20 shrink-0 overflow-hidden rounded-md border border-border bg-muted disabled:cursor-default"
+            className="h-36 shrink-0 overflow-hidden rounded-md border border-border bg-muted disabled:cursor-default sm:h-40"
             style={{ aspectRatio: 0.7071 }}
             disabled={saving || cover.pending || editionDeleted}
             title={t("readerEditor.thumbnail")}
