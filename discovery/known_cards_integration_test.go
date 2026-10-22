@@ -72,7 +72,7 @@ func TestKnownCardsPreserveCallerOrderAndReaderPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.docs(documents...)
-	if got, _ := f.list("clean.test", "", "/search?q=Known"); len(got) != 3 {
+	if got, _ := f.list("clean.test", "", "/search?q=Known"); !reflect.DeepEqual(sorted(got), sorted([]string{f.cid(1), f.cid(4)})) {
 		t.Fatalf("published search results: %v", got)
 	}
 	for _, invalid := range []string{path + "&mode=invalid", path + "&language=xx", path + "&summary=bad"} {
