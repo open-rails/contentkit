@@ -2,11 +2,14 @@ package catalog
 
 import (
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/versions"
 )
 
 func TestChapterStartInputs(t *testing.T) {
@@ -60,5 +63,13 @@ func TestChapterStartStorageKeepsLegacyRanges(t *testing.T) {
 	got = f.read("staff", "main.test", id)[0]
 	if got.Versions[0].Segments[0].StartPage != "" || got.Versions[0].Segments[1].Start != 2 || got.Versions[0].Segments[1].End != 4 {
 		t.Fatalf("legacy range changed: %+v", got.Versions[0].Segments)
+	}
+}
+
+func TestChapterStartRefusalIsTheEditorsToFix(t *testing.T) {
+	err := fmt.Errorf("publish: %w", fmt.Errorf("%w: chapter 2's start page is missing; choose another page", versions.ErrInvalid))
+	status, code, msg := classify(err)
+	if status != http.StatusBadRequest || code != "invalid_request" || msg != "chapter 2's start page is missing; choose another page" {
+		t.Fatalf("classify = %d %q %q", status, code, msg)
 	}
 }

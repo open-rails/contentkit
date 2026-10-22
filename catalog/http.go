@@ -18,6 +18,7 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/media/versions"
 )
 
 // totalsPath is the totals route under a ContentKit mount.
@@ -231,7 +232,7 @@ func classify(err error) (int, string, string) {
 		return http.StatusServiceUnavailable, httpapi.CodeUnavailable, "authentication is unavailable; retry"
 	case errors.Is(err, errUnauthenticated):
 		return http.StatusUnauthorized, httpapi.CodeUnauthorized, "authentication required"
-	case errors.Is(err, ErrInvalid):
+	case errors.Is(err, ErrInvalid), errors.Is(err, versions.ErrInvalid):
 		return http.StatusBadRequest, httpapi.CodeInvalidRequest, httpapi.Rule(err, httpapi.CodeInvalidRequest)
 	case errors.Is(err, ErrNotFound), errors.Is(err, content.ErrNotFound):
 		return http.StatusNotFound, httpapi.CodeNotFound, "not found"
