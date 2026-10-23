@@ -26,7 +26,7 @@ import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "..
 import { ReaderContentEditor } from "./reader-content-editor.js";
 import { createDraft, uploadTarget } from "./bulk-drafts.js";
 import { UploadQueueBody } from "./upload-queue.js";
-import { ContentSections, allowsIndividualSales } from "../content/editors.js";
+import { ContentSections, allowsIndividualSales, offersAccessChoice } from "../content/editors.js";
 import { labelOf, type Labels } from "../groups/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
@@ -298,7 +298,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   // Reader works take one ZIP per draft, players one video per draft.
   const presentation = spec?.presentation;
   const canDeleteParent = !!spec?.versions.hidden;
-  const canChangeParentAccess = !!spec && spec.access_scope !== "version";
+  const canChangeParentAccess = offersAccessChoice(spec) && spec?.access_scope !== "version";
   const canSelect = selectable && (deleted ? canDeleteParent : canDeleteParent || (canChangeParentAccess && tiers.length > 0));
   const bulkable = presentation === "reader" || presentation === "player";
   const [bulkOpen, setBulkOpen] = useState(false);
