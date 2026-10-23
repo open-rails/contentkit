@@ -21,12 +21,12 @@ import (
 	"github.com/open-rails/contentkit/offers"
 )
 
-// shop is a site over the world: groups, the catalog, discovery and offers
+// shop is a site over the world: entities, the catalog, discovery and offers
 // wired as the engine wires them, each module's routes served under /v1 and
 // held to the route catalog.
 type shop struct {
 	*world
-	groups                   *entities.Store
+	entities                 *entities.Store
 	cat                      *catalog.Store
 	staff                    access.Actor
 	catalogAPI, discoveryAPI *httptest.Server
@@ -37,7 +37,7 @@ func newShop(t *testing.T, edits ...func(*openrails.Config)) *shop {
 	ctx := t.Context()
 	s := &shop{world: newWorld(t, edits...), staff: testauth.Actor(access.Actor{ID: "staff"}, catalogStaff{})}
 	var err error
-	if s.groups, err = entities.New(entities.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds,
+	if s.entities, err = entities.New(entities.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds,
 		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return s.cat.ContentChanged(ctx, q, ids)
 		}}); err != nil {
@@ -45,7 +45,7 @@ func newShop(t *testing.T, edits ...func(*openrails.Config)) *shop {
 	}
 	authn := testauth.Auth{Authz: catalogStaff{}}
 	if s.cat, err = catalog.New(ctx, catalog.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds, Auth: authn, Gate: s.gate,
-		Entities: s.groups, Offers: s.offers}); err != nil {
+		Entities: s.entities, Offers: s.offers}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.cat.Close)
@@ -54,7 +54,7 @@ func newShop(t *testing.T, edits ...func(*openrails.Config)) *shop {
 		t.Fatal(err)
 	}
 	disc, err := discovery.New(discovery.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds, Visibility: s.cat,
-		Resolver: s.cat.Resolver(), Gate: s.gate, Entities: s.groups, Hub: h, Sales: s.offers})
+		Resolver: s.cat.Resolver(), Gate: s.gate, Entities: s.entities, Hub: h, Sales: s.offers})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -124,7 +124,9 @@ func TestPublishingReconcileOrderUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	var before string
-	if err := pool.QueryRow(ctx, `SELECT to_jsonb(op)::text FROM `+table+` op`).Scan(&before); err != nil {
+	// Migration0039 renames this relational column; the retained IDs and
+	// opaque receipt fields must survive that intentional schema change.
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(op)-'group_ids' || jsonb_build_object('entity_ids',op.group_ids))::text FROM `+table+` op`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
