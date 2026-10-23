@@ -161,7 +161,7 @@ func (e *Engine) newSignals(deps Deps) *signalPlane {
 	}
 	p := newSignalPlane(e.log, func(ctx context.Context) (signal.Conn, error) { return e.connectSignals(ctx, deps.ClickHouse) },
 		func(conn signal.Conn) error {
-			store, err := signal.NewStore(conn, c.Database)
+			store, err := signal.NewStore(conn, c.Database, signal.StoreOptions{Cluster: c.Cluster})
 			if err != nil {
 				return err
 			}

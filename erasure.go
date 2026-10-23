@@ -26,7 +26,8 @@ func (e *Engine) checkErasureReplay(ctx context.Context) error {
 	err := e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "notify_recipients"}.Sanitize()+` r
 WHERE r.scope=$1 AND r.audience='user' AND (r.erased_at IS NOT NULL OR EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "notify_app_erasures"}.Sanitize()+` x
 WHERE x.scope=r.scope AND x.audience=r.audience AND x.recipient=r.recipient AND ((x.app_id<>'' AND x.app_id=$2) OR (x.source='contentkit' AND x.source_scope=$3))))
-AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_erased_subjects"}.Sanitize()+` f WHERE f.tenant_id=$3 AND f.actor_id=r.recipient AND f.engine_cleanup_complete))`, "contentkit:"+namespace, e.scope.AppID.String(), e.cfg.Tenant).Scan(&pending)
+AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_erased_subjects"}.Sanitize()+` f WHERE f.tenant_id=$3 AND f.actor_id=r.recipient AND f.engine_cleanup_complete)
+AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$3 AND a.actor_id=r.recipient AND a.state='purging'))`, "contentkit:"+namespace, e.scope.AppID.String(), e.cfg.Tenant).Scan(&pending)
 	if err != nil {
 		return fmt.Errorf("contentkit: check erasure replay: %w", err)
 	}

@@ -291,7 +291,9 @@ type ClickHouseConfig struct {
 	Addr     string `yaml:"addr" json:"addr"`
 	Username string `yaml:"username" json:"username"`
 	Password string `yaml:"password" json:"password"`
-	// Cluster runs the migrations' DDL ON CLUSTER.
+	// Cluster runs DDL and account-anonymization synchronization on the whole
+	// signal replica set. It must cover one complete shard; pooled connections
+	// must route only to replicas of that shard.
 	Cluster string `yaml:"cluster" json:"cluster"`
 }
 

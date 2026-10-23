@@ -82,3 +82,24 @@ func TestAuthorsResolveInOneCall(t *testing.T) {
 		}
 	}
 }
+
+func TestDeletedAuthorIsDistinctFromDirectoryFailure(t *testing.T) {
+	dir := &countingDirectory{down: true}
+	rt, _ := newTestRuntime(t, Options{UserInfo: dir, Resolver: resolverWith("gallery", cid(1)), Kinds: testKinds("gallery")})
+	if err := rt.SetAccountDeleted(t.Context(), "deleted", true); err != nil {
+		t.Fatal(err)
+	}
+	users := rt.authors(t.Context(), []string{"deleted", "directory-unavailable"})
+	if !users["deleted"].Deleted || users["deleted"].Username != "" {
+		t.Fatalf("deleted account attribution: %+v", users["deleted"])
+	}
+	if _, ok := users["directory-unavailable"]; ok {
+		t.Fatal("directory outage was classified as an account deletion")
+	}
+	if err := rt.SetAccountDeleted(t.Context(), "deleted", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rt.authors(t.Context(), []string{"deleted"})["deleted"]; ok {
+		t.Fatal("restored account retained a deleted marker")
+	}
+}

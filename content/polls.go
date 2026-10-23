@@ -725,7 +725,7 @@ func (rt *Runtime) ReclassifyPending(ctx context.Context, after string, limit in
 	if cursor == "" {
 		cursor = "00000000-0000-0000-0000-000000000000"
 	}
-	rows, err := rt.store.pool.Query(ctx, `SELECT id::text,question_id::text,text,revision,actor_id FROM `+rt.store.t.pollAnswers+`
+	rows, err := rt.store.pool.Query(ctx, `SELECT id::text,question_id::text,text,revision,coalesce(actor_id,'') FROM `+rt.store.t.pollAnswers+`
  WHERE tenant_id=$1 AND classified_at IS NULL AND id > $3::uuid
  AND EXISTS (SELECT 1 FROM `+rt.store.t.pollQuestions+` q WHERE q.id=question_id AND q.tenant_id=$1 AND q.deleted_at IS NULL)
  ORDER BY id LIMIT $2`, rt.tenant, limit+1, cursor)
