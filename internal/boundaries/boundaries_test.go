@@ -49,22 +49,22 @@ var rules = []rule{
 	}},
 	{pkgs: []string{m + "/content"}, deny: []string{
 		"github.com/aws/...", m + "/media/image/...", m + "/media/video/...", m + "/media/s3/...",
-		m + "/signal/...", m + "/groups/...",
+		m + "/signal/...", m + "/entities/...",
 	}},
 	{pkgs: []string{m + "/media"}, deny: []string{
 		"github.com/aws/...", m + "/media/image/...", m + "/media/video/...", m + "/media/s3/...",
-		m + "/content/...", m + "/search/...", m + "/signal/...", m + "/groups/...",
+		m + "/content/...", m + "/search/...", m + "/signal/...", m + "/entities/...",
 	}},
 	// The host's side of the media worker: no libvips, ffmpeg or S3 client.
 	{pkgs: []string{m + "/media/workqueue"}, deny: []string{
 		"github.com/aws/...", m + "/media/image/...", m + "/media/video/...", m + "/media/worker/...", m + "/media/s3/...",
 	}},
-	{pkgs: []string{m + "/search", m + "/signal", m + "/groups"}, deny: []string{
+	{pkgs: []string{m + "/search", m + "/signal", m + "/entities"}, deny: []string{
 		m + "/media/...", m + "/content/...",
 	}},
-	// Content URLs sit below every content owner (groups and content write codes).
+	// Content URLs sit below every content owner (entities and content write codes).
 	{pkgs: []string{m + "/contenturl", m + "/internal/codes"}, deny: []string{
-		m + "/media/...", m + "/content/...", m + "/signal/...", m + "/groups/...", m + "/access/...",
+		m + "/media/...", m + "/content/...", m + "/signal/...", m + "/entities/...", m + "/access/...",
 	}},
 }
 
