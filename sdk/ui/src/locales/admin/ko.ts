@@ -17,6 +17,7 @@ export const admin: typeof en = {
     leaveVersion: "이 버전에서 나갈까요?",
     discardVersionEdits: "저장하지 않은 변경 사항을 버리고 다른 버전을 열까요?",
     discard: "변경 사항 버리기",
+    ready: "준비됨",
     thumbnail: "썸네일",
     editThumbnail: "썸네일 자르기",
     setThumbnail: "썸네일로 설정",

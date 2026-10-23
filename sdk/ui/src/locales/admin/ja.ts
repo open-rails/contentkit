@@ -17,6 +17,7 @@ export const admin: typeof en = {
     leaveVersion: "このバージョンを離れますか？",
     discardVersionEdits: "未保存の変更を破棄して別のバージョンを開きますか？",
     discard: "変更を破棄",
+    ready: "準備完了",
     thumbnail: "サムネイル",
     editThumbnail: "サムネイルを切り抜く",
     setThumbnail: "サムネイルに設定",

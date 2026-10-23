@@ -17,6 +17,7 @@ export const admin: typeof en = {
     leaveVersion: "¿Salir de esta versión?",
     discardVersionEdits: "¿Descartar los cambios sin guardar y abrir otra versión?",
     discard: "Descartar cambios",
+    ready: "Lista",
     thumbnail: "Miniatura",
     editThumbnail: "Recortar la miniatura",
     setThumbnail: "Usar como miniatura",

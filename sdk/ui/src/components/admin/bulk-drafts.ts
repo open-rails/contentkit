@@ -3,13 +3,16 @@ import { ContentKitError } from "../../client/errors.js";
 import type { Content, RefBody } from "../../client/generated/wire.js";
 import { isPattern, ruleDir, screenFiles } from "../../client/media/rules.js";
 
-/** A file name as a title: no extension, separators as spaces. */
-export const fileTitle = (name: string) =>
-  name
-    .replace(/\.[^.]+$/, "")
-    .replace(/[_-]+/g, " ")
-    .trim()
-    .slice(0, 300);
+const words = (s: string) => s.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+
+/** A file name as a title: no extension or [bracketed] circle, artist and tag groups, separators as spaces. */
+export const fileTitle = (name: string) => {
+  const stem = name.replace(/\.[^.]+$/, "");
+  let bare = stem;
+  // Innermost groups first, so nested brackets go too.
+  for (let prev = ""; prev !== bare; ) [prev, bare] = [bare, bare.replace(/\[[^[\]]*\]/g, " ")];
+  return (words(bare) || words(stem)).slice(0, 300);
+};
 
 /** A draft of kind titled from file, and the ref of its first version (uploads land there). */
 export async function createDraft(client: ContentKitClient, kind: string, language: string, file: File, untitled: string): Promise<{ content: Content; ref: RefBody }> {

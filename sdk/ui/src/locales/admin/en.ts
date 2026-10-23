@@ -16,6 +16,7 @@ export const admin = {
     leaveVersion: "Leave this version?",
     discardVersionEdits: "Discard unsaved changes before opening another version?",
     discard: "Discard changes",
+    ready: "Ready",
     thumbnail: "Thumbnail",
     editThumbnail: "Crop the thumbnail",
     setThumbnail: "Set as thumbnail",
