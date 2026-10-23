@@ -220,6 +220,8 @@ export const admin: typeof en = {
     makePremium: "Premium machen",
     makeFree: "Kostenlos machen",
     select: "{title} auswählen",
+    date: "Datum",
+    moreActions: "Weitere Aktionen für {title}",
     selectPage: "Alle Einträge dieser Seite auswählen",
     selected: "{count} ausgewählt",
     clearSelection: "Auswahl aufheben",
