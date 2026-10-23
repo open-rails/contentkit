@@ -201,7 +201,7 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
   );
 }
 
-/** A rule's form: level, tiers, group (the content's owner group by default), the preview its kind has and when it turns free. */
+/** A rule's form: level, tiers, group (the content's owner group by default), the preview its kind has and optional audience releases. */
 export function RuleFields({ value, onChange, model, kind, owner, labels, client }: { value: Rule; onChange: (r: Rule) => void; model: ContentModel | null; kind: string; owner?: string; labels?: Labels; client: ContentKitClient }) {
   const { t } = useMessages();
   const id = useId();
@@ -229,7 +229,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
           value={value.level}
           onValueChange={(v) => {
             const level = v as Rule["level"];
-            onChange({ level, tiers: level === "tier" ? (fixedTier ? [...tiers] : value.tiers) : undefined, group_id: grouped(level) ? value.group_id || owner : undefined, preview: value.preview, free_after: value.free_after });
+            onChange({ level, tiers: level === "tier" ? (fixedTier ? [...tiers] : value.tiers) : undefined, group_id: grouped(level) ? value.group_id || owner : undefined, preview: value.preview, releases: level === "public" ? undefined : value.releases });
           }}
         >
           <SelectTrigger size="sm" aria-label={t("contentEditor.access")}>
@@ -311,18 +311,32 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
               />
             </div>
           )}
-          <div className="grid gap-1.5">
-            <Label htmlFor={`${id}-free`}>{t("contentEditor.freeAfter")}</Label>
-            <Input id={`${id}-free`} className="h-8" type="datetime-local" value={toLocalInput(value.free_after)} onChange={(e) => set({ free_after: fromLocalInput(e.target.value) })} />
-          </div>
+
         </div>
       )}
+      {value.level !== "public" && <fieldset className="grid gap-3">
+        <legend>{t("contentEditor.releases")}</legend>
+        {(value.releases ?? []).map((release, index) => {
+          const change = (patch: Partial<typeof release>) => set({ releases: value.releases!.map((entry, i) => i === index ? { ...entry, ...patch } : entry) });
+          return <div key={index} className="flex flex-wrap items-center gap-2">
+            <Input required type="datetime-local" aria-label={t("contentEditor.versionPublishAt")} value={toLocalInput(release.at)} onChange={(e) => change({ at: fromLocalInput(e.target.value) ?? "" })} />
+            <Select value={release.level} onValueChange={(v) => change({ level: v as typeof release.level, tiers: v === "tier" ? tiers.slice(0, 1) : undefined, group_id: undefined })}>
+              <SelectTrigger size="sm" aria-label={t("contentEditor.access")}><SelectValue>{(v: string) => t(`contentEditor.level_${v as Rule["level"]}`)}</SelectValue></SelectTrigger>
+              <SelectContent>{["public", ...(tiers.length ? ["tier"] : []), ...(groupKinds.length ? ["group"] : [])].map((level) => <SelectItem key={level} value={level}>{t(`contentEditor.level_${level as Rule["level"]}`)}</SelectItem>)}</SelectContent>
+            </Select>
+            {release.level === "tier" && tiers.map((tier) => <label key={tier} className="flex items-center gap-1"><Switch aria-label={labelOf(labels, tier)} checked={release.tiers?.includes(tier) ?? false} onCheckedChange={(on) => change({ tiers: on ? [...(release.tiers ?? []), tier] : release.tiers?.filter((t) => t !== tier) })} />{labelOf(labels, tier)}</label>)}
+            {release.level === "group" && <><span>{release.group_id}</span><GroupPicker kind={groupKind} label={t("contentEditor.group")} client={client} onPick={(g) => change({ group_id: g.id })} /></>}
+            <Button type="button" variant="ghost" size="sm" onClick={() => set({ releases: value.releases!.filter((_, i) => i !== index) })}>{t("contentEditor.removeRelease")}</Button>
+          </div>;
+        })}
+        <Button type="button" variant="outline" size="sm" disabled={(value.releases?.length ?? 0) >= 32} onClick={() => set({ releases: [...(value.releases ?? []), { at: "", level: "public" }] })}>{t("contentEditor.addRelease")}</Button>
+      </fieldset>}
     </div>
   );
 }
 
 /** A rule the server takes: a group level names its group. */
-export const complete = (r: Rule) => !grouped(r.level) || !!r.group_id;
+export const complete = (r: Rule) => (!grouped(r.level) || !!r.group_id) && (r.releases ?? []).every((release) => !!release.at && (release.level !== "tier" || !!release.tiers?.length) && (release.level !== "group" || !!release.group_id));
 
 /** A rule as stored: empty previews and absent fields left out. */
 export function cleanRule(r: Rule): Rule {
@@ -332,7 +346,7 @@ export function cleanRule(r: Rule): Rule {
     tiers: r.level === "tier" ? r.tiers : undefined,
     group_id: r.level === "group" || r.level === "group_ppv" ? r.group_id : undefined,
     preview: r.level === "public" ? undefined : preview,
-    free_after: r.level === "public" ? undefined : r.free_after,
+    releases: r.level === "public" ? undefined : r.releases,
   };
 }
 

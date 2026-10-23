@@ -183,11 +183,11 @@ func TestResolverIntegration(t *testing.T) {
 
 	// A locked version's decision carries the rule's preview and free_after.
 	free := f.now().Add(time.Hour)
-	preview := &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, Preview: &access.Preview{Segments: 1}, FreeAfter: &free}
+	preview := &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, Preview: &access.Preview{Segments: 1}, Releases: []access.Release{{At: free, Level: access.Public}}}
 	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: preview}}}); err != nil {
 		t.Fatal(err)
 	}
-	if d := f.read(anon, "main.test", id)[0].Versions[0].Decision; d.Allowed || d.Preview == nil || d.Preview.Segments != 1 || d.FreeAfter == nil || !d.FreeAfter.Equal(free) {
+	if d := f.read(anon, "main.test", id)[0].Versions[0].Decision; d.Allowed || d.Preview == nil || d.Preview.Segments != 1 || len(d.Releases) != 1 || !d.Releases[0].At.Equal(free) {
 		t.Fatalf("the locked decision %+v", d)
 	}
 }

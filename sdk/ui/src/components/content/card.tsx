@@ -328,7 +328,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
           {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
         </div>}
         {metaLine}
-        {!card.access.allowed && card.access.free_after && <p className="text-xs text-muted-foreground">{t("contents.freeFrom", { date: formatDate(m, card.access.free_after, false) })}</p>}
+        
         {entityStyle === "chips" && entityList}
         {showCounts && (card.counts.favorites !== undefined || card.counts.likes !== undefined) && (
           <p className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums" data-ckui="card-counts">

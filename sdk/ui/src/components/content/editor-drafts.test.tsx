@@ -136,7 +136,7 @@ it("rebases clean fields and attributes without replacing edited fields", async 
   await choose(user, "Who can open it", "Tier members");
   await user.click(ui.access().getByRole("switch", { name: /Member/ }));
 
-  s.records.set("p1", { ...s.records.get("p1")!, revision: 4, comments: "closed", attributes: { caption: "Remote caption", note: "Remote note" }, access: { level: "public", free_after: "2027-01-01T00:00:00Z" } });
+  s.records.set("p1", { ...s.records.get("p1")!, revision: 4, comments: "closed", attributes: { caption: "Remote caption", note: "Remote note" }, access: { level: "public", releases: [{ at: "2027-01-01T00:00:00Z", level: "public" }] } });
   await user.click(screen.getByRole("button", { name: "Refresh record" }));
   await waitFor(() => expect(screen.getByLabelText("Note")).toHaveValue("Remote note"));
   expect(caption).toHaveValue("Keep this draft");

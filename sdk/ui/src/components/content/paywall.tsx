@@ -81,7 +81,7 @@ export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, childre
       </p>
       {preview?.pages ? <p className="text-muted-foreground">{m.plural("paywall.previewPages", preview.pages)}</p> : null}
       {preview?.segments ? <p className="text-muted-foreground">{m.plural("paywall.previewSegments", preview.segments)}</p> : null}
-      {decision.free_after && <p className="text-muted-foreground">{t("paywall.freeFrom", { date: formatDate(m, decision.free_after, false) })}</p>}
+      
       {!decision.unknown && (
         <div className="flex flex-wrap gap-2" data-ckui="paywall-offers">
           {requires && (

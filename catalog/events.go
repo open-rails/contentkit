@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/open-rails/contentkit/access"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
@@ -24,20 +26,24 @@ const (
 	EventVersionPublished   = "version.published"
 	EventVersionDeleted     = "version.deleted"
 	EventVersionPurged      = "version.purged"
+	EventAudienceReleased   = "version.audience_released"
 )
 
 // Event is the catalog fact appended by a mutation. Readers receive EventRecord.
 type Event struct {
-	Type      string
-	Kind      string
-	ContentID string
-	VersionID string
+	Type       string
+	Kind       string
+	ContentID  string
+	VersionID  string
+	OccurredAt time.Time
+	Release    *access.Release
 }
 
 type eventPayload struct {
-	Kind      string `json:"kind"`
-	ContentID string `json:"content_id"`
-	VersionID string `json:"version_id,omitempty"`
+	Kind      string          `json:"kind"`
+	ContentID string          `json:"content_id"`
+	VersionID string          `json:"version_id,omitempty"`
+	Release   *access.Release `json:"release,omitempty"`
 }
 
 // emit queues facts in the mutation transaction. The shared deferred flush
@@ -50,8 +56,13 @@ func (s *Store) emit(ctx context.Context, tx pgx.Tx, events ...Event) error {
 		return errors.New("catalog: events require the mutation transaction")
 	}
 	types, kinds, subjects, payloads := make([]string, len(events)), make([]string, len(events)), make([]string, len(events)), make([]string, len(events))
+	times := make([]time.Time, len(events))
 	for i, e := range events {
-		payload, err := json.Marshal(eventPayload{e.Kind, e.ContentID, e.VersionID})
+		times[i] = e.OccurredAt
+		if times[i].IsZero() {
+			times[i] = s.now()
+		}
+		payload, err := json.Marshal(eventPayload{Kind: e.Kind, ContentID: e.ContentID, VersionID: e.VersionID, Release: e.Release})
 		if err != nil {
 			return err
 		}
@@ -61,9 +72,9 @@ func (s *Store) emit(ctx context.Context, tx pgx.Tx, events ...Event) error {
 	// independent of committed positions, which the shared flush assigns.
 	_, err := tx.Exec(ctx, `INSERT INTO `+s.qs+`.eventlog_pending
  (source,scope,id,boundary,event_source,event_type,version,occurred_at,subject_type,subject_id,data)
- SELECT 'contentkit',$1,nextval($2::regclass)::text,gen_random_uuid()::text,'contentkit',t,1,clock_timestamp(),k,c,p::jsonb
- FROM unnest($3::text[],$4::text[],$5::text[],$6::text[]) WITH ORDINALITY AS x(t,k,c,p,n) ORDER BY n`,
-		s.tenant, s.qs+`.content_event_ids`, types, kinds, subjects, payloads)
+ SELECT 'contentkit',$1,nextval($2::regclass)::text,gen_random_uuid()::text,'contentkit',t,1,at,k,c,p::jsonb
+ FROM unnest($3::text[],$4::text[],$5::text[],$6::text[],$7::timestamptz[]) WITH ORDINALITY AS x(t,k,c,p,at,n) ORDER BY n`,
+		s.tenant, s.qs+`.content_event_ids`, types, kinds, subjects, payloads, times)
 	return err
 }
 

@@ -760,7 +760,7 @@ that fits the reader (`display_language` first, then position).
 A card carries title and path in the display language, cover renditions, the
 version (languages, traits, pages, duration), the version's groups with pages
 by kind, likes, dislikes, favorites and all-time viewers, the access decision
-(`allowed`, `sell`, `requires`, `preview`, `free_after`), the signed-in
+(`allowed`, `sell`, `requires`, `preview`, `releases`), the signed-in
 reader's favorite and progress, `published_at` and attributes. Content
 detail (`GET /contents/{id}`, `.../versions/{vid}`) carries the same
 `viewer` standing on the item and each version, to resume from. Without a

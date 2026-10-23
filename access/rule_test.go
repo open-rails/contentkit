@@ -20,7 +20,7 @@ func TestRuleJSON(t *testing.T) {
 		{Rule{Level: Public}, `{"level":"public"}`},
 		{Rule{Level: TierLevel, Tiers: []string{"premium"}, Preview: &Preview{Pages: 3}}, `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`},
 		{Rule{Level: GroupLevel, Group: id1}, `{"level":"group","group_id":"` + id1 + `"}`},
-		{Rule{Level: PPV, FreeAfter: &at}, `{"level":"ppv","free_after":"2026-11-01T00:00:00Z"}`},
+		{Rule{Level: PPV, Releases: []Release{{At: at, Level: Public}}}, `{"level":"ppv","releases":[{"at":"2026-11-01T00:00:00Z","level":"public"}]}`},
 		{Rule{Level: GroupPPV, Group: id1, Preview: &Preview{Segments: 1}}, `{"level":"group_ppv","group_id":"` + id1 + `","preview":{"segments":1}}`},
 	} {
 		b, err := json.Marshal(tc.rule)
@@ -48,7 +48,7 @@ func TestRuleValidate(t *testing.T) {
 		{Level: TierLevel}, {Level: TierLevel, Tiers: []string{"platinum"}}, {Level: TierLevel, Tiers: []string{"gold", "gold"}},
 		{Level: TierLevel, Tiers: []string{"gold"}, Group: id1}, {Level: GroupLevel}, {Level: GroupPPV, Group: "x"},
 		{Level: GroupLevel, Group: id1, Tiers: []string{"gold"}}, {Level: Public, Preview: &Preview{Pages: 1}},
-		{Level: Public, FreeAfter: &future}, {Level: PPV, Preview: &Preview{}}, {Level: PPV, Preview: &Preview{Pages: -1}},
+		{Level: Public, Releases: []Release{{At: future, Level: Public}}}, {Level: PPV, Preview: &Preview{}}, {Level: PPV, Preview: &Preview{Pages: -1}},
 	} {
 		if err := bad.Validate(tiered); !errors.Is(err, ErrRule) {
 			t.Errorf("%+v: %v", bad, err)
@@ -59,15 +59,15 @@ func TestRuleValidate(t *testing.T) {
 func TestRuleFreeEffectiveFacet(t *testing.T) {
 	now := time.Now()
 	past, future := now.Add(-time.Minute), now.Add(time.Minute)
-	if !(Rule{Level: Public}).Free(now) || !(Rule{Level: PPV, FreeAfter: &past}).Free(now) || (Rule{Level: PPV, FreeAfter: &future}).Free(now) {
+	if !(Rule{Level: Public}).Free(now) || !(Rule{Level: PPV, Releases: []Release{{At: past, Level: Public}}}).Free(now) || (Rule{Level: PPV, Releases: []Release{{At: future, Level: Public}}}).Free(now) {
 		t.Fatal("Free")
 	}
 	content, override := Rule{Level: TierLevel, Tiers: []string{"premium"}}, Rule{Level: Public}
 	if Effective(content, nil).Level != TierLevel || Effective(content, &override).Level != Public {
 		t.Fatal("Effective")
 	}
-	f := Rule{Level: GroupLevel, Group: id1, FreeAfter: &future}.Facet()
-	if f.Level != GroupLevel || f.GroupID == nil || *f.GroupID != id1 || f.Tiers == nil || len(f.Tiers) != 0 || f.FreeAfter != &future {
+	f := Rule{Level: GroupLevel, Group: id1, Releases: []Release{{At: future, Level: Public}}}.Facet()
+	if f.Level != GroupLevel || f.GroupID == nil || *f.GroupID != id1 || f.Tiers == nil || len(f.Tiers) != 0 || len(f.Releases) != 1 || !f.Releases[0].At.Equal(future) {
 		t.Fatalf("Facet %+v", f)
 	}
 }

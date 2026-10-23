@@ -375,7 +375,7 @@ WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.P
 
 	passed := time.Now().Add(-time.Minute)
 	freed, err := e.catalog.Create(ctx, staff, []catalog.ContentInput{{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Freed"}},
-		Access: &access.Rule{Level: access.PPV, FreeAfter: &passed}}})
+		Access: &access.Rule{Level: access.PPV, Releases: []access.Release{{At: passed, Level: access.Public}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.P
 		return n
 	}
 	before := exposed()
-	if n, err := e.catalog.ReleaseFree(ctx); err != nil || n != 1 || exposed() != before+1 {
+	if n, err := e.catalog.PublishDue(ctx); err != nil || n != 0 || exposed() != before {
 		t.Fatalf("released %d (%v); exposes %d after %d", n, err, exposed(), before)
 	}
 

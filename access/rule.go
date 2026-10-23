@@ -138,6 +138,9 @@ type Facet struct {
 // Facet projects r onto content_facets' access columns.
 func (r Rule) Facet() Facet {
 	f := Facet{Level: r.Level, Tiers: slices.Clone(r.Tiers), Releases: slices.Clone(r.Releases)}
+	if f.Releases == nil {
+		f.Releases = []Release{}
+	}
 	if f.Tiers == nil {
 		f.Tiers = []string{}
 	}

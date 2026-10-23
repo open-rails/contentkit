@@ -188,8 +188,16 @@ func (s *Store) checkStoredPolicies(ctx context.Context, tx pgx.Tx, ids []string
 func (s *Store) checkRuleGroups(ctx context.Context, q Querier, rules ...*access.Rule) error {
 	var ids []string
 	for _, r := range rules {
-		if r != nil && r.Group != "" && !slices.Contains(ids, r.Group) {
+		if r == nil {
+			continue
+		}
+		if r.Group != "" && !slices.Contains(ids, r.Group) {
 			ids = append(ids, r.Group)
+		}
+		for _, release := range r.Releases {
+			if release.Group != "" && !slices.Contains(ids, release.Group) {
+				ids = append(ids, release.Group)
+			}
 		}
 	}
 	if len(ids) == 0 {

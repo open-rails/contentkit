@@ -13658,9 +13658,11 @@
           "preview": {
             "$ref": "#/components/schemas/Preview"
           },
-          "free_after": {
-            "type": "string",
-            "format": "date-time"
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Release"
+            }
           },
           "offers": {
             "type": "array",
@@ -14878,9 +14880,11 @@
           "preview": {
             "$ref": "#/components/schemas/Preview"
           },
-          "free_after": {
-            "type": "string",
-            "format": "date-time"
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Release"
+            }
           },
           "offers": {
             "type": "array",
@@ -18806,6 +18810,38 @@
           "id"
         ]
       },
+      "Release": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "group",
+              "group_ppv",
+              "ppv",
+              "public",
+              "tier"
+            ]
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "level"
+        ]
+      },
       "ReleaseDates": {
         "type": "object",
         "properties": {
@@ -19098,9 +19134,11 @@
           "preview": {
             "$ref": "#/components/schemas/Preview"
           },
-          "free_after": {
-            "type": "string",
-            "format": "date-time"
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Release"
+            }
           }
         },
         "required": [

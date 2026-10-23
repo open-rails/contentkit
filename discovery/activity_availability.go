@@ -27,12 +27,12 @@ type accessHistoryState struct {
 	Deleted  bool       `json:"deleted"`
 	// LegacyListing is read only from snapshots captured before listing policies
 	// were removed. New snapshots omit it; historical availability stays intact.
-	LegacyListing string       `json:"listing"`
-	Languages     []string     `json:"languages"`
-	Level         access.Level `json:"level"`
-	Tiers         []string     `json:"tiers"`
-	Group         string       `json:"group_id"`
-	FreeAfter     *time.Time   `json:"free_after"`
+	LegacyListing string           `json:"listing"`
+	Languages     []string         `json:"languages"`
+	Level         access.Level     `json:"level"`
+	Tiers         []string         `json:"tiers"`
+	Group         string           `json:"group_id"`
+	Releases      []access.Release `json:"releases"`
 }
 
 type accessHistoryRow struct {
@@ -125,18 +125,22 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
 		if !begin.Before(end) {
 			continue
 		}
-		rule := access.Rule{Level: row.state.Level, Tiers: row.state.Tiers, Group: row.state.Group, FreeAfter: row.state.FreeAfter}
+		rule := access.Rule{Level: row.state.Level, Tiers: row.state.Tiers, Group: row.state.Group, Releases: row.state.Releases}
 		appendPart := func(a, b time.Time) {
 			_, audience, tiers := activityAudience(rule, a)
 			if a.Before(b) {
 				intervals = append(intervals, signal.AccessInterval{ContentID: row.content, From: a, Until: b, Audience: audience, AudienceTiers: tiers})
 			}
 		}
-		if rule.FreeAfter != nil && rule.FreeAfter.After(begin) && rule.FreeAfter.Before(end) {
-			appendPart(begin, *rule.FreeAfter)
-			appendPart(*rule.FreeAfter, end)
-		} else {
-			appendPart(begin, end)
+		boundaries := []time.Time{begin, end}
+		for _, release := range rule.Releases {
+			if release.At.After(begin) && release.At.Before(end) {
+				boundaries = append(boundaries, release.At)
+			}
+		}
+		slices.SortFunc(boundaries, func(a, b time.Time) int { return a.Compare(b) })
+		for i := 0; i+1 < len(boundaries); i++ {
+			appendPart(boundaries[i], boundaries[i+1])
 		}
 	}
 	out.Intervals = unionAccessIntervals(intervals)
