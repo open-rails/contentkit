@@ -82,7 +82,7 @@ func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key con
 			return false, nil
 		}
 		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id, value, revision) VALUES ($1, $2, $3, $4, $5, 1, `+f.s.nextRevision()+`)
-			ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) DO NOTHING`, args...)
+			ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO NOTHING`, args...)
 		if err != nil || tag.RowsAffected() == 1 || !retry {
 			return err == nil && tag.RowsAffected() == 1, err
 		}

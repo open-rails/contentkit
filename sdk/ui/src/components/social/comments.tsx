@@ -89,7 +89,7 @@ const useThread = () => useContext(ThreadContext)!;
 const mac = typeof navigator !== "undefined" && /Mac|iP(hone|ad)/.test(navigator.platform);
 const TRUNCATE = 300;
 
-const authorName = (c: Comment, anonymous: string) => c.author?.username ?? c.anon_name ?? anonymous;
+const authorName = (c: Comment, anonymous: string) => c.author?.deleted ? "<Deleted>" : c.author?.username ?? c.anon_name ?? anonymous;
 
 /**
  * An item's comment thread: top-level comments a page at a time with

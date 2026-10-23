@@ -86,6 +86,23 @@ it("Comments: a thread with tombstones and the author's held comment; posting la
   expect(s.calls.filter((c) => c.startsWith("GET /contents/v1/comments"))).toHaveLength(1);
 });
 
+it("Comments: deleted accounts retain discussion without profile links", async () => {
+  const s = server({
+    "GET /contents/v1/comments": () => [
+      comment("soft", { body: "still discussing", user_id: "removed", author: { id: "removed", username: "", deleted: true } }),
+      comment("hard", { body: "also retained", user_id: undefined, author: undefined, anon_name: "<Deleted>" }),
+      comment("unknown", { body: "directory unavailable", user_id: "unknown", author: undefined }),
+    ],
+    "GET /contents/v1/can-comment": () => standing(),
+  });
+  render(<Comments item={item} userHref={(u) => `/users/${u.id}`} />, { wrapper: wrap(s.client) });
+  expect(await screen.findByText("still discussing")).toBeInTheDocument();
+  expect(screen.getByText("also retained")).toBeInTheDocument();
+  expect(screen.getAllByText("<Deleted>")).toHaveLength(2);
+  expect(screen.queryByRole("link", { name: "<Deleted>" })).not.toBeInTheDocument();
+  expect(screen.getByText("directory unavailable").closest("article")).not.toHaveTextContent("<Deleted>");
+});
+
 it("Comments: authoritative standing count survives pagination and posts without reloading the list", async () => {
   let count = 23;
   const s = server({

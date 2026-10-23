@@ -13,7 +13,27 @@ const avatarWidth = 64
 func (rt *Runtime) authors(ctx context.Context, ids []string) map[string]PublicUser {
 	out := map[string]PublicUser{}
 	ids = dedup(ids)
-	if len(ids) == 0 || rt.userInfo == nil {
+	if len(ids) == 0 {
+		return out
+	}
+	rows, err := rt.store.pool.Query(ctx, `SELECT actor_id FROM `+rt.accountLifecycleTable()+` WHERE tenant_id=$1 AND actor_id=ANY($2)`, rt.tenant, ids)
+	if err != nil {
+		rt.log.WarnContext(ctx, "content: author lifecycle lookup failed", "err", err.Error())
+		return out
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return map[string]PublicUser{}
+		}
+		out[id] = PublicUser{ID: id, Deleted: true}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return map[string]PublicUser{}
+	}
+	if rt.userInfo == nil {
 		return out
 	}
 	users, err := rt.userInfo.Get(ctx, ids)
@@ -23,6 +43,9 @@ func (rt *Runtime) authors(ctx context.Context, ids []string) map[string]PublicU
 	}
 	var held []string
 	for _, id := range ids {
+		if out[id].Deleted {
+			continue
+		}
 		if u, ok := users[id]; ok {
 			out[id] = PublicUser{ID: id, Name: u.Name, Username: u.Username}
 			held = append(held, id)

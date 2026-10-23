@@ -455,7 +455,7 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []ImportFa
  created_at, updated_at)
  SELECT $1, r.user_id, r.kind, r.id, r.version, 1, `+s.nextRevision()+`, r.created_at, r.created_at
  FROM jsonb_to_recordset($2::jsonb) AS r(user_id text, kind text, id text, version text, created_at timestamptz)
- ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) DO UPDATE SET value = 1, revision = `+s.nextRevision()+`,
+ ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO UPDATE SET value = 1, revision = `+s.nextRevision()+`,
   created_at = EXCLUDED.created_at, updated_at = clock_timestamp()
  WHERE f.value <> 1`, rt.tenant, string(data)); err != nil {
 		return err
