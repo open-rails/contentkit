@@ -187,24 +187,6 @@ func (s *Store) releaseFree(ctx context.Context) (int, error) {
 	return len(ids), tx.Commit(ctx)
 }
 
-// RefreshCounts copies each content item's interaction counts into its
-// facets: likes, dislikes, favorites and rating (the Wilson lower bound of
-// likes over likes and dislikes). It returns how many facet rows changed.
-func (s *Store) RefreshCounts(ctx context.Context) (int, error) {
-	tag, err := s.pool.Exec(ctx, `UPDATE `+s.t.facets+` f SET likes = n.likes, dislikes = n.dislikes, favorites = n.favorites, rating = n.rating,
- updated_at = clock_timestamp()
- FROM (SELECT f.version_id, coalesce(c.likes, 0) AS likes, coalesce(c.dislikes, 0) AS dislikes, coalesce(c.favorites, 0) AS favorites,
-  `+content.RatingSQL("coalesce(c.likes, 0)", "coalesce(c.dislikes, 0)")+` AS rating
-  FROM `+s.t.facets+` f LEFT JOIN `+s.t.counts+` c ON c.tenant_id = f.tenant_id AND c.content_kind = f.kind AND c.content_id = f.content_id
-   AND c.content_version_id IS NULL WHERE f.tenant_id = $1) n
- WHERE f.tenant_id = $1 AND f.version_id = n.version_id
-  AND (f.likes, f.dislikes, f.favorites, f.rating) IS DISTINCT FROM (n.likes, n.dislikes, n.favorites, n.rating)`, s.tenant)
-	if err != nil {
-		return 0, err
-	}
-	return int(tag.RowsAffected()), nil
-}
-
 // ReconcileFacets explicitly refreshes every item's facets and search-document
 // marks from current catalog state, recording the current access snapshot.
 // Use it to repair stale projections after upgrading a writer; ordinary
@@ -493,11 +475,6 @@ func (publishDueArgs) Kind() string { return "contentkit_content_publish_due" }
 // Remove these aliases once those jobs and their retries have drained.
 func (publishDueArgs) KindAliases() []string { return []string{"contentkit_catalog_publish_due"} }
 
-type refreshCountsArgs struct{}
-
-func (refreshCountsArgs) Kind() string          { return "contentkit_content_refresh_counts" }
-func (refreshCountsArgs) KindAliases() []string { return []string{"contentkit_catalog_refresh_counts"} }
-
 type purgeDeletedArgs struct{}
 
 func (purgeDeletedArgs) Kind() string          { return "contentkit_content_purge_deleted" }
@@ -520,7 +497,7 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 
 // RiverJobs contributes content's periodic jobs to the engine's River
 // client: scheduled publication and free_after releases (every 30s), event
-// log retention, interaction counts (5m), and purging deleted content (1h).
+// log retention and purging deleted content (1h).
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-content", func(_ context.Context, cfg *river.Config) error {
 		if q, ok := cfg.Queues[Queue]; ok && q.MaxWorkers < 1 {
@@ -536,9 +513,6 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &jobWorker[publishDueArgs]{run: s.PublishDue}) },
 			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &jobWorker[refreshCountsArgs]{run: s.RefreshCounts})
-			},
-			func() error {
 				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted})
 			},
 			func() error {
@@ -551,7 +525,6 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,
 			periodic("contentkit_content_publish_due", 30*time.Second, publishDueArgs{}),
-			periodic("contentkit_content_refresh_counts", 5*time.Minute, refreshCountsArgs{}),
 			periodic("contentkit_content_purge_deleted", time.Hour, purgeDeletedArgs{}),
 			periodic("contentkit_content_release_free", 30*time.Second, releaseFreeArgs{}))
 		return nil

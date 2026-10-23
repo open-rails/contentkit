@@ -11,7 +11,6 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
-	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/media"
@@ -137,7 +136,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 }
 
 // rebuild queues the jobs that rebuild what an import changed: search
-// documents, group counts and covers, and listing counts. Before Start their
+// documents and group counts and covers. Before Start their
 // periodic first runs do it.
 func (e *Engine) rebuild(ctx context.Context) error {
 	c := e.jobs.bound()
@@ -147,8 +146,7 @@ func (e *Engine) rebuild(ctx context.Context) error {
 	opts := func(queue string) *river.InsertOpts {
 		return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
 	}
-	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}, {Args: groupsArgs{}, InsertOpts: opts(QueueContentKit)},
-		{Args: catalog.RefreshCountsJob(), InsertOpts: opts(catalog.Queue)}}
+	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}, {Args: groupsArgs{}, InsertOpts: opts(QueueContentKit)}}
 	_, err := c.InsertMany(ctx, params)
 	return err
 }

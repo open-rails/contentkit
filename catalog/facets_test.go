@@ -28,15 +28,13 @@ type facet struct {
 	Owner        string
 	Position     int
 	Attributes   map[string]any
-	Likes        int
-	Favorites    int
 }
 
 // facets reads the content item's facet rows in position order.
 func (f *fixture) facets(id string) []facet {
 	f.t.Helper()
 	rows, err := f.pool.Query(f.ctx, `SELECT version_id, coalesce(live_from <= $2, false), deleted, languages, access_level, access_tiers,
- coalesce(access_group_id, ''), access_free_after, restrictions, group_ids, traits, coalesce(owner_group_id, ''), position, attributes, likes, favorites
+ coalesce(access_group_id, ''), access_free_after, restrictions, group_ids, traits, coalesce(owner_group_id, ''), position, attributes
  FROM `+f.table("content_facets")+` WHERE tenant_id = $1 AND content_id = $3 ORDER BY position, version_id`, tenant, f.now(), id)
 	if err != nil {
 		f.t.Fatal(err)
@@ -47,7 +45,7 @@ func (f *fixture) facets(id string) []facet {
 		var x facet
 		var attrs []byte
 		if err := rows.Scan(&x.Version, &x.Live, &x.Deleted, &x.Languages, &x.Level, &x.Tiers, &x.Group, &x.FreeAfter, &x.Restrictions,
-			&x.Groups, &x.Traits, &x.Owner, &x.Position, &attrs, &x.Likes, &x.Favorites); err != nil {
+			&x.Groups, &x.Traits, &x.Owner, &x.Position, &attrs); err != nil {
 			f.t.Fatal(err)
 		}
 		if err := json.Unmarshal(attrs, &x.Attributes); err != nil {
@@ -145,30 +143,17 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 		t.Fatalf("a refused write moved the facets %+v -> %+v", before, after)
 	}
 
-	// Interaction counts reach the facets by the counts job.
+	// Rewriting facets leaves the independent interaction aggregate untouched.
 	if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_interaction_counts")+` (tenant_id, content_kind, content_id, likes, dislikes, favorites)
  VALUES ($1, 'gallery', $2, 9, 1, 4)`, tenant, id); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := f.s.RefreshCounts(f.ctx); err != nil || n != 2 {
-		t.Fatalf("RefreshCounts: %d %v", n, err)
-	}
-	var rating float64
-	if err := f.pool.QueryRow(f.ctx, `SELECT rating FROM `+f.table("content_facets")+` WHERE content_id = $1 LIMIT 1`, id).Scan(&rating); err != nil || rating < 0.5 || rating > 0.9 {
-		t.Fatalf("rating %v %v", rating, err)
-	}
-	if vs := f.facets(id); vs[0].Likes != 9 || vs[1].Favorites != 4 {
-		t.Fatalf("counts %+v", vs)
-	}
-	if n, err := f.s.RefreshCounts(f.ctx); err != nil || n != 0 {
-		t.Fatalf("an unchanged refresh wrote %d (%v)", n, err)
-	}
-	// A rewrite of the facets keeps the counts.
 	if err := pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error { return f.s.RefreshFacets(f.ctx, tx, []string{id}) }); err != nil {
 		t.Fatal(err)
 	}
-	if vs := f.facets(id); vs[0].Likes != 9 {
-		t.Fatalf("refresh lost the counts %+v", vs)
+	var likes, favorites int
+	if err := f.pool.QueryRow(f.ctx, `SELECT likes, favorites FROM `+f.table("content_interaction_counts")+` WHERE tenant_id=$1 AND content_kind='gallery' AND content_id=$2 AND content_version_id IS NULL`, tenant, id).Scan(&likes, &favorites); err != nil || likes != 9 || favorites != 4 {
+		t.Fatalf("refresh changed the aggregate: likes=%d favorites=%d err=%v", likes, favorites, err)
 	}
 }
 

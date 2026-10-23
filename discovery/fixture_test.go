@@ -306,7 +306,10 @@ func (f *fixture) seed(items ...item) {
 				f.t.Fatal(err)
 			}
 		}
-		f.exec(`UPDATE {s}.content_facets SET favorites = $2 WHERE content_id = $1`, id, it.favorites)
+		if it.favorites != 0 {
+			f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,favorites)
+ SELECT tenant_id,kind,id,$2 FROM {s}.content_items WHERE id=$1`, id, it.favorites)
+		}
 	}
 }
 
