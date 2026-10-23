@@ -85,7 +85,9 @@ export function contentStatus(c: Content): ContentStatus {
 }
 
 const choices = (list?: readonly Choice[], name: (code: string) => string = (c) => c) => (list ?? []).map((c) => (typeof c === "string" ? { value: c, label: name(c) } : c));
-const badge: Record<ContentStatus, "default" | "secondary" | "outline" | "destructive"> = { published: "default", scheduled: "secondary", draft: "outline", held: "secondary", rejected: "destructive" };
+const badge: Record<ContentStatus, "default" | "secondary" | "outline" | "destructive"> = { published: "outline", scheduled: "secondary", draft: "outline", held: "secondary", rejected: "destructive" };
+// Published reads as a good state, not the brand accent.
+const badgeClass: Partial<Record<ContentStatus, string>> = { published: "border-success/45 bg-success/15 text-foreground" };
 const states = ["draft", "scheduled", "published"] as const;
 
 /**
@@ -550,7 +552,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                     </button>
                   )}
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    {!deleted && <Badge variant={badge[s]}>{t(`contentManager.${s}`)}</Badge>}
+                    {!deleted && <Badge variant={badge[s]} className={badgeClass[s]}>{t(`contentManager.${s}`)}</Badge>}
                     {canChangeParentAccess && <Badge variant={isPremium ? "secondary" : "outline"} data-ckui="access-badge">
                       {accessLabel(t, c.access, labels)}
                     </Badge>}
@@ -590,7 +592,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                       <Button size="sm" variant="outline" onClick={() => open(c)}>
                         {t("comments.edit")}
                       </Button>
-                      {canDeleteParent && <Button size="sm" variant="destructive" disabled={del.pending} onClick={() => void remove(c)}>
+                      {canDeleteParent && <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={del.pending} onClick={() => void remove(c)}>
                         {t("comments.delete")}
                       </Button>}
                     </>
@@ -896,7 +898,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     >
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-base font-semibold">{t(item ? "contentManager.editTitle" : "contentManager.newTitle")}</h2>
-        {item && <Badge variant={badge[s]}>{t(`contentManager.${s}`)}</Badge>}
+        {item && <Badge variant={badge[s]} className={badgeClass[s]}>{t(`contentManager.${s}`)}</Badge>}
         {href && (
           <a className="text-xs text-muted-foreground hover:underline" href={href}>
             {t("contentManager.view")}

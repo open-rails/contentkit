@@ -51,6 +51,7 @@
   --color-accent-foreground: var(--ckui-accent-foreground);
   --color-destructive: var(--ckui-destructive);
   --color-warning: var(--ckui-warning);
+  --color-success: var(--ckui-success);
   --color-border: var(--ckui-border);
   --color-input: var(--ckui-input);
   --color-ring: var(--ckui-ring);
@@ -78,6 +79,7 @@
   --ckui-accent-foreground: oklch(0.21 0.006 285.885);
   --ckui-destructive: oklch(0.577 0.245 27.325);
   --ckui-warning: oklch(0.555 0.163 48.998);
+  --ckui-success: oklch(0.527 0.154 150.069);
   --ckui-border: oklch(0.92 0.004 286.32);
   --ckui-input: oklch(0.92 0.004 286.32);
   --ckui-ring: oklch(0.705 0.015 286.067);
@@ -110,6 +112,7 @@
   --ckui-accent-foreground: oklch(0.985 0 0);
   --ckui-destructive: oklch(0.704 0.191 22.216);
   --ckui-warning: oklch(0.828 0.189 84.429);
+  --ckui-success: oklch(0.723 0.219 149.579);
   --ckui-border: oklch(1 0 0 / 10%);
   --ckui-input: oklch(1 0 0 / 15%);
   --ckui-ring: oklch(0.552 0.016 285.938);
@@ -134,6 +137,7 @@
     --ckui-accent-foreground: oklch(0.985 0 0);
     --ckui-destructive: oklch(0.704 0.191 22.216);
     --ckui-warning: oklch(0.828 0.189 84.429);
+    --ckui-success: oklch(0.723 0.219 149.579);
     --ckui-border: oklch(1 0 0 / 10%);
     --ckui-input: oklch(1 0 0 / 15%);
     --ckui-ring: oklch(0.552 0.016 285.938);
@@ -159,6 +163,7 @@
   --ckui-accent-foreground: var(--accent-foreground, oklch(0.21 0.006 285.885));
   --ckui-destructive: var(--destructive, oklch(0.577 0.245 27.325));
   --ckui-warning: var(--warning, oklch(0.555 0.163 48.998));
+  --ckui-success: var(--success, oklch(0.527 0.154 150.069));
   --ckui-border: var(--border, oklch(0.92 0.004 286.32));
   --ckui-input: var(--input, oklch(0.92 0.004 286.32));
   --ckui-ring: var(--ring, oklch(0.705 0.015 286.067));
