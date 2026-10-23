@@ -16,11 +16,10 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// PublishDue promotes scheduled content items and versions whose time came:
-// it stamps published_at and fires the side effects of going live (facets,
-// search documents, media exposure, events). Visibility itself never waits
-// for it: a scheduled item is live from its time. It returns how many items
-// and versions it promoted.
+// PublishDue records due publication and audience-release facts and refreshes
+// their projections. Reads use publication and audience timestamps directly;
+// this recorder never determines when a viewer gains access. The return value
+// counts the publication stamps and separately caught-up audience releases.
 func (s *Store) PublishDue(ctx context.Context) (int, error) {
 	total := 0
 	deadline := time.Now().Add(purgeBudget)

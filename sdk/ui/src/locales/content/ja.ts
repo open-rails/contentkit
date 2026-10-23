@@ -30,6 +30,7 @@ export const content: typeof en = {
     lockedOption: "{name}（ロック中）",
   },
   contentEditor: {
+    releaseFrom: "{audience}：{date}から。",
     releases: "対象者ごとの公開",
     addRelease: "対象者別の公開を追加",
     removeRelease: "公開を削除",
