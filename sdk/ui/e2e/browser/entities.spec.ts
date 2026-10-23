@@ -211,7 +211,7 @@ for (const [mode, theme] of [
   });
 }
 
-test("a caller without group permission is told so", async ({ page }) => {
+test("a caller without entity permission is told so", async ({ page }) => {
   await page.goto(admin("/admin/entities", await h.user({ role: "moderator" }), { mode: "router" }));
-  await expect(page.locator("[data-ckui=entity-manager] [data-ckui=no-access]")).toContainText("You don't have permission to manage groups.", { timeout: 30_000 });
+  await expect(page.locator("[data-ckui=entity-manager] [data-ckui=no-access]")).toContainText("You don't have permission to manage entities.", { timeout: 30_000 });
 });
