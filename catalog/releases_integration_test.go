@@ -127,3 +127,22 @@ func TestAudienceReleaseRestoredAfterDue(t *testing.T) {
 		t.Fatal("restore replayed release")
 	}
 }
+
+func TestAudienceReleaseBackdatedEditOccursWhenGranted(t *testing.T) {
+	f := newFixture(t, nil)
+	in := gallery("Backdated grant", "en")
+	in.Access = &access.Rule{Level: access.PPV}
+	id := f.create("staff", in)
+	f.publish("staff", id, nil)
+	f.advance(2 * time.Hour)
+	grantedAt := f.now()
+	scheduledAt := grantedAt.Add(-time.Hour)
+	rule := &access.Rule{Level: access.PPV, Releases: []access.Release{{At: scheduledAt, Level: access.Public}}}
+	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: rule}}}); err != nil {
+		t.Fatal(err)
+	}
+	events := audienceEvents(t, f, id)
+	if len(events) != 1 || !events[0].OccurredAt.Equal(grantedAt) {
+		t.Fatalf("backdated grant=%+v want%s", events, grantedAt)
+	}
+}
