@@ -234,6 +234,7 @@ export const en = {
     failed: "The download couldn't start. Please try again.",
   },
   errors: {
+    event_cursor_expired: "This event history has expired or was reset.",
     ambiguous_entity: "More than one entry matches this name. Choose the intended entry.",
     unknown_entity: "This entry was not found. Select an existing entry or allow creation.",
     operation_conflict: "This submission already contains different content. Start a new submission.",

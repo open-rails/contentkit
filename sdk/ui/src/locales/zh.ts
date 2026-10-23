@@ -235,6 +235,7 @@ export const zh: ContentKitUiMessageBundle = {
     failed: "无法开始下载，请重试。",
   },
   errors: {
+    event_cursor_expired: "事件历史记录已过期或已重置。",
     ambiguous_entity: "有多个条目与此名称匹配。请选择所需的条目。",
     unknown_entity: "未找到此条目。请选择现有条目或允许创建新条目。",
     operation_conflict: "此提交已包含其他内容。请创建新的提交。",

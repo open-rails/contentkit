@@ -3,9 +3,12 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/groups"
@@ -197,6 +200,10 @@ func (s *Store) GroupsRenamed(ctx context.Context, q groups.Querier, groupIDs []
 // decorative paths (a path entity may have changed), queues their search
 // documents (group names are keywords) and records the change.
 func (s *Store) ContentChanged(ctx context.Context, q groups.Querier, contentIDs []string) error {
+	tx, ok := q.(pgx.Tx)
+	if !ok {
+		return errors.New("catalog: ContentChanged requires the mutation transaction")
+	}
 	ids := slices.Compact(slices.Sorted(slices.Values(contentIDs)))
 	if len(ids) == 0 {
 		return nil
@@ -229,5 +236,5 @@ func (s *Store) ContentChanged(ctx context.Context, q groups.Querier, contentIDs
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	return s.emit(ctx, q, events...)
+	return s.emit(ctx, tx, events...)
 }

@@ -15,18 +15,6 @@ func TestVersionDeletionOwnsParentLifecycle(t *testing.T) {
 	f := newFixture(t, nil)
 	id := f.create("staff", gallery("Edition lifecycle", "en", "ja"))
 	f.publish("staff", id, nil)
-	var lifecycle []string
-	f.s.Subscribe(func(_ context.Context, events []Event) error {
-		for _, event := range events {
-			if event.Type == EventContentDeleted || event.Type == EventContentRestored {
-				if event.ContentID != id || event.Kind != "gallery" {
-					t.Errorf("invalid parent lifecycle event: %+v", event)
-				}
-				lifecycle = append(lifecycle, event.Type)
-			}
-		}
-		return nil
-	})
 	versions := f.read("staff", "main.test", id)[0].Versions
 	if err := f.s.Delete(f.ctx, f.as("staff"), []string{id}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("nonempty parent deletion: %v", err)
@@ -50,8 +38,14 @@ func TestVersionDeletionOwnsParentLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertParentCause(t, f, id, StatePublished, false)
-	if _, err := f.s.DeliverEvents(f.ctx); err != nil {
-		t.Fatal(err)
+	var lifecycle []string
+	for _, event := range readEventLog(t, f) {
+		if event.Type == EventContentDeleted || event.Type == EventContentRestored {
+			if event.ContentID != id || event.Kind != "gallery" {
+				t.Errorf("invalid parent lifecycle event: %+v", event)
+			}
+			lifecycle = append(lifecycle, event.Type)
+		}
 	}
 	if !slices.Equal(lifecycle, []string{EventContentDeleted, EventContentRestored}) {
 		t.Fatalf("parent lifecycle events: %v", lifecycle)

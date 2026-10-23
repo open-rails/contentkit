@@ -77,6 +77,8 @@ type Config struct {
 	Notifications *notification.Config `json:"notifications,omitempty" yaml:"notifications,omitempty"`
 	// Jobs sizes the engine's River queue.
 	Jobs JobsConfig `yaml:"jobs" json:"jobs"`
+	// EventRetention keeps catalog facts independently of readers; zero is ninety days.
+	EventRetention time.Duration `yaml:"event_retention,omitempty" json:"event_retention,omitempty"`
 }
 
 // DatabaseConfig names the Postgres schemas New validates or migrates; the

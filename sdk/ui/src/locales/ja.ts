@@ -235,6 +235,7 @@ export const ja: ContentKitUiMessageBundle = {
     failed: "ダウンロードを開始できませんでした。もう一度お試しください。",
   },
   errors: {
+    event_cursor_expired: "イベント履歴の有効期限が切れたか、履歴がリセットされました。",
     ambiguous_entity: "この名前に一致する項目が複数あります。目的の項目を選択してください。",
     unknown_entity: "この項目が見つかりません。既存の項目を選択するか、新規作成を許可してください。",
     operation_conflict: "この送信には別のコンテンツが含まれています。新しく送信してください。",

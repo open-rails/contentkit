@@ -2,8 +2,8 @@ package catalog
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
+	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,149 +13,153 @@ import (
 	"github.com/riverqueue/river"
 )
 
-func TestCatalogEventsQueueWithMutationAndKeepRunningFollowUp(t *testing.T) {
-	f := newFixture(t, nil)
-	id := f.create("staff", gallery("Queued events", "en"))
-	schema := pgtest.EmptySchema(t, f.ctx, f.pool)
-	if err := riverhelpers.ApplyMigrations(f.ctx, f.pool, schema); err != nil {
-		t.Fatal(err)
-	}
-	_, err := riverhelpers.New(f.ctx, f.pool, &river.Config{Schema: schema}, f.s.RiverJobs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	jobs := pgx.Identifier{schema, "river_job"}.Sanitize()
-	count := func(want int) {
-		t.Helper()
-		var got int
-		if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+jobs+` WHERE kind='contentkit_catalog_deliver_events'`).Scan(&got); err != nil || got != want {
-			t.Fatalf("queued events=%d, want %d: %v", got, want, err)
-		}
-	}
-	emit := func(commit bool) {
-		t.Helper()
-		tx, err := f.pool.Begin(f.ctx)
+func readEventLog(t *testing.T, f *fixture) []EventRecord {
+	t.Helper()
+	var events []EventRecord
+	query := EventQuery{Limit: 500}
+	for {
+		page, err := f.s.ListEvents(f.ctx, query)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer tx.Rollback(f.ctx)
-		for range 2 {
-			if err := f.s.emit(f.ctx, tx, Event{Type: EventContentUpdated, Kind: "gallery", ContentID: id}); err != nil {
-				t.Fatal(err)
-			}
+		events = append(events, page.Events...)
+		if !page.HasMore {
+			return events
 		}
-		if commit {
-			if err := tx.Commit(f.ctx); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	emit(false)
-	count(0)
-	emit(true)
-	count(1) // A burst coalesces before the worker starts.
-	var running int64
-	if err := f.pool.QueryRow(f.ctx, `UPDATE `+jobs+` SET state='running',attempted_at=now() WHERE kind='contentkit_catalog_deliver_events' RETURNING id`).Scan(&running); err != nil {
-		t.Fatal(err)
-	}
-	emit(true)
-	emit(true)
-	count(2) // A writer racing the last batch preserves exactly one follow-up.
-	var after int64
-	if err := f.pool.QueryRow(f.ctx, `SELECT (args->>'after')::bigint FROM `+jobs+` WHERE state='available'`).Scan(&after); err != nil || after != running {
-		t.Fatalf("follow-up predecessor=%d, want %d: %v", after, running, err)
+		query.After = page.NextCursor
 	}
 }
 
-func TestCatalogEventRecoveryFindsUnboundProducer(t *testing.T) {
+func TestCatalogEventLogRollsBackWithoutDeliveryJobs(t *testing.T) {
 	f := newFixture(t, nil)
-	f.create("staff", gallery("Before the fleet starts", "en"))
-	var delivered int
-	f.s.Subscribe(func(_ context.Context, events []Event) error {
-		delivered += len(events)
-		return nil
-	})
-	if _, err := f.s.DeliverEvents(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if delivered == 0 {
-		t.Fatal("recovery lost events written before the producer was bound")
-	}
-}
-
-func TestCatalogEventsDeliverWithPeriodicJobsDisabled(t *testing.T) {
-	f := newFixture(t, nil)
-	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
-	defer cancel()
+	id := f.create("staff", gallery("Durable fact", "en"))
+	before := readEventLog(t, f)
 	schema := pgtest.EmptySchema(t, f.ctx, f.pool)
 	if err := riverhelpers.ApplyMigrations(f.ctx, f.pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	// The subscriber holds the first delivery after its batch was read. A
-	// concurrent real mutation must create a runnable follow-up, not wait for
-	// a periodic recovery that this fleet deliberately does not have.
-	entered, release := make(chan struct{}), make(chan struct{})
-	var held atomic.Bool
-	var releaseOnce sync.Once
-	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	defer unblock()
-	delivered := make(chan Event, 16)
-	f.s.Subscribe(func(ctx context.Context, events []Event) error {
-		if held.CompareAndSwap(false, true) {
-			close(entered)
-			select {
-			case <-release:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		for _, event := range events {
-			delivered <- event
-		}
-		return nil
-	})
-	client, err := riverhelpers.New(ctx, f.pool, &river.Config{Schema: schema, FetchCooldown: 50 * time.Millisecond, FetchPollInterval: 100 * time.Millisecond}, f.s.RiverJobs())
+	if _, err := riverhelpers.New(f.ctx, f.pool, &river.Config{Schema: schema}, f.s.RiverJobs()); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := f.pool.Begin(f.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.PeriodicJobs().Clear()
-	if err := client.Start(ctx); err != nil {
+	if err := f.s.emit(f.ctx, tx, Event{Type: EventContentUpdated, Kind: "gallery", ContentID: id}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = client.StopAndCancel(context.Background()) })
-	first := f.create("staff", gallery("First immediate delivery", "en"))
+	if err := tx.Rollback(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := readEventLog(t, f); !reflect.DeepEqual(got, before) {
+		t.Fatalf("rollback published a fact: %+v", got)
+	}
+	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Comments: ptr("closed")}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readEventLog(t, f); len(got) != len(before)+1 || got[len(got)-1].Type != EventContentUpdated {
+		t.Fatalf("committed mutation missing: %+v", got)
+	}
+	var jobs int
+	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+pgx.Identifier{schema, "river_job"}.Sanitize()).Scan(&jobs); err != nil || jobs != 0 {
+		t.Fatalf("event mutation enqueued %d jobs: %v", jobs, err)
+	}
+}
+
+func TestCatalogEventLogPreservesCommitOrderWithoutLockingOtherApps(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx, cancel := context.WithTimeout(f.ctx, 15*time.Second)
+	defer cancel()
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	if err := f.s.emit(ctx, tx, Event{Type: EventContentCreated, Kind: "gallery", ContentID: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	entered, completed := make(chan struct{}), make(chan error, 1)
+	go func() {
+		later, err := f.pool.Begin(ctx)
+		if err != nil {
+			completed <- err
+			return
+		}
+		defer later.Rollback(context.Background())
+		close(entered)
+		if err := f.s.emit(ctx, later, Event{Type: EventContentCreated, Kind: "gallery", ContentID: "second"}); err != nil {
+			completed <- err
+			return
+		}
+		completed <- later.Commit(ctx)
+	}()
+	<-entered
 	select {
-	case <-entered:
-	case <-ctx.Done():
-		t.Fatal("mutation did not wake the delivery worker:", ctx.Err())
+	case err := <-completed:
+		t.Fatalf("later writer escaped the commit-order lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
 	}
-	second := f.create("staff", gallery("Follow-up immediate delivery", "en"))
-	poll := time.NewTicker(20 * time.Millisecond)
-	defer poll.Stop()
-	for {
-		var waiting bool
-		if err := f.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+pgx.Identifier{schema, "river_job"}.Sanitize()+` WHERE kind='contentkit_catalog_deliver_events' AND args ? 'after' AND coalesce((metadata->>'snoozes')::int,0)>0)`).Scan(&waiting); err != nil {
-			t.Fatal(err)
-		}
-		if waiting {
-			break // The real follow-up worker ran WaitFor and snoozed behind the held callback.
-		}
-		select {
-		case <-poll.C:
-		case <-ctx.Done():
-			t.Fatal("follow-up worker did not wait for the running delivery:", ctx.Err())
+	page, err := f.s.ListEvents(ctx, EventQuery{})
+	if err != nil || len(page.Events) != 0 || page.NextCursor == "" {
+		t.Fatalf("uncommitted facts leaked: %+v %v", page, err)
+	}
+	other, err := New(ctx, Options{Pool: f.pool, Schema: f.schema, Tenant: "another-app", Kinds: config(), Auth: f.auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	independent, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.emit(ctx, independent, Event{Type: EventContentCreated, Kind: "gallery", ContentID: "independent"}); err != nil {
+		independent.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := independent.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-completed; err != nil {
+		t.Fatal(err)
+	}
+	page, err = f.s.ListEvents(ctx, EventQuery{After: page.NextCursor})
+	if err != nil || len(page.Events) != 2 || page.Events[0].ContentID != "first" || page.Events[1].ContentID != "second" {
+		t.Fatalf("committed order skipped a writer: %+v %v", page, err)
+	}
+}
+
+func TestCatalogEventReadersAreIndependentAndReplayable(t *testing.T) {
+	f := newFixture(t, nil)
+	id := f.create("staff", gallery("Independent readers", "en"))
+	f.publish("staff", id, nil)
+	first, err := f.s.ListEvents(f.ctx, EventQuery{Limit: 1})
+	if err != nil || len(first.Events) != 1 || !first.HasMore {
+		t.Fatalf("first page: %+v %v", first, err)
+	}
+	for range 2 {
+		replay, err := f.s.ListEvents(f.ctx, EventQuery{Limit: 1})
+		if err != nil || !reflect.DeepEqual(replay, first) {
+			t.Fatalf("one reader affected another or its replay: %+v %v", replay, err)
 		}
 	}
-	unblock()
-	want := map[string]bool{first: true, second: true}
-	for len(want) > 0 {
-		select {
-		case event := <-delivered:
-			if event.Type == EventContentCreated {
-				delete(want, event.ContentID)
-			}
-		case <-ctx.Done():
-			t.Fatalf("events did not arrive with recovery disabled: %v (%v)", want, ctx.Err())
-		}
+	next, err := f.s.ListEvents(f.ctx, EventQuery{After: first.NextCursor})
+	if err != nil || len(next.Events) != 2 || next.Events[0].Type != EventVersionCreated || next.Events[1].Type != EventContentPublished {
+		t.Fatalf("continuation: %+v %v", next, err)
+	}
+	end, err := f.s.ListEvents(f.ctx, EventQuery{After: next.NextCursor})
+	if err != nil || len(end.Events) != 0 || end.HasMore || end.NextCursor == "" {
+		t.Fatalf("empty continuation: %+v %v", end, err)
+	}
+	if err := f.s.ContentChanged(f.ctx, f.pool, []string{id}); err == nil {
+		t.Fatal("accepted nontransactional group callback")
+	}
+	if _, err := f.s.ListEvents(f.ctx, EventQuery{Types: []string{"not.an.event"}}); !errors.Is(err, ErrEventCursorInvalid) {
+		t.Fatalf("unknown type: %v", err)
+	}
+	if _, err := f.s.ListEvents(f.ctx, EventQuery{Limit: 501}); !errors.Is(err, ErrEventCursorInvalid) {
+		t.Fatalf("unbounded limit: %v", err)
 	}
 }

@@ -76,11 +76,6 @@ func TestPurgeVersionReferencesIntegration(t *testing.T) {
 // so its URL keeps answering 410, and the outbox names what went.
 func TestPurgeErasesInteractionsIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	var events []Event
-	f.s.Subscribe(func(_ context.Context, batch []Event) error {
-		events = append(events, batch...)
-		return nil
-	})
 	gone, kept := f.create("staff", gallery("Gone", "en", "ja")), f.create("staff", gallery("Kept", "en", "ja"))
 	f.publish("staff", gone, nil)
 	f.publish("staff", kept, nil)
@@ -202,11 +197,9 @@ func TestPurgeErasesInteractionsIntegration(t *testing.T) {
 		t.Fatalf("purging again: %d %v", n, err)
 	}
 
-	if _, err := f.s.DeliverEvents(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	purged := slices.ContainsFunc(events, func(e Event) bool { return e.Type == EventContentPurged && e.ContentID == gone })
-	version := slices.ContainsFunc(events, func(e Event) bool {
+	events := readEventLog(t, f)
+	purged := slices.ContainsFunc(events, func(e EventRecord) bool { return e.Type == EventContentPurged && e.ContentID == gone })
+	version := slices.ContainsFunc(events, func(e EventRecord) bool {
 		return e.Type == EventVersionPurged && e.ContentID == kept && e.VersionID == purgedVersion && e.Kind == "gallery"
 	})
 	if !purged || !version {

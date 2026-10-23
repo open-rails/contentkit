@@ -2,6 +2,8 @@ package openrails
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,56 +11,74 @@ import (
 	"testing"
 )
 
-func TestConsumerConfigurationAndWire(t *testing.T) {
-	var path, token string
+func TestEventLogConfigurationAndWire(t *testing.T) {
+	var path, token, after string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path = r.URL.Path
-		token = r.Header.Get("Authorization")
-		fmt.Fprint(w, `{"data":[{"id":"n","merchant_id":"m","customer_id":"c","event_type":"future.new_kind","data":{"amount":"9007199254740993.01"},"created_at":"2026-10-11T00:00:00Z","future":true}]}`)
+		path, token, after = r.URL.Path, r.Header.Get("Authorization"), r.URL.Query().Get("after")
+		e := event("n", "c")
+		e.EventType = "future.new_kind"
+		e.Data = json.RawMessage(`{"amount":"9007199254740993.01","customer_id":"c","account_id":"c","account_issuer":"","downgrade_applied":"future-kind-value"}`)
+		_ = json.NewEncoder(w).Encode(EventPage{Events: []Event{e}, NextCursor: "next", RetentionSeconds: 90 * 86400})
 	}))
 	defer server.Close()
-	s, err := New(Options{URL: server.URL + "/billing", MerchantID: "m", Consumer: "site-a", Token: func(context.Context) (string, error) { return "app", nil }})
+	s, err := New(Options{URL: server.URL + "/billing", MerchantID: "m", Token: func(context.Context) (string, error) { return "app", nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := s.pending(context.Background(), 100)
+	page, err := s.read(t.Context(), "cursor+with/slash", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != "/billing/v1/app/notification-consumers/site-a/events" || token != "Bearer app" || len(events) != 1 || events[0].EventType != "future.new_kind" || !strings.Contains(string(events[0].Data), "9007199254740993.01") {
-		t.Fatalf("wire %s %s %+v", path, token, events)
+	if path != "/billing/v1/app/events" || token != "Bearer app" || after != "cursor+with/slash" || len(page.Events) != 1 || !strings.Contains(string(page.Events[0].Data), "9007199254740993.01") {
+		t.Fatalf("wire %s %s %s %+v", path, token, after, page)
 	}
-	for _, name := range []string{"", ".", "..", "a/b", "../other", "space here", strings.Repeat("x", 65)} {
-		if _, err := New(Options{URL: server.URL, MerchantID: "m", Consumer: name}); err == nil {
-			t.Fatalf("accepted consumer %q", name)
+	for _, url := range []string{"", "ftp://example.test", "https://user:secret@example.test", "https://example.test?x=y", "https://example.test/#fragment"} {
+		if _, err := New(Options{URL: url, MerchantID: "m"}); err == nil {
+			t.Fatalf("accepted %q", url)
 		}
-	}
-	if _, err := New(Options{URL: server.URL, MerchantID: "m", Consumer: "site.v1"}); err != nil {
-		t.Fatalf("valid dotted consumer: %v", err)
 	}
 }
 
-func TestPendingRejectsInvalidAndCrossMerchantPages(t *testing.T) {
-	for name, body := range map[string]string{
-		"merchant":       `{"data":[{"id":"n","merchant_id":"other","customer_id":"c","event_type":"payment.failed","data":{},"created_at":"2026-10-11T00:00:00Z"}]}`,
-		"customer":       `{"data":[{"id":"n","merchant_id":"m","customer_id":"","event_type":"payment.failed","data":{},"created_at":"2026-10-11T00:00:00Z"}]}`,
-		"array payload":  `{"data":[{"id":"n","merchant_id":"m","customer_id":"c","event_type":"payment.failed","data":[],"created_at":"2026-10-11T00:00:00Z"}]}`,
-		"wrong envelope": `{"items":[]}`,
-		"trailing data":  `{"data":[]} {}`,
-	} {
+func TestReadRejectsInvalidAndCrossMerchantPages(t *testing.T) {
+	good := EventPage{Events: []Event{event("n", "c")}, NextCursor: "next", RetentionSeconds: 90 * 86400}
+	tests := map[string]func(*EventPage){
+		"merchant":          func(p *EventPage) { p.Events[0].MerchantID = "other" },
+		"customer":          func(p *EventPage) { p.Events[0].Subject.ID = "other" },
+		"array payload":     func(p *EventPage) { p.Events[0].Data = json.RawMessage("[]") },
+		"unknown schema":    func(p *EventPage) { p.Events[0].Version = 2 },
+		"missing cursor":    func(p *EventPage) { p.NextCursor = "" },
+		"missing retention": func(p *EventPage) { p.RetentionSeconds = 0 },
+		"missing events":    func(p *EventPage) { p.Events = nil },
+		"malformed renewal": func(p *EventPage) {
+			p.Events[0].EventType = "premium_renewed"
+			p.Events[0].Data = json.RawMessage(`{"customer_id":"c","account_id":"c","account_issuer":"","downgrade_applied":"invalid"}`)
+		},
+	}
+	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
+			page := good
+			page.Events = append([]Event(nil), good.Events...)
+			mutate(&page)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(page) }))
 			defer server.Close()
-			source, _ := New(Options{URL: server.URL, MerchantID: "m", Consumer: "site"})
-			if _, err := source.pending(context.Background(), 100); err == nil {
+			source, _ := New(Options{URL: server.URL, MerchantID: "m"})
+			if _, err := source.read(t.Context(), "", 100); err == nil {
 				t.Fatal("accepted unsafe page")
 			}
 		})
 	}
+	for _, body := range []string{`{"items":[]}`, `{"events":[],"next_cursor":"n","retention_seconds":1} {}`} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
+		source, _ := New(Options{URL: server.URL, MerchantID: "m"})
+		if _, err := source.read(t.Context(), "", 100); err == nil {
+			t.Fatal("accepted bad envelope")
+		}
+		server.Close()
+	}
 }
 
 func TestSourceRefusesRedirectsAndSanitizesErrors(t *testing.T) {
-	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusForbidden} {
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusForbidden, http.StatusGone} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,10 +88,13 @@ func TestSourceRefusesRedirectsAndSanitizesErrors(t *testing.T) {
 				fmt.Fprint(w, "secret provider diagnostic")
 			}))
 			defer server.Close()
-			source, _ := New(Options{URL: server.URL, MerchantID: "m", Consumer: "site"})
-			err := source.Register(context.Background())
+			source, _ := New(Options{URL: server.URL, MerchantID: "m"})
+			_, err := source.read(t.Context(), "", 100)
 			if err == nil || strings.Contains(err.Error(), "secret") || calls != 1 {
 				t.Fatalf("error %v calls %d", err, calls)
+			}
+			if status == 410 && !errors.Is(err, ErrCursorExpired) {
+				t.Fatalf("missing expiry code: %v", err)
 			}
 		})
 	}

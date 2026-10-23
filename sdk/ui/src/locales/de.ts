@@ -235,6 +235,7 @@ export const de: ContentKitUiMessageBundle = {
     failed: "Der Download konnte nicht starten. Bitte versuche es erneut.",
   },
   errors: {
+    event_cursor_expired: "Dieser Ereignisverlauf ist abgelaufen oder wurde zurückgesetzt.",
     ambiguous_entity: "Mehrere Einträge passen zu diesem Namen. Wähle den gewünschten Eintrag.",
     unknown_entity: "Dieser Eintrag wurde nicht gefunden. Wähle einen vorhandenen Eintrag oder erlaube die Erstellung.",
     operation_conflict: "Diese Einreichung enthält bereits andere Inhalte. Erstelle eine neue Einreichung.",

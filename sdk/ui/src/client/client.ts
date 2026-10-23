@@ -36,7 +36,7 @@ export interface ContentKitClient {
   readonly media: MediaClient;
   /** Content items: reads, and writes for their creators, owner-group editors and staff. */
   readonly contents: ContentsClient;
-  /** The catalog's totals by kind, language and audience. */
+  /** Catalog totals and the staff-readable committed event log. */
   readonly catalog: CatalogClient;
   /** Threads, replies, edits, tombstones, reactions, standing, the latest feed, moderation. */
   readonly comments: CommentsClient;

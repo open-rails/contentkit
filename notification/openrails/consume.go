@@ -9,87 +9,81 @@ import (
 	"github.com/open-rails/helpers/notify"
 )
 
-// RecipientMapper resolves the event's verified merchant/customer coordinates
-// through host-owned account records. deliver=false deliberately skips the
-// event and allows its ACK. An error keeps it pending for retry. Email equality
-// alone must never establish the association. Future event kinds pass through.
+// RecipientMapper resolves verified source coordinates to a local account.
+// False deliberately skips a fact; errors leave the whole page for retry.
+// Email equality alone must never establish the association.
 type RecipientMapper func(context.Context, Event) (recipientID string, deliver bool, err error)
 
-// ConsumeOptions bounds one worker call. Optional events default to skip+ACK;
-// opt in to map them, applying any per-user preferences inside RecipientMapper.
+// Inbox owns both publication and progress. Implementations must commit the
+// effects and cursor atomically; the producer stores no consumer state.
+type Inbox interface {
+	EventCursor(context.Context, notify.OriginScope) (string, error)
+	ImportEvents(context.Context, notify.OriginScope, string, string, []notify.Input) (notification.EventImportResult, error)
+}
+
 type ConsumeOptions struct {
 	Limit           int
 	IncludeOptional bool
-	// Filter is evaluated before recipient mapping; false intentionally skips+ACKs.
-	Filter func(Event) bool
+	Filter          func(Event) bool
 }
 
-// ConsumeResult counts this attempt, including idempotent destination replays.
-// Failed events remain pending. Acknowledged counts only a successful source ACK.
-type ConsumeResult struct{ Fetched, Delivered, Skipped, Acknowledged int }
+type ConsumeResult struct {
+	Fetched, Delivered, Skipped int
+	HasMore                     bool
+}
 
-// Consume publishes one bounded pending page, then ACKs only committed or
-// explicitly skipped events. Each consumer has independent ACKs. A failed ACK
-// safely replays destination publication; local read/dismiss state survives.
-// One failed mapping/publication does not prevent other events in the page.
-// The host owns scheduling and retries; there is no cursor or time watermark.
-func (s *Source) Consume(ctx context.Context, destination notify.Publisher, mapper RecipientMapper, opts ConsumeOptions) (ConsumeResult, error) {
+// Consume reads one page and atomically commits its notices and continuation.
+// A failed mapping or write commits neither. Other source facts are skipped
+// but advance the cursor, so a busy host-event log cannot stall the inbox.
+func (s *Source) Consume(ctx context.Context, destination Inbox, mapper RecipientMapper, opts ConsumeOptions) (ConsumeResult, error) {
 	var result ConsumeResult
 	if destination == nil || mapper == nil || opts.Limit < 0 || opts.Limit > 100 {
-		return result, fmt.Errorf("openrails notifications: publisher, mapper and valid limit are required")
+		return result, fmt.Errorf("openrails notifications: inbox, mapper and valid limit are required")
 	}
 	if opts.Limit == 0 {
 		opts.Limit = 100
 	}
-	events, err := s.pending(ctx, opts.Limit)
+	after, err := destination.EventCursor(ctx, s.Origin())
 	if err != nil {
 		return result, err
 	}
-	result.Fetched = len(events)
-	ids := make([]string, 0, len(events))
-	var failures []error
-	for _, event := range events {
+	page, err := s.read(ctx, after, opts.Limit)
+	if err != nil {
+		return result, err
+	}
+	result.Fetched, result.HasMore = len(page.Events), page.HasMore
+	inputs := make([]notify.Input, 0, len(page.Events))
+	skipped := 0
+	for _, event := range page.Events {
 		if err := ctx.Err(); err != nil {
-			failures = append(failures, err)
-			break
+			return result, err
 		}
-		if (event.Optional && !opts.IncludeOptional) || (opts.Filter != nil && !opts.Filter(event)) {
-			ids = append(ids, event.ID)
-			result.Skipped++
+		if event.Source != "notification" || event.Optional && !opts.IncludeOptional || opts.Filter != nil && !opts.Filter(event) {
+			skipped++
 			continue
 		}
 		recipient, deliver, err := mapper(ctx, event)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("map notification %s: %w", event.ID, err))
-			continue
+			return result, fmt.Errorf("map notification %s: %w", event.ID, err)
 		}
 		if !deliver {
-			ids = append(ids, event.ID)
-			result.Skipped++
+			skipped++
 			continue
 		}
 		target := notify.Recipient{Audience: notify.AudienceUser, ID: recipient}
 		if err := notify.ValidateRecipient(target); err != nil {
-			failures = append(failures, fmt.Errorf("map notification %s: %w", event.ID, err))
-			continue
+			return result, fmt.Errorf("map notification %s: %w", event.ID, err)
 		}
-		_, err = destination.Publish(ctx, notify.Input{Recipient: target, Origin: notify.Origin{System: s.name, Scope: event.MerchantID, ID: event.ID, Subject: event.CustomerID}, Kind: event.EventType, Data: event.Data, CreatedAt: event.CreatedAt, Visibility: notify.VisibilityTenant, ActionRequested: event.ActionRequested})
-		if errors.Is(err, notify.ErrRecipientErased) || errors.Is(err, notification.ErrRecipientNotFound) {
-			ids = append(ids, event.ID)
-			result.Skipped++
-			continue
-		}
-		if err != nil {
-			failures = append(failures, fmt.Errorf("publish notification %s: %w", event.ID, err))
-			continue
-		}
-		ids = append(ids, event.ID)
-		result.Delivered++
+		inputs = append(inputs, notify.Input{Recipient: target, Origin: notify.Origin{System: s.name, Scope: event.MerchantID, ID: event.ID, Subject: event.CustomerID}, Kind: event.EventType, Data: event.Data, CreatedAt: event.CreatedAt, Visibility: notify.VisibilityTenant, ActionRequested: event.ActionRequested})
 	}
-	if err := s.acknowledge(ctx, ids); err != nil {
-		failures = append(failures, err)
-	} else {
-		result.Acknowledged = len(ids)
+	committed, err := destination.ImportEvents(ctx, s.Origin(), after, page.NextCursor, inputs)
+	if errors.Is(err, notification.ErrEventCursorChanged) {
+		// Another replica did this work; its next scheduled read continues there.
+		return result, nil
 	}
-	return result, errors.Join(failures...)
+	if err != nil {
+		return result, err
+	}
+	result.Delivered, result.Skipped = committed.Published, skipped+committed.Skipped
+	return result, nil
 }

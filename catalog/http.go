@@ -31,6 +31,12 @@ const editorsDoc = " Creators, the owner group's editors (its owner, holders of 
 var languageParam = httpapi.Text("language", "the language to show text in; the site's first language, then any, when it has none")
 
 var routes = []httpapi.Route[*Store]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/events", Resource: "events", Auth: httpapi.Staff, Perm: access.ContentViewRestricted.String(),
+		Doc:       "Read this app's immutable catalog events in committed order. Readers save their own cursor; reading acknowledges or deletes nothing. Omitting after starts at the oldest retained event. Event-type filters are bound to the continuation; expired or reset cursors require a current-state resync.",
+		Query:     []httpapi.Param{httpapi.Text("after", "opaque continuation from the previous page"), httpapi.Int("limit", "page size: 100 by default, at most 500"), httpapi.List("types", "event types to include; keep the same selection with a cursor")},
+		Responses: []httpapi.Reply{httpapi.OK(EventPage{})}, Errors: []string{httpapi.CodeEventCursorExpired}},
+		Serve: httpapi.H((*Store).handleEvents)},
+
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/catalog/totals", Resource: "catalog", Auth: httpapi.Open,
 		Doc: "Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes.",
 		Query: []httpapi.Param{httpapi.List("kinds", "content kinds to total; every kind by default"),
@@ -236,6 +242,10 @@ func classify(err error) (int, string, string) {
 		return http.StatusServiceUnavailable, httpapi.CodeUnavailable, "authentication is unavailable; retry"
 	case errors.Is(err, errUnauthenticated):
 		return http.StatusUnauthorized, httpapi.CodeUnauthorized, "authentication required"
+	case errors.Is(err, ErrEventCursorExpired):
+		return http.StatusGone, httpapi.CodeEventCursorExpired, httpapi.Message(httpapi.CodeEventCursorExpired)
+	case errors.Is(err, ErrEventCursorInvalid):
+		return http.StatusBadRequest, httpapi.CodeInvalidRequest, "invalid event query or cursor"
 	case errors.Is(err, ErrInvalid), errors.Is(err, versions.ErrInvalid):
 		return http.StatusBadRequest, httpapi.CodeInvalidRequest, httpapi.Rule(err, httpapi.CodeInvalidRequest)
 	case errors.Is(err, ErrNotFound), errors.Is(err, content.ErrNotFound):
@@ -322,6 +332,35 @@ func (s *Store) respond(w http.ResponseWriter, r *http.Request, status int, id s
 		}
 	}
 	writeJSON(w, status, got[0])
+}
+
+func (s *Store) handleEvents(w http.ResponseWriter, r *http.Request) {
+	values := r.URL.Query()
+	if len(values["after"]) > 1 || len(values["limit"]) > 1 {
+		writeErr(w, ErrEventCursorInvalid)
+		return
+	}
+	query := EventQuery{After: values.Get("after")}
+	if raw := values.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 {
+			writeErr(w, ErrEventCursorInvalid)
+			return
+		}
+		query.Limit = limit
+	}
+	for _, part := range strings.Split(strings.Join(values["types"], ","), ",") {
+		if kind := strings.TrimSpace(part); kind != "" {
+			query.Types = append(query.Types, kind)
+		}
+	}
+	page, err := s.ListEvents(r.Context(), query)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (s *Store) handleTotals(w http.ResponseWriter, r *http.Request) {
