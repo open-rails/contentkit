@@ -86,10 +86,6 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/open-rails/authkit v1.34.1 h1:MrFsVCCmym1AgstjwRynRoNBo2aHXxU/8V/b/mOHa5o=
 github.com/open-rails/authkit v1.34.1/go.mod h1:QvGob87KF5BbxwSa4EO/3IbagozO/VG+Nsng4UrTp7U=
-github.com/open-rails/helpers v1.14.1 h1:to4yV4TXDBv9+tyMA6azYA3J4VPxlOd17JLwa5yZqeM=
-github.com/open-rails/helpers v1.14.1/go.mod h1:/q4zZNSZJ9pKH2BAROYACeaGecD7nWNL7jIRMPZbDa8=
-github.com/open-rails/helpers v1.14.2-0.20261023054655-a4ccc948ce17 h1:lOIgEanAgc9iPP3i1MP306UVjyaKVN0NxOIINm8B/OY=
-github.com/open-rails/helpers v1.14.2-0.20261023054655-a4ccc948ce17/go.mod h1:/q4zZNSZJ9pKH2BAROYACeaGecD7nWNL7jIRMPZbDa8=
 github.com/open-rails/helpers v1.14.2-0.20261023055349-0636028b685e h1:VCWBqmaAHx5wuHVafm6DH1p4L/RiEG9WjyvHbQHbxWQ=
 github.com/open-rails/helpers v1.14.2-0.20261023055349-0636028b685e/go.mod h1:/q4zZNSZJ9pKH2BAROYACeaGecD7nWNL7jIRMPZbDa8=
 github.com/open-rails/migratekit v1.11.2 h1:QTtn8i/Yj62SiGv6b7FnQ/mKudSDfLjnlmPSQN0NA7k=
