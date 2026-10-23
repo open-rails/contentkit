@@ -23,6 +23,9 @@ func TestAudiencesMatchDecide(t *testing.T) {
 	table := func(n string) string { return pgx.Identifier{schema, n}.Sanitize() }
 	past, future := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
 	rules := []access.Rule{
+		{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.TierLevel, Tiers: []string{"premium"}}}},
+		{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: past, Level: access.TierLevel, Tiers: []string{"premium"}}}},
+		{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: future, Level: access.TierLevel, Tiers: []string{"premium"}}}},
 		{Level: access.Public},
 		{Level: access.TierLevel, Tiers: []string{"premium"}},
 		{Level: access.TierLevel, Tiers: []string{"gold", "premium"}},
@@ -87,7 +90,26 @@ func TestAudiencesMatchDecide(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		filter, err := g.Filter(ctx, viewer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		predicate, parameters, err := filter.SQL("f", access.Hide)
+		if err != nil {
+			t.Fatal(err)
+		}
+		matched, err := pool.Query(ctx, `SELECT version_id FROM `+table("content_facets")+` f WHERE `+predicate, pgx.NamedArgs(parameters))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids, err := pgx.CollectRows(matched, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
 		for i, d := range ds {
+			if slices.Contains(ids, items[i].Version) != d.Allowed {
+				t.Errorf("SQL/Decide mismatch audience=%s rule=%+v", audience, items[i].Rule)
+			}
 			if d.Allowed {
 				want[items[i].Version] = append(want[items[i].Version], audience)
 			}

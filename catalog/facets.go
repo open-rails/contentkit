@@ -105,13 +105,13 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 		s.tenant, ids, string(data), s.playerKinds()); err != nil {
 		return err
 	}
+	if err := s.recordAccessHistory(ctx, q, ids); err != nil {
+		return err
+	}
 	if tx, ok := q.(pgx.Tx); ok {
 		if _, err := s.recordReleases(ctx, tx, ids); err != nil {
 			return err
 		}
-	}
-	if err := s.recordAccessHistory(ctx, q, ids); err != nil {
-		return err
 	}
 	return s.markDocuments(ctx, q, ids)
 }

@@ -100,3 +100,30 @@ func TestAudienceReleaseConcurrentRecorderAndRetention(t *testing.T) {
 		t.Fatalf("replayed retired transition: %d %v", n, err)
 	}
 }
+
+func TestAudienceReleaseRestoredAfterDue(t *testing.T) {
+	f := newFixture(t, nil)
+	at := f.now().Add(time.Hour)
+	in := gallery("Restore release", "en")
+	in.Access = &access.Rule{Level: access.PPV, Releases: []access.Release{{At: at, Level: access.Public}}}
+	id := f.create("staff", in)
+	f.publish("staff", id, nil)
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	f.advance(2 * time.Hour)
+	restoredAt := f.now()
+	if err := f.s.Restore(f.ctx, f.as("staff"), []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	events := audienceEvents(t, f, id)
+	if len(events) != 1 || !events[0].OccurredAt.Equal(restoredAt) {
+		t.Fatalf("restored audience release=%+v want%s", events, restoredAt)
+	}
+	if _, err := f.s.PublishDue(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(audienceEvents(t, f, id)) != 1 {
+		t.Fatal("restore replayed release")
+	}
+}
