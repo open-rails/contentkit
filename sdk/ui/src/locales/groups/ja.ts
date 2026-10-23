@@ -134,6 +134,7 @@ export const groups: typeof en = {
     noKinds: "このサイトにはグループの種類がありません。",
     back: "一覧に戻る",
     new: "新規: {kind}",
+    newShort: "新規",
     sort: "並び順",
     sort_name: "名前順",
     sort_count: "コンテンツが多い順",

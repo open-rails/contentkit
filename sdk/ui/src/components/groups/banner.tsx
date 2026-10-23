@@ -102,11 +102,13 @@ export function GroupBanner(p: GroupBannerProps) {
   if (!g) return read.error ? <ErrorLine>{contentError(m, read.error)}</ErrorLine> : <Skeleton className="h-48 w-full" />;
   const text = g.text.find((x) => x.language === (p.language ?? g.name_language)) ?? g.text.find((x) => x.description);
   const count = g.counts.filter((c) => c.language === (p.language ?? "")).reduce((n, c) => n + c.count, 0);
+  const cover = !!g.cover?.renditions?.length;
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="group-banner" data-kind={g.kind}>
-      <GroupCover group={g} className="aspect-[3/1] w-full" />
-      <div className="flex flex-wrap items-end gap-4 px-2 sm:px-4">
-        <GroupAvatar group={g} className="-mt-12 size-20 border-4 border-background sm:-mt-16 sm:size-28" />
+      {/* Without a cover image, a compact header rather than an empty 3:1 tile. */}
+      {cover && <GroupCover group={g} className="aspect-[3/1] w-full" />}
+      <div className={cn("flex flex-wrap gap-4 px-2 sm:px-4", cover ? "items-end" : "items-center")}>
+        <GroupAvatar group={g} className={cover ? "-mt-12 size-20 border-4 border-background sm:-mt-16 sm:size-28" : "size-16 sm:size-20"} />
         <div className="grid min-w-0 flex-1 gap-1">
           {g.scope && (
             <GroupLink group={g.scope} href={p.href} className="text-xs text-muted-foreground hover:underline">

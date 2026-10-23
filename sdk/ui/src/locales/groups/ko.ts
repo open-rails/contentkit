@@ -134,6 +134,7 @@ export const groups: typeof en = {
     noKinds: "이 사이트에는 그룹 종류가 없습니다.",
     back: "목록으로 돌아가기",
     new: "새로 만들기: {kind}",
+    newShort: "새로 만들기",
     sort: "정렬",
     sort_name: "이름순",
     sort_count: "콘텐츠 많은 순",

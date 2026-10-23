@@ -134,6 +134,7 @@ export const groups: typeof en = {
     noKinds: "Diese Website hat keine Gruppenarten.",
     back: "Zurück zur Liste",
     new: "Neu: {kind}",
+    newShort: "Neu",
     sort: "Reihenfolge",
     sort_name: "Nach Name",
     sort_count: "Meiste Inhalte",

@@ -140,6 +140,7 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
   const lead = Math.max(1, ...options.map((o) => o.vote_count));
   return (
     <>
+      {canVote && <p className="text-xs text-muted-foreground">{t("poll.choose")}</p>}
       <ul className={cn("grid gap-3", images && "grid-cols-2")} aria-labelledby={`poll-${poll.id}`}>
         {options.map((o) => {
           const mine = poll.my_option === o.id;
@@ -168,7 +169,7 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
           return (
             <li key={o.id} data-option={o.id} data-mine={mine || undefined} {...meter}>
               {choose ? (
-                <button type="button" className="grid w-full gap-1.5 rounded-md p-1.5 text-start hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring" onClick={choose}>
+                <button type="button" className="grid w-full gap-1.5 rounded-md border border-border p-2 text-start hover:border-primary/60 hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring" onClick={choose}>
                   {body}
                 </button>
               ) : (
@@ -178,6 +179,7 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
           );
         })}
       </ul>
+      {poll.voted && !poll.closed && <p className="text-xs text-muted-foreground">{t("poll.final")}</p>}
       <p className="flex justify-between gap-2 border-t border-border pt-2 text-xs tabular-nums text-muted-foreground">
         <time dateTime={poll.live_at}>{formatDate(m, poll.live_at, false)}</time>
         {results && <span>{m.plural("poll.votes", total)}</span>}

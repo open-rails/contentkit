@@ -163,6 +163,8 @@ export const social: typeof en = {
     votes_one: "{count} 票",
     votes_other: "{count} 票",
     yourVote: "你的投票",
+    choose: "选择一个选项进行投票。",
+    final: "投票后无法更改。",
     closes: "{date} 截止",
     closed: "此投票已结束。",
     signIn: "登录后投票",

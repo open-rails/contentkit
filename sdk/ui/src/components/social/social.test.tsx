@@ -504,6 +504,7 @@ it("Poll: a ballot until the vote, then results scaled to the leader with the ca
   render(<Poll language="en" />, { wrapper: wrap(s.client, { viewer: "alice" }) });
   expect(await screen.findByRole("heading", { name: "Tea or coffee?" })).toBeInTheDocument();
   expect(screen.queryByText("75%")).toBeNull();
+  expect(screen.getByText("Choose an option to vote.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Coffee/ }));
   // At once: the vote counts before the server answers.
   const coffee = await screen.findByRole("meter", { name: "Coffee" });
@@ -511,6 +512,8 @@ it("Poll: a ballot until the vote, then results scaled to the leader with the ca
   expect(within(coffee).getByLabelText("Your vote")).toBeInTheDocument();
   expect(screen.getByText("5 votes")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Tea/ })).toBeNull();
+  expect(screen.queryByText("Choose an option to vote.")).toBeNull();
+  expect(screen.getByText("Your vote is final.")).toBeInTheDocument();
 });
 
 it("Poll signed out: votes where the server takes anonymous votes, asks to sign in elsewhere", async () => {

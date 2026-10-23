@@ -163,6 +163,8 @@ export const social: typeof en = {
     votes_one: "{count} 票",
     votes_other: "{count} 票",
     yourVote: "あなたの投票",
+    choose: "選択肢を選んで投票してください。",
+    final: "投票は変更できません。",
     closes: "{date} に締め切り",
     closed: "この投票は締め切られました。",
     signIn: "ログインして投票",

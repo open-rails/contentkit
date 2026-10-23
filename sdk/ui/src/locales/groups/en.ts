@@ -133,6 +133,7 @@ export const groups = {
     noKinds: "This site has no group kinds.",
     back: "Back to the list",
     new: "New: {kind}",
+    newShort: "New",
     sort: "Order",
     sort_name: "By name",
     sort_count: "Most content",
