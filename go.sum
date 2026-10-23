@@ -84,10 +84,6 @@ github.com/maypok86/otter/v2 v2.3.1-0.20261012174237-6b4979235160/go.mod h1:NknZ
 github.com/montanaflynn/stats v0.0.0-20171201202039-1bf9dbcd8cbe/go.mod h1:wL8QJuTMNUDYhXwkmfOly8iTdp5TEcJFWZD2D7SIkUc=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
-github.com/open-rails/authkit v1.33.0 h1:PNWtWyMToID0X9mYEl2X3I4UX0GlBeIEBNPjbBiKv78=
-github.com/open-rails/authkit v1.33.0/go.mod h1:QvGob87KF5BbxwSa4EO/3IbagozO/VG+Nsng4UrTp7U=
-github.com/open-rails/authkit v1.34.0 h1:HG9h2ErXsqVoh4gjAECvyGAlnU91+5acL5um2BBV5Ac=
-github.com/open-rails/authkit v1.34.0/go.mod h1:QvGob87KF5BbxwSa4EO/3IbagozO/VG+Nsng4UrTp7U=
 github.com/open-rails/authkit v1.34.1 h1:MrFsVCCmym1AgstjwRynRoNBo2aHXxU/8V/b/mOHa5o=
 github.com/open-rails/authkit v1.34.1/go.mod h1:QvGob87KF5BbxwSa4EO/3IbagozO/VG+Nsng4UrTp7U=
 github.com/open-rails/helpers v1.14.1 h1:to4yV4TXDBv9+tyMA6azYA3J4VPxlOd17JLwa5yZqeM=

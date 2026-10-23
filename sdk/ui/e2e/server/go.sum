@@ -163,8 +163,6 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/nyaruka/phonenumbers v1.8.1 h1:2K9YMQuv1dCGqjjzB1DwmdCe89khT4KPBQb2CxAMMlU=
 github.com/nyaruka/phonenumbers v1.8.1/go.mod h1:fsKPJ70O9JetEA4ggnJadYTFWwtGPvu/lETTXNXq6Cs=
-github.com/open-rails/authkit v1.33.0 h1:PNWtWyMToID0X9mYEl2X3I4UX0GlBeIEBNPjbBiKv78=
-github.com/open-rails/authkit v1.33.0/go.mod h1:QvGob87KF5BbxwSa4EO/3IbagozO/VG+Nsng4UrTp7U=
 github.com/open-rails/authkit v1.34.1 h1:MrFsVCCmym1AgstjwRynRoNBo2aHXxU/8V/b/mOHa5o=
 github.com/open-rails/authkit v1.34.1/go.mod h1:QvGob87KF5BbxwSa4EO/3IbagozO/VG+Nsng4UrTp7U=
 github.com/open-rails/helpers v1.14.1 h1:to4yV4TXDBv9+tyMA6azYA3J4VPxlOd17JLwa5yZqeM=
