@@ -158,20 +158,22 @@ for (const [mode, theme] of [
     await expect(flow.locator("[data-ckui=entity-head]").getByRole("heading", { name: `Studio ${r}` })).toBeVisible();
     expect((await ck.entities.get(id)).attributes).toEqual({ artist_type: "company" });
 
+    // Details, a staged alias and a description go out with the one Save.
     await flow.getByLabel("Works").fill("12");
-    await flow.locator("[data-ckui=entity-details]").getByRole("button", { name: "Save" }).click();
-    await expect(flow.locator("[data-ckui=entity-details]").getByText("Saved.")).toBeVisible();
-    expect((await ck.entities.get(id)).attributes).toEqual({ artist_type: "company", works: 12 });
-
     const names = flow.locator("[data-ckui=entity-names-editor]");
     await names.getByRole("textbox", { name: "A name or alias" }).fill(`S. ${r}`);
     await names.getByRole("button", { name: "Add" }).click();
     await expect(names.locator("[data-ckui=entity-name][data-kind=alias]")).toContainText(`S. ${r}`);
-
     const texts = flow.locator("[data-ckui=entity-text]");
     await texts.getByLabel("Description (English)").fill(`Makes things ${r}.`);
-    await texts.getByRole("button", { name: "Save" }).click();
-    await expect(texts.getByText("Saved.")).toBeVisible();
+    const save = flow.locator("[data-ckui=entity-save]");
+    await expect(save.getByRole("status")).toHaveText("Unsaved changes");
+    await save.getByRole("button", { name: "Save" }).click();
+    await expect(save.getByText("Saved.")).toBeVisible();
+    const stored = await ck.entities.get(id);
+    expect(stored.attributes).toEqual({ artist_type: "company", works: 12 });
+    expect(stored.names).toEqual(expect.arrayContaining([expect.objectContaining({ language: "en", kind: "alias", name: `S. ${r}` })]));
+    expect(stored.text).toEqual(expect.arrayContaining([expect.objectContaining({ language: "en", description: `Makes things ${r}.` })]));
 
     // A member, then its cover as the group's.
     const content = await seedContent(ck, { kind: "comic", titles: { en: `Member ${r}` }, versions: [{ languages: ["en"] }] });
