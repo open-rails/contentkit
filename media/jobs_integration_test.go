@@ -120,8 +120,8 @@ func TestTakedown(t *testing.T) {
 	if f.exists(page0) || f.exists(view0) || m.Find("download/pages.zip") >= 0 {
 		t.Fatalf("takedown: page 0 kept %v, its editor view %v; %v", f.exists(page0), f.exists(view0), paths(m))
 	}
-	if !f.exists(page1) || !f.exists(view2) || !f.exists(unrecorded) || !f.exists(earlier) {
-		t.Fatalf("takedown took more than it dropped: shared blob kept %v, another upload's editor view %v, an unrecorded output %v, an earlier version %v",
+	if !f.exists(page1) || !f.exists(view2) || !f.exists(unrecorded) || f.exists(earlier) {
+		t.Fatalf("wrong retention: shared blob kept %v, another upload's editor view %v, an active allocation %v, retired earlier source %v",
 			f.exists(page1), f.exists(view2), f.exists(unrecorded), f.exists(earlier))
 	}
 	if jobs := f.q.take(); len(jobs) != 1 {
@@ -187,8 +187,6 @@ func TestTakedownFrames(t *testing.T) {
 	f.commit(v, media.Op{Op: media.OpFrame, Path: "poster", T: ptr(3.5)})
 	frameBlob := f.blob(v, []byte("frame"), "image/png")
 	frame, _ := item.Blob(frameBlob)
-	public, _ := item.Public("poster-640.webp")
-	f.object(public, "poster")
 	if _, err := f.ms.EditExisting(ctx, v, func(m *media.Manifest) error {
 		i := m.Find("poster.png")
 		source, _ := m.Get("source.mp4")
@@ -197,6 +195,8 @@ func TestTakedownFrames(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	f.produce(v)
+	public, _ := item.Public(f.publicName(v, "poster-640.webp"))
 	m := f.commit(v, media.Op{Op: media.OpRemove, Path: "source.mp4", Takedown: true})
 	if len(m.Files) != 0 || f.exists(frame) || f.exists(public) {
 		t.Fatalf("a grabbed frame survived its video: %v, blob %v, public %v", paths(m), f.exists(frame), f.exists(public))
@@ -745,8 +745,8 @@ func TestVersionFolderJobs(t *testing.T) {
 	var strays, kept []string
 	for i, ref := range refs {
 		item, _ := f.reg.Item(ref)
-		stray, _ := item.Blob(blobOf([]byte(fmt.Sprintf("stray %d", i))))
-		f.object(stray, "stray")
+		allocation := f.blob(ref, []byte(fmt.Sprintf("abandoned %d", i)), "image/png")
+		stray, _ := item.Blob(allocation)
 		strays = append(strays, stray)
 		m, _, _ := f.ms.Get(ctx, ref)
 		for _, b := range m.Blobs() {

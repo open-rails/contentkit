@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
