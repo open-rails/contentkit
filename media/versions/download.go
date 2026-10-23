@@ -555,7 +555,8 @@ func (s *Service) ask(ctx context.Context, actor access.Actor, v version, title 
 	var content access.Rule
 	var override *access.Rule
 	var released *time.Time
-	if err := s.o.Pool.QueryRow(ctx, `SELECT c.access, v.access, GREATEST(c.published_at, v.published_at)
+	if err := s.o.Pool.QueryRow(ctx, `SELECT c.access, v.access,
+GREATEST(coalesce(c.published_at,c.publish_at), coalesce(v.published_at,v.publish_at))
 FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
 WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3`, s.o.Tenant, v.Content, v.Version).Scan(&content, &override, &released); err != nil {
 		return grant{}, err
