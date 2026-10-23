@@ -10,7 +10,7 @@ import { ContentKitUiRoot } from "../scope.js";
 import type { PublicPreset } from "../client/public.js";
 import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
 import { presetFor } from "../client/media/rules.js";
-import { useKinds } from "../react/groups.js";
+import { useKinds } from "../react/entities.js";
 import { usePresets } from "../react/public.js";
 import { useContentScope } from "../react/use-resource.js";
 import { Button } from "#ckui/ui/button";

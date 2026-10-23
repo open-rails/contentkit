@@ -3,18 +3,18 @@ import type { ContentKitClient } from "../../client/client.js";
 import type { ContentModel } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, type AdminLocation, type AdminNavigation } from "../../react/admin.js";
-import { useKinds } from "../../react/groups.js";
+import { useKinds } from "../../react/entities.js";
 import { useReadScope } from "../../react/context.js";
 import { Button } from "#ckui/ui/button";
-import { labelOf, type Labels } from "../groups/parts.js";
+import { labelOf, type Labels } from "../entities/parts.js";
 import { CommentModeration, type CommentModerationProps } from "../social/moderation.js";
 import { ContentManager, type ContentManagerProps } from "./content-manager.js";
-import { GroupManager, type GroupManagerProps } from "./group-manager.js";
+import { EntityManager, type EntityManagerProps } from "./entity-manager.js";
 import { PollManager, type PollManagerProps } from "./poll-manager.js";
 import { AdminRoot, LoadFailed, Rows, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 import { StatsDashboard } from "./stats-dashboard.js";
 
-export type ContentAdminSection = "contents" | "groups" | "moderation" | "polls" | "statistics";
+export type ContentAdminSection = "contents" | "entities" | "moderation" | "polls" | "statistics";
 
 /** An optional reference workbench; each section remains usable as its own component. */
 export interface ContentAdminProps extends AdminFlowProps, AdminRouteProps {
@@ -22,16 +22,16 @@ export interface ContentAdminProps extends AdminFlowProps, AdminRouteProps {
   sections?: readonly ContentAdminSection[];
   /** Content kinds in picker order; default all configured kinds. Unknown kinds are omitted. */
   contentKinds?: readonly string[];
-  /** Group kinds in picker order; default the configured site-owned kinds. Unknown kinds are omitted. */
-  groupKinds?: readonly string[];
+  /** Entity kinds in picker order; default the configured site-owned kinds. Unknown kinds are omitted. */
+  entityKinds?: readonly string[];
   labels?: Labels;
   content?: Pick<ContentManagerProps, "renderEditor" | "contentHref">;
-  groups?: Pick<GroupManagerProps, "renderContent" | "contentHref">;
+  entities?: Pick<EntityManagerProps, "renderContent" | "contentHref">;
   moderation?: Pick<CommentModerationProps, "itemHref" | "userHref" | "sections">;
   polls?: Pick<PollManagerProps, "freeText" | "maxOptions">;
 }
 
-const SECTIONS: readonly ContentAdminSection[] = ["contents", "groups", "moderation", "polls", "statistics"];
+const SECTIONS: readonly ContentAdminSection[] = ["contents", "entities", "moderation", "polls", "statistics"];
 const MODERATION: readonly string[] = ["comments", "queue", "bans", "words", "ips"];
 
 /**
@@ -60,7 +60,7 @@ function knownKinds(wanted: readonly string[] | undefined, configured: object): 
   return [...new Set(wanted ?? Object.keys(configured).sort())].filter((kind) => Object.hasOwn(configured, kind));
 }
 
-function groupKinds(wanted: readonly string[] | undefined, model: ContentModel): string[] {
+function entityKinds(wanted: readonly string[] | undefined, model: ContentModel): string[] {
   return knownKinds(wanted ?? Object.keys(model.entity_kinds).filter((kind) => model.entity_kinds[kind]?.owner !== "user").sort(), model.entity_kinds);
 }
 
@@ -84,7 +84,7 @@ function childNavigation(base: string, view: string, loc: AdminLocation): AdminN
   };
 }
 
-function Workbench({ client, basePath, navigation, sections: wanted, contentKinds: requestedContents, groupKinds: requestedGroups, labels, guard, onError, content, groups, moderation, polls }: WorkbenchProps) {
+function Workbench({ client, basePath, navigation, sections: wanted, contentKinds: requestedContents, entityKinds: requestedEntities, labels, guard, onError, content, entities, moderation, polls }: WorkbenchProps) {
   const { t } = useMessages();
   const id = useId();
   const loc = useAdminLocation(basePath, navigation);
@@ -93,11 +93,11 @@ function Workbench({ client, basePath, navigation, sections: wanted, contentKind
   if (!model.kinds) return <LoadFailed error={model.error} message={t("contentAdmin.modelFailed")} retry={model.reload} />;
 
   const kinds = knownKinds(requestedContents, model.kinds.kinds);
-  const managedGroups = groupKinds(requestedGroups, model.kinds);
+  const managedEntities = entityKinds(requestedEntities, model.kinds);
   const sections = [...new Set(wanted ?? SECTIONS)].filter((section) =>
     SECTIONS.includes(section) &&
     (section !== "contents" && section !== "statistics" || kinds.length > 0) &&
-    (section !== "groups" || managedGroups.length > 0) &&
+    (section !== "entities" || managedEntities.length > 0) &&
     (section !== "moderation" || moderation?.sections?.length !== 0),
   );
   if (!sections.length) return <p role="status" className="text-muted-foreground">{t("contentAdmin.empty")}</p>;
@@ -109,7 +109,7 @@ function Workbench({ client, basePath, navigation, sections: wanted, contentKind
   const moderationSections: readonly string[] = moderation?.sections ?? MODERATION;
   const valid = sections.includes(section) &&
     (section !== "contents" || (parts[1] === undefined || requestedKind !== undefined) && kinds.includes(kind)) &&
-    (section !== "groups" || parts[1] === undefined || requestedKind !== undefined && managedGroups.includes(requestedKind)) &&
+    (section !== "entities" || parts[1] === undefined || requestedKind !== undefined && managedEntities.includes(requestedKind)) &&
     (section !== "moderation" || !parts[1] || moderationSections.includes(parts[1])) &&
     (section !== "statistics" || parts.length === 1 || !loc.view);
   const base = basePath?.replace(/\/+$/, "") ?? "";
@@ -120,7 +120,7 @@ function Workbench({ client, basePath, navigation, sections: wanted, contentKind
   const nav = childNavigation(base, effectiveView, loc);
   const shared = { client, guard, onError };
   const names: Record<ContentAdminSection, string> = {
-    contents: t("contentManager.title"), groups: t("contentAdmin.groups"), moderation: t("moderation.title"), polls: t("pollManager.title"), statistics: t("stats.title"),
+    contents: t("contentManager.title"), entities: t("contentAdmin.entities"), moderation: t("moderation.title"), polls: t("pollManager.title"), statistics: t("stats.title"),
   };
   const destination = (s: ContentAdminSection) => s === "contents" ? `contents/${encodeURIComponent(kinds[0]!)}` : s;
 
@@ -151,8 +151,8 @@ function Workbench({ client, basePath, navigation, sections: wanted, contentKind
               </label>
               <ContentManager key={kind} {...shared} {...content} kind={kind} labels={labels} languages={model.kinds.languages} basePath={`${base}/${prefix}`} navigation={nav} />
             </>
-          ) : section === "groups" ? (
-            <GroupManager {...shared} {...groups} labels={labels} groupKinds={managedGroups} basePath={`${base}/groups`} navigation={nav} />
+          ) : section === "entities" ? (
+            <EntityManager {...shared} {...entities} labels={labels} entityKinds={managedEntities} basePath={`${base}/entities`} navigation={nav} />
           ) : section === "moderation" ? (
             <CommentModeration {...shared} {...moderation} contentKinds={kinds.map((value) => ({ value, label: labelOf(labels, value) }))} basePath={`${base}/moderation`} navigation={nav} />
           ) : section === "polls" ? (

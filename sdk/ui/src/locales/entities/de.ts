@@ -1,7 +1,7 @@
-import type { groups as en } from "./en.js";
+import type { entities as en } from "./en.js";
 
-export const groups: typeof en = {
-  groups: {
+export const entities: typeof en = {
+  entities: {
     byLetter: "Nach Buchstabe",
     directorySort: "Sortieren",
     directorySort_name: "A–Z",
@@ -22,14 +22,14 @@ export const groups: typeof en = {
     searchPlaceholder: "Nach Namen suchen",
     noMatch: "Kein Treffer.",
   },
-  groupEditor: {
+  entityEditor: {
     internal: "Nur für den internen Gebrauch",
     internalHint: "Auf öffentlichen Seiten, in der Suche und in den Leseeinstellungen verborgen. Mitarbeitende können diese Entität in Domain-Regeln verwenden.",
     uploadAvatar: "Avatar hochladen",
     removeAvatar: "Avatar entfernen",
     images: "Bilder",
     membershipPrice: "Mitgliedspreis",
-    loadFailed: "Die Gruppe konnte nicht geladen werden.",
+    loadFailed: "Die Entität konnte nicht geladen werden.",
     newTitle: "Neu: {kind}",
     nameIn: "Name ({language})",
     slug: "Slug",
@@ -63,15 +63,15 @@ export const groups: typeof en = {
     uploadCover: "Bild hochladen",
     uploading: "Wird hochgeladen…",
     coverUseAuto: "Automatisch verwenden",
-    edges: "Verwandte Gruppen",
-    noEdges: "Keine verwandten Gruppen.",
+    edges: "Verwandte Entitäten",
+    noEdges: "Keine verwandten Entitäten.",
     relation: "Beziehung",
-    edgeKind: "Art der Gruppe",
-    edgeTarget: "Verwandte Gruppe",
+    edgeKind: "Art der Entität",
+    edgeTarget: "Verwandte Entität",
     removeEdge: "Beziehung zu {name} entfernen",
     merge: "Zusammenführen",
-    mergeTitle: "{name} mit einer anderen Gruppe zusammenführen",
-    mergeBody: "Mitglieder, Namen, verwandte Gruppen und Untergruppen wandern zur gewählten Gruppe, und ihre Links leiten dorthin weiter. Das lässt sich nicht rückgängig machen.",
+    mergeTitle: "{name} mit einer anderen Entität zusammenführen",
+    mergeBody: "Mitglieder, Namen, verwandte Entitäten und Untergruppen wandern zur gewählten Entität, und ihre Links leiten dorthin weiter. Das lässt sich nicht rückgängig machen.",
     mergeTarget: "Zusammenführen mit",
     mergeInto: "Mit {name}",
     mergeWord: "zusammenführen",
@@ -83,7 +83,7 @@ export const groups: typeof en = {
   },
   memberships: {
     add: "Hinzufügen: {kind}",
-    noKinds: "Dieser Inhalt gehört zu keinen Gruppen.",
+    noKinds: "Dieser Inhalt gehört zu keinen Entitäten.",
     discard: "Änderungen verwerfen",
     saved: "Gespeichert.",
     proposed: "Vorgeschlagen",
@@ -128,10 +128,10 @@ export const groups: typeof en = {
     joinFor: "Beitreten für {price}",
     join: "Beitreten",
   },
-  groupManager: {
-    noAccess: "Du darfst keine Gruppen verwalten.",
-    kindsFailed: "Die Gruppenarten der Website konnten nicht geladen werden.",
-    noKinds: "Diese Website hat keine Gruppenarten.",
+  entityManager: {
+    noAccess: "Du darfst keine Entitäten verwalten.",
+    kindsFailed: "Die Entitätenarten der Website konnten nicht geladen werden.",
+    noKinds: "Diese Website hat keine Entitätenarten.",
     back: "Zurück zur Liste",
     new: "Neu: {kind}",
     newShort: "Neu",
@@ -140,7 +140,7 @@ export const groups: typeof en = {
     sort_count: "Meiste Inhalte",
     sort_newest: "Neueste",
     language: "Sprache",
-    loadFailed: "Gruppen konnten nicht geladen werden.",
+    loadFailed: "Entitäten konnten nicht geladen werden.",
     count: "Inhalte",
     active: "Aktiv",
     deleted: "Gelöscht",

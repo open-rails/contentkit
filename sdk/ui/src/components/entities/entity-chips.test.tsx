@@ -5,12 +5,12 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/index.js";
-import type { GroupCard, Membership } from "../../client/generated/wire.js";
+import type { EntityCard, Membership } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/index.js";
 import { EntityChips, resolveToken, splitTokens } from "./entity-chips.js";
 
-const card = (id: string, name: string, slug = name.toLowerCase().replace(/\s+/g, "-")): GroupCard =>
-  ({ id, kind: "tag", slug, internal: false, name, count: 0, attributes: {}, created_at: "2026-01-01T00:00:00Z" }) as GroupCard;
+const card = (id: string, name: string, slug = name.toLowerCase().replace(/\s+/g, "-")): EntityCard =>
+  ({ id, kind: "tag", slug, internal: false, name, count: 0, attributes: {}, created_at: "2026-01-01T00:00:00Z" }) as EntityCard;
 const catalog = [card("g1", "Vanilla"), card("g2", "Big Breasts"), card("g3", "Café Au Lait", "cafe-au-lait")];
 
 function Harness({ initial = [] as Membership[], creatable = false }) {

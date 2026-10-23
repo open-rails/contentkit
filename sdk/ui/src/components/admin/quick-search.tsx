@@ -1,18 +1,18 @@
 import { useCallback, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import type { TypeaheadQuery } from "../../client/discovery.js";
-import type { Card, GroupCard } from "../../client/generated/wire.js";
+import type { Card, EntityCard } from "../../client/generated/wire.js";
 import { useContentScope } from "../../react/use-resource.js";
 import { SearchBox, type SearchBoxProps } from "../content/search.js";
 
-export interface AdminQuickSearchProps extends Omit<SearchBoxProps, "onSearch" | "href" | "kind" | "groupKinds" | "recent" | "requestSuggestions" | "selectionOnly" | "disabled"> {
+export interface AdminQuickSearchProps extends Omit<SearchBoxProps, "onSearch" | "href" | "kind" | "entityKinds" | "recent" | "requestSuggestions" | "selectionOnly" | "disabled"> {
   /** Content kinds for which the host offers an authorized editor. */
   contentKinds: readonly string[];
   /** Entity kinds for which the host offers an authorized editor. */
   entityKinds: readonly string[];
   /** An editor URL; returning undefined omits that suggestion. Public paths are never used. */
   contentHref: (item: Card) => string | undefined;
-  entityHref: (entity: GroupCard) => string | undefined;
+  entityHref: (entity: EntityCard) => string | undefined;
   disabled?: boolean;
 }
 

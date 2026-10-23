@@ -4,9 +4,9 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient, type ContentKitClient } from "../../client/index.js";
-import type { Card, GroupCard } from "../../client/generated/wire.js";
+import type { Card, EntityCard } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/index.js";
-import { GroupDirectory } from "../groups/directory.js";
+import { EntityDirectory } from "../entities/directory.js";
 import { ContentGrid } from "./grid.js";
 import { Pagination, pageWindow } from "./pagination.js";
 
@@ -25,7 +25,7 @@ const card = (id: string): Card => ({
   attributes: {},
 });
 
-const group = (n: number): GroupCard => ({ id: `g${n}`, kind: "tag", slug: `tag-${n}`, internal: false, name: `Tag ${n}`, count: n, attributes: {}, created_at: "2026-10-01T00:00:00Z" });
+const group = (n: number): EntityCard => ({ id: `g${n}`, kind: "tag", slug: `tag-${n}`, internal: false, name: `Tag ${n}`, count: n, attributes: {}, created_at: "2026-10-01T00:00:00Z" });
 
 const wrap = (client: ContentKitClient) =>
   function Wrapper({ children }: { children: ReactNode }) {
@@ -107,7 +107,7 @@ it("offers a directory sort and numbered pages of groups", async () => {
     },
   });
   const sort = vi.fn();
-  render(<GroupDirectory kind="tag" letters={false} sorts={["name", "count", "newest"]} sort="count" onSortChange={sort} pagination="pages" pageSize={2} />, { wrapper: wrap(client) });
+  render(<EntityDirectory kind="tag" letters={false} sorts={["name", "count", "newest"]} sort="count" onSortChange={sort} pagination="pages" pageSize={2} />, { wrapper: wrap(client) });
   expect(await screen.findByText("Tag 11")).toBeInTheDocument();
   const read = reads.find((u) => u.pathname === "/v1/entities")!;
   expect(read.searchParams.get("page")).toBe("1");

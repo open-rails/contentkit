@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./group-fields.js";
+import { attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./entity-fields.js";
 
 describe("group fields", () => {
   it("folds and buckets names as ContentKit compares them", () => {

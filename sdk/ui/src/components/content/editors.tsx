@@ -2,11 +2,11 @@ import { cn } from "cn";
 import { createPortal } from "react-dom";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import type { ContentKitClient } from "../../client/client.js";
-import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
+import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/entity-fields.js";
 import type { Content, ContentModel, Rule, Segment, SegmentInput, Version, VersionState } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
-import { useKinds } from "../../react/groups.js";
+import { useKinds } from "../../react/entities.js";
 import { useMediaRead } from "../../react/read.js";
 import { usePresets } from "../../react/public.js";
 import { useContentScope } from "../../react/use-resource.js";
@@ -25,9 +25,9 @@ import { Skeleton } from "#ckui/ui/skeleton";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { SortableList } from "../sortable-list.js";
 import { ErrorLine, useAction } from "../social/parts.js";
-import { GroupPicker, labelOf, useGroupNames, type Labels } from "../groups/parts.js";
-import { AttributeFields, formOf } from "../groups/fields.js";
-import { MembershipEditor } from "../groups/memberships.js";
+import { EntityPicker, labelOf, useEntityNames, type Labels } from "../entities/parts.js";
+import { AttributeFields, formOf } from "../entities/fields.js";
+import { MembershipEditor } from "../entities/memberships.js";
 import { useDraft } from "../../react/use-draft.js";
 import { EditorSaveContext, useEditorSaveTask } from "./editor-save.js";
 import { OfferFields } from "./offer-fields.js";
@@ -210,14 +210,14 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
   const declaredLevels = spec?.access_levels;
   const fixedTier = !!declaredLevels?.length && tiers.length === 1;
   const levels = declaredLevels?.length ? LEVELS.filter((level) => declaredLevels.includes(level)) : LEVELS;
-  const groupKinds = Object.entries(model?.entity_kinds ?? {})
+  const entityKinds = Object.entries(model?.entity_kinds ?? {})
     .filter(([, g]) => g.sellable || g.auth_scope)
     .map(([k]) => k);
-  const releaseLevels = levels.filter((level) => level === "public" || level === "tier" && tiers.length > 0 || level === "group" && groupKinds.length > 0);
+  const releaseLevels = levels.filter((level) => level === "public" || level === "tier" && tiers.length > 0 || level === "group" && entityKinds.length > 0);
   // Picked once the model has loaded: its first group kind until one is chosen.
-  const [chosenKind, setGroupKind] = useState<string>();
-  const groupKind = chosenKind ?? groupKinds[0] ?? "";
-  const named = useGroupNames(value.group_id ? [value.group_id] : [], { client });
+  const [chosenKind, setEntityKind] = useState<string>();
+  const entityKind = chosenKind ?? entityKinds[0] ?? "";
+  const named = useEntityNames(value.group_id ? [value.group_id] : [], { client });
   const group = value.group_id ? named.get(value.group_id) : undefined;
   const set = (patch: Partial<Rule>) => onChange({ ...value, ...patch });
   const pages = spec?.presentation === "reader";
@@ -237,7 +237,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
             <SelectValue>{(v: string) => t(`contentEditor.level_${v as Rule["level"]}`)}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {levels.filter((l) => (l !== "tier" || tiers.length) && (!l.startsWith("group") || groupKinds.length)).map((l) => (
+            {levels.filter((l) => (l !== "tier" || tiers.length) && (!l.startsWith("group") || entityKinds.length)).map((l) => (
               <SelectItem key={l} value={l}>
                 {t(`contentEditor.level_${l}`)}
               </SelectItem>
@@ -267,13 +267,13 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
               {group ? group.name || group.slug : value.group_id}
             </span>
           ) : null}
-          {groupKinds.length > 1 && (
-            <Select value={groupKind} onValueChange={(v) => setGroupKind(String(v))}>
-              <SelectTrigger size="sm" aria-label={t("groupEditor.edgeKind")}>
+          {entityKinds.length > 1 && (
+            <Select value={entityKind} onValueChange={(v) => setEntityKind(String(v))}>
+              <SelectTrigger size="sm" aria-label={t("entityEditor.edgeKind")}>
                 <SelectValue>{(v: string) => labelOf(labels, v)}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {groupKinds.map((k) => (
+                {entityKinds.map((k) => (
                   <SelectItem key={k} value={k}>
                     {labelOf(labels, k)}
                   </SelectItem>
@@ -281,7 +281,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
               </SelectContent>
             </Select>
           )}
-          {groupKind && <GroupPicker key={groupKind} kind={groupKind} label={t("contentEditor.group")} client={client} onPick={(g) => set({ group_id: g.id })} />}
+          {entityKind && <EntityPicker key={entityKind} kind={entityKind} label={t("contentEditor.group")} client={client} onPick={(g) => set({ group_id: g.id })} />}
         </div>
       )}
       {value.level !== "public" && (
@@ -326,7 +326,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
               <SelectContent>{releaseLevels.map((level) => <SelectItem key={level} value={level}>{t(`contentEditor.level_${level as Rule["level"]}`)}</SelectItem>)}</SelectContent>
             </Select>
             {release.level === "tier" && tiers.map((tier) => <label key={tier} className="flex items-center gap-1"><Switch aria-label={labelOf(labels, tier)} checked={release.tiers?.includes(tier) ?? false} onCheckedChange={(on) => change({ tiers: on ? [...(release.tiers ?? []), tier] : release.tiers?.filter((t) => t !== tier) })} />{labelOf(labels, tier)}</label>)}
-            {release.level === "group" && <><span>{release.group_id}</span><GroupPicker kind={groupKind} label={t("contentEditor.group")} client={client} onPick={(g) => change({ group_id: g.id })} /></>}
+            {release.level === "group" && <><span>{release.group_id}</span><EntityPicker kind={entityKind} label={t("contentEditor.group")} client={client} onPick={(g) => change({ group_id: g.id })} /></>}
             <Button type="button" variant="ghost" size="sm" onClick={() => set({ releases: value.releases!.filter((_, i) => i !== index) })}>{t("contentEditor.removeRelease")}</Button>
           </div>;
         })}

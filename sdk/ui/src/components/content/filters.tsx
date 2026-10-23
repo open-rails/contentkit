@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { useContext, useId } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { GroupCard } from "../../client/generated/wire.js";
+import type { EntityCard } from "../../client/generated/wire.js";
 import type { ReleaseDatesQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, type ContentKitErrorHandler } from "../../react/context.js";
@@ -17,7 +17,7 @@ import { contentError, ErrorLine, useAction } from "../social/parts.js";
 /** Counts for one concrete listing selection, aggregated by entity.
  * Only rows offered by the current domain's filter inventory are displayed. */
 export interface ContentFilterCount {
-  entity: Pick<GroupCard, "id">;
+  entity: Pick<EntityCard, "id">;
   count: number;
 }
 

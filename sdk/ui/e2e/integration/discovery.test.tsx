@@ -3,7 +3,7 @@ import "../../src/test/dom.js";
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
-import { Beacons, type ContentKitClient, type GroupCard } from "../../src/client/index.js";
+import { Beacons, type ContentKitClient, type EntityCard } from "../../src/client/index.js";
 import { ContentGrid, ContentRail } from "../../src/index.js";
 import {
   ContentKitProvider,
@@ -21,7 +21,7 @@ import type { Config } from "../support/harness.js";
 import { Accounts, client, harness, recorder, seedContents } from "./setup.js";
 
 const wait = { timeout: 30_000, interval: 50 };
-// Group documents trail their writes by the search sync job's period.
+// Entity documents trail their writes by the search sync job's period.
 const indexed = { timeout: 90_000, interval: 1000 };
 const run = () => Math.random().toString(36).slice(2, 8);
 
@@ -45,11 +45,11 @@ describe("discovery against the real ContentKit", () => {
         </ContentKitProvider>
       );
     };
-  const tag = async (slug: string, name = slug): Promise<GroupCard> => {
+  const tag = async (slug: string, name = slug): Promise<EntityCard> => {
     const found = (await staff.entities.list({ kind: "tag", slug })).entities[0];
     if (found) return found;
     const [g] = await staff.entities.create([{ kind: "tag", slug, names: [{ language: "en", kind: "name", name }] }]);
-    return (await staff.entities.list({ kind: "tag", slug })).entities[0] ?? ({ ...g!, name, count: 0 } as GroupCard);
+    return (await staff.entities.list({ kind: "tag", slug })).entities[0] ?? ({ ...g!, name, count: 0 } as EntityCard);
   };
 
   it("useContents: one card per content, sorts, filters and pages, locks or hides what the reader cannot open", async () => {

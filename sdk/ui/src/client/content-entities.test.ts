@@ -1,8 +1,8 @@
 import { expect, it } from "vitest";
 import { entitiesForVersion } from "./content-entities.js";
-import type { GroupSummary } from "./generated/wire.js";
+import type { EntitySummary } from "./generated/wire.js";
 
-const entity = (id: string, kind = "translator"): GroupSummary => ({ id, kind, slug: id, name: id });
+const entity = (id: string, kind = "translator"): EntitySummary => ({ id, kind, slug: id, name: id });
 
 it("combines shared entities with only the selected edition's credits", () => {
   const shared = entity("artist", "artist"), a = entity("translator-a"), b = entity("translator-b");

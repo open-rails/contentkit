@@ -3,9 +3,9 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
-import { fromLocalInput, toLocalInput } from "../../client/group-fields.js";
+import { fromLocalInput, toLocalInput } from "../../client/entity-fields.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
-import type { GroupCard, GroupKind, Membership } from "../../client/generated/wire.js";
+import type { EntityCard, EntityKind, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient } from "../../react/context.js";
 import { useTypeahead } from "../../react/discovery.js";
@@ -23,8 +23,8 @@ export interface EntityChipsProps {
   label: string;
   /** This kind's memberships, in order; callbacks index into this list. */
   memberships: readonly Membership[];
-  cards: ReadonlyMap<string, GroupCard>;
-  spec: GroupKind;
+  cards: ReadonlyMap<string, EntityCard>;
+  spec: EntityKind;
   labels?: Labels;
   versions?: readonly VersionChoice[];
   /** False when the enclosing editor already fixes the shared/version scope. */
@@ -40,7 +40,7 @@ export interface EntityChipsProps {
   onCreatedChange?: (names: string[]) => void;
   /** A scoped kind's new names wait for exactly one entity of this scope (its label). */
   needsScope?: string;
-  onAdd: (card: GroupCard) => void;
+  onAdd: (card: EntityCard) => void;
   onChange: (index: number, patch: Partial<Membership>) => void;
   onRemove: (index: number) => void;
 }
@@ -62,7 +62,7 @@ export function splitTokens(text: string): string[] {
 }
 
 /** An exact name or slug match wins; a lone result is an alias match. */
-export function resolveToken(token: string, found: readonly GroupCard[], kind: string): GroupCard | undefined {
+export function resolveToken(token: string, found: readonly EntityCard[], kind: string): EntityCard | undefined {
   const own = found.filter((g) => g.kind === kind);
   const key = fold(token);
   return own.find((g) => fold(g.name) === key) ?? own.find((g) => fold(g.slug) === key) ?? (own.length === 1 ? own[0] : undefined);
@@ -106,7 +106,7 @@ export function EntityChips(p: EntityChipsProps) {
   const listOpen = fragment !== "" && suggestions.length > 0;
   useEffect(() => setActive(0), [fragment]);
   const detailed = (m: Membership) => (allowsEntityScope(p.spec, "version") && p.allowVersionChange !== false) || !!p.spec.roles?.length || !!p.spec.ordered || m.state === "proposed" || !!m.active_from || !!m.active_until;
-  const add = (card: GroupCard) => {
+  const add = (card: EntityCard) => {
     if (plain.has(card.id)) return false;
     p.onAdd(card);
     return true;
@@ -144,7 +144,7 @@ export function EntityChips(p: EntityChipsProps) {
     commit(parts.map((s) => s.trim()).filter(Boolean));
   };
   // One picked name with roles, versions or positions opens its details.
-  const pick = (card: GroupCard) => {
+  const pick = (card: EntityCard) => {
     setText("");
     if (add(card) && (allowsEntityScope(p.spec, "version") && p.allowVersionChange !== false || p.spec.roles?.length || p.spec.ordered)) setOpen(p.memberships.length);
   };
@@ -155,7 +155,7 @@ export function EntityChips(p: EntityChipsProps) {
   };
   const detail = open !== null ? p.memberships[open] : undefined;
   return (
-    <div className="grid min-w-0 gap-1.5" data-ckui="entity-chips" data-group-kind={p.kind}>
+    <div className="grid min-w-0 gap-1.5" data-ckui="entity-chips" data-entity-kind={p.kind}>
       <label htmlFor={`${id}-input`} className="font-semibold">
         {p.label}
       </label>
@@ -171,7 +171,7 @@ export function EntityChips(p: EntityChipsProps) {
             const n = name(m);
             const extra = [m.role && labelOf(p.labels, m.role), m.version_id && p.allowVersionChange !== false && p.versionLabel(m.version_id), m.position != null && `#${m.position}`].filter(Boolean).join(" · ");
             return (
-              <li key={`${m.group_id}:${i}`} className={cn("inline-flex max-w-full items-center gap-1 rounded-md bg-muted py-0.5 ps-2 pe-1 text-sm", m.state === "proposed" && "border border-dashed border-primary", open === i && "ring-2 ring-ring")} data-ckui="entity-chip" data-group={p.cards.get(m.group_id ?? "")?.slug}>
+              <li key={`${m.group_id}:${i}`} className={cn("inline-flex max-w-full items-center gap-1 rounded-md bg-muted py-0.5 ps-2 pe-1 text-sm", m.state === "proposed" && "border border-dashed border-primary", open === i && "ring-2 ring-ring")} data-ckui="entity-chip" data-entity={p.cards.get(m.group_id ?? "")?.slug}>
                 {detailed(m) ? (
                   <button type="button" className="min-w-0 truncate text-start hover:underline" aria-expanded={open === i} aria-label={t("memberships.chipDetails", { name: n })} onClick={(e) => (e.stopPropagation(), setOpen(open === i ? null : i))}>
                     {n}
@@ -326,8 +326,8 @@ export function MembershipRow({
   onRemove,
 }: {
   m: Membership;
-  card?: GroupCard;
-  spec: GroupKind;
+  card?: EntityCard;
+  spec: EntityKind;
   labels?: Labels;
   versions?: readonly VersionChoice[];
   allowVersionChange?: boolean;
@@ -340,7 +340,7 @@ export function MembershipRow({
   const name = card ? card.name || card.slug : (x.group_id ?? "");
   const versionIds = [...new Set([...(versions ?? []).map((v) => v.id), ...(x.version_id ? [x.version_id] : [])])];
   return (
-    <li className="flex flex-wrap items-center gap-2 rounded-md border border-border p-2" data-ckui="membership" data-group={card?.slug} data-state={x.state ?? "active"}>
+    <li className="flex flex-wrap items-center gap-2 rounded-md border border-border p-2" data-ckui="membership" data-entity={card?.slug} data-state={x.state ?? "active"}>
       <span className="min-w-0 flex-1 font-medium break-words">{name}</span>
       {x.state === "proposed" && (
         <>

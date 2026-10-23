@@ -6,7 +6,7 @@ import { useMessages } from "../../i18n/context.js";
 import { useMyStats } from "../../react/stats.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Skeleton } from "#ckui/ui/skeleton";
-import { labelOf, type Labels } from "../groups/parts.js";
+import { labelOf, type Labels } from "../entities/parts.js";
 import { contentError } from "../social/parts.js";
 
 export interface ReaderStatsProps {

@@ -1,7 +1,7 @@
-import type { groups as en } from "./en.js";
+import type { entities as en } from "./en.js";
 
-export const groups: typeof en = {
-  groups: {
+export const entities: typeof en = {
+  entities: {
     byLetter: "按首字母",
     directorySort: "排序",
     directorySort_name: "按名称",
@@ -22,7 +22,7 @@ export const groups: typeof en = {
     searchPlaceholder: "按名称搜索",
     noMatch: "没有匹配项。",
   },
-  groupEditor: {
+  entityEditor: {
     internal: "仅供内部使用",
     internalHint: "不显示在公开页面、搜索和阅读设置中。工作人员可在域名规则中使用此实体。",
     uploadAvatar: "上传头像",
@@ -128,7 +128,7 @@ export const groups: typeof en = {
     joinFor: "以 {price} 加入",
     join: "加入",
   },
-  groupManager: {
+  entityManager: {
     noAccess: "你没有管理分组的权限。",
     kindsFailed: "无法加载站点的分组类型。",
     noKinds: "此站点没有分组类型。",

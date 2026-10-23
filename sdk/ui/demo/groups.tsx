@@ -1,10 +1,10 @@
 import { ContentKitProvider } from "@openrails/contentkit-ui/react";
-import { ContentKitUiProvider, GroupDirectory, GroupHeader, MembershipEditor } from "@openrails/contentkit-ui";
+import { ContentKitUiProvider, EntityDirectory, EntityHeader, MembershipEditor } from "@openrails/contentkit-ui";
 import { StrictMode, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { client, dark, q, theme, viewer } from "./session";
 
-// Group pages: ?kind=&parent= a directory (its letter in the URL, ?layout=grid),
+// Entity pages: ?kind=&parent= a directory (its letter in the URL, ?layout=grid),
 // ?group= a group's header, ?content=&content_kind= a content's groups (staff)
 // with ?versions=id:label,…; ?lang= the UI.
 const lang = q.get("lang") ?? "en";
@@ -37,7 +37,7 @@ function Page() {
     <main style={{ maxWidth: 900, margin: "0 auto", padding: 16, display: "grid", gap: 20 }}>
       {q.get("kind") && (
         <section data-demo="directory" style={panel}>
-          <GroupDirectory
+          <EntityDirectory
             kind={q.get("kind")!}
             parent={q.get("parent") ?? undefined}
             language={lang}
@@ -50,7 +50,7 @@ function Page() {
       )}
       {group && (
         <section data-demo="header" style={panel}>
-          <GroupHeader id={group} language={lang} />
+          <EntityHeader id={group} language={lang} />
         </section>
       )}
       {content && (

@@ -1,7 +1,7 @@
-import type { groups as en } from "./en.js";
+import type { entities as en } from "./en.js";
 
-export const groups: typeof en = {
-  groups: {
+export const entities: typeof en = {
+  entities: {
     byLetter: "頭文字で絞り込む",
     directorySort: "並び替え",
     directorySort_name: "名前順",
@@ -15,21 +15,21 @@ export const groups: typeof en = {
     items_one: "{count} 件",
     items_other: "{count} 件",
     alsoKnownAs: "別名",
-    children: "サブグループ",
+    children: "サブエンティティ",
     showMore: "もっと見る",
     yes: "はい",
     no: "いいえ",
     searchPlaceholder: "名前で検索",
     noMatch: "一致するものはありません。",
   },
-  groupEditor: {
+  entityEditor: {
     internal: "内部利用のみ",
     internalHint: "公開ページ、検索、閲覧設定には表示されません。スタッフはドメインルールでこのエンティティを使用できます。",
     uploadAvatar: "アバターをアップロード",
     removeAvatar: "アバターを削除",
     images: "画像",
     membershipPrice: "メンバーシップ価格",
-    loadFailed: "グループを読み込めませんでした。",
+    loadFailed: "エンティティを読み込めませんでした。",
     newTitle: "新規: {kind}",
     nameIn: "名前（{language}）",
     slug: "スラッグ",
@@ -63,15 +63,15 @@ export const groups: typeof en = {
     uploadCover: "画像をアップロード",
     uploading: "アップロード中…",
     coverUseAuto: "自動にする",
-    edges: "関連グループ",
-    noEdges: "関連グループはありません。",
+    edges: "関連エンティティ",
+    noEdges: "関連エンティティはありません。",
     relation: "関係",
-    edgeKind: "グループの種類",
-    edgeTarget: "関連グループ",
+    edgeKind: "エンティティの種類",
+    edgeTarget: "関連エンティティ",
     removeEdge: "{name}との関係を削除",
     merge: "統合",
-    mergeTitle: "{name}を別のグループに統合",
-    mergeBody: "メンバー、名前、関連グループ、サブグループは選んだグループへ移り、リンクはそちらへ転送されます。元に戻せません。",
+    mergeTitle: "{name}を別のエンティティに統合",
+    mergeBody: "メンバー、名前、関連エンティティ、サブエンティティは選んだエンティティへ移り、リンクはそちらへ転送されます。元に戻せません。",
     mergeTarget: "統合先",
     mergeInto: "統合先: {name}",
     mergeWord: "統合",
@@ -83,7 +83,7 @@ export const groups: typeof en = {
   },
   memberships: {
     add: "追加: {kind}",
-    noKinds: "このコンテンツはどのグループにも属しません。",
+    noKinds: "このコンテンツはどのエンティティにも属しません。",
     discard: "変更を破棄",
     saved: "保存しました。",
     proposed: "提案",
@@ -128,10 +128,10 @@ export const groups: typeof en = {
     joinFor: "{price} で参加",
     join: "参加",
   },
-  groupManager: {
-    noAccess: "グループを管理する権限がありません。",
-    kindsFailed: "サイトのグループの種類を読み込めませんでした。",
-    noKinds: "このサイトにはグループの種類がありません。",
+  entityManager: {
+    noAccess: "エンティティを管理する権限がありません。",
+    kindsFailed: "サイトのエンティティの種類を読み込めませんでした。",
+    noKinds: "このサイトにはエンティティの種類がありません。",
     back: "一覧に戻る",
     new: "新規: {kind}",
     newShort: "新規",
@@ -140,7 +140,7 @@ export const groups: typeof en = {
     sort_count: "コンテンツが多い順",
     sort_newest: "新しい順",
     language: "言語",
-    loadFailed: "グループを読み込めませんでした。",
+    loadFailed: "エンティティを読み込めませんでした。",
     count: "コンテンツ数",
     active: "有効",
     deleted: "削除済み",

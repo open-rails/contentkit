@@ -51,7 +51,7 @@ another tenant is an error, never remapped.
 
 | Package | Owns |
 |---|---|
-| `contentref` | `ContentRef`, `ContentKey`, `GroupID` |
+| `contentref` | `ContentRef`, `ContentKey`, `EntityID` |
 | `contenturl` | uniform content URLs `/{lang}/{route}/{CODE}[/{slug}][?v={version}]`: permanent 9-character codes per tenant, 4-character version codes, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`); the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access and offers](#access-and-offers-access-offers)) |
 | `offers` | offers on content, versions and groups, their OpenRails sync job, free group joins and the library |
@@ -68,7 +68,7 @@ another tenant is an error, never remapped.
 | `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
 | `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and groups; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | Indexed keyword search (exact/alias/substring/prefix/typo, EN/ZH/JA/KO) with eligibility, documents and dirty queue, RRF |
-| `groups` | storage for content entities by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
+| `entities` | storage for content entities by kind (`kinds.Config.EntityKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
 | `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; popular and standing orders; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
@@ -277,7 +277,7 @@ parses one. Keys are constructed, never typed:
 |---|---|
 | `access.ContentKey` → `<tenant>:content:<id>` | every version of a content item |
 | `access.VersionKey` → `<tenant>:content:<id>/<version>` | one version |
-| `access.GroupKey` → `<tenant>:group:<id>` | every member of the group, and content whose rule names it |
+| `access.EntityKey` → `<tenant>:group:<id>` | every member of the group, and content whose rule names it |
 | `access.TierKey` → `premium` | versions whose rule names the tier (`kinds.Config.Tiers`) |
 
 A `Rule` is stored as JSON on content (`content_items.access`), as a
@@ -658,9 +658,9 @@ per release): the client (uploads, commit ops, reads, `waitFor`, frames, HLS),
 content URLs, React hooks and styled components. See
 [sdk/ui/README.md](sdk/ui/README.md).
 
-## Groups
+## Entities
 
-Group kinds come from `kinds.Config.GroupKinds` (ordered, parent, scoped_by,
+Entity kinds come from `kinds.Config.EntityKinds` (ordered, parent, scoped_by,
 owner, sellable, auth_scope, windows, version_level, roles, attributes).
 Reader editors use one page per stable version code. Shared entity edits use
 `PUT /contents/{id}/entities/shared`; per-version credits use
@@ -681,7 +681,7 @@ per-language counts and automatic covers from the facets, and
 
 The engine builds the store from `Config.Content`, serves it as
 `EntityRoutes` and runs `Recount` (every 15 minutes) and `RefreshWindows`
-(every minute) as its jobs; groups' keyword documents are its search job's.
+(every minute) as its jobs; entities' keyword documents are its search job's.
 
 ## Content
 
@@ -741,7 +741,7 @@ routes (signals, exposures, history, popular, similar, recommend) land with
 - Windows are whole UTC days, 7/30/90/365/all, no decay.
 - Rank by a named policy, not the default rank: `popularity.ByName("v1")`,
   `popularity.New(popularity.Config{Source: hub, Policy: policy})` over the engine's hub, then
-  `ranker.Popular` / `ranker.Scores` / `ranker.Groups`
+  `ranker.Popular` / `ranker.Scores` / `ranker.Entities`
   ([docs/popularity-policy.md](docs/popularity-policy.md)).
 - Similar and recommended content draw candidates from `Deps.Candidates`
   (default: co-engagement); see

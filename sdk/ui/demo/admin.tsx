@@ -1,4 +1,4 @@
-import { CommentModeration, ContentManager, GroupManager, MediaItemPanel, PollManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
+import { CommentModeration, ContentManager, EntityManager, MediaItemPanel, PollManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
 import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -8,7 +8,7 @@ import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
 // UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* ContentManager of blog posts
-// (with the package's rich-text editor), /admin/groups/* GroupManager, /admin/media/{kind}/{id}[/{version}] MediaItemPanel, /admin/uploads UploadQueue (each
+// (with the package's rich-text editor), /admin/entities/* EntityManager, /admin/media/{kind}/{id}[/{version}] MediaItemPanel, /admin/uploads UploadQueue (each
 // file a new ?kind= item at ?path=; [data-demo=created] counts the items made,
 // across reloads; localStorage demo.last is the last one). ?router=1 mounts each flow in React Router through
 // `navigation` (with the client); otherwise alone over the history API (with
@@ -78,8 +78,8 @@ function Alone() {
           <Created />
           <UploadQueue {...common} createItem={createItem} path={q.get("path") ?? "file"} />
         </>
-      ) : at.startsWith("/admin/groups") ? (
-        <GroupManager {...common} basePath="/admin/groups" />
+      ) : at.startsWith("/admin/entities") ? (
+        <EntityManager {...common} basePath="/admin/entities" />
       ) : at.startsWith("/admin/posts") ? (
         <ContentManager {...common} kind="blog" basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} contentHref={contentHref} />
       ) : (
@@ -100,7 +100,7 @@ function Hosted() {
         <Link to="/admin/comments/bans">Bans</Link>
         <Link to="/admin/polls">Polls</Link>
         <Link to="/admin/posts">Posts</Link>
-        <Link to="/admin/groups">Groups</Link>
+        <Link to="/admin/entities">Entities</Link>
         <span data-demo="router-location" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
           {loc.pathname + loc.search}
         </span>
@@ -122,8 +122,8 @@ function Hosted() {
           }
         />
         <Route
-          path="/admin/groups/*"
-          element={<GroupManager client={client} basePath="/admin/groups" navigation={navigation} pageSize={size} language={lang} />}
+          path="/admin/entities/*"
+          element={<EntityManager client={client} basePath="/admin/entities" navigation={navigation} pageSize={size} language={lang} />}
         />
         <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />
         <Route

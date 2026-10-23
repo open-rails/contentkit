@@ -1,14 +1,14 @@
 import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
 import { admin } from "./admin/ko.js";
 import { social } from "./social/ko.js";
-import { groups } from "./groups/ko.js";
+import { entities } from "./entities/ko.js";
 import { discovery } from "./discovery/ko.js";
 import { content } from "./content/ko.js";
 
 export const ko: ContentKitUiMessageBundle = {
   ...social,
   ...admin,
-  ...groups,
+  ...entities,
   ...discovery,
   ...content,
   common: {

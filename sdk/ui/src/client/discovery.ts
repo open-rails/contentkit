@@ -32,9 +32,9 @@ export interface ContentFilterQuery {
   kind?: string;
   /** Public card hydration under current domain/access/preferences; at most 100. */
   ids?: readonly string[];
-  /** Group ids every listed version is in. */
+  /** Entity ids every listed version is in. */
   groups?: readonly string[];
-  /** Group ids no listed version is in. */
+  /** Entity ids no listed version is in. */
   exclude_groups?: readonly string[];
   /** Only contents this group owns: a channel's feed. */
   owner_group?: string;

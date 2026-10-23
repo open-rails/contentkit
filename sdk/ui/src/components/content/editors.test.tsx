@@ -5,8 +5,8 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient, type ContentKitClient } from "../../client/index.js";
-import type { Content, ContentModel, GroupCard, GroupDetail, Version } from "../../client/generated/wire.js";
-import { toLocalInput } from "../../client/group-fields.js";
+import type { Content, ContentModel, EntityCard, EntityDetail, Version } from "../../client/generated/wire.js";
+import { toLocalInput } from "../../client/entity-fields.js";
 import { ContentKitProvider } from "../../react/index.js";
 import { AccessEditor, SegmentsEditor, VersionEditor, VersionsEditor } from "./editors.js";
 
@@ -72,8 +72,8 @@ const content = (o: Partial<Content> = {}): Content => ({
   updated_at: at,
   ...o,
 });
-const card = (id: string, name: string): GroupCard => ({ id, internal: false, kind: "channel", slug: name.toLowerCase(), name, count: 0, attributes: {}, created_at: at });
-const detail = (id: string, name: string): GroupDetail => ({
+const card = (id: string, name: string): EntityCard => ({ id, internal: false, kind: "channel", slug: name.toLowerCase(), name, count: 0, attributes: {}, created_at: at });
+const detail = (id: string, name: string): EntityDetail => ({
   ...card(id, name),
   state: "active",
   updated_at: at,
@@ -107,7 +107,7 @@ it("AccessEditor: members-only defaults to the owner group, and the picker choos
   const editor = container.querySelector<HTMLElement>('[data-ckui="access-editor"]')!;
 
   await user.click(await within(editor).findByRole("combobox", { name: "Who can open it" }));
-  await user.click(await screen.findByRole("option", { name: "Group members" }));
+  await user.click(await screen.findByRole("option", { name: "Entity members" }));
   expect(await within(editor).findByText("Studio")).toBeInTheDocument();
   // A post has neither pages nor chapters to preview.
   expect(within(editor).queryByLabelText("Free pages")).toBeNull();
@@ -118,7 +118,7 @@ it("AccessEditor: members-only defaults to the owner group, and the picker choos
   await user.click(within(editor).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(s.calls.find((c) => c.key === "PATCH /contents/p1")?.body).toEqual({ access: { level: "group", group_id: "g-own" }, revision: 3 }));
 
-  await user.type(within(editor).getByRole("combobox", { name: "Group" }), "oth");
+  await user.type(within(editor).getByRole("combobox", { name: "Entity" }), "oth");
   await user.click(await screen.findByRole("option", { name: /Other Club/ }));
   expect(await within(editor).findByText("Other Club")).toBeInTheDocument();
   await user.click(within(editor).getByRole("button", { name: "Save" }));
@@ -131,9 +131,9 @@ it("AccessEditor: a group level saves only with a group; previews are the kind's
   const { container } = render(<AccessEditor content={content({ id: "c1", kind: "comic" })} />, { wrapper: wrap(s.client) });
   const editor = container.querySelector<HTMLElement>('[data-ckui="access-editor"]')!;
   await user.click(await within(editor).findByRole("combobox", { name: "Who can open it" }));
-  await user.click(await screen.findByRole("option", { name: "Group members" }));
+  await user.click(await screen.findByRole("option", { name: "Entity members" }));
   expect(within(editor).getByRole("button", { name: "Save" })).toBeDisabled();
-  expect(within(editor).getByRole("combobox", { name: "Group" })).toBeInTheDocument();
+  expect(within(editor).getByRole("combobox", { name: "Entity" })).toBeInTheDocument();
   expect(within(editor).getByLabelText("Free pages")).toBeInTheDocument();
   expect(within(editor).getByLabelText("Free chapters")).toBeInTheDocument();
 });

@@ -1,7 +1,7 @@
-import type { groups as en } from "./en.js";
+import type { entities as en } from "./en.js";
 
-export const groups: typeof en = {
-  groups: {
+export const entities: typeof en = {
+  entities: {
     byLetter: "Por letra",
     directorySort: "Ordenar",
     directorySort_name: "A–Z",
@@ -15,21 +15,21 @@ export const groups: typeof en = {
     items_one: "{count} elemento",
     items_other: "{count} elementos",
     alsoKnownAs: "También conocido como",
-    children: "Subgrupos",
+    children: "Subentidades",
     showMore: "Mostrar más",
     yes: "Sí",
     no: "No",
     searchPlaceholder: "Buscar por nombre",
     noMatch: "Sin resultados.",
   },
-  groupEditor: {
+  entityEditor: {
     internal: "Solo para uso interno",
     internalHint: "Oculta en las páginas públicas, la búsqueda y las preferencias de lectura. El personal puede usar esta entidad en las reglas del dominio.",
     uploadAvatar: "Subir avatar",
     removeAvatar: "Quitar avatar",
     images: "Imágenes",
     membershipPrice: "Precio de la membresía",
-    loadFailed: "No se pudo cargar el grupo.",
+    loadFailed: "No se pudo cargar el entidad.",
     newTitle: "Nuevo: {kind}",
     nameIn: "Nombre ({language})",
     slug: "Slug",
@@ -63,15 +63,15 @@ export const groups: typeof en = {
     uploadCover: "Subir imagen",
     uploading: "Subiendo…",
     coverUseAuto: "Usar automática",
-    edges: "Grupos relacionados",
-    noEdges: "No hay grupos relacionados.",
+    edges: "Entidades relacionados",
+    noEdges: "No hay entidades relacionados.",
     relation: "Relación",
-    edgeKind: "Tipo de grupo",
-    edgeTarget: "Grupo relacionado",
+    edgeKind: "Tipo de entidad",
+    edgeTarget: "Entidad relacionado",
     removeEdge: "Quitar la relación con {name}",
     merge: "Fusionar",
-    mergeTitle: "Fusionar {name} con otro grupo",
-    mergeBody: "Sus miembros, nombres, grupos relacionados y subgrupos pasan al grupo que elijas, y sus enlaces redirigen allí. No se puede deshacer.",
+    mergeTitle: "Fusionar {name} con otro entidad",
+    mergeBody: "Sus miembros, nombres, entidades relacionados y subentidades pasan al entidad que elijas, y sus enlaces redirigen allí. No se puede deshacer.",
     mergeTarget: "Fusionar con",
     mergeInto: "Con {name}",
     mergeWord: "fusionar",
@@ -83,7 +83,7 @@ export const groups: typeof en = {
   },
   memberships: {
     add: "Añadir: {kind}",
-    noKinds: "Este contenido no pertenece a ningún grupo.",
+    noKinds: "Este contenido no pertenece a ningún entidad.",
     discard: "Descartar cambios",
     saved: "Guardado.",
     proposed: "Propuesto",
@@ -128,10 +128,10 @@ export const groups: typeof en = {
     joinFor: "Unirse por {price}",
     join: "Unirse",
   },
-  groupManager: {
-    noAccess: "No tienes permiso para gestionar grupos.",
-    kindsFailed: "No se pudieron cargar los tipos de grupo del sitio.",
-    noKinds: "Este sitio no tiene tipos de grupo.",
+  entityManager: {
+    noAccess: "No tienes permiso para gestionar entidades.",
+    kindsFailed: "No se pudieron cargar los tipos de entidad del sitio.",
+    noKinds: "Este sitio no tiene tipos de entidad.",
     back: "Volver a la lista",
     new: "Nuevo: {kind}",
     newShort: "Nuevo",
@@ -140,7 +140,7 @@ export const groups: typeof en = {
     sort_count: "Más contenido",
     sort_newest: "Más recientes",
     language: "Idioma",
-    loadFailed: "No se pudieron cargar los grupos.",
+    loadFailed: "No se pudieron cargar los entidades.",
     count: "Contenidos",
     active: "Activos",
     deleted: "Eliminados",

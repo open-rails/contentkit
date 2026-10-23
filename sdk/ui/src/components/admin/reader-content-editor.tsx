@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { parseAttributes } from "../../client/group-fields.js";
+import { parseAttributes } from "../../client/entity-fields.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { CatalogText, Content, ContentModel, FileInfo, ForkBody, GroupCard, Membership, NewEntity, RefBody, Version, VersionText } from "../../client/generated/wire.js";
+import type { CatalogText, Content, ContentModel, FileInfo, ForkBody, EntityCard, Membership, NewEntity, RefBody, Version, VersionText } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
 import { ruleFor, uploadRules } from "../../client/media/rules.js";
@@ -12,7 +12,7 @@ import { useErrorReporter, useGuarded } from "../../react/context.js";
 import { useMediaFolder } from "../../react/folder.js";
 import { useReaderFileDraft } from "../../react/reader-file-draft.js";
 import { DraftHistoryProvider, useDraftHistory } from "../../react/draft-history.js";
-import { useContentGroups } from "../../react/groups.js";
+import { useContentEntities } from "../../react/entities.js";
 import { useEditorCrop } from "../../react/crop.js";
 import { usePageNotices } from "../../react/page-notices.js";
 import { useContentScope } from "../../react/use-resource.js";
@@ -23,9 +23,9 @@ import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Textarea } from "#ckui/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
-import { AttributeFields, formOf } from "../groups/fields.js";
-import { EntityChips } from "../groups/entity-chips.js";
-import { labelOf } from "../groups/parts.js";
+import { AttributeFields, formOf } from "../entities/fields.js";
+import { EntityChips } from "../entities/entity-chips.js";
+import { labelOf } from "../entities/parts.js";
 import { ImageCropDialog } from "../image-crop-dialog.js";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
@@ -162,13 +162,13 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     const first = version.languages.find((l) => languages.some((option) => option.value === l));
     if (first) setLanguage(first);
   }, [version, languages]);
-  const membership = useContentGroups(item?.id, { language, client });
+  const membership = useContentEntities(item?.id, { language, client });
   const names = useMemo(() => new Map(membership.entities), [membership.entities]);
-  const [picked, setPicked] = useState<ReadonlyMap<string, GroupCard>>(new Map());
+  const [picked, setPicked] = useState<ReadonlyMap<string, EntityCard>>(new Map());
   const cards = useMemo(() => new Map([...picked, ...names]), [names, picked]);
-  const groupKinds = useMemo(() => spec.entities ?? [], [spec.entities]);
-  const sharedKinds = useMemo(() => groupKinds.filter((kind) => allowsEntityScope(model.entity_kinds[kind], "content")), [groupKinds, model.entity_kinds]);
-  const versionKinds = useMemo(() => groupKinds.filter((kind) => allowsEntityScope(model.entity_kinds[kind], "version")), [groupKinds, model.entity_kinds]);
+  const entityKinds = useMemo(() => spec.entities ?? [], [spec.entities]);
+  const sharedKinds = useMemo(() => entityKinds.filter((kind) => allowsEntityScope(model.entity_kinds[kind], "content")), [entityKinds, model.entity_kinds]);
+  const versionKinds = useMemo(() => entityKinds.filter((kind) => allowsEntityScope(model.entity_kinds[kind], "version")), [entityKinds, model.entity_kinds]);
   const texts = useDraft(useMemo(() => Object.fromEntries(languageKey.split("|").map((l) => [l, editableText(item, l)])), [item, languageKey]));
   const editionLanguage = stagedLanguage && stagedLanguage.version === version?.id ? stagedLanguage.language : version?.languages[0] ?? language;
   const versionID = version?.id;
@@ -218,7 +218,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   useEffect(() => {
     if (started.current || p.id || !p.entities?.length) return;
     started.current = true;
-    const usable = p.entities.filter((g) => groupKinds.includes(g.kind));
+    const usable = p.entities.filter((g) => entityKinds.includes(g.kind));
     if (!usable.length) return;
     setPicked((all) => new Map([...all, ...usable.map((g) => [g.id, g] as const)]));
     const seed = (kinds: readonly string[], draft: typeof associations) => draft.edit((d) => ({
@@ -227,7 +227,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     }));
     seed(sharedKinds, latest.current.associations);
     seed(versionKinds.filter((kind) => !sharedKinds.includes(kind)), latest.current.versionAssociations);
-  }, [p.id, p.entities, groupKinds, sharedKinds, versionKinds]);
+  }, [p.id, p.entities, entityKinds, sharedKinds, versionKinds]);
   const text = texts.value[language] ?? blank();
   const editText = (patch: Partial<CatalogText>) => texts.edit((all) => ({ ...all, [language]: { ...(all[language] ?? blank()), ...patch } }));
   const fail = (e: unknown) => {
@@ -247,7 +247,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     const input = {
       kind: p.kind,
       text: { [l]: { ...before, title } },
-      owner_group_id: p.ownerGroup,
+      owner_group_id: p.ownerEntity,
       ...(spec.access_levels?.length ? { access: cleanRule(latest.current.details.get().access) } : {}),
       ...(spec.comment_modes?.length ? { comments: latest.current.details.get().comments } : {}),
     };
@@ -487,7 +487,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
           savedVersionTexts = saved.text ?? merged;
         }
         if (!current()) return;
-        const remember = (saved: { entities: GroupCard[] }) => setPicked((all) => new Map([...all, ...saved.entities.map((g) => [g.id, g] as const)]));
+        const remember = (saved: { entities: EntityCard[] }) => setPicked((all) => new Map([...all, ...saved.entities.map((g) => [g.id, g] as const)]));
         if (state.associations.dirty.length) {
           const saved = await client.entities.setSharedOfContent(content.id, { kinds: [...sharedKinds], memberships: snapshotAssociations, create: snapshotCreate.filter((c) => !waiting(c)) }, language);
           remember(saved);
@@ -823,7 +823,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 onChange={(access) => changeDetails({ access })}
                 model={model}
                 kind={p.kind}
-                owner={item?.owner_group_id ?? p.ownerGroup}
+                owner={item?.owner_group_id ?? p.ownerEntity}
                 labels={p.labels}
                 client={client}
               />

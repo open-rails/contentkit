@@ -6,16 +6,16 @@ import type {
   ContentModel,
   Edge,
   EdgeInput,
-  Group,
-  GroupCard,
-  GroupDetail,
-  GroupInput,
-  GroupPage,
-  GroupUpdate,
+  Entity,
+  EntityCard,
+  EntityDetail,
+  EntityInput,
+  EntityPage,
+  EntityUpdate,
   MemberRef,
   Membership,
   MergeReport,
-  MyGroup,
+  MyEntity,
   Name,
   NewEntity,
   Edit,
@@ -39,13 +39,13 @@ export function useKinds(o: { client?: ContentKitClient } = {}): UseKinds {
   return { kinds: r.data ?? null, loading: !r.data && (r.loading || !r.loaded), error: r.error, reload: r.reload };
 }
 
-export type GroupSort = "name" | "count" | "newest";
+export type EntitySort = "name" | "count" | "newest";
 
-export interface GroupFilter {
+export interface EntityFilter {
   kind?: string;
-  /** Children of this group. */
+  /** Children of this entity. */
   parent?: string;
-  /** Groups scoped by this group (characters of a series). */
+  /** Entities scoped by this entity (characters of a series). */
   scope?: string;
   slug?: string;
   /** Sort names starting with this letter (a-z), or with anything else ("#"). */
@@ -55,47 +55,47 @@ export interface GroupFilter {
   /** Count contents of this kind only. */
   contentKind?: string;
   /** Default "name". */
-  sort?: GroupSort;
+  sort?: EntitySort;
   /** Default 50, at most 200. */
   pageSize?: number;
   /** Management: a canonical name, alias or slug containing this. */
   query?: string;
-  /** Management: the deleted, restorable groups instead of active ones. */
+  /** Management: the deleted, restorable entities instead of active ones. */
   deleted?: boolean;
 }
 
-/** One numbered page of groups and every matching group's total. */
-export interface UseGroupsPage {
-  items: GroupCard[];
+/** One numbered page of entities and every matching entity's total. */
+export interface UseEntitiesPage {
+  items: EntityCard[];
   total?: number;
   loading: boolean;
   error?: ContentKitError;
   reload: () => void;
 }
 
-const NO_GROUPS: GroupCard[] = [];
+const NO_ENTITIES: EntityCard[] = [];
 
-/** Page `page` (from 1) of active groups with the total. */
-export function useGroupsPage(f: GroupFilter, page: number, o: { client?: ContentKitClient } = {}): UseGroupsPage {
+/** Page `page` (from 1) of active entities with the total. */
+export function useEntitiesPage(f: EntityFilter, page: number, o: { client?: ContentKitClient } = {}): UseEntitiesPage {
   const { client, store, scope, language: provided } = useContentScope(o.client);
   const language = f.language ?? provided;
   const size = f.pageSize ?? 50;
   const n = Math.max(1, Math.floor(page));
-  const r = useResource<GroupPage>(store, keyOf("groups", scope, "page", f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size, n), { type: "groups" }, (signal) =>
+  const r = useResource<EntityPage>(store, keyOf("entities", scope, "page", f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size, n), { type: "entities" }, (signal) =>
     client.entities.list({ kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, page: n, limit: size }, signal),
   );
-  return { items: r.data?.entities ?? NO_GROUPS, total: r.data?.total, loading: r.loading || !r.loaded, error: r.error, reload: r.reload };
+  return { items: r.data?.entities ?? NO_ENTITIES, total: r.data?.total, loading: r.loading || !r.loaded, error: r.error, reload: r.reload };
 }
 
-/** Active groups with name, path, cover and count, a cursor page at a time. */
-export function useGroups(f: GroupFilter = {}, o: { client?: ContentKitClient; management?: boolean } = {}): UseList<GroupCard> {
+/** Active entities with name, path, cover and count, a cursor page at a time. */
+export function useEntities(f: EntityFilter = {}, o: { client?: ContentKitClient; management?: boolean } = {}): UseList<EntityCard> {
   const { client, store, scope, language: provided } = useContentScope(o.client);
   const language = f.language ?? provided;
   const size = f.pageSize ?? 50;
   return useList(
     store,
-    keyOf("groups", scope, o.management, f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size, f.query, f.deleted),
-    { type: "groups" },
+    keyOf("entities", scope, o.management, f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size, f.query, f.deleted),
+    { type: "entities" },
     async (cursor, signal) => {
       const query = { kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, cursor: cursor as string | undefined, limit: size };
       const page = await (o.management
@@ -106,46 +106,46 @@ export function useGroups(f: GroupFilter = {}, o: { client?: ContentKitClient; m
   );
 }
 
-export interface UseGroup {
-  /** The group as its page shows it; null before create and while loading. A merged group reads as its survivor. */
-  group: GroupDetail | null;
+export interface UseEntity {
+  /** The entity as its page shows it; null before create and while loading. A merged entity reads as its survivor. */
+  entity: EntityDetail | null;
   /** What this hook deleted, until restored: reads no longer answer for it. */
-  deleted: Group | null;
+  deleted: Entity | null;
   loading: boolean;
   error?: ContentKitError;
   /** Writes in flight. */
   saving: boolean;
   reload: () => void;
-  /** Creates the group; the hook then shows it. */
-  create: (input: GroupInput) => Promise<Group>;
-  update: (patch: GroupUpdate) => Promise<Group>;
-  remove: () => Promise<Group>;
-  restore: () => Promise<Group>;
+  /** Creates the entity; the hook then shows it. */
+  create: (input: EntityInput) => Promise<Entity>;
+  update: (patch: EntityUpdate) => Promise<Entity>;
+  remove: () => Promise<Entity>;
+  restore: () => Promise<Entity>;
   /** Replaces ("set"), adds or removes names and aliases; a new canonical name demotes the old one to an alias. */
   names: (op: "set" | "add" | "remove", names: Name[]) => Promise<Name[]>;
   edges: (op: "add" | "remove", edges: EdgeInput[]) => Promise<Edge[]>;
-  /** Merges the group into another of its kind; the hook then shows the survivor. */
+  /** Merges the entity into another of its kind; the hook then shows the survivor. */
   merge: (into: string) => Promise<MergeReport>;
   /** Uploads an image (cropped by edit) and selects it as the cover or avatar. */
-  uploadImage: (slot: EntityImageSlot, file: Blob & { name?: string }, o?: { wait?: boolean; edit?: Edit }) => Promise<Group>;
+  uploadImage: (slot: EntityImageSlot, file: Blob & { name?: string }, o?: { wait?: boolean; edit?: Edit }) => Promise<Entity>;
   /** Shows the images uploaded here until their renditions exist. */
   previews: Partial<Record<EntityImageSlot, string>>;
 }
 
-/** One group: its page for anyone; create, edit, names, edges, cover, merge, delete and restore for staff (root:groups:write). null creates. */
-export function useGroup(id: string | null | undefined, o: { language?: string; initial?: GroupDetail; client?: ContentKitClient; management?: boolean } = {}): UseGroup {
+/** One entity: its page for anyone; create, edit, names, edges, cover, merge, delete and restore for staff (app:entities:write). null creates. */
+export function useEntity(id: string | null | undefined, o: { language?: string; initial?: EntityDetail; client?: ContentKitClient; management?: boolean } = {}): UseEntity {
   const { client, store, scope, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
   const [created, setCreated] = useState<string | null>(null);
   const [merged, setMerged] = useState<string | null>(null);
-  const [deleted, setDeleted] = useState<Group | null>(null);
+  const [deleted, setDeleted] = useState<Entity | null>(null);
   const gid = merged ?? id ?? created;
   useEffect(() => {
     setMerged(null);
     setDeleted(null);
   }, [id]);
-  const key = gid && !deleted ? keyOf("group", scope, o.management, gid, language) : null;
-  const r = useResource<GroupDetail>(store, key, { type: "group", id: gid ?? undefined }, (s) => o.management ? client.entities.getForManagement(gid!, language, s) : client.entities.get(gid!, language, s), { initial: o.initial });
+  const key = gid && !deleted ? keyOf("entity", scope, o.management, gid, language) : null;
+  const r = useResource<EntityDetail>(store, key, { type: "entity", id: gid ?? undefined }, (s) => o.management ? client.entities.getForManagement(gid!, language, s) : client.entities.get(gid!, language, s), { initial: o.initial });
   const guarded = useGuarded();
   const [inflight, setInflight] = useState(0);
   const run = useCallback(
@@ -171,16 +171,16 @@ export function useGroup(id: string | null | undefined, o: { language?: string; 
     return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, []);
 
-  const group = r.data ?? null;
+  const entity = r.data ?? null;
   return {
-    group: deleted ? null : group,
+    entity: deleted ? null : entity,
     deleted,
     loading: !!key && (r.loading || (!r.loaded && o.initial === undefined)),
     error: deleted ? undefined : r.error,
     saving: inflight > 0,
     reload: r.reload,
     create: useCallback(
-      (input: GroupInput) =>
+      (input: EntityInput) =>
         run(async () => {
           const [g] = await client.entities.create([input]);
           setCreated(g!.id);
@@ -188,7 +188,7 @@ export function useGroup(id: string | null | undefined, o: { language?: string; 
         }),
       [client, run],
     ),
-    update: useCallback((patch: GroupUpdate) => run(() => client.entities.update(need(), patch)), [client, run, need]),
+    update: useCallback((patch: EntityUpdate) => run(() => client.entities.update(need(), patch)), [client, run, need]),
     remove: useCallback(
       () =>
         run(async () => {
@@ -221,7 +221,7 @@ export function useGroup(id: string | null | undefined, o: { language?: string; 
     uploadImage: useCallback(
       (slot: EntityImageSlot, file: Blob & { name?: string }, u: { wait?: boolean; edit?: Edit } = {}) =>
         run(async () => {
-          const kind = group?.kind;
+          const kind = entity?.kind;
           if (!kind) throw new Error("contentkit-ui: load the group first");
           const g = await client.entities.uploadImage({ kind, id: need() }, slot, file, u);
           // A cropped upload's renditions show the crop; until then the file shows uncropped.
@@ -232,42 +232,42 @@ export function useGroup(id: string | null | undefined, o: { language?: string; 
           }
           return g;
         }),
-      [client, run, need, group?.kind],
+      [client, run, need, entity?.kind],
     ),
-    previews: { cover: group?.cover?.image ? previews.cover : undefined, avatar: group?.avatar?.image ? previews.avatar : undefined },
+    previews: { cover: entity?.cover?.image ? previews.cover : undefined, avatar: entity?.avatar?.image ? previews.avatar : undefined },
   };
 }
 
-/** Groups the signed-in person owns, edits or belongs to, a cursor page at a time; nothing signed out. */
-export function useMyGroups(q: Omit<MyEntityQuery, "cursor" | "limit"> & { pageSize?: number } = {}, o: { client?: ContentKitClient } = {}): UseList<MyGroup> {
+/** Entities the signed-in person owns, edits or belongs to, a cursor page at a time; nothing signed out. */
+export function useMyEntities(q: Omit<MyEntityQuery, "cursor" | "limit"> & { pageSize?: number } = {}, o: { client?: ContentKitClient } = {}): UseList<MyEntity> {
   const { client, store, scope, viewer, language } = useContentScope(o.client);
   const { pageSize, ...rest } = q;
   const query = { language, ...rest };
-  return useList(store, viewer === null ? null : keyOf("groups-mine", scope, query, pageSize), { type: "groups-mine" }, async (cursor, signal) => {
+  return useList(store, viewer === null ? null : keyOf("entities-mine", scope, query, pageSize), { type: "entities-mine" }, async (cursor, signal) => {
     const page = await client.entities.mine({ ...query, cursor: cursor as string | undefined, limit: pageSize }, signal);
     return { items: page.entities, next: page.next_cursor ?? null };
   });
 }
 
-/** A membership with a stable id: (group, content, version, role) is its identity. */
+/** A membership with a stable id: (entity, content, version, role) is its identity. */
 export type Member = Membership & { id: string };
 
 export const memberId = (m: Membership): string => [m.group_id ?? "", m.content_id ?? "", m.version_id ?? "", m.role ?? ""].join("|");
 
-export interface UseGroupMembers extends UseList<Member> {
+export interface UseEntityMembers extends UseList<Member> {
   saving: boolean;
   /** Adds members, or updates their role's position, window and state. */
   add: (members: Membership[]) => Promise<number>;
   remove: (members: Membership[]) => Promise<number>;
-  /** Orders an ordered group: the listed members first, in list order. */
+  /** Orders an ordered entity: the listed members first, in list order. */
   reorder: (members: MemberRef[]) => Promise<number>;
 }
 
-/** Staff: a group's memberships in member order, with writes. */
-export function useGroupMembers(id: string | null | undefined, o: { pageSize?: number; client?: ContentKitClient } = {}): UseGroupMembers {
+/** Staff: a entity's memberships in member order, with writes. */
+export function useEntityMembers(id: string | null | undefined, o: { pageSize?: number; client?: ContentKitClient } = {}): UseEntityMembers {
   const { client, store, scope } = useContentScope(o.client);
   const size = o.pageSize ?? 50;
-  const list = useList<Member>(store, id ? keyOf("group-members", scope, id, size) : null, { type: "group-members", id: id ?? undefined }, async (cursor, signal) => {
+  const list = useList<Member>(store, id ? keyOf("entity-members", scope, id, size) : null, { type: "entity-members", id: id ?? undefined }, async (cursor, signal) => {
     const page = await client.entities.members(id!, { cursor: cursor as string | undefined, limit: size }, signal);
     return { items: page.members.map((m) => ({ ...m, id: memberId(m) })), next: page.next_cursor ?? null };
   });
@@ -294,26 +294,26 @@ export function useGroupMembers(id: string | null | undefined, o: { pageSize?: n
   };
 }
 
-export interface UseContentGroups {
+export interface UseContentEntities {
   memberships: Membership[];
-  /** The groups the memberships name. */
-  entities: ReadonlyMap<string, GroupCard>;
+  /** The entities the memberships name. */
+  entities: ReadonlyMap<string, EntityCard>;
   loading: boolean;
   error?: ContentKitError;
   saving: boolean;
   reload: () => void;
-  /** Replaces the content's memberships, its versions' included, in these group kinds (every kind its kind joins when omitted); create links new names, creating entities of creatable kinds. */
+  /** Replaces the content's memberships, its versions' included, in these entity kinds (every kind its kind joins when omitted); create links new names, creating entities of creatable kinds. */
   set: (memberships: Membership[], kinds?: string[], create?: NewEntity[]) => Promise<ContentMemberships>;
 }
 
 /** Staff: one content's memberships, its versions' included, and their replacement. */
 const NO_MEMBERSHIPS: Membership[] = [];
 
-export function useContentGroups(contentId: string | null | undefined, o: { language?: string; client?: ContentKitClient } = {}): UseContentGroups {
+export function useContentEntities(contentId: string | null | undefined, o: { language?: string; client?: ContentKitClient } = {}): UseContentEntities {
   const { client, store, scope, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
-  const key = contentId ? keyOf("group-memberships", scope, contentId, language) : null;
-  const r = useResource<ContentMemberships>(store, key, { type: "group-memberships", id: contentId ?? undefined }, (s) => client.entities.ofContent(contentId!, language, s));
+  const key = contentId ? keyOf("entity-memberships", scope, contentId, language) : null;
+  const r = useResource<ContentMemberships>(store, key, { type: "entity-memberships", id: contentId ?? undefined }, (s) => client.entities.ofContent(contentId!, language, s));
   const guarded = useGuarded();
   const [inflight, setInflight] = useState(0);
   const set = useCallback(

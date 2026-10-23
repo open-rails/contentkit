@@ -48,7 +48,7 @@ it.each(["chips", "text"] as const)("groups %s entities into ordered accessible 
     artist: [{ id: "first", slug: "first", name: "First artist", path: "/artists/first" }, { id: "second", slug: "second", name: "Second artist" }],
     ...card.entities,
   } };
-  const view = render(<ContentCard card={grouped} entityLayout="rows" entityStyle={entityStyle} groupKinds={["series", "missing", "artist", "tag"]} chips={1} filterEntity={(entity, kind) => entity.slug !== "original" && kind !== "tag"} labels={{ series: "Series", artist: "Artists" }} />);
+  const view = render(<ContentCard card={grouped} entityLayout="rows" entityStyle={entityStyle} entityKinds={["series", "missing", "artist", "tag"]} chips={1} filterEntity={(entity, kind) => entity.slug !== "original" && kind !== "tag"} labels={{ series: "Series", artist: "Artists" }} />);
   const groups = view.container.querySelector('[data-ckui="card-groups"]')!;
   expect(groups).toHaveAttribute("data-layout", "rows");
   expect([...groups.children].map((row) => row.getAttribute("data-kind"))).toEqual(["series", "artist"]);
@@ -63,12 +63,12 @@ it.each(["chips", "text"] as const)("groups %s entities into ordered accessible 
   expect(artist.classList.contains("border")).toBe(entityStyle === "chips");
   expect(screen.queryByText(/Original|Second artist|A tag/)).toBeNull();
 
-  view.rerender(<ContentCard card={grouped} entityLayout="rows" groupKinds={["missing"]} />);
+  view.rerender(<ContentCard card={grouped} entityLayout="rows" entityKinds={["missing"]} />);
   expect(view.container.querySelector('[data-ckui="card-groups"]')).toBeNull();
 });
 
 it("lets a host show only page count, selected traits and filtered series without losing specific names", () => {
-  const view = render(<ContentCard card={card} groupKinds={["series"]} chips={2} filterEntity={(entity) => entity.slug !== "original"} metadata={{ languages: false, traits: ["colored"], duration: false }} showCounts={false} labels={{ colored: "Colored" }} />);
+  const view = render(<ContentCard card={card} entityKinds={["series"]} chips={2} filterEntity={(entity) => entity.slug !== "original"} metadata={{ languages: false, traits: ["colored"], duration: false }} showCounts={false} labels={{ colored: "Colored" }} />);
   expect(screen.getByText("Colored")).toHaveAttribute("data-variant", "outline");
   expect(screen.getByText("24 pages")).toBeVisible();
   expect(screen.queryByText(/English|Uncensored|2 min/)).toBeNull();
@@ -157,15 +157,15 @@ it("makes each card the positioning parent of its hidden labels", () => {
 it("counts the chips left out, per breakpoint, only when the host asks", () => {
   const tags = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id, slug: id, name: `Tag ${id}` }));
   const tagged: Card = { ...card, entities: { tag: tags } };
-  const view = render(<ContentCard card={tagged} groupKinds={["tag"]} chips={{ base: 3, lg: 4 }} chipOverflow />);
+  const view = render(<ContentCard card={tagged} entityKinds={["tag"]} chips={{ base: 3, lg: 4 }} chipOverflow />);
   const items = [...view.container.querySelectorAll('[data-ckui="card-groups"] > li')];
   expect(items.map((li) => li.textContent)).toEqual(["Tag a", "Tag b", "Tag c", "Tag d", "+33 more", "+22 more"]);
   expect(items.map((li) => li.className)).toEqual(["", "", "", "hidden lg:list-item", "lg:hidden", "hidden lg:list-item"]);
 
-  view.rerender(<ContentCard card={{ ...tagged, entities: { tag: tags.slice(0, 4) } }} groupKinds={["tag"]} chips={{ base: 3, lg: 4 }} chipOverflow />);
+  view.rerender(<ContentCard card={{ ...tagged, entities: { tag: tags.slice(0, 4) } }} entityKinds={["tag"]} chips={{ base: 3, lg: 4 }} chipOverflow />);
   expect([...view.container.querySelectorAll('[data-ckui="card-chip-more"]')].map((li) => [li.textContent, li.className])).toEqual([["+11 more", "lg:hidden"]]);
 
-  view.rerender(<ContentCard card={tagged} groupKinds={["tag"]} chips={3} />);
+  view.rerender(<ContentCard card={tagged} entityKinds={["tag"]} chips={3} />);
   expect(view.container.querySelector('[data-ckui="card-chip-more"]')).toBeNull();
   expect(view.container.querySelectorAll('[data-ckui="card-groups"] > li')).toHaveLength(3);
 });
@@ -184,7 +184,7 @@ const named = (...names: string[]) => names.map((name) => ({ id: name, slug: nam
 const seen = (list: Element) => [...list.children].filter((li) => !li.classList.contains("invisible") && getComputedStyle(li).display !== "none").map((li) => li.querySelector("a, span")?.textContent);
 
 it("fits whole chips on one line and counts the rest", () => withWidths(200, () => {
-  const view = render(<ContentCard card={{ ...card, entities: { tag: named("bakunyu", "big ass", "double penetration", "tentacles") } }} groupKinds={["tag"]} chips={4} chipOverflow chipFit />);
+  const view = render(<ContentCard card={{ ...card, entities: { tag: named("bakunyu", "big ass", "double penetration", "tentacles") } }} entityKinds={["tag"]} chips={4} chipOverflow chipFit />);
   const list = view.container.querySelector('[data-ckui="card-groups"]')!;
   expect(list).toHaveAttribute("data-fit");
   expect(seen(list)).toEqual(["bakunyu", "big ass", "+2"]);
@@ -194,7 +194,7 @@ it("fits whole chips on one line and counts the rest", () => withWidths(200, () 
 
 it("keeps room for the +N even when no kind is over its limit", () => withWidths(190, () => {
   // Without the reserve, three 60px chips (180px) would fill the line and push +N out.
-  const view = render(<ContentCard card={{ ...card, entities: { tag: named("aaaaaa", "bbbbbb", "cccccc", "dddddd") } }} groupKinds={["tag"]} chips={4} chipOverflow chipFit />);
+  const view = render(<ContentCard card={{ ...card, entities: { tag: named("aaaaaa", "bbbbbb", "cccccc", "dddddd") } }} entityKinds={["tag"]} chips={4} chipOverflow chipFit />);
   expect(seen(view.container.querySelector('[data-ckui="card-groups"]')!)).toEqual(["aaaaaa", "bbbbbb", "+2"]);
 }));
 
@@ -202,7 +202,7 @@ it("skips chips hidden at this width when fitting", () => withWidths(500, () => 
   const style = document.head.appendChild(document.createElement("style"));
   style.textContent = ".hidden { display: none; }";
   try {
-    const view = render(<ContentCard card={{ ...card, entities: { tag: named("a", "b"), artist: named("x") } }} groupKinds={["tag", "artist"]} chips={{ base: 1, lg: 2 }} chipOverflow chipFit />);
+    const view = render(<ContentCard card={{ ...card, entities: { tag: named("a", "b"), artist: named("x") } }} entityKinds={["tag", "artist"]} chips={{ base: 1, lg: 2 }} chipOverflow chipFit />);
     expect(seen(view.container.querySelector('[data-ckui="card-groups"]')!)).toEqual(["a", "x", "+1"]);
   } finally {
     style.remove();
@@ -223,7 +223,7 @@ it("ends the meta line with the first named group, dot separated and linked", ()
 });
 
 it("shrinks the one chip that cannot fit so its +N stays in view", () => withWidths(100, () => {
-  const view = render(<ContentCard card={{ ...card, entities: { tag: named("an unreasonably long tag", "b") } }} groupKinds={["tag"]} chips={2} chipOverflow chipFit />);
+  const view = render(<ContentCard card={{ ...card, entities: { tag: named("an unreasonably long tag", "b") } }} entityKinds={["tag"]} chips={2} chipOverflow chipFit />);
   const list = view.container.querySelector('[data-ckui="card-groups"]')!;
   expect(seen(list)).toEqual(["an unreasonably long tag", "+1"]);
   expect(within(list as HTMLElement).getByText("an unreasonably long tag").closest("li")).toHaveClass("min-w-0", "shrink");

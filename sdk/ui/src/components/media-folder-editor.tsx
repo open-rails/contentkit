@@ -323,7 +323,7 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
             />
           )
         ) : g.files.length ? (
-          <Group
+          <Entity
             key={g.path}
             group={g}
             layout={layout === "grid" && g.rule?.page ? "grid" : "list"}
@@ -421,7 +421,7 @@ function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) 
   );
 }
 
-function Group({
+function Entity({
   group,
   layout,
   titled,

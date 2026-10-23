@@ -2,26 +2,26 @@ import { cn } from "cn";
 import type { ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { Attribute, GroupDetail } from "../../client/generated/wire.js";
+import type { Attribute, EntityDetail } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
-import { useGroup, useKinds } from "../../react/groups.js";
+import { useEntity, useKinds } from "../../react/entities.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { contentError, formatDate } from "../social/parts.js";
-import { GroupCover, GroupLink, labelOf, type GroupLike, type Labels } from "./parts.js";
-import { ScopedGroups } from "./scoped.js";
+import { EntityCover, EntityLink, labelOf, type EntityLike, type Labels } from "./parts.js";
+import { ScopedEntities } from "./scoped.js";
 
-export interface GroupHeaderProps {
-  /** The group the host already read; or give id. */
-  group?: GroupDetail;
+export interface EntityHeaderProps {
+  /** The entity the host already read; or give id. */
+  entity?: EntityDetail;
   id?: string;
   /** Text, names and counts in this language; default the provider's. */
   language?: string;
   labels?: Labels;
-  /** A group's link (parent, scope, children); default its canonical path. */
-  href?: (group: GroupLike) => string | undefined;
+  /** A entity's link (parent, scope, children); default its canonical path. */
+  href?: (entity: EntityLike) => string | undefined;
   /** Below the description: the host's actions. */
   children?: ReactNode;
   client?: ContentKitClient;
@@ -31,23 +31,23 @@ export interface GroupHeaderProps {
 
 /** A value as its attribute's type shows it. */
 export function formatAttribute(m: Translator, spec: Attribute | undefined, value: unknown, labels?: Labels): string {
-  if (typeof value === "boolean") return m.t(value ? "groups.yes" : "groups.no");
+  if (typeof value === "boolean") return m.t(value ? "entities.yes" : "entities.no");
   if (spec?.type === "time" && typeof value === "string") return formatDate(m, value);
   if (spec?.type === "int" && typeof value === "number") return new Intl.NumberFormat(m.language).format(value);
   if (spec?.type === "enum" && typeof value === "string") return labelOf(labels, value);
   return String(value);
 }
 
-/** A group page's header: cover, name, other names, description, attributes, parent, scope, sub-groups and count. */
-export function GroupHeader(p: GroupHeaderProps) {
+/** A entity page's header: cover, name, other names, description, attributes, parent, scope, sub-entities and count. */
+export function EntityHeader(p: EntityHeaderProps) {
   const m = useMessages();
   const { t } = m;
   const languageName = useLanguageName();
-  const read = useGroup(p.group ? null : p.id, { language: p.language, client: p.client });
+  const read = useEntity(p.entity ? null : p.id, { language: p.language, client: p.client });
   const { kinds } = useKinds({ client: p.client });
-  const g = p.group ?? read.group;
+  const g = p.entity ?? read.entity;
   const root = (children: ReactNode) => (
-    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="group-header">
+    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="entity-header">
       {children}
     </ContentKitUiRoot>
   );
@@ -71,29 +71,29 @@ export function GroupHeader(p: GroupHeaderProps) {
   const count = g.counts.filter((c) => c.language === (p.language ?? "")).reduce((n, c) => n + c.count, 0);
   return root(
     <div className="grid gap-4 sm:grid-cols-[10rem_minmax(0,1fr)]" data-kind={g.kind}>
-      <GroupCover group={g} className="aspect-[3/4] w-32 sm:w-40" />
+      <EntityCover entityy={g} className="aspect-[3/4] w-32 sm:w-40" />
       <div className="grid content-start gap-3">
         <div className="grid gap-1">
           {(g.parent || g.scope) && (
-            <p className="text-xs text-muted-foreground" data-ckui="group-parent">
+            <p className="text-xs text-muted-foreground" data-ckui="entity-parent">
               {[g.scope, g.parent]
                 .filter((x, i, all): x is NonNullable<typeof x> => !!x && all.findIndex((y) => y?.id === x.id) === i)
                 .map((x, i) => (
                   <span key={x.id}>
                     {i > 0 && " · "}
-                    <GroupLink group={x} href={p.href} className="hover:underline">
+                    <EntityLink entityy={x} href={p.href} className="hover:underline">
                       {x.name || x.slug}
-                    </GroupLink>
+                    </EntityLink>
                   </span>
                 ))}
             </p>
           )}
           <h1 className="text-xl font-semibold break-words">{g.name || g.slug}</h1>
-          <p className="text-xs text-muted-foreground tabular-nums">{m.plural("groups.items", count)}</p>
+          <p className="text-xs text-muted-foreground tabular-nums">{m.plural("entities.items", count)}</p>
         </div>
         {others.length > 0 && (
-          <p className="text-muted-foreground" data-ckui="group-names">
-            <span className="sr-only">{t("groups.alsoKnownAs")} </span>
+          <p className="text-muted-foreground" data-ckui="entity-names">
+            <span className="sr-only">{t("entities.alsoKnownAs")} </span>
             {others.map((n, i) => (
               <span key={`${n.language}:${n.name}`} lang={n.language}>
                 {i > 0 && " · "}
@@ -104,12 +104,12 @@ export function GroupHeader(p: GroupHeaderProps) {
           </p>
         )}
         {text?.description && (
-          <p className="break-words whitespace-pre-line" lang={text.language} data-ckui="group-description">
+          <p className="break-words whitespace-pre-line" lang={text.language} data-ckui="entity-description">
             {text.description}
           </p>
         )}
         {attributes.length > 0 && (
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1" data-ckui="group-attributes">
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1" data-ckui="entity-attributes">
             {attributes.map(([name, v]) => (
               <div key={name} className="contents">
                 <dt className="text-muted-foreground">{labelOf(p.labels, name)}</dt>
@@ -119,15 +119,15 @@ export function GroupHeader(p: GroupHeaderProps) {
           </dl>
         )}
         {g.children.length > 0 && (
-          <nav aria-label={t("groups.children")} className="flex flex-wrap gap-2" data-ckui="group-children">
+          <nav aria-label={t("entities.children")} className="flex flex-wrap gap-2" data-ckui="entity-children">
             {g.children.map((c) => (
-              <GroupLink key={c.id} group={c} href={p.href} className="rounded-md border border-border px-2 py-1 hover:bg-muted">
+              <EntityLink key={c.id} entityy={c} href={p.href} className="rounded-md border border-border px-2 py-1 hover:bg-muted">
                 {c.name || c.slug}
-              </GroupLink>
+              </EntityLink>
             ))}
           </nav>
         )}
-        <ScopedGroups group={g} language={p.language} labels={p.labels} href={p.href} client={p.client} />
+        <ScopedEntities entityy={g} language={p.language} labels={p.labels} href={p.href} client={p.client} />
         {p.children}
       </div>
     </div>,

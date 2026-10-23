@@ -2,10 +2,10 @@ import { cn } from "cn";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { ContentMemberships, GroupCard, GroupKind, Membership } from "../../client/generated/wire.js";
+import type { ContentMemberships, EntityCard, EntityKind, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";
-import { useContentGroups, useKinds } from "../../react/groups.js";
+import { useContentEntities, useKinds } from "../../react/entities.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
@@ -18,16 +18,16 @@ export type { VersionChoice } from "./entity-chips.js";
 export interface MembershipEditorProps {
   /** The content whose memberships are edited, its versions' included. */
   content: string;
-  /** Its kind: the group kinds it joins. */
+  /** Its kind: the entity kinds it joins. */
   contentKind: string;
   /** Staff lookup, including internal classifications. */
   management?: boolean;
   /** Its versions, for version-level memberships (voice actors, version-only tags). */
   versions?: readonly VersionChoice[];
-  /** Only these group kinds; default every kind its kind joins. */
-  groupKinds?: readonly string[];
+  /** Only these entity kinds; default every kind its kind joins. */
+  entityKinds?: readonly string[];
   labels?: Labels;
-  /** Group names in this language; default the provider's. */
+  /** Entity names in this language; default the provider's. */
   language?: string;
   onSaved?: (saved: ContentMemberships) => void;
   client?: ContentKitClient;
@@ -42,23 +42,23 @@ const strip = ({ key: _key, ...m }: Draft): Membership => m;
 const same = (a: Membership[], b: Membership[]) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
- * Staff: a content's groups, per group kind: add and remove groups, and per
+ * Staff: a content's entities, per entity kind: add and remove entities, and per
  * membership the version it targets, its role, its position in an ordered
- * group, its window and acceptance of a proposed one. Saved in one write per
+ * entity, its window and acceptance of a proposed one. Saved in one write per
  * content for the kinds shown.
  */
 export function MembershipEditor(p: MembershipEditorProps) {
   const m = useMessages();
   const { t } = m;
   const { kinds, loading: kindsLoading } = useKinds({ client: p.client });
-  const cg = useContentGroups(p.content, { language: p.language, client: p.client });
-  const groupKinds = useMemo(() => p.groupKinds ?? kinds?.kinds[p.contentKind]?.entities ?? [], [p.groupKinds, kinds, p.contentKind]);
-  const [picked, setPicked] = useState<ReadonlyMap<string, GroupCard>>(new Map());
+  const cg = useContentEntities(p.content, { language: p.language, client: p.client });
+  const entityKinds = useMemo(() => p.entityKinds ?? kinds?.kinds[p.contentKind]?.entities ?? [], [p.entityKinds, kinds, p.contentKind]);
+  const [picked, setPicked] = useState<ReadonlyMap<string, EntityCard>>(new Map());
   const cards = useMemo(() => new Map([...cg.entities, ...picked]), [cg.entities, picked]);
   const seq = useRef(0);
   const initial = useMemo(
-    () => cg.memberships.filter((x) => groupKinds.includes(cg.entities.get(x.group_id ?? "")?.kind ?? "")).map((x) => ({ ...x, content_id: undefined })),
-    [cg.memberships, cg.entities, groupKinds],
+    () => cg.memberships.filter((x) => entityKinds.includes(cg.entities.get(x.group_id ?? "")?.kind ?? "")).map((x) => ({ ...x, content_id: undefined })),
+    [cg.memberships, cg.entities, entityKinds],
   );
   const [draft, setDraft] = useState<Draft[]>([]);
   const [created, setCreated] = useState<Record<string, string[]>>({});
@@ -106,21 +106,21 @@ export function MembershipEditor(p: MembershipEditorProps) {
       onSubmit={(e) => {
         e.preventDefault();
         setSaved(false);
-        void save.run(() => cg.set(draft.map(strip), [...groupKinds], newNames)).then((out) => {
+        void save.run(() => cg.set(draft.map(strip), [...entityKinds], newNames)).then((out) => {
           if (!out) return;
           setSaved(true);
           setCreated((all) => Object.fromEntries(Object.entries(all).filter(([kind]) => scopeMissing(kind))));
-          setDraft(out.memberships.filter((x) => groupKinds.includes(out.entities.find((g) => g.id === x.group_id)?.kind ?? "")).map((x) => ({ ...x, content_id: undefined, key: ++seq.current })));
+          setDraft(out.memberships.filter((x) => entityKinds.includes(out.entities.find((g) => g.id === x.group_id)?.kind ?? "")).map((x) => ({ ...x, content_id: undefined, key: ++seq.current })));
           p.onSaved?.(out);
         });
       }}
     >
-      {groupKinds.map((kind) => {
-        const spec: GroupKind = kinds?.entity_kinds?.[kind] ?? {};
+      {entityKinds.map((kind) => {
+        const spec: EntityKind = kinds?.entity_kinds?.[kind] ?? {};
         const rows = draft.filter((x) => cards.get(x.group_id ?? "")?.kind === kind);
         const label = labelOf(p.labels, kind);
         return (
-          <div key={kind} data-ckui="membership-kind" data-group-kind={kind}>
+          <div key={kind} data-ckui="membership-kind" data-entity-kind={kind}>
             <EntityChips
               kind={kind}
               label={label}
@@ -153,7 +153,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
           </div>
         );
       })}
-      {!groupKinds.length && <p className="text-muted-foreground">{t("memberships.noKinds")}</p>}
+      {!entityKinds.length && <p className="text-muted-foreground">{t("memberships.noKinds")}</p>}
       <ErrorLine error={save.error} />
       <div className="flex items-center gap-3">
         <Button type="submit" size="sm" disabled={save.pending || !dirty}>

@@ -201,9 +201,9 @@ retain the first page's age cutoff, but do not freeze later score or catalog edi
 
 ## Entity ranking, bounds and verification
 
-`Ranker.Groups` derives entity popularity from its member works; artists, tags,
+`Ranker.Entities` derives entity popularity from its member works; artists, tags,
 series and characters do not receive independent consumption measurements.
-It sums scores for the top `GroupCandidateLimit` works (default 2,000), deduping
+It sums scores for the top `EntityCandidateLimit` works (default 2,000), deduping
 each membership. Its `Readers` is a sum of member reader counts, **not unique
 people across the entity**. `ContentCount` and `MeanScore` describe only that
 bounded slice. `Ranker` also defaults `MaxDepth` to 2,000 and cache TTL to five

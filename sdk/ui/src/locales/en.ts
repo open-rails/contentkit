@@ -1,13 +1,13 @@
 import { admin } from "./admin/en.js";
 import { social } from "./social/en.js";
-import { groups } from "./groups/en.js";
+import { entities } from "./entities/en.js";
 import { discovery } from "./discovery/en.js";
 import { content } from "./content/en.js";
 
 export const en = {
   ...social,
   ...admin,
-  ...groups,
+  ...entities,
   ...discovery,
   ...content,
   common: {

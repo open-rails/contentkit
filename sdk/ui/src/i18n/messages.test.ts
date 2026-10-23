@@ -29,7 +29,7 @@ it("words video limits with their numbers, else the code's line", () => {
 it("every content string is in every bundle with the same placeholders", async () => {
   const { social } = await import("../locales/social/en.js");
   const { admin } = await import("../locales/admin/en.js");
-  const { groups } = await import("../locales/groups/en.js");
+  const { groups } = await import("../locales/entities/en.js");
   const { discovery } = await import("../locales/discovery/en.js");
   const { content } = await import("../locales/content/en.js");
   const leaves = (tree: object, prefix = ""): [string, string][] =>

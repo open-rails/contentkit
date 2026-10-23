@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/client.js";
 import type { Card, Content, ContentModel } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/provider.js";
-import { GroupMembers } from "./group-members.js";
+import { EntityMembers } from "./entity-members.js";
 
 const at = "2026-10-16T00:00:00Z";
 const model: ContentModel = {
@@ -28,7 +28,7 @@ const stored: Record<string, Content> = {
 };
 const suggestion = { id: "c4", kind: "gallery", code: "C4", title: "Gamma", cover: [{ url: "https://img.test/c4.webp", w: 1, h: 1 }] } as unknown as Card;
 
-function setup(newContentHref?: (kind: string, group: { code?: string }) => string | undefined) {
+function setup(newContentHref?: (kind: string, entity: { code?: string }) => string | undefined) {
   const added: unknown[] = [];
   const manageIds: string[][] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -51,8 +51,8 @@ function setup(newContentHref?: (kind: string, group: { code?: string }) => stri
   const client = createContentKitClient({ baseUrl: "https://ck.test", fetch: fetch as typeof globalThis.fetch });
   render(
     <ContentKitProvider client={client} viewer="staff">
-      <GroupMembers
-        group={{ id: "g1", kind: "series", name: "Saga", slug: "saga", code: "SAGA1" }}
+      <EntityMembers
+        entityy={{ id: "g1", kind: "series", name: "Saga", slug: "saga", code: "SAGA1" }}
         contentHref={(c) => `/admin/galleries/${c.code}`}
         newContentHref={newContentHref}
         labels={{ gallery: "Galleries", blog: "Posts" }}
@@ -86,7 +86,7 @@ it("adds a member by searching its title, without typing ids", async () => {
 });
 
 it("starts a new item already in the group, only for content kinds that join it", async () => {
-  setup((kind, group) => `/admin/${kind}/new?with=${group.code}`);
+  setup((kind, entity) => `/admin/${kind}/new?with=${entity.code}`);
   const start = await screen.findByRole("link", { name: "New Galleries in Saga" });
   expect(start).toHaveAttribute("href", "/admin/gallery/new?with=SAGA1");
   expect(screen.queryByRole("link", { name: /^New Posts/ })).toBeNull();

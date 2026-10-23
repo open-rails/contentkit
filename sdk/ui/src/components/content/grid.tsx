@@ -6,7 +6,7 @@ import type { AccessMode, ContentQuery, HistoryQuery, RailQuery, SearchQuery } f
 import type { Card, ListingSummary } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContents, useExposure, useHistory, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
-import { useKinds } from "../../react/groups.js";
+import { useKinds } from "../../react/entities.js";
 import type { UseList } from "../../react/use-resource.js";
 import { ContentKitContext } from "../../react/context.js";
 import { useContentScope } from "../../react/use-resource.js";
@@ -224,7 +224,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
                     aspectRatio={p.aspectRatio}
                     titlePosition={p.titlePosition}
                     loadMedia={p.loadMedia}
-                    groupKinds={p.groupKinds}
+                    entityKinds={p.entityKinds}
                     chips={p.chips}
                     chipOverflow={p.chipOverflow}
                     chipFit={p.chipFit}

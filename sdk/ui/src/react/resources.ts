@@ -312,13 +312,13 @@ export class ResourceStore {
         this.invalidate((t) => (t.type === "bans" && t.scope === c.scope) || t.type === "standing");
         break;
       case "entities.changed":
-        this.invalidate((t) => t.type.startsWith("group") || t.type === "daily-releases");
+        this.invalidate((t) => t.type.startsWith("entit") || t.type === "daily-releases");
         break;
       case "contentFilters.changed":
         this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates" || t.type === "daily-releases");
         break;
       case "access.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group") || t.type === "daily-releases" || t.type === "standing");
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("entit") || t.type === "daily-releases" || t.type === "standing");
         break;
       case "engagement.changed":
         this.invalidate((t) => t.type === "history" || t.type === "cards" || t.type === "daily-releases" || t.type === "standing" || t.type.startsWith("stats") || (t.type === "content-detail" && !!t.id && c.ids.includes(t.id)));

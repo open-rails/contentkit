@@ -1,23 +1,23 @@
 import { cn } from "cn";
 import { useId, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
-import type { GroupDetail } from "../../client/generated/wire.js";
+import type { EntityDetail } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
-import { useGroups, useKinds } from "../../react/groups.js";
+import { useEntities, useKinds } from "../../react/entities.js";
 import { Button } from "#ckui/ui/button";
-import { GroupAvatar, GroupLink, labelOf, type GroupLike, type Labels } from "./parts.js";
+import { EntityAvatar, EntityLink, labelOf, type EntityLike, type Labels } from "./parts.js";
 
-export interface ScopedGroupsProps {
+export interface ScopedEntitiesProps {
   /** The scope: e.g. a series, whose characters are listed. */
-  group: Pick<GroupDetail, "id" | "kind">;
+  entity: Pick<EntityDetail, "id" | "kind">;
   /** Names and counts in this language; default the provider's. */
   language?: string;
   /** Section titles by kind route or id; default the route humanized ("characters" → "Characters"). */
   labels?: Labels;
-  /** A group's link; default its canonical path. */
-  href?: (group: GroupLike) => string | undefined;
-  /** Opens a group in-app instead of linking (an admin editor). */
-  onSelect?: (group: GroupLike) => void;
+  /** A entity's link; default its canonical path. */
+  href?: (entity: EntityLike) => string | undefined;
+  /** Opens a entity in-app instead of linking (an admin editor). */
+  onSelect?: (entity: EntityLike) => void;
   /** Staff management: internal entities too. */
   management?: boolean;
   /** Shown before "Show more"; default 12. */
@@ -26,13 +26,13 @@ export interface ScopedGroupsProps {
   className?: string;
 }
 
-/** The entities scoped by a group, one section per kind scoped by its kind (a series' characters): avatar and name, most used first. */
-export function ScopedGroups(p: ScopedGroupsProps) {
+/** The entities scoped by a entity, one section per kind scoped by its kind (a series' characters): avatar and name, most used first. */
+export function ScopedEntities(p: ScopedEntitiesProps) {
   const { kinds } = useKinds({ client: p.client });
-  const scoped = Object.entries(kinds?.entity_kinds ?? {}).filter(([, k]) => k.scoped_by === p.group.kind);
+  const scoped = Object.entries(kinds?.entity_kinds ?? {}).filter(([, k]) => k.scoped_by === p.entity.kind);
   if (scoped.length === 0) return null;
   return (
-    <div className={cn("grid gap-4", p.className)} data-ckui="scoped-groups">
+    <div className={cn("grid gap-4", p.className)} data-ckui="scoped-entitys">
       {scoped.map(([kind, spec]) => (
         <ScopedSection key={kind} {...p} kind={kind} title={labelOf(p.labels, spec.route ?? kind)} />
       ))}
@@ -40,17 +40,17 @@ export function ScopedGroups(p: ScopedGroupsProps) {
   );
 }
 
-function ScopedSection(p: ScopedGroupsProps & { kind: string; title: string }) {
+function ScopedSection(p: ScopedEntitiesProps & { kind: string; title: string }) {
   const { t } = useMessages();
   const id = useId();
   const limit = p.limit ?? 12;
   const [all, setAll] = useState(false);
-  const list = useGroups({ kind: p.kind, scope: p.group.id, language: p.language, sort: "count" }, { client: p.client, management: p.management });
+  const list = useEntities({ kind: p.kind, scope: p.entity.id, language: p.language, sort: "count" }, { client: p.client, management: p.management });
   if (list.items.length === 0) return null;
   const shown = all ? list.items : list.items.slice(0, limit);
   const more = (!all && list.items.length > limit) || (all && list.hasMore);
   return (
-    <section aria-labelledby={id} className="grid gap-2" data-ckui="scoped-group-section" data-kind={p.kind}>
+    <section aria-labelledby={id} className="grid gap-2" data-ckui="scoped-entity-section" data-kind={p.kind}>
       <h2 id={id} className="text-sm font-semibold">
         {p.title}
       </h2>
@@ -58,7 +58,7 @@ function ScopedSection(p: ScopedGroupsProps & { kind: string; title: string }) {
         {shown.map((g) => {
           const body = (
             <>
-              <GroupAvatar group={g} className="size-7 text-xs" />
+              <EntityAvatar entityy={g} className="size-7 text-xs" />
               <span className="min-w-0 truncate">{g.name || g.slug}</span>
               {g.count > 0 && <span className="text-xs text-muted-foreground tabular-nums">{g.count}</span>}
             </>
@@ -71,9 +71,9 @@ function ScopedSection(p: ScopedGroupsProps & { kind: string; title: string }) {
                   {body}
                 </button>
               ) : (
-                <GroupLink group={g} href={p.href} className={chip}>
+                <EntityLink entityy={g} href={p.href} className={chip}>
                   {body}
-                </GroupLink>
+                </EntityLink>
               )}
             </li>
           );
@@ -88,7 +88,7 @@ function ScopedSection(p: ScopedGroupsProps & { kind: string; title: string }) {
           disabled={list.loadingMore}
           onClick={() => (all ? void list.loadMore() : setAll(true))}
         >
-          {t("groups.showMore")}
+          {t("entities.showMore")}
         </Button>
       )}
     </section>

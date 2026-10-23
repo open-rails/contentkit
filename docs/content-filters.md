@@ -66,8 +66,8 @@ loader: retired per-kind blocks, labels and misspelled fields fail instead of
 silently broadening a restricted domain. Entity display names and translations
 are not configuration fields. Filter rows are flat `{kind, slug, visible,
 user_toggle?}` references in YAML and JSON; the retired `entity: {...}` wrapper
-is rejected. The typed Go API continues to use `ContentFilter.Group` as a
-`GroupRef`, so application code retains the same compiler-checked model.
+is rejected. The typed Go API continues to use `ContentFilter.Entity` as a
+`EntityRef`, so application code retains the same compiler-checked model.
 
 ## Visibility
 

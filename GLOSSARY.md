@@ -68,6 +68,11 @@ _Avoid_: Group when referring to ContentKit content associations
 A configured type of entity, defining whether a record is an artist, series,
 character, tag or another app-specific concept.
 
+**Permission group**:
+An AuthKit organization or team in which people hold roles and permissions.
+An entity can have a permission group for its editors; they remain separate
+records with separate responsibilities.
+
 **Association**:
 A link between content and an entity. An association reuses the entity's
 identity instead of copying its name into every content item.

@@ -5,11 +5,11 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient, type ContentKitClient } from "../../client/index.js";
-import type { ContentModel, GroupAccess, GroupDetail, Offer } from "../../client/generated/wire.js";
+import type { ContentModel, EntityAccess, EntityDetail, Offer } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/index.js";
 import { MembershipBox } from "./banner.js";
-import { GroupEditor } from "./editor.js";
-import { GroupAvatar, GroupCover, GroupPicker } from "./parts.js";
+import { EntityEditor } from "./editor.js";
+import { EntityAvatar, EntityCover, EntityPicker } from "./parts.js";
 
 type Handler = (req: { url: URL; init?: RequestInit }) => unknown;
 
@@ -37,23 +37,23 @@ const wrap = (client: ContentKitClient) =>
   };
 
 const key = "t:group:g1";
-const group = (access: GroupAccess) => ({ id: "g1", kind: "channel", name: "No Offer Club", access });
+const entity = (access: EntityAccess) => ({ id: "g1", kind: "channel", name: "No Offer Club", access });
 const free = { key, target: { kind: "group" as const, id: "g1" }, terms: { amount: "0.00", currency: "USD" } };
 
 it("MembershipBox: no Join where the group sells no membership; members stay members", async () => {
   const s = server({});
-  const { container, rerender } = render(<MembershipBox group={group({ key, member: false })} />, { wrapper: wrap(s.client) });
+  const { container, rerender } = render(<MembershipBox entityy={entity({ key, member: false })} />, { wrapper: wrap(s.client) });
   expect(container.querySelector('[data-ckui="membership-box"]')).toBeNull();
   expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
 
-  rerender(<MembershipBox group={group({ key, member: true })} />);
+  rerender(<MembershipBox entityy={entity({ key, member: true })} />);
   expect(screen.getByText("Member")).toBeInTheDocument();
 });
 
 it("MembershipBox: a free group's Join refused as not joinable says so, not that something changed elsewhere", async () => {
   const s = server({ "POST /entities/g1/join": () => Response.json({ error: "offers: not free to join", code: "not_joinable" }, { status: 409 }) });
   const user = userEvent.setup();
-  render(<MembershipBox group={group({ key, member: false, offer: free })} />, { wrapper: wrap(s.client) });
+  render(<MembershipBox entityy={entity({ key, member: false, offer: free })} />, { wrapper: wrap(s.client) });
   await user.click(screen.getByRole("button", { name: "Join" }));
   expect(await screen.findByText("This group isn't open to join right now.")).toBeInTheDocument();
   expect(screen.queryByText(/changed elsewhere/)).toBeNull();
@@ -62,7 +62,7 @@ it("MembershipBox: a free group's Join refused as not joinable says so, not that
 const model: ContentModel = { languages: ["en"], tiers: [], signals: false, kinds: {}, entity_kinds: { channel: { owner: "user", sellable: true, auth_scope: true } } };
 const at = "2026-10-13T00:00:00Z";
 const offer: Offer = { id: "o1", target: { kind: "group", id: "g1" }, key, terms: { amount: "4.99", currency: "USD", renew_hours: 720 }, state: "active", synced: true, revision: 2, updated_at: at };
-const detail: GroupDetail = {
+const detail: EntityDetail = {
   id: "g1",
   internal: false,
   kind: "channel",
@@ -83,34 +83,34 @@ const detail: GroupDetail = {
   offer,
 };
 
-it("GroupEditor: its editor sees the membership it sells, though no paywall offers it to them", async () => {
+it("EntityEditor: its editor sees the membership it sells, though no paywall offers it to them", async () => {
   const s = server({ "GET /kinds": () => model, "GET /entities/g1": () => detail });
-  const { container } = render(<GroupEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
-  await waitFor(() => expect(container.querySelector('[data-ckui="group-offer"] [data-ckui="current-offer"]')).not.toBeNull());
-  const section = container.querySelector<HTMLElement>('[data-ckui="group-offer"]')!;
+  const { container } = render(<EntityEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
+  await waitFor(() => expect(container.querySelector('[data-ckui="entity-offer"] [data-ckui="current-offer"]')).not.toBeNull());
+  const section = container.querySelector<HTMLElement>('[data-ckui="entity-offer"]')!;
   expect(within(section).getByText("On sale")).toBeInTheDocument();
   expect(within(section).getByText(/\$4\.99/)).toBeInTheDocument();
   expect(within(section).queryByText("Not for sale.")).toBeNull();
 });
 
-it("GroupEditor keeps independent section state without duplicate sibling keys", async () => {
+it("EntityEditor keeps independent section state without duplicate sibling keys", async () => {
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
     const s = server({ "GET /kinds": () => model, "GET /entities/g1": () => detail });
-    const { container } = render(<GroupEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
-    await waitFor(() => expect(container.querySelector('[data-ckui="group-text"]')).not.toBeNull());
+    const { container } = render(<EntityEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
+    await waitFor(() => expect(container.querySelector('[data-ckui="entity-text"]')).not.toBeNull());
     expect(errors.mock.calls.filter(args => String(args[0]).includes("same key"))).toEqual([]);
   } finally {
     errors.mockRestore();
   }
 });
 
-it("GroupAvatar and GroupCover are styling roots of their own outside a ContentKit surface", () => {
+it("EntityAvatar and EntityCover are styling roots of their own outside a ContentKit surface", () => {
   const g = { id: "g1", kind: "channel", name: "Studio", slug: "studio" };
   const { container } = render(
     <div>
-      <GroupAvatar group={g} className="size-10" />
-      <GroupCover group={g} />
+      <EntityAvatar entityy={g} className="size-10" />
+      <EntityCover entityy={g} />
     </div>,
   );
   for (const slot of ["group-avatar", "group-cover"]) {
@@ -118,7 +118,7 @@ it("GroupAvatar and GroupCover are styling roots of their own outside a ContentK
     expect(el).toHaveClass("ckui");
     expect(el).toHaveAttribute("data-ckui-theme");
   }
-  expect(container.querySelector('[data-ckui="group-avatar"]')).toHaveClass("rounded-full", "size-10");
+  expect(container.querySelector('[data-ckui="entity-avatar"]')).toHaveClass("rounded-full", "size-10");
 });
 
 
@@ -136,13 +136,13 @@ it("staff entity editors read and update internal metadata through the managemen
     },
   });
   const user = userEvent.setup();
-  const { container } = render(<GroupEditor id="g1" kind="channel" management />, { wrapper: wrap(s.client) });
+  const { container } = render(<EntityEditor id="g1" kind="channel" management />, { wrapper: wrap(s.client) });
   const toggle = await screen.findByRole("switch", { name: "Internal use only" });
   expect(toggle).toBeChecked();
   expect(s.calls).toContain("GET /manage/entities/g1");
   expect(s.calls).not.toContain("GET /entities/g1");
   await user.click(toggle);
-  const details = container.querySelector<HTMLElement>('[data-ckui="group-details"]')!;
+  const details = container.querySelector<HTMLElement>('[data-ckui="entity-details"]')!;
   await user.click(within(details).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(updates).toHaveLength(1));
   expect(updates[0]).toMatchObject({ internal: false });
@@ -150,7 +150,7 @@ it("staff entity editors read and update internal metadata through the managemen
 
 it("user-owned entity editors do not offer the staff-only internal setting", async () => {
   const s = server({ "GET /kinds": () => model, "GET /entities/g1": () => detail });
-  render(<GroupEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
+  render(<EntityEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
   await screen.findByRole("heading", { name: "Studio" });
   expect(screen.queryByRole("switch", { name: "Internal use only" })).toBeNull();
   expect(s.calls).not.toContain("GET /manage/entities/g1");
@@ -162,7 +162,7 @@ it("staff pickers find internal entities without making them public search sugge
   const s = server({ "GET /manage/entities": ({ url }) => { queries.push(url); return { entities: [internal] }; } });
   const picked = vi.fn();
   const user = userEvent.setup();
-  render(<GroupPicker kind="tag" label="Add tag" management onPick={picked} />, { wrapper: wrap(s.client) });
+  render(<EntityPicker kind="tag" label="Add tag" management onPick={picked} />, { wrapper: wrap(s.client) });
   await user.type(screen.getByRole("combobox", { name: "Add tag" }), "restr");
   await user.click(await screen.findByRole("option", { name: /Restricted/ }));
   expect(picked).toHaveBeenCalledWith(internal);
@@ -179,7 +179,7 @@ it("does not retain internal suggestions when the signed-in account changes", as
     if (++requests > 1) return Response.json({ code: "forbidden", error: "Forbidden" }, { status: 403 });
     return new Promise((resolve) => { reply = resolve; });
   } });
-  const page = (viewer: string | null) => <ContentKitProvider client={s.client} viewer={viewer}><GroupPicker kind="tag" label="Private search" management onPick={vi.fn()} /></ContentKitProvider>;
+  const page = (viewer: string | null) => <ContentKitProvider client={s.client} viewer={viewer}><EntityPicker kind="tag" label="Private search" management onPick={vi.fn()} /></ContentKitProvider>;
   const view = render(page("staff"));
   await userEvent.setup().type(screen.getByRole("combobox", { name: "Private search" }), "restricted");
   await waitFor(() => expect(reply).toBeDefined());

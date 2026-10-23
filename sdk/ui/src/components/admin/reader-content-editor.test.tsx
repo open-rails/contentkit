@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createContentKitClient } from "../../client/index.js";
-import type { Content, ContentModel, ContentMemberships, FileInfo, GroupCard, ReadResult, Version } from "../../client/generated/wire.js";
+import type { Content, ContentModel, ContentMemberships, FileInfo, EntityCard, ReadResult, Version } from "../../client/generated/wire.js";
 import { ContentEditor, ContentManager } from "./content-manager.js";
 import { readerMediaReady } from "../content/editor-save.js";
 
@@ -224,7 +224,7 @@ it("requires configured gallery format and preserves the host's CGset label", as
 it("starts a new gallery linked to the entity it was created from", async () => {
   const s = server(),
     user = userEvent.setup();
-  const series = { id: "s1", kind: "series", slug: "saga", name: "Saga", internal: false, count: 0, attributes: {}, created_at: at } as GroupCard;
+  const series = { id: "s1", kind: "series", slug: "saga", name: "Saga", internal: false, count: 0, attributes: {}, created_at: at } as EntityCard;
   render(<ContentEditor client={s.client} kind="gallery" id={null} entities={[series]} />);
   expect(await screen.findByText("Saga")).toBeVisible();
   await user.type(await screen.findByLabelText("Title"), "First chapter");
@@ -237,7 +237,7 @@ it("starts a new gallery linked to the entity it was created from", async () => 
 it("starts from a shared tag without duplicating it onto the first version", async () => {
   const sharedTagModel: ContentModel = { ...model, entity_kinds: { ...model.entity_kinds, tag: { membership_scopes: ["content", "version"] } } };
   const s = server({ model: sharedTagModel }), user = userEvent.setup();
-  const tag: GroupCard = { id: "t1", kind: "tag", slug: "parent-tag", name: "Parent tag", internal: false, count: 0, attributes: {}, created_at: at };
+  const tag: EntityCard = { id: "t1", kind: "tag", slug: "parent-tag", name: "Parent tag", internal: false, count: 0, attributes: {}, created_at: at };
   render(<ContentEditor client={s.client} kind="gallery" id={null} entities={[tag]} />);
   expect(await screen.findByText("Parent tag")).toBeVisible();
   await user.type(screen.getByLabelText("Title"), "Tagged gallery");
@@ -877,7 +877,7 @@ it("editing version credits targets only its atomic version scope", async () => 
 });
 
 it("edits arbitrary version tags separately from shared gallery tags", async () => {
-  const tag = (id: string, name: string): GroupCard => ({ id, code: id.toUpperCase(), kind: "tag", slug: id, name, internal: false, count: 1, attributes: {}, created_at: at });
+  const tag = (id: string, name: string): EntityCard => ({ id, code: id.toUpperCase(), kind: "tag", slug: id, name, internal: false, count: 1, attributes: {}, created_at: at });
   const linked: ContentMemberships = {
     ...scopedLinks,
     memberships: [...scopedLinks.memberships, { group_id: "shared-tag" }, { group_id: "colored", version_id: "v1" }, { group_id: "uncensored", version_id: "v2" }],

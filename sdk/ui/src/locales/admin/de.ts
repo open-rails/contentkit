@@ -64,7 +64,7 @@ export const admin: typeof en = {
     changedDuringSave: "Es gibt neuere ungespeicherte Änderungen. Vor dem Veröffentlichen speichern.",
   },
   contentAdmin: {
-    groups: "Gruppen",
+    entities: "Gruppen",
     modelFailed: "Das Inhaltsmodell konnte nicht geladen werden.",
     title: "Inhaltsverwaltung",
     navigation: "Verwaltungsbereiche",

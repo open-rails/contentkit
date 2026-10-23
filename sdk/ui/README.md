@@ -88,7 +88,7 @@ operation. This does not change the operation's result or its authentication.
   generated route table with its generated types: `contents`, `catalog`, `comments`,
   `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`; `get("global", user)`),
   `moderation`, `entities`, `codes`. Lists take `limit`/`offset` (the review
-  queue and group listings a `cursor`); `contents.manage` lists what the caller
+  queue and entity listings a `cursor`); `contents.manage` lists what the caller
   manages (`kind`, `state` incl. `deleted` for `contents.restore`, `q`); `catalog.totals({kinds, languages})`
   counts what is open; staff lists are `polls.adminList` (`state`, `q`),
   `comments.adminList` (`contentKind`, `author`); `entities.members(id)` pages
@@ -309,7 +309,7 @@ reader), `version.has_audio`, `viewer.favorited` and `entities`.
 Hosts can tailor the details without replacing the card. For example,
 `metadata={{ languages: false, traits: ["colored"], duration: false }}` keeps
 the page count and the Colored trait, and `showCounts={false}` hides reaction
-totals. `groupKinds={["series"]}` selects series chips;
+totals. `entityKinds={["series"]}` selects series chips;
 `filterEntity={(entity, kind) => ...}` filters them before the chip limit.
 Defaults continue to show all normal metadata, entity chips and totals.
 
@@ -324,7 +324,7 @@ Plain-text entities sit directly below the cover, followed by other metadata.
 ```tsx
 <ContentGrid query={{ kind: "gallery" }}
   aspectRatio="182 / 260" titlePosition="cover" entityStyle="text"
-  groupKinds={["series"]} showCounts={false}
+  entityKinds={["series"]} showCounts={false}
   metadata={{ languages: false, traits: ["colored"], duration: false }} />
 ```
 
@@ -403,7 +403,7 @@ different time zone.
 
 Only revealed cards occupy the grid, and images/previews mount when those cards
 enter the viewport. Collapsing a day removes its media. The standard card
-properties (`href`, `decorate`, `groupKinds`, `tiers`, and so on) remain available.
+properties (`href`, `decorate`, `entityKinds`, `tiers`, and so on) remain available.
 For a custom layout, `useDailyReleases(query)` exposes the same shared read and
 `client.discovery.releases(query)` exposes the typed request directly.
 
@@ -589,7 +589,7 @@ Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
 <Poll language={lang} />
 ```
 
-## Groups
+## Entities
 
 Tags, artists, series, characters, channels and rails: the kinds the site's
 content model declares. `useKinds()` reads it (`GET /v1/kinds`); until that
@@ -597,33 +597,33 @@ route is served, pass the host's model as `initial` (and `kinds` to the
 components below).
 
 ```tsx
-const { items, hasMore, loadMore } = useGroups({ kind: "artist", letter: "a", sort: "count" }); // parent, scope, contentKind, language
-const g = useGroup(id);           // g.group: names, text, attributes, parent, scope, children, edges, counts
+const { items, hasMore, loadMore } = useEntities({ kind: "artist", letter: "a", sort: "count" }); // parent, scope, contentKind, language
+const g = useEntity(id);           // g.entity: names, text, attributes, parent, scope, children, edges, counts
 await g.update({ attributes: { artist_type: "circle" } }); // staff: create, names, edges, merge, remove, restore
-await g.uploadCover(file);         // into the group kind's folder (cover/{name}), then selected
-const members = useGroupMembers(id);       // add, remove, reorder
-const content = useContentGroups(contentId); // content.set(memberships, kinds)
+await g.uploadCover(file);         // into the entity kind's folder (cover/{name}), then selected
+const members = useEntityMembers(id);       // add, remove, reorder
+const content = useContentEntities(contentId); // content.set(memberships, kinds)
 ```
 
-- **`GroupDirectory`**: one kind's groups with A–Z buckets (`letter` and
+- **`EntityDirectory`**: one kind's entities with A–Z buckets (`letter` and
   `onLetterChange` to keep it in the URL), content counts, `layout` list or
-  grid, paged. **`GroupHeader`**: a group page's cover, names, description,
-  typed attributes, parent, scope and sub-groups. Links go to each group's
+  grid, paged. **`EntityHeader`**: an entity page's cover, names, description,
+  typed attributes, parent, scope and sub-entities. Links go to each entity's
   canonical path (`href` overrides) through the provider's `navigate`.
-- **`GroupEditor`** (staff): create, or edit slug, parent, scope, declared
+- **`EntityEditor`** (staff): create, or edit slug, parent, scope, declared
   attributes, names and aliases per language, description and sort key per
-  language, cover, related groups; `GroupMergeDialog`; delete and restore.
-- **`MembershipEditor`** (staff): a content's groups per group kind, with the
+  language, cover, related entities; `EntityMergeDialog`; delete and restore.
+- **`MembershipEditor`** (staff): a content's entities per entity kind, with the
   version (`versions`), role, position and window each kind allows; one save.
-  **`GroupMembers`**: a group's members, reordered, windowed, used as cover.
+  **`EntityMembers`**: an entity's members, reordered, windowed, used as cover.
 - `labels` names kinds, attributes, roles and values by identifier; others
   show humanized. Covers render `cover.renditions`; `renderCover` stands in
-  until group reads carry them.
+  until entity reads carry them.
 
 ## Reference administration workbench
 
 `ContentAdmin` is an optional library component composing the existing content,
-group, moderation, poll and statistics managers. It is not a standalone server
+entity, moderation, poll and statistics managers. It is not a standalone server
 portal, a sign-in page or a SaaS control plane. A host can continue to compose
 any individual manager in its own administration area.
 
@@ -637,7 +637,7 @@ import "@openrails/contentkit-ui/styles.css";
   basePath="/admin/content"
   navigation={{ pathname, search, navigate }}
   appearance={{ theme: "inherit" }}
-  sections={["contents", "groups", "moderation", "polls", "statistics"]}
+  sections={["contents", "entities", "moderation", "polls", "statistics"]}
   contentKinds={["article", "video"]}
   labels={{ article: "Articles", video: "Videos" }}
   content={{ renderEditor: richTextEditor }}
@@ -649,11 +649,11 @@ The client is an existing ContentKit client, or pass `baseUrl` and the host's
 individual managers' contracts below. Without `navigation`, the workbench uses
 browser history; without `basePath` as well, navigation stays in memory.
 
-`GET /kinds` supplies languages and configured content and group kinds. Omit
-`contentKinds` to offer all content kinds; omit `groupKinds` to offer the
-site-owned group kinds. Explicit lists restrict and order those choices, and
+`GET /kinds` supplies languages and configured content and entity kinds. Omit
+`contentKinds` to offer all content kinds; omit `entityKinds` to offer the
+site-owned entity kinds. Explicit lists restrict and order those choices, and
 unknown kinds are omitted. The routes beneath `basePath` are
-`contents/<kind>[/new|/<id>]`, `groups/<kind>[/new|/<id>]`, `moderation`,
+`contents/<kind>[/new|/<id>]`, `entities/<kind>[/new|/<id>]`, `moderation`,
 `polls[/new|/<id>]` and `statistics`; each manager retains its own filters and
 subviews. Unknown or excluded routes show an unavailable view and do not load
 a manager. Only the selected manager mounts. Navigation entries describe
@@ -661,7 +661,7 @@ configured sections, not permission grants: a selected manager can show its
 normal no-access state. Statistics uses its own read permission, independently
 of content editing.
 
-The optional `content` props are `renderEditor` and `contentHref`; `groups`
+The optional `content` props are `renderEditor` and `contentHref`; `entities`
 accepts `renderContent`; `moderation` accepts `itemHref`, `userHref` and
 `sections`; `polls` accepts `freeText` and `maxOptions`. These are the existing
 managers' extension points. Without `renderEditor`, body editing uses the
@@ -893,18 +893,18 @@ The host still owns navigation outside the flow, including browser Back handling
   The per-item queue engine behind `useUploadQueue` is `ItemUploadQueue` in
   `/client`.
 
-- **`GroupManager`**: groups per kind (tabs at `basePath/{kind}`): by
-  letter, order and language; a new group at `basePath/{kind}/new`; a group
-  at `basePath/{kind}/{id}` with `GroupEditor` and `GroupMembers`. Props:
-  `groupKinds` (default the model's site-owned ones), `kinds`, `labels`,
-  `contentKind`, `renderContent`, `pageSize`. `useGroupManagerAccess()`.
+- **`EntityManager`**: entities per kind (tabs at `basePath/{kind}`): by
+  letter, order and language; a new entity at `basePath/{kind}/new`; an entity
+  at `basePath/{kind}/{id}` with `EntityEditor` and `EntityMembers`. Props:
+  `entityKinds` (default the model's site-owned ones), `kinds`, `labels`,
+  `contentKind`, `renderContent`, `pageSize`. `useEntityManagerAccess()`.
   Its staff listing includes internal entities, with an “Internal use only”
   setting in the editor. Public directories and search never include those
-  entities. Use `management` on a standalone `GroupEditor` or `GroupPicker`
+  entities. Use `management` on a standalone `EntityEditor` or `EntityPicker`
   to opt into the same staff API; ordinary user-owned editors stay public.
 
   ```tsx
-  <GroupManager client={contentkit} basePath="/admin/groups" navigation={nav} labels={{ artist: "Artists" }} />
+  <EntityManager client={contentkit} basePath="/admin/entities" navigation={nav} labels={{ artist: "Artists" }} />
   ```
 
 - **`UserCommentStanding`**: for a user page, the person's site-wide comment
@@ -963,7 +963,7 @@ pnpm demo                 # the stack with seeded demo pages, until Ctrl-C
 ```
 
 The suites need Docker, Go and ffmpeg. `e2e/server` composes the real
-ContentKit's engine (content, groups, codes, media upload and read) with
+ContentKit's engine (content, entities, codes, media upload and read) with
 AuthKit for identity over PGroonga PostgreSQL 18, MinIO, and media-worker and
 media-gateway built from this checkout (`e2e/compose.yaml`). Each run brings
 the stack up under its own project name and takes it down; the server exits

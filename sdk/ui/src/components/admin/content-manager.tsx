@@ -5,13 +5,13 @@ import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { imageRefs } from "../../client/contents.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
-import type { Content, GroupCard, GroupDetail, ManageCount, Rule, Version } from "../../client/generated/wire.js";
+import type { Content, EntityCard, EntityDetail, ManageCount, Rule, Version } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { useContent } from "../../react/contents.js";
-import { useKinds } from "../../react/groups.js";
+import { useKinds } from "../../react/entities.js";
 import { keyOf, useContentScope, usePaged, useResource } from "../../react/use-resource.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Badge } from "#ckui/ui/badge";
@@ -27,7 +27,7 @@ import { ReaderContentEditor } from "./reader-content-editor.js";
 import { createDraft, uploadTarget } from "./bulk-drafts.js";
 import { UploadQueueBody } from "./upload-queue.js";
 import { ContentSections, allowsIndividualSales, offersAccessChoice } from "../content/editors.js";
-import { labelOf, type Labels } from "../groups/parts.js";
+import { labelOf, type Labels } from "../entities/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 type Choice = string | { value: string; label: string };
@@ -206,11 +206,11 @@ function useCodeTarget(client: ContentKitClient, kind: string, code: string | nu
   return { id: found.id, error: found.error, missing: !found.id && !found.error, retry };
 }
 
-const asCard = (g: GroupDetail): GroupCard => ({ ...g, count: 0 });
+const asCard = (g: EntityDetail): EntityCard => ({ ...g, count: 0 });
 
 /** A new item's starting entities from `?with=CODE[,CODE]`, each with its scope (a character's series); unresolvable codes are skipped. */
-function useStartingEntities(client: ContentKitClient, codes: string): readonly GroupCard[] | undefined {
-  const [found, setFound] = useState<{ codes: string; entities: GroupCard[] } | null>(null);
+function useStartingEntities(client: ContentKitClient, codes: string): readonly EntityCard[] | undefined {
+  const [found, setFound] = useState<{ codes: string; entities: EntityCard[] } | null>(null);
   useEffect(() => {
     if (!codes) return;
     const ctl = new AbortController();
@@ -219,7 +219,7 @@ function useStartingEntities(client: ContentKitClient, codes: string): readonly 
       const g = await client.entities.getForManagement(r.content_id, undefined, ctl.signal);
       return g.scope ? [asCard(g), g.scope] : [asCard(g)];
     };
-    void Promise.all(codes.split(",").filter(Boolean).map((c) => one(c).catch(() => [] as GroupCard[]))).then((all) => {
+    void Promise.all(codes.split(",").filter(Boolean).map((c) => one(c).catch(() => [] as EntityCard[]))).then((all) => {
       if (!ctl.signal.aborted) setFound({ codes, entities: all.flat() });
     });
     return () => ctl.abort();
@@ -688,9 +688,9 @@ export interface ContentEditorProps {
   onLeaveGuard?: (guard: (() => Promise<boolean>) | undefined) => void;
   labels?: Labels;
   /** A new item's owner group: a channel its editors write for. */
-  ownerGroup?: string;
+  ownerEntity?: string;
   /** Entities a new item starts linked to, e.g. the series it was created from; ignored for an existing item. */
-  entities?: readonly GroupCard[];
+  entities?: readonly EntityCard[];
   /** After create: show the new item (the editor goes on editing it). */
   onCreated?: (content: Content) => void;
   onDeleted?: (content: Content) => void;
@@ -725,7 +725,7 @@ export function ContentEditor(p:ContentEditorProps){
   return <StandardContentEditor key={boundary.key} {...props}/>;
 }
 
-function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, entities, onCreated, onDeleted, onError, management }: ContentEditorProps) {
+function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerEntity, entities, onCreated, onDeleted, onError, management }: ContentEditorProps) {
   const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
@@ -782,7 +782,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     if (!f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       if (!item) {
-        const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: ownerGroup });
+        const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: ownerEntity });
         // Starting entities link once the item exists; version-level kinds need a version first.
         const linked = (entities ?? []).filter((g) => model?.kinds[kind]?.entities?.includes(g.kind) && allowsEntityScope(model.entity_kinds[g.kind], "content"));
         if (linked.length) {

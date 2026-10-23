@@ -64,7 +64,7 @@ export const admin: typeof en = {
     changedDuringSave: "保存期间有新的修改。请先保存再发布。",
   },
   contentAdmin: {
-    groups: "群组",
+    entities: "群组",
     modelFailed: "无法加载内容模型。",
     title: "内容管理",
     navigation: "管理栏目",

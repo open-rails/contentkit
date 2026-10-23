@@ -84,7 +84,7 @@ it("keeps deep links, child navigation and browser Back in the host path", async
 it.each([
   ["/work/contents/missing", ["contents"] as const],
   ["/work/contents/article", ["contents"] as const],
-  ["/work/groups/board", ["groups"] as const],
+  ["/work/entities/board", ["entities"] as const],
   ["/work/polls", ["contents"] as const],
   ["/work/contents/%2F", ["contents"] as const],
 ])("does not load a manager for an unknown or excluded route %s", async (pathname, sections) => {
@@ -147,7 +147,7 @@ it("retries model discovery and makes an empty configured scope explicit", async
 it("composes the native group and moderation managers without loading other sections", async () => {
   const s = server();
   const user = userEvent.setup();
-  render(<ContentAdmin client={s.client} sections={["groups", "moderation"]} labels={{ artist: "Artists" }} moderation={{ sections: ["words"] }} />);
+  render(<ContentAdmin client={s.client} sections={["entities", "moderation"]} labels={{ artist: "Artists" }} moderation={{ sections: ["words"] }} />);
   await waitFor(() => expect(s.requests.some((r) => r.pathname.endsWith("/entities") && r.searchParams.get("kind") === "artist")).toBe(true));
   expect(s.requests.some((r) => r.searchParams.get("kind") === "board")).toBe(false);
   await user.click(nav().getByRole("button", { name: "Comment moderation" }));

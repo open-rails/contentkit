@@ -6,26 +6,26 @@ import { createPortal } from "react-dom";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { TypeaheadQuery } from "../../client/discovery.js";
-import type { Card, GroupCard, Typeahead } from "../../client/generated/wire.js";
+import type { Card, EntityCard, Typeahead } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext } from "../../react/context.js";
 import { useRecentSearches, useTypeahead } from "../../react/discovery.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Input } from "#ckui/ui/input";
 import { RenditionImg } from "../rendition-img.js";
-import { labelOf, type Labels } from "../groups/parts.js";
+import { labelOf, type Labels } from "../entities/parts.js";
 
 export interface SearchBoxProps {
   /** Submits the text: the host shows its search page. */
   onSearch: (q: string) => void;
   /** Suggest contents of this kind only. */
   kind?: string;
-  /** The group kinds suggested; every kind with a page by default. */
-  groupKinds?: readonly string[];
+  /** The entity kinds suggested; every kind with a page by default. */
+  entityKinds?: readonly string[];
   defaultValue?: string;
   placeholder?: string;
   /** A suggestion's link; default its canonical path. */
-  href?: (item: Card | GroupCard) => string | undefined;
+  href?: (item: Card | EntityCard) => string | undefined;
   labels?: Labels;
   /** Matching recent searches first, with prefixes before interior matches. Default true. */
   recent?: boolean;
@@ -43,10 +43,10 @@ export interface SearchBoxProps {
   appearance?: ContentKitUiAppearance;
 }
 
-type Suggestion = { type: "content"; card: Card } | { type: "group"; group: GroupCard } | { type: "recent"; query: string };
-const groups = (entities: GroupCard[]): Suggestion[] => entities.map((group) => ({ type: "group", group }));
+type Suggestion = { type: "content"; card: Card } | { type: "entity"; entity: EntityCard } | { type: "recent"; query: string };
+const entities = (entities: EntityCard[]): Suggestion[] => entities.map((entity) => ({ type: "entity", entity }));
 const titles = (contents: Card[]): Suggestion[] => contents.map((card) => ({ type: "content", card }));
-const suggestionKey = (s: Suggestion) => s.type === "content" ? `c:${s.card.id}` : s.type === "group" ? `g:${s.group.id}` : `r:${s.query}`;
+const suggestionKey = (s: Suggestion) => s.type === "content" ? `c:${s.card.id}` : s.type === "entity" ? `g:${s.entity.id}` : `r:${s.query}`;
 
 // Mirror search-only normalization. Identity/slug normalization stays separate;
 // complete English filler words never change Japanese/CJK or interior letters.
@@ -119,7 +119,7 @@ export function SearchBox(p: SearchBoxProps) {
   const anchor = useHeaderAnchor(open, header, root, input);
   const { top } = anchor;
   const empty = !text.trim();
-  const found = useTypeahead(text, { kind: p.kind, entity_kinds: p.groupKinds, client: p.client, request: p.requestSuggestions, minLength: p.disabled ? Infinity : 1 });
+  const found = useTypeahead(text, { kind: p.kind, entity_kinds: p.entityKinds, client: p.client, request: p.requestSuggestions, minLength: p.disabled ? Infinity : 1 });
   const recent = useRecentSearches({ enabled: p.recent !== false && open && !p.disabled, client: p.client });
   const normalized = searchText(text);
   const current = found.query === text.trim();
@@ -130,7 +130,7 @@ export function SearchBox(p: SearchBoxProps) {
         .filter((r) => empty || (normalized && r.normalized.includes(normalized)))
         .sort((a, b) => Number(b.normalized.startsWith(normalized)) - Number(a.normalized.startsWith(normalized)))
         .map((r) => ({ type: "recent" as const, query: r.query }))),
-      ...(!empty && current ? header ? [...titles(found.contents), ...groups(found.entities)] : [...groups(found.entities), ...titles(found.contents)] : []),
+      ...(!empty && current ? header ? [...titles(found.contents), ...entities(found.entities)] : [...entities(found.entities), ...titles(found.contents)] : []),
     ],
     [p.recent, normalized, empty, current, header, recent.searches, found.contents, found.entities],
   );
@@ -165,7 +165,7 @@ export function SearchBox(p: SearchBoxProps) {
       setText(s.query);
       return search(s.query);
     }
-    const url = p.href ? p.href(s.type === "content" ? s.card : s.group) : s.type === "content" ? s.card.path : s.group.path;
+    const url = p.href ? p.href(s.type === "content" ? s.card : s.entity) : s.type === "content" ? s.card.path : s.entity.path;
     setOpen(false);
     if (!url) return;
     p.onSelect?.();
@@ -201,11 +201,11 @@ export function SearchBox(p: SearchBoxProps) {
           key={suggestionKey(s)}
           id={`${id}-${i}`}
           role="option"
-          aria-label={header && s.type !== "recent" ? `${labelOf(p.labels, s.type === "content" ? s.card.kind : s.group.kind)} ${s.type === "content" ? s.card.title || s.card.code : s.group.name || s.group.slug}` : undefined}
+          aria-label={header && s.type !== "recent" ? `${labelOf(p.labels, s.type === "content" ? s.card.kind : s.entity.kind)} ${s.type === "content" ? s.card.title || s.card.code : s.entity.name || s.entity.slug}` : undefined}
           aria-selected={i === activeIndex}
           data-ckui="suggestion"
           data-type={s.type}
-          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "group h-9 gap-2.5 rounded-lg px-2.5 text-sm hover:bg-foreground/10" : "gap-3 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-foreground/10" : dialog ? "min-h-11 gap-3 rounded-md p-2 text-sm hover:bg-accent hover:text-accent-foreground" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
+          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "entity h-9 gap-2.5 rounded-lg px-2.5 text-sm hover:bg-foreground/10" : "gap-3 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-foreground/10" : dialog ? "min-h-11 gap-3 rounded-md p-2 text-sm hover:bg-accent hover:text-accent-foreground" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
           onMouseEnter={() => setActive(suggestionKey(s))}
           onMouseDown={(e) => {
             e.preventDefault();
@@ -215,9 +215,9 @@ export function SearchBox(p: SearchBoxProps) {
           {header && s.type !== "recent" ? (
             <>
               {s.type === "content" ? <span className="h-10 w-8 shrink-0 overflow-hidden rounded bg-muted"><RenditionImg outputs={s.card.cover} alt="" fit="cover" className="size-full" /></span>
-                : <span className="grid h-10 w-8 shrink-0 place-items-center"><SearchTypeIcon kind={s.group.kind} /></span>}
-              <span className="min-w-0 flex-1 truncate">{s.type === "content" ? s.card.title || s.card.code : s.group.name || s.group.slug}</span>
-              <span className={cn("shrink-0 text-xs font-normal text-muted-foreground", s.type === "content" && "sr-only")}>{labelOf(p.labels, s.type === "content" ? s.card.kind : s.group.kind)}</span>
+                : <span className="grid h-10 w-8 shrink-0 place-items-center"><SearchTypeIcon kind={s.entity.kind} /></span>}
+              <span className="min-w-0 flex-1 truncate">{s.type === "content" ? s.card.title || s.card.code : s.entity.name || s.entity.slug}</span>
+              <span className={cn("shrink-0 text-xs font-normal text-muted-foreground", s.type === "content" && "sr-only")}>{labelOf(p.labels, s.type === "content" ? s.card.kind : s.entity.kind)}</span>
             </>
           ) : s.type === "content" ? (
             <>
@@ -226,10 +226,10 @@ export function SearchBox(p: SearchBoxProps) {
               </span>
               <span className="min-w-0 truncate">{s.card.title || s.card.code}</span>
             </>
-          ) : s.type === "group" ? (
+          ) : s.type === "entity" ? (
             <>
-              <span className="min-w-0 flex-1 truncate">{s.group.name || s.group.slug}</span>
-              <span className="text-xs text-muted-foreground">{labelOf(p.labels, s.group.kind)}</span>
+              <span className="min-w-0 flex-1 truncate">{s.entity.name || s.entity.slug}</span>
+              <span className="text-xs text-muted-foreground">{labelOf(p.labels, s.entity.kind)}</span>
             </>
           ) : (
             <>
@@ -237,7 +237,7 @@ export function SearchBox(p: SearchBoxProps) {
               <span className="min-w-0 flex-1 truncate">{s.query}</span>
               <button
                 type="button"
-                className={cn("rounded p-0.5 text-muted-foreground hover:text-foreground", header && "pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-aria-selected:opacity-100 focus-visible:opacity-100", dialog && "-my-2 grid size-11 shrink-0 place-items-center")}
+                className={cn("rounded p-0.5 text-muted-foreground hover:text-foreground", header && "pointer-fine:opacity-0 pointer-fine:entity-hover:opacity-100 pointer-fine:entity-aria-selected:opacity-100 focus-visible:opacity-100", dialog && "-my-2 grid size-11 shrink-0 place-items-center")}
                 aria-label={t("contents.removeRecent", { q: s.query })}
                 onMouseDown={(e) => {
                   e.preventDefault();

@@ -3,8 +3,8 @@ import "../../src/test/dom.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
-import type { ContentKitClient, Group } from "../../src/client/index.js";
-import { ContentKitProvider, type GroupFilter, useContentGroups, useGroup, useGroupMembers, useGroups, useKinds, useStaffAccess } from "../../src/react/index.js";
+import type { ContentKitClient, Entity } from "../../src/client/index.js";
+import { ContentKitProvider, type EntityFilter, useContentEntities, useEntity, useEntityMembers, useEntities, useKinds, useStaffAccess } from "../../src/react/index.js";
 import type { Config } from "../support/harness.js";
 import { Accounts, client, fixture, harness, seedContents } from "./setup.js";
 
@@ -32,10 +32,10 @@ describe("groups against the real ContentKit", () => {
         </ContentKitProvider>
       );
     };
-  const create = async (kind: string, slug: string, names: ReturnType<typeof name>[], o: { parent_id?: string; scope_id?: string } = {}): Promise<Group> =>
+  const create = async (kind: string, slug: string, names: ReturnType<typeof name>[], o: { parent_id?: string; scope_id?: string } = {}): Promise<Entity> =>
     (await staff.entities.create([{ kind, slug, names, ...o }]))[0]!;
 
-  it("useGroups: a parent's children by letter bucket, order and page, named in the asked language", async () => {
+  it("useEntities: a parent's children by letter bucket, order and page, named in the asked language", async () => {
     const r = run();
     const parent = await create("series", `p-${r}`, [name("en", `Parent ${r}`)]);
     const under = { parent_id: parent.id };
@@ -53,9 +53,9 @@ describe("groups against the real ContentKit", () => {
     await h.recount();
 
     const c = client(h, cfg, null);
-    const { result, rerender } = renderHook((f: GroupFilter) => useGroups(f), {
+    const { result, rerender } = renderHook((f: EntityFilter) => useEntities(f), {
       wrapper: wrap(c, "en"),
-      initialProps: { kind: "series", parent: parent.id, letter: "a" } as GroupFilter,
+      initialProps: { kind: "series", parent: parent.id, letter: "a" } as EntityFilter,
     });
     await waitFor(() => expect(result.current.items.map((g) => g.id)).toEqual([abaco.id, alpha.id]), wait);
     expect(result.current.items[1]).toMatchObject({ name: `Alpha ${r}`, slug: `alpha-${r}`, count: 1, path: expect.stringContaining("/series/") });
@@ -76,12 +76,12 @@ describe("groups against the real ContentKit", () => {
     await waitFor(() => expect(result.current.items.map((g) => g.name).sort()).toEqual([`3x3 ${r}`, `アルファ ${r}`]), wait);
   });
 
-  it("useGroup: create, attributes, names, text, edges, cover, merge, delete and restore", async () => {
+  it("useEntity: create, attributes, names, text, edges, cover, merge, delete and restore", async () => {
     const r = run();
     const c = staff;
-    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useGroup(id), { wrapper: wrap(c, "en"), initialProps: { id: null as string | null } });
+    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useEntity(id), { wrapper: wrap(c, "en"), initialProps: { id: null as string | null } });
     expect(result.current.group).toBeNull();
-    let artist!: Group;
+    let artist!: Entity;
     await act(async () => {
       artist = await result.current.create({ kind: "artist", slug: `artist-${r}`, names: [name("en", `Artist ${r}`)] });
     });
@@ -127,7 +127,7 @@ describe("groups against the real ContentKit", () => {
     expect(result.current.group?.names.map((n) => n.name)).toEqual(expect.arrayContaining([`Circle ${r}`, `A. ${r}`, `Artist ${r}`]));
     expect((await staff.entities.members(circle.id)).members.map((m) => m.content_id)).toEqual([member!.id]);
 
-    const { result: other } = renderHook(() => useGroup(circle.id), { wrapper: wrap(c, "en") });
+    const { result: other } = renderHook(() => useEntity(circle.id), { wrapper: wrap(c, "en") });
     await waitFor(() => expect(other.current.group?.id).toBe(circle.id), wait);
     await act(() => other.current.remove());
     expect(other.current.group).toBeNull();
@@ -138,7 +138,7 @@ describe("groups against the real ContentKit", () => {
     expect(other.current.deleted).toBeNull();
   });
 
-  it("useContentGroups and useGroupMembers: roles, positions, windows and version-level memberships", async () => {
+  it("useContentEntities and useEntityMembers: roles, positions, windows and version-level memberships", async () => {
     const r = run();
     const [content] = await seedContents(staff, [{ kind: "comic", titles: { en: `Content ${r}` }, versions: [{ languages: ["en"] }, { languages: ["ja"] }] }]);
     const ja = content!.versions[1]!.id;
@@ -149,7 +149,7 @@ describe("groups against the real ContentKit", () => {
     const from = "2026-01-01T00:00:00Z";
     const until = "2027-01-01T00:00:00Z";
 
-    const { result } = renderHook(() => useContentGroups(content!.id), { wrapper: wrap(staff, "en") });
+    const { result } = renderHook(() => useContentEntities(content!.id), { wrapper: wrap(staff, "en") });
     await waitFor(() => expect(result.current.loading).toBe(false), wait);
     expect(result.current.memberships).toEqual([]);
     await act(() =>
@@ -177,7 +177,7 @@ describe("groups against the real ContentKit", () => {
 
     // The rail's members, from its side: another content, an order, a new window, a removal.
     const [second] = await seedContents(staff, [{ kind: "comic", titles: { en: `Second ${r}` }, versions: [{ languages: ["en"] }] }]);
-    const { result: members } = renderHook(() => useGroupMembers(rail.id), { wrapper: wrap(staff, "en") });
+    const { result: members } = renderHook(() => useEntityMembers(rail.id), { wrapper: wrap(staff, "en") });
     await waitFor(() => expect(members.current.items.map((m) => m.content_id)).toEqual([content!.id]), wait);
     await act(async () => {
       await members.current.add([{ content_id: second!.id }]);

@@ -198,7 +198,7 @@ function FreeText({ poll, pending, maxLength, results, onAnswer }: { poll: PollD
   const open = !poll.closed;
   const groups = [...(poll.groups ?? [])].sort((a, b) => b.count - a.count);
   const lead = Math.max(1, ...groups.map((g) => g.count));
-  const showGroups = groups.length > 0 && (!!mine || poll.closed || results === "always");
+  const showEntities = groups.length > 0 && (!!mine || poll.closed || results === "always");
   return (
     <>
       {open && (!mine || editing) ? (
@@ -246,7 +246,7 @@ function FreeText({ poll, pending, maxLength, results, onAnswer }: { poll: PollD
           </div>
         )
       )}
-      {showGroups && (
+      {showEntities && (
         <>
           <ul className="grid gap-2" aria-labelledby={`poll-${poll.id}`}>
             {groups.map((g) => (

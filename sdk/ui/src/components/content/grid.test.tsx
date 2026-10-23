@@ -65,7 +65,7 @@ it.each(["grid", "history", "rail"] as const)("forwards entity rows through the 
     const path = new URL(String(input)).pathname;
     return path.endsWith("/contents") || path.endsWith("/me/history") ? Response.json({ contents: [item] }) : Response.json({ code: "not_found" }, { status: 404 });
   } });
-  const props = { entityLayout: "rows", groupKinds: ["series", "artist"], loadMedia: false } as const;
+  const props = { entityLayout: "rows", entityKinds: ["series", "artist"], loadMedia: false } as const;
   const view = render(<ContentKitProvider client={client} viewer="reader">
     {viewType === "grid" ? <ContentGrid query={{ kind: "gallery" }} {...props} /> : viewType === "history" ? <ContentHistory {...props} /> : <ContentRail title="Featured" list={{ kind: "gallery" }} {...props} />}
   </ContentKitProvider>);

@@ -102,7 +102,7 @@ named as the body references them.
 
 | Section | Record | Keys |
 |---|---|---|
-| `groups` | `GroupRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `edges`, `code`, times |
+| `entities` | `EntityRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `edges`, `code`, times |
 | `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `comments` (open, closed, hidden), `access`, `restrictions`, `attributes`, `owner_group`, `creators`, `text`, `versions`, `code`, times |
 | | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `text`, `segments` |
 | `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `active_from`, `active_until`, `state`) |

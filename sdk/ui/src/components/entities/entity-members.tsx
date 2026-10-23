@@ -6,11 +6,11 @@ import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { TypeaheadQuery } from "../../client/discovery.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
-import type { Card, Content, GroupDetail, GroupKind, Membership } from "../../client/generated/wire.js";
+import type { Card, Content, EntityDetail, EntityKind, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useTypeahead } from "../../react/discovery.js";
-import { useGroupMembers, useKinds, type Member } from "../../react/groups.js";
+import { useEntityMembers, useKinds, type Member } from "../../react/entities.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Badge } from "#ckui/ui/badge";
 import { Button, buttonVariants } from "#ckui/ui/button";
@@ -26,16 +26,16 @@ const NONE = "__none__";
 // The managed listing hydrates at most this many ids per request.
 const BATCH = 100;
 
-export interface GroupMembersProps {
-  group: Pick<GroupDetail, "id" | "kind" | "name" | "slug" | "cover" | "code">;
+export interface EntityMembersProps {
+  entity: Pick<EntityDetail, "id" | "kind" | "name" | "slug" | "cover" | "code">;
   labels?: Labels;
   /** Where a member's card links, e.g. its admin editor; none: not a link. */
   contentHref?: (content: Content) => string | undefined;
-  /** Where a new item of a content kind starts already in this group, e.g. the host's editor with `?with=<code>`; none: no action. */
-  newContentHref?: (contentKind: string, group: GroupMembersProps["group"]) => string | undefined;
+  /** Where a new item of a content kind starts already in this entity, e.g. the host's editor with `?with=<code>`; none: no action. */
+  newContentHref?: (contentKind: string, entity: EntityMembersProps["group"]) => string | undefined;
   /** Replaces a member's card body; default its cover and title. */
   renderContent?: (member: Membership, content?: Content) => ReactNode;
-  /** Select a member's cover as the group's. */
+  /** Select a member's cover as the entity's. */
   onUseCover?: (contentId: string) => Promise<unknown>;
   pageSize?: number;
   client?: ContentKitClient;
@@ -78,13 +78,13 @@ const coverOf = (c?: Content) => c?.cover?.url ?? c?.versions.find((v) => v.cove
  * ordered kind as a reorderable list), each with its access, state, role and
  * version; add one by searching titles, remove or use its cover on hover.
  */
-export function GroupMembers(p: GroupMembersProps) {
+export function EntityMembers(p: EntityMembersProps) {
   const m = useMessages();
   const { t } = m;
   const client = useContentKitClient(p.client);
   const { kinds } = useKinds({ client: p.client });
-  const spec: GroupKind = kinds?.entity_kinds?.[p.group.kind] ?? {};
-  const members = useGroupMembers(p.group.id, { pageSize: p.pageSize, client: p.client });
+  const spec: EntityKind = kinds?.entity_kinds?.[p.entity.kind] ?? {};
+  const members = useEntityMembers(p.entity.id, { pageSize: p.pageSize, client: p.client });
   const contents = useMemberContents(
     useMemo(() => members.items.map((x) => x.content_id!).filter(Boolean), [members.items]),
     client,
@@ -118,7 +118,7 @@ export function GroupMembers(p: GroupMembersProps) {
       )}
       {p.onUseCover && !x.version_id && (
         <Button size="icon-xs" variant="secondary" aria-label={`${t("memberships.useCover")}: ${spoken(x)}`} title={t("memberships.useCover")}
-          disabled={save.pending || (p.group.cover?.content_id === x.content_id && !p.group.cover?.auto)}
+          disabled={save.pending || (p.entity.cover?.content_id === x.content_id && !p.entity.cover?.auto)}
           onClick={() => void save.run(() => p.onUseCover!(x.content_id!))}>
           <HugeiconsIcon icon={Image01Icon} strokeWidth={2} />
         </Button>
@@ -164,7 +164,7 @@ export function GroupMembers(p: GroupMembersProps) {
   const card = (x: Member) => {
     const c = contents.get(x.content_id ?? "");
     return (
-      <li key={x.id} className="group/member relative grid content-start gap-1.5" data-ckui="group-member" data-content={x.content_id} data-state={x.state ?? "active"}>
+      <li key={x.id} className="group/member relative grid content-start gap-1.5" data-ckui="entity-member" data-content={x.content_id} data-state={x.state ?? "active"}>
         {p.renderContent ? (
           p.renderContent(x, c)
         ) : (
@@ -182,7 +182,7 @@ export function GroupMembers(p: GroupMembersProps) {
   const row = (x: Member, handle?: ReactNode) => {
     const c = contents.get(x.content_id ?? "");
     return (
-      <div className="group/member flex flex-wrap items-center gap-2" data-ckui="group-member" data-content={x.content_id} data-state={x.state ?? "active"}>
+      <div className="group/member flex flex-wrap items-center gap-2" data-ckui="entity-member" data-content={x.content_id} data-state={x.state ?? "active"}>
         {handle}
         {x.position !== undefined && <span className="w-8 text-xs text-muted-foreground tabular-nums">{x.position}</span>}
         {p.renderContent ? (
@@ -212,17 +212,17 @@ export function GroupMembers(p: GroupMembersProps) {
   const starts = !allowsEntityScope(spec, "content")
     ? []
     : Object.entries(kinds?.kinds ?? {}).flatMap(([kind, k]) => {
-        const href = k.entities?.includes(p.group.kind) ? p.newContentHref?.(kind, p.group) : undefined;
+        const href = k.entities?.includes(p.entity.kind) ? p.newContentHref?.(kind, p.entity) : undefined;
         return href ? [{ kind, href }] : [];
       });
   return (
-    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="group-members">
+    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="entity-members">
       <h3 className="font-medium">{t("memberships.members")}</h3>
       {starts.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {starts.map((x) => (
-            <a key={x.kind} href={x.href} className={buttonVariants({ variant: "outline", size: "sm" })} data-ckui="group-member-new">
-              {t("memberships.newContent", { kind: labelOf(p.labels, x.kind), name: p.group.name })}
+            <a key={x.kind} href={x.href} className={buttonVariants({ variant: "outline", size: "sm" })} data-ckui="entity-member-new">
+              {t("memberships.newContent", { kind: labelOf(p.labels, x.kind), name: p.entity.name })}
             </a>
           ))}
         </div>
@@ -257,7 +257,7 @@ export function GroupMembers(p: GroupMembersProps) {
         </SortableList>
       ) : (
         byKind.map(([kind, items]) => (
-          <section key={kind || "other"} className="grid gap-2" data-ckui="group-members-kind" data-kind={kind}>
+          <section key={kind || "other"} className="grid gap-2" data-ckui="entity-members-kind" data-kind={kind}>
             {byKind.length > 1 && kind && <h4 className="text-xs font-medium text-muted-foreground uppercase">{labelOf(p.labels, kind)}</h4>}
             <ul className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-3">{items.map(card)}</ul>
           </section>
@@ -267,7 +267,7 @@ export function GroupMembers(p: GroupMembersProps) {
         <div className="grid justify-items-center gap-2">
           {members.error && <p role="alert" className="text-destructive">{contentError(m, members.error)}</p>}
           <Button variant="outline" size="sm" disabled={members.loadingMore} onClick={() => void members.loadMore()}>
-            {members.loadingMore ? t("groups.loading") : members.error ? t("common.retry") : t("groups.loadMore")}
+            {members.loadingMore ? t("entities.loading") : members.error ? t("common.retry") : t("entities.loadMore")}
           </Button>
         </div>
       )}
@@ -277,7 +277,7 @@ export function GroupMembers(p: GroupMembersProps) {
 }
 
 /** A title search over contents the caller manages; picking one adds it, after its role, version or dates when the kind has them. */
-function AddContent({ spec, labels, client, onAdd }: { spec: GroupKind; labels?: Labels; client: ContentKitClient; onAdd: (m: Membership) => Promise<unknown> }) {
+function AddContent({ spec, labels, client, onAdd }: { spec: EntityKind; labels?: Labels; client: ContentKitClient; onAdd: (m: Membership) => Promise<unknown> }) {
   const { t } = useMessages();
   const id = useId();
   const [text, setText] = useState("");

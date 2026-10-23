@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import type { Group } from "@openrails/contentkit-ui/client";
+import type { Entity } from "@openrails/contentkit-ui/client";
 import { contentKit, seedContent } from "../support/seed.ts";
 import { admin, harness, inheritsHostTheme, page as demo, screenshots as dir } from "./pages.ts";
 
-// Groups in demo/groups.tsx (directory, header, a content's groups) and
-// GroupManager in demo/admin.tsx, against the real ContentKit.
+// Entities in demo/groups.tsx (directory, header, a content's groups) and
+// EntityManager in demo/admin.tsx, against the real ContentKit.
 test.describe.configure({ timeout: 120_000 });
 test.use({ actionTimeout: 15_000 });
 const h = harness();
@@ -36,7 +36,7 @@ for (const theme of ["light", "dark"] as const) {
     await ck.entities.update(beta.id, { text: [{ language: "en", description: `Beta's story ${r}.` }] });
     await h.recount();
 
-    await page.goto(demo("groups.html", null, { kind: "series", parent: parent!.id, theme }));
+    await page.goto(demo("entities.html", null, { kind: "series", parent: parent!.id, theme }));
     const dir_ = page.locator("[data-ckui=group-directory]");
     const groups = dir_.locator("[data-ckui=group]");
     await expect(groups).toHaveText([`3x3 ${r}0`, `Alpha ${r}0`, `Beta ${r}2`], { timeout: 30_000 });
@@ -72,7 +72,7 @@ test("group header: names in other languages, aliases and typed attributes", asy
       attributes: { artist_type: "circle", works: 1200, active: true, debut: "2020-05-01T12:00:00Z" },
     },
   ]);
-  await page.goto(demo("groups.html", null, { group: artist!.id }));
+  await page.goto(demo("entities.html", null, { group: artist!.id }));
   const header = page.locator("[data-ckui=group-header]");
   await expect(header.getByRole("heading", { name: `Circle ${r}` })).toBeVisible({ timeout: 30_000 });
   const names = header.locator("[data-ckui=group-names]");
@@ -94,10 +94,10 @@ test("membership editor: a content's groups with roles, positions and versions",
     { kind: "artist", slug: `pub-${r}`, names: [name("en", `Publisher ${r}`)] },
     { kind: "series", slug: `saga-${r}`, names: [name("en", `Saga ${r}`)] },
     { kind: "voice_actor", slug: `voice-${r}`, names: [name("en", `Voice ${r}`)] },
-  ])) as [Group, Group, Group];
-  await page.goto(demo("groups.html", staff, { content: content.id, content_kind: "comic", versions: `${content.versions[0]!.id}:English,${ja}:Japanese` }));
+  ])) as [Entity, Entity, Entity];
+  await page.goto(demo("entities.html", staff, { content: content.id, content_kind: "comic", versions: `${content.versions[0]!.id}:English,${ja}:Japanese` }));
   const editor = page.locator("[data-ckui=membership-editor]");
-  const kind = (k: string) => editor.locator(`[data-ckui=membership-kind][data-group-kind=${k}]`);
+  const kind = (k: string) => editor.locator(`[data-ckui=membership-kind][data-entity-kind=${k}]`);
   await expect(kind("artist")).toBeVisible({ timeout: 30_000 });
 
   await searchable(ck, "artist", `Publisher ${r}`);

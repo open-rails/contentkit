@@ -1,5 +1,5 @@
 import { useId } from "react";
-import { attributeInput } from "../../client/group-fields.js";
+import { attributeInput } from "../../client/entity-fields.js";
 import type { Attribute } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { Input } from "#ckui/ui/input";
@@ -17,7 +17,7 @@ export function AttributeFields({ declared, form, onChange, labels }: { declared
   const names = Object.keys(declared).sort();
   if (!names.length) return null;
   return (
-    <div className="grid gap-3 sm:grid-cols-2" data-ckui="group-attributes-form">
+    <div className="grid gap-3 sm:grid-cols-2" data-ckui="entity-attributes-form">
       {names.map((name) => {
         const spec = declared[name]!;
         const label = labelOf(labels, name);
@@ -35,10 +35,10 @@ export function AttributeFields({ declared, form, onChange, labels }: { declared
               <Label>{label}{spec.required && " *"}</Label>
               <Select value={String(value) || NONE} required={spec.required} onValueChange={(v) => onChange(name, v === NONE ? "" : String(v))}>
                 <SelectTrigger size="sm" aria-label={label} aria-required={spec.required}>
-                  <SelectValue>{(v: string) => (v === NONE ? (spec.required ? `${label}…` : t("groupEditor.none")) : labelOf(labels, v))}</SelectValue>
+                  <SelectValue>{(v: string) => (v === NONE ? (spec.required ? `${label}…` : t("entityEditor.none")) : labelOf(labels, v))}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {!spec.required && <SelectItem value={NONE}>{t("groupEditor.none")}</SelectItem>}
+                  {!spec.required && <SelectItem value={NONE}>{t("entityEditor.none")}</SelectItem>}
                   {(spec.values ?? []).map((v) => (
                     <SelectItem key={v} value={v}>
                       {labelOf(labels, v)}

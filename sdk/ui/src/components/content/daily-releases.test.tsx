@@ -4,7 +4,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/client.js";
-import type { Card, DailyReleases as DailyReleaseData, GroupCard } from "../../client/generated/wire.js";
+import type { Card, DailyReleases as DailyReleaseData, EntityCard } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/provider.js";
 import { DailyReleases } from "./daily-releases.js";
 
@@ -72,7 +72,7 @@ it("forwards ordered entity rows to daily release cards", async () => {
     series: [{ id: "series", slug: "series", name: "A series" }],
   } };
   const client = createContentKitClient({ baseUrl: "https://content.test/entity-rows", fetch: async (input) => Response.json(new URL(String(input)).pathname.endsWith("/presets") ? [] : { ...data(), days: [{ date: "2026-10-15", contents: [item], filtered_count: 0, filtered_entities: [] }] }) });
-  const view = render(<ContentKitProvider client={client} viewer={null}><DailyReleases entityLayout="rows" groupKinds={["series", "artist"]} /></ContentKitProvider>);
+  const view = render(<ContentKitProvider client={client} viewer={null}><DailyReleases entityLayout="rows" entityKinds={["series", "artist"]} /></ContentKitProvider>);
   await screen.findByText("Gallery entities");
   expect([...view.container.querySelectorAll('[data-ckui="card-group-row"]')].map((row) => row.getAttribute("data-kind"))).toEqual(["series", "artist"]);
   expect(within(screen.getByRole("list", { name: "Series" })).getByText("A series")).toBeVisible();
@@ -176,7 +176,7 @@ it("refreshes the window when the account changes its content filters", async ()
 });
 
 const premium = (id: string, allowed = false): Card => ({ ...card(id), access: { allowed, level: "tier", tiers: ["premium"] } });
-const entity = (id: string, name = id): GroupCard => ({ id, slug: id, kind: "tag", internal: false, name, count: 0, attributes: {}, created_at: "2026-01-01T00:00:00Z" });
+const entity = (id: string, name = id): EntityCard => ({ id, slug: id, kind: "tag", internal: false, name, count: 0, attributes: {}, created_at: "2026-01-01T00:00:00Z" });
 const windowWith = (contents: Card[], filtered_count = 0, filtered_entities: DailyReleaseData["days"][number]["filtered_entities"] = []): DailyReleaseData => ({ ...data(), days: [{ date: "2026-10-15", contents, filtered_count, filtered_entities }] });
 
 it("collapses only locked tier previews at their first original position and keeps the cached card budget on expansion", async () => {
