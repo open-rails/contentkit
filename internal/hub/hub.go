@@ -436,8 +436,8 @@ func (h *Hub) EraseSubjects(ctx context.Context, subjects []signal.Subject) (sig
 }
 
 // EnforceErasures physically removes residue of every recorded erasure of
-// this tenant (see signal.Store.EnforceErasures): schedule it and run it after
-// every restore.
+// this tenant (see signal.Store.EnforceErasures). The host invokes it explicitly;
+// ContentKit does not schedule an erasure sweep.
 func (h *Hub) EnforceErasures(ctx context.Context) (signal.ErasureReport, error) {
 	store, err := h.requireStore()
 	if err != nil {
