@@ -281,7 +281,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
               </SelectContent>
             </Select>
           )}
-          {entityKind && <EntityPicker key={entityKind} kind={entityKind} label={t("contentEditor.group")} client={client} onPick={(g) => set({ group_id: g.id })} />}
+          {entityKind && <EntityPicker key={entityKind} kind={entityKind} label={t("contentEditor.entity")} client={client} onPick={(g) => set({ group_id: g.id })} />}
         </div>
       )}
       {value.level !== "public" && (
@@ -326,7 +326,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
               <SelectContent>{releaseLevels.map((level) => <SelectItem key={level} value={level}>{t(`contentEditor.level_${level as Rule["level"]}`)}</SelectItem>)}</SelectContent>
             </Select>
             {release.level === "tier" && tiers.map((tier) => <label key={tier} className="flex items-center gap-1"><Switch aria-label={labelOf(labels, tier)} checked={release.tiers?.includes(tier) ?? false} onCheckedChange={(on) => change({ tiers: on ? [...(release.tiers ?? []), tier] : release.tiers?.filter((t) => t !== tier) })} />{labelOf(labels, tier)}</label>)}
-            {release.level === "group" && <><span>{release.group_id}</span><EntityPicker kind={entityKind} label={t("contentEditor.group")} client={client} onPick={(g) => change({ group_id: g.id })} /></>}
+            {release.level === "group" && <><span>{release.group_id}</span><EntityPicker kind={entityKind} label={t("contentEditor.entity")} client={client} onPick={(g) => change({ group_id: g.id })} /></>}
             <Button type="button" variant="ghost" size="sm" onClick={() => set({ releases: value.releases!.filter((_, i) => i !== index) })}>{t("contentEditor.removeRelease")}</Button>
           </div>;
         })}

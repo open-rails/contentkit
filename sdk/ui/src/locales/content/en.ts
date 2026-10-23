@@ -55,7 +55,7 @@ export const content = {
     level_group: "Entity members",
     level_group_ppv: "Entity members who buy it",
     tiers: "Tiers",
-    group: "Entity",
+    entity: "Entity",
     previewPages: "Free pages",
     previewSegments: "Free chapters",
     onSale: "On sale",

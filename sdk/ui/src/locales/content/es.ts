@@ -56,7 +56,7 @@ export const content: typeof en = {
     level_group: "Miembros del grupo",
     level_group_ppv: "Miembros del grupo que lo compren",
     tiers: "Niveles",
-    group: "Grupo",
+    entity: "Grupo",
     previewPages: "Páginas gratis",
     previewSegments: "Capítulos gratis",
     onSale: "A la venta",

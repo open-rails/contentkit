@@ -56,7 +56,7 @@ export const content: typeof en = {
     level_group: "グループのメンバー",
     level_group_ppv: "購入したグループのメンバー",
     tiers: "プラン",
-    group: "グループ",
+    entity: "グループ",
     previewPages: "無料ページ数",
     previewSegments: "無料の章数",
     onSale: "販売中",

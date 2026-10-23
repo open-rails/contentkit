@@ -692,7 +692,7 @@ The engine builds the store from `Config.Content`, serves it as
 
 `catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
 Writes are batches; each transaction keeps `content_facets` current (rules
-through `access.Rule.Facet`, groups through `EffectiveGroups`), marks search
+through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
 documents dirty, queues `content_events`, renames offers' products after
 titles and calls media (expose, republish, fork, delete). Published with a
 future `publish_at` becomes visible when that time arrives; the periodic job

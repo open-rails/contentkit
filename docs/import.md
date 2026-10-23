@@ -53,7 +53,7 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
 
 ## Order and failures
 
-Sections are written in order: groups, contents, memberships, offers,
+Sections are written in order: entities, contents, memberships, offers,
 aliases, comments, reactions, favorites, polls, votes, answers, signals,
 deletes; a
 record may name what an earlier section or call wrote. Each section runs in
