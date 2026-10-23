@@ -173,6 +173,9 @@ func TestDailyReleasesFilteredCountsKeepHardAndAccessPolicies(t *testing.T) {
 			total += day.FilteredCount
 			visible += len(day.Contents)
 			for _, entry := range day.FilteredEntities {
+				if entry.Entity.Cover != nil {
+					t.Fatalf("count-only entity exposed a cover: %+v", entry.Entity.Cover)
+				}
 				if entry.Entity.Slug != "big-breasts" || entry.Entity.Internal || entry.Count != day.FilteredCount {
 					t.Fatalf("hard/internal/required entity leaked: %+v", entry)
 				}
