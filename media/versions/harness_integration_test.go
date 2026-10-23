@@ -409,26 +409,30 @@ AND state = 'applied' AND (effects->'process'->>'place')::boolean`, ref.TenantID
 	return n
 }
 
-// settles waits for the worker's queue to drain, then checks it gets no new
-// job for longer than a publish job's poll: nothing feeds back.
+// settles waits for both publishers and media workers to drain. A publisher
+// can legitimately enqueue media after the worker first goes idle. Once both
+// queues settle, no new worker job should arrive during a publisher poll.
 func (s *site) settles() {
 	s.t.Helper()
-	sql := `SELECT count(*) FILTER (WHERE state IN ('available', 'pending', 'running', 'retryable', 'scheduled')), coalesce(max(id), 0)
-FROM ` + pgx.Identifier{s.workers, "river_job"}.Sanitize()
-	var waiting, last int64
-	eventually(s.t, "the worker's queue to drain", time.Minute, func() bool {
-		if err := s.pool.QueryRow(s.ctx, sql).Scan(&waiting, &last); err != nil {
+	sql := `SELECT w.waiting, h.waiting, w.last FROM
+ (SELECT count(*) FILTER (WHERE state IN ('available', 'pending', 'running', 'retryable', 'scheduled')) AS waiting,
+ coalesce(max(id), 0) AS last FROM ` + pgx.Identifier{s.workers, "river_job"}.Sanitize() + `) w
+ CROSS JOIN (SELECT count(*) FILTER (WHERE state IN ('available', 'pending', 'running', 'retryable', 'scheduled')) AS waiting
+ FROM ` + pgx.Identifier{s.host, "river_job"}.Sanitize() + `) h`
+	var workerWaiting, hostWaiting, last int64
+	eventually(s.t, "the publisher and worker queues to drain", time.Minute, func() bool {
+		if err := s.pool.QueryRow(s.ctx, sql).Scan(&workerWaiting, &hostWaiting, &last); err != nil {
 			s.t.Fatal(err)
 		}
-		return waiting == 0
+		return workerWaiting == 0 && hostWaiting == 0
 	})
 	time.Sleep(8 * time.Second)
 	var now int64
-	if err := s.pool.QueryRow(s.ctx, sql).Scan(&waiting, &now); err != nil {
+	if err := s.pool.QueryRow(s.ctx, sql).Scan(&workerWaiting, &hostWaiting, &now); err != nil {
 		s.t.Fatal(err)
 	}
-	if waiting != 0 || now != last {
-		s.t.Fatalf("the settled version's worker got %d more jobs", now-last)
+	if workerWaiting != 0 || hostWaiting != 0 || now != last {
+		s.t.Fatalf("the settled version has %d worker and %d host jobs pending, and got %d more worker jobs", workerWaiting, hostWaiting, now-last)
 	}
 }
 
