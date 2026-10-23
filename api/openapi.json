@@ -16591,9 +16591,6 @@
           "locked": {
             "$ref": "#/components/schemas/Locked"
           },
-          "draft_ttl": {
-            "type": "integer"
-          },
           "download": {
             "$ref": "#/components/schemas/Download"
           }

@@ -153,9 +153,6 @@ type Kind struct {
 	// Locked is what a viewer who does not open its content sees of it;
 	// nil is DefaultLocked.
 	Locked *Locked `json:"locked,omitempty" yaml:"locked"`
-	// DraftTTL expires drafts that never went live this long after their
-	// creation: they are deleted, media included. Zero keeps them.
-	DraftTTL time.Duration `json:"draft_ttl,omitempty" yaml:"draft_ttl"`
 	// Download is what a version's download serves; nil serves its
 	// presentation's default (Download.Serves).
 	Download *Download `json:"download,omitempty" yaml:"download"`
@@ -540,9 +537,6 @@ func (c Config) Validate() error {
 		}
 		if err := validateAttributes("kind "+name, k.Attributes); err != nil {
 			return err
-		}
-		if k.DraftTTL < 0 {
-			return fmt.Errorf("%w: kind %s draft_ttl is negative", ErrInvalid, name)
 		}
 		if l := k.Locked; l != nil {
 			if err := l.validate(k.Segments); err != nil {

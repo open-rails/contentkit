@@ -16,7 +16,6 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
-	"github.com/open-rails/contentkit/kinds"
 )
 
 func TestPublishedVersionReferencesIntegration(t *testing.T) {
@@ -473,62 +472,6 @@ func TestHiddenVersionFollowsTextIntegration(t *testing.T) {
 	got := f.read("staff", "main.test", id)[0]
 	if !slices.Equal(got.Versions[0].Languages, []string{"en"}) || got.Language != "en" || got.Slug != "diary" {
 		t.Fatalf("after English text: %+v", got)
-	}
-}
-
-// A kind's draft_ttl expires its drafts that never went live, rows and all;
-// a draft unpublished after going live, a fresh one and another kind's stay.
-func TestDraftExpiryIntegration(t *testing.T) {
-	f := newFixture(t, func(o *Options) {
-		blog := o.Kinds.Kinds["blog"]
-		blog.DraftTTL = 24 * time.Hour
-		o.Kinds.Kinds["blog"] = blog
-	})
-	var events []Event
-	f.s.Subscribe(func(_ context.Context, batch []Event) error {
-		events = append(events, batch...)
-		return nil
-	})
-	post := func(title string) string {
-		return f.create("staff", ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: title}}})
-	}
-	abandoned, unpublished, fresh := post("Abandoned"), post("Unpublished"), post("Fresh")
-	f.publish("staff", unpublished, nil)
-	if err := f.s.Unpublish(f.ctx, f.as("staff"), []string{unpublished}); err != nil {
-		t.Fatal(err)
-	}
-	old := f.create("staff", gallery("Old gallery", "en"))
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+pgx.Identifier{f.schema, "content_items"}.Sanitize()+` SET created_at = now() - interval '25 hours'
- WHERE id = ANY($1)`, []string{abandoned, unpublished, old}); err != nil {
-		t.Fatal(err)
-	}
-	n, err := f.s.ExpireDrafts(f.ctx)
-	if err != nil || n != 1 {
-		t.Fatalf("expired %d, %v; want the abandoned draft", n, err)
-	}
-	var left []string
-	rows, err := f.pool.Query(f.ctx, `SELECT id FROM `+pgx.Identifier{f.schema, "content_items"}.Sanitize()+` ORDER BY id`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if left, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
-		t.Fatal(err)
-	}
-	if want := slices.Sorted(slices.Values([]string{unpublished, fresh, old})); !slices.Equal(left, want) {
-		t.Fatalf("left %v, want %v", left, want)
-	}
-	if _, err := f.s.DeliverEvents(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.ContainsFunc(events, func(e Event) bool { return e.Type == EventContentPurged && e.ContentID == abandoned }) {
-		t.Fatalf("no purge event for the abandoned draft: %+v", events)
-	}
-	if n, err := f.s.ExpireDrafts(f.ctx); err != nil || n != 0 {
-		t.Fatalf("a second run expired %d, %v", n, err)
-	}
-	if err := (kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"blog": {Route: "b", Presentation: "post",
-		Versions: kinds.VersionRules{Languages: "one"}, DraftTTL: -time.Hour}}}).Validate(); err == nil {
-		t.Fatal("a negative draft_ttl was accepted")
 	}
 }
 

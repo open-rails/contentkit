@@ -3,7 +3,6 @@ package catalog
 import (
 	"context"
 	"fmt"
-	"maps"
 	"slices"
 	"strconv"
 	"time"
@@ -275,27 +274,6 @@ func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
 	return items + erased, err
 }
 
-// ExpireDrafts erases the drafts of kinds with a DraftTTL that never went
-// live and were created longer than it ago: their media folders and their
-// rows. It returns how many it erased.
-func (s *Store) ExpireDrafts(ctx context.Context) (int, error) {
-	var names []string
-	var cutoffs []time.Time
-	for _, name := range slices.Sorted(maps.Keys(s.cfg.Kinds)) {
-		if ttl := s.cfg.Kinds[name].DraftTTL; ttl > 0 {
-			names, cutoffs = append(names, name), append(cutoffs, s.now().Add(-ttl))
-		}
-	}
-	if len(names) == 0 {
-		return 0, nil
-	}
-	return s.drain(ctx, func(ctx context.Context) (int, error) {
-		return s.erase(ctx, `SELECT c.id, c.kind FROM `+s.t.items+` c JOIN unnest($2::text[], $3::timestamptz[]) AS k(kind, cutoff) ON c.kind = k.kind
- WHERE c.tenant_id = $1 AND c.state = 'draft' AND c.first_published_at IS NULL AND NOT c.ever_sold AND c.created_at < k.cutoff
- ORDER BY c.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF c SKIP LOCKED`, s.tenant, names, cutoffs)
-	})
-}
-
 // drain repeats batch until one comes back short or the run's budget is spent.
 func (s *Store) drain(ctx context.Context, batch func(context.Context) (int, error)) (int, error) {
 	deadline := time.Now().Add(purgeBudget)
@@ -529,10 +507,6 @@ type purgeDeletedArgs struct{}
 
 func (purgeDeletedArgs) Kind() string { return "contentkit_catalog_purge_deleted" }
 
-type expireDraftsArgs struct{}
-
-func (expireDraftsArgs) Kind() string { return "contentkit_catalog_expire_drafts" }
-
 type releaseFreeArgs struct{}
 
 func (releaseFreeArgs) Kind() string { return "contentkit_catalog_release_free" }
@@ -550,7 +524,7 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 // RiverJobs contributes the catalog's periodic jobs to the engine's River
 // client: scheduled publication and free_after releases (every 30s), event
 // delivery recovery (5m; writes enqueue immediately), interaction counts (5m),
-// purging deleted content (1h) and expiring drafts (10m).
+// and purging deleted content (1h).
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-catalog", func(_ context.Context, cfg *river.Config) error {
 		if q, ok := cfg.Queues[Queue]; ok && q.MaxWorkers < 1 {
@@ -575,9 +549,6 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted})
 			},
 			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &jobWorker[expireDraftsArgs]{run: s.ExpireDrafts})
-			},
-			func() error {
 				return river.AddWorkerSafely(cfg.Workers, &jobWorker[releaseFreeArgs]{run: s.ReleaseFree})
 			},
 		} {
@@ -590,7 +561,6 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			periodic("contentkit_catalog_deliver_events", 5*time.Minute, deliverEventsArgs{}),
 			periodic("contentkit_catalog_refresh_counts", 5*time.Minute, refreshCountsArgs{}),
 			periodic("contentkit_catalog_purge_deleted", time.Hour, purgeDeletedArgs{}),
-			periodic("contentkit_catalog_expire_drafts", 10*time.Minute, expireDraftsArgs{}),
 			periodic("contentkit_catalog_release_free", 30*time.Second, releaseFreeArgs{}))
 		return nil
 	}, func(_ context.Context, binding riverhelpers.Binding) error {
