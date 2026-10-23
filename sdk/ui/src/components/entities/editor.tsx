@@ -1,13 +1,14 @@
 import { cn } from "cn";
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
-import { parseAttributes, slugify } from "../../client/entity-fields.js";
-import type { ContentModel, Entity, EntityCard, EntityDetail, EntityKind, EntitiesText as Text, MergeReport, Name } from "../../client/generated/wire.js";
+import { fold, parseAttributes, slugify } from "../../client/entity-fields.js";
+import type { ContentModel, Entity, EntityCard, EntityDetail, EntityKind, EntityUpdate, EntitiesText as Text, MergeReport, Name } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";
 import { useEntity, useKinds, type UseEntity } from "../../react/entities.js";
+import { useDraft } from "../../react/use-draft.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Badge } from "#ckui/ui/badge";
 import { Switch } from "#ckui/ui/switch";
@@ -19,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { Skeleton } from "#ckui/ui/skeleton";
 import { Textarea } from "#ckui/ui/textarea";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
+import { useConfirm } from "../admin/shell.js";
 import { OfferFields } from "../content/offer-fields.js";
 import { AttributeFields, formOf } from "./fields.js";
 import { useContentKitClient } from "../../react/context.js";
@@ -39,6 +41,8 @@ export interface EntityEditorProps {
   /** After a merge: the survivor's id is report.into. */
   onMerged?: (report: MergeReport) => void;
   onDeleted?: (entity: Entity) => void;
+  /** Registers a confirmation check for the host's editor navigation. */
+  onLeaveGuard?: (guard: (() => Promise<boolean>) | undefined) => void;
   /** Below the editor's sections, with the loaded entity: the members, host fields. */
   children?: (entity: EntityDetail) => ReactNode;
   client?: ContentKitClient;
@@ -90,38 +94,126 @@ export function EntityEditor(p: EntityEditorProps) {
       );
     return root(<Skeleton className="h-40 w-full" />);
   }
-  const entity = g.entity;
-  return root(
+  return root(<EditForm key={g.entity.id} {...p} entity={g.entity} spec={spec} languages={languages} g={g} kinds={kinds} />);
+}
+
+function detailsOf(entity: EntityDetail, spec: EntityKind) {
+  return { slug: entity.slug, internal: entity.internal ?? false, parent: (entity.parent ?? null) as EntityLike | null, scope: (entity.scope ?? null) as EntityLike | null, attrs: formOf(spec.attributes ?? {}, entity.attributes) };
+}
+
+type DetailsValue = ReturnType<typeof detailsOf>;
+
+function addNames(names: Name[], additions: Name[]): Name[] {
+  let next = names;
+  for (const name of additions) {
+    const same = (n: Name) => n.language === name.language && fold(n.name) === fold(name.name);
+    if (name.kind === "alias" && next.some(same)) continue;
+    next = next.filter((n) => !same(n)).map((n): Name => name.kind === "name" && n.language === name.language && n.kind === "name" ? { ...n, kind: "alias" } : n);
+    next = [...next, name];
+  }
+  return next;
+}
+
+function EditForm({ entity, spec, languages, g, kinds, onLeaveGuard, ...p }: EntityEditorProps & { entity: EntityDetail; spec: EntityKind; languages: readonly string[]; g: UseEntity; kinds: ContentModel | null }) {
+  const m = useMessages();
+  const { t } = m;
+  const offered = useMemo(() => [...new Set([...languages, ...entity.text.map((x) => x.language)])], [languages, entity.text]);
+  const draft = useDraft(useMemo(() => ({
+    details: detailsOf(entity, spec),
+    names: entity.names,
+    text: Object.fromEntries(offered.map((l) => {
+      const x = entity.text.find((x) => x.language === l);
+      return [l, { language: l, description: x?.description ?? "", sort_key: x?.sort_key ?? "" }];
+    })),
+    newName: "",
+  }), [entity, spec, offered]));
+  const { details, names, text, newName } = draft.value;
+  const [language, setLanguage] = useState(languages[0]!);
+  const [nameKind, setNameKind] = useState<Name["kind"]>("alias");
+  const [invalid, setInvalid] = useState<string | null>(null);
+  const [failedParts, setFailedParts] = useState("");
+  const [saved, setSaved] = useState(false);
+  const save = useAction("entity.save", p.onError);
+  const dirty = draft.dirty.some((key) => key !== "newName") || !!newName.trim();
+  const unsaved = dirty || save.pending;
+  const pendingNames = () => addNames(names, (nameKind === "alias" ? newName.split(/[,\n]/) : [newName]).map((name) => name.trim()).filter(Boolean).map((name) => ({ language, kind: nameKind, name })));
+  const { confirm, dialog } = useConfirm();
+  useEffect(() => {
+    if (!unsaved) return;
+    const ask = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    addEventListener("beforeunload", ask);
+    return () => removeEventListener("beforeunload", ask);
+  }, [unsaved]);
+  useEffect(() => {
+    onLeaveGuard?.(async () => !unsaved || await confirm({ title: t("entitySave.leaveEntity"), description: t("entitySave.discardEdits"), confirm: t("entitySave.discard") }));
+    return () => onLeaveGuard?.(undefined);
+  }, [onLeaveGuard, unsaved, confirm, t]);
+  const submit = async () => {
+    if (save.pending || !dirty) return;
+    setInvalid(null);
+    setSaved(false);
+    setFailedParts("");
+    const patch: EntityUpdate = {};
+    const parts: string[] = [];
+    if (draft.dirty.includes("details")) {
+      parts.push(t("entityEditor.details"));
+      try {
+        patch.attributes = parseAttributes(spec.attributes ?? {}, details.attrs);
+      } catch (e) {
+        setInvalid(`${t("entityEditor.details")}: ${(e as Error).message}`);
+        return;
+      }
+      patch.slug = details.slug.trim();
+      if (p.management) patch.internal = details.internal;
+      if (spec.parent) patch.parent_id = details.parent?.id ?? "";
+      if (spec.scoped_by && details.scope) patch.scope_id = details.scope.id;
+    }
+    if (draft.dirty.includes("names") || newName.trim()) {
+      parts.push(t("entityEditor.names"));
+      patch.names = pendingNames();
+    }
+    if (draft.dirty.includes("text")) {
+      parts.push(t("entityEditor.text"));
+      patch.text = Object.values(text).map((x) => ({ language: x.language, description: x.description.trim() || undefined, sort_key: x.sort_key.trim() || undefined })).filter((x) => x.description || x.sort_key);
+    }
+    const settle = draft.checkpoint();
+    const done = await save.run(() => g.update(patch));
+    if (!done) {
+      setFailedParts(parts.join(", "));
+      return;
+    }
+    setSaved(settle({
+      details: { ...details, slug: done.slug, internal: done.internal, attrs: formOf(spec.attributes ?? {}, done.attributes) },
+      names: patch.names ?? names,
+      text: Object.fromEntries(offered.map((l) => {
+        const x = patch.text ? patch.text.find((x) => x.language === l) : text[l];
+        return [l, { language: l, description: x?.description ?? "", sort_key: x?.sort_key ?? "" }];
+      })),
+      newName: "",
+    }));
+  };
+  return (
     <>
+      {dialog}
       <Head management={p.management} entity={entity} g={g} labels={p.labels} onMerged={p.onMerged} onDeleted={p.onDeleted} onError={p.onError} client={p.client} />
-      <Details management={p.management} key={`details:${entity.id}`} entity={entity} spec={spec} g={g} labels={p.labels} onError={p.onError} client={p.client} />
-      <Names entity={entity} g={g} languages={languages} onError={p.onError} />
-      <Texts key={`text:${entity.id}`} entity={entity} g={g} languages={languages} onError={p.onError} />
+      <div className="flex flex-wrap items-center gap-3" data-ckui="entity-save">
+        <Button size="sm" disabled={save.pending || !dirty || !details.slug.trim() || (!!spec.scoped_by && !details.scope)} onClick={() => void submit()}>{save.pending ? t("common.saving") : t("common.save")}</Button>
+        <span role="status" className="text-muted-foreground">{dirty ? t("entitySave.unsaved") : saved ? t("entityEditor.saved") : ""}</span>
+      </div>
+      {invalid && <ErrorLine>{invalid}</ErrorLine>}
+      {failedParts && <ErrorLine>{t("entitySave.saveFailed", { parts: failedParts })} {save.error && contentError(m, save.error)}</ErrorLine>}
+      <Details management={p.management} entity={entity} spec={spec} form={details} onChange={(patch) => draft.edit((f) => ({ ...f, details: { ...f.details, ...patch } }))} labels={p.labels} client={p.client} />
+      <Names names={names} languages={languages} language={language} onLanguage={setLanguage} kind={nameKind} onKind={setNameKind} text={newName} onText={(newName) => draft.edit((f) => ({ ...f, newName }))} onChange={(names) => draft.edit((f) => ({ ...f, names }))} onAdd={() => draft.edit((f) => ({ ...f, names: pendingNames(), newName: "" }))} />
+      <Texts form={text} languages={offered} onChange={(l, patch) => draft.edit((f) => ({ ...f, text: { ...f.text, [l]: { ...f.text[l]!, ...patch } } }))} />
       <Images management={p.management} entity={entity} spec={spec} onError={p.onError} client={p.client} />
       {spec.sellable && <Membership entity={entity} onError={p.onError} client={p.client} />}
       <Edges management={p.management} entity={entity} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
       {p.children?.(entity)}
-    </>,
+    </>
   );
-}
-
-/** Form state seeded from the record, seeded again when it changes unless edited since; settle() after a save. */
-function useSeeded<T>(seed: () => T, revision: unknown): [T, (next: (prev: T) => T) => void, () => void] {
-  const [value, setValue] = useState(seed);
-  const edited = useRef(false);
-  const latest = useRef(seed);
-  latest.current = seed;
-  useEffect(() => {
-    if (!edited.current) setValue(latest.current());
-  }, [revision]);
-  const set = useCallback((next: (prev: T) => T) => {
-    edited.current = true;
-    setValue(next);
-  }, []);
-  const settle = useCallback(() => {
-    edited.current = false;
-  }, []);
-  return [value, set, settle];
 }
 
 function Section({ title, children, ckui, action }: { title: ReactNode; children: ReactNode; ckui: string; action?: ReactNode }) {
@@ -420,95 +512,32 @@ function InternalField({ id, checked, onChange }: { id: string; checked: boolean
   );
 }
 
-function Details({ entity, spec, g, labels, onError, client, management }: { management?: boolean; entity: EntityDetail; spec: EntityKind; g: UseEntity; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
-  const m = useMessages();
-  const { t } = m;
+function Details({ entity, spec, form, onChange: edit, labels, client, management }: { management?: boolean; entity: EntityDetail; spec: EntityKind; form: DetailsValue; onChange: (patch: Partial<DetailsValue>) => void; labels?: Labels; client?: ContentKitClient }) {
+  const { t } = useMessages();
   const id = useId();
-  const declared = spec.attributes ?? {};
-  const [form, setForm, settle] = useSeeded(
-    () => ({ slug: entity.slug, internal: entity.internal ?? false, parent: (entity.parent ?? null) as EntityLike | null, scope: (entity.scope ?? null) as EntityLike | null, attrs: formOf(declared, entity.attributes) }),
-    entity.revision,
-  );
   const { slug, internal, parent, scope, attrs } = form;
-  const edit = (patch: Partial<typeof form>) => {
-    setSaved(false);
-    setForm((f) => ({ ...f, ...patch }));
-  };
-  const setSlug = (v: string) => edit({ slug: v });
-  const setParent = (v: EntityLike | null) => edit({ parent: v });
-  const setScope = (v: EntityLike | null) => edit({ scope: v });
-  const setAttrs = (fn: (a: Record<string, string | boolean>) => Record<string, string | boolean>) => edit({ attrs: fn(attrs) });
-  const [invalid, setInvalid] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  const save = useAction("entity.save", onError);
-  const submit = async () => {
-    setInvalid(null);
-    setSaved(false);
-    let attributes: Record<string, unknown>;
-    try {
-      attributes = parseAttributes(declared, attrs);
-    } catch (e) {
-      setInvalid((e as Error).message);
-      return;
-    }
-    const done = await save.run(() =>
-      g.update({
-        slug: slug.trim(),
-        ...(management ? { internal } : {}),
-        attributes,
-        ...(spec.parent ? { parent_id: parent?.id ?? "" } : {}),
-        ...(spec.scoped_by && scope ? { scope_id: scope.id } : {}),
-      }),
-    );
-    if (done) {
-      settle();
-      setSaved(true);
-    }
-  };
   return (
     <Section title={t("entityEditor.details")} ckui="entity-details">
-      <form
-        className="grid gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-      >
+      <div className="grid gap-3">
         <div className="grid gap-1.5">
           <Label htmlFor={`${id}-slug`}>{t("entityEditor.slug")}</Label>
-          <Input id={`${id}-slug`} className="h-8" required value={slug} onChange={(e) => setSlug(e.target.value)} />
+          <Input id={`${id}-slug`} className="h-8" required value={slug} onChange={(e) => edit({ slug: e.target.value })} />
         </div>
-        {spec.scoped_by && <EntityField management={management} label={labelOf(labels, spec.scoped_by)} kind={spec.scoped_by} value={scope} onChange={setScope} required client={client} />}
-        {spec.parent && <EntityField management={management} label={t("entityEditor.parent")} kind={spec.parent} value={parent} onChange={setParent} exclude={[entity.id]} client={client} />}
-        {management && <InternalField id={`${id}-internal`} checked={internal} onChange={(value) => edit({ internal: value })} />}
-        <AttributeFields declared={declared} form={attrs} onChange={(n, v) => setAttrs((a) => ({ ...a, [n]: v }))} labels={labels} />
-        {invalid && <ErrorLine>{invalid}</ErrorLine>}
-        <ErrorLine error={save.error} />
-        <div className="flex items-center gap-3">
-          <Button type="submit" size="sm" disabled={save.pending || !slug.trim() || (!!spec.scoped_by && !scope)}>
-            {save.pending ? t("common.saving") : t("common.save")}
-          </Button>
-          {saved && (
-            <span role="status" className="text-muted-foreground">
-              {t("entityEditor.saved")}
-            </span>
-          )}
-        </div>
-      </form>
+        {spec.scoped_by && <EntityField management={management} label={labelOf(labels, spec.scoped_by)} kind={spec.scoped_by} value={scope} onChange={(scope) => edit({ scope })} required client={client} />}
+        {spec.parent && <EntityField management={management} label={t("entityEditor.parent")} kind={spec.parent} value={parent} onChange={(parent) => edit({ parent })} exclude={[entity.id]} client={client} />}
+        {management && <InternalField id={`${id}-internal`} checked={internal} onChange={(internal) => edit({ internal })} />}
+        <AttributeFields declared={spec.attributes ?? {}} form={attrs} onChange={(n, v) => edit({ attrs: { ...attrs, [n]: v } })} labels={labels} />
+      </div>
     </Section>
   );
 }
 
-function Names({ entity, g, languages, onError }: { entity: EntityDetail; g: UseEntity; languages: readonly string[]; onError?: ContentKitErrorHandler }) {
+function Names({ names, languages, language, onLanguage, kind, onKind, text, onText, onChange, onAdd }: { names: Name[]; languages: readonly string[]; language: string; onLanguage: (language: string) => void; kind: Name["kind"]; onKind: (kind: Name["kind"]) => void; text: string; onText: (text: string) => void; onChange: (names: Name[]) => void; onAdd: () => void }) {
   const { t } = useMessages();
   const id = useId();
   const languageName = useLanguageName();
-  const [language, setLanguage] = useState(languages[0]!);
-  const [kind, setKind] = useState<Name["kind"]>("alias");
-  const [text, setText] = useState("");
-  const save = useAction("entity.save", onError);
-  const sorted = [...entity.names].sort((a, b) => a.language.localeCompare(b.language) || (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "name" ? -1 : 1));
-  const offered = [...new Set([...languages, ...entity.names.map((n) => n.language)])];
+  const sorted = [...names].sort((a, b) => a.language.localeCompare(b.language) || (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "name" ? -1 : 1));
+  const offered = [...new Set([...languages, ...names.map((n) => n.language)])];
   return (
     <Section title={t("entityEditor.names")} ckui="entity-names-editor">
       {sorted.length ? (
@@ -521,11 +550,11 @@ function Names({ entity, g, languages, onError }: { entity: EntityDetail; g: Use
               </span>
               <span className="text-xs text-muted-foreground">{t(n.kind === "name" ? "entityEditor.canonical" : "entityEditor.alias")}</span>
               {n.kind === "alias" && (
-                <Button size="xs" variant="ghost" disabled={save.pending} onClick={() => void save.run(() => g.names("add", [{ ...n, kind: "name" }]))}>
+                <Button size="xs" variant="ghost" onClick={() => onChange(addNames(names, [{ ...n, kind: "name" }]))}>
                   {t("entityEditor.makeCanonical")}
                 </Button>
               )}
-              <Button size="xs" variant="ghost" disabled={save.pending} aria-label={t("entityEditor.removeName", { name: n.name })} onClick={() => void save.run(() => g.names("remove", [n]))}>
+              <Button size="xs" variant="ghost" aria-label={t("entityEditor.removeName", { name: n.name })} onClick={() => onChange(names.filter((name) => name !== n))}>
                 {t("common.remove")}
               </Button>
             </li>
@@ -538,14 +567,11 @@ function Names({ entity, g, languages, onError }: { entity: EntityDetail; g: Use
         className="flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          // Aliases take a comma-separated list, as entity chips do; a canonical name stays whole.
-          const have = new Set(entity.names.filter((n) => n.language === language).map((n) => n.name.toLowerCase()));
-          const tokens = kind === "alias" ? [...new Set(text.split(/[,\n]/).map((x) => x.trim()).filter((x) => x && !have.has(x.toLowerCase())))] : [text.trim()].filter(Boolean);
-          if (tokens.length) void save.run(() => g.names("add", tokens.map((name) => ({ language, kind, name })))).then((d) => d && setText(""));
+          onAdd();
         }}
       >
         {offered.length > 1 && (
-          <Select value={language} onValueChange={(v) => setLanguage(String(v))}>
+          <Select value={language} onValueChange={(v) => onLanguage(String(v))}>
             <SelectTrigger size="sm" aria-label={t("entityEditor.language")}>
               <SelectValue>{(v: string) => languageName(v)}</SelectValue>
             </SelectTrigger>
@@ -558,7 +584,7 @@ function Names({ entity, g, languages, onError }: { entity: EntityDetail; g: Use
             </SelectContent>
           </Select>
         )}
-        <Select value={kind} onValueChange={(v) => setKind(v as Name["kind"])}>
+        <Select value={kind} onValueChange={(v) => onKind(v as Name["kind"])}>
           <SelectTrigger size="sm" aria-label={t("entityEditor.nameKind")}>
             <SelectValue>{(v: string) => t(v === "name" ? "entityEditor.canonical" : "entityEditor.alias")}</SelectValue>
           </SelectTrigger>
@@ -570,48 +596,23 @@ function Names({ entity, g, languages, onError }: { entity: EntityDetail; g: Use
         <Label htmlFor={`${id}-name`} className="sr-only">
           {t("entityEditor.newName")}
         </Label>
-        <Input id={`${id}-name`} className="h-8 min-w-40 flex-1" lang={language} value={text} placeholder={t(kind === "alias" ? "entityEditor.newAliases" : "entityEditor.newName")} onChange={(e) => setText(e.target.value)} />
-        <Button type="submit" size="sm" variant="outline" disabled={save.pending || !text.trim()}>
+        <Input id={`${id}-name`} className="h-8 min-w-40 flex-1" lang={language} value={text} placeholder={t(kind === "alias" ? "entityEditor.newAliases" : "entityEditor.newName")} onChange={(e) => onText(e.target.value)} />
+        <Button type="submit" size="sm" variant="outline" disabled={!text.trim()}>
           {t("entityEditor.addName")}
         </Button>
       </form>
-      <ErrorLine error={save.error} />
     </Section>
   );
 }
 
-function Texts({ entity, g, languages, onError }: { entity: EntityDetail; g: UseEntity; languages: readonly string[]; onError?: ContentKitErrorHandler }) {
+function Texts({ form, languages, onChange: set }: { form: Record<string, Text>; languages: readonly string[]; onChange: (language: string, patch: Partial<Text>) => void }) {
   const { t } = useMessages();
   const id = useId();
   const languageName = useLanguageName();
-  const offered = [...new Set([...languages, ...entity.text.map((x) => x.language)])];
-  const [form, setForm, settle] = useSeeded<Record<string, Text>>(
-    () => Object.fromEntries(offered.map((l) => [l, entity.text.find((x) => x.language === l) ?? { language: l }])),
-    entity.revision,
-  );
-  const [saved, setSaved] = useState(false);
-  const save = useAction("entity.save", onError);
-  const set = (l: string, patch: Partial<Text>) => {
-    setSaved(false);
-    setForm((f) => ({ ...f, [l]: { ...f[l]!, ...patch } }));
-  };
   return (
     <Section title={t("entityEditor.text")} ckui="entity-text">
-      <form
-        className="grid gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const text = Object.values(form)
-            .map((x) => ({ language: x.language, description: x.description?.trim() || undefined, sort_key: x.sort_key?.trim() || undefined }))
-            .filter((x) => x.description || x.sort_key);
-          void save.run(() => g.update({ text })).then((d) => {
-            if (!d) return;
-            settle();
-            setSaved(true);
-          });
-        }}
-      >
-        {offered.map((l) => (
+      <div className="grid gap-4">
+        {languages.map((l) => (
           <fieldset key={l} className="grid gap-2" data-language={l}>
             <legend className="mb-1 text-xs font-medium text-muted-foreground">{languageName(l)}</legend>
             <Label htmlFor={`${id}-${l}-d`} className="sr-only">
@@ -638,18 +639,7 @@ function Texts({ entity, g, languages, onError }: { entity: EntityDetail; g: Use
             />
           </fieldset>
         ))}
-        <ErrorLine error={save.error} />
-        <div className="flex items-center gap-3">
-          <Button type="submit" size="sm" disabled={save.pending}>
-            {save.pending ? t("common.saving") : t("common.save")}
-          </Button>
-          {saved && (
-            <span role="status" className="text-muted-foreground">
-              {t("entityEditor.saved")}
-            </span>
-          )}
-        </div>
-      </form>
+      </div>
     </Section>
   );
 }
