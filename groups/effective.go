@@ -3,7 +3,6 @@ package groups
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 )
 
@@ -89,8 +88,6 @@ UPDATE %s f SET group_ids = eff.group_ids, updated_at = now() FROM eff
 	return s.changed(ctx, q, contentIDs)
 }
 
-var refreshBatch = 200
-
 // refreshGroupFacets re-derives the facets of every content a change to the
 // given groups can reach: members of them or of their descendants, and
 // content whose facets name any of them. These groups grant access, so the
@@ -120,33 +117,6 @@ ORDER BY 1`,
 		return nil, err
 	}
 	return collectStrings(rows)
-}
-
-// RefreshGroupMembers re-derives the facets of the contents the groups reach
-// whose ids sort after after, refreshBatch per transaction, until budget
-// passes (0: none). It returns where it stopped, "" when done. Repeating it
-// is harmless.
-func (s *Store) RefreshGroupMembers(ctx context.Context, groupIDs []string, after string, budget time.Duration) (string, error) {
-	var contentIDs []string
-	if err := s.read(ctx, func(q Querier) (err error) {
-		contentIDs, err = s.groupReach(ctx, q, groupIDs)
-		return err
-	}); err != nil {
-		return "", err
-	}
-	start := time.Now()
-	contentIDs = contentIDs[sort.SearchStrings(contentIDs, after+"\x00"):]
-	for len(contentIDs) > 0 {
-		batch := contentIDs[:min(refreshBatch, len(contentIDs))]
-		if err := s.run(ctx, func(q Querier) error { return s.refreshFacets(ctx, q, batch) }); err != nil {
-			return after, err
-		}
-		after, contentIDs = batch[len(batch)-1], contentIDs[len(batch):]
-		if budget > 0 && len(contentIDs) > 0 && time.Since(start) > budget {
-			return after, nil
-		}
-	}
-	return "", nil
 }
 
 // RefreshWindows re-derives the facets of content whose windowed memberships

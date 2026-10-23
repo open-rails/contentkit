@@ -3,7 +3,6 @@ package groups
 import (
 	"context"
 	"errors"
-	"reflect"
 	"slices"
 	"testing"
 
@@ -80,27 +79,5 @@ func TestLargeGroupRefreshCommitsWithTheWrite(t *testing.T) {
 	}
 	if queued != 0 {
 		t.Fatalf("queued refresh jobs = %d, want 0", queued)
-	}
-}
-
-// A refresh resumes after the content it stopped at and reports where.
-func TestRefreshGroupMembersResumesInBatches(t *testing.T) {
-	batch := refreshBatch
-	refreshBatch = 2
-	t.Cleanup(func() { refreshBatch = batch })
-	f := newFixture(t)
-	g := f.create(GroupInput{Kind: "tag", Slug: "big"})[0]
-	for n := 1; n <= 5; n++ {
-		f.content("gallery", n, live("en"))
-		f.add(Membership{GroupID: g.ID, ContentID: cid(n)})
-	}
-	f.changed = nil
-	next, err := f.s.RefreshGroupMembers(f.ctx, []string{string(g.ID)}, cid(2), 0)
-	if err != nil || next != "" {
-		t.Fatalf("refresh after %s = %q, %v; want done", cid(2), next, err)
-	}
-	want := [][]string{{cid(3), cid(4)}, {cid(5)}}
-	if !reflect.DeepEqual(f.changed, want) {
-		t.Fatalf("refreshed batches = %v, want %v", f.changed, want)
 	}
 }
