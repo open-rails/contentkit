@@ -24,6 +24,7 @@ export interface ContentKitUiVariables {
   accentForeground?: string;
   destructive?: string;
   warning?: string;
+  success?: string;
   border?: string;
   input?: string;
   ring?: string;

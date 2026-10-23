@@ -207,7 +207,7 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
                     {poll.question}
                   </button>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    <Badge variant={s === "live" ? "default" : s === "inactive" ? "outline" : "secondary"}>{t(`pollManager.${s}`)}</Badge>
+                    <Badge variant={s === "live" || s === "inactive" ? "outline" : "secondary"} className={s === "live" ? "border-success/45 bg-success/15 text-foreground" : undefined}>{t(`pollManager.${s}`)}</Badge>
                     <span>{poll.language}</span>
                     {poll.kind === "free_text" && <span>{t("pollEditor.freeText")}</span>}
                     <span>{t(s === "scheduled" ? "pollManager.goesLive" : "pollManager.wentLive", { date: formatDate(m, poll.live_at) })}</span>
@@ -219,7 +219,7 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
                   <Button size="sm" variant="outline" onClick={() => loc.go(poll.id)}>
                     {t("comments.edit")}
                   </Button>
-                  <Button size="sm" variant="destructive" disabled={del.pending} onClick={() => void remove(poll)}>
+                  <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={del.pending} onClick={() => void remove(poll)}>
                     {t("comments.delete")}
                   </Button>
                 </div>
