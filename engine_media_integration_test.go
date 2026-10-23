@@ -288,20 +288,16 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 	}
 }
 
-// Engine jobs erase what nobody keeps: a blog draft that never went live is
-// expired after its kind's draft_ttl, media folder included; a deleted
-// channel's media is hidden, kept for a restore through the retention, then
-// purged once. A post whose free_after passed has its media exposed.
-func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
+// Engine maintenance keeps old drafts and their media. A deleted channel's
+// media is hidden, kept for a restore through the retention, then purged once.
+// A post whose free_after passed has its media exposed.
+func TestEngineDraftAndGroupRetentionIntegration(t *testing.T) {
 	ctx := t.Context()
 	env := mediatest.Open(t)
 	pool := pgtest.Pool(t, nil)
 	schema := engineSchema(t, pool)
 	cfg := siteConfig(schema)
 	cfg.Tenant = env.Tenant
-	blog := cfg.Content.Kinds["blog"]
-	blog.DraftTTL = time.Hour
-	cfg.Content.Kinds["blog"] = blog
 	cfg.Content.GroupKinds["channel"] = kinds.GroupKind{Route: "c", Owner: "user"}
 	cfg.Media = &MediaConfig{
 		Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "blog",
@@ -330,7 +326,7 @@ func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	}
 
 	staff := testauth.Actor(access.Actor{ID: "staff", Kind: "user"}, staffAuthz{})
-	ids, err := e.catalog.Create(ctx, staff, []catalog.ContentInput{{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Abandoned"}}}})
+	ids, err := e.catalog.Create(ctx, staff, []catalog.ContentInput{{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Unfinished"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,26 +344,33 @@ func TestEngineExpiryAndGroupRetentionIntegration(t *testing.T) {
 	}
 	// Give the version a manifest incarnation without starting image processing.
 	draftManifest, err := e.media.jobs.Manifests().Edit(ctx, draftRef, func(m *media.Manifest) error {
-		m.Meta = map[string]any{"title": "Abandoned"}
+		m.Meta = map[string]any{"title": "Unfinished"}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE `+table("content_items")+` SET created_at = now() - interval '2 hours' WHERE id = $1`, ids[0]); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE `+table("content_items")+` SET created_at = now() - interval '1 year' WHERE id = $1`, ids[0]); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := e.catalog.ExpireDrafts(ctx); err != nil || n != 1 {
-		t.Fatalf("expired %d (%v)", n, err)
+	if n, err := e.catalog.PurgeDeleted(ctx); err != nil || n != 0 {
+		t.Fatalf("purged %d (%v); an old draft must stay", n, err)
+	}
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT state FROM `+table("content_items")+` WHERE tenant_id=$1 AND id=$2`, env.Tenant, ids[0]).Scan(&state); err != nil || state != catalog.StateDraft {
+		t.Fatalf("old draft state=%q, err=%v", state, err)
+	}
+	keptManifest, _, err := e.media.jobs.Manifests().Get(ctx, draftRef)
+	if err != nil || keptManifest.Incarnation != draftManifest.Incarnation {
+		t.Fatalf("old draft's media changed: manifest=%+v, err=%v", keptManifest, err)
 	}
 	var deletions int
-	var incarnation string
-	if err := pool.QueryRow(ctx, `SELECT count(*),coalesce(min(args->>'incarnation'),'') FROM `+pgx.Identifier{schema + "_river", "river_job"}.Sanitize()+`
-WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.Prefix()).Scan(&deletions, &incarnation); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema + "_river", "river_job"}.Sanitize()+`
+WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.Prefix()).Scan(&deletions); err != nil {
 		t.Fatal(err)
 	}
-	if deletions != 1 || incarnation != draftManifest.Incarnation || !strings.HasSuffix(draftItem.Prefix(), "/blog/"+draftVersion+"/") {
-		t.Fatalf("draft version deletion: count=%d prefix=%q incarnation=%q want=%q", deletions, draftItem.Prefix(), incarnation, draftManifest.Incarnation)
+	if deletions != 0 {
+		t.Fatalf("old draft queued %d media deletions", deletions)
 	}
 
 	passed := time.Now().Add(-time.Minute)

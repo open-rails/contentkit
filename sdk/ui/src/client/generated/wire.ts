@@ -1166,7 +1166,6 @@ export interface Kind {
   attributes?: Record<string, Attribute>;
   sort?: string;
   locked?: Locked;
-  draft_ttl?: number;
   download?: Download;
 }
 
