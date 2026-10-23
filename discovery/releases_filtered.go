@@ -35,6 +35,9 @@ func (s *Service) filteredReleases(ctx context.Context, out *DailyReleases, filt
 	}
 	byID := make(map[string]entities.EntityCard, len(entityCards))
 	for _, entity := range entityCards {
+		// A directory cover can identify an omitted member. Filter explanations
+		// expose the entity and counts, never a member selected as its cover.
+		entity.Cover = nil
 		byID[string(entity.ID)] = entity
 	}
 	entries := []ReleaseFilteredEntity{}

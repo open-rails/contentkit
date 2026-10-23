@@ -43,7 +43,10 @@ CREATE VIEW content_current_facets AS
  f.attributes,f.updated_at,f.unplayable
  FROM (SELECT DISTINCT tenant_id,content_id FROM content_memberships
   WHERE active_from IS NOT NULL OR active_until IS NOT NULL) timed
- CROSS JOIN LATERAL (SELECT f.* FROM content_facets f
+ CROSS JOIN LATERAL (SELECT f.tenant_id,f.content_id,f.version_id,f.kind,f.live_from,f.deleted,f.languages,
+  f.access_level,f.access_tiers,f.access_group_id,f.access_releases,f.next_release_at,
+  f.restrictions,f.traits,f.owner_group_id,f.position,f.published_at,f.attributes,f.updated_at,f.unplayable
+  FROM content_facets f
   WHERE f.tenant_id=timed.tenant_id AND f.content_id=timed.content_id
   AND EXISTS (SELECT 1 FROM content_memberships m WHERE m.tenant_id=f.tenant_id AND m.content_id=f.content_id
    AND (m.version_id IS NULL OR m.version_id=f.version_id) AND (m.active_from IS NOT NULL OR m.active_until IS NOT NULL)) OFFSET 0) f
