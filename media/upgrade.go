@@ -472,7 +472,8 @@ func (m *Manifests) convert(ctx context.Context, item Item, stored *Manifest) (*
 // encoded sizes from the WebP headers, their fingerprint from the metadata
 // the v0.67 worker wrote, so an unchanged preset is not rendered again.
 func (m *Manifests) legacyPublication(ctx context.Context, item Item, f File, p *Public, names []string, public map[string]bool) (Publication, bool, error) {
-	pub := Publication{Preset: p.Name, Source: f.Key(), Names: names, State: PublicationReady, Dims: make([]Dims, len(names))}
+	stable := p.Stable
+	pub := Publication{Preset: p.Name, Source: f.Key(), Names: names, Stable: &stable, State: PublicationReady, Dims: make([]Dims, len(names))}
 	for i, name := range names {
 		key, err := item.Public(name)
 		if err != nil || !public[key] {

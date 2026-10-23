@@ -369,10 +369,6 @@ WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.P
 	if deletions != 1 || incarnation != draftManifest.Incarnation || !strings.HasSuffix(draftItem.Prefix(), "/blog/"+draftVersion+"/") {
 		t.Fatalf("draft version deletion: count=%d prefix=%q incarnation=%q want=%q", deletions, draftItem.Prefix(), incarnation, draftManifest.Incarnation)
 	}
-	// The daily orphan sweep lists the catalog kinds' folders; nothing is past its grace yet.
-	if n, err := e.sweepOrphans(ctx); err != nil || n != 0 {
-		t.Fatalf("orphan sweep deleted %d (%v)", n, err)
-	}
 
 	passed := time.Now().Add(-time.Minute)
 	freed, err := e.catalog.Create(ctx, staff, []catalog.ContentInput{{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Freed"}},

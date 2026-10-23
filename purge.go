@@ -3,15 +3,12 @@ package contentkit
 import (
 	"context"
 	"errors"
-	"maps"
-	"slices"
 	"time"
 
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/hub"
-	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -61,30 +58,4 @@ func (e *Engine) forgetPurged(ctx context.Context, events []catalog.Event) error
 	}
 	_, err := c.Insert(ctx, forgetContentsArgs{Contents: contents}, &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 25})
 	return err
-}
-
-// sweepOrphans runs the media orphan sweep over every catalog kind with media.
-func (e *Engine) sweepOrphans(ctx context.Context) (int, error) {
-	if e.media == nil {
-		return 0, nil
-	}
-	deleted := 0
-	for _, kind := range slices.Sorted(maps.Keys(e.catalog.Kinds().Kinds)) {
-		if _, err := e.media.reg.Kind(kind); err != nil {
-			continue
-		}
-		report, err := e.media.jobs.SweepOrphans(ctx, media.OrphanSweep{Kind: kind, Exists: e.catalog.Existing, Grace: 7 * 24 * time.Hour, Delete: true})
-		if err != nil {
-			return deleted, err
-		}
-		for _, f := range report.Orphans {
-			if f.Deleted {
-				deleted++
-			}
-		}
-		if len(report.Orphans) > 0 {
-			e.log.InfoContext(ctx, "contentkit: media orphan sweep", "kind", kind, "folders", report.Folders, "orphans", len(report.Orphans))
-		}
-	}
-	return deleted, nil
 }

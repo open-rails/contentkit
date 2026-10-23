@@ -103,6 +103,7 @@ func TestSpecChangeAndForce(t *testing.T) {
 	if h := e.file(t, g, "high/1.webp"); h.FP != high.FP || h.Blob != high.Blob {
 		t.Fatalf("high regenerated %+v", h)
 	}
+	thumb = e.file(t, g, "thumb/1.webp") // the earlier generation was correctly retired
 	if _, err := e.ms.EditExisting(context.Background(), g, func(m *media.Manifest) error {
 		m.Files[m.Find("high/1.webp")].Blob = thumb.Blob // a wrong blob a producer fix must redo
 		return nil
@@ -239,8 +240,8 @@ func TestRemoveFencesInFlightPublicPublication(t *testing.T) {
 		t.Fatal("remove returned before deleting the old public image")
 	}
 	e.commit(t, ref, op) // a retry must still confirm cleanup
-	if _, err := e.Store.Head(ctx, source); err != nil {
-		t.Fatalf("ordinary removal lost the retained private blob: %v", err)
+	if _, err := e.Store.Head(ctx, source); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("ordinary removal retained its unreferenced source: %v", err)
 	}
 	release.Do(func() { close(resume) })
 	if err := <-done; err != nil {
@@ -459,6 +460,9 @@ type parallelDelete struct {
 }
 
 func (s *parallelDelete) Delete(ctx context.Context, key string) error {
+	if !strings.Contains(key, "/public/") {
+		return s.Store.Delete(ctx, key)
+	}
 	if s.started.Add(1) == 3 {
 		close(s.ready)
 	}
@@ -475,19 +479,13 @@ func TestPublicCleanupDeletesConcurrently(t *testing.T) {
 	ref := e.ref(t, "gallery", 1)
 	e.put(t, ref, "cover.png", "image/png", quadrants(t))
 	e.process(t, media.ProcessJob{Ref: ref})
-	if _, err := e.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
-		m.Files = nil
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
 	store := &parallelDelete{Store: e.Store, ready: make(chan struct{})}
 	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.journal})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	keys, err := manifests.SyncPublic(ctx, ref)
-	if err != nil || len(keys) != 3 {
-		t.Fatalf("public deletes did not overlap: keys=%v, err=%v", keys, err)
+	_, err := manifests.EditExisting(ctx, ref, func(m *media.Manifest) error { m.Files = nil; return nil })
+	if err != nil || store.started.Load() != 3 {
+		t.Fatalf("public deletes did not overlap: count=%d, err=%v", store.started.Load(), err)
 	}
 	if _, err := e.ms.EditExisting(t.Context(), ref, func(*media.Manifest) error { return nil }); err != nil {
 		t.Fatalf("cleanup did not release the folder lock: %v", err)

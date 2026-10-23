@@ -112,10 +112,16 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	}
 	time.Sleep(1100 * time.Millisecond)
 	seed(channel, "origB", "outB")
+	for _, name := range old {
+		key, _ := ch.Blob(name)
+		if _, err := store.Head(ctx, key); !errors.Is(err, media.ErrNotFound) {
+			t.Fatalf("replacement did not retire its old allocation inline: %s %v", key, err)
+		}
+	}
 	clock = time.Now().Add(grace + time.Minute)
 	res, err := jobs.Sweep(ctx, channel)
-	if err != nil || len(res.Deleted) != 2 {
-		t.Fatalf("sweep: %+v %v", res, err)
+	if err != nil || len(res.Deleted) != 0 {
+		t.Fatalf("due cleanup rediscovered already retired files: %+v %v", res, err)
 	}
 	deletion := media.Deletion{Ref: post, Owner: "owner", OperationID: uuid.NewString()}
 	if err := jobs.Purge(ctx, deletion); err != nil {

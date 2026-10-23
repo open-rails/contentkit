@@ -428,7 +428,8 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 		for _, p := range k.PublicFor(u.Path) {
 			names := k.PublicNames(m, p, u.Path)
 			if len(names) > 0 && !u.Unattached {
-				pub := media.Publication{Preset: p.Name, Source: u.Key(), FP: "test", Generation: uuid.NewString(),
+				stable := p.Stable
+				pub := media.Publication{Preset: p.Name, Source: u.Key(), FP: "test", Generation: uuid.NewString(), Stable: &stable,
 					Names: names, Dims: make([]media.Dims, len(names)), State: media.PublicationReady}
 				if old, ok := k.Publication(m, u, p); ok && old.Ready() {
 					pub = old

@@ -347,13 +347,9 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		for _, d := range results {
 			i := cur.Find(d.src.Path)
 			if i < 0 || cur.Files[i].Blob != d.src.Blob || cur.Files[i].Edit.Hash() != d.src.Edit.Hash() {
-				if i < 0 {
-					orphaned = append(orphaned, d.written...)
-				}
-				if i < 0 || cur.Files[i].Blob != d.src.Blob {
-					for _, f := range d.outputs {
-						gone = append(gone, f.Blob)
-					}
+				orphaned = append(orphaned, d.written...)
+				for _, f := range d.outputs {
+					gone = append(gone, f.Blob)
 				}
 				continue
 			}
@@ -403,6 +399,13 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 				f, _ := cur.Get(d.src.Path)
 				owned, ok := f.Publication(pub.Preset)
 				if !ok || owned.Generation != pub.Generation || cur.Hidden {
+					for _, name := range pub.NamesOnDisk() {
+						key, err := item.Public(name)
+						if err != nil {
+							return err
+						}
+						orphaned = append(orphaned, key)
+					}
 					continue
 				}
 				present := true
@@ -467,7 +470,7 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		}
 	}
 	if len(orphaned) > 0 {
-		if err := p.syncPublic(ctx, item); err != nil {
+		if err := p.c.Manifests.DropUnreferenced(ctx, item.Ref(), media.Unreferenced{Public: orphaned}); err != nil {
 			return err
 		}
 	}
@@ -564,7 +567,8 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 				publication = old // interrupted PUTs retry the active reservation
 				return nil
 			}
-			publication = media.Publication{Preset: pu.Name, Source: f.Key(), FP: fp,
+			stable := pu.Stable
+			publication = media.Publication{Preset: pu.Name, Source: f.Key(), FP: fp, Stable: &stable,
 				Generation: uuid.NewString(), Names: names, Dims: make([]media.Dims, len(names))}
 			for i, name := range names {
 				publication.Dims[i] = outs[name].dims

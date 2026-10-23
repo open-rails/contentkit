@@ -99,6 +99,9 @@ type Publication struct {
 	Preset string `json:"preset"`
 	Source string `json:"source"` // the upload's Key
 	FP     string `json:"fp"`
+	// Stable records whether this generation also owns its logical names.
+	// Nil marks historical manifests whose alias policy was not recorded.
+	Stable *bool `json:"stable,omitempty"`
 	// Generation suffixes every physical name; "" is a legacy publication,
 	// files a pre-v0.68 worker wrote at the logical names (always ready).
 	Generation string           `json:"generation"`
@@ -443,6 +446,10 @@ func (m *Manifest) Clone() *Manifest {
 		}
 		f.Public = slices.Clone(f.Public)
 		for j := range f.Public {
+			if f.Public[j].Stable != nil {
+				stable := *f.Public[j].Stable
+				f.Public[j].Stable = &stable
+			}
 			f.Public[j].Names = slices.Clone(f.Public[j].Names)
 			f.Public[j].Dims = slices.Clone(f.Public[j].Dims)
 		}

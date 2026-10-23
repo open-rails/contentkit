@@ -345,3 +345,134 @@ func TestExactRetirementPurgeRelayFailureRecoversSameKeys(t *testing.T) {
 		t.Fatalf("recovery changed exact purge keys: %+v", calls)
 	}
 }
+
+func TestPublicOnlyRetirementRecoversLateWriteWithoutDiscovery(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ref := f.ref("gallery", 1)
+	f.put(ref, "cover.png", "image/png", png(1))
+	f.produce(ref)
+	item, _ := f.reg.Item(ref)
+	old, _ := item.Public(f.publicName(ref, "cover-230.webp"))
+	if _, err := f.republish(f.ms, ref, "cover.png", "cover"); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := item.Public(f.publicName(ref, "cover-230.webp"))
+	if old == current || f.exists(old) {
+		t.Fatal("public generation was not retired inline")
+	}
+	f.object(old, "late public PUT after the producer crashed")
+	store := &noDiscoveryStore{Store: f.env.Store}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.journal, Now: func() time.Time { return time.Now().Add(10 * 24 * time.Hour) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := jobs.CleanupDue(t.Context(), 100); err != nil || n == 0 {
+		t.Fatalf("late public cleanup: %d %v", n, err)
+	}
+	if f.exists(old) || !f.exists(current) || store.lists.Load() != 0 {
+		t.Fatal("late cleanup used discovery or deleted the current generation")
+	}
+}
+
+func TestExactPublicCompensationRejectsForeignKeys(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ref := f.ref("gallery", 1)
+	f.put(ref, "cover.png", "image/png", png(1))
+	f.produce(ref)
+	item, _ := f.reg.Item(ref)
+	current, _ := item.Public(f.publicName(ref, "cover-230.webp"))
+	if err := f.ms.DropUnreferenced(t.Context(), ref, media.Unreferenced{Public: []string{current}}); err != nil {
+		t.Fatal(err)
+	}
+	if !f.exists(current) {
+		t.Fatal("compensation deleted a live publication")
+	}
+	for _, key := range []string{"another/gallery/x/public/cover.webp", item.PublicPrefix() + "../private/secret"} {
+		if err := f.ms.DropUnreferenced(t.Context(), ref, media.Unreferenced{Public: []string{key}}); err == nil {
+			t.Fatalf("accepted unsafe public key %q", key)
+		}
+	}
+}
+
+func TestRemovedPublicPresetRetiresRecordedGenerations(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ref := f.ref("gallery", 1)
+	f.put(ref, "cover.png", "image/png", png(1))
+	f.produce(ref)
+	item, _ := f.reg.Item(ref)
+	old, _ := item.Public(f.publicName(ref, "cover-230.webp"))
+	source, _ := item.Blob(f.fileBlob(ref, "cover.png"))
+	cfg := f.reg.Config()
+	for i := range cfg.Kinds {
+		if cfg.Kinds[i].Name == "gallery" {
+			cfg.Kinds[i].Public = nil
+		}
+	}
+	reg, err := media.NewRegistry(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &noDiscoveryStore{Store: f.env.Store}
+	m, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: s3test.Locker(t, f.env.Store), Journal: f.journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.EditExisting(t.Context(), ref, func(*media.Manifest) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if f.exists(old) || !f.exists(source) || store.lists.Load() != 0 {
+		t.Fatal("removed preset lost ownership evidence or deleted the retained source")
+	}
+}
+
+func TestUnknownAliasRetirementReclaimsLateWrite(t *testing.T) {
+	f := newFixtureOn(t, s3test.Open(t), func(cfg *media.Config) { cfg.Kinds[0].Public[0].Stable = true })
+	f.visible(1)
+	ref := f.ref("gallery", 1)
+	f.put(ref, "cover.png", "image/png", png(1))
+	f.produce(ref)
+	item, _ := f.reg.Item(ref)
+	alias, _ := item.Public("cover-230.webp")
+	if !f.exists(alias) {
+		t.Fatal("stable alias was not produced")
+	}
+	// A historical manifest has no recorded alias policy. The alias may be
+	// temporarily absent while a previously authorized copy is still running.
+	if _, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+		for i := range m.Files {
+			for j := range m.Files[i].Public {
+				m.Files[i].Public[j].Stable = nil
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.Store.Delete(t.Context(), alias); err != nil {
+		t.Fatal(err)
+	}
+	cfg := f.reg.Config()
+	cfg.Kinds[0].Public = nil
+	reg, err := media.NewRegistry(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &noDiscoveryStore{Store: f.env.Store}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.journal, Now: func() time.Time { return time.Now().Add(10 * 24 * time.Hour) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jobs.Manifests().EditExisting(t.Context(), ref, func(*media.Manifest) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	f.object(alias, "late historical alias")
+	if n, err := jobs.CleanupDue(t.Context(), 100); err != nil || n == 0 {
+		t.Fatalf("late alias cleanup: %d %v", n, err)
+	}
+	if f.exists(alias) || store.lists.Load() != 0 {
+		t.Fatal("historical alias was forgotten or rediscovered through storage listing")
+	}
+}

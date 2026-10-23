@@ -242,6 +242,10 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 
 // Unreferenced selects what DropUnreferenced deletes.
 type Unreferenced struct {
+	// Public are exact physical keys written by a producer. Only keys in
+	// this item's public area and no longer owned by its manifest may go.
+	// This internal producer API is not an HTTP deletion capability.
+	Public []string
 	// All is every private blob in the folder, editor views included: a
 	// worker whose unrecorded outputs go with them finds them missing when
 	// it records, and produces them again.
@@ -263,7 +267,22 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 	}
 	return m.cleanup(ctx, item, false, func(cur *Manifest, _ bool) (journalEffects, error) {
 		keys, err := m.unreferenced(ctx, item, cur, u)
-		return journalEffects{Private: keys}, err
+		if err != nil {
+			return journalEffects{}, err
+		}
+		kept := item.Kind().PublicKept(cur)
+		var public []string
+		for _, key := range u.Public {
+			name, ok := strings.CutPrefix(key, item.PublicPrefix())
+			canonical, err := item.Public(name)
+			if !ok || err != nil || canonical != key {
+				return journalEffects{}, errors.New("media: public retirement key is outside the item")
+			}
+			if !slices.Contains(kept, name) && !slices.Contains(public, key) {
+				public = append(public, key)
+			}
+		}
+		return journalEffects{Private: keys, Public: public}, nil
 	})
 }
 
@@ -308,12 +327,58 @@ func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, sel
 	if len(effects.Allocate) > 0 {
 		effects.CleanupAt = time.Now().Add(m.cleanupGrace)
 	}
+	m.scheduleRetirement(item, &effects)
 	// The projection is asserted before any DELETE: a file it names is never
 	// one this cleanup retires.
 	if err := m.journal.prepareCleanup(ctx, &c, effects, projectionOf(item, cur).without(item, effects.Public)); err != nil {
 		return err
 	}
 	return m.finishCommit(ctx, item, c, true, nil)
+}
+
+// retiredPublicKeys derives physical ownership from the old manifest even
+// when a deployment removed or renamed the preset. Historical generations
+// without a recorded alias policy retain those exact possible alias targets.
+func retiredPublicKeys(item Item, previous *Manifest, kept []string) ([]string, error) {
+	var keys []string
+	for _, file := range previous.Files {
+		for _, publication := range file.Public {
+			retired := missing(publication.NamesOnDisk(), kept)
+			if len(retired) == 0 {
+				continue
+			}
+			for _, name := range retired {
+				key, err := item.Public(name)
+				if err != nil {
+					return nil, err
+				}
+				keys = append(keys, key)
+			}
+			if !publication.Ready() || publication.Generation == "" || publication.Stable != nil && !*publication.Stable {
+				continue
+			}
+			for _, name := range missing(publication.Names, kept) {
+				key, err := item.Public(name)
+				if err != nil {
+					return nil, err
+				}
+				keys = append(keys, key)
+			}
+		}
+	}
+	return keys, nil
+}
+
+// scheduleRetirement preserves exact permanent keys after an in-flight write
+// could land. Temporary objects have their own absolute bucket expiry.
+func (m *Manifests) scheduleRetirement(item Item, effects *journalEffects) {
+	permanent := len(effects.Public) > 0 || slices.ContainsFunc(effects.Private, func(key string) bool { return !strings.HasPrefix(key, item.TempPrefix()) })
+	if permanent {
+		effects.CleanupDelete = true
+		if effects.CleanupAt.IsZero() {
+			effects.CleanupAt = time.Now().Add(m.lateUploadWindow)
+		}
+	}
 }
 
 // unreferenced selects exact targets while the caller holds the folder lock.
@@ -512,17 +577,14 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 		key, _ := item.Staged(name)
 		mutation.effects.Private = append(mutation.effects.Private, key)
 	}
-	for _, name := range missing(item.Kind().PublicKept(cur), item.Kind().PublicKept(next)) {
-		mutation.effects.Public = append(mutation.effects.Public, item.PublicPrefix()+name)
+	retiredPublic, err := retiredPublicKeys(item, cur, item.Kind().PublicKept(next))
+	if err != nil {
+		return nil, false, err
 	}
+	mutation.effects.Public = append(mutation.effects.Public, retiredPublic...)
 	slices.Sort(mutation.effects.Private)
 	mutation.effects.Private = slices.Compact(mutation.effects.Private)
-	if len(mutation.effects.Private) > 0 && mutation.effects.CleanupAt.IsZero() {
-		// Repeat only these retired names once after an already-issued PUT
-		// could finish. This is not object discovery or a deferred removal.
-		mutation.effects.CleanupAt = time.Now().Add(m.lateUploadWindow)
-		mutation.effects.CleanupDelete = true
-	}
+	m.scheduleRetirement(item, &mutation.effects)
 	slices.Sort(mutation.effects.Public)
 	mutation.effects.Public = slices.Compact(mutation.effects.Public)
 	mutation.effects.Mirror = item.kind.mirrors(item, cur, next)

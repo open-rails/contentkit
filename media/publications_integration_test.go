@@ -101,7 +101,8 @@ func (f *fixture) republish(ms *media.Manifests, ref contentref.ContentRef, path
 	}
 	file, _ := m.Get(path)
 	names := item.Kind().PublicNames(m, item.Kind().PublicFor(path)[0], path)
-	pub := media.Publication{Preset: preset, Source: file.Key(), FP: "republished", Generation: uuid.NewString(),
+	stable := item.Kind().PublicFor(path)[0].Stable
+	pub := media.Publication{Preset: preset, Source: file.Key(), FP: "republished", Generation: uuid.NewString(), Stable: &stable,
 		Names: names, Dims: make([]media.Dims, len(names)), State: media.PublicationReady}
 	src, _ := item.Blob(file.Blob)
 	for i, name := range pub.NamesOnDisk() {
