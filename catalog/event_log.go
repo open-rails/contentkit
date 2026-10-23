@@ -156,7 +156,10 @@ func (s *catalogSnapshot) Stream(ctx context.Context, cutoff time.Time) (eventlo
 	if err := s.tx.QueryRow(ctx, `SELECT epoch::text FROM `+s.store.qs+`.content_event_epoch WHERE singleton`).Scan(&state.Epoch); err != nil {
 		return state, err
 	}
-	err := s.tx.QueryRow(ctx, `SELECT epoch,position,pruned_through,pruned_id FROM `+s.store.qs+`.eventlog_streams WHERE source='contentkit' AND scope=$1`, s.store.tenant).Scan(&state.Epoch, &state.Head.Number, &state.Floor.Number, &state.Floor.ID)
+	// Public catalog cursors have always used the schema-global epoch. A
+	// persisted stream can predate a global reset, including first creation by
+	// a repeatable-read transaction with an older snapshot.
+	err := s.tx.QueryRow(ctx, `SELECT position,pruned_through,pruned_id FROM `+s.store.qs+`.eventlog_streams WHERE source='contentkit' AND scope=$1`, s.store.tenant).Scan(&state.Head.Number, &state.Floor.Number, &state.Floor.ID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return state, err
 	}

@@ -82,3 +82,7 @@ Numeric event IDs can therefore commit out of order; only cursors and stream
 positions define ordering. Discovery invalidates its summary cache with the
 committed position, independently of ID allocation and pruning. Reading an empty
 app still makes no writes and keeps previously issued empty cursors valid.
+
+The schema-global epoch remains authoritative for public catalog cursors. Shared
+stream epochs are seeded identity metadata; an older transaction may create a
+stream after a global rotation, so its stored epoch cannot override that reset.

@@ -3,6 +3,7 @@ package catalog
 import (
 	"encoding/json"
 	"errors"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/helpers/eventlog"
 	"net/http"
 	"strconv"
@@ -197,11 +198,19 @@ func TestEventLogRejectsReusedPositionAfterRestore(t *testing.T) {
 	if err != nil || len(current.Events) != 2 || current.Events[1].ContentID != "replacement" {
 		t.Fatalf("new history unavailable: %+v %v", current, err)
 	}
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("eventlog_streams")+` SET epoch=gen_random_uuid()::text`); err != nil {
+	emptyStore := &Store{pool: f.pool, schema: f.schema, qs: f.s.qs, tenant: "empty-before-reset", eventRetention: DefaultEventRetention, now: f.now}
+	empty, err := emptyStore.ListEvents(f.ctx, EventQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_event_epoch")+` SET epoch=gen_random_uuid()`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.s.ListEvents(f.ctx, EventQuery{After: current.NextCursor}); !errors.Is(err, ErrEventCursorExpired) {
 		t.Fatalf("accepted old stream epoch: %v", err)
+	}
+	if _, err := emptyStore.ListEvents(f.ctx, EventQuery{After: empty.NextCursor}); !errors.Is(err, ErrEventCursorExpired) {
+		t.Fatalf("accepted old empty epoch: %v", err)
 	}
 }
 
@@ -244,5 +253,50 @@ func TestSharedEventReaderFutureTypeFilterLimit(t *testing.T) {
 	}
 	if _, err := f.s.EventReader().ListEvents(f.ctx, eventlog.Query{Types: append(types, "overflow")}); !errors.Is(err, eventlog.ErrInvalidQuery) {
 		t.Fatalf("type limit: %v", err)
+	}
+}
+
+func TestEventLogGlobalEpochWinsOverOldSnapshotStreamCreation(t *testing.T) {
+	f := newFixture(t, nil)
+	store := &Store{pool: f.pool, schema: f.schema, qs: f.s.qs, tenant: "late-stream", eventRetention: DefaultEventRetention, now: f.now}
+	empty, err := store.ListEvents(f.ctx, EventQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := f.pool.BeginTx(f.ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(f.ctx)
+	var oldEpoch string
+	if err := tx.QueryRow(f.ctx, `SELECT epoch::text FROM `+f.table("content_event_epoch")).Scan(&oldEpoch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_event_epoch")+` SET epoch=gen_random_uuid()`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.emit(f.ctx, tx, Event{Type: EventContentCreated, Kind: "gallery", ContentID: "after-reset"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	var storedEpoch string
+	if err := f.pool.QueryRow(f.ctx, `SELECT epoch FROM `+f.table("eventlog_streams")+` WHERE source='contentkit' AND scope='late-stream'`).Scan(&storedEpoch); err != nil {
+		t.Fatal(err)
+	}
+	if storedEpoch != oldEpoch {
+		t.Fatalf("fixture did not preserve old transaction snapshot: %s != %s", storedEpoch, oldEpoch)
+	}
+	if _, err := store.ListEvents(f.ctx, EventQuery{After: empty.NextCursor}); !errors.Is(err, ErrEventCursorExpired) {
+		t.Fatalf("stale stream epoch resurrected a cursor: %v", err)
+	}
+	fresh, err := store.ListEvents(f.ctx, EventQuery{})
+	if err != nil || len(fresh.Events) != 1 {
+		t.Fatalf("fresh reader: %+v %v", fresh, err)
+	}
+	cursor, _, err := decodeEventCursor(fresh.NextCursor)
+	if err != nil || cursor.Epoch == oldEpoch {
+		t.Fatalf("fresh cursor used old epoch: %+v %v", cursor, err)
 	}
 }
