@@ -87,6 +87,7 @@ jobs:
   e2e:
     name: UI package e2e (real ContentKit)
     if: '!github.event.pull_request.draft'
+    # Playwright 1.60 supports Ubuntu 24.04; ubuntu-latest has moved to 26.04.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:

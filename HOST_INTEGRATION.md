@@ -45,7 +45,7 @@ ContentKit names its staff permissions, always the full
 
 | Constant | Permission | Holders may |
 |---|---|---|
-| `access.ContentWrite` | `root:content:write` | write, publish, delete and restore any content item and its images |
+| `access.ContentWrite` | `root:content:write` | write and publish content, delete and restore its versions, and manage its images |
 | `access.ContentViewRestricted` | `root:content:view-restricted` | see every content item in any state, listing, site or filter |
 | `access.PollsWrite` | `root:polls:write` | write and delete polls, options and images; see inactive ones |
 | `access.CommentsModerate` | `root:comments:moderate` | edit, delete and restore anyone's comments; list every comment |
@@ -111,6 +111,17 @@ A host mounting a module alone passes the same Auth: `content.Options.Auth`
 Hosts use the routes and `ck.Client()` (the same surface in process).
 Search, typeahead, signals and discovery run inside the engine; their routes
 land with #122.
+
+Ordinary content deletion always addresses versions: `Catalog.DeleteVersions` in
+embedded Go, `Client.DeleteContentVersion` remotely, or
+`DELETE /v1/contents/{id}/versions/{vid}`. Hidden single-version kinds expose their
+sole version in `Content.Versions` and use the same operation. Deleting the final
+undeleted version soft-deletes its parent in the same transaction. Restoring an
+edition with `PutVersions` / `PATCH .../versions/{vid}` and `state: "published"`
+restores only a parent automatically deleted for having no versions, preserving
+its earlier draft or publication schedule. Moderation and owner deletion remain
+separate embedded lifecycle operations and cannot be bypassed this way. There
+is no ordinary parent-content DELETE route or Go method.
 
 ## Content ids
 

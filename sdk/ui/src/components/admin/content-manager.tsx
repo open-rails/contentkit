@@ -303,9 +303,9 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const tiers = model?.tiers ?? [];
   // Reader works take one ZIP per draft, players one video per draft.
   const presentation = spec?.presentation;
-  const canDeleteParent = !!spec?.versions.hidden;
+  const hasHiddenVersion = !!spec?.versions.hidden;
   const canChangeParentAccess = offersAccessChoice(spec) && spec?.access_scope !== "version";
-  const canSelect = selectable && (deleted ? canDeleteParent : canDeleteParent || (canChangeParentAccess && tiers.length > 0));
+  const canSelect = selectable && (deleted ? hasHiddenVersion : hasHiddenVersion || (canChangeParentAccess && tiers.length > 0));
   const bulkable = presentation === "reader" || presentation === "player";
   const [bulkOpen, setBulkOpen] = useState(false);
   const { store, scope } = useContentScope(client);
@@ -347,9 +347,19 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
       });
     }
   };
+  const removeVersion = (c: Content) => {
+    const version = c.versions.find((v) => v.state !== "deleted");
+    if (!version) throw new Error("contentkit-ui: the item has no undeleted version");
+    return client.contents.removeVersion(c.id, version.id);
+  };
+  const restore = async (c: Content) => {
+    const version = c.versions.find((v) => v.state === "deleted");
+    if (version) await client.contents.updateVersion(c.id, version.id, { state: "published" });
+    else await client.contents.restore(c.id);
+  };
   const remove = async (c: Content) => {
     if (await confirm({ title: t("contentManager.deleteTitle", { title: c.title }), description: t("contentManager.deleteBody"), confirm: t("contentManager.delete") })) {
-      await del.run(() => client.contents.remove(c.id));
+      await del.run(() => removeVersion(c));
     }
   };
   const chosen = items.filter((c) => selected.has(c.id));
@@ -365,7 +375,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   };
   const bulkDelete = async () => {
     if (await confirm({ title: m.plural("contentManager.bulkDeleteTitle", chosen.length), description: t("contentManager.bulkDeleteBody"), confirm: t("contentManager.delete") })) {
-      await runBulk(chosen, (c) => client.contents.remove(c.id));
+      await runBulk(chosen, (c) => removeVersion(c));
     }
   };
   const allChosen = items.length > 0 && chosen.length === items.length;
@@ -529,7 +539,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
               <div className="flex flex-1 flex-wrap items-center gap-2" data-ckui="bulk-bar">
                 <span className="me-2 text-sm font-medium text-foreground">{t("contentManager.selected", { count: chosen.length })}</span>
                 {deleted ? (
-                  <Button size="xs" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen, (c) => client.contents.restore(c.id))}>
+                  <Button size="xs" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen, restore)}>
                     {t("moderation.restore")}
                   </Button>
                 ) : (
@@ -544,7 +554,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                         {t("contentManager.makeFree")}
                       </Button>
                     )}
-                    {canDeleteParent && <Button size="xs" variant="destructive" disabled={bulk.pending} onClick={() => void bulkDelete()}>
+                    {hasHiddenVersion && <Button size="xs" variant="destructive" disabled={bulk.pending} onClick={() => void bulkDelete()}>
                       {t("contentManager.delete")}
                     </Button>}
                   </>
@@ -569,7 +579,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
             const href = s === "published" ? contentHref?.(c) : undefined;
             const pending = busy.has(c.id);
             const isPremium = c.access.level === "tier";
-            const more = href || toggleable(c) || canDeleteParent;
+            const more = href || toggleable(c) || hasHiddenVersion;
             return (
               <li
                 key={c.id}
@@ -589,7 +599,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                 <div className="flex min-w-[min(100%,16rem)] flex-1 items-center gap-3">
                   <RowCover url={c.cover?.url} portrait={presentation === "reader"} />
                   <div className="grid min-w-0 gap-0.5">
-                    {deleted && canDeleteParent ? (
+                    {deleted && hasHiddenVersion ? (
                       <span className="truncate font-medium text-muted-foreground line-through">{c.title}</span>
                     ) : (
                       <button type="button" className="truncate text-start font-medium underline-offset-4 hover:underline" title={c.title} onClick={() => open(c)}>
@@ -621,8 +631,8 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                   {s === "scheduled" && c.publish_at && <span className="text-xs">{t("pollManager.goesLive", { date: formatDate(m, c.publish_at) })}</span>}
                 </div>
                 <div className="ms-auto flex items-center justify-end gap-1">
-                  {deleted ? canDeleteParent ? (
-                    <Button size="sm" variant="outline" disabled={del.pending} onClick={() => void del.run(() => client.contents.restore(c.id))}>
+                  {deleted ? hasHiddenVersion ? (
+                    <Button size="sm" variant="outline" disabled={del.pending} onClick={() => void del.run(() => restore(c))}>
                       {t("moderation.restore")}
                     </Button>
                   ) : (
@@ -652,8 +662,8 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                                 {t(isPremium ? "contentManager.makeFree" : "contentManager.makePremium")}
                               </DropdownMenuItem>
                             )}
-                            {canDeleteParent && (href || toggleable(c)) && <DropdownMenuSeparator />}
-                            {canDeleteParent && (
+                            {hasHiddenVersion && (href || toggleable(c)) && <DropdownMenuSeparator />}
+                            {hasHiddenVersion && (
                               <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={del.pending} onClick={() => void remove(c)}>
                                 <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
                                 {t("comments.delete")}
@@ -953,7 +963,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   const remove = async () => {
     if (!item || !(await confirm({ title: t("contentManager.deleteTitle", { title: item.title }), description: t("contentManager.deleteBody"), confirm: t("contentManager.delete") }))) return;
     try {
-      await ed.remove();
+      await ed.removeVersion();
       onDeleted?.(item);
     } catch (e) {
       fail(e);

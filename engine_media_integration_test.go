@@ -135,7 +135,7 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	for _, actor := range []access.Actor{anon, user, staff} {
 		s.call(http.StatusNotFound, actor, "GET", "http://safe.example"+item, nil, nil)
 	}
-	s.call(http.StatusNoContent, staff, "DELETE", "/api/ck/v1/contents/"+post.ID, nil, nil)
+	s.call(http.StatusNoContent, staff, "DELETE", "/api/ck/v1/contents/"+post.ID+"/versions/"+vid, nil, nil)
 	s.call(http.StatusNotFound, anon, "GET", item, nil, nil)
 	s.call(http.StatusNotFound, user, "GET", item+"?editor", nil, nil)
 }

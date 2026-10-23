@@ -216,3 +216,24 @@ it("bounds guest history summary hydration to the newest 100 known IDs", async (
   await waitFor(() => expect(result.current.items.map(row => row.id)).toEqual(["known-100"]));
   expect(result.current.summary?.total).toBe(1);
 });
+
+it.each([null, "alice"])("refreshes mounted reading history after version deletion and restoration (viewer: %s)", async (viewer) => {
+  let visible = true;
+  const client = createContentKitClient({ baseUrl: `https://catalog.test/version-history-${viewer ?? "guest"}`, fetch: async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith("/contents/post/versions/edition")) {
+      visible = init?.method !== "DELETE";
+      return visible ? Response.json({ id: "edition" }) : new Response(null, { status: 204 });
+    }
+    expect(path.endsWith(viewer ? "/me/history" : "/content-cards")).toBe(true);
+    return Response.json({ contents: visible ? [{ id: "post", kind: "blog", version: { id: "edition" } }] : [] });
+  } });
+  client.guestHistory.record({ content_id: "post", version_id: "edition", visit_id: "visit", segment_id: "post", revision: 1, active_ms: 1500, activity_token: "", kind: "blog" });
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={viewer}>{children}</ContentKitProvider>;
+  const { result } = renderHook(() => useHistory({ kind: "blog" }), { wrapper });
+  await waitFor(() => expect(result.current.items.map((c) => c.id)).toEqual(["post"]));
+  await act(() => client.contents.removeVersion("post", "edition"));
+  await waitFor(() => expect(result.current.items).toEqual([]));
+  await act(() => client.contents.updateVersion("post", "edition", { state: "published" }));
+  await waitFor(() => expect(result.current.items.map((c) => c.id)).toEqual(["post"]));
+});
