@@ -90,6 +90,8 @@ github.com/open-rails/helpers v1.14.1 h1:to4yV4TXDBv9+tyMA6azYA3J4VPxlOd17JLwa5y
 github.com/open-rails/helpers v1.14.1/go.mod h1:/q4zZNSZJ9pKH2BAROYACeaGecD7nWNL7jIRMPZbDa8=
 github.com/open-rails/helpers v1.14.2-0.20261023054655-a4ccc948ce17 h1:lOIgEanAgc9iPP3i1MP306UVjyaKVN0NxOIINm8B/OY=
 github.com/open-rails/helpers v1.14.2-0.20261023054655-a4ccc948ce17/go.mod h1:/q4zZNSZJ9pKH2BAROYACeaGecD7nWNL7jIRMPZbDa8=
+github.com/open-rails/helpers v1.14.2-0.20261023055349-0636028b685e h1:VCWBqmaAHx5wuHVafm6DH1p4L/RiEG9WjyvHbQHbxWQ=
+github.com/open-rails/helpers v1.14.2-0.20261023055349-0636028b685e/go.mod h1:/q4zZNSZJ9pKH2BAROYACeaGecD7nWNL7jIRMPZbDa8=
 github.com/open-rails/migratekit v1.11.2 h1:QTtn8i/Yj62SiGv6b7FnQ/mKudSDfLjnlmPSQN0NA7k=
 github.com/open-rails/migratekit v1.11.2/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/paulmach/orb v0.12.0 h1:z+zOwjmG3MyEEqzv92UN49Lg1JFYx0L9GpGKNVDKk1s=

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/helpers/eventlog"
+	eventpg "github.com/open-rails/helpers/eventlog/postgres"
 )
 
 // DefaultEventRetention is independent of readers' progress.
@@ -155,7 +156,10 @@ func (s *catalogSnapshot) Stream(ctx context.Context, cutoff time.Time) (eventlo
 	if err := s.tx.QueryRow(ctx, `SELECT epoch::text FROM `+s.store.qs+`.content_event_epoch WHERE singleton`).Scan(&state.Epoch); err != nil {
 		return state, err
 	}
-	err := s.tx.QueryRow(ctx, `SELECT position,retained_after,coalesce(retained_boundary::text,'') FROM `+s.store.qs+`.content_event_streams WHERE tenant_id=$1`, s.store.tenant).Scan(&state.Head.Number, &state.Floor.Number, &state.Floor.ID)
+	// Public catalog cursors have always used the schema-global epoch. A
+	// persisted stream can predate a global reset, including first creation by
+	// a repeatable-read transaction with an older snapshot.
+	err := s.tx.QueryRow(ctx, `SELECT position,pruned_through,pruned_id FROM `+s.store.qs+`.eventlog_streams WHERE source='contentkit' AND scope=$1`, s.store.tenant).Scan(&state.Head.Number, &state.Floor.Number, &state.Floor.ID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return state, err
 	}
@@ -163,7 +167,7 @@ func (s *catalogSnapshot) Stream(ctx context.Context, cutoff time.Time) (eventlo
 	// Advance only the expired prefix, and exclude later expired rows separately.
 	var floor int64
 	var boundary string
-	err = s.tx.QueryRow(ctx, `SELECT position,boundary::text FROM `+s.store.t.events+` WHERE tenant_id=$1 AND position>$2 AND position<coalesce((SELECT min(position) FROM `+s.store.t.events+` WHERE tenant_id=$1 AND position>$2 AND created_at >= $3),$4+1) ORDER BY position DESC LIMIT 1`, s.store.tenant, state.Floor.Number, cutoff, s.head).Scan(&floor, &boundary)
+	err = s.tx.QueryRow(ctx, `SELECT position,boundary FROM `+s.store.qs+`.eventlog_events WHERE source='contentkit' AND scope=$1 AND position>$2 AND position<coalesce((SELECT min(position) FROM `+s.store.qs+`.eventlog_events WHERE source='contentkit' AND scope=$1 AND position>$2 AND recorded_at >= $3),$4+1) ORDER BY position DESC LIMIT 1`, s.store.tenant, state.Floor.Number, cutoff, s.head).Scan(&floor, &boundary)
 	if err == nil {
 		state.Floor = eventlog.Position{Number: floor, ID: boundary}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -180,14 +184,14 @@ func (s *catalogSnapshot) Stream(ctx context.Context, cutoff time.Time) (eventlo
 }
 func (s *catalogSnapshot) Boundary(ctx context.Context, position int64) (string, error) {
 	var id string
-	err := s.tx.QueryRow(ctx, `SELECT boundary::text FROM `+s.store.t.events+` WHERE tenant_id=$1 AND position=$2`, s.store.tenant, position).Scan(&id)
+	err := s.tx.QueryRow(ctx, `SELECT boundary FROM `+s.store.qs+`.eventlog_events WHERE source='contentkit' AND scope=$1 AND position=$2`, s.store.tenant, position).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", eventlog.ErrExpiredCursor
 	}
 	return id, err
 }
 func (s *catalogSnapshot) Events(ctx context.Context, after int64, types []string, limit int) ([]eventlog.Record, error) {
-	rows, err := s.tx.Query(ctx, `SELECT id::text,event_version,type,payload,created_at,position,boundary::text FROM `+s.store.t.events+` WHERE tenant_id=$1 AND position>$2 AND position<=$3 AND created_at >= $4 AND (cardinality($5::text[])=0 OR type=ANY($5)) ORDER BY position LIMIT $6`, s.store.tenant, after, s.head, s.cutoff, append([]string{}, types...), limit)
+	rows, err := s.tx.Query(ctx, `SELECT id,version,event_type,data,occurred_at,recorded_at,position,boundary FROM `+s.store.qs+`.eventlog_events WHERE source='contentkit' AND scope=$1 AND position>$2 AND position<=$3 AND recorded_at >= $4 AND (cardinality($5::text[])=0 OR event_type=ANY($5)) ORDER BY position LIMIT $6`, s.store.tenant, after, s.head, s.cutoff, append([]string{}, types...), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +199,7 @@ func (s *catalogSnapshot) Events(ctx context.Context, after int64, types []strin
 	result := []eventlog.Record{}
 	for rows.Next() {
 		var r eventlog.Record
-		if err := rows.Scan(&r.Event.ID, &r.Event.Version, &r.Event.Type, &r.Event.Data, &r.Event.RecordedAt, &r.Position, &r.Boundary); err != nil {
+		if err := rows.Scan(&r.Event.ID, &r.Event.Version, &r.Event.Type, &r.Event.Data, &r.Event.OccurredAt, &r.Event.RecordedAt, &r.Position, &r.Boundary); err != nil {
 			return nil, err
 		}
 		var fact eventPayload
@@ -203,63 +207,19 @@ func (s *catalogSnapshot) Events(ctx context.Context, after int64, types []strin
 			return nil, err
 		}
 		r.Event.Source, r.Event.Scope = "contentkit", s.store.tenant
-		// The legacy log recorded mutation facts at insertion time; both timestamps
-		// coincide. Keep the fields distinct for consumers and future storage.
-		r.Event.OccurredAt = r.Event.RecordedAt
+
 		r.Event.Subject = eventlog.Subject{Type: fact.Kind, ID: fact.ContentID}
 		result = append(result, r)
 	}
 	return result, rows.Err()
 }
 
-// PruneEvents bounds each maintenance run and advances only a contiguous
-// expired prefix. A younger event never gets skipped by the retained floor.
+// PruneEvents bounds maintenance while reads independently enforce retention.
 func (s *Store) PruneEvents(ctx context.Context) (int, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	store, err := eventpg.New(s.pool, eventpg.Config{Schema: s.schema, Source: "contentkit", Scope: s.tenant, Retention: s.eventRetention, Now: s.now})
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback(ctx)
-	var floor int64
-	if err := tx.QueryRow(ctx, `SELECT retained_after FROM `+s.qs+`.content_event_streams WHERE tenant_id=$1 FOR UPDATE`, s.tenant).Scan(&floor); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	cutoff := s.now().Add(-s.eventRetention)
-	rows, err := tx.Query(ctx, `SELECT position,boundary::text,created_at FROM `+s.t.events+` WHERE tenant_id=$1 AND position>$2 ORDER BY position LIMIT 1000`, s.tenant, floor)
-	if err != nil {
-		return 0, err
-	}
-	var through int64
-	var boundary string
-	count := 0
-	for rows.Next() {
-		var position int64
-		var token string
-		var at time.Time
-		if err := rows.Scan(&position, &token, &at); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		if !at.Before(cutoff) {
-			break
-		}
-		through, boundary, count = position, token, count+1
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil || count == 0 {
-		return 0, err
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.events+` WHERE tenant_id=$1 AND position<=$2`, s.tenant, through); err != nil {
-		return 0, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE `+s.qs+`.content_event_streams SET retained_after=$2,retained_boundary=$3 WHERE tenant_id=$1`, s.tenant, through, boundary); err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return count, nil
+	count, err := store.Prune(ctx, 1000)
+	return int(count), err
 }

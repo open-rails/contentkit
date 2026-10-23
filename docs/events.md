@@ -18,8 +18,9 @@ uses the existing embedded or HTTP transport and returns the shared envelope;
 `ListEvents` remains available with its catalog-specific records and the same
 cursors. Engine clients retain host authority; remote clients retain the
 caller's credentials. Shared records include source, app scope, subject, payload,
-and separate occurrence and recording timestamps. In legacy storage both
-timestamps are the mutation insertion time.
+and separate occurrence and recording timestamps. Imported legacy records keep
+the mutation insertion time in both fields; new records keep the occurrence
+time and the shared log's commit-time recording timestamp separately.
 
 Remote readers call `GET /v1/events?after=<cursor>&limit=100` under the
 application's ContentKit prefix. The route requires the app's restricted-content
@@ -65,3 +66,23 @@ New purges use an explicit same-transaction `OnPurge` callback to record require
 cleanup; ordinary event readers do not control deletion or other domain work.
 The log has no subscriber registry, delivery ACKs, consumer offsets, per-event
 River delivery jobs or automatic polling loop.
+
+## Shared PostgreSQL storage
+
+SQL33 moves retained facts into the shared Helpers log without changing their
+numeric IDs, UUID boundaries, positions, epochs, timestamps or purge handoff.
+Stop all application writers using the previous event storage before applying
+it. The migration is atomic; legacy event tables become read-only compatibility
+views, and old writers are refused. Rolling back storage requires an explicit
+coordinated forward migration.
+
+New facts enter the shared pending queue in the domain transaction. At commit,
+the shared flush locks the touched scopes in sorted order and assigns positions.
+Numeric event IDs can therefore commit out of order; only cursors and stream
+positions define ordering. Discovery invalidates its summary cache with the
+committed position, independently of ID allocation and pruning. Reading an empty
+app still makes no writes and keeps previously issued empty cursors valid.
+
+The schema-global epoch remains authoritative for public catalog cursors. Shared
+stream epochs are seeded identity metadata; an older transaction may create a
+stream after a global rotation, so its stored epoch cannot override that reset.

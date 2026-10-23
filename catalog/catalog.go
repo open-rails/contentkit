@@ -210,7 +210,7 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 	if s.totals, err = cache.New(totalsPolicy, s.loadTotals); err != nil {
 		return nil, err
 	}
-	if _, err := s.pool.Exec(ctx, `SELECT 1 FROM `+s.t.items+` LIMIT 0; SELECT 1 FROM `+s.t.facets+` LIMIT 0; SELECT position,boundary,event_version FROM `+s.t.events+` LIMIT 0; SELECT epoch FROM `+s.qs+`.content_event_epoch LIMIT 0; SELECT position FROM `+s.qs+`.content_event_streams LIMIT 0`); err != nil {
+	if _, err := s.pool.Exec(ctx, `SELECT 1 FROM `+s.t.items+` LIMIT 0; SELECT 1 FROM `+s.t.facets+` LIMIT 0; SELECT position,boundary,event_version FROM `+s.t.events+` LIMIT 0; SELECT epoch FROM `+s.qs+`.content_event_epoch LIMIT 0; SELECT position FROM `+s.qs+`.content_event_streams LIMIT 0; SELECT boundary,recorded_at FROM `+s.qs+`.eventlog_events LIMIT 0; SELECT ordinal FROM `+s.qs+`.eventlog_pending LIMIT 0`); err != nil {
 		return nil, fmt.Errorf("catalog: schema %q lacks the catalog tables (apply contentkit.Migrate): %w", s.schema, err)
 	}
 	return s, nil

@@ -40,8 +40,8 @@ type eventPayload struct {
 	VersionID string `json:"version_id,omitempty"`
 }
 
-// emit allocates committed order under this app's row lock. The lock and rows
-// commit with the mutation; a rollback publishes neither a gap nor an event.
+// emit queues facts in the mutation transaction. The shared deferred flush
+// locks all touched scopes in sorted order and assigns committed positions.
 func (s *Store) emit(ctx context.Context, tx pgx.Tx, events ...Event) error {
 	if len(events) == 0 {
 		return nil
@@ -49,26 +49,21 @@ func (s *Store) emit(ctx context.Context, tx pgx.Tx, events ...Event) error {
 	if tx == nil {
 		return errors.New("catalog: events require the mutation transaction")
 	}
-	var last int64
-	if err := tx.QueryRow(ctx, `INSERT INTO `+s.qs+`.content_event_streams AS stream (tenant_id,position) VALUES ($1,$2)
-ON CONFLICT (tenant_id) DO UPDATE SET position=stream.position+EXCLUDED.position RETURNING position`, s.tenant, len(events)).Scan(&last); err != nil {
-		return err
-	}
-	types, entities, payloads := make([]string, len(events)), make([]string, len(events)), make([]string, len(events))
+	types, kinds, subjects, payloads := make([]string, len(events)), make([]string, len(events)), make([]string, len(events)), make([]string, len(events))
 	for i, e := range events {
 		payload, err := json.Marshal(eventPayload{e.Kind, e.ContentID, e.VersionID})
 		if err != nil {
 			return err
 		}
-		entity := e.ContentID
-		if e.VersionID != "" {
-			entity = e.VersionID
-		}
-		types[i], entities[i], payloads[i] = e.Type, entity, string(payload)
+		types[i], kinds[i], subjects[i], payloads[i] = e.Type, e.Kind, e.ContentID, string(payload)
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO `+s.t.events+` (tenant_id,position,type,entity_id,payload,created_at)
-SELECT $1,$2+n,t,e,p::jsonb,clock_timestamp() FROM unnest($3::text[],$4::text[],$5::text[]) WITH ORDINALITY AS x(t,e,p,n) ORDER BY n`,
-		s.tenant, last-int64(len(events)), types, entities, payloads)
+	// IDs remain decimal product identifiers. Their allocation is deliberately
+	// independent of committed positions, which the shared flush assigns.
+	_, err := tx.Exec(ctx, `INSERT INTO `+s.qs+`.eventlog_pending
+ (source,scope,id,boundary,event_source,event_type,version,occurred_at,subject_type,subject_id,data)
+ SELECT 'contentkit',$1,nextval($2::regclass)::text,gen_random_uuid()::text,'contentkit',t,1,clock_timestamp(),k,c,p::jsonb
+ FROM unnest($3::text[],$4::text[],$5::text[],$6::text[]) WITH ORDINALITY AS x(t,k,c,p,n) ORDER BY n`,
+		s.tenant, s.qs+`.content_event_ids`, types, kinds, subjects, payloads)
 	return err
 }
 
