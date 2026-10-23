@@ -78,7 +78,7 @@ export function EntityDirectory(p: EntityDirectoryProps) {
                   variant={letter === l ? "default" : "ghost"}
                   aria-pressed={letter === l}
                   aria-label={l === null ? undefined : l === "#" ? t("entities.otherLetters") : l.toUpperCase()}
-                  className="min-w-7"
+                  className="min-w-7 max-sm:h-10 max-sm:min-w-10"
                   onClick={() => choose(l)}
                 >
                   {l === null ? t("entities.all") : l.toUpperCase()}
