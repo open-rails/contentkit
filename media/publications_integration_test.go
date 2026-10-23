@@ -238,7 +238,7 @@ func TestRecoveryKeepsProjection(t *testing.T) {
 	if got, err := f.ms.PresetImages(ctx, "cover", ref); err != nil || !reflect.DeepEqual(got[0], before) {
 		t.Fatalf("an unsettled write moved the projection: %+v %v", got, err)
 	}
-	keys, err := f.ms.SyncPublic(ctx, ref)
+	_, err := f.ms.SyncPublic(ctx, ref)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,10 +246,19 @@ func TestRecoveryKeepsProjection(t *testing.T) {
 	if got, err := f.ms.PresetImages(ctx, "cover", ref); err != nil || !reflect.DeepEqual(got[0], after) || reflect.DeepEqual(after, before) {
 		t.Fatalf("recovered projection %+v, manifest %+v, %v", got, after, err)
 	}
+	var purged []string
+	for draining := true; draining; {
+		select {
+		case urls := <-f.purged:
+			purged = append(purged, urls...)
+		default:
+			draining = false
+		}
+	}
 	for _, u := range urlsOf(before) {
 		key := strings.TrimPrefix(u, "https://"+mediaHost+layout.URLPrefix)
-		if !slices.Contains(keys, key) || f.exists(key) {
-			t.Fatalf("old generation %s not retired: %v", key, keys)
+		if !slices.Contains(purged, u) || f.exists(key) {
+			t.Fatalf("old generation %s not retired/purged: %v", key, purged)
 		}
 	}
 	for _, u := range urlsOf(after) {

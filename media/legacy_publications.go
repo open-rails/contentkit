@@ -136,7 +136,7 @@ func (j *Jobs) cleanLegacyPublication(ctx context.Context, item Item, operations
 				return fmt.Errorf("media: legacy deletion target leaves retired prefix")
 			}
 		}
-		if err := j.repeatDeletion(ctx, item, operation); err != nil {
+		if err := j.repeatLegacyDeletion(ctx, item, c); err != nil {
 			return err
 		}
 	}
@@ -151,6 +151,41 @@ WHERE tenant_id=$1 AND operation_id=ANY($2) AND effects->'legacy_publication'->>
 		}
 		return jr.scheduleCleanupTx(ctx, tx, item.ref, item.prefix, j.cfg.Now().Add(j.cfg.LateUploadWindow), operations, false)
 	})
+}
+
+// The retired publication kind has no writable registry entry. Its historical
+// manifest may not decode, and is never evidence for deleting current content.
+// Exact migration receipts own these keys; a newer writer/adoption invalidates
+// that ownership even if an older receipt still sits in the cleanup table.
+func (j *Jobs) repeatLegacyDeletion(ctx context.Context, item Item, c manifestCommit) error {
+	unlock, err := j.cfg.Locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	jr := j.cfg.Journal.forTenant(item.Ref().TenantID)
+	var changed bool
+	err = jr.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jr.table+` newer
+        JOIN `+jr.table+` retired ON retired.tenant_id=newer.tenant_id AND retired.operation_id=$3
+        WHERE newer.tenant_id=$1 AND newer.folder_prefix=$2 AND newer.operation_id<>$3
+        AND (newer.state IN('open','prepared','frozen') OR
+          (newer.state='applied' AND newer.created_at>retired.created_at
+           AND NOT newer.effects ? 'legacy_publication')))`, item.Ref().TenantID, item.Prefix(), c.ID).Scan(&changed)
+	if err != nil {
+		return err
+	}
+	if changed {
+		return ErrCommitIdentity
+	}
+	if err := j.manifests.retireAllocations(ctx, item, c.Effects.Private); err != nil {
+		return err
+	}
+	keys := append(append([]string{}, c.Effects.Public...), c.Effects.Private...)
+	if err := j.deleteKeys(ctx, keys); err != nil {
+		return err
+	}
+	j.purge(ctx, c.Effects.Public)
+	return nil
 }
 
 // prepareLegacyRetirementTx also covers an already-retired publication whose

@@ -107,7 +107,7 @@ WHERE tenant_id=$1 AND content_id=$2 AND content_version_id=$3`, ref.TenantID, r
 	}
 	// The retained exact targets catch a late old uploader without re-listing.
 	f.object(oldKey, "late old bytes")
-	clock = time.Now().Add(120 * time.Hour)
+	clock = time.Now().Add(10 * 24 * time.Hour)
 	if _, err := jobs.CleanupDue(t.Context(), 100); err != nil {
 		t.Fatal(err)
 	}

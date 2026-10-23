@@ -648,9 +648,9 @@ func TestHostRecoversInterruptedManifestOnStartup(t *testing.T) {
 	if err != nil || man.Meta["title"] != "landed" {
 		t.Fatalf("recovered manifest: %+v %v", man, err)
 	}
-	var due time.Time
-	if err := pool.QueryRow(t.Context(), "SELECT due_at FROM "+pgx.Identifier{env.ContentSchema(), "content_media_cleanup"}.Sanitize()+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&due); err != nil || !due.After(time.Now()) {
-		t.Fatalf("recovered write lost its atomically recorded cleanup: %s %v", due, err)
+	var scheduled int
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{env.ContentSchema(), "content_media_cleanup"}.Sanitize()+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&scheduled); err != nil || scheduled != 0 {
+		t.Fatalf("metadata-only recovery scheduled unnecessary media cleanup: %d %v", scheduled, err)
 	}
 }
 

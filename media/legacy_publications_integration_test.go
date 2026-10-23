@@ -99,6 +99,25 @@ VALUES($1,$2,'gallery.published','infinity',$3)`, source.TenantID, legacy, []uui
 	if _, err := pool.Exec(t.Context(), `UPDATE `+cleanupTable(f)+` SET due_at=now() WHERE folder_prefix=$1`, legacy); err != nil {
 		t.Fatal(err)
 	}
+	// A legitimate newer journaled adoption fences this old retirement,
+	// even if the original retired manifest is unreadable.
+	adopted := uuid.New()
+	if _, err := pool.Exec(t.Context(), `INSERT INTO `+commits+` (tenant_id,operation_id,content_kind,content_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects,created_at)
+        VALUES($1,$2,'gallery.published',$3,$4,'restore',$5,$6,'applied','{}',now()+interval '1 second')`, source.TenantID, adopted, cid(3), legacy, make([]byte, 32), uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jobs.CleanupDue(t.Context(), 100); err == nil {
+		t.Fatal("retirement crossed a newer adoption")
+	}
+	if !f.exists(oldKey) || !f.exists(sourceKey) {
+		t.Fatal("retirement deleted a restored owner's bytes")
+	}
+	if _, err := pool.Exec(t.Context(), `DELETE FROM `+commits+` WHERE operation_id=$1`, adopted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `UPDATE `+cleanupTable(f)+` SET due_at=now() WHERE folder_prefix=$1`, legacy); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := jobs.CleanupDue(t.Context(), 100); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +138,7 @@ VALUES($1,$2,'gallery.published','infinity',$3)`, source.TenantID, legacy, []uui
 	}
 	// A late old copy lands after the first cleanup; the same receipt removes it.
 	f.object(oldKey, "late")
-	clock = time.Now().Add(75 * time.Hour)
+	clock = time.Now().Add(10 * 24 * time.Hour)
 	if _, err := jobs.CleanupDue(t.Context(), 100); err != nil {
 		t.Fatal(err)
 	}

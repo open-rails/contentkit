@@ -567,13 +567,11 @@ func TestCopyIsMetered(t *testing.T) {
 		}
 	}
 
-	// Unreferenced and older than the grace period: copied again.
+	// Removing the last reference retires the immutable allocation immediately.
 	f.commit(b, media.Op{Op: media.OpRemove, Path: "originals/1.png"})
-	old, err := f.env.Store.Head(ctx, one)
-	if err != nil {
-		t.Fatal(err)
+	if f.exists(one) {
+		t.Fatal("unreferenced copied source survived removal")
 	}
-	time.Sleep(9 * time.Second)
 	unlimited, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Grace: 8 * time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -592,7 +590,7 @@ func TestCopyIsMetered(t *testing.T) {
 	}
 	next, _ := copied.Get("originals/1.png")
 	nextKey, _ := item.Blob(next.Blob)
-	if obj, err := f.env.Store.Head(ctx, nextKey); err != nil || next.Blob == page.Blob || !obj.LastModified.After(old.LastModified) {
+	if obj, err := f.env.Store.Head(ctx, nextKey); err != nil || next.Blob == page.Blob {
 		t.Fatalf("copy reused the old allocation: %v %v", obj, err)
 	}
 }
