@@ -5,7 +5,7 @@ import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { imageRefs } from "../../client/contents.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
-import type { Content, EntityCard, EntityDetail, ManageCount, Rule, Version } from "../../client/generated/wire.js";
+import type { Content, ContentModel, EntityCard, EntityDetail, ManageCount, Rule, Version } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
@@ -20,14 +20,16 @@ import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Skeleton } from "#ckui/ui/skeleton";
+import { Switch } from "#ckui/ui/switch";
 import { Textarea } from "#ckui/ui/textarea";
 import { localInput } from "../social/bans.js";
 import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "../social/parts.js";
 import { ReaderContentEditor } from "./reader-content-editor.js";
-import { createDraft, uploadTarget } from "./bulk-drafts.js";
+import { applyDraftDefaults, createDraft, uploadTarget, type BulkDraftDefaults } from "./bulk-drafts.js";
 import { UploadQueueBody } from "./upload-queue.js";
-import { ContentSections, allowsIndividualSales, offersAccessChoice } from "../content/editors.js";
-import { labelOf, type Labels } from "../entities/parts.js";
+import { ContentSections, RuleFields, allowsIndividualSales, cleanRule, defaultAccessRule, offersAccessChoice } from "../content/editors.js";
+import { AttributeFields } from "../entities/fields.js";
+import { EntityPicker, labelOf, type Labels } from "../entities/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 type Choice = string | { value: string; label: string };
@@ -302,24 +304,6 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const canSelect = selectable && (deleted ? canDeleteParent : canDeleteParent || (canChangeParentAccess && tiers.length > 0));
   const bulkable = presentation === "reader" || presentation === "player";
   const [bulkOpen, setBulkOpen] = useState(false);
-  const drafts = useRef(new Map<string, Content>()).current;
-  const report = useErrorReporter(onError);
-  const createItem = async (file: File) => {
-    const { content, ref } = await createDraft(client, kind, language ?? model?.languages[0] ?? "en", file, t("readerEditor.untitled"));
-    drafts.set(content.id, content);
-    return ref;
-  };
-  const openDraft = (ref: { id: string }) => {
-    const known = drafts.get(ref.id);
-    if (known) return open(known);
-    // Resumed after a reload: the draft is no longer in memory.
-    void client.contents.manage({ kind, ids: [ref.id], limit: 1 }).then(
-      ([c]) => {
-        if (c) open(c);
-      },
-      (e) => report(e, "upload"),
-    );
-  };
   const { store, scope } = useContentScope(client);
   const state = deleted ? "deleted" : status || undefined;
   const tag = { type: "contents", scope: deleted ? "deleted" : undefined } as const;
@@ -396,19 +380,10 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
           </Button>
         </div>
       </div>
-      {bulkable && bulkOpen && !deleted && (
+      {bulkable && bulkOpen && !deleted && model && (
         <section className="grid gap-3 rounded-lg border border-border p-3" aria-label={t("contentManager.bulkUpload")} data-ckui="bulk-upload">
           <p className="text-sm text-muted-foreground">{t(presentation === "reader" ? "contentManager.bulkHintArchive" : "contentManager.bulkHintFile")}</p>
-          <UploadQueueBody
-            client={client}
-            createItem={createItem}
-            target={(ref, file, signal) => uploadTarget(client, ref, file, signal)}
-            accept={presentation === "reader" ? ".zip,application/zip" : "video/*"}
-            concurrency={2}
-            storageKey={`ckui.bulk.${kind}`}
-            onOpen={openDraft}
-            onError={onError}
-          />
+          <BulkUpload client={client} kind={kind} model={model} languages={offered} labels={labels} open={open} onError={onError} />
         </section>
       )}
       <div className="flex gap-2" role="group" aria-label={noun?.other ?? t("contentManager.title")}>
@@ -640,6 +615,76 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
       {dialog}
     </div>
   );
+}
+
+function BulkUpload({ client, kind, model, languages: offered, labels, open, onError }: Pick<Inner, "client" | "kind" | "languages" | "labels" | "onError"> & { model: ContentModel; open: (c: Content) => void }) {
+  const { t } = useMessages();
+  const languageName = useLanguageName();
+  const languages = choices(offered ?? model.languages, languageName);
+  const spec = model.kinds[kind]!;
+  const [defaults, setDefaults] = useState<BulkDraftDefaults>({});
+  const [artists, setArtists] = useState<readonly EntityCard[]>([]);
+  const drafts = useRef(new Map<string, Content>()).current;
+  // Queued entries keep this callback and its drafts through retries.
+  const created = new WeakMap<File, Awaited<ReturnType<typeof createDraft>>>();
+  const report = useErrorReporter(onError);
+  const createItem = async (file: File) => {
+    const snapshot = { ...defaults, access: defaults.access ? cleanRule(defaults.access) : undefined, artists: artists.map((g) => g.id) };
+    let draft = created.get(file);
+    if (!draft) {
+      draft = await createDraft(client, kind, snapshot.language ?? languages[0]?.value ?? model.languages[0] ?? "en", file, t("readerEditor.untitled"));
+      created.set(file, draft);
+    }
+    const content = await applyDraftDefaults(client, draft, model, snapshot);
+    drafts.set(content.id, content);
+    return draft.ref;
+  };
+  const openDraft = (ref: { id: string }) => {
+    const known = drafts.get(ref.id);
+    if (known) return open(known);
+    // Resumed after a reload: the draft is no longer in memory.
+    void client.contents.manage({ kind, ids: [ref.id], limit: 1 }).then(
+      ([c]) => { if (c) open(c); },
+      (e) => report(e, "upload"),
+    );
+  };
+  const none = "__none__";
+  return <>
+    <fieldset className="grid gap-3">
+      <legend className="mb-2 text-sm font-medium">{t("contentManager.bulkDefaults")}</legend>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {spec.attributes?.format && <AttributeFields declared={{ format: { ...spec.attributes.format, required: false } }} form={{ format: defaults.format ?? "" }} onChange={(_, value) => setDefaults((d) => ({ ...d, format: String(value) }))} labels={labels} />}
+        <div className="grid gap-1.5">
+          <Label>{t("contentManager.language")}</Label>
+          <Select value={defaults.language ?? none} onValueChange={(v) => setDefaults((d) => ({ ...d, language: v === none ? undefined : String(v) }))}>
+            <SelectTrigger size="sm" aria-label={t("contentManager.language")}>
+              <SelectValue>{(v: string) => v === none ? t("contentManager.bulkUnchanged") : languages.find((l) => l.value === v)?.label}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={none}>{t("contentManager.bulkUnchanged")}</SelectItem>
+              {languages.map((l) => <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <label className="flex items-center gap-2 text-sm">
+        <Switch checked={!!defaults.access} onCheckedChange={(on) => setDefaults((d) => ({ ...d, access: on ? defaultAccessRule(model, kind) : undefined }))} />
+        {t("contentManager.bulkAccess")}
+      </label>
+      {defaults.access && <RuleFields value={defaults.access} onChange={(access) => setDefaults((d) => ({ ...d, access }))} model={model} kind={kind} labels={labels} client={client} />}
+      {spec.entities?.includes("artist") && <div className="grid gap-1.5">
+        <Label>{t("contentManager.bulkArtists")}</Label>
+        {artists.map((g) => <div key={g.id} className="flex items-center gap-2 text-sm">
+          <span>{g.name || g.slug}</span>
+          <Button size="xs" variant="ghost" aria-label={t("memberships.remove", { name: g.name || g.slug })} onClick={() => setArtists((all) => all.filter((a) => a.id !== g.id))}>{t("common.remove")}</Button>
+        </div>)}
+        <EntityPicker management kind="artist" language={defaults.language} exclude={artists.map((g) => g.id)} label={t("contentManager.bulkArtists")} onPick={(g) => setArtists((all) => [...all, g])} client={client} />
+      </div>}
+    </fieldset>
+    <UploadQueueBody client={client} createItem={createItem}
+      target={(ref, file, signal) => uploadTarget(client, ref, file, signal)} accept={spec.presentation === "reader" ? ".zip,application/zip" : "video/*"}
+      concurrency={2} storageKey={`ckui.bulk.${kind}`} onOpen={openDraft} onError={onError} />
+  </>;
 }
 
 /** A row's portrait cover, or a quiet placeholder. */

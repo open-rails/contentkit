@@ -183,3 +183,96 @@ it("visible-version players hide parent Delete in both the list and generic edit
   await screen.findByRole("heading", { name: "Edit" });
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
 });
+
+const bulkId = (n: number) => `0192f000-0000-7000-8000-${String(n).padStart(12, "0")}`;
+
+function bulkServer(failArtists = false) {
+  localStorage.removeItem("ckui.bulk.gallery");
+  const bulkModel: ContentModel = { ...model, languages: ["en", "ja"], kinds: { gallery: { ...model.kinds.gallery!, entities: ["artist"], attributes: { format: { type: "enum", values: ["manga", "doujin"], required: true } } } }, entity_kinds: { artist: { route: "artists" } } };
+  const calls: { method: string; path: string; body: unknown }[] = [];
+  const contents: Content[] = [];
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), "https://test.invalid").pathname.replace(/^\/v1/, "");
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    calls.push({ method, path, body });
+    if (path === "/kinds") return Response.json(bulkModel);
+    if (path === "/manage/gallery") return Response.json([]);
+    if (path === "/manage/gallery/count") return Response.json({ total: 0 });
+    if (path === "/manage/entities") return Response.json({ entities: [{ id: "artist1", kind: "artist", slug: "artist-one", name: "Artist One", count: 0, attributes: {} }] });
+    if (path === "/contents" && method === "POST") {
+      const id = bulkId(contents.length + 1);
+      const created = item(id, Object.values(body.text as NonNullable<Content["text"]>)[0]!.title, { level: "public" }, { ...body, state: "draft", versions: [{ id: bulkId(contents.length + 101), position: 1 }] });
+      contents.push(created);
+      return Response.json(created, { status: 201 });
+    }
+    if (path.endsWith("/entities/shared")) {
+      if (failArtists && path === `/contents/${bulkId(1)}/entities/shared`) {
+        failArtists = false;
+        return Response.json({ code: "invalid_request", error: "Choose another artist and retry." }, { status: 400 });
+      }
+      return Response.json({ memberships: body.memberships, entities: [] });
+    }
+    if (method === "PATCH") return Response.json({ ...contents.find((c) => path === `/contents/${c.id}`), ...body });
+    if (path.startsWith("/media/gallery/")) return Response.json({ files: [], uploads: [{ path: "import/{name}", types: ["application/zip"], max_bytes: 0 }] });
+    return Response.json({ code: "not_found", error: path }, { status: 404 });
+  });
+  const client = createContentKitClient({ baseUrl: "", fetch: fetch as typeof globalThis.fetch });
+  const upload = vi.spyOn(client.media, "upload").mockImplementation(async (file, options) => ({ path: options.path, sourceName: file.name ?? options.path, blob: "uploaded", type: "application/zip", size: file.size, exists: false }));
+  vi.spyOn(client.media, "commit").mockResolvedValue([]);
+  render(<Route client={client} />);
+  return { calls, upload };
+}
+
+it("captures defaults for every queued file and keeps them for the next drop", async () => {
+  const s = bulkServer();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Bulk upload" }));
+  const panel = screen.getByRole("region", { name: "Bulk upload" });
+  await user.click(within(panel).getByRole("combobox", { name: "Format" }));
+  await user.click(await screen.findByRole("option", { name: "Manga" }));
+  await user.click(within(panel).getByRole("combobox", { name: "Language" }));
+  await user.click(await screen.findByRole("option", { name: "Japanese" }));
+  await user.click(within(panel).getByRole("switch", { name: "Use a shared access rule" }));
+  await user.click(within(panel).getByRole("combobox", { name: "Who can open it" }));
+  await user.click(await screen.findByRole("option", { name: "Tier members" }));
+  await user.click(within(panel).getByRole("switch", { name: /Premium/ }));
+  await user.type(within(panel).getByRole("combobox", { name: "Artists" }), "Artist");
+  await user.click(await screen.findByRole("option", { name: /Artist One/ }));
+  await user.upload(within(panel).getByLabelText("Add files"), ["One.zip", "Two.zip", "Three.zip"].map((name) => new File(["z"], name, { type: "application/zip" })));
+  await waitFor(() => expect(panel.querySelectorAll('[data-status="done"]')).toHaveLength(3));
+  for (const n of [1, 2, 3]) {
+    const id = bulkId(n);
+    expect(s.calls).toEqual(expect.arrayContaining([
+      { method: "PATCH", path: `/contents/${id}`, body: { attributes: { format: "manga" }, access: { level: "tier", tiers: ["premium"] } } },
+      { method: "PATCH", path: `/contents/${id}/versions/${bulkId(n + 100)}`, body: { languages: ["ja"] } },
+      { method: "PUT", path: `/contents/${id}/entities/shared`, body: { kinds: ["artist"], memberships: [{ group_id: "artist1" }] } },
+    ]));
+  }
+  expect(s.calls.filter((c) => c.path === "/contents" && c.method === "POST").map((c) => c.body)).toEqual(["One", "Two", "Three"].map((title) => ({ kind: "gallery", text: { ja: { title } } })));
+  expect(within(panel).getByRole("combobox", { name: "Format" })).toHaveTextContent("Manga");
+  expect(within(panel).getByText("Artist One")).toBeInTheDocument();
+  await user.upload(within(panel).getByLabelText("Add files"), new File(["z"], "Four.zip", { type: "application/zip" }));
+  await waitFor(() => expect(panel.querySelectorAll('[data-status="done"]')).toHaveLength(4));
+  expect(s.calls.filter((c) => c.method === "PATCH" || c.method === "PUT")).toHaveLength(12);
+  expect(s.calls.filter((c) => c.path === "/contents").at(-1)?.body).toEqual({ kind: "gallery", text: { ja: { title: "Four" } } });
+});
+
+it("shows a per-file default failure, continues other files and retries the same draft", async () => {
+  const s = bulkServer(true);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Bulk upload" }));
+  const panel = screen.getByRole("region", { name: "Bulk upload" });
+  await user.type(within(panel).getByRole("combobox", { name: "Artists" }), "Artist");
+  await user.click(await screen.findByRole("option", { name: /Artist One/ }));
+  await user.upload(within(panel).getByLabelText("Add files"), ["Fail.zip", "Good.zip"].map((name) => new File(["z"], name, { type: "application/zip" })));
+  await waitFor(() => expect(panel.querySelectorAll('[data-status="done"]')).toHaveLength(1));
+  const failed = within(panel).getByText("Fail.zip").closest("li")!;
+  expect(failed).toHaveAttribute("data-status", "failed");
+  expect(within(failed).getByText("Choose another artist and retry.")).toBeVisible();
+  expect(s.upload).toHaveBeenCalledTimes(1);
+  await user.click(within(failed).getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(panel.querySelectorAll('[data-status="done"]')).toHaveLength(2));
+  expect(s.calls.filter((c) => c.path === "/contents" && c.method === "POST")).toHaveLength(2);
+  expect(s.calls.filter((c) => c.path === `/contents/${bulkId(1)}/entities/shared`)).toHaveLength(2);
+});
