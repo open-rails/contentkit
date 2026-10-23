@@ -230,6 +230,7 @@ func TestNamePrefixIndexUpgrade(t *testing.T) {
 // changes nothing), content keys lead with tenant_id, and a content reference's
 // version id is NULL for the work itself, never empty. The ownership registry
 // has separate unique app and catalog keys rather than content references.
+// The event epoch is schema metadata; event positions remain app-scoped.
 func TestPostgresBaseline(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
@@ -254,7 +255,7 @@ func TestPostgresBaseline(t *testing.T) {
 		}
 		applied = append(applied, f)
 	}
-	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql", "0011_search_substrings.up.sql", "0012_management_names.up.sql", "0013_code_paths.up.sql", "0014_page_notices.up.sql", "0015_pages_added.up.sql", "0016_body_excerpt.up.sql", "0017_reader_chapter_starts.up.sql", "0018_media_commit_notifications.up.sql", "0019_offer_targets.up.sql", "0020_listing_order_index.up.sql", "0021_publishing_reconcile_order.up.sql", "0022_management_order_index.up.sql", "0023_playable_versions.up.sql", "0024_original_titles_and_publication_visibility.up.sql", "0025_empty_version_lifecycle.up.sql", "0026_empty_publication_pages.up.sql", "0027_due_media_cleanup.up.sql", "0028_reader_metadata_snapshots.up.sql", "0029_version_storage_owner.up.sql", "0030_structured_post_excerpt.up.sql"}
+	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql", "0011_search_substrings.up.sql", "0012_management_names.up.sql", "0013_code_paths.up.sql", "0014_page_notices.up.sql", "0015_pages_added.up.sql", "0016_body_excerpt.up.sql", "0017_reader_chapter_starts.up.sql", "0018_media_commit_notifications.up.sql", "0019_offer_targets.up.sql", "0020_listing_order_index.up.sql", "0021_publishing_reconcile_order.up.sql", "0022_management_order_index.up.sql", "0023_playable_versions.up.sql", "0024_original_titles_and_publication_visibility.up.sql", "0025_empty_version_lifecycle.up.sql", "0026_empty_publication_pages.up.sql", "0027_due_media_cleanup.up.sql", "0028_reader_metadata_snapshots.up.sql", "0029_version_storage_owner.up.sql", "0030_structured_post_excerpt.up.sql", "0031_notification_event_cursors.up.sql", "0032_catalog_event_log.up.sql"}
 	if err := rows.Err(); err != nil || !slices.Equal(applied, want) {
 		t.Fatalf("ledger %v %v", applied, err)
 	}
@@ -262,7 +263,7 @@ func TestPostgresBaseline(t *testing.T) {
 	keys, err := pool.Query(ctx, `SELECT c.relname || '.' || i.relname FROM pg_index x
  JOIN pg_class i ON i.oid = x.indexrelid JOIN pg_class c ON c.oid = x.indrelid
  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = x.indkey[0]
- WHERE c.relnamespace = $1::regnamespace AND c.relname LIKE 'content\_%' AND c.relname <> 'content_app_bindings'
+ WHERE c.relnamespace = $1::regnamespace AND c.relname LIKE 'content\_%' AND c.relname NOT IN ('content_app_bindings', 'content_event_epoch')
    AND x.indisunique AND a.attname <> 'tenant_id'`, schema)
 	if err != nil {
 		t.Fatal(err)

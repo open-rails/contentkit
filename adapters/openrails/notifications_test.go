@@ -34,6 +34,7 @@ func (accountDirectory) Search(context.Context, string, int) ([]userinfo.User, e
 
 func TestSameAccountsVerifiesTheCurrentSubject(t *testing.T) {
 	id, other := uuid.NewString(), uuid.NewString()
+	native := ""
 	for _, tc := range []struct {
 		name      string
 		directory userinfo.Lookup
@@ -51,18 +52,29 @@ func TestSameAccountsVerifiesTheCurrentSubject(t *testing.T) {
 		{"zero customer stays retryable", accountDirectory{}, uuid.Nil.String(), false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, deliver, err := ckopenrails.SameAccounts(tc.directory)(t.Context(), notice.Event{CustomerID: tc.customer})
+			got, deliver, err := ckopenrails.SameAccounts(tc.directory)(t.Context(), notice.Event{CustomerID: tc.customer, AccountIssuer: &native})
 			if (err != nil) != tc.wantError || deliver != tc.deliver || (deliver && got != id) || (!deliver && got != "") {
 				t.Fatalf("mapped account = %q, %v, %v", got, deliver, err)
 			}
 		})
 	}
+	foreign := "https://foreign.test"
+	for _, issuer := range []*string{nil, &foreign} {
+		_, deliver, err := ckopenrails.SameAccounts(accountDirectory{users: map[string]userinfo.User{id: {ID: id}}})(t.Context(), notice.Event{CustomerID: id, AccountIssuer: issuer})
+		if err != nil || deliver {
+			t.Fatalf("unverified issuer received notice: %v %v", deliver, err)
+		}
+	}
+	trusted := "https://accounts.test"
+	_, deliver, err := ckopenrails.SameAccounts(accountDirectory{users: map[string]userinfo.User{id: {ID: id}}}, trusted)(t.Context(), notice.Event{CustomerID: id, AccountIssuer: &trusted})
+	if err != nil || !deliver {
+		t.Fatalf("verified issuer refused: %v %v", deliver, err)
+	}
 }
 
 // Two site processes use the typed embedded client, the same durable source
-// consumer, and one destination receipt. The second process observes the ACK;
-// an independent consumer can replay the fact without resetting read state.
-func TestNotificationSourceSharesConsumerAndPreservesReadState(t *testing.T) {
+// log, and one destination cursor. A replay never resets inbox read state.
+func TestNotificationSourceSharesInboxCursorAndPreservesReadState(t *testing.T) {
 	var schema string
 	w := newWorld(t, func(c *openrails.Config) { schema = c.Database.Schema })
 	ctx := t.Context()
@@ -92,6 +104,9 @@ func TestNotificationSourceSharesConsumerAndPreservesReadState(t *testing.T) {
 		t.Fatal(err)
 	}
 	var recipientLookupError error
+	if err := notification.Migrate(ctx, w.pool, w.schema); err != nil {
+		t.Fatal(err)
+	}
 	destination, err := notification.New(notification.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant.String(), AppID: uuid.NewString(),
 		AccountExists: func(ctx context.Context, id string) (bool, error) {
 			if recipientLookupError != nil {
@@ -102,6 +117,9 @@ func TestNotificationSourceSharesConsumerAndPreservesReadState(t *testing.T) {
 			return exists && user.ID == id, err
 		},
 		AccountExistsTx: func(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+			if recipientLookupError != nil {
+				return false, recipientLookupError
+			}
 			reader, ok := directory.(interface {
 				GetTx(context.Context, pgx.Tx, []string) (map[string]userinfo.User, error)
 			})
@@ -129,25 +147,25 @@ func TestNotificationSourceSharesConsumerAndPreservesReadState(t *testing.T) {
 		t.Fatal(err)
 	}
 	mapper := ckopenrails.SameAccounts(directory)
-	failedSource, err := ckopenrails.NewNotificationSource(w.bill, "openrails", "shared-accounts")
+	failedSource, err := ckopenrails.NewNotificationSource(w.bill, "openrails")
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := failedSource.Register(ctx); err != nil {
 		t.Fatal(err)
 	}
 	recipientLookupError = errors.New("temporary recipient lookup outage")
 	failedResult, err := failedSource.Consume(ctx, destination, mapper, notice.ConsumeOptions{Filter: notice.BillingLifecycle})
-	if !errors.Is(err, recipientLookupError) || failedResult.Fetched != 1 || failedResult.Acknowledged != 0 || failedResult.Delivered != 0 {
-		t.Fatalf("lookup failure changed source acknowledgement: %+v %v", failedResult, err)
+	if !errors.Is(err, recipientLookupError) || failedResult.Delivered != 0 {
+		t.Fatalf("lookup failure committed a page: %+v %v", failedResult, err)
 	}
 	recipientLookupError = nil
-	for i, consumer := range []string{"shared-accounts", "shared-accounts", "independent-replay"} {
-		source, err := ckopenrails.NewNotificationSource(w.bill, "openrails", consumer)
-		if err != nil {
-			t.Fatal(err)
+	for i := range 3 {
+		if i == 2 {
+			_, err := w.pool.Exec(ctx, `UPDATE `+pgx.Identifier{w.schema, "notification_event_cursors"}.Sanitize()+` SET cursor='' WHERE namespace=$1`, tenant.String())
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
-		if err := source.Register(ctx); err != nil {
+		source, err := ckopenrails.NewNotificationSource(w.bill, "openrails")
+		if err != nil {
 			t.Fatal(err)
 		}
 		result, err := source.Consume(ctx, destination, mapper, notice.ConsumeOptions{Filter: notice.BillingLifecycle})
@@ -158,8 +176,8 @@ func TestNotificationSourceSharesConsumerAndPreservesReadState(t *testing.T) {
 		if i == 1 {
 			want = 0
 		}
-		if result.Fetched != want || result.Delivered != want || result.Acknowledged != want {
-			t.Fatalf("consumer %d delivered %+v, want %d", i, result, want)
+		if result.Delivered != want {
+			t.Fatalf("reader %d delivered %+v, want %d", i, result, want)
 		}
 		page, err := destination.List(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: viewer}, notify.ListOptions{})
 		if err != nil || len(page.Items) != 1 {

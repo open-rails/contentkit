@@ -7,14 +7,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/open-rails/helpers/notify"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 )
 
 // Jobs routes one shared worker to any number of explicitly configured sources.
-// Each source has a distinct queue and durable consumer, and contributes to the
-// same host fleet. A worker never acknowledges an unconfigured source's job.
+// Each source has a distinct queue and contributes to the same host fleet.
 type Jobs struct {
 	mu         sync.RWMutex
 	sources    map[string]billingSource
@@ -22,17 +21,17 @@ type Jobs struct {
 }
 type billingSource struct {
 	source      *Source
-	destination notify.Publisher
+	destination Inbox
 	mapper      RecipientMapper
 }
 
-// Add contributes one source's queue, registration and periodic import. Call
+// Add contributes one source's queue and periodic read. Call
 // before starting the host fleet. Repeating a source is a configuration error.
-func (j *Jobs) Add(s *Source, destination notify.Publisher, mapper RecipientMapper, namespace string) (riverhelpers.Contribution, error) {
+func (j *Jobs) Add(s *Source, destination Inbox, mapper RecipientMapper, namespace string) (riverhelpers.Contribution, error) {
 	if s == nil || destination == nil || mapper == nil || namespace == "" {
 		return riverhelpers.Contribution{}, fmt.Errorf("openrails notifications: source, destination, mapper and namespace required")
 	}
-	key := fmt.Sprintf("%x", sha256.Sum256([]byte(namespace+"\x00"+s.name+"\x00"+s.merchant+"\x00"+s.consumer)))
+	key := fmt.Sprintf("%x", sha256.Sum256([]byte(namespace+"\x00"+s.name+"\x00"+s.merchant)))
 	queue := "contentkit_notifications_" + key[:16]
 	j.mu.Lock()
 	if j.sources == nil {
@@ -46,9 +45,6 @@ func (j *Jobs) Add(s *Source, destination notify.Publisher, mapper RecipientMapp
 	j.sources[key] = billingSource{source: s, destination: destination, mapper: mapper}
 	j.mu.Unlock()
 	return riverhelpers.NewContribution(queue, func(ctx context.Context, cfg *river.Config) error {
-		if err := s.Register(ctx); err != nil {
-			return err
-		}
 		j.mu.Lock()
 		if !j.registered[cfg.Workers] {
 			if err := river.AddWorkerSafely(cfg.Workers, &billingWorker{jobs: j}); err != nil {
@@ -63,7 +59,10 @@ func (j *Jobs) Add(s *Source, destination notify.Publisher, mapper RecipientMapp
 		}
 		cfg.Queues[queue] = river.QueueConfig{MaxWorkers: 1}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(30*time.Second), func() (river.JobArgs, *river.InsertOpts) {
-			return billingArgs{Key: key}, &river.InsertOpts{Queue: queue, MaxAttempts: 10, UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: 30 * time.Second}}
+			args := billingArgs{Key: key}
+			opts := args.InsertOpts()
+			opts.Queue = queue
+			return args, &opts
 		}, &river.PeriodicJobOpts{ID: queue, RunOnStart: true}))
 		return nil
 	}, nil, nil), nil
@@ -73,11 +72,28 @@ type billingArgs struct {
 	Key string `json:"key"`
 }
 
-func (billingArgs) Kind() string { return "contentkit_openrails_notifications" }
+func (billingArgs) Kind() string { return "contentkit_openrails_inbox_sync" }
+
+// The next periodic read retries from the saved cursor. Keep only one live
+// read per source instead of accumulating delayed retries during an outage.
+func (billingArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{MaxAttempts: 1, UniqueOpts: river.UniqueOpts{
+		ByArgs: true,
+		ByState: []rivertype.JobState{
+			rivertype.JobStateAvailable, rivertype.JobStatePending,
+			rivertype.JobStateRunning, rivertype.JobStateRetryable,
+			rivertype.JobStateScheduled,
+		},
+	}}
+}
 
 type billingWorker struct {
 	river.WorkerDefaults[billingArgs]
 	jobs *Jobs
+}
+
+func (*billingWorker) Timeout(*river.Job[billingArgs]) time.Duration {
+	return 30 * time.Second
 }
 
 func (w *billingWorker) Work(ctx context.Context, job *river.Job[billingArgs]) error {
@@ -87,6 +103,15 @@ func (w *billingWorker) Work(ctx context.Context, job *river.Job[billingArgs]) e
 	if !ok {
 		return fmt.Errorf("openrails notifications: worker source mismatch")
 	}
-	_, err := source.source.Consume(ctx, source.destination, source.mapper, ConsumeOptions{Filter: BillingLifecycle})
-	return err
+	deadline := time.Now().Add(5 * time.Second)
+	for range 10 {
+		result, err := source.source.Consume(ctx, source.destination, source.mapper, ConsumeOptions{Filter: BillingLifecycle})
+		if err != nil {
+			return err
+		}
+		if !result.HasMore || !time.Now().Before(deadline) {
+			return nil
+		}
+	}
+	return nil
 }

@@ -3,23 +3,21 @@ package openrails
 import (
 	"context"
 	"errors"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/helpers/notify"
 )
 
-func TestConsumeSkipsAbsentAndErasedAccountsButRetriesLookupOutage(t *testing.T) {
+func TestConsumeSkipsAbsentAndErasedAccountsButRollsBackLookupOutage(t *testing.T) {
 	ctx := t.Context()
-	pool := pgtest.Pool(t, nil)
-	schema := pgtest.Schema(t, ctx, pool)
+	pool, schema := testStorage(t)
 	failed := true
 	outage := errors.New("account directory offline")
 	store, err := notification.New(notification.Options{Pool: pool, Schema: schema, Tenant: "site", AppID: uuid.NewString(),
-		AccountExists: func(_ context.Context, id string) (bool, error) {
+		AccountExistsTx: func(_ context.Context, _ pgx.Tx, id string) (bool, error) {
 			if id == "outage" && failed {
 				return false, outage
 			}
@@ -31,31 +29,33 @@ func TestConsumeSkipsAbsentAndErasedAccountsButRetriesLookupOutage(t *testing.T)
 	if err := store.EraseRecipient(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: "erased"}); err != nil {
 		t.Fatal(err)
 	}
-	state := &eventServer{events: []Event{event("absent-event", "absent"), event("erased-event", "erased"), event("outage-event", "outage"), event("member-event", "member")}, ack: map[string]map[string]bool{}}
-	server := httptest.NewServer(state)
-	defer server.Close()
-	source, err := New(Options{URL: server.URL, Name: "billing", MerchantID: "m", Consumer: "tenant-accounts"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := source.Register(ctx); err != nil {
-		t.Fatal(err)
-	}
+	state := &eventServer{events: []Event{event("member-event", "member"), event("absent-event", "absent"), event("erased-event", "erased"), event("outage-event", "outage")}}
+	source := sourceFor(t, state)
 	mapper := func(_ context.Context, e Event) (string, bool, error) { return e.CustomerID, true, nil }
 	result, err := source.Consume(ctx, store, mapper, ConsumeOptions{})
-	if !errors.Is(err, outage) || result != (ConsumeResult{Fetched: 4, Delivered: 1, Skipped: 2, Acknowledged: 3}) {
+	if !errors.Is(err, outage) || result.Delivered != 0 {
 		t.Fatalf("first consume %+v %v", result, err)
 	}
-	if state.ack["tenant-accounts"]["outage-event"] {
-		t.Fatal("transient lookup failure was acknowledged")
+	cursor, err := store.EventCursor(ctx, source.Origin())
+	if err != nil || cursor != "" {
+		t.Fatalf("failed transaction advanced %q %v", cursor, err)
+	}
+	page, err := store.List(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: "member"}, notify.ListOptions{})
+	if err != nil || len(page.Items) != 0 {
+		t.Fatalf("page not rolled back %+v %v", page, err)
 	}
 	failed = false
 	result, err = source.Consume(ctx, store, mapper, ConsumeOptions{})
-	if err != nil || result != (ConsumeResult{Fetched: 1, Delivered: 1, Acknowledged: 1}) {
+	if err != nil || result.Delivered != 2 || result.Skipped != 2 {
 		t.Fatalf("retry %+v %v", result, err)
 	}
-	var absentRows int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+schema+`.notify_recipients WHERE recipient='absent'`).Scan(&absentRows); err != nil || absentRows != 0 {
-		t.Fatalf("missing account created a receipt or tombstone: %d %v", absentRows, err)
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+pgxIdentifier(schema)+".notify_recipients WHERE recipient='absent'").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("absent account created receipt: %d %v", count, err)
+	}
+	// A stale replica cannot roll the destination cursor back.
+	_, err = store.ImportEvents(ctx, source.Origin(), "", "old", nil)
+	if !errors.Is(err, notification.ErrEventCursorChanged) {
+		t.Fatalf("stale cursor accepted: %v", err)
 	}
 }

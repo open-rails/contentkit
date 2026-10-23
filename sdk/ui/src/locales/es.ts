@@ -235,6 +235,7 @@ export const es: ContentKitUiMessageBundle = {
     failed: "No se pudo iniciar la descarga. Inténtalo de nuevo.",
   },
   errors: {
+    event_cursor_expired: "Este historial de eventos ha caducado o se ha restablecido.",
     ambiguous_entity: "Hay varias entradas con este nombre. Selecciona la entrada correcta.",
     unknown_entity: "No se encontró esta entrada. Selecciona una existente o permite crearla.",
     operation_conflict: "Este envío ya contiene contenido diferente. Crea un nuevo envío.",

@@ -102,89 +102,73 @@ when their own event channel signals a change.
 
 ## OpenRails producer events
 
-OpenRails owns billing facts and a durable producer stream. ContentKit consumes
-it through `notification/openrails`, without a dependency on the OpenRails Go
-module or a second billing inbox UI.
+OpenRails records billing facts in its retained event log. ContentKit reads
+`GET /v1/app/events` (or the identical embedded `Client.ListEvents` API) and
+owns the destination cursor. Reading the source never registers a consumer,
+acknowledges a message or deletes an event.
+
+The typed adapter uses the same client for embedded and remote OpenRails:
+
+```go
+source, err := billingadapter.NewNotificationSource(merchantClient, "openrails")
+if err != nil { return err }
+jobs, err := ck.OpenRailsNotifications(source,
+    billingadapter.SameAccounts(accounts.UserInfo(), accountIssuer))
+if err != nil { return err }
+// Include jobs in the host's River fleet before starting it.
+```
+
+For HTTP without the OpenRails Go module, construct the same source directly:
 
 ```go
 source, err := openrails.New(openrails.Options{
-    Name: "openrails:billing-production", // complete origin system, used verbatim
-    URL: billingURL,                      // before /v1
+    Name: "openrails:billing-production",
+    URL: billingURL, // before /v1
     MerchantID: merchantID,
-    Consumer: "contentkit-site-a",        // stable independent destination name
-    Token: applicationToken,             // func(context.Context) (string, error)
+    Token: applicationToken,
 })
-if err != nil { return err }
-if err := source.Register(ctx); err != nil { return err }
-
-result, err := source.Consume(ctx, publisher, // a notify.Publisher; consumption moves into the engine (#117 follow-up)
-    func(ctx context.Context, event openrails.Event) (string, bool, error) {
-        // Resolve a verified merchant/customer association from host records.
-        // false deliberately skips this event; an error leaves it pending.
-        return lookupLocalRecipient(ctx, event.MerchantID, event.CustomerID)
-    }, openrails.ConsumeOptions{Limit: 100})
 ```
 
-The consumer is independently namespaced by the authenticated application and
-merchant. Registration is idempotent and persists across worker restarts. Each
-call reads a bounded pending page and ACKs only after destination publication
-commits or the host deliberately skips an event. No timestamp or cursor is used
-as a delivery watermark. A failed source ACK safely replays publication without
-resetting read/archive state. One mapping/publication failure leaves that event
-pending while allowing other events in the page to proceed. Host scheduling
-retries returned errors; `Retire` is an explicit deprovisioning action, not normal
-worker shutdown.
+The shared inbox stores one cursor per origin and account namespace. Both sites
+therefore continue the same import. Each bounded page commits its selected
+notices and continuation in **one database transaction**. The thirty-second
+poller keeps one active job per source and drains at most ten pages per run;
+a failed run is retried by the next tick rather than delayed per-event jobs. A lookup or write
+failure rolls back the whole page. Competing replicas compare the saved cursor
+under a row lock, so a stale reader cannot overwrite progress. Replaying an old
+page preserves receipt identity and read/archive state.
 
-Optional events default to skip plus ACK. Set `IncludeOptional: true` to map
-them; the mapper can apply per-user preferences and explicitly skip unwanted
-ones. Unmapped accounts are skipped only when the host returns `deliver=false`.
-Erased recipients are also a deliberate skip. Lookup/storage failures are not
-silently acknowledged. Every page is checked against the configured merchant;
-source customer IDs remain in `Origin.Subject`. All event kinds are accepted,
-and JSON numbers are never round-tripped through floating point.
+The default selection covers unexpected payment failure, actual access ending
+and applied downgrades, rather than notices for direct user actions. Other
+billing facts and optional notices advance the cursor without creating inbox
+items. Erased or absent accounts are skipped; directory outages are retried.
+The retained customer UUID and issuer establish identity even after billing
+rows are deleted. The typed mapper accepts native accounts and explicitly
+allowed external issuers; an unknown issuer never proves account ownership.
 
-The source's `action_requested` flag records a request at event creation; it is
-not evidence that a current issue remains open. Imported events remain general
-notices. Fetch current OpenRails domain state before offering a billing action.
-The adapter uses bounded requests and idempotency keys, refuses redirects, and
-never reads operator findings or acknowledges a different consumer's stream.
-Historical availability before registration follows the producer's retention
-policy; this adapter does not reconstruct deleted pre-subscription history.
+Source retention is independent of reader progress. An expired or reset cursor
+returns an explicit error and requires a deliberate resync; it never silently
+drops a missing interval. Historical rows deleted before event-log adoption
+cannot be reconstructed by this adapter.
 
-## Optional AuthKit/application callbacks
+Requests have bounded size and timeouts and refuse redirects. Monetary values
+remain JSON strings. An action-requested notice describes the historical fact:
+fetch current billing state before offering an action.
 
-An existing host callback can use the same publisher. For example, AuthKit's
-`Deps.OnEvent` receives committed `iam.Event` values with stable `ID`, `UserID`
-and `OccurredAt`; its durable delivery retries errors. The following is an
-**opt-in host policy**, not a built-in AuthKit notification catalog:
+## AuthKit and application events
 
-```go
-deps.OnEvent = func(ctx context.Context, event iam.Event) error {
-    if event.Kind != iam.EventUserEmailChanged { return nil }
-    userID, deliver, err := lookupAuthAccount(ctx, accountIssuer, event.UserID)
-    if err != nil || !deliver { return err }
-    _, err = ck.Client().PublishNotifications(ctx, []notify.Input{{
-        Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: userID},
-        Origin: notify.Origin{System: "authkit:" + accountIssuer,
-            Scope: accountIssuer, Subject: event.UserID, ID: event.ID},
-        Kind: string(event.Kind), CreatedAt: event.OccurredAt,
-        Data: json.RawMessage(`{}`), // select only fields this user should see
-    }})
-    return err // an erased recipient's notice is dropped, not an error
-}
-```
+AuthKit exposes a tenant-scoped retained log through `ListEvents`. A host can
+read that log, select the facts relevant to its product, and publish notices
+with stable source IDs. It owns its cursor, retries and notification policy.
+There is no AuthKit `Deps.OnEvent` callback or per-event delivery job.
 
-Compose this into existing callback work, explicitly ignore unselected/future
-kinds and return persistence errors for retry. Do not copy the entire audit event
-or manufacture random event IDs on each retry. This example uses AuthKit
-v1.24's durable `Deps.OnEvent` contract, alongside the native authentication and
-user-info contracts used by ContentKit. Notification policy remains opt-in.
+Do not copy a whole audit payload into a user notice. Select safe fields and
+verify the recipient against the current tenant directory. User-initiated
+actions need no inbox notice unless the application has a specific reason.
 
-`Engine.EraseSubjects` removes
-and permanently fences the user inbox before other content cleanup. Delayed
-imports cannot recreate it. Interactions on retained published comments skip
-notification to an erased recipient. Keep failed host erasure obligations
-pending until the whole erasure succeeds.
+`Engine.EraseSubjects` removes and permanently fences the inbox before other
+content cleanup. Delayed imports cannot recreate it. Required account cleanup
+remains separate from optional event readers.
 
 ## Shared account inboxes
 
@@ -217,16 +201,16 @@ Once the OpenRails client exists, attach the source before `Start` and compose
 the returned River contribution with the host fleet:
 
 ```go
-source, err := openrailsadapter.NewNotificationSource(billing.Client(), "openrails", "shared-account-notifications")
+source, err := openrailsadapter.NewNotificationSource(billing.Client(), "openrails")
 if err != nil { return err }
-notificationJobs, err := ck.OpenRailsNotifications(source, openrailsadapter.SameAccounts(auth.UserInfo()))
+notificationJobs, err := ck.OpenRailsNotifications(source, openrailsadapter.SameAccounts(auth.UserInfo(), accountIssuer))
 if err != nil { return err }
 // Include notificationJobs alongside ck.RiverJobs() in the host's River fleet.
 ```
 
-Both hosts use the same source name, consumer and account namespace. The
-contribution registers one durable source consumer and a source-specific shared
-queue. Each bounded attempt persists before ACK and safely retries failures.
+Both hosts use the same source name and account namespace. The contribution
+registers a source-specific shared queue. Each bounded attempt commits inbox
+changes and the destination cursor together and safely retries failures.
 No host billing-kind filter or poller is needed. `SameAccounts` is suitable only
 when the billing customer ID is the very same verified AuthKit subject; use a
 verified association mapper otherwise. No email comparison establishes identity.

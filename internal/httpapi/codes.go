@@ -19,20 +19,22 @@ type ErrorCode struct {
 
 // The codes more than one module answers.
 const (
-	CodeInvalidRequest = "invalid_request"
-	CodeUnauthorized   = "unauthorized"
-	CodeForbidden      = "forbidden"
-	CodeNotFound       = "not_found"
-	CodeConflict       = "conflict"
-	CodeRateLimited    = "rate_limited"
-	CodeUnavailable    = "unavailable"
-	CodeUpgrade        = "upgrade_required"
-	CodeInternal       = "internal_error"
-	CodeTenantMismatch = "tenant_mismatch"
-	CodeLimitReached   = "limit_reached"
+	CodeInvalidRequest     = "invalid_request"
+	CodeUnauthorized       = "unauthorized"
+	CodeForbidden          = "forbidden"
+	CodeNotFound           = "not_found"
+	CodeConflict           = "conflict"
+	CodeRateLimited        = "rate_limited"
+	CodeUnavailable        = "unavailable"
+	CodeUpgrade            = "upgrade_required"
+	CodeInternal           = "internal_error"
+	CodeTenantMismatch     = "tenant_mismatch"
+	CodeLimitReached       = "limit_reached"
+	CodeEventCursorExpired = "event_cursor_expired"
 )
 
 var codes = []ErrorCode{
+	{CodeEventCursorExpired, http.StatusGone, "The event cursor predates retained history or names a reset stream; resync current state before continuing.", "Event history expired; resync current state."},
 	{CodeInvalidRequest, http.StatusBadRequest, "The request is malformed: its body, a query parameter or a path value.", "The request is invalid."},
 	{CodeUnauthorized, http.StatusUnauthorized, "The request needs a valid credential: it has none where the route needs one, or one that is expired, revoked or invalid. WWW-Authenticate says which.", "Sign in to do this."},
 	{CodeForbidden, http.StatusForbidden, "The actor may not do this.", "You may not do this."},

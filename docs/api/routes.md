@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (179). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, entities `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`, publishing `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (180). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, entities `/v1`, notifications `/v1/notifications`, versions `/v1`, offers `/v1`, discovery `/v1`, import `/v1`, publishing `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -89,6 +89,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
+| GET | `/v1/events` | staff `root:content:view-restricted` | — | 200 `EventPage` | Read this app's immutable catalog events in committed order. Readers save their own cursor; reading acknowledges or deletes nothing. Omitting after starts at the oldest retained event. Event-type filters are bound to the continuation; expired or reset cursors require a current-state resync. Query: `after`, `limit`, `types`. |
 | GET | `/v1/catalog/totals` | open | — | 200 `Totals` | Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes. Query: `kinds`, `languages`. |
 | GET | `/v1/contents/{id}` | public | — | 200 `Content` | A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state. Query: `language`. |
 | GET | `/v1/versions/{vid}` | public | — | 200 `Content` | A version by its globally generated id: returns its parent content detail with only this edition selected, including shared and version-specific entities. The same visibility and access rules apply as on the parent's page; hidden versions never fall back to a sibling. Query: `language`. |
@@ -272,6 +273,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `conflict` | 409 | A concurrent change, a path or slug already taken, or an operation id already used for another commit. |
 | `content_changed` | 409 | A publishing operation's content or version was edited after submission. |
 | `download_unavailable` | 403 | The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged. |
+| `event_cursor_expired` | 410 | The event cursor predates retained history or names a reset stream; resync current state before continuing. |
 | `forbidden` | 403 | The actor may not do this. |
 | `gone` | 410 | The content was removed. |
 | `image_too_large` | 413 | The image has more pixels or frames than the processor decodes. |

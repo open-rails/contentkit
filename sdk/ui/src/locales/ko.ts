@@ -235,6 +235,7 @@ export const ko: ContentKitUiMessageBundle = {
     failed: "다운로드를 시작할 수 없습니다. 다시 시도하세요.",
   },
   errors: {
+    event_cursor_expired: "이벤트 기록이 만료되었거나 초기화되었습니다.",
     ambiguous_entity: "이 이름과 일치하는 항목이 여러 개 있습니다. 원하는 항목을 선택하세요.",
     unknown_entity: "이 항목을 찾을 수 없습니다. 기존 항목을 선택하거나 새 항목 생성을 허용하세요.",
     operation_conflict: "이 제출에는 이미 다른 콘텐츠가 포함되어 있습니다. 새로 제출하세요.",

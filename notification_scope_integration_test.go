@@ -15,12 +15,9 @@ import (
 
 type emptyNotificationBackend struct{}
 
-func (emptyNotificationBackend) Register(context.Context) error { return nil }
-func (emptyNotificationBackend) Retire(context.Context) error   { return nil }
-func (emptyNotificationBackend) Pending(context.Context, int) ([]source.Event, error) {
-	return []source.Event{}, nil
+func (emptyNotificationBackend) ListEvents(context.Context, string, int) (source.EventPage, error) {
+	return source.EventPage{Events: []source.Event{}, NextCursor: "empty", RetentionSeconds: 90 * 86400}, nil
 }
-func (emptyNotificationBackend) Acknowledge(context.Context, []string) error { return nil }
 
 func TestScopedAppsShareOnlyTheirVerifiedMerchant(t *testing.T) {
 	ctx := t.Context()
@@ -45,7 +42,7 @@ func TestScopedAppsShareOnlyTheirVerifiedMerchant(t *testing.T) {
 	a, b := makeApp(tenantID, "accounts", "a"), makeApp(tenantID, "accounts", "b")
 	makeSource := func(merchant string) *source.Source {
 		t.Helper()
-		s, err := source.New(source.Options{Name: "openrails:test", MerchantID: merchant, Consumer: "accounts", Backend: emptyNotificationBackend{}})
+		s, err := source.New(source.Options{Name: "openrails:test", MerchantID: merchant, Backend: emptyNotificationBackend{}})
 		if err != nil {
 			t.Fatal(err)
 		}
