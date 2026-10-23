@@ -472,12 +472,17 @@ func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vi
 	return err
 }
 
-// Queue is the River queue of the catalog's jobs.
+// Queue is the River queue of content jobs. Keep its persisted routing name
+// stable so jobs queued before the terminology change continue to run.
 const Queue = "contentkit_catalog"
 
 type publishDueArgs struct{}
 
-func (publishDueArgs) Kind() string { return "contentkit_catalog_publish_due" }
+func (publishDueArgs) Kind() string { return "contentkit_content_publish_due" }
+
+// KindAliases preserve queued jobs from before the content terminology change.
+// Remove these aliases once those jobs and their retries have drained.
+func (publishDueArgs) KindAliases() []string { return []string{"contentkit_catalog_publish_due"} }
 
 type deliverEventsArgs struct {
 	After int64 `json:"after,omitempty"`
@@ -501,15 +506,18 @@ func (w *deliverEventsWorker) Work(ctx context.Context, job *river.Job[deliverEv
 
 type refreshCountsArgs struct{}
 
-func (refreshCountsArgs) Kind() string { return "contentkit_catalog_refresh_counts" }
+func (refreshCountsArgs) Kind() string          { return "contentkit_content_refresh_counts" }
+func (refreshCountsArgs) KindAliases() []string { return []string{"contentkit_catalog_refresh_counts"} }
 
 type purgeDeletedArgs struct{}
 
-func (purgeDeletedArgs) Kind() string { return "contentkit_catalog_purge_deleted" }
+func (purgeDeletedArgs) Kind() string          { return "contentkit_content_purge_deleted" }
+func (purgeDeletedArgs) KindAliases() []string { return []string{"contentkit_catalog_purge_deleted"} }
 
 type releaseFreeArgs struct{}
 
-func (releaseFreeArgs) Kind() string { return "contentkit_catalog_release_free" }
+func (releaseFreeArgs) Kind() string          { return "contentkit_content_release_free" }
+func (releaseFreeArgs) KindAliases() []string { return []string{"contentkit_catalog_release_free"} }
 
 type jobWorker[T river.JobArgs] struct {
 	river.WorkerDefaults[T]
@@ -521,12 +529,12 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 	return err
 }
 
-// RiverJobs contributes the catalog's periodic jobs to the engine's River
+// RiverJobs contributes content's periodic jobs to the engine's River
 // client: scheduled publication and free_after releases (every 30s), event
 // delivery recovery (5m; writes enqueue immediately), interaction counts (5m),
 // and purging deleted content (1h).
 func (s *Store) RiverJobs() riverhelpers.Contribution {
-	return riverhelpers.NewContribution("contentkit-catalog", func(_ context.Context, cfg *river.Config) error {
+	return riverhelpers.NewContribution("contentkit-content", func(_ context.Context, cfg *river.Config) error {
 		if q, ok := cfg.Queues[Queue]; ok && q.MaxWorkers < 1 {
 			return fmt.Errorf("catalog: queue %q needs workers", Queue)
 		} else if !ok {
@@ -557,11 +565,11 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			}
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,
-			periodic("contentkit_catalog_publish_due", 30*time.Second, publishDueArgs{}),
+			periodic("contentkit_content_publish_due", 30*time.Second, publishDueArgs{}),
 			periodic("contentkit_catalog_deliver_events", 5*time.Minute, deliverEventsArgs{}),
-			periodic("contentkit_catalog_refresh_counts", 5*time.Minute, refreshCountsArgs{}),
-			periodic("contentkit_catalog_purge_deleted", time.Hour, purgeDeletedArgs{}),
-			periodic("contentkit_catalog_release_free", 30*time.Second, releaseFreeArgs{}))
+			periodic("contentkit_content_refresh_counts", 5*time.Minute, refreshCountsArgs{}),
+			periodic("contentkit_content_purge_deleted", time.Hour, purgeDeletedArgs{}),
+			periodic("contentkit_content_release_free", 30*time.Second, releaseFreeArgs{}))
 		return nil
 	}, func(_ context.Context, binding riverhelpers.Binding) error {
 		s.mu.Lock()

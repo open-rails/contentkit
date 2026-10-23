@@ -11,9 +11,9 @@ directory. A tenant can have one app or several.
 _Avoid_: Site, namespace, merchant when referring to ContentKit ownership
 
 **App**:
-A tenant-owned product with its own catalog, content, activity, preferences,
+A tenant-owned product with its own content, activity, preferences,
 roles and restrictions. Doujins and Hentai0 are two apps of one tenant.
-_Avoid_: Tenant when referring to a site or its catalog
+_Avoid_: Tenant when referring to a site or its content
 
 **Account**:
 A person's registration with a tenant, usable across all of that tenant's
@@ -35,9 +35,9 @@ app restriction does not by itself disable the tenant account.
 ## Content and access
 
 **Domain**:
-A hostname through which readers enter an app's catalog, with requirements and
+A hostname through which readers enter an app's content, with requirements and
 reader filters scoped to each content kind. Aliases may share one domain policy.
-_Avoid_: Site when referring to hostname-specific catalog policy
+_Avoid_: Site when referring to hostname-specific content policy
 
 **Domain requirement**:
 An entity that every item of a configured content kind must be associated with
@@ -50,12 +50,14 @@ Preferences distinguish the content kind and entity, so hiding a tag in one
 kind does not hide it in another.
 
 **Internal entity**:
-An entity used for catalog administration or access policy whose identity,
+An entity used for content administration or access policy whose identity,
 names and associations are absent from public discovery and presentation.
 
-**Catalog**:
-An app's collection of content, versions, entities and publication
-rules. Sharing accounts does not combine catalogs.
+**Content**:
+An app's complete set of items, such as posts, galleries and videos, together
+with their versions, entities and publication rules. Sharing accounts does not
+combine the apps' content.
+_Avoid_: Catalog, which refers to OpenRails products and prices
 
 **Entity**:
 An app-owned record associated with content, such as an artist, series,
@@ -88,7 +90,7 @@ app. Ownership in one app does not confer authority in another.
 
 **Entitlement**:
 An authoritative right to access a paid feature or content. A product can
-grant rights in one app or several without merging their catalogs.
+grant rights in one app or several without merging their content.
 
 **Merchant**:
 The OpenRails billing business linked to a ContentKit tenant. The merchant

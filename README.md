@@ -109,10 +109,10 @@ for _, r := range routes {
 - `Config` is plain data (YAML/JSON); `Deps` holds connections and
   providers. Media's namespace is the tenant; content kinds' media are their
   versions' (`media.ForContent`, the `media/versions` service). All content
-  is the catalog's: hosts create it through `/v1/contents` (or `Client()`).
+  belongs to ContentKit: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
   projection repair, erasure, groups' counts and windows,
-  the catalog's scheduled publishing, event delivery, counts and purge,
+  content's scheduled publishing, event delivery, counts and purge,
   offer sync and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and
@@ -683,14 +683,15 @@ The engine builds the store from `Config.Content`, serves it as
 `EntityRoutes` and runs `Recount` (every 15 minutes) and `RefreshWindows`
 (every minute) as its jobs; groups' keyword documents are its search job's.
 
-## Catalog
+## Content
 
 `catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
 Writes are batches; each transaction keeps `content_facets` current (rules
 through `access.Rule.Facet`, groups through `EffectiveGroups`), marks search
 documents dirty, queues `content_events`, renames offers' products after
 titles and calls media (expose, republish, fork, delete). Published with a
-future `publish_at` is scheduled until a job makes it live. A deleted item
+future `publish_at` becomes visible when that time arrives; the periodic job
+records publication and runs its side effects. A deleted item
 stays readable to holders of its own keys; its media is erased after
 `DeletedRetention` unless it was sold.
 
@@ -705,6 +706,12 @@ shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
 (`kinds`, `languages`) counts what anyone and each tier opens, per kind and
 language; a sibling deployment reads it with
 `catalog.NewTotalsClient(baseURL, nil).Totals(ctx, catalog.TotalsQuery{Kinds, Languages})`.
+
+Content jobs use `contentkit_content_*` River kinds. Their previous
+`contentkit_catalog_*` kinds remain dispatch aliases, and the queue route stays
+`contentkit_catalog` so already queued jobs can drain. The legacy event-delivery
+worker retains `contentkit_catalog_deliver_events` until its removal. The Go
+package remains `catalog`; OpenRails uses catalog for its products and prices.
 
 [Content filters](docs/content-filters.md) form one app-scoped entity layer across
 explicit `applies_to` content kinds. Domains define their offered toggles and
