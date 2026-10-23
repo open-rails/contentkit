@@ -249,12 +249,20 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	}
 	count := "coalesce(cc.n, 0)"
 	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT count(DISTINCT f.content_id)::int AS n FROM %s f
- WHERE f.tenant_id=g.tenant_id AND (f.group_ids @> ARRAY[g.id] OR f.owner_group_id=g.id)
- AND %s AND (@count_language='' OR f.languages @> ARRAY[@count_language::text])%s) cc ON true`, s.table("content_current_facets"), liveListed, countKind)
+ WHERE %s AND (@count_language='' OR f.languages @> ARRAY[@count_language::text])%s) cc ON true`, s.memberFacetsSQL(), liveListed, countKind)
 	c.args["covered_kinds"] = s.coveredKinds()
+	displayJoins := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT nn.name,nn.language,nn.normalized FROM %s nn
+ WHERE nn.tenant_id=g.tenant_id AND nn.group_id=g.id AND nn.kind='name'
+ ORDER BY CASE WHEN nn.language=@language THEN 0 WHEN nn.language='en' THEN 1 ELSE 2+coalesce(array_position(@fallback::text[],nn.language),1000) END,nn.language LIMIT 1) nm ON true
+ LEFT JOIN %s t ON t.tenant_id=g.tenant_id AND t.group_id=g.id AND t.language=@language`, s.table("content_group_names"), s.table("content_group_text"))
 	from := s.table("content_groups") + " g"
 	predicate := "WHERE " + strings.Join(where, " AND ")
 	paging := " LIMIT @limit OFFSET @offset"
+	if c.sort == SortName && strings.TrimSpace(opts.Letter) == "" {
+		// Names choose this page; derive counts and covers only for its rows.
+		from = "(SELECT g.* FROM " + from + " " + displayJoins + " " + predicate + " ORDER BY " + order + paging + ") g"
+		predicate, paging = "", ""
+	}
 	if c.sort == SortNewest && strings.TrimSpace(opts.Letter) == "" {
 		// Display names and counts do not select newest pages without a letter
 		// filter. Resolve them only for the selected page and its cursor sentinel.
@@ -271,16 +279,12 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
  coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), %[11]s, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
 FROM %[1]s
-LEFT JOIN LATERAL (SELECT nn.name, nn.language, nn.normalized FROM %[2]s nn
-  WHERE nn.tenant_id = g.tenant_id AND nn.group_id = g.id AND nn.kind = 'name'
-  ORDER BY CASE WHEN nn.language = @language THEN 0 WHEN nn.language = 'en' THEN 1 ELSE 2 + coalesce(array_position(@fallback::text[], nn.language), 1000) END, nn.language
-  LIMIT 1) nm ON true
-LEFT JOIN %[3]s t ON t.tenant_id = g.tenant_id AND t.group_id = g.id AND t.language = @language
+%[12]s
 LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AND cd.content_id = g.id
 %[7]s
 %[8]s`,
 		from, s.table("content_group_names"), s.table("content_group_text"), s.table("content_codes"),
-		count, sortName, counts, predicate, scope, parent, s.coverSQL())
+		count, sortName, counts, predicate, scope, parent, s.coverSQL(), displayJoins)
 	c.sql = base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
 		c.count = "SELECT count(*) FROM (" + base + ") counted"

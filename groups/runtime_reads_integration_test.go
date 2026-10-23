@@ -44,6 +44,29 @@ func TestRuntimeWindowsAcrossOutage(t *testing.T) {
 	if err != nil || len(detail.Counts) != 2 || detail.Cover == nil || detail.Cover.ContentID != cid(1) {
 		t.Fatalf("runtime parent: %+v %v", detail, err)
 	}
+	// Exercise inclusive start and exclusive end at one exact database clock.
+	tx, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(f.ctx)
+	if _, err = tx.Exec(f.ctx, `UPDATE `+f.s.table("content_memberships")+` SET active_from=now(),active_until=NULL WHERE group_id=$1`, string(child.ID)); err != nil {
+		t.Fatal(err)
+	}
+	var boundary []string
+	currentQuery := `SELECT group_ids FROM ` + f.s.table("content_current_facets") + ` WHERE tenant_id=$1 AND version_id=$2`
+	if err = tx.QueryRow(f.ctx, currentQuery, tenant, vid(1, 1)).Scan(&boundary); err != nil || !slices.Contains(boundary, string(child.ID)) {
+		t.Fatalf("inclusive start: %v %v", boundary, err)
+	}
+	if _, err = tx.Exec(f.ctx, `UPDATE `+f.s.table("content_memberships")+` SET active_from=now()-interval '3 days',active_until=now() WHERE group_id=$1`, string(child.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.QueryRow(f.ctx, currentQuery, tenant, vid(1, 1)).Scan(&boundary); err != nil || len(boundary) != 0 {
+		t.Fatalf("exclusive end: %v %v", boundary, err)
+	}
+	if err = tx.Rollback(f.ctx); err != nil {
+		t.Fatal(err)
+	}
 	// The end is exclusive, including the exact current transaction boundary.
 	f.exec(`UPDATE {s}.content_memberships SET active_until=now()-interval '2 days' WHERE group_id=$1`, string(child.ID))
 	if got := read(vid(1, 1)); len(got) != 0 {

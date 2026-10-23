@@ -142,7 +142,7 @@ func New(o Options) (*Service, error) {
 	s := &Service{pool: o.Pool, tenant: o.Tenant, kinds: o.Kinds, cfg: o.Config, billing: o.Billing, gate: o.Gate,
 		queue: o.Queue, log: o.Logger,
 		t: tables{offers: q("content_offers"), items: q("content_items"), versions: q("content_versions"), text: q("content_text"),
-			creators: q("content_creators"), groups: q("content_groups"), groupNames: q("content_group_names"), facets: q("content_facets")}}
+			creators: q("content_creators"), groups: q("content_groups"), groupNames: q("content_group_names"), facets: q("content_current_facets")}}
 	if s.queue == "" {
 		s.queue = "contentkit_offers"
 	}
