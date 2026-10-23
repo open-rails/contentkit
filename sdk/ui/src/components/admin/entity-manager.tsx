@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { LETTERS } from "../../client/entity-fields.js";
 import type { Content, ContentModel, Membership } from "../../client/generated/wire.js";
@@ -11,7 +11,7 @@ import { Button } from "#ckui/ui/button";
 import { Input } from "#ckui/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "#ckui/ui/tabs";
-import { EntityEditor } from "../entities/editor.js";
+import { EntityEditor, type EntityEditorProps } from "../entities/editor.js";
 import { EntityMembers, type EntityMembersProps } from "../entities/entity-members.js";
 import { labelOf, type Labels } from "../entities/parts.js";
 import { ScopedEntities } from "../entities/scoped.js";
@@ -57,11 +57,18 @@ export function EntityManager({ client: own, baseUrl, auth, guard, appearance, c
 }
 
 type Inner = Omit<EntityManagerProps, "client" | "baseUrl" | "auth" | "guard" | "appearance" | "className" | "language" | "messages"> & { client: ContentKitClient };
-type Ctx = Inner & { loc: AdminLocation; kind: string; kinds: ContentModel };
+type Ctx = Inner & { loc: AdminLocation; kind: string; kinds: ContentModel; onLeaveGuard: NonNullable<EntityEditorProps["onLeaveGuard"]>; merged: (into: string) => void };
 
 function Manager({ basePath, navigation, ...p }: Inner) {
   const { t } = useMessages();
   const loc = useAdminLocation(basePath, navigation);
+  const leaveGuard = useRef<(() => Promise<boolean>) | undefined>(undefined);
+  const registerLeaveGuard = useCallback((guard: (() => Promise<boolean>) | undefined) => { leaveGuard.current = guard; }, []);
+  const go: AdminLocation["go"] = (...args) => {
+    void (async () => {
+      if ((await leaveGuard.current?.()) ?? true) loc.go(...args);
+    })();
+  };
   const access = useEntityManagerAccess({ client: p.client });
   const model = useKinds({ client: p.client });
   const kinds = model.kinds;
@@ -80,11 +87,11 @@ function Manager({ basePath, navigation, ...p }: Inner) {
   if (!list.length) return <p className="text-muted-foreground">{t("entityManager.noKinds")}</p>;
   const [k, sub] = loc.view.split("/");
   const kind = list.includes(k ?? "") ? k! : list[0]!;
-  const ctx: Ctx = { ...p, loc, kind, kinds };
+  const ctx: Ctx = { ...p, loc: { ...loc, go }, kind, kinds, onLeaveGuard: registerLeaveGuard, merged: (into) => loc.go(`${kind}/${into}`, undefined, { replace: true }) };
   return (
     <>
       {list.length > 1 && (
-        <Tabs value={kind} onValueChange={(v) => loc.go(String(v))}>
+        <Tabs value={kind} onValueChange={(v) => go(String(v))}>
           <TabsList className="flex-wrap group-data-horizontal/tabs:h-auto">
             {list.map((x) => (
               <TabsTrigger key={x} value={x} className="h-7.5">
@@ -269,7 +276,7 @@ function Create({ loc, kind, client, labels, onError }: Ctx) {
   );
 }
 
-function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, newContentHref, id }: Ctx & { id: string }) {
+function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, newContentHref, id, onLeaveGuard, merged }: Ctx & { id: string }) {
   return (
     <div className="grid gap-4">
       <Back loc={loc} kind={kind} />
@@ -280,7 +287,8 @@ function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, 
         labels={labels}
         client={client}
         onError={onError}
-        onMerged={(r) => loc.go(`${kind}/${r.into}`, undefined, { replace: true })}
+        onLeaveGuard={onLeaveGuard}
+        onMerged={(r) => merged(r.into)}
       >
         {(entity) => (
           <>

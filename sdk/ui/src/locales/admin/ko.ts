@@ -1,6 +1,13 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  entitySave: {
+    unsaved: "저장하지 않은 변경 사항",
+    leaveEntity: "이 엔터티를 나갈까요?",
+    discardEdits: "저장하지 않은 변경 사항을 버리고 이 엔터티를 나갈까요?",
+    discard: "변경 사항 버리기",
+    saveFailed: "저장할 수 없습니다: {parts}. 수정 내용은 유지됩니다.",
+  },
   readerEditor: {
     savedPublishFailed: "변경 사항을 저장했습니다. 게시하지 못했습니다: {reason}",
     deleteVersionHelp: "이 버전만 삭제됩니다. 마지막 버전이면 갤러리도 숨겨집니다. 삭제한 콘텐츠는 30일 동안 복원할 수 있습니다. 저장하지 않은 변경 사항은 버려집니다.",

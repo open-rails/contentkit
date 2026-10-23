@@ -1,6 +1,13 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  entitySave: {
+    unsaved: "未保存の変更があります",
+    leaveEntity: "このエンティティから移動しますか？",
+    discardEdits: "未保存の変更を破棄して、このエンティティから移動しますか？",
+    discard: "変更を破棄",
+    saveFailed: "保存できませんでした：{parts}。編集内容は保持されています。",
+  },
   readerEditor: {
     savedPublishFailed: "変更を保存しました。公開に失敗しました: {reason}",
     deleteVersionHelp: "このバージョンのみを削除します。最後のバージョンの場合、ギャラリーも非表示になります。削除したコンテンツは30日間復元できます。未保存の変更は破棄されます。",

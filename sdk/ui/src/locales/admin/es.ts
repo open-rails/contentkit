@@ -1,6 +1,13 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  entitySave: {
+    unsaved: "Cambios sin guardar",
+    leaveEntity: "¿Salir de esta entidad?",
+    discardEdits: "¿Descartar los cambios sin guardar y salir de esta entidad?",
+    discard: "Descartar cambios",
+    saveFailed: "No se pudo guardar: {parts}. Se conservan tus cambios.",
+  },
   readerEditor: {
     savedPublishFailed: "Cambios guardados. No se pudo publicar: {reason}",
     deleteVersionHelp: "Solo se eliminará esta versión. Si es la última, también se ocultará la galería. El contenido eliminado se puede restaurar durante 30 días. Se descartarán los cambios sin guardar.",

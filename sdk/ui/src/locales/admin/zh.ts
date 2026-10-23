@@ -1,6 +1,13 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  entitySave: {
+    unsaved: "有未保存的更改",
+    leaveEntity: "离开此实体？",
+    discardEdits: "放弃未保存的更改并离开此实体？",
+    discard: "放弃更改",
+    saveFailed: "无法保存：{parts}。编辑内容已保留。",
+  },
   readerEditor: {
     savedPublishFailed: "更改已保存。发布失败：{reason}",
     deleteVersionHelp: "仅删除此版本。如果这是最后一个版本，图库也会隐藏。删除的内容可在30天内恢复。未保存的更改将被放弃。",

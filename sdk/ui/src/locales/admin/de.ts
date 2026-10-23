@@ -1,6 +1,13 @@
 import type { admin as en } from "./en.js";
 
 export const admin: typeof en = {
+  entitySave: {
+    unsaved: "Ungespeicherte Änderungen",
+    leaveEntity: "Diese Entität verlassen?",
+    discardEdits: "Ungespeicherte Änderungen verwerfen und diese Entität verlassen?",
+    discard: "Änderungen verwerfen",
+    saveFailed: "Speichern fehlgeschlagen: {parts}. Deine Änderungen bleiben erhalten.",
+  },
   readerEditor: {
     savedPublishFailed: "Änderungen gespeichert. Veröffentlichung fehlgeschlagen: {reason}",
     deleteVersionHelp: "Nur diese Version wird gelöscht. Ist sie die letzte, wird auch die Galerie ausgeblendet. Gelöschte Inhalte können 30 Tage lang wiederhergestellt werden. Ungespeicherte Änderungen werden verworfen.",

@@ -7,6 +7,7 @@ import { expect, it, vi } from "vitest";
 import { createContentKitClient, type ContentKitClient } from "../../client/index.js";
 import type { ContentModel, EntityAccess, EntityDetail, Offer } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/index.js";
+import { EntityManager } from "../admin/entity-manager.js";
 import { MembershipBox } from "./banner.js";
 import { EntityEditor } from "./editor.js";
 import { EntityAvatar, EntityCover, EntityPicker } from "./parts.js";
@@ -136,14 +137,13 @@ it("staff entity editors read and update internal metadata through the managemen
     },
   });
   const user = userEvent.setup();
-  const { container } = render(<EntityEditor id="g1" kind="channel" management />, { wrapper: wrap(s.client) });
+  render(<EntityEditor id="g1" kind="channel" management />, { wrapper: wrap(s.client) });
   const toggle = await screen.findByRole("switch", { name: "Internal use only" });
   expect(toggle).toBeChecked();
   expect(s.calls).toContain("GET /manage/entities/g1");
   expect(s.calls).not.toContain("GET /entities/g1");
   await user.click(toggle);
-  const details = container.querySelector<HTMLElement>('[data-ckui="entity-details"]')!;
-  await user.click(within(details).getByRole("button", { name: "Save" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(updates).toHaveLength(1));
   expect(updates[0]).toMatchObject({ internal: false });
 });
@@ -188,4 +188,174 @@ it("does not retain internal suggestions when the signed-in account changes", as
   expect(screen.queryByRole("option", { name: /Internal secret/ })).toBeNull();
   await waitFor(() => expect(requests).toBe(2));
   expect(screen.queryByRole("option", { name: /Internal secret/ })).toBeNull();
+});
+
+const editorModel: ContentModel = {
+  ...model,
+  languages: ["en", "ja"],
+  entity_kinds: { channel: { attributes: { rank: { type: "int" } } }, tag: {} },
+};
+
+function editableServer() {
+  let current: EntityDetail = { ...detail, names: [...detail.names], text: [], attributes: {} };
+  const patches: Record<string, unknown>[] = [];
+  let fail = false;
+  let wait: Promise<void> | undefined;
+  const s = server({
+    "GET /kinds": () => editorModel,
+    "GET /entities/g1": () => current,
+    "GET /manage/entities/g1": () => current,
+    "GET /manage/entities": () => ({ entities: [{ ...current, count: 0 }] }),
+    "GET /entities/g1/members": () => ({ members: [] }),
+    "PATCH /entities/g1": async ({ init }) => {
+      const patch = JSON.parse(String(init?.body));
+      patches.push(patch);
+      await wait;
+      if (fail) return Response.json({ code: "conflict", error: "Conflict" }, { status: 409 });
+      current = { ...current, ...patch, revision: current.revision + 1 };
+      return current;
+    },
+  });
+  return { ...s, patches, fail: (value: boolean) => { fail = value; }, pause: (value: Promise<void>) => { wait = value; }, set: (patch: Partial<EntityDetail>) => { current = { ...current, ...patch }; } };
+}
+
+it("saves details, staged aliases and descriptions in every language with one Save", async () => {
+  const s = editableServer();
+  const user = userEvent.setup();
+  render(<EntityEditor id="g1" kind="channel" management />, { wrapper: wrap(s.client) });
+  const slug = await screen.findByRole("textbox", { name: "Slug" });
+  const save = screen.getByRole("button", { name: "Save" });
+  expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(1);
+  expect(save).toBeDisabled();
+  await user.clear(slug);
+  await user.type(slug, "new-studio");
+  await user.type(screen.getByRole("spinbutton", { name: "Rank" }), "12");
+  await user.click(screen.getByRole("switch", { name: "Internal use only" }));
+  await user.type(screen.getByRole("textbox", { name: "A name or alias" }), "Alias one, Alias two");
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  expect(screen.getByText("Alias one")).toBeInTheDocument();
+  expect(s.calls.filter((call) => /^(PATCH|POST|PUT|DELETE) /.test(call))).toEqual([]);
+  await user.type(screen.getByRole("textbox", { name: "Description (English)" }), "English description");
+  await user.type(screen.getByRole("textbox", { name: "Description (Japanese)" }), "日本語の説明");
+  await user.type(screen.getByRole("textbox", { name: "Sort as (Japanese)" }), "Studio JP");
+  expect(screen.getByRole("status")).toHaveTextContent("Unsaved changes");
+  await user.click(save);
+  await waitFor(() => expect(save).toBeDisabled());
+  expect(s.patches).toEqual([{
+    slug: "new-studio", internal: true, attributes: { rank: 12 },
+    names: [...detail.names, { language: "en", kind: "alias", name: "Alias one" }, { language: "en", kind: "alias", name: "Alias two" }],
+    text: [{ language: "en", description: "English description" }, { language: "ja", description: "日本語の説明", sort_key: "Studio JP" }],
+  }]);
+  expect(screen.getByRole("status")).toHaveTextContent("Saved.");
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(false);
+});
+
+it("keeps all failed edits dirty and retries them together", async () => {
+  const s = editableServer();
+  s.fail(true);
+  const user = userEvent.setup();
+  render(<EntityEditor id="g1" kind="channel" management />, { wrapper: wrap(s.client) });
+  const slug = await screen.findByRole("textbox", { name: "Slug" });
+  await user.type(slug, "-edited");
+  const input = screen.getByRole("textbox", { name: "A name or alias" });
+  await user.type(input, "Unadded alias");
+  const description = screen.getByRole("textbox", { name: "Description (Japanese)" });
+  await user.type(description, "Pending description");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not save: Details, Names and aliases, Description. Your edits are kept.");
+  expect(slug).toHaveValue("studio-edited");
+  expect(input).toHaveValue("Unadded alias");
+  expect(description).toHaveValue("Pending description");
+  expect(screen.getByRole("status")).toHaveTextContent("Unsaved changes");
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  s.fail(false);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved."));
+  expect(s.patches).toHaveLength(2);
+  expect(s.patches[1]).toEqual(s.patches[0]);
+  expect(input).toHaveValue("");
+  expect(screen.getByText("Unadded alias")).toBeInTheDocument();
+});
+
+it("stages canonical promotion and removal without saving and preserves other languages", async () => {
+  const s = editableServer();
+  const japanese = { language: "ja", kind: "name" as const, name: "スタジオ" };
+  s.set({ names: [...detail.names, japanese, { language: "en", kind: "alias", name: "New name" }, { language: "en", kind: "alias", name: "Remove me" }] });
+  const user = userEvent.setup();
+  render(<EntityEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
+  await screen.findByRole("heading", { name: "Studio" });
+  await user.click(screen.getByRole("button", { name: "Remove Remove me" }));
+  await user.click(screen.getByRole("button", { name: "Make it the name" }));
+  expect(s.patches).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved."));
+  expect(s.patches).toEqual([{ names: [{ language: "en", kind: "alias", name: "Studio" }, japanese, { language: "en", kind: "name", name: "New name" }] }]);
+});
+
+it("protects edits made while saving and sends an empty array when all descriptions are cleared", async () => {
+  const s = editableServer();
+  s.set({ text: [{ language: "en", description: "Stored description" }] });
+  let release!: () => void;
+  s.pause(new Promise<void>((resolve) => { release = resolve; }));
+  const user = userEvent.setup();
+  render(<EntityEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
+  const description = await screen.findByRole("textbox", { name: "Description (English)" });
+  await user.clear(description);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(s.patches).toEqual([{ text: [] }]));
+  await user.type(description, "Typed during save");
+  await act(async () => { release(); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+  expect(description).toHaveValue("Typed during save");
+  expect(screen.getByRole("status")).toHaveTextContent("Unsaved changes");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved."));
+  await user.clear(description);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved."));
+  expect(s.patches).toEqual([{ text: [] }, { text: [{ language: "en", description: "Typed during save" }] }, { text: [] }]);
+  expect(description).toHaveValue("");
+});
+
+it("clears the dirty state when edits are reverted and keeps edits through an immediate cover update", async () => {
+  const s = editableServer();
+  const user = userEvent.setup();
+  render(<EntityEditor id="g1" kind="channel" management />, { wrapper: wrap(s.client) });
+  const slug = await screen.findByRole("textbox", { name: "Slug" });
+  await user.type(slug, "x");
+  let event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  await user.keyboard("{Backspace}");
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(false);
+  await user.type(slug, "-pending");
+  await act(async () => { await s.client.entities.update("g1", { cover: { auto: true } }); });
+  await waitFor(() => expect(s.calls.filter((call) => call === "GET /manage/entities/g1").length).toBeGreaterThan(1));
+  expect(slug).toHaveValue("studio-pending");
+  expect(screen.getByRole("status")).toHaveTextContent("Unsaved changes");
+});
+
+it("EntityManager confirms discarding edits before Back or changing kind", async () => {
+  const s = editableServer();
+  const user = userEvent.setup();
+  render(<EntityManager entityKinds={["channel", "tag"]} />, { wrapper: wrap(s.client) });
+  await user.click(await screen.findByRole("button", { name: "Studio" }));
+  const slug = await screen.findByRole("textbox", { name: "Slug" });
+  await user.type(slug, "-pending");
+  await user.click(screen.getByRole("button", { name: "Back to the list" }));
+  expect(await screen.findByRole("alertdialog")).toHaveTextContent("Leave this entity?");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(slug).toHaveValue("studio-pending");
+  await user.click(screen.getByRole("tab", { name: "Tag" }));
+  expect(await screen.findByRole("alertdialog")).toHaveTextContent("Discard unsaved changes");
+  await user.click(screen.getByRole("button", { name: "Discard changes" }));
+  await screen.findByRole("heading", { name: "Tag" });
+  expect(screen.queryByRole("textbox", { name: "Slug" })).toBeNull();
 });

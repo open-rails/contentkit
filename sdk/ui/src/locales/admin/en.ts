@@ -1,5 +1,12 @@
 // The drop-in admin flows: shared states, and each flow's own words.
 export const admin = {
+  entitySave: {
+    unsaved: "Unsaved changes",
+    leaveEntity: "Leave this entity?",
+    discardEdits: "Discard unsaved changes before leaving this entity?",
+    discard: "Discard changes",
+    saveFailed: "Could not save: {parts}. Your edits are kept.",
+  },
   readerEditor: {
     deleteVersionHelp: "Only this version will be deleted. If it is the last version, the gallery is also hidden. Deleted content can be restored for 30 days. Unsaved changes will be discarded.",
     discardBeforeUnpublish: "Unpublish only this version and discard unsaved changes? Other versions stay published.",
