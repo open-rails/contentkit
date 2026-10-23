@@ -11,11 +11,135 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/internal/signaltest"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/signal"
 )
 
 func strp(s string) *string { return &s }
+
+func TestSimilarSharedEntities(t *testing.T) {
+	env := signaltest.FromEnv(t)
+	database := fmt.Sprintf("contentkit_similar_test_%d", time.Now().UnixNano())
+	conn := env.Fresh(t, database)
+	admin := env.Open(t, "")
+	t.Cleanup(func() { env.Drop(t, admin, database) })
+	cfg := siteConfig()
+	galleryKind := cfg.Kinds["gallery"]
+	galleryKind.Entities = append(galleryKind.Entities, "character")
+	cfg.Kinds["gallery"] = galleryKind
+	cfg.EntityKinds["character"] = kinds.EntityKind{Route: "characters"}
+	f := newFixtureConfig(t, conn, database, cfg)
+	f.entity("tag", "romance", "adventure", "big-breasts")
+	f.entity("artist", "alice")
+	f.entity("series", "saga")
+	f.entity("character", "hero")
+	f.seed(
+		item{n: 1, age: 30 * time.Hour, titles: map[string]string{"en": "Anchor"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"alice", "saga", "hero", "romance", "adventure"}},
+		item{n: 2, age: time.Hour, titles: map[string]string{"en": "Tag"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"romance"}},
+		item{n: 3, age: 6 * time.Hour, titles: map[string]string{"en": "Artist"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"alice"}},
+		item{n: 4, age: 5 * time.Hour, titles: map[string]string{"en": "Series"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"saga"}},
+		item{n: 5, age: 4 * time.Hour, titles: map[string]string{"en": "Character"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"hero"}},
+		item{n: 6, age: 2 * time.Hour, titles: map[string]string{"en": "Two tags"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"romance", "adventure"}},
+		item{n: 7, age: 7 * time.Hour, titles: map[string]string{"en": "Artist and tag"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"alice", "romance"}},
+		item{n: 8, age: 6 * time.Hour, titles: map[string]string{"en": "Artist tie"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"alice"}},
+		item{n: 9, titles: map[string]string{"en": "Hidden tag"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"alice", "big-breasts"}},
+		item{n: 10, draft: true, titles: map[string]string{"en": "Draft"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"alice"}},
+		item{n: 11, titles: map[string]string{"en": "Future version"}, versions: []ver{{langs: []string{"en"}, future: true}}, entities: []string{"alice"}},
+		item{n: 12, deleted: true, titles: map[string]string{"en": "Deleted"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"alice"}},
+		item{n: 13, kind: "video", titles: map[string]string{"en": "Other kind"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"romance"}},
+	)
+	f.exec(`INSERT INTO {s}.content_memberships (tenant_id, entity_id, content_id, version_id, role)
+ VALUES ($1, $2, $3, $4, 'edition')`, tenant, f.ids["alice"], f.cid(3), f.vid(3, 0))
+	// Reused entity and content IDs must not borrow another tenant's matches.
+	f.exec(`INSERT INTO {s}.content_entities (tenant_id, id, kind, slug) VALUES ('other', $1, 'artist', 'alice')`, f.ids["alice"])
+	f.exec(`INSERT INTO {s}.content_items (tenant_id, id, kind, state, published_at)
+ VALUES ('other', $1, 'gallery', 'published', now()), ('other', $2, 'gallery', 'published', now())`, f.cid(2), cid(90))
+	f.exec(`INSERT INTO {s}.content_memberships (tenant_id, entity_id, content_id)
+ VALUES ('other', $1, $2), ('other', $1, $3)`, f.ids["alice"], f.cid(2), cid(90))
+	anchor := contentref.New(tenant, "gallery", f.cid(1))
+	source := sharedEntities{s: f.svc}
+	candidates, err := source.Similar(f.ctx, anchor, Query{ContentKinds: []string{"gallery"}, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range candidates {
+		if c.Ref.TenantID != tenant || c.Ref.ContentID == cid(90) || c.Ref.ContentID == anchor.ContentID || c.Ref.ContentKind != "gallery" {
+			t.Fatalf("invalid shared-entity candidate: %+v", c)
+		}
+		if c.Ref.ContentID == f.cid(2) && c.Score != 1 {
+			t.Fatalf("tag borrowed a foreign artist match: %+v", c)
+		}
+	}
+	tied := []string{f.cid(3), f.cid(8)}
+	slices.Sort(tied)
+	want := append([]string{f.cid(7), f.cid(5), f.cid(4)}, tied...)
+	want = append(want, f.cid(6), f.cid(2))
+	path := "/contents/" + f.cid(1) + "/similar"
+	if got, _ := f.list("main.test", "", path); !reflect.DeepEqual(got, want) {
+		t.Fatalf("cold similar = %v, want %v", got, want)
+	}
+	if got, _ := f.list("main.test", "", q(path, "limit", "3")); !reflect.DeepEqual(got, want[:3]) {
+		t.Fatalf("limited cold similar = %v, want %v", got, want[:3])
+	}
+
+	var batch []signal.Signal
+	for _, fan := range []string{"fan1", "fan2"} {
+		for _, n := range []int{1, 2} {
+			batch = append(batch, recReading(tenant, f.cid(n), fan, 1, 60))
+		}
+	}
+	for _, n := range []int{6, 9, 10} {
+		batch = append(batch, recReading(tenant, f.cid(n), "fan1", 1, 60))
+	}
+	if err := f.svc.o.Hub.RecordSignals(f.ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+	want = append([]string{f.cid(2), f.cid(6), f.cid(7), f.cid(5), f.cid(4)}, tied...)
+	if got, _ := f.list("main.test", "", path); !reflect.DeepEqual(got, want) {
+		t.Fatalf("co-reading then shared entities = %v, want %v", got, want)
+	}
+	if got, _ := f.list("main.test", "", q(path, "limit", "3")); !reflect.DeepEqual(got, want[:3]) {
+		t.Fatalf("limited co-reading then fill = %v, want %v", got, want[:3])
+	}
+
+	reader := signal.Subject{UserID: "reader"}
+	if err := f.svc.o.Hub.RecordSignals(f.ctx, []signal.Signal{
+		recReading(tenant, f.cid(7), "reader", 1, 60),
+		{ContentRef: contentref.New(tenant, "gallery", f.cid(5)), Subject: reader, Type: "reaction", EventID: "dislike", OccurredAt: f.now, Value: -1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := f.svc.recommender()
+	if err != nil {
+		t.Fatal(err)
+	}
+	forSubject, err := recs.Candidates.ForSubject(f.ctx, reader, Query{ContentKinds: []string{"gallery"}, Limit: 4})
+	if err != nil || len(forSubject) != 0 {
+		t.Fatalf("shared entities changed for-you candidates: %v, %v", forSubject, err)
+	}
+	selected, err := f.svc.compile(f.ctx, Reader{Host: "main.test"}, Filter{Kind: "gallery"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := admission{s: f.svc, q: selected, picked: map[string]pick{}}
+	recs.Candidates = Fallback{Primary: recs.Candidates, Secondary: source}
+	hits, err := recs.Similar(f.ctx, anchor, SimilarOptions{Limit: 4, ContentKinds: []string{"gallery"}, ExcludeSeenFor: &reader, Admit: a.admit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = append([]string{f.cid(2), f.cid(6), f.cid(4)}, tied[0])
+	if got := hitIDs(hits); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reader exclusions on fill = %v, want %v", got, want)
+	}
+
+	f.svc.o.Candidates = fixed{out: cands(contentref.New(tenant, "gallery", f.cid(5)))}
+	if got, _ := f.list("main.test", "", path); !reflect.DeepEqual(got, []string{f.cid(5)}) {
+		t.Fatalf("custom candidates were filled: %v", got)
+	}
+}
 
 // seeded is a small site: galleries in English and Japanese, a premium
 // one behind a default-hidden content filter, a restricted one in the yaoi
