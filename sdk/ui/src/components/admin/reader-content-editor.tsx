@@ -607,7 +607,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   };
   const renderEntities = (kinds: readonly string[], draft: typeof associations, scopedVersion?: string) => kinds.map((kind) => {
     const rows = draft.value.memberships.map((a, index) => ({ a, index })).filter(({ a }) => cards.get(a.group_id ?? "")?.kind === kind);
-    return <EntityChips key={`${kind}:${scopedVersion ?? "shared"}`} kind={kind} label={labelOf(p.labels, kind)} memberships={rows.map(({ a }) => a)} cards={cards}
+    return <EntityChips key={`${kind}:${scopedVersion ?? "shared"}`} kind={kind} label={scopedVersion ? t("readerEditor.versionKind", { kind: labelOf(p.labels, kind) }) : labelOf(p.labels, kind)} memberships={rows.map(({ a }) => a)} cards={cards}
       spec={model.entity_kinds[kind] ?? {}} labels={p.labels} allowVersionChange={false}
       versionLabel={(id) => versionChoices.find((v) => v.id === id)?.label ?? id} language={language} management={p.management} client={client}
       disabled={!!item && membership.loading} created={draft.value.create.filter((c) => c.kind === kind).map((c) => c.name)}

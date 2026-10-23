@@ -13,12 +13,12 @@ export interface BulkDraftDefaults {
   artists?: readonly string[];
 }
 
-/** A file name as a title: no extension or [bracketed] circle, artist and tag groups, separators as spaces. */
+/** A file name as a title: no extension or [bracketed] / 【bracketed】 circle, artist and tag groups, separators as spaces. */
 export const fileTitle = (name: string) => {
   const stem = name.replace(/\.[^.]+$/, "");
   let bare = stem;
   // Innermost groups first, so nested brackets go too.
-  for (let prev = ""; prev !== bare; ) [prev, bare] = [bare, bare.replace(/\[[^[\]]*\]/g, " ")];
+  for (let prev = ""; prev !== bare; ) [prev, bare] = [bare, bare.replace(/\[[^[\]]*\]|【[^【】]*】/g, " ")];
   return (words(bare) || words(stem)).slice(0, 300);
 };
 
