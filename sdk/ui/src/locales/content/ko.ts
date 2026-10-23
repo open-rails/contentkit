@@ -30,6 +30,8 @@ export const content: typeof en = {
     lockedOption: "{name} (잠김)",
   },
   contentEditor: {
+    releaseAudience: "공개 {n} 대상",
+    releaseAt: "공개 {n} 날짜",
     releaseFrom: "{date}부터 {audience}에게 공개.",
     releases: "대상별 공개 일정",
     addRelease: "대상별 공개 추가",

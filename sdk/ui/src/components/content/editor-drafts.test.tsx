@@ -143,7 +143,7 @@ it("rebases clean fields and attributes without replacing edited fields", async 
   expect(ui.details().getByRole("combobox", { name: "Comments" })).toHaveTextContent("Closed");
   expect(ui.access().getByRole("combobox", { name: "Who can open it" })).toHaveTextContent("Tier members");
   expect(ui.access().getByRole("switch", { name: /Member/ })).toBeChecked();
-  expect(ui.access().getByLabelText("Free for everyone from")).not.toHaveValue("");
+  expect(ui.access().getByLabelText("Release 1 date")).not.toHaveValue("");
   await user.click(ui.details().getByRole("button", { name: "Save" }));
   await waitFor(() => expect(s.writes.at(-1)?.patch).toEqual({ comments: "closed", attributes: { caption: "Keep this draft", note: "Remote note" }, revision: 4 }));
 });
