@@ -218,7 +218,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	}
 	countKind := ""
 	if ck := strings.TrimSpace(opts.ContentKind); ck != "" {
-		countKind, c.args["content_kind"] = " AND gc.content_kind = @content_kind", ck
+		countKind, c.args["content_kind"] = " AND f.kind = @content_kind", ck
 	}
 	if opts.Cursor != "" {
 		var cur listCursor
@@ -248,8 +248,10 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
 	count := "coalesce(cc.n, 0)"
-	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT sum(gc.content_count)::int AS n FROM %s gc
-  WHERE gc.tenant_id = g.tenant_id AND gc.group_id = g.id AND gc.language = @count_language%s) cc ON true`, s.table("content_group_counts"), countKind)
+	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT count(DISTINCT f.content_id)::int AS n FROM %s f
+ WHERE f.tenant_id=g.tenant_id AND (f.group_ids @> ARRAY[g.id] OR f.owner_group_id=g.id)
+ AND %s AND (@count_language='' OR f.languages @> ARRAY[@count_language::text])%s) cc ON true`, s.table("content_current_facets"), liveListed, countKind)
+	c.args["covered_kinds"] = s.coveredKinds()
 	from := s.table("content_groups") + " g"
 	predicate := "WHERE " + strings.Join(where, " AND ")
 	paging := " LIMIT @limit OFFSET @offset"
@@ -267,7 +269,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		order = count + " DESC, g.id"
 	}
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
- coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), %[11]s, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
 FROM %[1]s
 LEFT JOIN LATERAL (SELECT nn.name, nn.language, nn.normalized FROM %[2]s nn
   WHERE nn.tenant_id = g.tenant_id AND nn.group_id = g.id AND nn.kind = 'name'
@@ -278,7 +280,7 @@ LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AN
 %[7]s
 %[8]s`,
 		from, s.table("content_group_names"), s.table("content_group_text"), s.table("content_codes"),
-		count, sortName, counts, predicate, scope, parent)
+		count, sortName, counts, predicate, scope, parent, s.coverSQL())
 	c.sql = base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
 		c.count = "SELECT count(*) FROM (" + base + ") counted"
@@ -485,7 +487,7 @@ func (s *Store) detail(ctx context.Context, id GroupID, language string, include
 			return errors.Join(err, ErrNotFound)
 		}
 		card := self.Groups[0]
-		d.ParentID, d.ScopeID = card.ParentID, card.ScopeID
+		d.ParentID, d.ScopeID, d.Cover = card.ParentID, card.ScopeID, card.Cover
 		d.Name, d.NameLanguage, d.Code, d.Path = card.Name, card.NameLanguage, card.Code, card.Path
 		names, err := s.names(ctx, q, []string{string(id)})
 		if err != nil {

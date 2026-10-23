@@ -43,8 +43,8 @@ func TestScopedGroupMetadataRetainsCredentialCeilings(t *testing.T) {
 	actor := testauth.Actor(access.Actor{ID: "reader"}, testauth.All{})
 	limited := &limitedScopeAuth{}
 	store := f.s.As(limited, actor)
-	f.exec(`INSERT INTO {s}.content_group_counts(tenant_id,group_id,language,content_kind,content_count)
- VALUES ($1,$2,'','video',1),($1,$3,'','video',100)`, tenant, channels[0].ID, channels[1].ID)
+	f.content("video", 1, live("en"))
+	f.add(Membership{GroupID: channels[1].ID, ContentID: cid(1)})
 	for _, sort := range []Sort{SortName, SortCount} {
 		t.Run(string(sort), func(t *testing.T) {
 			page, err := store.Mine(f.ctx, ListOptions{Kind: "channel", Sort: sort, Limit: 1})

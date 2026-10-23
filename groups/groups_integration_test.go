@@ -755,13 +755,11 @@ func TestEffectiveGroups(t *testing.T) {
 	if facets := f.facetGroups(); !slices.Equal(facets[vid(1, 0)], ids(sub, tag, now)) || len(facets[vid(2, 0)]) != 0 {
 		t.Fatalf("after delete %v", facets)
 	}
-	// A window opening is picked up by the window job.
-	f.exec(`UPDATE {s}.content_memberships SET active_from = now() - interval '1 minute' WHERE group_id = $1`, string(later.ID))
-	if err := f.s.RefreshWindows(f.ctx, 5*time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if facets := f.facetGroups(); !slices.Contains(facets[vid(1, 0)], string(later.ID)) {
-		t.Fatalf("opened window %v", facets)
+	// A window that opened during a long outage is visible without a worker.
+	f.exec(`UPDATE {s}.content_memberships SET active_from = now() - interval '2 days' WHERE group_id = $1`, string(later.ID))
+	var current []string
+	if err := f.pool.QueryRow(f.ctx, `SELECT group_ids FROM `+f.s.table("content_current_facets")+` WHERE tenant_id=$1 AND version_id=$2`, tenant, vid(1, 0)).Scan(&current); err != nil || !slices.Contains(current, string(later.ID)) {
+		t.Fatalf("opened window %v: %v", current, err)
 	}
 	// The popularity catalog sees the same groups, per content and kind.
 	byContent, err := f.s.Memberships(f.ctx, tenant, "gallery", "rail", []string{cid(1), cid(2)})
@@ -955,7 +953,7 @@ func TestMerge(t *testing.T) {
 // language ("" for all), descendants included; the automatic cover is the
 // most-favorited live member anyone sees the cover of, a selected cover
 // stays.
-func TestRecount(t *testing.T) {
+func TestRuntimeCountsAndCovers(t *testing.T) {
 	f := newFixture(t)
 	f.content("gallery", 1, live("en"), live("es"))
 	f.content("gallery", 2, live("en"), version{languages: []string{"ja"}})
@@ -969,9 +967,6 @@ func TestRecount(t *testing.T) {
 	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,content_version_id,favorites) VALUES ($1,'gallery',$2,$3,50)`, tenant, cid(2), vid(2, 1))
 	f.add(Membership{GroupID: child.ID, ContentID: cid(1)}, Membership{GroupID: parent.ID, ContentID: cid(2)}, Membership{GroupID: parent.ID, ContentID: cid(3)},
 		Membership{GroupID: tag.ID, ContentID: cid(1)}, Membership{GroupID: tag.ID, ContentID: cid(4)}, Membership{GroupID: picked.ID, ContentID: cid(2)})
-	if err := f.s.Recount(f.ctx); err != nil {
-		t.Fatal(err)
-	}
 	counts := func(id GroupID) string {
 		d, err := f.s.Detail(f.ctx, id, "")
 		if err != nil {
@@ -995,9 +990,6 @@ func TestRecount(t *testing.T) {
 	}
 	// Videos' locked view hides covers: a premium video's is no group's.
 	f.exec(`UPDATE {s}.content_facets SET access_level = 'tier' WHERE content_id = $1`, cid(4))
-	if err := f.s.Recount(f.ctx); err != nil {
-		t.Fatal(err)
-	}
 	if got, _ := f.s.Groups(f.ctx, []GroupID{tag.ID}); got[0].Cover == nil || got[0].Cover.ContentID != cid(1) {
 		t.Fatalf("auto cover of a premium video %+v", got[0].Cover)
 	}
@@ -1014,25 +1006,19 @@ func TestRecount(t *testing.T) {
 	if err := f.s.RemoveMemberships(f.ctx, []Membership{{GroupID: tag.ID, ContentID: cid(4)}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.Recount(f.ctx); err != nil {
-		t.Fatal(err)
-	}
 	if got := counts(parent.ID); got != "gallery/=1 gallery/en=1 " {
 		t.Fatalf("parent after %s", got)
 	}
 	if got := counts(tag.ID); got != "gallery/=1 gallery/en=1 gallery/es=1 " {
 		t.Fatalf("tag after %s", got)
 	}
-	var n int
-	if err := f.pool.QueryRow(f.ctx, fmt.Sprintf(`SELECT count(*) FROM %q.content_group_counts WHERE group_id = $1`, f.schema), string(child.ID)).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("deleted group keeps %d counts %v", n, err)
-	}
+
 }
 
 // A group counts the content it owns as well as its members, each item once
 // per language it serves and once overall, never once per version or twice
 // for being both.
-func TestRecountOwnedContent(t *testing.T) {
+func TestRuntimeCountsOwnedContent(t *testing.T) {
 	f := newFixture(t)
 	ch := f.create(GroupInput{Kind: "channel", Slug: "studio", OwnerUserID: "owner"})[0]
 	f.content("video", 1, live("en"), live("es"))
@@ -1044,9 +1030,6 @@ func TestRecountOwnedContent(t *testing.T) {
 	f.content("video", 4, live("en"))
 	f.exec(`UPDATE {s}.content_facets SET owner_group_id = $1 WHERE content_id = $2`, string(solo.ID), cid(4))
 	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,favorites) VALUES ($1,'video',$2,5)`, tenant, cid(1))
-	if err := f.s.Recount(f.ctx); err != nil {
-		t.Fatal(err)
-	}
 	// Automatic covers pick from owned content too: a channel with no members has one.
 	covers, err := f.s.Groups(f.ctx, []GroupID{ch.ID, solo.ID})
 	if err != nil {
@@ -1088,9 +1071,6 @@ func TestList(t *testing.T) {
 	in = append(in, GroupInput{Kind: "tag", Slug: "spanish", Names: []Name{canonical("es", "Zeta")}, Text: []Text{{Language: "en", SortKey: "aaa"}}})
 	tags := f.create(in...)
 	f.add(Membership{GroupID: tags[0].ID, ContentID: cid(1)}, Membership{GroupID: tags[0].ID, ContentID: cid(2)}, Membership{GroupID: tags[4].ID, ContentID: cid(2)})
-	if err := f.s.Recount(f.ctx); err != nil {
-		t.Fatal(err)
-	}
 	walk := func(opts ListOptions) []string {
 		t.Helper()
 		var out []string
@@ -1209,9 +1189,6 @@ func TestCountSortedGroupPages(t *testing.T) {
 		Membership{GroupID: tags[1].ID, ContentID: cid(3)},
 		Membership{GroupID: tags[2].ID, ContentID: cid(3)},
 	)
-	if err := f.s.Recount(f.ctx); err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
 		name, language, kind string
 	}{

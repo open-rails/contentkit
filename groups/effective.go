@@ -3,7 +3,6 @@ package groups
 import (
 	"context"
 	"fmt"
-	"time"
 )
 
 // effectiveSQL derives eff(version_id, group_ids) for the versions source
@@ -117,29 +116,6 @@ ORDER BY 1`,
 		return nil, err
 	}
 	return collectStrings(rows)
-}
-
-// RefreshWindows re-derives the facets of content whose windowed memberships
-// opened or closed within the last lookback. It is an engine job: run it more
-// often than lookback; overlapping runs are harmless.
-func (s *Store) RefreshWindows(ctx context.Context, lookback time.Duration) error {
-	if lookback <= 0 {
-		return fmt.Errorf("%w: lookback must be positive", ErrInvalid)
-	}
-	return s.run(ctx, func(q Querier) error {
-		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT DISTINCT content_id FROM %s
- WHERE tenant_id = $1 AND (active_from IS NOT NULL OR active_until IS NOT NULL)
-   AND ((active_from > now() - $2 * interval '1 second' AND active_from <= now()) OR (active_until > now() - $2 * interval '1 second' AND active_until <= now()))`,
-			s.table("content_memberships")), s.tenant, lookback.Seconds())
-		if err != nil {
-			return err
-		}
-		ids, err := collectStrings(rows)
-		if err != nil {
-			return err
-		}
-		return s.refreshFacets(ctx, q, ids)
-	})
 }
 
 func collectStrings(rows interface {

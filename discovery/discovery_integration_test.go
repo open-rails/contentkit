@@ -236,9 +236,6 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	}
 	// A hidden group's content stays out of other lists, but its own page
 	// shows what its count counts.
-	if err := f.groups.Recount(f.ctx); err != nil {
-		t.Fatal(err)
-	}
 	dir, err := f.groups.List(f.ctx, groups.ListOptions{Kind: "tag", Slug: "big-breasts"})
 	if err != nil || len(dir.Groups) != 1 {
 		t.Fatalf("directory: %+v %v", dir, err)

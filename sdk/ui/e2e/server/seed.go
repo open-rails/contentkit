@@ -2,11 +2,8 @@ package main
 
 import "net/http"
 
-// recount runs the groups' count and automatic cover job now.
+// recount is retained for existing browser fixtures. Entity counts and automatic
+// covers are read live, so seeding no longer requires a background job.
 func (h *harness) recount(w http.ResponseWriter, r *http.Request) {
-	if err := h.groups.Recount(r.Context()); err != nil {
-		fail(w, http.StatusInternalServerError, err)
-		return
-	}
 	w.WriteHeader(http.StatusNoContent)
 }

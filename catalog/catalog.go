@@ -149,6 +149,7 @@ type Store struct {
 
 type tables struct {
 	items, text, creators, versions, versionText, segments, facets, events string
+	currentFacets                                                          string
 	groups, groupNames, memberships, prefs, counts, docs, offers           string
 	reactions, favorites, comments, accessHistory                          string
 }
@@ -171,7 +172,7 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 	s := &Store{
 		pool: opts.Pool, schema: opts.Schema, qs: pgx.Identifier{opts.Schema}.Sanitize(), tenant: opts.Tenant, cfg: opts.Kinds,
 		t: tables{items: q("content_items"), text: q("content_text"), creators: q("content_creators"), versions: q("content_versions"),
-			versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), events: q("content_events"),
+			versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), currentFacets: q("content_current_facets"), events: q("content_events"),
 			groups: q("content_groups"), groupNames: q("content_group_names"), memberships: q("content_memberships"),
 			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"), offers: q("content_offers"),
 			reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")},
