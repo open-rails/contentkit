@@ -220,6 +220,8 @@ export const admin: typeof en = {
     makePremium: "设为高级",
     makeFree: "设为免费",
     select: "选择 {title}",
+    date: "日期",
+    moreActions: "{title} 的更多操作",
     selectPage: "选择本页全部",
     selected: "已选 {count} 项",
     clearSelection: "取消选择",

@@ -1,6 +1,7 @@
-import { Image01Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, CrownIcon, Delete02Icon, Image01Icon, MoreHorizontalIcon, Search01Icon, SquareUnlock02Icon, Upload04Icon, ViewIcon } from "@hugeicons/core-free-icons";
+import { cn } from "cn";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { imageRefs } from "../../client/contents.js";
@@ -15,7 +16,8 @@ import { useKinds } from "../../react/entities.js";
 import { keyOf, useContentScope, usePaged, useResource } from "../../react/use-resource.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Badge } from "#ckui/ui/badge";
-import { Button, buttonVariants } from "#ckui/ui/button";
+import { Button } from "#ckui/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
 import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
@@ -367,38 +369,61 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
     }
   };
   const allChosen = items.length > 0 && chosen.length === items.length;
+  const heading = noun?.other ?? t("contentManager.title");
+  const newLabel = noun ? t("contentManager.newNamed", { one: noun.one }) : t("contentManager.new");
+  // From md up the rows line up as a table: select, item, status, access, date, actions.
+  const columns = [canSelect && "1rem", "minmax(0,1fr)", "8rem", canChangeParentAccess && "8rem", "9rem", "6.5rem"].filter(Boolean).join(" ");
+  const tab = (active: boolean) =>
+    cn("h-7 rounded-[5px] px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50", active ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground");
+  const toggle = (c: Content, on: boolean) =>
+    setSelected((cur) => {
+      const n = new Set(cur);
+      if (on) n.add(c.id);
+      else n.delete(c.id);
+      return n;
+    });
   return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold first-letter:uppercase">{noun?.other ?? t("contentManager.title")}</h2>
+    <div className="grid gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-xl font-semibold tracking-tight first-letter:uppercase">{heading}</h2>
+          {total !== undefined && (
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {new Intl.NumberFormat(m.language).format(total)}
+              {counted.data?.truncated && "+"}
+            </span>
+          )}
+        </div>
         <div className="flex gap-2">
           {bulkable && !deleted && (
             <Button size="sm" variant="outline" aria-expanded={bulkOpen} onClick={() => setBulkOpen((o) => !o)}>
+              <HugeiconsIcon icon={Upload04Icon} strokeWidth={2} data-icon="inline-start" />
               {t("contentManager.bulkUpload")}
             </Button>
           )}
           <Button size="sm" onClick={() => loc.go("new")}>
-            {noun ? t("contentManager.newNamed", { one: noun.one }) : t("contentManager.new")}
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+            {newLabel}
           </Button>
         </div>
       </div>
       {bulkable && bulkOpen && !deleted && model && (
-        <section className="grid gap-3 rounded-lg border border-border p-3" aria-label={t("contentManager.bulkUpload")} data-ckui="bulk-upload">
+        <section className="grid gap-3 rounded-lg border border-border p-4" aria-label={t("contentManager.bulkUpload")} data-ckui="bulk-upload">
           <p className="text-sm text-muted-foreground">{t(presentation === "reader" ? "contentManager.bulkHintArchive" : "contentManager.bulkHintFile")}</p>
           <BulkUpload client={client} kind={kind} model={model} languages={offered} labels={labels} open={open} onError={onError} />
         </section>
       )}
-      <div className="flex gap-2" role="group" aria-label={noun?.other ?? t("contentManager.title")}>
-        <Button size="sm" variant={deleted ? "outline" : "default"} aria-pressed={!deleted} onClick={() => loc.go("", { q: query })}>
-          {t("contentManager.items")}
-        </Button>
-        <Button size="sm" variant={deleted ? "default" : "outline"} aria-pressed={deleted} onClick={() => loc.go("", { q: query, deleted: "1" })}>
-          {t("contentManager.deleted")}
-        </Button>
-      </div>
       <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md border border-border bg-muted/50 p-0.5" role="group" aria-label={heading}>
+          <button type="button" className={tab(!deleted)} aria-pressed={!deleted} onClick={() => loc.go("", { q: query })}>
+            {t("contentManager.items")}
+          </button>
+          <button type="button" className={tab(deleted)} aria-pressed={deleted} onClick={() => loc.go("", { q: query, deleted: "1" })}>
+            {t("contentManager.deleted")}
+          </button>
+        </div>
         <form
-          className="min-w-48 flex-1"
+          className="relative min-w-48 flex-1"
           role="search"
           onSubmit={(e) => {
             e.preventDefault();
@@ -408,7 +433,8 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
           <Label htmlFor={`${ids}-q`} className="sr-only">
             {t("contentManager.search")}
           </Label>
-          <Input id={`${ids}-q`} className="h-8" type="search" value={text} placeholder={t("contentManager.search")} onChange={(e) => setText(e.target.value)} />
+          <HugeiconsIcon icon={Search01Icon} strokeWidth={2} aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input id={`${ids}-q`} className="h-8 ps-8" type="search" value={text} placeholder={t("contentManager.search")} onChange={(e) => setText(e.target.value)} />
         </form>
         {!deleted && (
           <Select value={status} onValueChange={(v) => filter({ status: String(v ?? "") as typeof status })}>
@@ -457,41 +483,12 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
           {bulk.summary}
         </p>
       )}
-      {canSelect && chosen.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 p-2 text-sm" data-ckui="bulk-bar">
-          <span className="font-medium">{t("contentManager.selected", { count: chosen.length })}</span>
-          {deleted ? (
-            <Button size="sm" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen, (c) => client.contents.restore(c.id))}>
-              {t("moderation.restore")}
-            </Button>
-          ) : (
-            <>
-              {canChangeParentAccess && premium && (
-                <Button size="sm" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, true) }))}>
-                  {t("contentManager.makePremium")}
-                </Button>
-              )}
-              {canChangeParentAccess && premium && (
-                <Button size="sm" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, false) }))}>
-                  {t("contentManager.makeFree")}
-                </Button>
-              )}
-              {canDeleteParent && <Button size="sm" variant="destructive" disabled={bulk.pending} onClick={() => void bulkDelete()}>
-                {t("contentManager.delete")}
-              </Button>}
-            </>
-          )}
-          <Button size="sm" variant="ghost" disabled={bulk.pending} onClick={() => setSelected(new Set())}>
-            {t("contentManager.clearSelection")}
-          </Button>
-        </div>
-      )}
       {loading && !items.length ? (
         <Rows />
       ) : listing.error && !items.length ? (
         <LoadFailed error={listing.error} message={t("contentManager.loadFailed")} retry={listing.reload} />
       ) : !items.length ? (
-        <div className="grid justify-items-start gap-2">
+        <div className="grid justify-items-center gap-3 rounded-lg border border-dashed border-border px-6 py-12 text-center">
           <p className="text-muted-foreground">{filtered ? t("contentManager.noMatches") : deleted ? t("contentManager.noDeleted") : noun ? t("contentManager.emptyNamed", { other: noun.other }) : t("contentManager.emptyAll")}</p>
           {filtered ? (
             <Button size="sm" variant="outline" onClick={() => loc.go("", { deleted: deleted ? "1" : undefined })}>
@@ -500,76 +497,130 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
           ) : (
             !deleted && (
               <Button size="sm" onClick={() => loc.go("new")}>
-                {noun ? t("contentManager.newNamed", { one: noun.one }) : t("contentManager.new")}
+                <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+                {newLabel}
               </Button>
             )
           )}
         </div>
       ) : (
-        <ul className="grid divide-y divide-border rounded-lg border border-border" aria-busy={loading}>
-          {canSelect && (
-            <li className="flex items-center gap-3 px-3 py-2 text-xs text-muted-foreground">
+        <ul className="overflow-hidden rounded-lg border border-border" style={{ "--ck-cols": columns } as CSSProperties} aria-busy={loading}>
+          <li
+            className={cn(
+              "flex min-h-11 items-center gap-3 border-b border-border bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground",
+              !canSelect && "hidden md:flex",
+              !chosen.length && "md:grid md:grid-cols-(--ck-cols) md:gap-4",
+            )}
+            data-ckui="list-head"
+          >
+            {canSelect && (
               <input
                 type="checkbox"
                 className="size-4 shrink-0 accent-primary"
                 checked={allChosen}
+                ref={(el) => {
+                  if (el) el.indeterminate = chosen.length > 0 && !allChosen;
+                }}
                 aria-label={t("contentManager.selectPage")}
                 onChange={(e) => setSelected(e.target.checked ? new Set(items.map((c) => c.id)) : new Set())}
               />
-              <span>{t("contentManager.selectPage")}</span>
-            </li>
-          )}
+            )}
+            {canSelect && chosen.length > 0 ? (
+              <div className="flex flex-1 flex-wrap items-center gap-2" data-ckui="bulk-bar">
+                <span className="me-2 text-sm font-medium text-foreground">{t("contentManager.selected", { count: chosen.length })}</span>
+                {deleted ? (
+                  <Button size="xs" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen, (c) => client.contents.restore(c.id))}>
+                    {t("moderation.restore")}
+                  </Button>
+                ) : (
+                  <>
+                    {canChangeParentAccess && premium && (
+                      <Button size="xs" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, true) }))}>
+                        {t("contentManager.makePremium")}
+                      </Button>
+                    )}
+                    {canChangeParentAccess && premium && (
+                      <Button size="xs" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, false) }))}>
+                        {t("contentManager.makeFree")}
+                      </Button>
+                    )}
+                    {canDeleteParent && <Button size="xs" variant="destructive" disabled={bulk.pending} onClick={() => void bulkDelete()}>
+                      {t("contentManager.delete")}
+                    </Button>}
+                  </>
+                )}
+                <Button size="xs" variant="ghost" className="ms-auto" disabled={bulk.pending} onClick={() => setSelected(new Set())}>
+                  {t("contentManager.clearSelection")}
+                </Button>
+              </div>
+            ) : (
+              <>
+                {canSelect && <span className="md:hidden">{t("contentManager.selectPage")}</span>}
+                <span className="hidden md:block">{t("contentManager.itemTitle")}</span>
+                <span className="hidden md:block">{t("contentManager.status")}</span>
+                {canChangeParentAccess && <span className="hidden md:block">{t("contentManager.access")}</span>}
+                <span className="hidden md:block">{t("contentManager.date")}</span>
+                <span className="hidden md:block" />
+              </>
+            )}
+          </li>
           {items.map((c) => {
             const s = contentStatus(c);
             const href = s === "published" ? contentHref?.(c) : undefined;
             const pending = busy.has(c.id);
             const isPremium = c.access.level === "tier";
+            const more = href || toggleable(c) || canDeleteParent;
             return (
-              <li key={c.id} className="flex flex-wrap items-start gap-3 p-3" data-ckui="content-row" data-status={deleted ? "deleted" : s}>
+              <li
+                key={c.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-3 py-2.5 transition-colors last:border-b-0 hover:bg-muted/30 has-checked:bg-muted/40 md:grid md:grid-cols-(--ck-cols) md:gap-4"
+                data-ckui="content-row"
+                data-status={deleted ? "deleted" : s}
+              >
                 {canSelect && (
                   <input
                     type="checkbox"
-                    className="mt-1 size-4 shrink-0 accent-primary"
+                    className="size-4 shrink-0 accent-primary"
                     checked={selected.has(c.id)}
                     aria-label={t("contentManager.select", { title: c.title })}
-                    onChange={(e) =>
-                      setSelected((cur) => {
-                        const n = new Set(cur);
-                        if (e.target.checked) n.add(c.id);
-                        else n.delete(c.id);
-                        return n;
-                      })
-                    }
+                    onChange={(e) => toggle(c, e.target.checked)}
                   />
                 )}
-                <RowCover url={c.cover?.url} />
-                <div className="grid min-w-0 flex-1 gap-1">
-                  {deleted && canDeleteParent ? (
-                    <span className="font-medium break-words line-through">{c.title}</span>
-                  ) : (
-                    <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => open(c)}>
-                      {c.title}
-                    </button>
-                  )}
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    {!deleted && <Badge variant={badge[s]} className={badgeClass[s]}>{t(`contentManager.${s}`)}</Badge>}
-                    {canChangeParentAccess && <Badge variant={isPremium ? "secondary" : "outline"} data-ckui="access-badge">
-                      {accessLabel(t, c.access, labels)}
-                    </Badge>}
-                    <span className="font-mono">{c.code}</span>
-                    <span>{c.language}</span>
-                    {c.published_at && s === "published" ? (
-                      <time dateTime={c.published_at} title={formatDate(m, c.published_at)}>
-                        {t("contentManager.liveOn", { date: formatDate(m, c.published_at, false) })}
-                      </time>
+                <div className="flex min-w-[min(100%,16rem)] flex-1 items-center gap-3">
+                  <RowCover url={c.cover?.url} portrait={presentation === "reader"} />
+                  <div className="grid min-w-0 gap-0.5">
+                    {deleted && canDeleteParent ? (
+                      <span className="truncate font-medium text-muted-foreground line-through">{c.title}</span>
                     ) : (
-                      <RelativeTime at={deleted && c.deleted_at ? c.deleted_at : c.updated_at} />
+                      <button type="button" className="truncate text-start font-medium underline-offset-4 hover:underline" title={c.title} onClick={() => open(c)}>
+                        {c.title}
+                      </button>
                     )}
-                    {s === "scheduled" && c.publish_at && <span>{t("pollManager.goesLive", { date: formatDate(m, c.publish_at) })}</span>}
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="font-mono">{c.code}</span>
+                      <span aria-hidden>·</span>
+                      <span className="uppercase">{c.language}</span>
+                    </div>
+                    <ErrorLine error={rowErrors[c.id] ?? null} />
                   </div>
-                  <ErrorLine error={rowErrors[c.id] ?? null} />
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm">{deleted ? <span className="text-muted-foreground">{t("contentManager.deleted")}</span> : <StatusDot status={s} />}</div>
+                {canChangeParentAccess && (
+                  <div className={cn("text-sm", isPremium ? "font-medium text-foreground" : "text-muted-foreground")} data-ckui="access-badge">
+                    {accessLabel(t, c.access, labels)}
+                  </div>
+                )}
+                <div className="grid text-sm text-muted-foreground">
+                  {c.published_at && s === "published" && !deleted ? (
+                    <time dateTime={c.published_at} title={formatDate(m, c.published_at)}>
+                      {t("contentManager.liveOn", { date: formatDate(m, c.published_at, false) })}
+                    </time>
+                  ) : (
+                    <RelativeTime at={deleted && c.deleted_at ? c.deleted_at : c.updated_at} />
+                  )}
+                  {s === "scheduled" && c.publish_at && <span className="text-xs">{t("pollManager.goesLive", { date: formatDate(m, c.publish_at) })}</span>}
+                </div>
+                <div className="ms-auto flex items-center justify-end gap-1">
                   {deleted ? canDeleteParent ? (
                     <Button size="sm" variant="outline" disabled={del.pending} onClick={() => void del.run(() => client.contents.restore(c.id))}>
                       {t("moderation.restore")}
@@ -578,23 +629,41 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                     <Button size="sm" variant="outline" onClick={() => open(c)}>{t("contentManager.manageVersions")}</Button>
                   ) : (
                     <>
-                      {toggleable(c) && (
-                        <Button size="sm" variant="outline" disabled={pending} aria-busy={pending} onClick={() => void setAccess(c, !isPremium)}>
-                          {pending && <Spinner />}
-                          {t(isPremium ? "contentManager.makeFree" : "contentManager.makePremium")}
-                        </Button>
-                      )}
-                      {href && (
-                        <a className={buttonVariants({ size: "sm", variant: "ghost" })} href={href}>
-                          {t("contentManager.view")}
-                        </a>
-                      )}
                       <Button size="sm" variant="outline" onClick={() => open(c)}>
                         {t("comments.edit")}
                       </Button>
-                      {canDeleteParent && <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={del.pending} onClick={() => void remove(c)}>
-                        {t("comments.delete")}
-                      </Button>}
+                      {more ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={<Button size="icon-sm" variant="ghost" disabled={pending} aria-busy={pending} aria-label={t("contentManager.moreActions", { title: c.title })} />}
+                          >
+                            {pending ? <Spinner /> : <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} />}
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-40">
+                            {href && (
+                              <DropdownMenuItem render={<a href={href} />}>
+                                <HugeiconsIcon icon={ViewIcon} strokeWidth={2} />
+                                {t("contentManager.view")}
+                              </DropdownMenuItem>
+                            )}
+                            {toggleable(c) && (
+                              <DropdownMenuItem onClick={() => void setAccess(c, !isPremium)}>
+                                <HugeiconsIcon icon={isPremium ? SquareUnlock02Icon : CrownIcon} strokeWidth={2} />
+                                {t(isPremium ? "contentManager.makeFree" : "contentManager.makePremium")}
+                              </DropdownMenuItem>
+                            )}
+                            {canDeleteParent && (href || toggleable(c)) && <DropdownMenuSeparator />}
+                            {canDeleteParent && (
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={del.pending} onClick={() => void remove(c)}>
+                                <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                                {t("comments.delete")}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : (
+                        <span aria-hidden className="size-8" />
+                      )}
                     </>
                   )}
                 </div>
@@ -616,6 +685,19 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
       />
       {dialog}
     </div>
+  );
+}
+
+const dot: Record<ContentStatus, string> = { published: "bg-success", scheduled: "bg-sky-500", draft: "bg-muted-foreground/50", held: "bg-warning", rejected: "bg-destructive" };
+
+/** A status as a coloured dot and its name. */
+function StatusDot({ status }: { status: ContentStatus }) {
+  const { t } = useMessages();
+  return (
+    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+      <span aria-hidden className={cn("size-2 shrink-0 rounded-full", dot[status])} />
+      {t(`contentManager.${status}`)}
+    </span>
   );
 }
 
@@ -689,13 +771,14 @@ function BulkUpload({ client, kind, model, languages: offered, labels, open, onE
   </>;
 }
 
-/** A row's portrait cover, or a quiet placeholder. */
-function RowCover({ url }: { url?: string }) {
+/** A row's cover, portrait for reader works and wide for the rest, or a quiet placeholder. */
+function RowCover({ url, portrait }: { url?: string; portrait?: boolean }) {
+  const box = cn("shrink-0 rounded-md bg-muted ring-1 ring-foreground/5", portrait ? "aspect-[7/10] w-11" : "aspect-video w-24");
   return url ? (
-    <img src={url} alt="" loading="lazy" className="aspect-[7/10] w-24 shrink-0 rounded-md bg-muted object-cover sm:w-28" />
+    <img src={url} alt="" loading="lazy" className={cn(box, "object-cover")} />
   ) : (
-    <span aria-hidden className="grid aspect-[7/10] w-24 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground sm:w-28">
-      <HugeiconsIcon icon={Image01Icon} strokeWidth={1.5} className="size-8" />
+    <span aria-hidden className={cn(box, "grid place-items-center text-muted-foreground")}>
+      <HugeiconsIcon icon={Image01Icon} strokeWidth={1.5} className="size-5" />
     </span>
   );
 }

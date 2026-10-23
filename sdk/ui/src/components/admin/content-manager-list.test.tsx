@@ -78,7 +78,7 @@ function Route({ client, search = "", noun }: { client: ReturnType<typeof server
   );
 }
 
-it("shows each row's cover, code, access and live date, and toggles premium in one click", async () => {
+it("shows each row's cover, code, access and live date, and toggles premium from its actions menu", async () => {
   const s = server([item("a", "Alpha", { level: "public" }, { cover: { url: "https://test.invalid/a.webp" } }), item("b", "Beta", { level: "tier", tiers: ["premium"] })]);
   const { container } = render(<Route client={s.client} />);
   const alpha = (await screen.findByText("Alpha")).closest("li")!;
@@ -88,7 +88,8 @@ it("shows each row's cover, code, access and live date, and toggles premium in o
   expect(container.querySelector('img[src="https://test.invalid/a.webp"]')).not.toBeNull();
   expect(within(screen.getByText("Beta").closest("li")!).getByText("Premium")).toBeVisible();
 
-  await userEvent.click(within(alpha).getByRole("button", { name: "Make premium" }));
+  await userEvent.click(within(alpha).getByRole("button", { name: "More actions for Alpha" }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Make premium" }));
   await waitFor(() => expect(s.calls.some((c) => c.method === "PATCH")).toBe(true));
   expect(s.calls.find((c) => c.method === "PATCH")).toMatchObject({ path: "/contents/a", body: { access: { level: "tier", tiers: ["premium"] } } });
 });
@@ -163,8 +164,8 @@ it("directs version-scoped gallery changes to the edition editor instead of pare
   const { container } = render(<Route client={s.client} search="?access=public" />);
   const row = (await screen.findByText("Alpha")).closest("li")!;
   expect(within(row).getByRole("button", { name: "Edit" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Make premium" })).toBeNull();
+  // Row Delete and Make premium live in the actions menu; with neither to offer, the row has no menu.
+  expect(within(row).queryByRole("button", { name: "More actions for Alpha" })).toBeNull();
   expect(screen.queryByRole("checkbox", { name: "Select every item on this page" })).toBeNull();
   expect(screen.queryByRole("combobox", { name: "Access" })).toBeNull();
   expect(container.querySelector('[data-ckui="access-badge"]')).toBeNull();
@@ -177,7 +178,7 @@ it("visible-version players hide parent Delete in both the list and generic edit
   const s = server([item("a", "Alpha", { level: "public" })], { model: player });
   const list = render(<Route client={s.client} />);
   await screen.findByText("Alpha");
-  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "More actions for Alpha" })).toBeNull();
   list.unmount();
   render(<ContentEditor id="a" kind="gallery" client={s.client} />);
   await screen.findByRole("heading", { name: "Edit" });

@@ -219,6 +219,8 @@ export const admin = {
     makePremium: "Make premium",
     makeFree: "Make free",
     select: "Select {title}",
+    date: "Date",
+    moreActions: "More actions for {title}",
     selectPage: "Select every item on this page",
     selected: "{count} selected",
     clearSelection: "Clear selection",
