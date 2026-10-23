@@ -33,6 +33,7 @@ it("titles a draft from its file name and uploads into its first version", async
   expect(fileTitle("[Diogenes Club, Haikawa Hemlen] - NobaMei Correction.zip")).toBe("NobaMei Correction");
   expect(fileTitle("[Circle (Artist)] Title (Parody) [English] [Digital].zip")).toBe("Title (Parody)");
   expect(fileTitle("[Only Brackets].zip")).toBe("[Only Brackets]");
+  expect(fileTitle("[Circle [Artist] Group] Title.zip")).toBe("Title");
   const s = server(rules);
   const { ref } = await createDraft(s.client, "gallery", "en", new File(["z"], "Resort_Lover.zip"), "Untitled");
   expect(s.posts).toEqual([{ kind: "gallery", text: { en: { title: "Resort Lover" } } }]);

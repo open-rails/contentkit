@@ -8,7 +8,10 @@ const words = (s: string) => s.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim(
 /** A file name as a title: no extension or [bracketed] circle, artist and tag groups, separators as spaces. */
 export const fileTitle = (name: string) => {
   const stem = name.replace(/\.[^.]+$/, "");
-  return (words(stem.replace(/\[[^\]]*\]/g, " ")) || words(stem)).slice(0, 300);
+  let bare = stem;
+  // Innermost groups first, so nested brackets go too.
+  for (let prev = ""; prev !== bare; ) [prev, bare] = [bare, bare.replace(/\[[^[\]]*\]/g, " ")];
+  return (words(bare) || words(stem)).slice(0, 300);
 };
 
 /** A draft of kind titled from file, and the ref of its first version (uploads land there). */
