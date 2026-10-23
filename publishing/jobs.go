@@ -41,7 +41,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		if _, ok := cfg.Queues[versions.Queue]; !ok {
 			cfg.Queues[versions.Queue] = river.QueueConfig{MaxWorkers: 2}
 		}
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(reconcileInterval), func() (river.JobArgs, *river.InsertOpts) {
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, reconcileInterval, func() (river.JobArgs, *river.InsertOpts) {
 			return reconcileArgs{Tenant: s.o.Tenant}, &river.InsertOpts{Queue: versions.Queue, UniqueOpts: media.PendingOnce}
 		}, &river.PeriodicJobOpts{ID: "contentkit_publishing_reconcile:" + s.o.Tenant, RunOnStart: true}))
 		return nil

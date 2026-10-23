@@ -84,7 +84,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			}
 		}
 		periodic := func(id string, every time.Duration, args river.JobArgs, onStart bool) {
-			cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(every),
+			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, every,
 				func() (river.JobArgs, *river.InsertOpts) {
 					return args, &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3, UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: every}}
 				}, &river.PeriodicJobOpts{ID: id, RunOnStart: onStart}))

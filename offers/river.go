@@ -109,7 +109,7 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 		if err := river.AddWorkerSafely(cfg.Workers, &reconcileWorker{s: s}); err != nil {
 			return err
 		}
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(ReconcileInterval),
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, ReconcileInterval,
 			func() (river.JobArgs, *river.InsertOpts) {
 				return reconcileArgs{Tenant: s.tenant}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 3,
 					UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: ReconcileInterval}}

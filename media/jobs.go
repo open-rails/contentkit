@@ -147,21 +147,21 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			}
 		}
 		interval := j.cfg.CleanupInterval
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(interval),
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, interval,
 			func() (river.JobArgs, *river.InsertOpts) {
 				args := cleanupDueArgs{}
 				opts := args.InsertOpts()
 				opts.Queue, opts.MaxAttempts = j.cfg.Queue, 3
 				return args, &opts
 			}, &river.PeriodicJobOpts{ID: "contentkit_media_cleanup_due", RunOnStart: true}))
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(time.Minute),
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, time.Minute,
 			func() (river.JobArgs, *river.InsertOpts) {
 				return recoverArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, MaxAttempts: 3,
 					UniqueOpts: river.UniqueOpts{ByPeriod: time.Minute}}
 			}, &river.PeriodicJobOpts{ID: "contentkit_media_recover", RunOnStart: true}))
 		// The upgrade starts with the host and queues its own batches until
 		// done; the daily run retries failures and costs one read after.
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(24*time.Hour),
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, 24*time.Hour,
 			func() (river.JobArgs, *river.InsertOpts) {
 				return upgradeArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, UniqueOpts: PendingOnce}
 			}, &river.PeriodicJobOpts{ID: "contentkit_media_upgrade", RunOnStart: true}))
