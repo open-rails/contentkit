@@ -6,7 +6,11 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/open-rails/contentkit/internal/signaltest"
 )
 
 func TestAnonymizationPreservesReaderMetricsAndRejectsOldWrites(t *testing.T) {
@@ -59,6 +63,116 @@ func TestAnonymizationPreservesReaderMetricsAndRejectsOldWrites(t *testing.T) {
 	}
 	if n := countWhere(t, conn, "engagement_segments", "tenant=? AND subject_kind='user' AND subject=?", tenant, old.Key()); n != 0 {
 		t.Fatal("a removed account resumed writing")
+	}
+}
+
+type anonymousReplicaSwitch struct {
+	Conn
+	copySource Conn
+	copied     chan struct{}
+	once       sync.Once
+}
+
+func (c *anonymousReplicaSwitch) Exec(ctx context.Context, query string, args ...any) error {
+	if strings.HasPrefix(query, "INSERT INTO "+testDB+".engagement_segments (") && strings.Contains(query, " FINAL") {
+		c.once.Do(func() { close(c.copied) })
+		return c.copySource.Exec(ctx, query, args...)
+	}
+	return c.Conn.Exec(ctx, query, args...)
+}
+
+func TestAnonymousCopyWaitsForEveryReplicaBeforeSwitchingSource(t *testing.T) {
+	env := signaltest.FromEnv(t)
+	envB := env
+	envB.Addr = os.Getenv("CONTENTKIT_TEST_CH_ADDR2")
+	if envB.Addr == "" || env.Cluster == "" {
+		t.Skip("two replicas and CONTENTKIT_TEST_CH_CLUSTER are required")
+	}
+	stA, connA := freshStore(t)
+	connB := envB.Open(t, testDB)
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
+	defer cancel()
+	quorum, err := stA.erasureQuorum(ctx)
+	if err != nil || quorum != 2 {
+		t.Fatalf("expected two replicas: quorum=%d err=%v", quorum, err)
+	}
+	if err := connB.Exec(ctx, "SYSTEM STOP FETCHES "+testDB+".engagement_segments"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = connB.Exec(context.Background(), "SYSTEM START FETCHES "+testDB+".engagement_segments") })
+	old := Subject{UserID: "removed-reader"}
+	const tenant = "replica-switch"
+	if err := recordFixtureSignals(stA, ctx, tenant, []readingFixture{view(tenant, cid(1), old, 1, 10, 10, 10, 50, true)}); err != nil {
+		t.Fatal(err)
+	}
+	if n := countWhere(t, connB, "engagement_segments", "tenant=?", tenant); n != 0 {
+		t.Fatalf("replica B must be behind before copying: %d", n)
+	}
+	routed := &anonymousReplicaSwitch{Conn: connA, copySource: connB, copied: make(chan struct{})}
+	st, err := NewStore(routed, testDB, StoreOptions{Cluster: env.Cluster})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- st.AnonymizeSubject(ctx, tenant, old, Subject{AnonKey: "fresh-anonymous-reader"}) }()
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	for {
+		rows, err := connB.Query(ctx, `SELECT count() FROM system.processes WHERE query_kind='System' AND startsWith(query,'SYSTEM SYNC REPLICA') AND position(query,?)>0`, testDB+".engagement_segments")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var syncing uint64
+		if rows.Next() {
+			err = rows.Scan(&syncing)
+		}
+		rows.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if syncing > 0 {
+			break
+		}
+		select {
+		case <-routed.copied:
+			t.Fatal("copy reached stale B before cluster synchronization")
+		case err := <-done:
+			t.Fatalf("anonymization ended before blocked B synchronized: %v", err)
+		case <-deadline.C:
+			t.Fatal("cluster synchronization never reached replica B")
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	select {
+	case <-routed.copied:
+		t.Fatal("copy did not wait for B's stopped fetches")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := connB.Exec(ctx, "SYSTEM START FETCHES "+testDB+".engagement_segments"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case <-routed.copied:
+	default:
+		t.Fatal("copy never used replica B")
+	}
+	for _, conn := range []Conn{connA, connB} {
+		store, _ := NewStore(conn, testDB)
+		metrics := metricsByID(t, store, tenant, []string{cid(1)}, AllTime())[cid(1)]
+		if metrics.Readers != 1 || metrics.GuestReaders != 1 || metrics.UserReaders != 0 {
+			t.Fatalf("replica lost anonymized readership: %+v", metrics)
+		}
+		if n := countWhere(t, conn, "engagement_segments", "tenant=? AND subject_kind='user'", tenant); n != 0 {
+			t.Fatalf("old reader remains after completion: %d", n)
+		}
 	}
 }
 
