@@ -43,7 +43,7 @@ describe("groups against the real ContentKit", () => {
     const abaco = await create("series", `abaco-${r}`, [name("en", `Ábaco ${r}`)], under);
     const beta = await create("series", `beta-${r}`, [name("en", `Beta ${r}`)], under);
     const digits = await create("series", `3x3-${r}`, [name("en", `3x3 ${r}`)], under);
-    // Beta has two live contents, Alpha one: count order after the job runs.
+    // Beta has two live contents, Alpha one: count order is immediate without workers.
     for (const [g, n] of [[beta, 2], [alpha, 1]] as const) {
       for (let i = 0; i < n; i++) {
         const [c] = await seedContents(staff, [{ kind: "comic", titles: { en: `Member ${r} ${i}` }, versions: [{ languages: ["en"] }] }]);
