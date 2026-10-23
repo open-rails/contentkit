@@ -26,6 +26,7 @@ import (
 	"github.com/open-rails/helpers/deps"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Config configures one bucket.
@@ -166,6 +167,7 @@ func (s *Store) Put(ctx context.Context, key string, body io.Reader, size int64,
 	in.IfMatch = optional(o.IfMatch)
 	in.IfNoneMatch = optional(o.IfNoneMatch)
 	in.Metadata = o.Metadata
+	in.Tagging = temporaryTagging(key)
 	if o.ChecksumSHA256 != nil {
 		in.ChecksumSHA256 = aws.String(base64.StdEncoding.EncodeToString(o.ChecksumSHA256))
 	}
@@ -272,6 +274,10 @@ func (s *Store) copy(ctx context.Context, source, dst string, head media.Object,
 	typ := cmp.Or(contentType, head.ContentType)
 	if head.Size <= s.part {
 		in := &s3.CopyObjectInput{Bucket: &s.bucket, Key: &dst, CopySource: &source, CopySourceIfMatch: ifMatch}
+		// Temporary upload tags must never survive promotion to retained media.
+		// Select tags from the destination for both copy implementations.
+		in.TaggingDirective = types.TaggingDirectiveReplace
+		in.Tagging = temporaryTagging(dst)
 		if typ != head.ContentType {
 			// REPLACE drops whatever it is not given.
 			in.MetadataDirective, in.ContentType = types.MetadataDirectiveReplace, &typ
@@ -285,10 +291,14 @@ func (s *Store) copy(ctx context.Context, source, dst string, head media.Object,
 		if out.CopyObjectResult != nil {
 			etag = aws.ToString(out.CopyObjectResult.ETag)
 		}
+		if err := s.copyTags(ctx, dst); err != nil {
+			return media.Object{}, err
+		}
 		return media.Object{Key: dst, Size: head.Size, ETag: etag, ContentType: typ, CacheControl: head.CacheControl}, nil
 	}
 	up, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: &s.bucket, Key: &dst,
-		ContentType: optional(typ), CacheControl: optional(head.CacheControl), Metadata: head.Metadata})
+		ContentType: optional(typ), CacheControl: optional(head.CacheControl), Metadata: head.Metadata,
+		Tagging: temporaryTagging(dst)})
 	if err != nil {
 		return media.Object{}, mapErr("copy", dst, err)
 	}
@@ -315,7 +325,25 @@ func (s *Store) copy(ctx context.Context, source, dst string, head media.Object,
 	if err != nil {
 		return abort(mapErr("complete copy", dst, err))
 	}
+	if err := s.copyTags(ctx, dst); err != nil {
+		return media.Object{}, err
+	}
 	return media.Object{Key: dst, Size: head.Size, ETag: aws.ToString(out.ETag), ContentType: typ, CacheControl: head.CacheControl}, nil
+}
+
+// RGW can retain source tags despite CopyObject's REPLACE directive. Apply the
+// destination policy explicitly before acknowledging any copy, so a retained
+// file cannot inherit temporary expiry. Failed tagging leaves its allocation
+// pending for the caller's normal retry.
+func (s *Store) copyTags(ctx context.Context, key string) error {
+	var err error
+	if temporaryTagging(key) != nil {
+		_, err = s.client.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{Bucket: &s.bucket, Key: &key,
+			Tagging: &types.Tagging{TagSet: []types.Tag{{Key: aws.String("contentkit-temp"), Value: aws.String("true")}}}})
+	} else {
+		_, err = s.client.DeleteObjectTagging(ctx, &s3.DeleteObjectTaggingInput{Bucket: &s.bucket, Key: &key})
+	}
+	return mapErr("tag copy", key, err)
 }
 
 // PresignPut signs Content-Type, Content-Length and x-amz-checksum-sha256, so
@@ -327,6 +355,9 @@ func (s *Store) PresignPut(ctx context.Context, key string, p media.PresignPut) 
 	h := http.Header{}
 	h.Set("Content-Type", p.ContentType)
 	h.Set("X-Amz-Checksum-Sha256", base64.StdEncoding.EncodeToString(p.SHA256))
+	if tag := temporaryTagging(key); tag != nil {
+		h.Set("X-Amz-Tagging", *tag)
+	}
 	return s.presign(ctx, s.public, http.MethodPut, key, nil, h, p.Size, p.TTL)
 }
 
@@ -338,7 +369,7 @@ func (s *Store) PresignGet(ctx context.Context, key string, ttl time.Duration) (
 
 func (s *Store) CreateMultipart(ctx context.Context, key, contentType string) (string, error) {
 	out, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: &s.bucket, Key: &key,
-		ContentType: optional(contentType), ChecksumAlgorithm: types.ChecksumAlgorithmSha256})
+		ContentType: optional(contentType), ChecksumAlgorithm: types.ChecksumAlgorithmSha256, Tagging: temporaryTagging(key)})
 	if err != nil {
 		return "", mapErr("create multipart", key, err)
 	}
@@ -406,27 +437,61 @@ func (s *Store) AbortMultipart(ctx context.Context, key, uploadID string) error 
 	return mapErr("abort multipart", key, err)
 }
 
-// Configure applies the media bucket policy: versioning on, noncurrent
-// versions kept restoreDays, incomplete multipart uploads aborted after 1 day,
-// and unservable video work fragments expired after 7 days.
+// temporaryTagging marks only canonical temporary media objects. It does not
+// infer ownership or change keys; the tag enables expiry without bucket scans.
+func temporaryTagging(key string) *string {
+	parsed, ok := layout.Parse(key)
+	if !ok || parsed.Area != layout.AreaTemp {
+		return nil
+	}
+	return aws.String("contentkit-temp=true")
+}
+
+// Configure enables versioning, retains permanent noncurrent versions for
+// restoreDays, and expires temporary objects and incomplete uploads after seven
+// days. Temporary noncurrent versions have a one-day retention after replacement
+// or expiry. Other applications' lifecycle rules are preserved.
 func (s *Store) Configure(ctx context.Context, restoreDays int32) error {
 	if _, err := s.client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{Bucket: &s.bucket,
 		VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled}}); err != nil {
 		return fmt.Errorf("s3: enable versioning: %w", err)
 	}
-	_, err := s.client.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{Bucket: &s.bucket,
-		LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
-			ID:                             aws.String("contentkit-media"),
-			Status:                         types.ExpirationStatusEnabled,
-			Filter:                         &types.LifecycleRuleFilter{Prefix: aws.String("")},
-			NoncurrentVersionExpiration:    &types.NoncurrentVersionExpiration{NoncurrentDays: aws.Int32(restoreDays)},
-			AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: aws.Int32(1)},
-		}, {
-			ID:         aws.String("contentkit-video-work"),
-			Status:     types.ExpirationStatusEnabled,
-			Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("work/")},
-			Expiration: &types.LifecycleExpiration{Days: aws.Int32(7)},
-		}}}})
+	current, err := s.client.GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{Bucket: &s.bucket})
+	if err != nil {
+		var apiErr smithy.APIError
+		if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "NoSuchLifecycleConfiguration" {
+			return fmt.Errorf("s3: read lifecycle: %w", err)
+		}
+	}
+	var rules []types.LifecycleRule
+	if current != nil {
+		for _, rule := range current.Rules {
+			switch aws.ToString(rule.ID) {
+			case "contentkit-media", "contentkit-video-work", "contentkit-temp":
+			default:
+				rules = append(rules, rule)
+			}
+		}
+	}
+	rules = append(rules, []types.LifecycleRule{{
+		ID:                             aws.String("contentkit-media"),
+		Status:                         types.ExpirationStatusEnabled,
+		Filter:                         &types.LifecycleRuleFilter{Prefix: aws.String("")},
+		NoncurrentVersionExpiration:    &types.NoncurrentVersionExpiration{NoncurrentDays: aws.Int32(restoreDays)},
+		AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: aws.Int32(7)},
+	}, {
+		ID:         aws.String("contentkit-video-work"),
+		Status:     types.ExpirationStatusEnabled,
+		Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("work/")},
+		Expiration: &types.LifecycleExpiration{Days: aws.Int32(7)},
+	}, {
+		ID: aws.String("contentkit-temp"), Status: types.ExpirationStatusEnabled,
+		Filter:                      &types.LifecycleRuleFilter{Tag: &types.Tag{Key: aws.String("contentkit-temp"), Value: aws.String("true")}},
+		Expiration:                  &types.LifecycleExpiration{Days: aws.Int32(7)},
+		NoncurrentVersionExpiration: &types.NoncurrentVersionExpiration{NoncurrentDays: aws.Int32(1)},
+	}}...)
+	_, err = s.client.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{Bucket: &s.bucket,
+		LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: rules}})
 	if err != nil {
 		return fmt.Errorf("s3: put lifecycle: %w", err)
 	}

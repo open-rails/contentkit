@@ -392,7 +392,7 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 			prefix = aws.ToString(r.Filter.Prefix)
 		}
 		ok = ok || (prefix == "" && r.NoncurrentVersionExpiration != nil && aws.ToInt32(r.NoncurrentVersionExpiration.NoncurrentDays) >= 30)
-		abort = abort || (prefix == "" && r.AbortIncompleteMultipartUpload != nil && aws.ToInt32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation) == 1)
+		abort = abort || (prefix == "" && r.AbortIncompleteMultipartUpload != nil && aws.ToInt32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation) == 7)
 		var expiration, noncurrent, abortDays int32
 		if r.Expiration != nil {
 			expiration = aws.ToInt32(r.Expiration.Days)

@@ -96,8 +96,8 @@ type Capabilities struct {
 	ChecksumSHA256 bool // x-amz-checksum-sha256 enforced on PUT
 }
 
-// Store is the bucket. Keys are built by Item; implementations do not
-// interpret them.
+// Store is the bucket. Item builds keys and enforces ownership. A backend may
+// recognize canonical temporary keys solely to apply storage expiry policy.
 type Store interface {
 	Put(ctx context.Context, key string, body io.Reader, size int64, opts PutOptions) (Object, error)
 	Get(ctx context.Context, key string, opts GetOptions) (io.ReadCloser, Object, error)

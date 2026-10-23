@@ -40,7 +40,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 func (f *fixture) later() *media.Jobs {
 	f.t.Helper()
 	j, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(f.t, f.env.Store), Journal: f.journal,
-		Processes: f.q, Now: func() time.Time { return time.Now().Add(72 * time.Hour) }})
+		Processes: f.q, Now: func() time.Time { return time.Now().Add(10 * 24 * time.Hour) }})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -63,105 +63,27 @@ func (f *fixture) object(key, body string) {
 	}
 }
 
-// The sweep collects by manifest reference: unexpected public names at once
-// (purged), unreferenced blobs and temp/ once past their periods, nothing
-// the manifest keeps.
-func TestSweep(t *testing.T) {
-	f := newFixture(t)
-	f.visible(1)
-	g := f.gallery(1, 2)
-	item, _ := f.reg.Item(g)
-	ctx := context.Background()
-	old, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
-	f.put(g, "originals/000.png", "image/png", png(7)) // replaces page 0: its old blob is unreferenced
-	f.produce(g)
-	stray, _ := item.Blob(blobOf([]byte("stray")))
-	f.object(stray, "stray")
-	stale, _ := item.Public("cover-999.webp")
-	f.object(stale, "stale")
-	f.object(item.TempPrefix()+"u-1", "temp")
-	cover, _ := item.Public(f.publicName(g, "cover-230.webp"))
-
-	res, err := f.jobs.Sweep(ctx, g)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Wait <= 0 || !slices.Equal(res.Deleted, []string{stale}) || !f.exists(old) || !f.exists(cover) {
-		t.Fatalf("within grace: %+v", res)
-	}
-	if urls := f.purges(); len(urls) != 1 || !strings.HasSuffix(urls[0], "/public/cover-999.webp") || !strings.HasPrefix(urls[0], "https://"+mediaHost+"/v1/") {
-		t.Fatalf("purged %v", urls)
-	}
-	res, err = f.later().Sweep(ctx, g)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Wait != 0 || f.exists(old) || f.exists(stray) || f.exists(item.TempPrefix()+"u-1") || !f.exists(cover) {
-		t.Fatalf("past grace: %+v", res)
-	}
-	m, _, _ := f.ms.Get(ctx, g)
-	for _, b := range m.Blobs() {
-		if key, _ := item.Blob(b); !f.exists(key) {
-			t.Fatalf("swept referenced %s", key)
-		}
-	}
-	// Uploads never committed are swept once past the temp period; a staged
-	// upload the manifest references stays until placed.
-	other := f.ref("gallery", 2)
-	otherItem, _ := f.reg.Item(other)
-	p, committed := f.upload(other, "originals/1.png", "image/png", png(1))
-	_, abandoned := f.upload(other, "originals/2.png", "image/png", png(2))
-	if _, err := f.up.Commit(ctx, f.editor, other, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: committed}}); err != nil {
-		t.Fatal(err)
-	}
-	kept, _ := otherItem.Staged(committed)
-	gone, _ := otherItem.Staged(abandoned)
-	if _, err := f.later().Sweep(ctx, other); err != nil || f.exists(gone) || !f.exists(kept) {
-		t.Fatalf("staged uploads after the temp period: %v", err)
-	}
-}
-
-// The sweep deletes an unreferenced blob by the blob's own age, however
-// lately the item was edited (audit: an item edited daily was never swept);
-// a young one waits out its grace period.
-func TestSweepProgressesUnderEdits(t *testing.T) {
+// Replacements retire the old allocation as part of the edit, regardless of
+// its age. Neither the old grace period nor a later sweep is needed.
+func TestReplacementRetiresImmediately(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
 	g := f.gallery(1, 1)
 	item, _ := f.reg.Item(g)
-	ctx := context.Background()
-	const grace = 6 * time.Second
-	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.journal, Processes: f.q, Grace: grace})
+	old, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
+	f.put(g, "originals/000.png", "image/png", png(7))
+	f.produce(g)
+	if f.exists(old) {
+		t.Fatal("replaced source survived its manifest edit")
+	}
+	m, _, err := f.ms.Get(t.Context(), g)
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
-	time.Sleep(grace + time.Second)
-	f.put(g, "originals/000.png", "image/png", png(7)) // drops the old blob and edits the manifest just now
-	f.produce(g)
-	if res, err := jobs.Sweep(ctx, g); err != nil || f.exists(old) || !slices.Contains(res.Deleted, old) {
-		t.Fatalf("an old blob survived a fresh edit: %+v %v", res, err)
-	}
-	young, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
-	f.put(g, "originals/000.png", "image/png", png(8))
-	f.produce(g)
-	if res, err := jobs.Sweep(ctx, g); err != nil || !f.exists(young) || res.Wait <= 0 || res.Wait > grace+time.Second {
-		t.Fatalf("a young blob: %+v %v", res, err)
-	}
-	waitFor(t, "the young blob's sweep", func() bool {
-		res, err := jobs.Sweep(ctx, g)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return res.Wait == 0
-	})
-	if f.exists(young) {
-		t.Fatal("the young blob was never swept")
-	}
-	m, _, _ := f.ms.Get(ctx, g)
-	for _, b := range m.Blobs() {
-		if key, _ := item.Blob(b); !f.exists(key) {
-			t.Fatalf("swept referenced %s", key)
+	for _, blob := range m.Blobs() {
+		key, _ := item.Blob(blob)
+		if !f.exists(key) {
+			t.Fatalf("current source was retired: %s", key)
 		}
 	}
 }

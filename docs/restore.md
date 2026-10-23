@@ -30,8 +30,10 @@ means durable acceptance, not completion of downstream erasure.
 ## Media
 
 The media bucket is versioned with a 30-day noncurrent expiry
-(`s3.Store.Configure(ctx, 30)`), so sweeps and folder deletions stay
-recoverable for 30 days. To restore to time T:
+(`s3.Store.Configure(ctx, 30)`), so retired permanent files and folder deletions
+stay recoverable for 30 days. Temporary uploads and regeneratable caches have
+a separate seven-day expiration and one-day noncurrent retention; they are not
+durable originals. To restore to time T:
 
 1. Restore PostgreSQL to T (the steps above).
 2. Run `store.Restore(ctx, "{tenant}/", T)`: manifests return to their

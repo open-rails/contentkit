@@ -15,13 +15,6 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-// orphanGrace keeps any folder with an object newer than this out of the
-// orphan sweep, so an item allocated meanwhile is never taken for an orphan.
-const (
-	orphanSweepEvery = 24 * time.Hour
-	orphanGrace      = 7 * 24 * time.Hour
-)
-
 type forgetContentsArgs struct {
 	Contents []signal.ForgottenContent `json:"contents"`
 }
@@ -70,24 +63,6 @@ func (e *Engine) forgetPurged(ctx context.Context, events []catalog.Event) error
 	return err
 }
 
-type orphanSweepArgs struct{}
-
-func (orphanSweepArgs) Kind() string { return "contentkit_media_orphan_sweep" }
-
-// orphanSweepWorker deletes media folders of catalog kinds whose item and
-// version no longer exist, e.g. after a failed folder deletion.
-type orphanSweepWorker struct {
-	river.WorkerDefaults[orphanSweepArgs]
-	e *Engine
-}
-
-func (w *orphanSweepWorker) Timeout(*river.Job[orphanSweepArgs]) time.Duration { return 6 * time.Hour }
-
-func (w *orphanSweepWorker) Work(ctx context.Context, _ *river.Job[orphanSweepArgs]) error {
-	_, err := w.e.sweepOrphans(ctx)
-	return err
-}
-
 // sweepOrphans runs the media orphan sweep over every catalog kind with media.
 func (e *Engine) sweepOrphans(ctx context.Context) (int, error) {
 	if e.media == nil {
@@ -98,7 +73,7 @@ func (e *Engine) sweepOrphans(ctx context.Context) (int, error) {
 		if _, err := e.media.reg.Kind(kind); err != nil {
 			continue
 		}
-		report, err := e.media.jobs.SweepOrphans(ctx, media.OrphanSweep{Kind: kind, Exists: e.catalog.Existing, Grace: orphanGrace, Delete: true})
+		report, err := e.media.jobs.SweepOrphans(ctx, media.OrphanSweep{Kind: kind, Exists: e.catalog.Existing, Grace: 7 * 24 * time.Hour, Delete: true})
 		if err != nil {
 			return deleted, err
 		}

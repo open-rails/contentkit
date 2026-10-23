@@ -111,31 +111,20 @@ type cleanupListStore struct {
 	paused           atomic.Bool
 }
 
-func (s *cleanupListStore) List(ctx context.Context, prefix string) iter.Seq2[media.Object, error] {
-	return func(yield func(media.Object, error) bool) {
-		var objects []media.Object
-		for obj, err := range s.Store.List(ctx, prefix) {
-			if err != nil {
-				yield(obj, err)
-				return
+func (s *cleanupListStore) Get(ctx context.Context, key string, options media.GetOptions) (io.ReadCloser, media.Object, error) {
+	rc, obj, err := s.Store.Get(ctx, key, options)
+	if strings.HasPrefix(key, s.prefix) && s.paused.CompareAndSwap(false, true) {
+		close(s.selected)
+		select {
+		case <-s.resume:
+		case <-ctx.Done():
+			if rc != nil {
+				_ = rc.Close()
 			}
-			objects = append(objects, obj)
-		}
-		if strings.HasPrefix(prefix, s.prefix) && s.paused.CompareAndSwap(false, true) {
-			close(s.selected)
-			select {
-			case <-s.resume:
-			case <-ctx.Done():
-				yield(media.Object{}, ctx.Err())
-				return
-			}
-		}
-		for _, obj := range objects {
-			if !yield(obj, nil) {
-				return
-			}
+			return nil, media.Object{}, ctx.Err()
 		}
 	}
+	return rc, obj, err
 }
 
 // Cleanup retires ownership even when the bytes have not landed yet. A late

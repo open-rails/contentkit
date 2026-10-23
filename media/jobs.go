@@ -33,19 +33,14 @@ type JobsConfig struct {
 	// Pool is the host database Hooks.ItemReady's transaction runs on;
 	// required with ItemReady.
 	Pool *pgxpool.Pool
-	// Grace protects job outputs not recorded yet: the sweep deletes an
-	// unreferenced blob once it is this old, whatever edits follow. Default
-	// 24 h.
+	// Grace bounds unfinished, recorded private allocations. Default 24 h.
 	Grace time.Duration
-	// TempTTL is how long temp/ objects (in-flight server-side writes) are
-	// kept; above the bucket's 1-day abort-incomplete rule. Default 48 h.
-	TempTTL time.Duration
 	// CleanupInterval is the interval between bounded due-cleanup passes.
 	// Idle passes query PostgreSQL without listing the bucket. Default 24 h.
 	CleanupInterval time.Duration
 	// LateUploadWindow retains exact-key cleanup after folder deletion or
 	// allocation retirement, catching writes that land after the first pass;
-	// above the presign TTL and 1-day multipart rule. Default 25 h.
+	// at least the seven-day multipart lifetime plus one hour.
 	LateUploadWindow time.Duration
 	Limiter          *PGLimiter // optional; must share the journal's pool and schema
 	Queue            string     // default DefaultQueue
@@ -84,14 +79,11 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	if cfg.Grace <= 0 {
 		cfg.Grace = 24 * time.Hour
 	}
-	if cfg.TempTTL <= 0 {
-		cfg.TempTTL = 48 * time.Hour
-	}
 	if cfg.CleanupInterval <= 0 {
 		cfg.CleanupInterval = 24 * time.Hour
 	}
-	if cfg.LateUploadWindow <= 0 {
-		cfg.LateUploadWindow = 25 * time.Hour
+	if cfg.LateUploadWindow < minimumLateUploadWindow {
+		cfg.LateUploadWindow = minimumLateUploadWindow
 	}
 	if cfg.Queue == "" {
 		cfg.Queue = DefaultQueue
@@ -107,7 +99,7 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	}
 	j := &Jobs{cfg: cfg}
 	var err error
-	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, Journal: cfg.Journal, CleanupGrace: cfg.Grace}); err != nil {
+	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, Journal: cfg.Journal, CleanupGrace: cfg.Grace, LateUploadWindow: cfg.LateUploadWindow}); err != nil {
 		return nil, err
 	}
 	return j, nil

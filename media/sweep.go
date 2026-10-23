@@ -24,19 +24,8 @@ type SweepResult struct {
 	Wait    time.Duration
 }
 
-// Sweep collects garbage by manifest reference and allocation age:
-//   - private/ blobs the manifest does not reference, once the blob is
-//     older than the grace period (a job's outputs not recorded yet, editor
-//     views). Later edits never hold it back. A blob written long ago and
-//     dropped just now is old already, so a viewer mid-stream on a replaced
-//     file may lose it within the grace period;
-//   - public/ names no preset expects (a removed upload, a hidden item), at
-//     once, purged;
-//   - temp/ by age (JobsConfig.TempTTL), but for staged uploads the
-//     manifest references.
-//
-// Selection and retirement share a recoverable journal lease. A cleaner
-// that loses its folder lock cannot delete from a stale manifest snapshot.
+// Sweep retires expired allocations recorded before storage writes. Unknown
+// bucket objects are never discovered or deleted by this operation.
 func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResult, error) {
 	item, err := j.cfg.Registry.Item(ref)
 	if err != nil {
@@ -74,6 +63,9 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 	if err != nil {
 		return SweepResult{}, err
 	}
+	if err := j.expireStaged(ctx, item); err != nil {
+		return SweepResult{}, err
+	}
 	var result SweepResult
 	err = j.manifests.cleanup(ctx, item, false, func(m *Manifest, _ bool) (journalEffects, error) {
 		now := j.cfg.Now()
@@ -83,51 +75,22 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 			return journalEffects{}, err
 		}
 		var effects journalEffects
-		seen := map[string]bool{}
-		// An allocated upload can still be on its way to storage. Keep its
-		// cleanup obligation until the same grace that protects its writer.
+		// Only previously allocated keys are eligible. Unknown S3 objects are
+		// an integrity failure, never inputs to routine cleanup.
 		for key, until := range protected {
-			if parsed, ok := layout.Parse(key); ok && !keep[parsed.Area+"/"+parsed.Name] {
-				if left := until.Sub(now); left > 0 && (result.Wait == 0 || left < result.Wait) {
-					result.Wait = left + time.Second
-				}
-			}
-		}
-		for o, err := range j.cfg.Store.List(ctx, prefix) {
-			if err != nil {
-				return journalEffects{}, err
-			}
-			seen[o.Key] = true
-			k, ok := layout.Parse(o.Key)
-			if !ok || k.Folder() != prefix || k.Area == layout.AreaManifest || keep[k.Area+"/"+k.Name] {
+			parsed, ok := layout.Parse(key)
+			if !ok || keep[parsed.Area+"/"+parsed.Name] {
 				continue
 			}
-			switch k.Area {
-			case layout.AreaPublic:
-				effects.Public = append(effects.Public, o.Key)
-			case layout.AreaTemp:
-				if left := o.LastModified.Add(j.cfg.TempTTL).Sub(now); left <= 0 {
-					effects.Private = append(effects.Private, o.Key)
-				} else if result.Wait == 0 || left < result.Wait {
+			if left := until.Sub(now); left > 0 {
+				if result.Wait == 0 || left < result.Wait {
 					result.Wait = left + time.Second
 				}
-			case layout.AreaPrivate, layout.AreaDownload:
-				if until, ok := protected[o.Key]; ok && until.After(now) {
-					if left := until.Sub(now); result.Wait == 0 || left < result.Wait {
-						result.Wait = left + time.Second
-					}
-					continue
-				}
-				if left := o.LastModified.Add(j.cfg.Grace).Sub(now); left <= 0 {
-					effects.Private = append(effects.Private, o.Key)
-				} else if result.Wait == 0 || left < result.Wait {
-					result.Wait = left + time.Second
-				}
+				continue
 			}
-		}
-		for key, until := range protected {
-			k, ok := layout.Parse(key)
-			if ok && !seen[key] && !keep[k.Area+"/"+k.Name] && !until.After(now) {
+			if parsed.Area == layout.AreaPublic {
+				effects.Public = append(effects.Public, key)
+			} else {
 				effects.Private = append(effects.Private, key)
 			}
 		}
@@ -147,6 +110,48 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 		return SweepResult{}, err
 	}
 	return result, nil
+}
+
+// expireStaged drops unusable upload references at their known deadline.
+// A user must upload again after temporary storage expires.
+func (j *Jobs) expireStaged(ctx context.Context, item Item) error {
+	deadlines, err := j.manifests.allocationDeadlines(ctx, item, j.cfg.Grace)
+	if err != nil {
+		return err
+	}
+	needsExpiry := false
+	for key, deadline := range deadlines {
+		if strings.HasPrefix(key, item.TempPrefix()) && !deadline.After(j.cfg.Now()) {
+			needsExpiry = true
+			break
+		}
+	}
+	if !needsExpiry {
+		return nil
+	}
+	var expired []string
+	_, err = j.manifests.EditExisting(ctx, item.Ref(), func(m *Manifest) error {
+		m.Files = slices.DeleteFunc(m.Files, func(f File) bool {
+			if f.Staged == "" {
+				return false
+			}
+			key, err := item.Staged(f.Staged)
+			deadline, exists := deadlines[key]
+			if err == nil && exists && !deadline.After(j.cfg.Now()) {
+				expired = append(expired, f.Path)
+				return true
+			}
+			return false
+		})
+		return nil
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err == nil && len(expired) > 0 {
+		j.cfg.Logger.WarnContext(ctx, "media: temporary uploads expired; upload again", "ref", item.Ref(), "paths", expired)
+	}
+	return err
 }
 
 // keeps is what an item's manifest keeps, as "{area}/{name}": its blobs and

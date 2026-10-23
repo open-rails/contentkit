@@ -16,7 +16,7 @@ import (
 )
 
 const legacyCleanupWhere = `state NOT IN ('completed', 'cancelled', 'discarded') AND (
-kind IN ('contentkit_media_sweep', 'contentkit_media_sweep_pass') OR
+kind IN ('contentkit_media_sweep', 'contentkit_media_sweep_pass', 'contentkit_media_orphan_sweep') OR
 kind = 'contentkit_media_delete_folder')`
 
 type legacyCleanup struct {
@@ -38,7 +38,7 @@ func legacyCleanupTable(schema string) string {
 }
 
 func (job *legacyCleanup) owned(ctx context.Context, q folderQuerier, reg *Registry, journal *PGJournal) (bool, error) {
-	if job.kind == "contentkit_media_sweep_pass" {
+	if job.kind == "contentkit_media_sweep_pass" || job.kind == "contentkit_media_orphan_sweep" {
 		return true, nil
 	}
 	var args struct {

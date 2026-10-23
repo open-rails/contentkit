@@ -129,9 +129,17 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 // repeatDeletion never lists the folder again. A final late-upload pass can
 // safely run after reset because these physical names are permanently retired.
 func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUID) error {
+	unlock, err := j.cfg.Locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, _, err := j.manifests.recoverLocked(ctx, item); err != nil {
+		return err
+	}
 	var c manifestCommit
 	jr := j.cfg.Journal
-	err := pgx.BeginFunc(ctx, jr.pool, func(tx pgx.Tx) error {
+	err = pgx.BeginFunc(ctx, jr.pool, func(tx pgx.Tx) error {
 		var err error
 		c, err = jr.load(ctx, tx, item.Ref().TenantID, operation)
 		return err
@@ -142,7 +150,27 @@ func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUI
 	if !c.Ref.Equal(item.Ref()) || c.Folder != item.Prefix() || c.State != "applied" {
 		return ErrCommitPending
 	}
-	return j.manifests.finishCommit(ctx, item, c, true, nil)
+	current, _, err := j.manifests.get(ctx, item.ManifestKey())
+	if errors.Is(err, ErrNotFound) {
+		current = &Manifest{}
+	} else if err != nil {
+		return err
+	}
+	// Immutable allocations cannot be adopted after retirement. Public
+	// stable aliases can be reused, so recheck their current ownership while
+	// holding the same lease as a writer. Never replay a historical mirror.
+	kept := j.keeps(item, current)
+	c.Effects.Public = slices.DeleteFunc(slices.Clone(c.Effects.Public), func(key string) bool {
+		return kept[layout.AreaPublic+"/"+strings.TrimPrefix(key, item.PublicPrefix())]
+	})
+	for _, key := range c.Effects.Private {
+		parsed, ok := layout.Parse(key)
+		if ok && kept[parsed.Area+"/"+parsed.Name] {
+			return errors.New("media: retired allocation is still referenced")
+		}
+	}
+	c.Effects.Mirror = nil
+	return j.manifests.finishCommit(ctx, item, c, true, current)
 }
 
 func (j *Jobs) resetItem(ctx context.Context, item Item, deletion uuid.UUID) error {

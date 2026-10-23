@@ -300,6 +300,24 @@ func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.
 	return s.recordFacts(ctx, tx, k, v, m)
 }
 
+// beforeRetire serializes snapshot invalidation with publishers. A publisher
+// that already holds the version row finishes first and is then invalidated;
+// one that follows reads the newly committed manifest. No media lock is taken.
+func (s *Service) beforeRetire(ctx context.Context, ref contentref.ContentRef, current *media.Manifest) error {
+	k, err := s.reg.Kind(ref.ContentKind)
+	if err != nil || !k.Versions || ref.Version() == "" || k.Publish == nil {
+		return nil
+	}
+	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+		v := Target{Content: ref.ContentID, Version: ref.Version()}
+		if err := s.lockTarget(ctx, tx, v); err != nil {
+			return err
+		}
+		_, err := s.withdrawStaleTx(ctx, tx, k, v, current)
+		return err
+	})
+}
+
 // itemCommitted records a changed version's facts, withdraws its
 // publications at once when an edit removed or replaced what they show, and
 // queues its publication.

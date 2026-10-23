@@ -232,6 +232,8 @@ type siteOptions struct {
 	mediaGallery func(*media.Kind)
 	// reader adjusts delivery and URL-window limits before workers start.
 	reader func(*media.ReaderOptions)
+	// workerStore intercepts the standalone worker storage in protocol tests.
+	workerStore func(*site) media.Store
 }
 
 func newSite(t *testing.T, o siteOptions) *site {
@@ -328,7 +330,19 @@ func newSite(t *testing.T, o siteOptions) *site {
 		defer cancel()
 		_ = client.StopAndCancel(ctx)
 	})
-	w, err := worker.New(ctx, worker.Config{Pool: s.pool, Schema: workers, ContentSchema: s.schema, Store: env.Store, Kinds: s.reg,
+	// The stock worker receives plain registry data, not in-process service
+	// hooks. Its publication retirement barrier must be installed by New.
+	workerConfig := s.reg.Config()
+	workerConfig.Hooks = media.Hooks{}
+	workerRegistry, err := media.NewRegistry(workerConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workerStore media.Store = env.Store
+	if o.workerStore != nil {
+		workerStore = o.workerStore(s)
+	}
+	w, err := worker.New(ctx, worker.Config{Pool: s.pool, Schema: workers, ContentSchema: s.schema, Store: workerStore, Kinds: workerRegistry,
 		HostSchema: host, TempDir: t.TempDir(), Threads: 1, ImageWorkers: 1, VideoWorkers: 1})
 	if err != nil {
 		t.Fatal(err)

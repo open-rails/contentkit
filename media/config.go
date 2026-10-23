@@ -1,13 +1,12 @@
-// Package media stores app media as a self-describing file system in one
-// private bucket. The app declares everything in one registry at startup
-// (Config): its kinds, their uploads, the private files derived from them
-// and the public images at fixed names. ContentKit hard-codes no kinds, names
-// or layouts; it owns the mechanics: uploads, the worker's generic producers,
-// conditional manifest writes, the storage areas, the access rule, and
-// purge, sweep and erasure. No database table records what media exists.
+// Package media stores application media in a private bucket. A registry
+// declares media kinds, uploads, renditions and access. Each item has an
+// ordered manifest that is authoritative for retained source and derived files.
+// A database journal records conditional manifest writes, pending allocations
+// and exact retirement effects, including interrupted uploads and caches.
 //
-// An item is a folder, {namespace}/{kind}/{id}/ (see media/layout), with a
-// manifest.json: an ordered virtual file system over its private blobs.
+// Scoped roots are tenant/<tenant>/app/<app>/<kind>/<item>/; versioned
+// content uses the version as the physical item ID. Account media uses
+// tenant/<tenant>/account/. Legacy roots remain documented in media/layout.
 package media
 
 import (
@@ -336,6 +335,11 @@ type Hooks struct {
 	// through the host's media queue like ItemReady, which still reports the
 	// far end. Optional; idempotent; an error retries.
 	ItemProgressed func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error
+	// BeforeRetire is the catalog integration barrier. It runs after the
+	// manifest commits and before its removed objects are deleted, including
+	// recovery. It must invalidate references to those objects idempotently.
+	// The manifest lease is held: this callback must not mutate media.
+	BeforeRetire func(ctx context.Context, ref contentref.ContentRef, current *Manifest) error
 	// ItemCommitted reports an item a commit changed, before its processing
 	// runs; ItemReady reports the far end. Idempotent; an error fails the
 	// commit.

@@ -73,6 +73,9 @@ func New(c Config) (*Processor, error) {
 	if err := start(); err != nil {
 		return nil, fmt.Errorf("media/image: libvips: %w", err)
 	}
+	if c.Purge != nil && c.Manifests.Registry().Config().Hooks.PurgePublic == nil {
+		c.Manifests = c.Manifests.WithPublicPurge(c.Purge)
+	}
 	return &Processor{c: c, reg: c.Manifests.Registry()}, nil
 }
 

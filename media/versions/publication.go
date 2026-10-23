@@ -416,6 +416,10 @@ func sameBlob(a, b string) bool {
 // whether the pages snapshot was withdrawn.
 func (s *Service) withdrawStaleTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, m *media.Manifest) (bool, error) {
 	have := map[string]string{}
+	blobs := map[string]bool{}
+	for _, blob := range m.Blobs() {
+		blobs[blob] = true
+	}
 	for _, f := range m.Files {
 		if f.IsUpload() && !f.Unattached {
 			have[f.Path] = f.Key()
@@ -448,6 +452,9 @@ func (s *Service) withdrawStaleTx(ctx context.Context, tx pgx.Tx, k *media.Kind,
 			}
 			for _, pg := range snap.Pages {
 				gone = gone || have[pg.Path] != pg.Source
+				for _, file := range pg.Files {
+					gone = gone || !blobs[file.Blob]
+				}
 			}
 			pages = pages || gone
 		} else {
@@ -456,7 +463,7 @@ func (s *Service) withdrawStaleTx(ctx context.Context, tx pgx.Tx, k *media.Kind,
 				return false, err
 			}
 			for _, t := range snap.Tracks {
-				gone = gone || have[t.Upload] != t.Source
+				gone = gone || have[t.Upload] != t.Source || !blobs[t.File.Blob]
 			}
 		}
 		if gone {

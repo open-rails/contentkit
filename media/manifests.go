@@ -43,20 +43,24 @@ type ManifestOptions struct {
 	// (MaxManifestBytes) costs 24 MiB; default 128 MiB, at least two of them.
 	CacheBytes int64
 	MaxRetries int // conditional-write attempts per recovery fence; default 16
-	// CleanupGrace delays reference-aware cleanup after an edit or allocation.
-	// The deadline commits with the journal outcome; default 24 hours.
+	// CleanupGrace bounds unfinished private allocations; default 24 hours.
 	CleanupGrace time.Duration
+	// LateUploadWindow delays one repeat of exact retired keys to catch a
+	// write already in flight. Minimum seven days plus one hour.
+	LateUploadWindow time.Duration
 }
 
 // Manifests reads and edits item manifests.
 type Manifests struct {
-	store        Store
-	reg          *Registry
-	locker       Locker
-	journal      *PGJournal
-	cleanupGrace time.Duration
-	retries      int
-	cache        *manifestCache
+	store            Store
+	reg              *Registry
+	locker           Locker
+	journal          *PGJournal
+	cleanupGrace     time.Duration
+	lateUploadWindow time.Duration
+	retries          int
+	cache            *manifestCache
+	publicPurge      func(context.Context, []string) error
 }
 
 var ErrManifestConflict = errors.New("media: manifest edit kept conflicting")
@@ -93,8 +97,20 @@ func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, er
 	if o.CleanupGrace <= 0 {
 		o.CleanupGrace = 24 * time.Hour
 	}
-	return &Manifests{store: store, reg: reg, locker: o.Locker, journal: o.Journal, cleanupGrace: o.CleanupGrace, retries: o.MaxRetries,
+	if o.LateUploadWindow < minimumLateUploadWindow {
+		o.LateUploadWindow = minimumLateUploadWindow
+	}
+	return &Manifests{store: store, reg: reg, locker: o.Locker, journal: o.Journal, cleanupGrace: o.CleanupGrace, lateUploadWindow: o.LateUploadWindow, retries: o.MaxRetries,
 		cache: newManifestCache(o.CacheBytes)}, nil
+}
+
+// WithPublicPurge returns a writer that durably hands retired public keys to
+// a host relay. A failed relay keeps the exact commit pending for recovery.
+// The returned writer shares its thread-safe cache, journal and folder lock.
+func (m *Manifests) WithPublicPurge(purge func(context.Context, []string) error) *Manifests {
+	copy := *m
+	copy.publicPurge = purge
+	return &copy
 }
 
 // Registry is the registry the manifests are read under.
@@ -197,7 +213,8 @@ func (e *tooLargeError) Error() string {
 func (e *tooLargeError) Is(target error) bool { return target == ErrManifestTooLarge }
 
 // SyncPublic deletes the public names the manifest does not keep
-// (Kind.PublicKept). Cleanup is bounded to one minute. Selected keys are
+// (Kind.PublicKept), considering only recorded allocations. Unknown objects
+// require an explicit integrity audit. Cleanup is bounded to one minute. Selected keys are
 // returned for cache purging; failed deletes remain in the recovery journal.
 func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
@@ -209,12 +226,13 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 	var keys []string
 	err = m.cleanup(ctx, item, false, func(cur *Manifest, _ bool) (journalEffects, error) {
 		want := item.Kind().PublicKept(cur)
-		for obj, err := range m.store.List(ctx, item.PublicPrefix()) {
-			if err != nil {
-				return journalEffects{}, err
-			}
-			if !slices.Contains(want, strings.TrimPrefix(obj.Key, item.PublicPrefix())) {
-				keys = append(keys, obj.Key)
+		known, err := m.allocationKeys(ctx, item)
+		if err != nil {
+			return journalEffects{}, err
+		}
+		for _, key := range known {
+			if strings.HasPrefix(key, item.PublicPrefix()) && !slices.Contains(want, strings.TrimPrefix(key, item.PublicPrefix())) {
+				keys = append(keys, key)
 			}
 		}
 		return journalEffects{Public: keys}, nil
@@ -312,16 +330,7 @@ func (m *Manifests) unreferenced(ctx context.Context, item Item, cur *Manifest, 
 			key, _ := item.Blob(b)
 			keep[key] = true
 		}
-		for _, prefix := range []string{item.PrivatePrefix(), item.DownloadPrefix()} {
-			for obj, err := range m.store.List(ctx, prefix) {
-				if err != nil {
-					return nil, err
-				}
-				if !keep[obj.Key] {
-					keys = append(keys, obj.Key)
-				}
-			}
-		}
+
 		allocated, err := m.allocationKeys(ctx, item)
 		if err != nil {
 			return nil, err
@@ -493,6 +502,29 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 		}
 	}
 	next.cleanup = nil
+	// The committed manifests, not a bucket listing, determine retirement.
+	// Shared allocations stay live while any current file still names them.
+	for _, blob := range missing(cur.Blobs(), next.Blobs()) {
+		key, _ := item.Blob(blob)
+		mutation.effects.Private = append(mutation.effects.Private, key)
+	}
+	for _, name := range missing(cur.StagedNames(), next.StagedNames()) {
+		key, _ := item.Staged(name)
+		mutation.effects.Private = append(mutation.effects.Private, key)
+	}
+	for _, name := range missing(item.Kind().PublicKept(cur), item.Kind().PublicKept(next)) {
+		mutation.effects.Public = append(mutation.effects.Public, item.PublicPrefix()+name)
+	}
+	slices.Sort(mutation.effects.Private)
+	mutation.effects.Private = slices.Compact(mutation.effects.Private)
+	if len(mutation.effects.Private) > 0 && mutation.effects.CleanupAt.IsZero() {
+		// Repeat only these retired names once after an already-issued PUT
+		// could finish. This is not object discovery or a deferred removal.
+		mutation.effects.CleanupAt = time.Now().Add(m.lateUploadWindow)
+		mutation.effects.CleanupDelete = true
+	}
+	slices.Sort(mutation.effects.Public)
+	mutation.effects.Public = slices.Compact(mutation.effects.Public)
 	mutation.effects.Mirror = item.kind.mirrors(item, cur, next)
 	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.Incarnation == cur.Incarnation && next.Deleted == cur.Deleted && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
 		return cur, false, nil
@@ -522,9 +554,6 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	mutation.commit.ETag = etag
 	if mutation.effects.Process != nil && next.Full && !publicPending(item.Kind(), next) {
 		mutation.effects.Process = nil
-	}
-	if mutation.effects.CleanupAt.IsZero() {
-		mutation.effects.CleanupAt = time.Now().Add(m.cleanupGrace)
 	}
 	if err := m.journal.prepare(ctx, &mutation.commit, mutation.effects, mutation.quota); err != nil {
 		return nil, false, err
@@ -744,6 +773,21 @@ func (m *Manifests) fenceUnreadable(ctx context.Context, item Item) error {
 func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifestCommit, applied bool, current *Manifest) error {
 	proj := projectionOf(item, current)
 	if applied {
+		if hook := m.reg.cfg.Hooks.BeforeRetire; hook != nil && (len(commit.Effects.Public) > 0 || len(commit.Effects.Private) > 0) {
+			if current == nil {
+				var err error
+				current, _, err = m.get(ctx, item.ManifestKey())
+				if err != nil && !errors.Is(err, ErrNotFound) {
+					return err
+				}
+				if current == nil {
+					current = &Manifest{}
+				}
+			}
+			if err := beforeRetire(ctx, hook, item.Ref(), current); err != nil {
+				return err
+			}
+		}
 		if len(commit.Effects.Public) > 0 {
 			// Readers leave the retired files before they are deleted.
 			if err := m.journal.project(ctx, proj); err != nil {
@@ -774,7 +818,11 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 		if err := g.Wait(); err != nil {
 			return fmt.Errorf("media: commit cleanup: %w", err)
 		}
-		if purge := m.reg.cfg.Hooks.PurgePublic; purge != nil && len(purged) > 0 {
+		if m.publicPurge != nil && len(purged) > 0 {
+			if err := m.publicPurge(ctx, purged); err != nil {
+				return fmt.Errorf("media: public purge relay: %w", err)
+			}
+		} else if purge := m.reg.cfg.Hooks.PurgePublic; purge != nil && len(purged) > 0 {
 			urls := make([]string, len(purged))
 			for i, key := range purged {
 				urls[i] = strings.TrimRight(m.reg.cfg.BaseURL, "/") + layout.URLPrefix + key
@@ -783,6 +831,16 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 		}
 	}
 	return m.journal.finish(ctx, commit, applied, proj)
+}
+
+// A failed integration leaves the journal pending and every source intact.
+func beforeRetire(ctx context.Context, hook func(context.Context, contentref.ContentRef, *Manifest) error, ref contentref.ContentRef, current *Manifest) (err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			err = fmt.Errorf("media: before retirement panic: %v", value)
+		}
+	}()
+	return hook(ctx, ref, current)
 }
 
 // RecoverPending scans the journal, including writes that never created an S3

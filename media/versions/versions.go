@@ -132,7 +132,7 @@ func New(o Options) (*Service, error) {
 // media.Config.Hooks (with the host's PurgePublic) before building the
 // registry.
 func (s *Service) Hooks() media.Hooks {
-	return media.Hooks{Resolver: resolver{s}, CanUpload: uploads{s}, ItemReady: s.itemReady, ItemProgressed: s.itemProgressed, ItemCommitted: s.itemCommitted, Failed: s.failed}
+	return media.Hooks{Resolver: resolver{s}, CanUpload: uploads{s}, ItemReady: s.itemReady, ItemProgressed: s.itemProgressed, ItemCommitted: s.itemCommitted, BeforeRetire: s.beforeRetire, Failed: s.failed}
 }
 
 // Bind attaches the media runtime built over Hooks.

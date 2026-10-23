@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"iter"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -96,7 +98,7 @@ func TestCleanupDueRetainsYoungTempAndAllocations(t *testing.T) {
 		t.Fatal("expired upload survived or its bounded late-upload pass was lost")
 	}
 	last, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.journal,
-		Now: func() time.Time { return time.Now().Add(120 * time.Hour) }})
+		Now: func() time.Time { return time.Now().Add(20 * 24 * time.Hour) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +133,11 @@ func TestCleanupDueIsBoundedAndIdleDoesNotListStorage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, ref := range refs {
+		if err := f.jobs.ScheduleSweep(t.Context(), ref); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cleanupDueNow(t, f, refs...)
 	if n, err := jobs.CleanupDue(t.Context(), 1); err != nil || n != 1 {
 		t.Fatalf("bounded cleanup: %d %v", n, err)
@@ -138,6 +145,16 @@ func TestCleanupDueIsBoundedAndIdleDoesNotListStorage(t *testing.T) {
 	if got := cleanupCount(t, f, refs[0]) + cleanupCount(t, f, refs[1]); got != 1 {
 		t.Fatalf("cleanup limit left %d records, want one", got)
 	}
+}
+
+func (s dueCleanupListStore) Get(ctx context.Context, key string, opts media.GetOptions) (io.ReadCloser, media.Object, error) {
+	if s.before != nil {
+		s.before(key)
+	}
+	if s.fail != "" && strings.HasPrefix(key, s.fail) {
+		return nil, media.Object{}, errors.New("injected folder read failure")
+	}
+	return s.Store.Get(ctx, key, opts)
 }
 
 func (s dueCleanupListStore) List(ctx context.Context, prefix string) iter.Seq2[media.Object, error] {
@@ -160,10 +177,15 @@ func TestCleanupDueKeepsConcurrentRequestAndIsolatesFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, ref := range []contentref.ContentRef{one, two} {
+		if err := f.jobs.ScheduleSweep(t.Context(), ref); err != nil {
+			t.Fatal(err)
+		}
+	}
 	first, _ := f.reg.Item(one)
 	var once sync.Once
 	store := dueCleanupListStore{Store: f.env.Store, fail: first.Prefix(), before: func(prefix string) {
-		if prefix != first.Prefix() {
+		if !strings.HasPrefix(prefix, first.Prefix()) {
 			once.Do(func() {
 				if err := f.jobs.ScheduleSweep(t.Context(), two); err != nil {
 					t.Error(err)
@@ -215,6 +237,9 @@ func TestCleanupAcknowledgmentCannotEraseRecreatedRow(t *testing.T) {
 	if _, err := f.ms.Edit(t.Context(), ref, func(m *media.Manifest) error { m.Meta = map[string]any{"title": "first"}; return nil }); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.jobs.ScheduleSweep(t.Context(), ref); err != nil {
+		t.Fatal(err)
+	}
 	cleanupDueNow(t, f, ref)
 	gate := &gatedCleanupLocker{Locker: s3test.Locker(t, f.env.Store), entered: make(chan struct{}), resume: make(chan struct{})}
 	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: gate, Journal: f.journal})
@@ -236,6 +261,9 @@ func TestCleanupAcknowledgmentCannotEraseRecreatedRow(t *testing.T) {
 		t.Fatalf("first cleaner did not finish: %v", err)
 	}
 	if _, err := f.ms.Edit(ctx, ref, func(m *media.Manifest) error { m.Meta["title"] = "new request"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.jobs.ScheduleSweep(ctx, ref); err != nil {
 		t.Fatal(err)
 	}
 	close(gate.resume)
@@ -311,12 +339,13 @@ func TestCleanupMigrationPreservesDeadlinesAndRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	var operation uuid.UUID
-	if err := pool.QueryRow(t.Context(), "SELECT deletion_operations[1] FROM "+cleanupTable(f)+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&operation); err != nil {
+	if err := pool.QueryRow(t.Context(), "SELECT operation_id FROM "+pgx.Identifier{f.env.ContentSchema(), "content_media_commits"}.Sanitize()+" WHERE tenant_id=$1 AND folder_prefix=$2 AND effects->>'deletion'='true' ORDER BY created_at DESC LIMIT 1", ref.TenantID, item.Prefix()).Scan(&operation); err != nil {
 		t.Fatal(err)
 	}
 	insert("contentkit_media_sweep", map[string]any{"prefix": item.Prefix()}, before)
 	final := insert("contentkit_media_delete_folder", map[string]any{"prefix": item.Prefix(), "final": true, "operation": operation.String()}, after)
 	insert("contentkit_media_sweep_pass", map[string]any{}, before)
+	orphan := insert("contentkit_media_orphan_sweep", map[string]any{}, before)
 	immediate := insert("contentkit_media_delete_folder", map[string]any{"prefix": item.Prefix(), "incarnation": uuid.NewString()}, before)
 	foreign := insert("contentkit_media_sweep", map[string]any{"prefix": "another-app/gallery/" + cid(1) + "/"}, before)
 	if _, err := pool.Exec(t.Context(), "UPDATE "+cleanupTable(f)+" SET due_at='infinity' WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()); err != nil {
@@ -363,10 +392,13 @@ func TestCleanupMigrationPreservesDeadlinesAndRollsBack(t *testing.T) {
 	if err := pool.QueryRow(t.Context(), "SELECT due_at,deletion_operations FROM "+cleanupTable(f)+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&due, &operations); err != nil {
 		t.Fatal(err)
 	}
-	if due.Before(after) || len(operations) != 1 || operations[0] != operation {
+	if due.Before(after) || !slices.Contains(operations, operation) {
 		t.Fatalf("lost deadline/targets: %s %v", due, operations)
 	}
 	var state string
+	if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE id=$1", orphan).Scan(&state); err != nil || state != "cancelled" {
+		t.Fatalf("obsolete orphan crawler was not cancelled: %s %v", state, err)
+	}
 	if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE id=$1", immediate).Scan(&state); err != nil || state != "scheduled" {
 		t.Fatalf("immediate deletion was changed: %s %v", state, err)
 	}
@@ -390,13 +422,13 @@ func TestCleanupMigrationPreservesDeadlinesAndRollsBack(t *testing.T) {
 	}
 }
 
-func TestCleanupBootstrapPreservesConfiguredPublicGrace(t *testing.T) {
+func TestCleanupBootstrapPreservesConfiguredAllocationGrace(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
-	ref := f.gallery(1, 1)
+	ref := f.ref("gallery", 1)
+	allocation := f.blob(ref, []byte("unfinished private output"), "image/png")
 	item, _ := f.reg.Item(ref)
-	public, _ := item.Public("retired-young.webp")
-	f.object(public, "young public image")
+	public, _ := item.Blob(allocation)
 	pool := f.env.Pool()
 	if _, err := pool.Exec(t.Context(), "UPDATE "+cleanupTable(f)+" SET due_at='infinity' WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()); err != nil {
 		t.Fatal(err)
@@ -419,11 +451,11 @@ func TestCleanupBootstrapPreservesConfiguredPublicGrace(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n, err := jobs.CleanupDue(t.Context(), 10); n != 0 || err != nil || !f.exists(public) {
-		t.Fatalf("bootstrap shortened custom public grace: %d %v", n, err)
+		t.Fatalf("bootstrap shortened custom allocation grace: %d %v", n, err)
 	}
 	clock = time.Now().Add(49 * time.Hour)
 	if n, err := jobs.CleanupDue(t.Context(), 10); n != 1 || err != nil || f.exists(public) {
-		t.Fatalf("bootstrap never collected expired public image: %d %v", n, err)
+		t.Fatalf("bootstrap never collected expired allocated output: %d %v", n, err)
 	}
 }
 
@@ -455,6 +487,9 @@ func TestCleanupUsesAccountJournalRoute(t *testing.T) {
 		m.Meta = map[string]any{"account": true}
 		return nil
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := jobs.ScheduleSweep(t.Context(), ref); err != nil {
 		t.Fatal(err)
 	}
 	item, _ := f.reg.Item(ref)

@@ -513,8 +513,9 @@ oversized transfers stream without caching; they never wait for another builder.
 The full
 SHA-256 cache key covers the ordered blobs, output extensions, types and archive
 recipe; reorder, exclusion, replacement and output-policy changes select a new
-key. Cached objects stay under the version's never-public `temp/` folder and
-expire with `JobsConfig.TempTTL` (48 hours by default). Each transfer, including
+key plus a seven-day time bucket. Before writing a cache, the allocation ledger
+records its exact key. Cached objects stay under the version's never-public
+`temp/` folder and expire after seven days. Each transfer, including
 a cache hit, repeats current visibility, access, chapter-release and host-policy
 checks, and refuses stale tickets or a draft source order that differs from its
 frozen publication. Personalized watermarked archives are generated fresh with
@@ -592,16 +593,31 @@ fail with `video_aspect_unsupported`. An `MP4` preset muxes H.264 at one rung wi
 request by the read API. Encode progress comes from
 `workqueue.NewProgressSource` (`ReaderOptions.Progress`).
 
-**Cleanup**: each catalog/account schema stores one `content_media_cleanup`
-record per storage prefix. Manifest edits and upload allocations record the
-deadline in their journal transaction. One daily `contentkit_media_cleanup_due`
-job processes bounded batches; idle runs do not scan the bucket. Cleanup keeps
-current manifest references, honors private/download grace and `temp/` age,
-and retains a future deadline when a file is still too young. Retiring an absent
-allocation also retains a bounded exact-key pass for a late upload. Deletion replaces
-an overlapping sweep and retains every exact late-upload target, including
-across restore. Failures remain due for the next pass without blocking other
-prefixes. A prefix is a media item or version's folder, not necessarily a gallery.
+**Cleanup**: a manifest edit records the exact source, rendition, staging and
+public keys it removes in its durable journal. After the conditional manifest
+write commits, it withdraws stale published snapshots and deletes those keys.
+Shared references and retained originals remain intact. Failed deletes leave
+the operation pending for recovery; reordering alone never deletes files.
+
+Each catalog/account schema also stores one `content_media_cleanup` record per
+storage prefix. One daily `contentkit_media_cleanup_due` job processes bounded
+batches of recorded allocation and deletion deadlines. It does not list the
+bucket to discover unreferenced objects. A bounded retry of exact retired keys
+catches writes authorized before retirement. Unknown objects are an integrity
+error to investigate, not routine garbage. A prefix is a media item or version's
+folder, not necessarily a gallery.
+
+Completed temporary uploads and optional ZIP caches expire after seven days;
+unfinished uploads past that deadline must restart. The S3 adapter tags only
+canonical temporary keys and clears that tag when copying to permanent media.
+Copies apply destination tags explicitly before succeeding, including on RGW
+where the copy request's replacement directive alone does not clear source tags.
+Worker credentials need `s3:PutObjectTagging` and `s3:DeleteObjectTagging`.
+`s3.Store.Configure` preserves other applications' lifecycle rules and configures
+seven-day temp expiration and incomplete-multipart abort. Temporary noncurrent
+versions expire after one day; permanent noncurrent versions retain the host's
+configured restore window. Lifecycle execution is asynchronous. Backends that
+do not implement multipart-abort lifecycle rules need equivalent server settings.
 
 The immediate `contentkit_media_delete_folder` job still performs storage I/O
 and releases quota after a host deletion commits. Its late-upload pass is a
@@ -614,7 +630,8 @@ migration atomically transfers pending sweep/final-deletion timers and cancels
 them; running old cleanup jobs block migration. Read-only startup rejects
 unmigrated timers. Standalone media hosts call `media.MigrateCleanup` with their
 registry, routed journal and River schema. `SweepAll` and `SweepOrphans` remain
-explicit repair tools, rather than periodic bucket-wide work.
+explicit repair tools, rather than periodic bucket-wide work. Neither is
+registered as a recurring orphan-discovery job.
 
 Moving an existing nested version layout to the flat version-owned layout also
 requires the explicit object-store phase, after PostgreSQL migrations and with

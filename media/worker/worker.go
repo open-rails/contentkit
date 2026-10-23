@@ -32,6 +32,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
@@ -53,8 +54,8 @@ type Config struct {
 	// Empty keeps the long-running all-queue worker.
 	Queue string
 	Store media.Store
-	// Kinds is the host's registry. Only Hooks.Failed runs here; ItemReady
-	// and PurgePublic run in the host through its media queue.
+	// Kinds is the host's registry. Failed and the catalog retirement barrier
+	// run here; ItemReady and PurgePublic run through the host media queue.
 	Kinds *media.Registry
 	// HostSchema and HostQueue are the host's River schema ("" is the
 	// connection's search path) and media queue (default media.DefaultQueue):
@@ -209,10 +210,19 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := media.ValidateVersionStorageMigration(ctx, c.Kinds, journal); err != nil {
 		return nil, fmt.Errorf("media/worker: version storage migration required: %w", err)
 	}
+	// A stock worker can replace published renditions too. Install the same
+	// synchronous catalog barrier as embedded writers before any DELETE.
+	registryConfig := c.Kinds.Config()
+	registryConfig.Hooks.BeforeRetire = versions.RetirementBarrier(c.Pool, c.ContentSchema, c.Kinds)
+	c.Kinds, err = media.NewRegistry(registryConfig)
+	if err != nil {
+		return nil, err
+	}
 	manifests, err := media.NewManifests(c.Store, c.Kinds, media.ManifestOptions{Locker: media.PGLocker(c.Pool), Journal: journal, CleanupGrace: c.Grace})
 	if err != nil {
 		return nil, err
 	}
+	manifests = manifests.WithPublicPurge(host.Purge)
 	var observeEncode func(video.EncodeObservation)
 	if c.Metrics != nil {
 		observeEncode = c.Metrics.ObserveEncode

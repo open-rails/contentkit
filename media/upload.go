@@ -43,8 +43,8 @@ type UploadOptions struct {
 	// PresignTTL bounds PUT and part URLs; default 15m. TicketTTL bounds a
 	// multipart ticket; default 24h, the bucket's abort-incomplete rule.
 	PresignTTL, TicketTTL time.Duration
-	// Grace is the sweep's (JobsConfig.Grace): an existing blob is reused
-	// only while the sweep cannot take it first. Default 24h.
+	// Grace bounds the commit deadline below the lifetime of unfinished
+	// private allocations (JobsConfig.Grace). Default 24h.
 	Grace time.Duration
 	// Frames serves the frame picker (media/video.Frames); nil answers
 	// not_found. FrameConcurrency bounds grabs per process; default 2.
@@ -88,6 +88,9 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	}
 	if o.TicketTTL <= 0 {
 		o.TicketTTL = 24 * time.Hour
+	}
+	if o.PresignTTL > TemporaryRetention || o.TicketTTL > TemporaryRetention {
+		return nil, errors.New("media: upload capabilities cannot outlive seven-day temporary storage")
 	}
 	if o.Grace <= 0 {
 		o.Grace = 24 * time.Hour
@@ -597,20 +600,7 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 				}
 			}
 		}
-		unkept := len(missing(item.Kind().PublicKept(prior), item.Kind().PublicKept(m))) > 0
-		if unkept || slices.ContainsFunc(ops, func(op Op) bool {
-			return op.Op == OpRemove && (len(item.Kind().PublicFor(op.Path)) > 0 || op.Takedown)
-		}) {
-			kept := item.Kind().PublicKept(m)
-			for obj, err := range u.o.Store.List(editCtx, item.PublicPrefix()) {
-				if err != nil {
-					return err
-				}
-				if !slices.Contains(kept, strings.TrimPrefix(obj.Key, item.PublicPrefix())) {
-					mutation.effects.Public = append(mutation.effects.Public, obj.Key)
-				}
-			}
-		}
+
 		if slices.ContainsFunc(ops, func(op Op) bool { return op.Takedown }) {
 			drop := Unreferenced{All: grant.Exempt, Staged: missing(prior.StagedNames(), m.StagedNames())}
 			if !drop.All {

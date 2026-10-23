@@ -480,7 +480,14 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version)
 		a.names = append(a.names, path.Base(f.Path))
 	}
 	if len(marked) == 0 {
-		a.cache = item.TempPrefix() + "zip-cache-" + revision
+		// Buckets bound reuse to seven days without refreshing old cache age.
+		bucket := s.o.Now().Unix() / int64(media.TemporaryRetention/time.Second)
+		name := fmt.Sprintf("zip-cache-%s-%d", revision, bucket)
+		if err := s.m.Manifests.ReserveTemporary(ctx, item.Ref(), name); err == nil {
+			a.cache = item.TempPrefix() + name
+		} else {
+			s.o.Logger.WarnContext(ctx, "versions: archive cache reservation failed", "version", t.Version, "error", err)
+		}
 	}
 	if _, err := s.m.Manifests.Store().Head(ctx, a.keys[0]); err != nil {
 		return nil, err

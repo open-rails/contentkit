@@ -53,7 +53,8 @@ var archiveSpoolBudget = make(chan struct{}, 1)
 // stream independently, publishing the same deterministic bytes with an atomic
 // create-only PUT. A failed/cancelled caller neither publishes partial output
 // nor cancels another caller's transfer. temp/ is never opened by media tokens
-// or gateway URLs, and the ordinary sweep expires these entries by TempTTL.
+// or gateway URLs. Exact-key allocation expiry and bucket lifecycle bound
+// their lifetime; cache keys are registered before any storage write.
 func streamCachedArchive(ctx context.Context, store media.Store, cache string, keys, names []string, dst io.Writer) (int64, error, error) {
 	return streamArchive(ctx, store, cache, keys, names, dst, archiveSpoolBudget, archiveSpoolMaxBytes)
 }

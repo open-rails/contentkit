@@ -84,7 +84,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &groupsWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &forgetContentsWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &orphanSweepWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -100,9 +99,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		periodic("contentkit_groups_recount", recountEvery, groupsArgs{}, true)
 		periodic("contentkit_groups_windows", windowsEvery, groupsArgs{Windows: true}, true)
 		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{}, false)
-		if e.media != nil {
-			periodic("contentkit_media_orphan_sweep", orphanSweepEvery, orphanSweepArgs{}, false)
-		}
 		if e.classifier {
 			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{}, false)
 		}

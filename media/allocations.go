@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,42 @@ import (
 // ErrAllocationRetired means a producer must write a new physical allocation
 // rather than adopt an object already selected for cleanup.
 var ErrAllocationRetired = errors.New("media: file allocation is missing or retired")
+
+// TemporaryRetention is the maximum lifetime of an unfinished upload or
+// optional cache. Permanent media must never depend on temp storage.
+const TemporaryRetention = 7 * 24 * time.Hour
+const minimumLateUploadWindow = TemporaryRetention + time.Hour
+
+// ReserveTemporary accounts for an optional temporary object before its PUT.
+// Reusing the same live key is safe; retired names can never be resurrected.
+func (m *Manifests) ReserveTemporary(ctx context.Context, ref contentref.ContentRef, name string) error {
+	if !layout.ValidSegment(name) {
+		return errors.New("media: invalid temporary object name")
+	}
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	key := item.TempPrefix() + name
+	return m.cleanup(ctx, item, false, func(cur *Manifest, exists bool) (journalEffects, error) {
+		if !exists || cur.Deleted {
+			return journalEffects{}, ErrNotFound
+		}
+		j := m.journal.forTenant(ref.TenantID)
+		var present, live bool
+		err := j.pool.QueryRow(ctx, `SELECT count(*) > 0, coalesce(bool_and(retired_at IS NULL AND incarnation = $4 AND created_at > now() - interval '7 days'),false) FROM `+j.allocations+` WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=$3`, ref.TenantID, item.Prefix(), key, cur.Incarnation).Scan(&present, &live)
+		if err != nil {
+			return journalEffects{}, err
+		}
+		if present {
+			if !live {
+				return journalEffects{}, ErrAllocationRetired
+			}
+			return journalEffects{}, nil
+		}
+		return journalEffects{Allocate: []string{key}, Incarnation: cur.Incarnation}, nil
+	})
+}
 
 // NewBlobs records ownership, in one journal step, before a writer sends
 // bytes to fresh allocations in area (private/ or download/, Kind.Area): one
@@ -87,8 +124,9 @@ func (m *Manifests) checkAllocationsIn(ctx context.Context, item Item, keys []st
 	err := journal.pool.QueryRow(ctx, `SELECT NOT EXISTS (
 SELECT 1 FROM unnest($3::text[]) AS requested(key)
 WHERE NOT EXISTS (SELECT 1 FROM `+journal.allocations+` a
-WHERE a.tenant_id = $1 AND a.folder_prefix = $2 AND a.object_key = requested.key AND a.incarnation = $4 AND a.retired_at IS NULL))`,
-		item.Ref().TenantID, item.Prefix(), keys, incarnation).Scan(&live)
+WHERE a.tenant_id = $1 AND a.folder_prefix = $2 AND a.object_key = requested.key AND a.incarnation = $4 AND a.retired_at IS NULL
+AND (NOT starts_with(a.object_key, $5) OR a.created_at > now() - interval '7 days')))`,
+		item.Ref().TenantID, item.Prefix(), keys, incarnation, item.TempPrefix()).Scan(&live)
 	if err != nil {
 		return err
 	}
@@ -149,7 +187,11 @@ WHERE tenant_id = $1 AND folder_prefix = $2 AND retired_at IS NULL`,
 		if err := rows.Scan(&key, &created); err != nil {
 			return nil, err
 		}
-		keys[key] = created.Add(grace)
+		retention := grace
+		if strings.HasPrefix(key, item.TempPrefix()) {
+			retention = TemporaryRetention
+		}
+		keys[key] = created.Add(retention)
 	}
 	return keys, rows.Err()
 }

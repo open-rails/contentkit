@@ -1161,20 +1161,29 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   `details.max`. A source declaring a faster rate than its packets
   hold is encoded at its real rate.
 
-### Sweep, deletion and erasure
+### File retirement, deletion and erasure
 
-- The sweep collects garbage by manifest reference: private blobs the
-  manifest does not reference once they are older than `JobsConfig.Grace`
-  (24 h) by their own age, however often the item is edited; public names no
-  preset expects at once (purged); and `temp/` after `TempTTL` (48 h). A
-  periodic pass covers every folder. An unreferenced blob that old cannot be
-  committed again by name (`not_uploaded`: upload it again). For content
-  that must go now, use `remove` with `takedown`.
+- Manifest edits retire their exact removed keys after the conditional
+  manifest write commits. Recovery retries the recorded operation, not a
+  new storage listing. A file shared by retained entries stays live;
+  reordering entries does not delete or rename it.
+- A daily bounded pass handles database-recorded allocation and deletion
+  deadlines. It does not search the bucket for unreferenced files. Unfinished
+  private allocations retain `JobsConfig.Grace` (24 h by default); temporary
+  uploads and caches expire after seven days and must then be uploaded again.
+  Known retired keys receive a bounded retry to catch already-issued writes.
+  Unknown objects require an explicit integrity investigation.
+- Configure the S3 adapter's lifecycle policy and allow `x-amz-tagging` in
+  upload CORS. Worker credentials also need `s3:PutObjectTagging` and
+  `s3:DeleteObjectTagging`. Canonical temp objects receive an expiry tag; copies into
+  permanent storage clear it. `Store.Configure` preserves unrelated lifecycle
+  rules, expires temp objects and aborts multipart uploads after seven days.
+  Use equivalent server settings where multipart lifecycle is unsupported.
 - `jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref, Owner})` deletes items from
   the host's delete transaction (a second pass catches late uploads); a host
   deletes every version item of a work, and account erasure deletes
-  `accounts/user/{id}/` once. `Jobs.Purge` deletes now; `SweepOrphans` finds
-  folders the host no longer has.
+  `accounts/user/{id}/` once. `Jobs.Purge` deletes now; `SweepOrphans` is an
+  explicit repair operation, never a scheduled discovery job.
 - Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
   their referenced blobs; then `Expose` the restored items.
 
