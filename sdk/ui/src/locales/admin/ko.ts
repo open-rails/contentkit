@@ -220,6 +220,8 @@ export const admin: typeof en = {
     makePremium: "프리미엄으로 전환",
     makeFree: "무료로 전환",
     select: "{title} 선택",
+    date: "날짜",
+    moreActions: "{title} 추가 작업",
     selectPage: "이 페이지 전체 선택",
     selected: "{count}개 선택됨",
     clearSelection: "선택 해제",
