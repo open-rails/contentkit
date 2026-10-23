@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -53,7 +54,19 @@ func TestPurgeRetainsBillingHistoryIntegration(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				payment, err := s.bill.RecordExternalPayment(ctx, billing.RecordExternalPaymentParams{OrderID: order.ID, Amount: order.Total, TransactionID: uuid.NewString()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				order, err = s.bill.GetOrder(ctx, order.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
 				grant, err := s.bill.CreateProductAccess(ctx, billing.CreateProductAccessBatchParams{Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				beforeAccess, err := s.bill.ListProductAccess(ctx, billing.ProductAccessListParams{CustomerIDs: []billing.CustomerID{customer}, ProductIDs: []billing.ProductID{product.ID}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -108,8 +121,17 @@ func TestPurgeRetainsBillingHistoryIntegration(t *testing.T) {
 					t.Fatalf("order changed: %+v %v", kept, err)
 				}
 				grants, err := s.bill.ListProductAccess(ctx, billing.ProductAccessListParams{CustomerIDs: []billing.CustomerID{customer}, ProductIDs: []billing.ProductID{product.ID}})
-				if err != nil || len(grants.Items) != 1 || grants.Items[0].ID != grant.Items[0].ID || !s.holdsNow(buyer, productKey) {
+				if err != nil || len(grants.Items) != len(beforeAccess.Items) || !slices.ContainsFunc(grants.Items, func(g billing.ProductAccessGrant) bool { return g.ID == grant[0].ID }) || !s.holdsNow(buyer, productKey) {
 					t.Fatalf("purchase access lost: %+v %v", grants, err)
+				}
+				if !slices.ContainsFunc(grants.Items, func(g billing.ProductAccessGrant) bool {
+					return g.SourceType == billing.ProductAccessSourcePurchase && g.PaymentID != nil && *g.PaymentID == payment.ID
+				}) {
+					t.Fatal("purchased access window lost")
+				}
+				keptPayment, err := s.bill.GetPayment(ctx, payment.ID)
+				if err != nil || keptPayment.ID != payment.ID || keptPayment.Status != billing.PaymentSucceeded || keptPayment.Amount != payment.Amount || keptPayment.Currency != payment.Currency || keptPayment.TransactionID != payment.TransactionID || keptPayment.CustomerID != payment.CustomerID || !reflect.DeepEqual(keptPayment.OrderID, payment.OrderID) {
+					t.Fatalf("payment changed: %+v %v", keptPayment, err)
 				}
 				live, err := s.offers.Live(ctx, []access.Key{key(productKey)})
 				if err != nil || len(live) != 0 {
