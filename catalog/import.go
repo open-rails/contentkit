@@ -228,6 +228,9 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 			return err
 		}
 	}
+	if _, err := s.recordReleases(ctx, tx, ids); err != nil {
+		return err
+	}
 	changed, retitled, err := s.writeImport(ctx, tx, b)
 	if err != nil {
 		return err
@@ -960,11 +963,21 @@ func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions
 	if err != nil {
 		return err
 	}
+	var releaseIDs []string
 	for locked.Next() {
+		var id string
+		if err := locked.Scan(&id); err != nil {
+			locked.Close()
+			return err
+		}
+		releaseIDs = append(releaseIDs, id)
 	}
 	err = locked.Err()
 	locked.Close()
 	if err != nil {
+		return err
+	}
+	if _, err := s.recordReleases(ctx, tx, releaseIDs); err != nil {
 		return err
 	}
 	if len(contents) > 0 {

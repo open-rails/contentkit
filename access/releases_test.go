@@ -8,7 +8,7 @@ import (
 
 func TestAudienceReleaseBoundaryPreservesEarlierTiers(t *testing.T) {
 	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	gate, err := NewGate(GateConfig{Tenant: tenant, Kinds: tiered})
+	gate, err := NewGate(GateConfig{Tenant: "site", Kinds: tiered})
 	if err != nil {
 		t.Fatal(err)
 	}

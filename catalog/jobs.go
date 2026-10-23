@@ -96,7 +96,7 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if err != nil {
 		return 0, "", err
 	}
-	rows, err = tx.Query(ctx, `UPDATE `+s.t.versions+` v SET published_at = v.publish_at, updated_at = clock_timestamp(), revision = v.revision + 1
+	rows, err = tx.Query(ctx, `UPDATE `+s.t.versions+` v SET published_at = greatest(v.publish_at,coalesce(c.published_at,c.publish_at)), updated_at = clock_timestamp(), revision = v.revision + 1
  FROM `+s.t.items+` c WHERE v.id IN (SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL
   AND content_id = ANY($3) AND publish_at <= $2 ORDER BY publish_at, id LIMIT 500 FOR UPDATE SKIP LOCKED)
  AND v.tenant_id = $1 AND c.tenant_id = v.tenant_id AND c.id = v.content_id

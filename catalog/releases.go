@@ -62,7 +62,10 @@ func (s *Store) recordReleases(ctx context.Context, tx pgx.Tx, ids []string) (in
 		release := c.release
 		events = append(events, Event{Type: EventAudienceReleased, Kind: c.kind, ContentID: c.content, VersionID: c.version, OccurredAt: at, Release: &release})
 	}
-	return len(events), s.emit(ctx, tx, events...)
+	if err := s.emit(ctx, tx, events...); err != nil {
+		return 0, err
+	}
+	return len(events), s.refreshNextRelease(ctx, tx, ids)
 }
 
 func (s *Store) recordDueReleases(ctx context.Context) (int, error) {
@@ -74,11 +77,7 @@ func (s *Store) recordDueReleases(ctx context.Context) (int, error) {
 	// Rows are claimed in the same order used by content edits. SKIP LOCKED
 	// allows another pass to catch a busy writer without blocking the batch.
 	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND EXISTS (
- SELECT 1 FROM `+s.t.facets+` f CROSS JOIN LATERAL jsonb_array_elements(f.access_releases) release
- WHERE f.tenant_id=c.tenant_id AND f.content_id=c.id AND NOT f.deleted AND NOT f.unplayable
- AND f.live_from<=$2 AND (release->>'at')::timestamptz<=$2
- AND NOT EXISTS (SELECT 1 FROM `+s.qs+`.content_release_receipts receipt WHERE receipt.tenant_id=f.tenant_id AND receipt.version_id=f.version_id
- AND receipt.live_from=f.live_from AND receipt.release_key=`+s.qs+`.content_release_key(release)))
+ SELECT 1 FROM `+s.t.facets+` f WHERE f.tenant_id=c.tenant_id AND f.content_id=c.id AND f.next_release_at<=$2)
  ORDER BY c.id LIMIT `+fmt.Sprint(releaseBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, s.now())
 	if err != nil {
 		return 0, err
@@ -151,5 +150,15 @@ func (s *Store) recordBeforeEdit(ctx context.Context, q Querier, ids []string, o
 		return err
 	}
 	_, err = s.recordReleases(ctx, tx, ids)
+	return err
+}
+
+// next_release_at is an indexed recorder projection, never an access decision.
+func (s *Store) refreshNextRelease(ctx context.Context, tx pgx.Tx, ids []string) error {
+	_, err := tx.Exec(ctx, `UPDATE `+s.t.facets+` f SET next_release_at=CASE WHEN NOT f.deleted AND NOT f.unplayable AND f.live_from IS NOT NULL THEN (
+ SELECT min(greatest(f.live_from,(release->>'at')::timestamptz)) FROM jsonb_array_elements(f.access_releases) release
+ WHERE NOT EXISTS (SELECT 1 FROM `+s.qs+`.content_release_receipts receipt WHERE receipt.tenant_id=f.tenant_id AND receipt.version_id=f.version_id
+ AND receipt.live_from=f.live_from AND receipt.release_key=`+s.qs+`.content_release_key(release))) END
+ WHERE f.tenant_id=$1 AND f.content_id=ANY($2)`, s.tenant, ids)
 	return err
 }

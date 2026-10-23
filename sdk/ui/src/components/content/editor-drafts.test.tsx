@@ -7,7 +7,7 @@ import { createContentKitClient, type ContentKitClient } from "../../client/clie
 import type { Content, ContentModel, ContentPatch } from "../../client/generated/wire.js";
 import { useContent } from "../../react/contents.js";
 import { ContentKitProvider } from "../../react/provider.js";
-import { ContentSections } from "./editors.js";
+import { cleanRule, complete, ContentSections } from "./editors.js";
 
 const at = "2026-10-16T00:00:00Z";
 const content = (id = "p1"): Content => ({
@@ -309,4 +309,14 @@ it.each(["item", "client", "viewer", "access revision"])("resets both editor dra
   ui.rerender(tree(change === "client" ? other.client : s.client, change === "item" ? content("p2") : record, change === "viewer" ? "other creator" : "creator", change === "access revision" ? 1 : 0));
   await waitFor(() => expect(screen.getByLabelText("Caption")).toHaveValue(change === "item" ? "Stored p2" : "Stored p1"));
   expect(screen.getByRole("combobox", { name: "Who can open it" })).toHaveTextContent("Everyone");
+});
+
+
+it("preserves audience schedules in access edits and rejects incomplete releases", () => {
+  const rule = { level: "tier" as const, tiers: ["early"], releases: [{ at, level: "tier" as const, tiers: ["standard"] }] };
+  expect(cleanRule(rule)).toEqual(rule);
+  expect(complete(rule)).toBe(true);
+  expect(complete({ ...rule, releases: [{ at: "", level: "public" }] })).toBe(false);
+  expect(complete({ ...rule, releases: [{ at, level: "group" }] })).toBe(false);
+  expect(cleanRule({ ...rule, level: "public" }).releases).toBeUndefined();
 });

@@ -11,7 +11,8 @@ UPDATE content_versions SET access = pg_temp.migrate_content_release(access) WHE
 UPDATE content_groups SET access = pg_temp.migrate_content_release(access) WHERE access ? 'free_after';
 UPDATE content_access_history SET snapshot = pg_temp.migrate_content_release(snapshot) WHERE snapshot ? 'free_after';
 
-ALTER TABLE content_facets ADD COLUMN access_releases jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(access_releases)='array');
+ALTER TABLE content_facets ADD COLUMN access_releases jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(access_releases)='array'),
+ ADD COLUMN next_release_at timestamptz;
 UPDATE content_facets f SET access_releases = coalesce(coalesce(v.access,c.access)->'releases','[]'::jsonb)
  FROM content_versions v JOIN content_items c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
  WHERE f.tenant_id=v.tenant_id AND f.version_id=v.id;
@@ -36,3 +37,8 @@ CREATE FUNCTION content_release_key(release jsonb) RETURNS text LANGUAGE sql STA
  'tiers',coalesce((SELECT jsonb_agg(t ORDER BY t) FROM jsonb_array_elements_text(release->'tiers') t),'[]'::jsonb),
  'group_id',release->>'group_id')::text
 $$;
+
+UPDATE content_facets f SET next_release_at=(
+ SELECT min(greatest(f.live_from,(release->>'at')::timestamptz)) FROM jsonb_array_elements(f.access_releases) release
+) WHERE NOT f.deleted AND NOT f.unplayable AND f.live_from IS NOT NULL;
+CREATE INDEX content_facets_next_release_idx ON content_facets(tenant_id,next_release_at) WHERE next_release_at IS NOT NULL;

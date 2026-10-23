@@ -28,13 +28,13 @@ func TestAudienceReleaseMigrationPreservesLegacyRights(t *testing.T) {
  CREATE TABLE content_versions(tenant_id text,id text,content_id text,access jsonb);
  CREATE TABLE content_groups(access jsonb);
  CREATE TABLE content_access_history(snapshot jsonb);
- CREATE TABLE content_facets(tenant_id text,version_id text,access_free_after timestamptz,free_applied boolean);
+ CREATE TABLE content_facets(tenant_id text,version_id text,access_free_after timestamptz,free_applied boolean,live_from timestamptz,deleted boolean default false,unplayable boolean default false);
  CREATE INDEX content_facets_free_idx ON content_facets(access_free_after);
  INSERT INTO content_items VALUES('app','one','{"level":"tier","tiers":["premium"],"free_after":"2027-01-01T00:00:00+00:00"}');
  INSERT INTO content_versions VALUES('app','v1','one',null),('app','v2','one','{"level":"ppv","free_after":"2027-02-01T00:00:00Z"}');
  INSERT INTO content_groups VALUES('{"level":"group","group_id":"g","free_after":"2027-03-01T00:00:00Z"}');
  INSERT INTO content_access_history VALUES('{"level":"tier","tiers":["old"],"free_after":"2026-01-01T00:00:00Z","live_from":"2025-01-01T00:00:00Z"}');
- INSERT INTO content_facets VALUES('app','v1','2027-01-01',false),('app','v2','2027-02-01',true);`)
+ INSERT INTO content_facets VALUES('app','v1','2027-01-01',false,'2026-01-01',false,false),('app','v2','2027-02-01',true,'2026-01-01',false,false);`)
 	body, err := fs.ReadFile(migrations.Postgres, "0034_audience_releases.up.sql")
 	if err != nil {
 		t.Fatal(err)
