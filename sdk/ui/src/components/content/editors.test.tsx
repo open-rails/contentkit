@@ -112,7 +112,8 @@ it("AccessEditor: members-only defaults to the owner group, and the picker choos
   // A post has neither pages nor chapters to preview.
   expect(within(editor).queryByLabelText("Free pages")).toBeNull();
   expect(within(editor).queryByLabelText("Free chapters")).toBeNull();
-  expect(within(editor).getByLabelText("Free for everyone from")).toBeInTheDocument();
+  expect(within(editor).getByRole("button", { name: "Add audience release" })).toBeInTheDocument();
+  expect(within(editor).queryByLabelText("Release 1 date")).toBeNull();
 
   await user.click(within(editor).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(s.calls.find((c) => c.key === "PATCH /contents/p1")?.body).toEqual({ access: { level: "group", group_id: "g-own" }, revision: 3 }));
