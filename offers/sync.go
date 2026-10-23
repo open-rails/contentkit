@@ -133,7 +133,7 @@ func (s *Service) syncTarget(ctx context.Context, t Target) (err error) {
 			activeID = active.id
 		}
 		_, err = tx.Exec(ctx, `UPDATE `+s.t.offers+` o SET synced_revision = o.revision, last_error = NULL,
-				product_id = coalesce(nullif($4, ''), o.product_id),
+				product_id = CASE WHEN $5 = '' THEN coalesce(o.product_id, nullif($4, '')) ELSE coalesce(nullif($4, ''), o.product_id) END,
 				price_id = CASE WHEN o.id = $5 THEN nullif($6, '') ELSE o.price_id END
 			FROM unnest($2::text[], $3::bigint[]) AS r(id, rev)
 			WHERE o.tenant_id = $1 AND o.id = r.id AND o.revision = r.rev`, s.tenant, ids, revs, productID, activeID, priceID)
