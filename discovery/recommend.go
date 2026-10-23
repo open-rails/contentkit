@@ -125,6 +125,11 @@ func (s *Service) Similar(ctx context.Context, anchorID string, o Recommendation
 	if o.Summary {
 		a.candidates = map[string]struct{}{}
 	}
+	if s.o.Candidates == nil {
+		recs.Candidates = Fallback{Primary: recs.Candidates, Secondary: sharedEntities{s: s}, OnError: func(err error) {
+			s.o.Logger.WarnContext(ctx, "discovery: co-reading similar failed; using shared entities", "err", err)
+		}}
+	}
 	hits, err := recs.Similar(ctx, anchor, SimilarOptions{Limit: recLimit(o.Limit), ContentKinds: []string{o.Kind}, Admit: a.admit})
 	if err != nil {
 		return empty, err

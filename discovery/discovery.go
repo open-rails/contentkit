@@ -6,10 +6,10 @@
 // filters, listing and language apply inside ContentKit, and each content
 // item shows as one card carrying the version that fits the viewer best.
 //
-// Similar and "for you" lists come from a Candidates source (Engagement, the
-// co-engagement default, or a provider's) through the Recommender's shared
-// policy; popular sorts rank population-normalized measured readership, or the
-// labeled standing order of current reactions and favorites without it.
+// Similar and "for you" lists come from a Candidates source (Engagement with
+// shared-entity fill for similar, or a provider's) through the Recommender's
+// shared policy; popular sorts rank population-normalized measured readership,
+// or the labeled standing order of current reactions and favorites without it.
 package discovery
 
 import (
@@ -75,7 +75,7 @@ type Options struct {
 	// view_status, similar, recommendations and popularity are unavailable.
 	Hub *hub.Hub
 	// Candidates sources similar and recommendations; nil is co-engagement
-	// over the signal plane.
+	// over the signal plane, with shared-entity fill for similar.
 	Candidates Candidates
 	// Tenure supplies elapsed access to configured tiers; nil omits it from
 	// account statistics. Billing adapters may implement access.TenureReader.
