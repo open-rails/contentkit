@@ -320,9 +320,9 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
         {(value.releases ?? []).map((release, index) => {
           const change = (patch: Partial<typeof release>) => set({ releases: value.releases!.map((entry, i) => i === index ? { ...entry, ...patch } : entry) });
           return <div key={index} className="flex flex-wrap items-center gap-2">
-            <Input required type="datetime-local" aria-label={t("contentEditor.versionPublishAt")} value={toLocalInput(release.at)} onChange={(e) => change({ at: fromLocalInput(e.target.value) ?? "" })} />
+            <Input required type="datetime-local" aria-label={t("contentEditor.releaseAt", { n: index + 1 })} value={toLocalInput(release.at)} onChange={(e) => change({ at: fromLocalInput(e.target.value) ?? "" })} />
             <Select value={release.level} onValueChange={(v) => change({ level: v as typeof release.level, tiers: v === "tier" ? tiers.slice(0, 1) : undefined, group_id: undefined })}>
-              <SelectTrigger size="sm" aria-label={t("contentEditor.access")}><SelectValue>{(v: string) => t(`contentEditor.level_${v as Rule["level"]}`)}</SelectValue></SelectTrigger>
+              <SelectTrigger size="sm" aria-label={t("contentEditor.releaseAudience", { n: index + 1 })}><SelectValue>{(v: string) => t(`contentEditor.level_${v as Rule["level"]}`)}</SelectValue></SelectTrigger>
               <SelectContent>{releaseLevels.map((level) => <SelectItem key={level} value={level}>{t(`contentEditor.level_${level as Rule["level"]}`)}</SelectItem>)}</SelectContent>
             </Select>
             {release.level === "tier" && tiers.map((tier) => <label key={tier} className="flex items-center gap-1"><Switch aria-label={labelOf(labels, tier)} checked={release.tiers?.includes(tier) ?? false} onCheckedChange={(on) => change({ tiers: on ? [...(release.tiers ?? []), tier] : release.tiers?.filter((t) => t !== tier) })} />{labelOf(labels, tier)}</label>)}
