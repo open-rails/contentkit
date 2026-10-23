@@ -539,9 +539,10 @@ it("Poll signed out: votes where the server takes anonymous votes, asks to sign 
   const voted = poll({ voted: true, my_option: "o1", total_votes: 5, options: [option("o1", "Tea", 0, 4), option("o2", "Coffee", 1, 1)] });
   const off = server({ "GET /polls/p1": () => poll(), "GET /config": config(), "POST /polls/p1/vote": () => voted });
   let view = render(<Poll poll="p1" />, { wrapper: wrap(off.client, { viewer: null, onSignIn: signIn }) });
-  expect(await screen.findByText("Sign in to vote")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: /Tea/ }));
+  await user.click(await screen.findByRole("button", { name: "Sign in to vote" }));
   expect(signIn).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: /Tea/ }));
+  expect(signIn).toHaveBeenCalledTimes(2);
   expect(off.calls).not.toContain("POST /polls/p1/vote");
   view.unmount();
 
@@ -551,7 +552,7 @@ it("Poll signed out: votes where the server takes anonymous votes, asks to sign 
   await user.click(await screen.findByRole("button", { name: /Tea/ }));
   expect(await screen.findByRole("meter", { name: "Tea" })).toBeInTheDocument();
   expect(screen.queryByText("Sign in to vote")).toBeNull();
-  expect(signIn).toHaveBeenCalledTimes(1);
+  expect(signIn).toHaveBeenCalledTimes(2);
   view.unmount();
 });
 

@@ -125,7 +125,11 @@ export function Poll(p: PollProps) {
         />
       )}
       <ErrorLine error={error} />
-      {!poll.voted && !poll.closed && mustSignIn && poll.kind !== "free_text" && <p className="text-xs text-muted-foreground">{t("poll.signIn")}</p>}
+      {!poll.voted && !poll.closed && mustSignIn && poll.kind !== "free_text" && (signIn ? (
+        <Button size="sm" className="justify-self-start" onClick={signIn}>
+          {t("poll.signIn")}
+        </Button>
+      ) : <p className="text-xs text-muted-foreground">{t("poll.signIn")}</p>)}
     </>,
   );
 }
