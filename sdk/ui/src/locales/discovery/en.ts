@@ -37,7 +37,6 @@ export const discovery = {
     moreChips_one: "{count} more",
     moreChips_other: "{count} more",
     completed: "Finished",
-    freeFrom: "Free from {date}",
     favorites: "Favorites",
     likes: "Likes",
     empty: "Nothing here yet.",

@@ -86,3 +86,11 @@ app still makes no writes and keeps previously issued empty cursors valid.
 The schema-global epoch remains authoritative for public catalog cursors. Shared
 stream epochs are seeded identity metadata; an older transaction may create a
 stream after a global rotation, so its stored epoch cannot override that reset.
+
+Audience release schedules use `version.audience_released` facts. The payload
+includes `content_id`, `version_id` and the released audience (`release.at`,
+`release.level`, and its optional `tiers` or `group_id`). `occurred_at` is the
+later of the audience timestamp and the effective content/version publication
+instant; `recorded_at` is when the recorder caught up. The five-minute recorder
+is not an access gate. Content edits first retain any overdue release facts,
+so unpublishing or rescheduling cannot erase an already-effective release.

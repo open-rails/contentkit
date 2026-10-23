@@ -78,7 +78,7 @@ type Filter struct {
 	// Creators keeps content one of these users is credited on.
 	Creators []string
 	// Access keeps content at one of these levels: public is what anyone
-	// opens now (free_after included), the others what stays locked at that
+	// opens now (audience releases included), the others what stays locked at that
 	// level.
 	Access []string
 	// Tiers keeps content locked behind one of these tiers.
@@ -322,7 +322,7 @@ func (s *Service) accessFilter(q *sel, levels, tiers []string) error {
 	}
 	free := access.PublicSQL("f")
 	if len(levels) > 0 {
-		q.and("(("+free+" AND 'public' = ANY(@d_levels::text[])) OR (NOT "+free+" AND f.access_level = ANY(@d_levels::text[])))",
+		q.and("(("+free+" AND 'public' = ANY(@d_levels::text[])) OR (NOT "+free+" AND (f.access_level = ANY(@d_levels::text[]) OR (cardinality("+access.ReleasedTiersSQL("f")+")>0 AND 'tier'=ANY(@d_levels::text[])))))",
 			pgx.NamedArgs{"d_levels": levels})
 	}
 	if len(tiers) > 0 {

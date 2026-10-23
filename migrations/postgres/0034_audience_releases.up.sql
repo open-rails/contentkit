@@ -29,3 +29,10 @@ CREATE TABLE content_release_receipts (
  PRIMARY KEY(tenant_id,version_id,release_key,live_from),
  FOREIGN KEY(tenant_id,content_id) REFERENCES content_items(tenant_id,id) ON DELETE CASCADE
 );
+
+-- Canonical release identity ignores JSON key/tier ordering and timezone spelling.
+CREATE FUNCTION content_release_key(release jsonb) RETURNS text LANGUAGE sql STABLE AS $$
+ SELECT jsonb_build_object('at',extract(epoch from (release->>'at')::timestamptz),'level',release->>'level',
+ 'tiers',coalesce((SELECT jsonb_agg(t ORDER BY t) FROM jsonb_array_elements_text(release->'tiers') t),'[]'::jsonb),
+ 'group_id',release->>'group_id')::text
+$$;

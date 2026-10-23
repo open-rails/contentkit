@@ -409,8 +409,17 @@ func TestPublishDueSkipsConcurrentVersionEditIntegration(t *testing.T) {
 	if err := <-edited; err != nil {
 		t.Fatal(err)
 	}
-	if n, err := f.s.PublishDue(ctx); err != nil || n != 1 {
-		t.Fatalf("publisher permanently skipped the edited version: %d %v", n, err)
+	if n, err := f.s.PublishDue(ctx); err != nil || n != 0 {
+		t.Fatalf("edit already records the due version exactly once: %d %v", n, err)
+	}
+	count := 0
+	for _, event := range readEventLog(t, f) {
+		if event.Type == EventVersionPublished && event.VersionID == vids[0] {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("due version facts after edit: %d", count)
 	}
 }
 

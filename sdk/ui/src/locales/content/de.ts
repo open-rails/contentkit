@@ -30,9 +30,9 @@ export const content: typeof en = {
     lockedOption: "{name} (gesperrt)",
   },
   contentEditor: {
-    releases: "Audience releases",
-    addRelease: "Add audience release",
-    removeRelease: "Remove release",
+    releases: "Zielgruppenfreigaben",
+    addRelease: "Zielgruppenfreigabe hinzufügen",
+    removeRelease: "Freigabe entfernen",
     chapterRange: "Seiten {from}–{to}",
     chapterStartRequired: "Wähle für jedes Kapitel eine Startseite.",
     chapterStartsOrdered: "Die Kapitelanfänge müssen der Seitenreihenfolge folgen.",

@@ -18,6 +18,9 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 		}
 	}
 	collect := func(d Decision) {
+		for _, release := range d.Releases {
+			add(release.Group)
+		}
 		for _, raw := range append(append([]string{}, d.Sell...), d.Requires) {
 			if key, err := access.ParseKey(raw); err == nil && key.Kind() == access.KeyGroup {
 				add(key.Group())
@@ -27,10 +30,16 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 	for _, c := range items {
 		add(c.OwnerGroupID)
 		add(c.Access.Group)
+		for _, release := range c.Access.Releases {
+			add(release.Group)
+		}
 		collect(c.Decision)
 		for _, v := range c.Versions {
 			if v.Access != nil {
 				add(v.Access.Group)
+				for _, release := range v.Access.Releases {
+					add(release.Group)
+				}
 			}
 			collect(v.Decision)
 		}
@@ -59,6 +68,7 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 		return err == nil && key.Kind() == access.KeyGroup && internal[key.Group()]
 	}
 	redact := func(d *Decision) {
+		d.Releases = slices.DeleteFunc(slices.Clone(d.Releases), func(r access.Release) bool { return internal[r.Group] })
 		if privateKey(d.Requires) {
 			// No offered purchase may skip this required membership.
 			d.Sell, d.Requires, d.Offers = nil, "", nil
@@ -68,7 +78,11 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 		d.Offers = slices.DeleteFunc(slices.Clone(d.Offers), func(sale offers.Sale) bool { return sale.Key.Kind() == access.KeyGroup && internal[sale.Key.Group()] })
 	}
 	rule := func(r *access.Rule) {
-		if r == nil || !internal[r.Group] {
+		if r == nil {
+			return
+		}
+		r.Releases = slices.DeleteFunc(slices.Clone(r.Releases), func(r access.Release) bool { return internal[r.Group] })
+		if !internal[r.Group] {
 			return
 		}
 		// The public shape says only that access is locked. The original group

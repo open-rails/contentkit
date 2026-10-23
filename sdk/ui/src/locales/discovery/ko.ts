@@ -38,7 +38,6 @@ export const discovery: typeof en = {
     moreChips_one: "{count}개 더",
     moreChips_other: "{count}개 더",
     completed: "완료",
-    freeFrom: "{date}부터 무료",
     favorites: "즐겨찾기",
     likes: "좋아요",
     empty: "아직 아무것도 없습니다.",

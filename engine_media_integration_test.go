@@ -290,7 +290,7 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 
 // Engine maintenance keeps old drafts and their media. A deleted channel's
 // media is hidden, kept for a restore through the retention, then purged once.
-// A post whose free_after passed has its media exposed.
+// A post with a matured public audience release has its media exposed.
 func TestEngineDraftAndGroupRetentionIntegration(t *testing.T) {
 	ctx := t.Context()
 	env := mediatest.Open(t)

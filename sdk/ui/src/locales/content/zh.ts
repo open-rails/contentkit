@@ -30,9 +30,9 @@ export const content: typeof en = {
     lockedOption: "{name}（已锁定）",
   },
   contentEditor: {
-    releases: "Audience releases",
-    addRelease: "Add audience release",
-    removeRelease: "Remove release",
+    releases: "按受众发布时间",
+    addRelease: "添加受众发布时间",
+    removeRelease: "删除发布时间",
     chapterRange: "第 {from}–{to} 页",
     chapterStartRequired: "请为每个章节选择起始页。",
     chapterStartsOrdered: "章节起点必须按页面顺序排列。",

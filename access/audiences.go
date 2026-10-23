@@ -10,8 +10,8 @@ const Anyone = ""
 
 // AudiencesSQL is a text[] expression over the content_facets row aliased
 // alias naming who opens it without buying it: Anyone and every one of tiers
-// for a free row (public, or past free_after), the tiers among tiers its
-// rule names for a tier row, nobody otherwise. Totals count rows per
+// for a public row or matured public release, the current base and released
+// tier audiences for a restricted row, nobody otherwise. Totals count rows per
 // audience with it. Args are pgx named args prefixed audience_.
 func AudiencesSQL(alias string, tiers []string) (string, map[string]any, error) {
 	if !aliasRe.MatchString(alias) {

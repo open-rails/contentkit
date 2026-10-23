@@ -15,7 +15,7 @@ const releaseBatch = 200
 // recordReleases records effective audience transitions under parent locks.
 // Receipts are independent of retained-log pruning and consumer cursors.
 func (s *Store) recordReleases(ctx context.Context, tx pgx.Tx, ids []string) (int, error) {
-	rows, err := tx.Query(ctx, `SELECT f.content_id,f.version_id,f.kind,f.live_from,release
+	rows, err := tx.Query(ctx, `SELECT f.content_id,f.version_id,f.kind,f.live_from,release,`+s.qs+`.content_release_key(release)
  FROM `+s.t.facets+` f CROSS JOIN LATERAL jsonb_array_elements(f.access_releases) release
  WHERE f.tenant_id=$1 AND f.content_id=ANY($2) AND NOT f.deleted AND NOT f.unplayable
  AND f.live_from<=$3 AND (release->>'at')::timestamptz<=$3
@@ -32,11 +32,10 @@ func (s *Store) recordReleases(ctx context.Context, tx pgx.Tx, ids []string) (in
 	for rows.Next() {
 		var c candidate
 		var raw []byte
-		if err := rows.Scan(&c.content, &c.version, &c.kind, &c.live, &raw); err != nil {
+		if err := rows.Scan(&c.content, &c.version, &c.kind, &c.live, &raw, &c.key); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		c.key = string(raw)
 		if err := json.Unmarshal(raw, &c.release); err != nil {
 			rows.Close()
 			return 0, err
@@ -53,7 +52,7 @@ func (s *Store) recordReleases(ctx context.Context, tx pgx.Tx, ids []string) (in
 		if c.live.After(at) {
 			at = c.live
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO `+s.qs+`.content_release_receipts(tenant_id,content_id,version_id,release_key,live_from,occurred_at) VALUES($1,$2,$3,$4::jsonb::text,$5,$6) ON CONFLICT DO NOTHING`, s.tenant, c.content, c.version, c.key, c.live, at)
+		tag, err := tx.Exec(ctx, `INSERT INTO `+s.qs+`.content_release_receipts(tenant_id,content_id,version_id,release_key,live_from,occurred_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, s.tenant, c.content, c.version, c.key, c.live, at)
 		if err != nil {
 			return 0, err
 		}
@@ -79,7 +78,7 @@ func (s *Store) recordDueReleases(ctx context.Context) (int, error) {
  WHERE f.tenant_id=c.tenant_id AND f.content_id=c.id AND NOT f.deleted AND NOT f.unplayable
  AND f.live_from<=$2 AND (release->>'at')::timestamptz<=$2
  AND NOT EXISTS (SELECT 1 FROM `+s.qs+`.content_release_receipts receipt WHERE receipt.tenant_id=f.tenant_id AND receipt.version_id=f.version_id
- AND receipt.live_from=f.live_from AND receipt.release_key=release::text))
+ AND receipt.live_from=f.live_from AND receipt.release_key=`+s.qs+`.content_release_key(release)))
  ORDER BY c.id LIMIT `+fmt.Sprint(releaseBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, s.now())
 	if err != nil {
 		return 0, err

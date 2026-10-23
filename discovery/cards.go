@@ -382,8 +382,9 @@ func (s *Service) settle(ctx context.Context, q *sel, rows []cardRow) error {
 	now := s.o.Now()
 	for i, d := range ds {
 		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, Releases: d.Releases, Level: access.Public}
+		a.Releases = slices.DeleteFunc(slices.Clone(a.Releases), func(r access.Release) bool { return internal[r.Group] })
 		if r := items[i].Rule; !r.Free(now) {
-			a.Level, a.Tiers = r.Level, r.Tiers
+			a.Level, a.Tiers = r.Level, r.AudienceTiers(now)
 		}
 		for _, k := range d.Sell {
 			if k.Kind() != access.KeyGroup || !internal[k.Group()] {

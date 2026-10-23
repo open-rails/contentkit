@@ -30,9 +30,9 @@ export const content: typeof en = {
     lockedOption: "{name} (잠김)",
   },
   contentEditor: {
-    releases: "Audience releases",
-    addRelease: "Add audience release",
-    removeRelease: "Remove release",
+    releases: "대상별 공개 일정",
+    addRelease: "대상별 공개 추가",
+    removeRelease: "공개 일정 삭제",
     chapterRange: "{from}–{to}페이지",
     chapterStartRequired: "각 챕터의 시작 페이지를 선택하세요.",
     chapterStartsOrdered: "챕터 시작은 페이지 순서대로 정렬해야 합니다.",

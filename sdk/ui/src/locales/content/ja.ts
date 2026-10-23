@@ -30,9 +30,9 @@ export const content: typeof en = {
     lockedOption: "{name}（ロック中）",
   },
   contentEditor: {
-    releases: "Audience releases",
-    addRelease: "Add audience release",
-    removeRelease: "Remove release",
+    releases: "対象者ごとの公開",
+    addRelease: "対象者別の公開を追加",
+    removeRelease: "公開を削除",
     chapterRange: "{from}–{to}ページ",
     chapterStartRequired: "各チャプターの開始ページを選択してください。",
     chapterStartsOrdered: "チャプターの開始はページ順に並べてください。",

@@ -181,7 +181,7 @@ func TestResolverIntegration(t *testing.T) {
 		}
 	}
 
-	// A locked version's decision carries the rule's preview and free_after.
+	// A locked version's decision carries the rule's preview and audience releases.
 	free := f.now().Add(time.Hour)
 	preview := &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, Preview: &access.Preview{Segments: 1}, Releases: []access.Release{{At: free, Level: access.Public}}}
 	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: preview}}}); err != nil {
