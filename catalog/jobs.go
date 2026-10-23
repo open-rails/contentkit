@@ -132,10 +132,10 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if len(ids) == 0 {
 		return 0, next, tx.Commit(ctx)
 	}
-	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
+	if err := s.emit(ctx, tx, events...); err != nil {
 		return 0, "", err
 	}
-	if err := s.emit(ctx, tx, events...); err != nil {
+	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
 		return 0, "", err
 	}
 	if err := s.exposeTx(ctx, tx, ids); err != nil {

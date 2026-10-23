@@ -280,10 +280,10 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	if err := s.putCodes(ctx, tx, written); err != nil {
 		return codeError(err)
 	}
-	if err := s.RefreshFacets(ctx, tx, written); err != nil {
+	if err := s.emit(ctx, tx, events...); err != nil {
 		return err
 	}
-	if err := s.emit(ctx, tx, events...); err != nil {
+	if err := s.RefreshFacets(ctx, tx, written); err != nil {
 		return err
 	}
 	if s.media != nil {

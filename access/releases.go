@@ -1,8 +1,6 @@
 package access
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -21,13 +19,12 @@ type Release struct {
 	Group string    `json:"group_id,omitempty"`
 }
 
-// Key identifies the same release across retries and input reordering.
-func (r Release) Key() string {
+// key compares validated releases independently of input ordering.
+func (r Release) key() string {
 	r.At = r.At.UTC()
 	r.Tiers = slices.Sorted(slices.Values(r.Tiers))
 	data, _ := json.Marshal(r)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return string(data)
 }
 
 func (r Rule) validateReleases(cfg kinds.Config) error {
@@ -45,7 +42,7 @@ func (r Rule) validateReleases(cfg kinds.Config) error {
 		if err := (Rule{Level: release.Level, Tiers: release.Tiers, Group: release.Group}).Validate(cfg); err != nil {
 			return err
 		}
-		key := release.Key()
+		key := release.key()
 		if seen[key] {
 			return fmt.Errorf("%w: repeated release", ErrRule)
 		}

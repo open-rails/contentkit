@@ -177,10 +177,10 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 			return err
 		}
 	}
-	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
+	if err := s.emit(ctx, tx, fx.events...); err != nil {
 		return err
 	}
-	if err := s.emit(ctx, tx, fx.events...); err != nil {
+	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
 		return err
 	}
 	if s.media != nil && len(fx.republish) > 0 {
