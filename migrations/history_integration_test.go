@@ -3,6 +3,7 @@ package migrations_test
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,6 +88,73 @@ UPDATE `+q+`.content_items SET cover=NULL`); err != nil {
 			}
 			if diff, err := migratekit.SchemaDiff(ctx, db, schema, fresh); err != nil || len(diff) != 0 {
 				t.Fatalf("upgraded schema differs from fresh: %v %v", diff, err)
+			}
+		})
+	}
+}
+
+func TestHistoricalReaderMigrationUpgrade(t *testing.T) {
+	for _, mode := range []string{"preserve_applied_0_114_1", "reject_unknown_history", "reject_empty_history"} {
+		t.Run(mode, func(t *testing.T) {
+			known := mode == "preserve_applied_0_114_1"
+			ctx := t.Context()
+			pool := pgtest.Pool(t, nil)
+			pgtest.EnsureExtensions(t, ctx, pool)
+			db := stdlib.OpenDBFromPool(pool)
+			defer db.Close()
+			schema := pgtest.EmptySchema(t, ctx, pool)
+			old, err := os.ReadFile("compat/postgres_0028_before_bound_source.sql")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := migratekit.ContentDigest(string(old)); got != "09a356813cd1761b0ec8a2f63e5f1b2b9638eff95fedfedc842e439921c2184a" {
+				t.Fatalf("historical reader migration changed: %s", got)
+			}
+			chain, err := migratekit.Load(migrations.Postgres, ".")
+			if err != nil {
+				t.Fatal(err)
+			}
+			index := slices.IndexFunc(chain, func(m migratekit.Migration) bool { return m.Name == "0028_reader_metadata_snapshots.up.sql" })
+			if index < 0 {
+				t.Fatal("reader migration missing")
+			}
+			chain[index].Content = string(old)
+			if mode == "reject_unknown_history" {
+				chain[index].Content += "\nSELECT 1;\n"
+			}
+			m := migratekit.NewPostgres(db, "contentkit").WithSchema(schema)
+			if err := m.ApplyMigrations(ctx, chain[:index+1]); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "reject_empty_history" {
+				// Simulate an incomplete imported ledger; no released reader
+				// migration predates content and semantic digest recording.
+				if _, err := pool.Exec(ctx, `UPDATE public.migrations SET content_sha256='',semantic_sha256='' WHERE app='contentkit' AND schema=$1 AND sequence=28`, schema); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := m.AppliedRecords(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				err := migrations.ApplyPostgres(ctx, db, schema)
+				if !known {
+					if err == nil || !strings.Contains(err.Error(), "unrecognized reader migration history") {
+						t.Fatalf("unknown history accepted: %v", err)
+					}
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := migrations.ValidatePostgres(ctx, db, schema); err != nil {
+					t.Fatalf("already-applied reader migration no longer validates: %v", err)
+				}
+			}
+			after, err := m.AppliedRecords(ctx)
+			if err != nil || before["28"] != after["28"] {
+				t.Fatalf("historical reader migration record changed: %v", err)
 			}
 		})
 	}

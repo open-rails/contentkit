@@ -27,6 +27,15 @@ Stop the affected writers and drain their media jobs. Keep the original buckets 
 
 A legacy versionless cover needs explicit mappings to the preexisting versions that inherit its cover metadata. The planner supports a versionless legacy source even when the current kind uses version folders. The operator must determine the correct versions from catalog records; the media library does not guess. Complete and verify the copy before clearing legacy item-cover metadata or finishing its database migration.
 
+Before upgrading to metadata-only reader snapshots (0.114.x), an app with an
+existing scope binding must have completed this verified scope copy. The binding
+alone does not prove its objects moved. If only the legacy root exists, finish
+the copy and cutover above with the previous release, then retry the upgrade.
+The reader migration selects the exact bound app root and preserves legacy
+journal history; it refuses missing, foreign or malformed bound ownership.
+Unbound legacy installations retain their existing unique-source upgrade path.
+Already-applied reader migrations keep their original recorded bytes and digest.
+
 ## Rollback
 
 `Media.LegacyLayout` is temporary migration compatibility: ownership and authorization remain scoped while object paths use the retained legacy catalog/account keys. It is not a safe rollback operation by itself.

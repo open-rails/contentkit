@@ -8,6 +8,8 @@ DECLARE
     source_namespace text;
     source_folder text;
     source_suffix text;
+    bound_namespace text;
+    bound_root text;
     retired_folder text;
     operation uuid;
     objects text[];
@@ -31,14 +33,39 @@ BEGIN
         WHERE p.kind='playback'
     LOOP
         source_suffix := item.kind || '/' || item.content_id || '/' || item.version_id || '/';
-        SELECT count(*), min(tenant_id), min(folder_prefix)
-        INTO source_count, source_namespace, source_folder
-        FROM (
-            SELECT DISTINCT tenant_id, folder_prefix FROM content_media_commits
-            WHERE content_kind=item.kind AND content_id=item.content_id
-              AND content_version_id=item.version_id AND state='applied'
-              AND right(folder_prefix,length(source_suffix))=source_suffix
-        ) source;
+        SELECT 'tenant_' || tenant_id || '_app_' || app_id,
+               'tenant/' || tenant_id || '/app/' || app_id || '/'
+        INTO bound_namespace, bound_root
+        FROM content_app_bindings WHERE catalog_key=item.tenant_id;
+        IF bound_namespace IS NOT NULL THEN
+            -- Scope adoption preserves the old journal. Only the bound app is
+            -- active; its exact former catalog root may remain as history.
+            IF EXISTS (SELECT 1 FROM content_media_commits
+                       WHERE content_kind=item.kind AND content_id=item.content_id
+                         AND content_version_id=item.version_id AND state='applied'
+                         AND NOT ((tenant_id=bound_namespace AND folder_prefix=bound_root || source_suffix)
+                               OR (tenant_id=item.tenant_id AND folder_prefix=item.tenant_id || '/' || source_suffix))) THEN
+                RAISE EXCEPTION 'reader retirement found source ownership outside the bound app for version %', item.version_id;
+            END IF;
+            source_namespace := bound_namespace;
+            source_folder := bound_root || source_suffix;
+            IF NOT EXISTS (SELECT 1 FROM content_media_commits
+                           WHERE tenant_id=source_namespace AND folder_prefix=source_folder
+                             AND content_kind=item.kind AND content_id=item.content_id
+                             AND content_version_id=item.version_id AND state='applied') THEN
+                RAISE EXCEPTION 'reader retirement needs bound source % at % for version %; complete the verified scope copy in docs/media-layout-migration.md (Copy and cutover) with the previous release before upgrading', source_namespace, source_folder, item.version_id;
+            END IF;
+            source_count := 1;
+        ELSE
+            SELECT count(*), min(tenant_id), min(folder_prefix)
+            INTO source_count, source_namespace, source_folder
+            FROM (
+                SELECT DISTINCT tenant_id, folder_prefix FROM content_media_commits
+                WHERE content_kind=item.kind AND content_id=item.content_id
+                  AND content_version_id=item.version_id AND state='applied'
+                  AND right(folder_prefix,length(source_suffix))=source_suffix
+            ) source;
+        END IF;
         IF source_count <> 1 THEN
             RAISE EXCEPTION 'reader retirement cannot prove unique source ownership for version %', item.version_id;
         END IF;
