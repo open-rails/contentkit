@@ -96,7 +96,7 @@ type Service struct {
 }
 
 type tables struct {
-	facets, items, versions, versionText, text, codes, memberships, groups, prefs, favorites, reactions, searches, searchMarks, erased, creators, comments, eventStreams string
+	facets, items, versions, versionText, text, codes, memberships, groups, prefs, favorites, reactions, counts, searches, searchMarks, erased, creators, comments, eventStreams string
 }
 
 // New validates o.
@@ -128,7 +128,7 @@ func New(o Options) (*Service, error) {
 	q := func(t string) string { return pgx.Identifier{o.Schema, t}.Sanitize() }
 	s := &Service{o: o, t: tables{facets: q("content_facets"), items: q("content_items"), versions: q("content_versions"),
 		versionText: q("content_version_text"), text: q("content_text"), codes: q("content_codes"), memberships: q("content_memberships"),
-		groups: q("content_groups"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"),
+		groups: q("content_groups"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"), counts: q("content_interaction_counts"),
 		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments: q("content_comments"), eventStreams: q("eventlog_streams")}}
 	var err error

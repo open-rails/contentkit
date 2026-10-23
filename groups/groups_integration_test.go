@@ -958,13 +958,15 @@ func TestMerge(t *testing.T) {
 func TestRecount(t *testing.T) {
 	f := newFixture(t)
 	f.content("gallery", 1, live("en"), live("es"))
-	f.content("gallery", 2, live("en"), version{languages: []string{"ja"}, favorites: 50})
+	f.content("gallery", 2, live("en"), version{languages: []string{"ja"}})
 	f.content("gallery", 3, version{languages: []string{"en"}})
-	f.content("video", 4, version{languages: []string{"en", "ja"}, live: &past, favorites: 7})
+	f.content("video", 4, version{languages: []string{"en", "ja"}, live: &past})
 	g := f.create(GroupInput{Kind: "series", Slug: "parent"}, GroupInput{Kind: "tag", Slug: "tag"}, GroupInput{Kind: "tag", Slug: "picked", Cover: &Cover{ContentID: cid(1)}})
 	parent, tag, picked := g[0], g[1], g[2]
 	child := f.create(GroupInput{Kind: "series", Slug: "child", ParentID: parent.ID})[0]
-	f.exec(`UPDATE {s}.content_facets SET favorites = 3 WHERE version_id = $1`, vid(1, 1))
+	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,favorites) VALUES ($1,'gallery',$2,3),($1,'video',$3,7)`, tenant, cid(1), cid(4))
+	// A version's reactions do not replace the content's aggregate.
+	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,content_version_id,favorites) VALUES ($1,'gallery',$2,$3,50)`, tenant, cid(2), vid(2, 1))
 	f.add(Membership{GroupID: child.ID, ContentID: cid(1)}, Membership{GroupID: parent.ID, ContentID: cid(2)}, Membership{GroupID: parent.ID, ContentID: cid(3)},
 		Membership{GroupID: tag.ID, ContentID: cid(1)}, Membership{GroupID: tag.ID, ContentID: cid(4)}, Membership{GroupID: picked.ID, ContentID: cid(2)})
 	if err := f.s.Recount(f.ctx); err != nil {
@@ -1041,7 +1043,7 @@ func TestRecountOwnedContent(t *testing.T) {
 	solo := f.create(GroupInput{Kind: "channel", Slug: "solo", OwnerUserID: "owner"})[0]
 	f.content("video", 4, live("en"))
 	f.exec(`UPDATE {s}.content_facets SET owner_group_id = $1 WHERE content_id = $2`, string(solo.ID), cid(4))
-	f.exec(`UPDATE {s}.content_facets SET favorites = 5 WHERE content_id = $1`, cid(1))
+	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,favorites) VALUES ($1,'video',$2,5)`, tenant, cid(1))
 	if err := f.s.Recount(f.ctx); err != nil {
 		t.Fatal(err)
 	}

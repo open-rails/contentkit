@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/edition"
 	"github.com/open-rails/contentkit/kinds"
@@ -474,7 +475,7 @@ type order struct {
 	ranking  *popularity.RankingInfo
 	rankings map[string]ContentRanking
 	// edition keys can differ between a content's versions (version
-	// memberships, copied counts): a content sorts by its shown edition's.
+	// memberships): a content sorts by its shown edition's.
 	edition bool
 }
 
@@ -505,7 +506,8 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		return s.standingOrder(raw, window, true), nil
 	case SortTopRated:
 		if period == "" || period == "all" {
-			o.expr, o.edition = "f.rating", true
+			o.expr = content.RatingSQL("coalesce(counts.likes, 0)", "coalesce(counts.dislikes, 0)")
+			o.join = s.countsJoin()
 			break
 		}
 		window, err := popularity.WindowForPeriod(period, s.now())
@@ -514,7 +516,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		}
 		return s.standingOrder(raw, window, false), nil
 	case SortMostFavorited:
-		o.expr, o.cast, o.edition = "f.favorites::bigint", "bigint", true
+		o.expr, o.cast, o.join = "coalesce(counts.favorites, 0)::bigint", "bigint", s.countsJoin()
 
 	case SortPosition:
 		if len(f.Groups) == 0 {
@@ -540,6 +542,12 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		return o, fmt.Errorf("%w: unknown sort %q", ErrInvalid, raw)
 	}
 	return o, nil
+}
+
+// countsJoin reads the current content-level aggregate once per content,
+// irrespective of how many versions match. Version reactions remain separate.
+func (s *Service) countsJoin() string {
+	return "LEFT JOIN " + s.t.counts + " counts ON counts.tenant_id = f.tenant_id AND counts.content_kind = f.kind AND counts.content_id = f.content_id AND counts.content_version_id IS NULL"
 }
 
 func (s *Service) sortName(raw, kind string) string {

@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -552,9 +551,6 @@ func (s *Store) checkVersionCodes(ctx context.Context, tx pgx.Tx, rows []importV
 	}
 	return fmt.Errorf("%w: version %s cannot take code %s: it has another, or another version of its content has it", ErrConflict, id, code)
 }
-
-// RefreshCountsJob is RefreshCounts' job, for Queue: an import queues it.
-func RefreshCountsJob() river.JobArgs { return refreshCountsArgs{} }
 
 // importTimes are a record's publication times. A published one is live from
 // publish_at (its stored time, else now, when omitted) and went live at

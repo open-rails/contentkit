@@ -177,20 +177,35 @@ func TestEngineInteractions(t *testing.T) {
 		t.Fatalf("an unpublished favorite still lists: %+v", page)
 	}
 
-	// Counts reach the listing.
-	if _, err := e.catalog.RefreshCounts(ctx); err != nil {
-		t.Fatal(err)
-	}
+	// Counts reach the listing immediately, without any worker or refresh.
 	var listed discovery.ContentPage
 	s.call(http.StatusOK, anon, "GET", v+"/contents?kind=gallery&sort=most_favorited", nil, &listed)
 	if len(listed.Contents) == 0 || listed.Contents[0].ID != harbor.ID || *listed.Contents[0].Counts.Likes != 1 ||
 		*listed.Contents[0].Counts.Dislikes != 1 || *listed.Contents[0].Counts.Favorites != 2 {
 		t.Fatalf("listing %+v", listed.Contents)
 	}
-	var rating float64
-	if err := pool.QueryRow(ctx, `SELECT rating FROM `+pgx.Identifier{schema, "content_facets"}.Sanitize()+` WHERE content_id = $1`, harbor.ID).Scan(&rating); err != nil || rating <= 0 {
-		t.Fatalf("rating %v %v", rating, err)
+	s.call(http.StatusOK, anon, "GET", v+"/contents?kind=gallery&sort=top_rated", nil, &listed)
+	if len(listed.Contents) == 0 || listed.Contents[0].ID != harbor.ID {
+		t.Fatalf("immediate rating order %+v", listed.Contents)
 	}
+	listingCounts := func(wantLikes, wantDislikes, wantFavorites int) {
+		t.Helper()
+		s.call(http.StatusOK, anon, "GET", v+"/contents?kind=gallery", nil, &listed)
+		if len(listed.Contents) != 1 {
+			t.Fatalf("listing after interaction %+v", listed.Contents)
+		}
+		c := listed.Contents[0].Counts
+		if c.Likes == nil || c.Dislikes == nil || c.Favorites == nil || *c.Likes != wantLikes || *c.Dislikes != wantDislikes || *c.Favorites != wantFavorites {
+			t.Fatalf("immediate counts %+v; want %d/%d/%d", c, wantLikes, wantDislikes, wantFavorites)
+		}
+	}
+	s.call(http.StatusOK, u1, "POST", item+"/like", nil, nil)     // retry
+	s.call(http.StatusOK, u1, "POST", item+"/favorite", nil, nil) // retry
+	listingCounts(1, 1, 2)
+	s.call(http.StatusOK, u1, "POST", item+"/dislike", nil, nil)
+	listingCounts(0, 2, 2)
+	s.call(http.StatusOK, u1, "POST", item+"/like", nil, nil)
+	listingCounts(1, 1, 2)
 
 	// Recent searches: kept per reader, one per query, newest first.
 	search := func(a access.Actor, q string) {
@@ -253,6 +268,7 @@ func TestEngineInteractions(t *testing.T) {
 	if err != nil || !report.Complete() {
 		t.Fatalf("erasure %+v %v", report, err)
 	}
+	listingCounts(0, 1, 1)
 	search(u1, "q=after")
 	if rows("u1") != 0 || rows(session) != 0 {
 		t.Fatalf("searches after erasure: u1 %d, session %d", rows("u1"), rows(session))

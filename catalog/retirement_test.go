@@ -45,9 +45,6 @@ func TestRetireOpenCountersDropsStaleFacetPopularity(t *testing.T) {
 		t.Fatalf("retirement must be idempotent: %v", err)
 	}
 	// Current writers never needed the retired columns.
-	if _, err := f.s.RefreshCounts(f.ctx); err != nil {
-		t.Fatal(err)
-	}
 	next := f.create("staff", gallery("Published after retirement", "en"))
 	f.publish("staff", next, nil)
 	var facets int
