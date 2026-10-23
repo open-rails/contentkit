@@ -843,7 +843,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                   <p className="font-medium">
                     {t("readerEditor.versionStatus", {
                       language: version.languages.map((l) => { const label = languages.find((x) => x.value === l)?.label; return label && label !== l ? label : languageName(l); }).join(", "),
-                      status: t(version.state === "deleted" ? "contentManager.deleted" : version.state === "draft" ? "contentManager.draft" : version.publish_at && Date.parse(version.publish_at) > Date.now() ? "contentManager.scheduled" : "contentManager.published"),
+                      status: t(version.state === "deleted" ? "contentManager.deleted" : version.state === "draft" ? "contentManager.draft" : version.publish_at && Date.parse(version.publish_at) > Date.now() ? "contentManager.scheduled" : item.live ? "contentManager.published" : "readerEditor.ready"),
                     })}
                   </p>
                   {version.state === "published" && !item?.live && status !== "published" && (

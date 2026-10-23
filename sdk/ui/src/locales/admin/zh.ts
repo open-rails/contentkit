@@ -17,6 +17,7 @@ export const admin: typeof en = {
     leaveVersion: "离开此版本？",
     discardVersionEdits: "放弃未保存的更改并打开其他版本？",
     discard: "放弃更改",
+    ready: "已就绪",
     thumbnail: "缩略图",
     editThumbnail: "裁剪缩略图",
     setThumbnail: "设为缩略图",

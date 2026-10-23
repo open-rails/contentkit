@@ -827,7 +827,7 @@ it("names the gallery's status and the version's own status, and says why a publ
   };
   let view = open({});
   expect(await screen.findByText("Gallery · Draft")).toBeVisible();
-  expect(await screen.findByText("This version (English) · Published")).toBeVisible();
+  expect(await screen.findByText("This version (English) · Ready")).toBeVisible();
   expect(screen.getByText("Readers can't see this version until the gallery is published.")).toBeVisible();
   view.unmount();
 

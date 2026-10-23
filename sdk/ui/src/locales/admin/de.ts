@@ -17,6 +17,7 @@ export const admin: typeof en = {
     leaveVersion: "Diese Version verlassen?",
     discardVersionEdits: "Ungespeicherte Änderungen verwerfen und eine andere Version öffnen?",
     discard: "Änderungen verwerfen",
+    ready: "Bereit",
     thumbnail: "Vorschaubild",
     editThumbnail: "Vorschaubild zuschneiden",
     setThumbnail: "Als Vorschaubild festlegen",
