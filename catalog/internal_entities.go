@@ -73,7 +73,7 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 		}
 		// The public shape says only that access is locked. The original group
 		// rule remains stored and was already evaluated by the access gate.
-		*r = access.Rule{Level: access.PPV, Preview: r.Preview, FreeAfter: r.FreeAfter}
+		*r = access.Rule{Level: access.PPV, Preview: r.Preview, Releases: r.Releases}
 	}
 	for _, c := range items {
 		if internal[c.OwnerGroupID] {
