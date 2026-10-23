@@ -249,7 +249,7 @@ func TestPublishDuePreservesConcurrentAccessIntegration(t *testing.T) {
 // PutTx does not call billing until the offer sync worker runs.
 type catalogOfferBilling struct{ access.Billing }
 
-func TestPurgeVersionsPreservesFirstOfferIntegration(t *testing.T) {
+func TestPurgeVersionsSkipsInFlightOfferThenPurgesIntegration(t *testing.T) {
 	b := newCatalogJobBarrier(t, `SELECT v.id, v.content_id, c.kind`, true)
 	f := catalogJobFixture(t, b)
 	id := f.create("staff", gallery("First offer", "en", "ja"))
@@ -311,8 +311,8 @@ func TestPurgeVersionsPreservesFirstOfferIntegration(t *testing.T) {
 	if got.n != 0 || remaining != 1 {
 		t.Fatalf("first offer lost its retained version: erased=%d remaining=%d", got.n, remaining)
 	}
-	if n, err := f.s.eraseVersions(ctx, f.now().Add(-DefaultDeletedRetention)); err != nil || n != 0 {
-		t.Fatalf("committed first offer must retain versions: erased=%d err=%v", n, err)
+	if n, err := f.s.eraseVersions(ctx, f.now().Add(-DefaultDeletedRetention)); err != nil || n != 1 {
+		t.Fatalf("committed first offer must not prevent expired version purge: erased=%d err=%v", n, err)
 	}
 }
 

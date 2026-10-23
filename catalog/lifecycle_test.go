@@ -120,7 +120,7 @@ func TestVersionDefaultsIntegration(t *testing.T) {
 
 // A content item goes draft -> scheduled -> live -> deleted -> restored, and
 // only its editors see it before and while it is not live; a deleted item
-// stays readable to holders of its key, and one never sold is erased after
+// stays readable to holders of its key until it is erased after
 // the retention, rows and all.
 func TestLifecycleIntegration(t *testing.T) {
 	f := newFixture(t, nil)
@@ -219,8 +219,7 @@ func TestLifecycleIntegration(t *testing.T) {
 		t.Fatal("an unpublished item shows")
 	}
 
-	// Purge: a deleted item never sold is erased after the retention; a sold
-	// one stays for its holders.
+	// Purge applies the same retention to sold and never-sold content.
 	sold := f.create("staff", gallery("Sold", "en"))
 	f.publish("staff", sold, nil)
 	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_items")+` SET ever_sold = true WHERE id = $1`, sold); err != nil {
@@ -233,7 +232,7 @@ func TestLifecycleIntegration(t *testing.T) {
 		t.Fatalf("purge inside the retention: %d %v", n, err)
 	}
 	f.advance(DefaultDeletedRetention + time.Hour)
-	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != 1 {
+	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != 2 {
 		t.Fatalf("purge: %d %v", n, err)
 	}
 	var left []string
@@ -243,8 +242,8 @@ func TestLifecycleIntegration(t *testing.T) {
 		_ = rows.Scan(&x)
 		left = append(left, x)
 	}
-	if !slices.Equal(left, []string{sold}) {
-		t.Fatalf("after purge %v, want only the sold item", left)
+	if len(left) != 0 {
+		t.Fatalf("after purge %v, want no remaining content", left)
 	}
 
 	// Every committed change remains independently readable.

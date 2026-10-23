@@ -257,17 +257,16 @@ const (
 	purgeBudget = 45 * time.Second
 )
 
-// PurgeDeleted erases what was deleted longer than the retention ago and never
-// sold: content items with their media folders, rows and interactions, then
-// deleted versions of the remaining items. Sold items, and every version of
-// one, stay for their holders. It returns how many items and versions it erased.
+// PurgeDeleted erases content and versions deleted longer than the retention
+// ago, including purchased content. Billing products and purchase history stay;
+// holders lose access to the erased media. It returns the number erased.
 func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
 	if _, err := s.PruneEvents(ctx); err != nil {
 		return 0, err
 	}
 	cutoff := s.now().Add(-s.retention)
 	items, err := s.drain(ctx, func(ctx context.Context) (int, error) {
-		return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND NOT ever_sold AND deleted_at < $2
+		return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND deleted_at < $2
  ORDER BY id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, cutoff)
 	})
 	if err != nil {
@@ -317,6 +316,9 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 	if err := rows.Err(); err != nil || len(ids) == 0 {
 		return 0, err
 	}
+	if err := s.retireOffers(ctx, tx, events); err != nil {
+		return 0, err
+	}
 	if s.media != nil {
 		if err := s.media.Versions.DeleteTx(ctx, tx, contentTargets(ids)); err != nil {
 			return 0, err
@@ -358,7 +360,7 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 }
 
 // eraseVersions deletes one batch of versions deleted before cutoff whose
-// item lives on and was never sold, with their media folders and interactions.
+// item lives on, with their media folders and interactions.
 func (s *Store) eraseVersions(ctx context.Context, cutoff time.Time) (int, error) {
 	deadline := time.Now().Add(purgeBudget)
 	for after := ""; ; {
@@ -376,10 +378,9 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		return 0, "", err
 	}
 	defer tx.Rollback(ctx)
-	// ever_sold belongs to the parent. Fence the first offer before reading
-	// its value, in the same parent-before-version order as catalog edits.
+	// Use the same parent-before-version lock order as catalog edits and offers.
 	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c
- WHERE c.tenant_id = $1 AND c.id > $3 AND c.state <> 'deleted' AND NOT c.ever_sold
+ WHERE c.tenant_id = $1 AND c.id > $3 AND c.state <> 'deleted'
  AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id
   AND v.state = 'deleted' AND v.deleted_at < $2)
  ORDER BY c.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF c SKIP LOCKED`, s.tenant, cutoff, after)
@@ -422,6 +423,9 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		// Release this bounded set before scanning beyond parents whose only
 		// eligible versions are locked. They can be retried by the next run.
 		return 0, next, tx.Commit(ctx)
+	}
+	if err := s.retireOffers(ctx, tx, events); err != nil {
+		return 0, "", err
 	}
 	if s.media != nil {
 		if err := s.media.Versions.DeleteTx(ctx, tx, targets); err != nil {

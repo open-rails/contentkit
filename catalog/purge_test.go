@@ -207,8 +207,8 @@ func TestPurgeErasesInteractionsIntegration(t *testing.T) {
 	}
 }
 
-// A backlog larger than one batch drains in one run; a sold item's deleted
-// versions stay for its holders.
+// A backlog larger than one batch drains in one run, including a sold item's
+// deleted versions.
 func TestPurgeDrainsBacklogIntegration(t *testing.T) {
 	f := newFixture(t, nil)
 	var ids []string
@@ -228,8 +228,8 @@ func TestPurgeDrainsBacklogIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.advance(DefaultDeletedRetention + time.Hour)
-	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != len(ids) {
-		t.Fatalf("purge: %d %v, want %d", n, err, len(ids))
+	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != len(ids)+1 {
+		t.Fatalf("purge: %d %v, want %d", n, err, len(ids)+1)
 	}
 	var items, versions int
 	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_items")).Scan(&items); err != nil {
@@ -238,7 +238,7 @@ func TestPurgeDrainsBacklogIntegration(t *testing.T) {
 	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_versions")+` WHERE id = $1`, soldVersion).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if items != 1 || versions != 1 {
-		t.Fatalf("after draining: %d items, sold item's deleted version kept %d", items, versions)
+	if items != 1 || versions != 0 {
+		t.Fatalf("after draining: %d items, sold item's deleted versions=%d", items, versions)
 	}
 }
