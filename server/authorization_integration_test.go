@@ -24,6 +24,7 @@ import (
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/contentkit/access"
 	ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
+	"github.com/open-rails/contentkit/catalog"
 )
 
 func scopedServerFixture(t *testing.T, identityIssuer string) (Config, *pgxpool.Pool, *authkit.Client) {
@@ -152,6 +153,41 @@ func TestScopedServerLocalAuthorization(t *testing.T) {
 			}
 			if got := scopedStatus(s, "/comments/admin", token); got != tc.want {
 				t.Fatalf("staff access: %d, want %d", got, tc.want)
+			}
+		})
+	}
+	// The independently released server module must expose the same deletion
+	// surface as embedded ContentKit, even without a sibling checkout.
+	item, err := s.engine.Client().PostContents(t.Context(), catalog.ContentInput{
+		Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Version deletion"}},
+	})
+	if err != nil || len(item.Versions) != 1 {
+		t.Fatalf("create edition: %+v %v", item, err)
+	}
+	for _, tc := range []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{"anonymous", "", http.StatusUnauthorized},
+		{"ordinary", authtest.SignIn(t, bootstrap, ordinary).AccessToken, http.StatusForbidden},
+		{"staff", authtest.SignIn(t, bootstrap, staff).AccessToken, http.StatusNoContent},
+	} {
+		t.Run("version deletion routes/"+tc.name, func(t *testing.T) {
+			request := func(path string) int {
+				r := httptest.NewRequest(http.MethodDelete, "/api/contentkit/v1"+path, nil)
+				if tc.token != "" {
+					r.Header.Set("Authorization", "Bearer "+tc.token)
+				}
+				w := httptest.NewRecorder()
+				s.Handler().ServeHTTP(w, r)
+				return w.Code
+			}
+			if got := request("/contents/" + item.ID); got != http.StatusMethodNotAllowed {
+				t.Fatalf("parent deletion route remains: %d", got)
+			}
+			if got := request("/contents/" + item.ID + "/versions/" + item.Versions[0].ID); got != tc.want {
+				t.Fatalf("version deletion authorization: %d, want %d", got, tc.want)
 			}
 		})
 	}

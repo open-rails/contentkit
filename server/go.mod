@@ -7,7 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/open-rails/authkit v1.35.4
-	github.com/open-rails/contentkit v0.117.0
+	github.com/open-rails/contentkit v0.119.0
 	github.com/open-rails/contentkit/adapters/openrails v0.8.0
 	github.com/open-rails/helpers v1.16.1
 	github.com/open-rails/openrails v0.262.0
@@ -135,10 +135,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace (
-	github.com/open-rails/contentkit => ../
-	github.com/open-rails/contentkit/adapters/openrails => ../adapters/openrails
-)
-
-replace github.com/open-rails/contentkit/adapters/authkit => ../adapters/authkit
