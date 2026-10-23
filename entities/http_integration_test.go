@@ -85,7 +85,7 @@ func TestHandler(t *testing.T) {
 	expect(user, "POST", "/entities/"+color+"/edges", `[{"relation":"related","to":"`+saga+`"}]`, 200, `"relation":"related"`)
 	expect(user, "POST", "/entities/"+color+"/edges", `[{"relation":"Bad Rel","to":"`+saga+`"}]`, 400, "relation")
 	expect(user, "POST", "/entities/"+color+"/edges", `[{"relation":"related","to":"`+cid(99)+`"}]`, 404, "")
-	expect(user, "PUT", "/contents/"+cid(1)+"/entities", `{"memberships":[{"group_id":"`+color+`"},{"entity_id":"`+saga+`","position":3}]}`, 200, `"position":3`)
+	expect(user, "PUT", "/contents/"+cid(1)+"/entities", `{"memberships":[{"group_id":"`+color+`"},{"group_id":"`+saga+`","position":3}]}`, 200, `"position":3`)
 	expect(user, "PUT", "/contents/"+cid(1)+"/entities", `{"memberships":[{"group_id":"`+color+`","position":1}]}`, 400, "ordered")
 	expect(user, "PUT", "/contents/"+cid(9)+"/entities", `{"memberships":[]}`, 404, "")
 	expect(user, "GET", "/contents/"+cid(1)+"/entities", "", 200, `"entities":[`)
