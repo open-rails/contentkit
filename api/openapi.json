@@ -18429,6 +18429,9 @@
           "id": {
             "type": "string"
           },
+          "deleted": {
+            "type": "boolean"
+          },
           "name": {
             "type": "string"
           },

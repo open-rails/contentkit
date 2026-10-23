@@ -3,8 +3,6 @@ package groups
 import (
 	"context"
 	"fmt"
-	"sort"
-	"time"
 )
 
 // effectiveSQL derives eff(version_id, group_ids) for the versions source
@@ -89,8 +87,6 @@ UPDATE %s f SET group_ids = eff.group_ids, updated_at = now() FROM eff
 	return s.changed(ctx, q, contentIDs)
 }
 
-var refreshBatch = 200
-
 // refreshGroupFacets re-derives the facets of every content a change to the
 // given groups can reach: members of them or of their descendants, and
 // content whose facets name any of them. These groups grant access, so the
@@ -120,56 +116,6 @@ ORDER BY 1`,
 		return nil, err
 	}
 	return collectStrings(rows)
-}
-
-// RefreshGroupMembers re-derives the facets of the contents the groups reach
-// whose ids sort after after, refreshBatch per transaction, until budget
-// passes (0: none). It returns where it stopped, "" when done. Repeating it
-// is harmless.
-func (s *Store) RefreshGroupMembers(ctx context.Context, groupIDs []string, after string, budget time.Duration) (string, error) {
-	var contentIDs []string
-	if err := s.read(ctx, func(q Querier) (err error) {
-		contentIDs, err = s.groupReach(ctx, q, groupIDs)
-		return err
-	}); err != nil {
-		return "", err
-	}
-	start := time.Now()
-	contentIDs = contentIDs[sort.SearchStrings(contentIDs, after+"\x00"):]
-	for len(contentIDs) > 0 {
-		batch := contentIDs[:min(refreshBatch, len(contentIDs))]
-		if err := s.run(ctx, func(q Querier) error { return s.refreshFacets(ctx, q, batch) }); err != nil {
-			return after, err
-		}
-		after, contentIDs = batch[len(batch)-1], contentIDs[len(batch):]
-		if budget > 0 && len(contentIDs) > 0 && time.Since(start) > budget {
-			return after, nil
-		}
-	}
-	return "", nil
-}
-
-// RefreshWindows re-derives the facets of content whose windowed memberships
-// opened or closed within the last lookback. It is an engine job: run it more
-// often than lookback; overlapping runs are harmless.
-func (s *Store) RefreshWindows(ctx context.Context, lookback time.Duration) error {
-	if lookback <= 0 {
-		return fmt.Errorf("%w: lookback must be positive", ErrInvalid)
-	}
-	return s.run(ctx, func(q Querier) error {
-		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT DISTINCT content_id FROM %s
- WHERE tenant_id = $1 AND (active_from IS NOT NULL OR active_until IS NOT NULL)
-   AND ((active_from > now() - $2 * interval '1 second' AND active_from <= now()) OR (active_until > now() - $2 * interval '1 second' AND active_until <= now()))`,
-			s.table("content_memberships")), s.tenant, lookback.Seconds())
-		if err != nil {
-			return err
-		}
-		ids, err := collectStrings(rows)
-		if err != nil {
-			return err
-		}
-		return s.refreshFacets(ctx, q, ids)
-	})
 }
 
 func collectStrings(rows interface {

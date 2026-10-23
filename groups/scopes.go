@@ -77,12 +77,28 @@ func (s *Store) unscoped(gs []Group) []string {
 	return out
 }
 
+// needsSync reports whether configured kinds use the external lifecycle adapters.
+// Hosts commonly install Owned for ordinary catalog writes without configuring
+// any user-owned kinds; those hosts have no asynchronous ownership work.
+func (s *Store) needsSync() bool {
+	for _, kind := range s.cfg.GroupKinds {
+		if kind.AuthScope && s.scopes != nil || kind.Owner == "user" && s.owned != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) needsReconcile() bool {
+	return s.needsSync() || s.folders != nil && len(s.userKinds()) > 0
+}
+
 // queueSync queues the sync of ids in the writing transaction, when River
 // is bound.
 func (s *Store) queueSync(ctx context.Context, q Querier, ids []string) error {
 	client := s.river.bound()
 	tx, ok := q.(pgx.Tx)
-	if s.scopes == nil && s.owned == nil || client == nil || !ok || len(ids) == 0 {
+	if !s.needsSync() || client == nil || !ok || len(ids) == 0 {
 		return nil
 	}
 	_, err := client.InsertTx(ctx, tx, syncArgs{Tenant: s.tenant, Groups: ids}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 10})
@@ -93,7 +109,7 @@ func (s *Store) queueSync(ctx context.Context, q Querier, ids []string) error {
 // queued job retries), and answers gs as they then stand. Bound to a
 // caller's transaction it leaves them to the job.
 func (s *Store) syncAfter(ctx context.Context, gs []Group, changed []string) ([]Group, error) {
-	if s.tx != nil || len(changed) == 0 || s.scopes == nil && s.owned == nil {
+	if s.tx != nil || len(changed) == 0 || !s.needsSync() {
 		return gs, nil
 	}
 	ids := make([]GroupID, len(changed))

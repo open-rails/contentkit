@@ -435,6 +435,15 @@ func (h *Hub) EraseSubjects(ctx context.Context, subjects []signal.Subject) (sig
 	return store.EraseSubjects(ctx, []string{h.tenant}, subjects)
 }
 
+// AnonymizeSubject preserves anonymous engagement while unlinking an account.
+func (h *Hub) AnonymizeSubject(ctx context.Context, old, anonymous signal.Subject) error {
+	store, err := h.requireStore()
+	if err != nil {
+		return err
+	}
+	return store.AnonymizeSubject(ctx, h.tenant, old, anonymous)
+}
+
 // EnforceErasures physically removes residue of every recorded erasure of
 // this tenant (see signal.Store.EnforceErasures). The host invokes it explicitly;
 // ContentKit does not schedule an erasure sweep.

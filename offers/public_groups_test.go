@@ -112,6 +112,19 @@ func TestInternalGroupPublicOffersAndLibrary(t *testing.T) {
 	if err != nil || len(page.Items) != 1 || page.Items[0].ContentID != visibleContent {
 		t.Fatalf("domain library: %+v %v", page, err)
 	}
+	// A hard-domain exclusion follows its current dated association even
+	// when the base facet still contains the old entity and no worker ran.
+	exec(`INSERT INTO `+table("content_memberships")+` (tenant_id,group_id,content_id,active_from,active_until)
+ VALUES ('policy',$1,$2,now()-interval '3 days',now()-interval '2 days')`, internal, blockedContent)
+	page, err = s.Library(ctx, actor, LibraryQuery{})
+	if err != nil || len(page.Items) != 2 {
+		t.Fatalf("expired timed exclusion: %+v %v", page, err)
+	}
+	exec(`UPDATE `+table("content_memberships")+` SET active_until=NULL WHERE tenant_id='policy' AND content_id=$1`, blockedContent)
+	page, err = s.Library(ctx, actor, LibraryQuery{})
+	if err != nil || len(page.Items) != 1 || page.Items[0].ContentID != visibleContent {
+		t.Fatalf("active timed exclusion: %+v %v", page, err)
+	}
 	s.kinds.ContentFilters.Domains = nil
 	page, err = s.Library(ctx, actor, LibraryQuery{})
 	if err != nil || len(page.Items) != 2 {

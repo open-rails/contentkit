@@ -91,7 +91,7 @@ export function RelativeTime({ at, className }: { at: string; className?: string
 export function UserAvatar({ user, name, size = "default" }: { user?: PublicUser; name: string; size?: "default" | "sm" | "lg" }) {
   return (
     <Avatar size={size}>
-      {user?.avatar && <AvatarImage src={user.avatar} srcSet={user.avatar_srcset} sizes={size === "lg" ? "40px" : size === "sm" ? "24px" : "32px"} alt="" loading="lazy" />}
+      {!user?.deleted && user?.avatar && <AvatarImage src={user.avatar} srcSet={user.avatar_srcset} sizes={size === "lg" ? "40px" : size === "sm" ? "24px" : "32px"} alt="" loading="lazy" />}
       <AvatarFallback aria-hidden>{(name.trim()[0] ?? "?").toUpperCase()}</AvatarFallback>
     </Avatar>
   );
@@ -99,7 +99,8 @@ export function UserAvatar({ user, name, size = "default" }: { user?: PublicUser
 
 /** A user's name, linked when the host gives a profile URL. */
 export function UserName({ user, name, href, className }: { user?: PublicUser; name: string; href?: (u: PublicUser) => string | undefined; className?: string }) {
-  const url = user && href?.(user);
+  if (user?.deleted) name = "<Deleted>";
+  const url = user && !user.deleted && href?.(user);
   const cls = cn("font-medium text-foreground", className);
   return url ? (
     <a href={url} className={cn(cls, "hover:underline")}>

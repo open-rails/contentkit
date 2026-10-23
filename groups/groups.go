@@ -76,7 +76,7 @@ type Text struct {
 // Cover is a group's picture: an image uploaded to the group's media folder
 // ("i-{uuid}") or a member content's cover, the cover of the edition a
 // reader's language opens by default. Auto covers are the most-favorited live
-// member, chosen by Recount when none is selected.
+// member, selected at read time when none is explicitly chosen.
 type Cover struct {
 	Image     string `json:"image,omitempty"`
 	ContentID string `json:"content_id,omitempty"`

@@ -553,6 +553,13 @@ func (c *comments) enrichAuthors(ctx context.Context, list []Comment, authorIDs 
 			continue
 		}
 		if u, ok := users[list[i].UserID]; ok {
+			if u.Deleted {
+				// Keep ownership in storage for account recovery, but use the
+				// established anonymous-author wire shape so older clients also
+				// hide the account and its profile link.
+				list[i].UserID, list[i].AnonName = "", "<Deleted>"
+				continue
+			}
 			pu := u
 			list[i].Author = &pu
 		}

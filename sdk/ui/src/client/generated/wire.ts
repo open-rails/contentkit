@@ -1679,6 +1679,7 @@ export interface PublicRendition {
 
 export interface PublicUser {
   id: string;
+  deleted?: boolean;
   name?: string;
   username: string;
   avatar?: string;

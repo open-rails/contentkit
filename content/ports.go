@@ -19,6 +19,7 @@ import (
 // Never its email.
 type PublicUser struct {
 	ID           string `json:"id"`
+	Deleted      bool   `json:"deleted,omitempty"`
 	Name         string `json:"name,omitempty"`
 	Username     string `json:"username"`
 	Avatar       string `json:"avatar,omitempty"`

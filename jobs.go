@@ -52,10 +52,7 @@ const (
 	resyncEvery         = 24 * time.Hour
 	repairEvery         = time.Hour
 	reclassifyEvery     = 10 * time.Minute
-	recountEvery        = 15 * time.Minute
-	windowsEvery        = time.Minute
 	searchPruneEvery    = time.Hour
-	windowsLookback     = 5 * time.Minute // well past windowsEvery, so no window change is missed
 )
 
 func (j *jobs) contribution() riverhelpers.Contribution {
@@ -93,8 +90,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 				}, &river.PeriodicJobOpts{ID: id, RunOnStart: onStart}))
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{}, true)
-		periodic("contentkit_groups_recount", recountEvery, groupsArgs{}, true)
-		periodic("contentkit_groups_windows", windowsEvery, groupsArgs{Windows: true}, true)
 		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{}, false)
 		if e.classifier {
 			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{}, false)
@@ -133,7 +128,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 }
 
 // rebuild queues the jobs that rebuild what an import changed: search
-// documents and group counts and covers. Before Start their
+// documents. Before Start their
 // periodic first runs do it.
 func (e *Engine) rebuild(ctx context.Context) error {
 	c := e.jobs.bound()
@@ -143,7 +138,7 @@ func (e *Engine) rebuild(ctx context.Context) error {
 	opts := func(queue string) *river.InsertOpts {
 		return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
 	}
-	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}, {Args: groupsArgs{}, InsertOpts: opts(QueueContentKit)}}
+	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}}
 	_, err := c.InsertMany(ctx, params)
 	return err
 }
@@ -194,20 +189,14 @@ type groupsArgs struct {
 
 func (groupsArgs) Kind() string { return "contentkit_groups" }
 
-// groupsWorker keeps groups' derived state current.
+// groupsWorker drains jobs queued by older hosts. Counts, covers and windows
+// are now read at runtime, so there is no projection left to rebuild.
 type groupsWorker struct {
 	river.WorkerDefaults[groupsArgs]
 	e *Engine
 }
 
-func (w *groupsWorker) Timeout(*river.Job[groupsArgs]) time.Duration { return 30 * time.Minute }
-
-func (w *groupsWorker) Work(ctx context.Context, job *river.Job[groupsArgs]) error {
-	if job.Args.Windows {
-		return w.e.groups.RefreshWindows(ctx, windowsLookback)
-	}
-	return w.e.groups.Recount(ctx)
-}
+func (w *groupsWorker) Work(context.Context, *river.Job[groupsArgs]) error { return nil }
 
 type searchPruneArgs struct{}
 

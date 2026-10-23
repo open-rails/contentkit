@@ -453,7 +453,19 @@ func (s *Store) Groups(ctx context.Context, ids []GroupID) ([]Group, error) {
 		return out, nil
 	}
 	err = s.read(ctx, func(q Querier) error {
-		found, err := s.byIDs(ctx, q, list)
+		rows, err := q.Query(ctx, "SELECT "+strings.Replace(groupColumns, "g.cover,", s.coverSQL()+",", 1)+" FROM "+s.table("content_groups")+" g WHERE g.tenant_id=@tenant AND g.id=ANY(@ids::text[])",
+			pgx.NamedArgs{"tenant": s.tenant, "ids": list, "covered_kinds": s.coveredKinds()})
+		if err != nil {
+			return err
+		}
+		read, err := scanGroups(rows)
+		if err != nil {
+			return err
+		}
+		found := make(map[GroupID]Group, len(read))
+		for _, g := range read {
+			found[g.ID] = g
+		}
 		for _, id := range list {
 			if g, ok := found[GroupID(id)]; ok {
 				out = append(out, g)

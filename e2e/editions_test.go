@@ -116,13 +116,7 @@ func TestEditionsCarryTheirOwnCovers(t *testing.T) {
 	}
 
 	// The tag's automatic cover is its member's edition in the reader's language.
-	store, err := groups.New(groups.Options{Pool: w.pool, Schema: w.schema, Tenant: w.tenant, Kinds: w.config().Content})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Recount(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+
 	for language, v := range map[string]catalog.Version{"en": b, "zh": z} {
 		var g groups.GroupDetail
 		f.want(http.StatusOK, "", "GET", "/entities/"+string(tag)+"?language="+language, nil, &g)
