@@ -39,6 +39,7 @@ interface Entry {
   file: File;
   key: string;
   status: Status;
+  createItem: UploadQueueProps["createItem"];
   progress?: Progress;
   ref?: RefBody;
   error?: ContentKitError;
@@ -108,9 +109,9 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const controllers = useRef(new Map<string, AbortController>());
-  const latest = useRef({ createItem, onUploaded, place });
+  const latest = useRef({ onUploaded, place });
   useEffect(() => {
-    latest.current = { createItem, onUploaded, place };
+    latest.current = { onUploaded, place };
   });
 
   const patch = useCallback((id: string, next: Partial<Entry>) => setEntries((es) => es.map((e) => (e.id === id ? { ...e, ...next } : e))), []);
@@ -124,7 +125,7 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
         let ref = entry.ref ?? saved?.ref;
         if (!ref) {
           patch(entry.id, { status: "creating", error: undefined });
-          ref = await latest.current.createItem(entry.file);
+          ref = await entry.createItem(entry.file);
           const made = ref;
           writeSaved(storageKey, (all) => void (all[entry.key] = { ref: made, name: entry.file.name, size: entry.file.size }));
         }
@@ -196,7 +197,7 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
     for (const file of files) {
       const key = fingerprint(file);
       if (entries.some((e) => e.key === key && e.status !== "done") || added.some((e) => e.key === key)) continue;
-      added.push({ id: `u${++seq}`, file, key, status: "queued", ref: saved[key]?.ref, resumed: !!saved[key] });
+      added.push({ id: `u${++seq}`, file, key, status: "queued", createItem, ref: saved[key]?.ref, resumed: !!saved[key] });
     }
     if (!added.length) return;
     setWaiting((w) => w.filter((s) => !added.some((a) => a.file.name === s.name && a.file.size === s.size)));

@@ -1,9 +1,17 @@
 import type { ContentKitClient } from "../../client/client.js";
 import { ContentKitError } from "../../client/errors.js";
-import type { Content, RefBody } from "../../client/generated/wire.js";
+import { allowsEntityScope } from "../../client/entity-scopes.js";
+import type { Content, ContentModel, RefBody, Rule } from "../../client/generated/wire.js";
 import { isPattern, ruleDir, screenFiles } from "../../client/media/rules.js";
 
 const words = (s: string) => s.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+
+export interface BulkDraftDefaults {
+  format?: string;
+  language?: string;
+  access?: Rule;
+  artists?: readonly string[];
+}
 
 /** A file name as a title: no extension or [bracketed] circle, artist and tag groups, separators as spaces. */
 export const fileTitle = (name: string) => {
@@ -20,6 +28,31 @@ export async function createDraft(client: ContentKitClient, kind: string, langua
   const version = [...(content.versions ?? [])].sort((a, b) => a.position - b.position)[0];
   if (!version) throw new ContentKitError("invalid_request", `kind ${kind} made a draft without a version`);
   return { content, ref: { kind, id: content.id, version: version.id } };
+}
+
+/** Applies only chosen defaults; safe to repeat when a file is retried. */
+export async function applyDraftDefaults(client: ContentKitClient, draft: { content: Content; ref: RefBody }, model: ContentModel, defaults: BulkDraftDefaults): Promise<Content> {
+  let { content } = draft;
+  const spec = model.kinds[content.kind];
+  const versionAccess = spec?.access_scope === "version";
+  if (defaults.format || defaults.access && !versionAccess) {
+    content = await client.contents.update(content.id, {
+      ...(defaults.format ? { attributes: { ...content.attributes, format: defaults.format } } : {}),
+      ...(defaults.access && !versionAccess ? { access: defaults.access } : {}),
+    });
+  }
+  if (defaults.language || defaults.access && versionAccess) {
+    await client.contents.updateVersion(content.id, draft.ref.version!, {
+      ...(defaults.language ? { languages: [defaults.language] } : {}),
+      ...(defaults.access && versionAccess ? { access: defaults.access } : {}),
+    });
+  }
+  if (defaults.artists?.length) {
+    const set = { kinds: ["artist"], memberships: defaults.artists.map((group_id) => ({ group_id })) };
+    if (allowsEntityScope(model.entity_kinds.artist, "content")) await client.entities.setSharedOfContent(content.id, set, defaults.language);
+    else await client.entities.setOfVersion(content.id, draft.ref.version!, set, defaults.language);
+  }
+  return content;
 }
 
 /**
