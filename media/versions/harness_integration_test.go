@@ -105,10 +105,10 @@ func mediaKinds(ns string, hooks media.Hooks) media.Config {
 // user-owned channels.
 var siteKinds = kinds.Config{Languages: []string{"en"}, Tiers: []string{"premium"}, TokenClaims: []string{"premium"},
 	Kinds: map[string]kinds.Kind{
-		"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Segments: true, Groups: []string{"tag", "channel"}},
+		"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Segments: true, Entities: []string{"tag", "channel"}},
 		"movie":   {Route: "m", Presentation: "player", Versions: kinds.VersionRules{Languages: "many"}},
 	},
-	GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags"}, "channel": {Owner: "user", AuthScope: true}}}
+	EntityKinds: map[string]kinds.EntityKind{"tag": {Route: "tags"}, "channel": {Owner: "user", AuthScope: true}}}
 
 // grants are the test auth's permissions: staff holds root:entities:write;
 // in a channel's AuthKit scope, its editor holds channel:media:write.

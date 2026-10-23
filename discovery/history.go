@@ -21,10 +21,10 @@ type HistoryOptions struct {
 	Kind string
 	// Status is seen, in_progress or completed; anything they touched by
 	// default.
-	Status     string
-	CardGroups []string
-	Cursor     string
-	Summary    bool
+	Status       string
+	CardEntities []string
+	Cursor       string
+	Summary      bool
 	// Limit defaults to 24 and is capped at 100.
 	Limit int
 }
@@ -82,7 +82,7 @@ func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, e
 	if err != nil {
 		return empty, err
 	}
-	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
+	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
 	if err != nil {
 		return empty, err
 	}

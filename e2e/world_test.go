@@ -85,13 +85,13 @@ func newWorld(t *testing.T, options ...authtest.Option) *world {
 	w.avatars = rbac.Root.Role("avatars", declared[slices.Index(access.Permissions(), access.AvatarsWrite)])
 	channel := rbac.Persona("channel")
 	var editing []iam.Grant
-	perms := channel.Declare(access.GroupPermissions("channel")...)
+	perms := channel.Declare(access.EntityPermissions("channel")...)
 	for _, p := range perms {
 		editing = append(editing, p)
 	}
 	w.channelEditor = channel.Role("editor", editing...)
 	w.channelWriter = channel.Role("writer", perms[0])
-	w.channelModerator = channel.Role("moderator", perms[slices.Index(access.GroupPermissions("channel"), access.GroupCommentsModerate("channel"))])
+	w.channelModerator = channel.Role("moderator", perms[slices.Index(access.EntityPermissions("channel"), access.EntityCommentsModerate("channel"))])
 	options = append([]authtest.Option{authtest.WithConfig(func(c *authkit.Config) { c.Roles = rbac })}, options...)
 	w.ak, _ = authtest.New(t, options...)
 	var err error
@@ -162,12 +162,12 @@ func (w *world) config() contentkit.Config {
 	return contentkit.Config{Tenant: w.tenant, Database: contentkit.DatabaseConfig{Schema: w.schema},
 		Content: kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium"},
 			Kinds: map[string]kinds.Kind{
-				"gallery": {Route: "g", Presentation: "reader", Versions: one, Groups: []string{"tag", "series"}},
+				"gallery": {Route: "g", Presentation: "reader", Versions: one, Entities: []string{"tag", "series"}},
 				"book":    {Route: "b", Presentation: "reader", Segments: true, Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored"}}},
 				"album":   {Route: "a", Presentation: "reader", Versions: one},
 				"blog":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			},
-			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true, Sellable: true}}},
+			EntityKinds: map[string]kinds.EntityKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true, Sellable: true}}},
 		Interactions: contentkit.InteractionsConfig{Limits: contentkit.LimitsConfig{Disabled: true}},
 		Avatars:      &contentkit.AvatarsConfig{Kind: avatarKind()},
 		Media: &contentkit.MediaConfig{Config: w.mediaConfig(),

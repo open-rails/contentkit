@@ -3,10 +3,10 @@ import "../../test/dom.js";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { createContentKitClient } from "../../client/client.js";
-import type { Card, ContentModel, GroupCard } from "../../client/generated/wire.js";
+import type { Card, ContentModel, EntityCard } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/provider.js";
-import { GroupManager } from "../admin/group-manager.js";
-import { GroupDirectory } from "../groups/directory.js";
+import { EntityManager } from "../admin/entity-manager.js";
+import { EntityDirectory } from "../entities/directory.js";
 import { ReleaseDateIndex } from "./filters.js";
 import { ContentGrid } from "./grid.js";
 
@@ -18,7 +18,7 @@ const card = (id: string): Card => ({
   version: { id: `${id}-version`, code: id, languages: ["en"], traits: [], has_audio: false },
   entities: {}, counts: {}, attributes: {}, access: { allowed: true, level: "public" },
 });
-const group = (id: string): GroupCard => ({ id, kind: "artist", slug: id, name: `${id} item`, internal: false, count: 1, attributes: {}, created_at: "2026-10-16T00:00:00Z" });
+const group = (id: string): EntityCard => ({ id, kind: "artist", slug: id, name: `${id} item`, internal: false, count: 1, attributes: {}, created_at: "2026-10-16T00:00:00Z" });
 
 function server(caller: Caller, failInitial: boolean) {
   const reads: URL[] = [];
@@ -44,7 +44,7 @@ function server(caller: Caller, failInitial: boolean) {
 
 function mount(caller: Caller, client: ReturnType<typeof server>["client"]) {
   return render(<ContentKitProvider client={client} viewer="staff">
-    {caller === "grid" ? <ContentGrid query={{ kind: "gallery" }} renderCard={(card) => <span>{card.title}</span>} /> : caller === "dates" ? <ReleaseDateIndex query={{ kind: "gallery", by: "day" }} /> : caller === "directory" ? <GroupDirectory kind="artist" letters={false} /> : <GroupManager groupKinds={["artist"]} />}
+    {caller === "grid" ? <ContentGrid query={{ kind: "gallery" }} renderCard={(card) => <span>{card.title}</span>} /> : caller === "dates" ? <ReleaseDateIndex query={{ kind: "gallery", by: "day" }} /> : caller === "directory" ? <EntityDirectory kind="artist" letters={false} /> : <EntityManager entityKinds={["artist"]} />}
   </ContentKitProvider>);
 }
 

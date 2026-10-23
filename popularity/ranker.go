@@ -22,30 +22,30 @@ type Source interface {
 	Metrics(ctx context.Context, refs []signal.ContentRef, window signal.Window) (map[signal.ContentKey]signal.ContentMetrics, error)
 }
 
-// Catalog is the join group popularity derives from: which groups (artist,
+// Catalog is the join entity popularity derives from: which entities (artist,
 // series, tag, character, season, ...) content is in. ContentKit never
-// records a signal against a group; a group ranks by its member contents.
-// Memberships returns, per content id, the ids of the groups of groupKind
+// records a signal against an entity; an entity ranks by its member contents.
+// Memberships returns, per content id, the ids of the entities of groupKind
 // effective on the content (it or any version); contents in none are
-// absent. *groups.Store implements it.
+// absent. *entities.Store implements it.
 type Catalog interface {
-	Memberships(ctx context.Context, tenant, contentKind, groupKind string, contentIDs []string) (map[string][]contentref.GroupID, error)
+	Memberships(ctx context.Context, tenant, contentKind, entityKind string, contentIDs []string) (map[string][]contentref.EntityID, error)
 }
 
 // CatalogFunc adapts a function to Catalog.
-type CatalogFunc func(ctx context.Context, tenant, contentKind, groupKind string, contentIDs []string) (map[string][]contentref.GroupID, error)
+type CatalogFunc func(ctx context.Context, tenant, contentKind, entityKind string, contentIDs []string) (map[string][]contentref.EntityID, error)
 
-func (f CatalogFunc) Memberships(ctx context.Context, tenant, contentKind, groupKind string, contentIDs []string) (map[string][]contentref.GroupID, error) {
-	return f(ctx, tenant, contentKind, groupKind, contentIDs)
+func (f CatalogFunc) Memberships(ctx context.Context, tenant, contentKind, entityKind string, contentIDs []string) (map[string][]contentref.EntityID, error) {
+	return f(ctx, tenant, contentKind, entityKind, contentIDs)
 }
 
-// DefaultGroupCandidateLimit bounds the ranked works a group listing
+// DefaultEntityCandidateLimit bounds the ranked works an entity listing
 // aggregates; see docs/popularity-policy.md for what the bound means.
-const DefaultGroupCandidateLimit = 2000
+const DefaultEntityCandidateLimit = 2000
 
 // DefaultMaxDepth is the deepest rank Popular serves by default; it equals
-// DefaultGroupCandidateLimit, the deepest prefix Groups reads.
-const DefaultMaxDepth = DefaultGroupCandidateLimit
+// DefaultEntityCandidateLimit, the deepest prefix Entities reads.
+const DefaultMaxDepth = DefaultEntityCandidateLimit
 
 // minReadDepth is the shallowest ranking prefix Popular reads.
 const minReadDepth = 64
@@ -59,18 +59,18 @@ const DefaultCacheTTL = 5 * time.Minute
 type Config struct {
 	Source Source
 	Policy Policy
-	// Catalog enables Groups. Optional.
+	// Catalog enables Entities. Optional.
 	Catalog Catalog
-	// Cache memoizes Popular and Groups under policy-named keys. Optional.
+	// Cache memoizes Popular and Entities under policy-named keys. Optional.
 	Cache    Cache
 	CacheTTL time.Duration // default DefaultCacheTTL
-	// GroupCandidateLimit is the ranked-work bound of Groups (default
-	// DefaultGroupCandidateLimit). Part of the cache key.
-	GroupCandidateLimit int
+	// EntityCandidateLimit is the ranked-work bound of Entities (default
+	// DefaultEntityCandidateLimit). Part of the cache key.
+	EntityCandidateLimit int
 	// MaxDepth is the deepest rank Popular serves (default DefaultMaxDepth,
-	// or GroupCandidateLimit when larger); a larger limit is clamped, so a
+	// or EntityCandidateLimit when larger); a larger limit is clamped, so a
 	// listing ends there. It bounds the rows one read returns and one cache
-	// entry holds. Must be at least GroupCandidateLimit.
+	// entry holds. Must be at least EntityCandidateLimit.
 	MaxDepth     int
 	Availability AvailabilityProvider
 }
@@ -82,7 +82,7 @@ type Ranker struct {
 	catalog             Catalog
 	cache               Cache
 	cacheTTL            time.Duration
-	groupCandidates     int
+	entityCandidates    int
 	maxDepth            int
 	availability        AvailabilityProvider
 	scope               signal.ActivityScope
@@ -99,18 +99,18 @@ func New(cfg Config) (*Ranker, error) {
 		return nil, err
 	}
 	r := &Ranker{source: cfg.Source, policy: cfg.Policy, catalog: cfg.Catalog, cache: cfg.Cache, cacheTTL: cfg.CacheTTL,
-		groupCandidates: cfg.GroupCandidateLimit, maxDepth: cfg.MaxDepth, availability: cfg.Availability}
+		entityCandidates: cfg.EntityCandidateLimit, maxDepth: cfg.MaxDepth, availability: cfg.Availability}
 	if r.cacheTTL <= 0 {
 		r.cacheTTL = DefaultCacheTTL
 	}
-	if r.groupCandidates <= 0 {
-		r.groupCandidates = DefaultGroupCandidateLimit
+	if r.entityCandidates <= 0 {
+		r.entityCandidates = DefaultEntityCandidateLimit
 	}
 	if r.maxDepth <= 0 {
-		r.maxDepth = max(DefaultMaxDepth, r.groupCandidates)
+		r.maxDepth = max(DefaultMaxDepth, r.entityCandidates)
 	}
-	if r.groupCandidates > r.maxDepth {
-		return nil, fmt.Errorf("popularity: GroupCandidateLimit %d exceeds MaxDepth %d", r.groupCandidates, r.maxDepth)
+	if r.entityCandidates > r.maxDepth {
+		return nil, fmt.Errorf("popularity: GroupCandidateLimit %d exceeds MaxDepth %d", r.entityCandidates, r.maxDepth)
 	}
 	return r, nil
 }
@@ -137,10 +137,10 @@ func (h Hit) MeanEngagement() float64 {
 	return h.ReaderQualitySum / float64(h.Readers)
 }
 
-// GroupHit is one ranked group, derived from its member works.
-type GroupHit struct {
-	GroupID      contentref.GroupID
-	GroupKind    string
+// EntityHit is one ranked entity, derived from its member works.
+type EntityHit struct {
+	EntityID     contentref.EntityID
+	EntityKind   string
 	Score        float64 // summed member scores
 	ContentCount uint64  // ranked members inside the candidate bound
 	Readers      uint64  // summed member readers (a person engaging with two members counts twice)
@@ -278,40 +278,40 @@ func (r *Ranker) Scores(ctx context.Context, contentKind string, ids []string, w
 	return out, nil
 }
 
-// Groups ranks the groups of one kind by the window popularity
+// Entities ranks the entities of one kind by the window popularity
 // of their member works, joined through the Catalog over the top
-// GroupCandidateLimit ranked works: score = summed member scores. The
+// EntityCandidateLimit ranked works: score = summed member scores. The
 // listing is approximate: a record with no member in that slice is absent and
 // counts describe only the slice.
-func (r *Ranker) Groups(ctx context.Context, contentKind, groupKind string, window signal.Window) ([]GroupHit, error) {
+func (r *Ranker) Entities(ctx context.Context, contentKind, entityKind string, window signal.Window) ([]EntityHit, error) {
 	if r.catalog == nil {
 		return nil, fmt.Errorf("popularity: group ranking needs a Catalog")
 	}
-	if strings.TrimSpace(groupKind) == "" {
+	if strings.TrimSpace(entityKind) == "" {
 		return nil, fmt.Errorf("popularity: groupKind is required")
 	}
-	key := r.cacheKey("groups", contentKind, groupKind, window.String(), strconv.Itoa(r.groupCandidates))
-	var out []GroupHit
+	key := r.cacheKey("groups", contentKind, entityKind, window.String(), strconv.Itoa(r.entityCandidates))
+	var out []EntityHit
 	if r.cached(ctx, key, &out) {
 		return out, nil
 	}
-	works, err := r.Popular(ctx, contentKind, window, r.groupCandidates)
+	works, err := r.Popular(ctx, contentKind, window, r.entityCandidates)
 	if err != nil {
 		return nil, err
 	}
-	out = []GroupHit{}
+	out = []EntityHit{}
 	if len(works) > 0 {
 		ids := make([]string, 0, len(works))
 		for _, w := range works {
 			ids = append(ids, w.ContentID)
 		}
-		memberships, err := r.catalog.Memberships(ctx, r.source.Tenant(), contentKind, groupKind, ids)
+		memberships, err := r.catalog.Memberships(ctx, r.source.Tenant(), contentKind, entityKind, ids)
 		if err != nil {
-			return nil, fmt.Errorf("popularity: %s memberships: %w", groupKind, err)
+			return nil, fmt.Errorf("popularity: %s memberships: %w", entityKind, err)
 		}
-		byID := map[contentref.GroupID]*GroupHit{}
+		byID := map[contentref.EntityID]*EntityHit{}
 		for _, w := range works {
-			seen := map[contentref.GroupID]struct{}{}
+			seen := map[contentref.EntityID]struct{}{}
 			for _, tid := range memberships[w.ContentID] {
 				if _, dup := seen[tid]; dup || tid == "" {
 					continue
@@ -319,7 +319,7 @@ func (r *Ranker) Groups(ctx context.Context, contentKind, groupKind string, wind
 				seen[tid] = struct{}{}
 				e := byID[tid]
 				if e == nil {
-					e = &GroupHit{GroupID: tid, GroupKind: groupKind}
+					e = &EntityHit{EntityID: tid, EntityKind: entityKind}
 					byID[tid] = e
 				}
 				e.ContentCount++
@@ -335,7 +335,7 @@ func (r *Ranker) Groups(ctx context.Context, contentKind, groupKind string, wind
 			if out[i].Score != out[j].Score {
 				return out[i].Score > out[j].Score
 			}
-			return out[i].GroupID < out[j].GroupID
+			return out[i].EntityID < out[j].EntityID
 		})
 	}
 	r.store(ctx, key, out)

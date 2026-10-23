@@ -3,7 +3,7 @@
 //
 //	ck, err := contentkit.New(ctx, cfg, deps)  // validates or migrates its schema
 //	err = ck.Start(ctx)                        // its jobs, on its own River
-//	routes, err := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
+//	routes, err := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Entities: contentkit.AllRoutes})
 //
 // The routes, the Go client (Client) and Ready, Probes and Close are the
 // whole surface: hosts never read or write ContentKit's storage.
@@ -37,7 +37,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
@@ -82,7 +82,7 @@ type Engine struct {
 	content          *content.Runtime
 	notices          *notification.Store
 	notificationJobs *billingNotificationJobs
-	groups           *groups.Store
+	entities         *entities.Store
 	catalog          *catalog.Store
 	offers           *offers.Service
 	discover         *discovery.Service
@@ -232,7 +232,7 @@ func (e *Engine) validate(deps Deps) error {
 	if err := cfg.Content.Validate(); err != nil {
 		return fmt.Errorf("contentkit: Config.Content: %w", err)
 	}
-	if err := e.validateGroupScopes(deps.Scopes); err != nil {
+	if err := e.validateEntityScopes(deps.Scopes); err != nil {
 		return err
 	}
 	for kind := range cfg.Content.Kinds {
@@ -366,22 +366,22 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	return nil
 }
 
-// newCatalog builds the stores media is built over: groups, offers (with
-// Deps.Billing) and the catalog, which refreshes facets on groups' changes
+// newCatalog builds the stores media is built over: entities, offers (with
+// Deps.Billing) and the catalog, which refreshes facets on entities' changes
 // and renames offers' products after titles.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
-	opts := groups.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.GroupReferences,
-		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+	opts := entities.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.EntityReferences,
+		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},
-		NamesChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
-			return e.catalog.GroupsRenamed(ctx, q, ids)
+		NamesChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
+			return e.catalog.EntitiesRenamed(ctx, q, ids)
 		},
-		DocumentsChanged: func(ctx context.Context, q groups.Querier) error { return e.syncDocuments(ctx, q) },
+		DocumentsChanged: func(ctx context.Context, q entities.Querier) error { return e.syncDocuments(ctx, q) },
 		Owned:            ownedContent{e}}
 	if e.cfg.Media != nil {
-		opts.Covers, opts.Folders = groupCovers{e}, groupFolders{e}
+		opts.Covers, opts.Folders = entityCovers{e}, entityFolders{e}
 	}
 	var err error
 	if deps.Billing != nil {
@@ -391,14 +391,14 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		}
 		opts.Sales = e.offers
 	}
-	if e.groups, err = groups.New(opts); err != nil {
+	if e.entities, err = entities.New(opts); err != nil {
 		return err
 	}
 	playable, err := e.playableKinds()
 	if err != nil {
 		return err
 	}
-	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Groups: e.groups,
+	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities,
 		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences, PlayableKinds: playable,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
@@ -479,7 +479,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if err := media.ValidateVersionStorageMigration(ctx, m.reg, journal); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMigrationsRequired, err)
 	}
-	limiter, err := e.groupLimiter()
+	limiter, err := e.entityLimiter()
 	if err != nil {
 		return nil, err
 	}
@@ -544,12 +544,12 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	return m, nil
 }
 
-// groupLimiter limits uploads to user-owned groups by their kind's
-// kinds.UploadLimits, keyed by the group (versions.GroupOwner); nil when no
+// groupLimiter limits uploads to user-owned entities by their kind's
+// kinds.UploadLimits, keyed by the entity (versions.EntityOwner); nil when no
 // kind sets any.
-func (e *Engine) groupLimiter() (*media.PGLimiter, error) {
+func (e *Engine) entityLimiter() (*media.PGLimiter, error) {
 	limits := map[string]kinds.UploadLimits{}
-	for name, gk := range e.cfg.Content.GroupKinds {
+	for name, gk := range e.cfg.Content.EntityKinds {
 		if gk.Uploads != (kinds.UploadLimits{}) {
 			limits[name] = gk.Uploads
 		}
@@ -558,7 +558,7 @@ func (e *Engine) groupLimiter() (*media.PGLimiter, error) {
 		return nil, nil
 	}
 	of := func(owner string) kinds.UploadLimits {
-		kind, _, _ := versions.ParseGroupOwner(owner)
+		kind, _, _ := versions.ParseEntityOwner(owner)
 		return limits[kind]
 	}
 	return media.NewPGLimiter(e.pool, e.schema, media.PGLimits{
@@ -663,14 +663,14 @@ func (e *Engine) mount(deps Deps) error {
 			return err
 		}
 		if e.publishing, err = publishing.New(publishing.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
-			Catalog: e.catalog, Groups: e.groups, Registry: m.reg, Uploads: m.uploads, Manifests: m.jobs.Manifests(),
+			Catalog: e.catalog, Entities: e.entities, Registry: m.reg, Uploads: m.uploads, Manifests: m.jobs.Manifests(),
 			Versions: m.versions, Auth: e.auth, Authority: publishingAuthority{e}, Logger: e.log, Clock: deps.Clock}); err != nil {
 			return err
 		}
 		e.modules[httpapi.Publishing] = e.publishing.Handler()
 	}
 	c := e.cfg.Content
-	if e.modules[httpapi.Entities], err = e.groups.Handler(e.auth); err != nil {
+	if e.modules[httpapi.Entities], err = e.entities.Handler(e.auth); err != nil {
 		return err
 	}
 	e.modules[httpapi.Contents] = e.catalog.Handler()
@@ -684,7 +684,7 @@ func (e *Engine) mount(deps Deps) error {
 	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c, e.hub.SignalPlane, avatars); err != nil {
 		return err
 	}
-	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Groups: e.groups,
+	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities,
 		Content: e.content, Offers: e.offers, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
 	}
@@ -713,7 +713,7 @@ func (e *Engine) mount(deps Deps) error {
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
-		Groups: e.groups, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
+		Entities: e.entities, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
 		MeasuredEngagement: e.cfg.MeasuredEngagement, ActivityCohorts: e.cfg.ActivityCohorts}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if o.Candidates != nil && !e.hub.SignalsConfigured() {

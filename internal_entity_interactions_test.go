@@ -6,7 +6,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
@@ -18,13 +18,13 @@ func TestInternalEntitiesCannotReceivePublicInteractions(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = e.Close(context.Background()) })
-	created, err := e.groups.CreateGroups(t.Context(), []groups.GroupInput{
+	created, err := e.entities.CreateEntities(t.Context(), []entities.EntityInput{
 		{Kind: "tag", Slug: "public"}, {Kind: "tag", Slug: "internal", Internal: true}, {Kind: "tag", Slug: "merged", Internal: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.groups.Merge(t.Context(), []groups.Merge{{From: created[2].ID, Into: created[1].ID}}); err != nil {
+	if _, err := e.entities.Merge(t.Context(), []entities.Merge{{From: created[2].ID, Into: created[1].ID}}); err != nil {
 		t.Fatal(err)
 	}
 	refs := []contentref.ContentRef{}

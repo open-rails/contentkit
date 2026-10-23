@@ -16,13 +16,13 @@ import (
 )
 
 func seedKnownCards(f *fixture) {
-	f.group("tag", "big-breasts", "yaoi")
+	f.entity("tag", "big-breasts", "yaoi")
 	en := []string{"en"}
 	premium := `{"level":"tier","tiers":["premium"]}`
 	f.seed(
 		item{n: 1, titles: map[string]string{"en": "Known published"}, age: time.Hour, versions: []ver{{langs: en}}},
-		item{n: 2, titles: map[string]string{"en": "Known filtered"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: en}}},
-		item{n: 3, titles: map[string]string{"en": "Known domain restricted"}, age: time.Hour, groups: []string{"restricted"}, versions: []ver{{langs: en}}},
+		item{n: 2, titles: map[string]string{"en": "Known filtered"}, age: time.Hour, entities: []string{"big-breasts"}, versions: []ver{{langs: en}}},
+		item{n: 3, titles: map[string]string{"en": "Known domain restricted"}, age: time.Hour, entities: []string{"restricted"}, versions: []ver{{langs: en}}},
 		item{n: 4, titles: map[string]string{"en": "Known premium"}, age: time.Hour, rule: premium, versions: []ver{{langs: en}}},
 		item{n: 5, titles: map[string]string{"en": "Future"}, age: time.Hour, versions: []ver{{langs: en, future: true}}},
 		item{n: 6, titles: map[string]string{"en": "Deleted"}, age: time.Hour, deleted: true, versions: []ver{{langs: en}}},

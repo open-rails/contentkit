@@ -18,8 +18,8 @@ engine:
   content:
     languages: [en]
     kinds:
-      gallery: {route: g, presentation: reader, versions: {languages: one}, groups: [tag]}
-    group_kinds:
+      gallery: {route: g, presentation: reader, versions: {languages: one}, entities: [tag]}
+    entity_kinds:
       tag: {route: tags}
       channel: {route: c, owner: user}
   media:
@@ -30,7 +30,7 @@ engine:
 `
 
 // media-config prints the engine's registry as the stock media worker loads
-// it (MEDIA_KINDS_FILE): content kinds versioned, every group kind with its
+// it (MEDIA_KINDS_FILE): content kinds versioned, every entity kind with its
 // cover media and a user-owned one with avatars, in the tenant's namespace.
 func TestMediaConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "contentkit.yaml")

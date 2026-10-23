@@ -96,14 +96,14 @@ func TestTenantAppErasureAndRestrictions(t *testing.T) {
 		}
 	}
 	// An authorization-provider callback never gets to approve an unknown,
-	// retired or sibling-only content-group scope merely from its string ID.
+	// retired or sibling-only content-entity scope merely from its string ID.
 	for i, e := range engines[:2] {
-		_, err := pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{e.schema, "content_groups"}.Sanitize()+`(tenant_id,id,kind,slug,auth_scope) VALUES($1,$2,'tag',$2,$3)`, e.cfg.Tenant, "same-group", "same-scope")
+		_, err := pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{e.schema, "content_entities"}.Sanitize()+`(tenant_id,id,kind,slug,auth_scope) VALUES($1,$2,'tag',$2,$3)`, e.cfg.Tenant, "same-group", "same-scope")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if i == 1 {
-			_, err = pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{e.schema, "content_groups"}.Sanitize()+`(tenant_id,id,kind,slug,auth_scope) VALUES($1,'sibling','tag','sibling','sibling-scope')`, e.cfg.Tenant)
+			_, err = pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{e.schema, "content_entities"}.Sanitize()+`(tenant_id,id,kind,slug,auth_scope) VALUES($1,'sibling','tag','sibling','sibling-scope')`, e.cfg.Tenant)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +123,7 @@ func TestTenantAppErasureAndRestrictions(t *testing.T) {
 			t.Fatalf("group scope %d/%s=%v %v", tc.app, tc.scope, allowed, err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `UPDATE `+pgx.Identifier{engines[0].schema, "content_groups"}.Sanitize()+` SET state='deleted' WHERE id='same-group'`); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE `+pgx.Identifier{engines[0].schema, "content_entities"}.Sanitize()+` SET state='deleted' WHERE id='same-group'`); err != nil {
 		t.Fatal(err)
 	}
 	if allowed, err := engines[0].auth.(scopeAuthenticator).Authorize(ctx, verified, "same-scope", "tag:settings:manage"); err != nil || allowed {

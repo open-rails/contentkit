@@ -17,7 +17,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -41,9 +41,9 @@ type ContentInput struct {
 	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions []string       `json:"restrictions,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"`
-	// OwnerGroupID is the home group (a channel); its editors edit the item.
+	// OwnerEntityID is the home entity (a channel); its editors edit the item.
 	// It never changes.
-	OwnerGroupID string `json:"owner_group_id,omitempty"`
+	OwnerEntityID string `json:"owner_group_id,omitempty"`
 	// Creators nil credits the creating person as its author.
 	Creators *[]Creator `json:"creators,omitempty"`
 	// Versions: none gives the item one serving its text's languages (a
@@ -216,7 +216,7 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 }
 
 // Create creates content items as drafts and returns their ids in order.
-// actor needs root:content:write, or to edit each item's owner group.
+// actor needs root:content:write, or to edit each item's owner entity.
 func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInput) ([]string, error) {
 	prepared, err := s.PrepareCreate(ctx, actor, in)
 	if err != nil {
@@ -327,7 +327,7 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		if slices.ContainsFunc(p.versions, func(v VersionInput) bool { return v.Fork != nil }) {
 			return nil, invalid("a new item's versions have no sibling to fork")
 		}
-		owners = append(owners, c.OwnerGroupID)
+		owners = append(owners, c.OwnerEntityID)
 		preps[i] = p
 	}
 	if err := s.authorizeCreate(ctx, s.pool, actor, owners); err != nil {
@@ -353,23 +353,23 @@ func (s *Store) createPreparedTx(ctx context.Context, tx pgx.Tx, actor access.Ac
 	ids := make([]string, len(preps))
 	var events []Event
 	for i, p := range preps {
-		if err := s.checkRuleGroups(ctx, tx, p.Access); err != nil {
+		if err := s.checkRuleEntities(ctx, tx, p.Access); err != nil {
 			return nil, err
 		}
-		if p.OwnerGroupID != "" {
+		if p.OwnerEntityID != "" {
 			var ok bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2 AND state = 'active')`, s.tenant, p.OwnerGroupID).Scan(&ok); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = $2 AND state = 'active')`, s.tenant, p.OwnerEntityID).Scan(&ok); err != nil {
 				return nil, err
 			}
 			if !ok {
-				return nil, invalid("owner group %s does not exist", p.OwnerGroupID)
+				return nil, invalid("owner group %s does not exist", p.OwnerEntityID)
 			}
 		}
 		rule, _ := json.Marshal(p.Access)
 		attrs, _ := json.Marshal(p.Attributes)
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, original_title, original_language, access, restrictions, attributes, owner_group_id, created_by, comments)
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, original_title, original_language, access, restrictions, attributes, owner_entity_id, created_by, comments)
  VALUES ($1, $2, $3, nullif($4, ''), nullif($5, ''), $6, $7, $8, nullif($9, ''), nullif($10, ''), $11)`,
-			s.tenant, p.id, p.Kind, p.OriginalTitle, p.OriginalLanguage, rule, p.Restrictions, attrs, p.OwnerGroupID, viewerID(actor), p.Comments); err != nil {
+			s.tenant, p.id, p.Kind, p.OriginalTitle, p.OriginalLanguage, rule, p.Restrictions, attrs, p.OwnerEntityID, viewerID(actor), p.Comments); err != nil {
 			return nil, err
 		}
 		if err := s.writeTexts(ctx, tx, p.id, p.Text, nil); err != nil {
@@ -478,7 +478,7 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 					return fx, errStale
 				}
 			}
-			if err := s.checkRuleGroups(ctx, tx, u.Access); err != nil {
+			if err := s.checkRuleEntities(ctx, tx, u.Access); err != nil {
 				return fx, err
 			}
 			var access, attrs []byte
@@ -591,7 +591,7 @@ func orEmpty[T any](s []T) []T {
 // putCodes gives each item its content code and decorative path per language:
 // its kind's path entity slug, if any, then its title slug (the site's first
 // language with text is the default).
-func (s *Store) putCodes(ctx context.Context, q groups.Querier, ids []string) error {
+func (s *Store) putCodes(ctx context.Context, q entities.Querier, ids []string) error {
 	rows, err := q.Query(ctx, `SELECT c.id, c.kind, t.language, t.slug FROM `+s.t.items+` c
  LEFT JOIN `+s.t.text+` t ON t.tenant_id = c.tenant_id AND t.content_id = c.id WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
@@ -989,7 +989,7 @@ func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error 
 	if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_group = NULL,deleted_without_versions=false,
+	_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_entity = NULL,deleted_without_versions=false,
  state = CASE WHEN published_at IS NOT NULL OR publish_at IS NOT NULL THEN 'published' ELSE 'draft' END WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
 	return err
 }
@@ -997,39 +997,39 @@ func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error 
 // ownedBatch bounds the content one owned-content transaction locks.
 const ownedBatch = 100
 
-// DeleteOwned deletes the live content of the deleted user-owned groups
-// among groups (every one with nil), recording each group as its content's
-// cause (groups.OwnedContent): holders of a deleted item's key still read
+// DeleteOwned deletes the live content of the deleted user-owned entities
+// among entities (every one with nil), recording each entity as its content's
+// cause (entities.OwnedContent): holders of a deleted item's key still read
 // it until the content is erased after the deletion retention.
-func (s *Store) DeleteOwned(ctx context.Context, groups []string) error {
-	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id
+func (s *Store) DeleteOwned(ctx context.Context, entities []string) error {
+	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_entity_id
  WHERE c.tenant_id = $1 AND g.state = 'deleted' AND g.kind = ANY($2) AND ($3::text[] IS NULL OR g.id = ANY($3)) AND c.state <> 'deleted'
- ORDER BY c.id LIMIT `+strconv.Itoa(ownedBatch)+` FOR UPDATE OF c FOR SHARE OF g`, groups, EventContentDeleted,
+ ORDER BY c.id LIMIT `+strconv.Itoa(ownedBatch)+` FOR UPDATE OF c FOR SHARE OF g`, entities, EventContentDeleted,
 		func(ctx context.Context, tx pgx.Tx, ids, causes []string) error {
-			_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` c SET state = 'deleted', deleted_at = clock_timestamp(), deleted_with_group = r.cause,deleted_without_versions=false
+			_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` c SET state = 'deleted', deleted_at = clock_timestamp(), deleted_with_entity = r.cause,deleted_without_versions=false
  FROM unnest($2::text[], $3::text[]) AS r(id, cause) WHERE c.tenant_id = $1 AND c.id = r.id`, s.tenant, ids, causes)
 			return err
 		})
 }
 
-// RestoreOwned restores the content the active groups among groups (every
-// one with nil) deleted when they were deleted (groups.OwnedContent), as
+// RestoreOwned restores the content the active entities among entities (every
+// one with nil) deleted when they were deleted (entities.OwnedContent), as
 // Restore does; content deleted for another reason stays deleted, and
 // content purged since is gone.
-func (s *Store) RestoreOwned(ctx context.Context, groups []string) error {
-	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.deleted_with_group
+func (s *Store) RestoreOwned(ctx context.Context, entities []string) error {
+	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.deleted_with_entity
  WHERE c.tenant_id = $1 AND g.state = 'active' AND g.kind = ANY($2) AND ($3::text[] IS NULL OR g.id = ANY($3)) AND c.state = 'deleted'
- ORDER BY c.id LIMIT `+strconv.Itoa(ownedBatch)+` FOR UPDATE OF c FOR SHARE OF g`, groups, EventContentRestored,
+ ORDER BY c.id LIMIT `+strconv.Itoa(ownedBatch)+` FOR UPDATE OF c FOR SHARE OF g`, entities, EventContentRestored,
 		func(ctx context.Context, tx pgx.Tx, ids, _ []string) error { return s.restoreRows(ctx, tx, ids) })
 }
 
 // followOwned writes, a batch at a time, the content items query selects
-// (id, kind, group) with write, each batch in one transaction with the
+// (id, kind, entity) with write, each batch in one transaction with the
 // write's effects.
-func (s *Store) followOwned(ctx context.Context, query string, groups []string, typ string,
+func (s *Store) followOwned(ctx context.Context, query string, entities []string, typ string,
 	write func(ctx context.Context, tx pgx.Tx, ids, causes []string) error) error {
 	var userKinds []string
-	for name, gk := range s.cfg.GroupKinds {
+	for name, gk := range s.cfg.EntityKinds {
 		if gk.Owner == "user" {
 			userKinds = append(userKinds, name)
 		}
@@ -1043,7 +1043,7 @@ func (s *Store) followOwned(ctx context.Context, query string, groups []string, 
 			return err
 		}
 		ids, causes, events, err := func() ([]string, []string, []Event, error) {
-			rows, err := tx.Query(ctx, query, s.tenant, userKinds, groups)
+			rows, err := tx.Query(ctx, query, s.tenant, userKinds, entities)
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -1051,11 +1051,11 @@ func (s *Store) followOwned(ctx context.Context, query string, groups []string, 
 			var ids, causes []string
 			var events []Event
 			for rows.Next() {
-				var id, kind, group string
-				if err := rows.Scan(&id, &kind, &group); err != nil {
+				var id, kind, entity string
+				if err := rows.Scan(&id, &kind, &entity); err != nil {
 					return nil, nil, nil, err
 				}
-				ids, causes = append(ids, id), append(causes, group)
+				ids, causes = append(ids, id), append(causes, entity)
 				events = append(events, Event{Type: typ, Kind: kind, ContentID: id})
 			}
 			return ids, causes, events, rows.Err()
@@ -1102,8 +1102,8 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			k := s.cfg.Kinds[o.kind]
 			if o.state == StateDeleted {
 				var automatic bool
-				if err := tx.QueryRow(ctx, `SELECT c.deleted_without_versions AND (c.owner_group_id IS NULL OR EXISTS
- (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id=c.tenant_id AND g.id=c.owner_group_id AND g.state='active'))
+				if err := tx.QueryRow(ctx, `SELECT c.deleted_without_versions AND (c.owner_entity_id IS NULL OR EXISTS
+ (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id=c.tenant_id AND g.id=c.owner_entity_id AND g.state='active'))
  FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND c.id=$2`, s.tenant, p.ContentID).Scan(&automatic); err != nil {
 					return fx, err
 				}
@@ -1355,7 +1355,7 @@ func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, raw []byte) err
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return err
 	}
-	return s.checkRuleGroups(ctx, tx, &r)
+	return s.checkRuleEntities(ctx, tx, &r)
 }
 
 func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind string, k kinds.Kind, id string, v VersionInput) error {

@@ -65,7 +65,7 @@ export const admin: typeof en = {
     changedDuringSave: "저장 중에 새 변경 사항이 생겼습니다. 게시하기 전에 저장하세요.",
   },
   contentAdmin: {
-    groups: "그룹",
+    entities: "그룹",
     modelFailed: "콘텐츠 모델을 불러올 수 없습니다.",
     title: "콘텐츠 관리",
     navigation: "관리 섹션",

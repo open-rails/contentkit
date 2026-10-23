@@ -110,14 +110,14 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
           {t("readerManifest.summary", { pages: names.pages.length, files: names.files.length })} {!names.files.length && t("readerManifest.noAudio")}
         </p>
         <Defaults meta={meta} edit={edit} />
-        <Group title={t("readerManifest.anchors")} help={t("readerManifest.anchorsHelp")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
+        <Entity title={t("readerManifest.anchors")} help={t("readerManifest.anchorsHelp")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
           onAdd={() => edit((m) => ({ ...m, anchors: [...(m.anchors ?? []), { id: nextId(m.anchors ?? []), page: names.pages[0]!.id, offset_percent: 0 }] }))}>
           {anchors.map((a, i) => (
             <AnchorRow key={i} index={i} anchor={a} media={media} onChange={(next) => edit((m) => ({ ...m, anchors: replace(m.anchors, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, anchors: drop(m.anchors, i) }))} />
           ))}
-        </Group>
-        <Group title={t("readerManifest.foreground")} help={t("readerManifest.foregroundHelp")} add={t("readerManifest.addCue")} disabled={!names.files.length || !names.pages.length}
+        </Entity>
+        <Entity title={t("readerManifest.foreground")} help={t("readerManifest.foregroundHelp")} add={t("readerManifest.addCue")} disabled={!names.files.length || !names.pages.length}
           onAdd={() => edit((m) => ({ ...m, foreground: [...(m.foreground ?? []), { file: names.files[0]!, page: names.pages[0]!.id }] }))}
           extra={
             <Button type="button" size="sm" variant="outline" disabled={!names.files.length} onClick={() => {
@@ -133,14 +133,14 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
             <ForegroundRow key={i} index={i} cue={c} names={names} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, foreground: replace(m.foreground, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, foreground: drop(m.foreground, i) }))} />
           ))}
-        </Group>
-        <Group title={t("readerManifest.background")} help={t("readerManifest.backgroundHelp")} add={t("readerManifest.addTrack")} disabled={!names.files.length}
+        </Entity>
+        <Entity title={t("readerManifest.background")} help={t("readerManifest.backgroundHelp")} add={t("readerManifest.addTrack")} disabled={!names.files.length}
           onAdd={() => edit((m) => ({ ...m, background: [...(m.background ?? []), { file: names.files[0]! }] }))}>
           {(meta.background ?? []).map((c, i) => (
             <BackgroundRow key={i} index={i} cue={c} names={names} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, background: replace(m.background, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, background: drop(m.background, i) }))} />
           ))}
-        </Group>
+        </Entity>
         {problems.length > 0 && <Problems problems={problems} />}
         <ErrorLine error={save.error} />
         {!coordinated && <div className="flex flex-wrap items-center gap-3">
@@ -179,7 +179,7 @@ function nextId(anchors: readonly Anchor[]): string {
 const replace = <T,>(list: T[] | undefined, i: number, next: T): T[] => (list ?? []).map((x, j) => (j === i ? next : x));
 const drop = <T,>(list: T[] | undefined, i: number): T[] => (list ?? []).filter((_, j) => j !== i);
 
-function Group({ title, help, add, disabled, onAdd, extra, children }: { title: string; help: string; add: string; disabled: boolean; onAdd: () => void; extra?: ReactNode; children: ReactNode }) {
+function Entity({ title, help, add, disabled, onAdd, extra, children }: { title: string; help: string; add: string; disabled: boolean; onAdd: () => void; extra?: ReactNode; children: ReactNode }) {
   return (
     <fieldset className="grid gap-2 rounded-md border border-border p-3">
       <legend className="px-1 font-medium">{title}</legend>

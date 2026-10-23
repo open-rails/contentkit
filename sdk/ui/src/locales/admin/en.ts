@@ -64,7 +64,7 @@ export const admin = {
     changedDuringSave: "There are newer unsaved edits. Save them before publishing.",
   },
   contentAdmin: {
-    groups: "Groups",
+    entities: "Entities",
     modelFailed: "The content model could not be loaded.",
     title: "Content administration",
     navigation: "Administration sections",

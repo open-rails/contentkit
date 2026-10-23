@@ -23,7 +23,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/notification"
@@ -53,7 +53,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, anon, "GET", "/config", nil, &cfg)
 	var model kindsroute.ContentModel
 	f.want(http.StatusOK, anon, "GET", "/kinds", nil, &model)
-	if model.Kinds["gallery"].Route != "g" || model.GroupKinds["tag"].Route != "tags" {
+	if model.Kinds["gallery"].Route != "g" || model.EntityKinds["tag"].Route != "tags" {
 		t.Fatalf("content model %+v", model)
 	}
 	if cfg.Anonymous != (content.Anonymous{}) {
@@ -251,44 +251,46 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusForbidden, user, "GET", "/moderation/held?kind=comment", nil, nil)
 
 	// Groups: public reads, the site's groups' writes behind root:entities:write.
-	f.want(http.StatusForbidden, user, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
+	f.want(http.StatusForbidden, user, "POST", "/entities", []entities.EntityInput{{Kind: "tag", Slug: "nope"}}, nil)
 	f.want(http.StatusOK, user, "GET", "/me/entities", nil, nil)
-	name := func(n string) groups.Name { return groups.Name{Language: "en", Kind: groups.NameCanonical, Name: n} }
-	var made []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{
-		{Kind: "tag", Slug: "color", Names: []groups.Name{name("Color")}},
-		{Kind: "tag", Slug: "colour", Names: []groups.Name{name("Colour")}},
-		{Kind: "series", Slug: "saga", Names: []groups.Name{name("Saga")}},
+	name := func(n string) entities.Name {
+		return entities.Name{Language: "en", Kind: entities.NameCanonical, Name: n}
+	}
+	var made []entities.Entity
+	f.want(http.StatusCreated, staff, "POST", "/entities", []entities.EntityInput{
+		{Kind: "tag", Slug: "color", Names: []entities.Name{name("Color")}},
+		{Kind: "tag", Slug: "colour", Names: []entities.Name{name("Colour")}},
+		{Kind: "series", Slug: "saga", Names: []entities.Name{name("Saga")}},
 	}, &made)
 	color, colour, saga := string(made[0].ID), string(made[1].ID), string(made[2].ID)
-	f.want(http.StatusConflict, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "color"}}, nil)
-	var page groups.GroupPage
+	f.want(http.StatusConflict, staff, "POST", "/entities", []entities.EntityInput{{Kind: "tag", Slug: "color"}}, nil)
+	var page entities.EntityPage
 	f.want(http.StatusOK, anon, "GET", "/entities?kind=tag&language=en&sort=name&limit=1", nil, &page)
-	if len(page.Groups) != 1 || page.Groups[0].Name != "Color" || page.Groups[0].Path == "" || page.NextCursor == "" {
+	if len(page.Entities) != 1 || page.Entities[0].Name != "Color" || page.Entities[0].Path == "" || page.NextCursor == "" {
 		t.Fatalf("groups page %+v", page)
 	}
 	f.want(http.StatusOK, anon, "GET", "/entities/"+color+"?language=en", nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/entities/"+uuid.Must(uuid.NewV7()).String(), nil, nil)
 	f.want(http.StatusBadRequest, anon, "GET", "/entities/not-an-id", nil, nil)
-	f.want(http.StatusOK, staff, "PATCH", "/entities/"+colour, groups.GroupUpdate{Slug: ptr("colour-uk")}, nil)
-	f.want(http.StatusOK, staff, "POST", "/entities/"+color+"/names", []groups.Name{{Language: "en", Kind: groups.NameAlias, Name: "Hue"}}, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/entities/"+color+"/names", []groups.Name{{Language: "en", Name: "Hue"}}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/entities/"+color+"/names", []groups.Name{name("Color")}, nil)
-	edges := []groups.EdgeInput{{Relation: "related", To: groups.GroupID(colour)}}
+	f.want(http.StatusOK, staff, "PATCH", "/entities/"+colour, entities.EntityUpdate{Slug: ptr("colour-uk")}, nil)
+	f.want(http.StatusOK, staff, "POST", "/entities/"+color+"/names", []entities.Name{{Language: "en", Kind: entities.NameAlias, Name: "Hue"}}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/entities/"+color+"/names", []entities.Name{{Language: "en", Name: "Hue"}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/entities/"+color+"/names", []entities.Name{name("Color")}, nil)
+	edges := []entities.EdgeInput{{Relation: "related", To: entities.EntityID(colour)}}
 	f.want(http.StatusOK, staff, "POST", "/entities/"+color+"/edges", edges, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/entities/"+color+"/edges", edges, nil)
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+g1+"/entities", groups.ContentGroups{Memberships: []groups.Membership{
-		{GroupID: groups.GroupID(color)}, {GroupID: groups.GroupID(saga)}, {GroupID: groups.GroupID(colour), VersionID: g1v}}}, nil)
-	var held groups.ContentMemberships
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+g1+"/entities", entities.ContentEntities{Memberships: []entities.Membership{
+		{EntityID: entities.EntityID(color)}, {EntityID: entities.EntityID(saga)}, {EntityID: entities.EntityID(colour), VersionID: g1v}}}, nil)
+	var held entities.ContentMemberships
 	f.want(http.StatusOK, staff, "GET", "/contents/"+g1+"/entities?language=en", nil, &held)
-	if len(held.Memberships) != 3 || len(held.Groups) != 3 {
+	if len(held.Memberships) != 3 || len(held.Entities) != 3 {
 		t.Fatalf("content groups %+v", held)
 	}
 	// Content detail names shared groups and version-owned groups separately.
 	var named catalog.Content
 	f.want(http.StatusOK, anon, "GET", "/contents/"+g1+"?language=ja", nil, &named)
 	routes := map[string]string{"tag": "/ja/tags/", "series": "/ja/series/"}
-	checkEntities := func(got []catalog.GroupSummary, want ...string) {
+	checkEntities := func(got []catalog.EntitySummary, want ...string) {
 		t.Helper()
 		if len(got) != len(want) {
 			t.Fatalf("entity scope: got %+v, want %v", got, want)
@@ -299,28 +301,28 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 			}
 		}
 	}
-	checkEntities(named.Groups, color, saga)
+	checkEntities(named.Entities, color, saga)
 	foundVersion := false
 	for _, v := range named.Versions {
 		if v.ID == g1v {
 			foundVersion = true
-			checkEntities(v.Groups, colour)
+			checkEntities(v.Entities, colour)
 		} else {
-			checkEntities(v.Groups)
+			checkEntities(v.Entities)
 		}
 	}
 	if !foundVersion {
 		t.Fatalf("detail has no selected version %s: %+v", g1v, named.Versions)
 	}
-	f.want(http.StatusOK, staff, "POST", "/entities/"+saga+"/members", []groups.Membership{{ContentID: g2}}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/entities/"+saga+"/members/order", groups.Order{Members: []groups.MemberRef{{ContentID: g2}, {ContentID: g1}}}, nil)
-	var members groups.MemberPage
+	f.want(http.StatusOK, staff, "POST", "/entities/"+saga+"/members", []entities.Membership{{ContentID: g2}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/entities/"+saga+"/members/order", entities.Order{Members: []entities.MemberRef{{ContentID: g2}, {ContentID: g1}}}, nil)
+	var members entities.MemberPage
 	f.want(http.StatusOK, staff, "GET", "/entities/"+saga+"/members?limit=10", nil, &members)
 	if len(members.Members) != 2 || members.Members[0].ContentID != g2 {
 		t.Fatalf("members %+v", members)
 	}
-	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga+"/members", []groups.Membership{{ContentID: g2}}, nil)
-	f.want(http.StatusOK, staff, "POST", "/entities/"+colour+"/merge", groups.MergeInput{Into: groups.GroupID(color)}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga+"/members", []entities.Membership{{ContentID: g2}}, nil)
+	f.want(http.StatusOK, staff, "POST", "/entities/"+colour+"/merge", entities.MergeInput{Into: entities.EntityID(color)}, nil)
 
 	// Offers on content, a version and a sellable group, over a real OpenRails merchant.
 	var offer offers.Offer

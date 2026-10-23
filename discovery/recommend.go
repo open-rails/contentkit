@@ -17,7 +17,7 @@ import (
 type RecommendationOptions struct {
 	Reader
 	Filter
-	CardGroups []string
+	CardEntities []string
 	// Limit defaults to 12 and is capped at 50.
 	Limit int
 	// Summary counts omissions within the bounded recommendation candidates.
@@ -63,7 +63,7 @@ func (a *admission) cards(ctx context.Context, hits []Hit, o RecommendationOptio
 			picks = append(picks, p)
 		}
 	}
-	cards, err := a.s.cards(ctx, a.q, picks, cardOptions{chips: o.CardGroups})
+	cards, err := a.s.cards(ctx, a.q, picks, cardOptions{chips: o.CardEntities})
 	out := ContentPage{Contents: cards}
 	if err == nil && o.Summary {
 		ids := make([]string, 0, len(a.candidates))

@@ -11,14 +11,14 @@ import (
 )
 
 // The one visibility rule: site scopes (excluded restrictions, required
-// groups), content filters (config defaults and a viewer's overrides), the
+// entities), content filters (config defaults and a viewer's overrides), the
 // lock and hide access modes, and the
-// viewers who see everything (staff, creators, owner-group editors), for
+// viewers who see everything (staff, creators, owner-entity editors), for
 // lists (Listed) and direct reads (Contents) alike.
 func TestVisibilityIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	yaoi, gore, red := f.group("tag", "yaoi"), f.group("tag", "gore"), f.group("tag", "red")
-	studio := f.group("channel", "studio")
+	yaoi, gore, red := f.entity("tag", "yaoi"), f.entity("tag", "gore"), f.entity("tag", "red")
+	studio := f.entity("channel", "studio")
 	f.sell(studio)
 	f.editor("studio", "ed")
 
@@ -44,11 +44,11 @@ func TestVisibilityIntegration(t *testing.T) {
 	}, "en")
 	additional := item("Additional", nil, "en")
 	premium := item("Premium", func(c *ContentInput) { c.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}} }, "en")
-	channel := item("Channel", func(c *ContentInput) { c.Access = &access.Rule{Level: access.GroupLevel, Group: studio} }, "en")
+	channel := item("Channel", func(c *ContentInput) { c.Access = &access.Rule{Level: access.EntityLevel, Entity: studio} }, "en")
 	ppv := item("Pay per view", func(c *ContentInput) { c.Access = &access.Rule{Level: access.PPV} }, "en")
 	draft := f.create("staff", func() ContentInput {
 		in := gallery("Draft", "en")
-		in.OwnerGroupID, in.Creators = studio, &[]Creator{{UserID: "alice"}}
+		in.OwnerEntityID, in.Creators = studio, &[]Creator{{UserID: "alice"}}
 		return in
 	}())
 	f.claim("pam", "premium")
@@ -80,9 +80,9 @@ func TestVisibilityIntegration(t *testing.T) {
 		{"view-restricted stays inside domain", "viewer", "gay.test", ViewerOptions{}, []string{gay}},
 		{"a creator also lists their draft", "alice", "main.test", ViewerOptions{},
 			[]string{plain, restricted, gay, reddish, members, additional, premium, channel, ppv, draft}},
-		{"an owner group's editor lists its drafts", "ed", "main.test", ViewerOptions{EditorGroups: []string{studio}},
+		{"an owner group's editor lists its drafts", "ed", "main.test", ViewerOptions{EditorEntities: []string{studio}},
 			[]string{plain, restricted, gay, reddish, members, additional, premium, channel, ppv, draft}},
-		{"another channel's editor does not", "bob", "main.test", ViewerOptions{EditorGroups: []string{studio}},
+		{"another channel's editor does not", "bob", "main.test", ViewerOptions{EditorEntities: []string{studio}},
 			[]string{plain, restricted, gay, reddish, members, additional, premium, channel, ppv}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestVisibilityIntegration(t *testing.T) {
 	if got[0] == nil || got[1] == nil || got[2] == nil || got[6] != nil {
 		t.Fatalf("anonymous direct reads %v", ids(got))
 	}
-	// Sell: the rule's own keys (tiers, group), then the version's and the content's.
+	// Sell: the rule's own keys (tiers, entity), then the version's and the content's.
 	vkey := func(c *Content) string { return tenant + ":content:" + c.ID + "/" + c.Versions[0].ID }
 	ckey := func(c *Content) string { return tenant + ":content:" + c.ID }
 	if d := got[3].Versions[0].Decision; d.Allowed || !slices.Equal(d.Sell, []string{"premium", vkey(got[3]), ckey(got[3])}) {
@@ -133,8 +133,8 @@ func TestVisibilityIntegration(t *testing.T) {
 		t.Fatal("an editor edited content outside its group")
 	}
 
-	// Groups summarize what an item belongs to.
-	if g := f.read(anon, "main.test", gay)[0].Groups; len(g) != 1 || g[0].ID != yaoi || g[0].Name != "Yaoi" || g[0].Kind != "tag" {
+	// Entities summarize what an item belongs to.
+	if g := f.read(anon, "main.test", gay)[0].Entities; len(g) != 1 || g[0].ID != yaoi || g[0].Name != "Yaoi" || g[0].Kind != "tag" {
 		t.Fatalf("groups %+v", g)
 	}
 }

@@ -24,7 +24,7 @@ type Sale struct {
 
 // Sales answers, by key string, the purchasable offers selling keys (an
 // access.Decision's Sell): active offers, a paid one once OpenRails sells it
-// on its current terms, with its price; a free group's at once (joining
+// on its current terms, with its price; a free entity's at once (joining
 // syncs it). Tier keys have none.
 func (s *Service) Sales(ctx context.Context, keys []string) (map[string]Sale, error) {
 	var parsed []access.Key
@@ -114,9 +114,9 @@ func compare(a, b string) int {
 
 // editors reports, per target in order, whether actor may change its offers:
 // staff holding access.OffersWrite in a's root scope, else a creator of the
-// content, or an editor of the user-owned group sold or owning the content:
-// its owner, or a holder of access.GroupOffersWrite or
-// access.GroupSettingsManage in its AuthKit scope. A missing target is
+// content, or an editor of the user-owned entity sold or owning the content:
+// its owner, or a holder of access.EntityOffersWrite or
+// access.EntitySettingsManage in its AuthKit scope. A missing target is
 // ErrNotFound.
 func (s *Service) editors(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []Target) ([]bool, error) {
 	out := make([]bool, len(targets))
@@ -138,11 +138,11 @@ func (s *Service) editors(ctx context.Context, a auth.Authenticator, actor acces
 		kind, owner, scope string
 	}
 	got := make([]facts, len(targets))
-	var contents, versions, groups []string
-	var contentAt, groupAt []int
+	var contents, versions, entities []string
+	var contentAt, entityAt []int
 	for i, t := range targets {
-		if t.Kind == GroupTarget {
-			groups, groupAt = append(groups, t.ID), append(groupAt, i)
+		if t.Kind == EntityTarget {
+			entities, entityAt = append(entities, t.ID), append(entityAt, i)
 		} else {
 			contents, versions, contentAt = append(contents, orID(t)), append(versions, versionOf(t)), append(contentAt, i)
 		}
@@ -170,13 +170,13 @@ func (s *Service) editors(ctx context.Context, a auth.Authenticator, actor acces
 			coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
 		FROM unnest($2::text[], $3::text[]) WITH ORDINALITY AS r(content_id, version_id, n)
 		JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id
-		LEFT JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id AND g.state = 'active'
+		LEFT JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_entity_id AND g.state = 'active'
 		WHERE r.version_id = '' OR EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id AND v.id = r.version_id)`,
 		contentAt, s.tenant, contents, versions, actor.AccountID()); err != nil {
 		return nil, err
 	}
 	if err := scan(`SELECT r.n, false, g.kind, coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
-		FROM unnest($2::text[]) WITH ORDINALITY AS r(id, n) JOIN `+s.t.groups+` g ON g.tenant_id = $1 AND g.id = r.id`, groupAt, s.tenant, groups); err != nil {
+		FROM unnest($2::text[]) WITH ORDINALITY AS r(id, n) JOIN `+s.t.entities+` g ON g.tenant_id = $1 AND g.id = r.id`, entityAt, s.tenant, entities); err != nil {
 		return nil, err
 	}
 	asked := map[facts]bool{}
@@ -184,13 +184,13 @@ func (s *Service) editors(ctx context.Context, a auth.Authenticator, actor acces
 		if !f.found {
 			return nil, fmt.Errorf("%w: %s %s", ErrNotFound, targets[i].Kind, targets[i].ID)
 		}
-		if out[i] = f.creator && actor.Member(); out[i] || s.kinds.GroupKinds[f.kind].Owner != "user" {
+		if out[i] = f.creator && actor.Member(); out[i] || s.kinds.EntityKinds[f.kind].Owner != "user" {
 			continue
 		}
 		g := facts{kind: f.kind, owner: f.owner, scope: f.scope}
 		ok, seen := asked[g]
 		if !seen {
-			if ok, err = gate.GroupEditor(ctx, a, actor, f.owner, f.scope, access.GroupOffersWrite(f.kind), access.GroupSettingsManage(f.kind)); err != nil {
+			if ok, err = gate.EntityEditor(ctx, a, actor, f.owner, f.scope, access.EntityOffersWrite(f.kind), access.EntitySettingsManage(f.kind)); err != nil {
 				return nil, err
 			}
 			asked[g] = ok

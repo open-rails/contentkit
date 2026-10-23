@@ -5,18 +5,18 @@ import (
 	"testing"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 )
 
 func TestInternalEntityMediaRequiresExplicitStaffEditorRead(t *testing.T) {
 	s := newSite(t, siteOptions{})
-	store, err := groups.New(groups.Options{Pool: s.pool, Schema: s.schema, Tenant: s.tenant, Kinds: siteKinds})
+	store, err := entities.New(entities.Options{Pool: s.pool, Schema: s.schema, Tenant: s.tenant, Kinds: siteKinds})
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.CreateGroups(s.ctx, []groups.GroupInput{{Kind: "tag", Slug: "internal-marker", Internal: true}})
+	created, err := store.CreateEntities(s.ctx, []entities.EntityInput{{Kind: "tag", Slug: "internal-marker", Internal: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

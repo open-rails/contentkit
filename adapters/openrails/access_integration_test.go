@@ -111,7 +111,7 @@ func TestJoinCompensationPreservesConcurrentMembership(t *testing.T) {
 	ctx := t.Context()
 	owner, viewer := w.customer(), w.customer()
 	a, b := w.group("channel", "A", owner.ID), w.group("channel", "B", owner.ID)
-	targets := []offers.Target{{Kind: offers.GroupTarget, ID: a}, {Kind: offers.GroupTarget, ID: b}}
+	targets := []offers.Target{{Kind: offers.EntityTarget, ID: a}, {Kind: offers.EntityTarget, ID: b}}
 	if _, err := w.offers.Put(ctx, []offers.Put{{Target: targets[0]}, {Target: targets[1]}}); err != nil {
 		t.Fatal(err)
 	}
@@ -155,9 +155,9 @@ func TestDecideStoredRules(t *testing.T) {
 	saga := w.content(access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}, "Saga 1", "")
 	sagaV := w.version(saga, nil, "")
 	w.member(series, saga)
-	members := w.content(access.Rule{Level: access.GroupLevel, Group: channel}, "Members only", "")
+	members := w.content(access.Rule{Level: access.EntityLevel, Entity: channel}, "Members only", "")
 	membersV := w.version(members, nil, "")
-	mppv := w.content(access.Rule{Level: access.GroupPPV, Group: channel}, "Members PPV", "")
+	mppv := w.content(access.Rule{Level: access.EntityPPV, Entity: channel}, "Members PPV", "")
 	mppvV := w.version(mppv, nil, "")
 	aged := w.content(access.Rule{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.Public}}}, "Aged", "")
 	agedV := w.version(aged, nil, "")
@@ -255,9 +255,9 @@ func TestDecideStoredRules(t *testing.T) {
 func (w *world) facet(it access.Item) {
 	f := it.Rule.Facet()
 	w.exec(`INSERT INTO `+w.table("content_facets")+` (tenant_id, content_id, version_id, kind, languages,
-			access_level, access_tiers, access_group_id, access_releases, group_ids, published_at)
+			access_level, access_tiers, access_entity_id, access_releases, entity_ids, published_at)
 		VALUES ($1, $2, $3, 'post', '{en}', $4, $5, $6, $7, $8, now())`,
-		tenant, it.Content, it.Version, f.Level, f.Tiers, f.GroupID, f.Releases, it.Groups)
+		tenant, it.Content, it.Version, f.Level, f.Tiers, f.EntityID, f.Releases, it.Entities)
 }
 
 // Filter.SQL over content_facets admits, per viewer, exactly the versions
@@ -271,9 +271,9 @@ func TestFilterSQLMatchesDecide(t *testing.T) {
 		{Level: access.Public},
 		{Level: access.TierLevel, Tiers: []string{"premium"}},
 		{Level: access.TierLevel, Tiers: []string{"gold", "premium"}},
-		{Level: access.GroupLevel, Group: channel},
+		{Level: access.EntityLevel, Entity: channel},
 		{Level: access.PPV},
-		{Level: access.GroupPPV, Group: channel},
+		{Level: access.EntityPPV, Entity: channel},
 		{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.Public}}},
 		{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: future, Level: access.Public}}},
 	}

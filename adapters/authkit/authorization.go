@@ -32,7 +32,7 @@ var ErrScopeMigrationRequired = errors.New("contentkit/authkit: explicit authori
 
 // GroupResolver resolves only a group's authorization scope owned by this app.
 // Return auth.ErrForbidden for a missing group or one belonging to another app.
-type GroupResolver func(context.Context, contentkit.Scope, string) (auth.Scope, error)
+type EntityResolver func(context.Context, contentkit.Scope, string) (auth.Scope, error)
 
 // AuthorizationConfig binds one ContentKit app to its identity directory and
 // AuthKit permission group. These values come from trusted provisioning, never
@@ -40,7 +40,7 @@ type GroupResolver func(context.Context, contentkit.Scope, string) (auth.Scope, 
 type AuthorizationConfig struct {
 	Scope contentkit.Scope
 	// Issuer identifies the trusted tenant account directory. For a resource
-	// server it can differ from the authority that owns the permission groups.
+	// server it can differ from the authority that owns the permission entities.
 	Issuer string
 	// PermissionAuthority owns AppScope, TenantAdminScope and content group
 	// scopes. Empty preserves the same-issuer behavior by using Issuer.
@@ -57,7 +57,7 @@ type AuthorizationConfig struct {
 	Accounts AccountResolver
 	// Groups overrides deterministic GroupScopeID resolution only for an
 	// explicitly verified legacy binding. New apps use AppScopes and omit it.
-	Groups GroupResolver
+	Entities EntityResolver
 }
 
 type authorization struct {
@@ -297,13 +297,13 @@ func (a authorization) Authorize(ctx context.Context, scope contentkit.Scope, v 
 	if !ok {
 		return false, nil
 	}
-	if target.GroupID != "" {
+	if target.EntityID != "" {
 		var group auth.Scope
 		var err error
-		if a.cfg.Groups != nil {
-			group, err = a.cfg.Groups(ctx, scope, target.GroupID)
+		if a.cfg.Entities != nil {
+			group, err = a.cfg.Entities(ctx, scope, target.EntityID)
 		} else {
-			group.ID, err = GroupScopeID(scope, target.GroupID)
+			group.ID, err = EntityScopeID(scope, target.EntityID)
 			group.Authority = a.cfg.PermissionAuthority
 		}
 		if err != nil {
@@ -338,7 +338,7 @@ func (a authorization) Authorize(ctx context.Context, scope contentkit.Scope, v 
 // GroupScopeID is a deterministic AuthKit group identity for a ContentKit
 // group in one tenant and app. Existing content IDs and stored auth_scope
 // references stay unchanged; only the provider's authorization ID is derived.
-func GroupScopeID(scope contentkit.Scope, groupID string) (string, error) {
+func EntityScopeID(scope contentkit.Scope, groupID string) (string, error) {
 	if err := scope.Validate(); err != nil {
 		return "", err
 	}

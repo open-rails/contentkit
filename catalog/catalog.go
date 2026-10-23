@@ -25,7 +25,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/offers"
@@ -46,12 +46,12 @@ type Querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// Groups answers each version's effective group ids (its content's
+// Entities answers each version's effective entity ids (its content's
 // memberships, its own and what they imply), read in q's transaction, and
-// owner groups' cards: *groups.Store.
-type Groups interface {
-	EffectiveGroups(ctx context.Context, q groups.Querier, versionIDs []string) (map[string][]string, error)
-	Cards(ctx context.Context, ids []groups.GroupID, o groups.CardOptions) ([]groups.GroupCard, error)
+// owner entities' cards: *entities.Store.
+type Entities interface {
+	EffectiveEntities(ctx context.Context, q entities.Querier, versionIDs []string) (map[string][]string, error)
+	Cards(ctx context.Context, ids []entities.EntityID, o entities.CardOptions) ([]entities.EntityCard, error)
 }
 
 // Moderation screens text before it publishes: content.Runtime.
@@ -84,7 +84,7 @@ type Options struct {
 	Tenant string
 	// Kinds is the site's content model. Required.
 	Kinds kinds.Config
-	// Auth gates the routes and answers staff and owner-group permissions.
+	// Auth gates the routes and answers staff and owner-entity permissions.
 	Auth auth.Authenticator
 	// Gate answers viewers' entitlements; nil builds one without billing
 	// (only free rules and claimed tiers open).
@@ -92,10 +92,10 @@ type Options struct {
 	// Offers renames the products of content whose title changes and answers
 	// paywalls' offers; nil when nothing is sold.
 	Offers Offers
-	// Groups answers effective group ids for content_facets; nil: none. Wire
+	// Entities answers effective entity ids for content_facets; nil: none. Wire
 	// its Options.ContentChanged to Store.ContentChanged and its
-	// Options.NamesChanged to Store.GroupsRenamed.
-	Groups Groups
+	// Options.NamesChanged to Store.EntitiesRenamed.
+	Entities Entities
 	// Moderation screens text of content that is or goes live; nil approves
 	// unless contentkit.NewRuntime binds its content runtime (BindModeration).
 	Moderation Moderation
@@ -131,7 +131,7 @@ type Store struct {
 	guard          *gate.Gate
 	accessG        *access.Gate
 	offers         Offers
-	groups         Groups
+	entities       Entities
 	moderator      Moderation
 	body           Sanitizer
 	media          *Media
@@ -149,7 +149,8 @@ type Store struct {
 
 type tables struct {
 	items, text, creators, versions, versionText, segments, facets, events string
-	groups, groupNames, memberships, prefs, counts, docs, offers           string
+	currentFacets                                                          string
+	entities, entityNames, memberships, prefs, counts, docs, offers        string
 	reactions, favorites, comments, accessHistory                          string
 }
 
@@ -171,11 +172,11 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 	s := &Store{
 		pool: opts.Pool, schema: opts.Schema, qs: pgx.Identifier{opts.Schema}.Sanitize(), tenant: opts.Tenant, cfg: opts.Kinds,
 		t: tables{items: q("content_items"), text: q("content_text"), creators: q("content_creators"), versions: q("content_versions"),
-			versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), events: q("content_events"),
-			groups: q("content_groups"), groupNames: q("content_group_names"), memberships: q("content_memberships"),
+			versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), currentFacets: q("content_current_facets"), events: q("content_events"),
+			entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
 			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"), offers: q("content_offers"),
 			reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")},
-		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, offers: opts.Offers, groups: opts.Groups, moderator: opts.Moderation,
+		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, offers: opts.Offers, entities: opts.Entities, moderator: opts.Moderation,
 		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, documents: opts.DocumentsChanged, references: opts.References,
 		playable: slices.Sorted(slices.Values(opts.PlayableKinds)), now: opts.Now, log: opts.Logger,
 	}

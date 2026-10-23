@@ -170,7 +170,7 @@ export interface SeedContent {
   access?: Rule;
   attributes?: Record<string, unknown>;
   versions: VersionInput[];
-  /** Group ids, content-level memberships. */
+  /** Entity ids, content-level memberships. */
   groups?: string[];
   /** The owner group's id (a channel). */
   owner?: string;

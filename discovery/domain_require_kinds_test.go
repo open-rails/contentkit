@@ -12,16 +12,16 @@ import (
 
 func TestDomainRequiredEntitiesCanBeLimitedToContentKinds(t *testing.T) {
 	cfg := siteConfig()
-	cfg.Kinds["blog"] = kinds.Kind{Route: "blog", Presentation: "post", Groups: []string{"tag"}, Versions: kinds.VersionRules{Languages: "one"}}
-	required := []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}
+	cfg.Kinds["blog"] = kinds.Kind{Route: "blog", Presentation: "post", Entities: []string{"tag"}, Versions: kinds.VersionRules{Languages: "one"}}
+	required := []kinds.EntityRef{{Kind: "tag", Slug: "yaoi"}}
 	locked := false
 	cfg.ContentFilters.Domains, cfg.ContentFilters.AppliesTo = []kinds.Domain{
-		{Name: "main", Hosts: []string{"main.test"}}, {Name: "scoped", Hosts: []string{"scoped.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": required}}, {Name: "all", Hosts: []string{"all.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": required, "video": required, "blog": required}}, {Name: "missing", Hosts: []string{"missing.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "missing"}}}}, {Name: "missing-hard", Hosts: []string{"missing-hard.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": required}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}},
+		{Name: "main", Hosts: []string{"main.test"}}, {Name: "scoped", Hosts: []string{"scoped.test"}, RequireEntities: map[string][]kinds.EntityRef{"gallery": required}}, {Name: "all", Hosts: []string{"all.test"}, RequireEntities: map[string][]kinds.EntityRef{"gallery": required, "video": required, "blog": required}}, {Name: "missing", Hosts: []string{"missing.test"}, RequireEntities: map[string][]kinds.EntityRef{"gallery": []kinds.EntityRef{{Kind: "tag", Slug: "missing"}}}}, {Name: "missing-hard", Hosts: []string{"missing-hard.test"}, RequireEntities: map[string][]kinds.EntityRef{"gallery": required}, Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "missing"}, Visible: false, UserToggle: &locked}}},
 	}, []string{"gallery", "video", "blog"}
 	f := newFixtureConfig(t, nil, "", cfg)
-	f.group("tag", "yaoi")
+	f.entity("tag", "yaoi")
 	f.seed(item{n: 1, titles: map[string]string{"en": "Other gallery"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, titles: map[string]string{"en": "Yaoi gallery"}, age: time.Hour, groups: []string{"yaoi"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Yaoi gallery"}, age: time.Hour, entities: []string{"yaoi"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 3, kind: "blog", titles: map[string]string{"en": "News"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}})
 	for _, tc := range []struct {
 		host             string

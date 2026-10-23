@@ -116,7 +116,7 @@ func (s *Service) ActivityContexts(ctx context.Context, actor access.Actor, in A
 		}
 		f := selected[i]
 		refs[i] = contentref.NewVersion(s.o.Tenant, f.kind, t.ContentID, f.version)
-		items[i] = access.Item{Content: t.ContentID, Version: f.version, Rule: f.rule.Previewed(s.o.Kinds.Kinds[f.kind]), Groups: f.groups}
+		items[i] = access.Item{Content: t.ContentID, Version: f.version, Rule: f.rule.Previewed(s.o.Kinds.Kinds[f.kind]), Entities: f.entities}
 	}
 	visible, err := s.o.Resolver.Resolve(ctx, refs, actor)
 	if err != nil {
@@ -226,11 +226,11 @@ func expiredActivity(err error) bool { return errors.Is(err, token.ErrExpired) }
 type activityFact struct {
 	kind, version string
 	rule          access.Rule
-	groups        []string
+	entities      []string
 }
 
 func (s *Service) activityFacts(ctx context.Context, ids []string, language string) (map[string][]activityFact, error) {
-	rows, err := s.o.Pool.Query(ctx, `SELECT f.content_id,f.kind,f.version_id,c.access,v.access,f.group_ids
+	rows, err := s.o.Pool.Query(ctx, `SELECT f.content_id,f.kind,f.version_id,c.access,v.access,f.entity_ids
  FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id=f.tenant_id AND c.id=f.content_id
  JOIN `+s.t.versions+` v ON v.tenant_id=f.tenant_id AND v.id=f.version_id
  WHERE f.tenant_id=$1 AND f.content_id=ANY($2::text[])
@@ -245,7 +245,7 @@ func (s *Service) activityFacts(ctx context.Context, ids []string, language stri
 		var f activityFact
 		var content access.Rule
 		var override *access.Rule
-		if err := rows.Scan(&id, &f.kind, &f.version, &content, &override, &f.groups); err != nil {
+		if err := rows.Scan(&id, &f.kind, &f.version, &content, &override, &f.entities); err != nil {
 			return nil, err
 		}
 		f.rule = access.Effective(content, override)

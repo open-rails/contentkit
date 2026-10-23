@@ -6,35 +6,35 @@ import (
 	"github.com/open-rails/contentkit/access"
 )
 
-// internalAccessGroups is used only to redact public purchase metadata after
+// internalAccessEntities is used only to redact public purchase metadata after
 // the gate evaluated the original rules and entitlements.
-func (s *Service) internalAccessGroups(ctx context.Context, items []access.Item, decisions []access.Decision) (map[string]bool, error) {
+func (s *Service) internalAccessEntities(ctx context.Context, items []access.Item, decisions []access.Decision) (map[string]bool, error) {
 	var ids []string
 	for _, item := range items {
 		for _, release := range item.Rule.Releases {
-			if release.Group != "" {
-				ids = append(ids, release.Group)
+			if release.Entity != "" {
+				ids = append(ids, release.Entity)
 			}
 		}
-		if item.Rule.Group != "" {
-			ids = append(ids, item.Rule.Group)
+		if item.Rule.Entity != "" {
+			ids = append(ids, item.Rule.Entity)
 		}
 	}
 	for _, d := range decisions {
 		for _, key := range d.Sell {
-			if key.Kind() == access.KeyGroup {
-				ids = append(ids, key.Group())
+			if key.Kind() == access.KeyEntity {
+				ids = append(ids, key.Entity())
 			}
 		}
-		if d.Requires != nil && d.Requires.Kind() == access.KeyGroup {
-			ids = append(ids, d.Requires.Group())
+		if d.Requires != nil && d.Requires.Kind() == access.KeyEntity {
+			ids = append(ids, d.Requires.Entity())
 		}
 	}
 	internal := map[string]bool{}
 	if len(ids) == 0 {
 		return internal, nil
 	}
-	rows, err := s.o.Pool.Query(ctx, `SELECT id FROM `+s.t.groups+` WHERE tenant_id=$1 AND id=ANY($2::text[]) AND internal`, s.o.Tenant, ids)
+	rows, err := s.o.Pool.Query(ctx, `SELECT id FROM `+s.t.entities+` WHERE tenant_id=$1 AND id=ANY($2::text[]) AND internal`, s.o.Tenant, ids)
 	if err != nil {
 		return nil, err
 	}

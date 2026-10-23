@@ -13,7 +13,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
@@ -57,11 +57,11 @@ func TestEngineInteractions(t *testing.T) {
 		return c
 	}
 	harbor, draft, third := create("Harbor", true), create("Draft", false), create("Third", true)
-	var tags []groups.Group
-	tag := func(slug, name string) groups.GroupInput {
-		return groups.GroupInput{Kind: "tag", Slug: slug, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: name}}}
+	var tags []entities.Entity
+	tag := func(slug, name string) entities.EntityInput {
+		return entities.EntityInput{Kind: "tag", Slug: slug, Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: name}}}
 	}
-	s.call(http.StatusCreated, staff, "POST", v+"/entities", []groups.GroupInput{tag("moonlit", "Moonlit"), tag("rainy", "Rainy"), tag("old", "Old")}, &tags)
+	s.call(http.StatusCreated, staff, "POST", v+"/entities", []entities.EntityInput{tag("moonlit", "Moonlit"), tag("rainy", "Rainy"), tag("old", "Old")}, &tags)
 	moon, rainy, old := string(tags[0].ID), string(tags[1].ID), string(tags[2].ID)
 
 	// Comments join a language's thread; a reply joins its comment's.
@@ -126,7 +126,7 @@ func TestEngineInteractions(t *testing.T) {
 		t.Fatalf("standing %+v", standing)
 	}
 	s.call(http.StatusBadRequest, u1, "POST", v+"/entities/"+moon+"/like?version="+vid, nil, nil)
-	s.call(http.StatusOK, staff, "POST", v+"/entities/"+old+"/merge", groups.MergeInput{Into: groups.GroupID(moon)}, nil)
+	s.call(http.StatusOK, staff, "POST", v+"/entities/"+old+"/merge", entities.MergeInput{Into: entities.EntityID(moon)}, nil)
 	s.call(http.StatusOK, u2, "POST", v+"/entities/"+old+"/like", nil, &counts)
 	if *counts.Likes != 2 {
 		t.Fatalf("a like through the merged group %+v", counts)
@@ -142,11 +142,11 @@ func TestEngineInteractions(t *testing.T) {
 		s.call(http.StatusOK, a, "GET", v+path, nil, &page)
 	}
 	mine(u1, "/me/reactions?target=entities&kind=tag")
-	if len(page.Items) != 1 || page.Items[0].Group == nil || page.Items[0].Group.Name != "Moonlit" || page.Items[0].Value != 1 {
+	if len(page.Items) != 1 || page.Items[0].Entity == nil || page.Items[0].Entity.Name != "Moonlit" || page.Items[0].Value != 1 {
 		t.Fatalf("tag reactions %+v", page)
 	}
 	mine(u2, "/me/reactions?target=entities&value=like")
-	if len(page.Items) != 1 || string(page.Items[0].Group.ID) != moon {
+	if len(page.Items) != 1 || string(page.Items[0].Entity.ID) != moon {
 		t.Fatalf("u2's tag likes %+v", page)
 	}
 	mine(u1, "/me/reactions?value=like")
@@ -168,7 +168,7 @@ func TestEngineInteractions(t *testing.T) {
 		t.Fatalf("favorites page 2 %+v", page)
 	}
 	mine(u1, "/me/favorites?target=entities")
-	if len(page.Items) != 1 || string(page.Items[0].Group.ID) != moon {
+	if len(page.Items) != 1 || string(page.Items[0].Entity.ID) != moon {
 		t.Fatalf("group favorites %+v", page)
 	}
 	s.call(http.StatusOK, staff, "POST", v+"/contents/"+third.ID+"/unpublish", nil, nil)
@@ -289,7 +289,7 @@ func TestEngineCommentsSettingAndDomainScope(t *testing.T) {
 	cfg := siteConfig(schema)
 	locked := false
 	cfg.Content.ContentFilters.Domains, cfg.Content.ContentFilters.AppliesTo = []kinds.Domain{
-		{Name: "main", Hosts: []string{"example.com"}}, {Name: "safe", Hosts: []string{"safe.example"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}},
+		{Name: "main", Hosts: []string{"example.com"}}, {Name: "safe", Hosts: []string{"safe.example"}, Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}},
 	}, []string{"gallery"}
 	e, err := New(ctx, cfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: staffAuthz{}}})
 	if err != nil {
@@ -355,14 +355,14 @@ func TestEngineCommentsSettingAndDomainScope(t *testing.T) {
 
 	// An internal entity can impose a domain boundary without becoming a
 	// public tag. The boundary applies to staff using public routes too.
-	var restricted []groups.Group
-	s.call(http.StatusCreated, staff, "POST", v+"/entities", []groups.GroupInput{{
+	var restricted []entities.Entity
+	s.call(http.StatusCreated, staff, "POST", v+"/entities", []entities.EntityInput{{
 		Kind: "tag", Slug: "restricted", Internal: true,
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Restricted"}},
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Restricted"}},
 	}}, &restricted)
 	r := create(catalog.ContentInput{})
-	s.call(http.StatusOK, staff, "PUT", v+"/contents/"+r.ID+"/entities", groups.ContentGroups{
-		Memberships: []groups.Membership{{GroupID: restricted[0].ID}},
+	s.call(http.StatusOK, staff, "PUT", v+"/contents/"+r.ID+"/entities", entities.ContentEntities{
+		Memberships: []entities.Membership{{EntityID: restricted[0].ID}},
 	}, nil)
 	main, safe := "http://example.com"+v+"/contents/"+r.ID, "http://safe.example"+v+"/contents/"+r.ID
 	s.call(http.StatusOK, u1, "GET", main, nil, nil)

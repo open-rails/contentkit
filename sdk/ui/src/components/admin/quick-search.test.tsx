@@ -4,12 +4,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/client.js";
-import type { Card, GroupCard } from "../../client/generated/wire.js";
+import type { Card, EntityCard } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/provider.js";
 import { AdminQuickSearch } from "./quick-search.js";
 
 const at="2026-10-16T00:00:00Z";
-const series:GroupCard={id:"series-1",kind:"series",name:"Bleach",slug:"bleach",path:"/series/bleach",internal:false,count:1,attributes:{},created_at:at};
+const series:EntityCard={id:"series-1",kind:"series",name:"Bleach",slug:"bleach",path:"/series/bleach",internal:false,count:1,attributes:{},created_at:at};
 const draft:Card={id:"draft-1",kind:"gallery",code:"DRAFT0001",path:"/g/DRAFT0001/public-path",title:"Bleach draft",language:"en",cover:[],version:{id:"v1",code:"V1",languages:["en"],traits:[],has_audio:false},entities:{},counts:{},access:{allowed:true,level:"public"},attributes:{}};
 function server(){
  const requests:URL[]=[];
@@ -21,7 +21,7 @@ function server(){
  return{client,requests};
 }
 const contentHref=(item:Card)=>`/admin/galleries/${item.id}`;
-const entityHref=(item:GroupCard)=>`/admin/entities/${item.kind}/${item.id}`;
+const entityHref=(item:EntityCard)=>`/admin/entities/${item.kind}/${item.id}`;
 
 it("only navigates a chosen result to its actual editor, with no history or public search fallback",async()=>{
  const s=server(),navigate=vi.fn(),user=userEvent.setup();

@@ -17,7 +17,7 @@ import (
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -39,20 +39,20 @@ func TestMembersOnlyChannelComments(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
-		c.Content.GroupKinds["channel"] = channel
+		c.Content.EntityKinds["channel"] = channel
 		c.Interactions.Anonymous = content.Anonymous{Comments: true, Reactions: true}
 		d.Billing, d.Scopes = ckopenrails.Billing(merchant), ckauthkit.Scopes(w.ak)
 	})
 	f := serve(t, e)
 
-	var made []groups.Group
-	f.want(http.StatusCreated, ownerToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "club",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Club"}}}}, &made)
+	var made []entities.Entity
+	f.want(http.StatusCreated, ownerToken, "POST", "/entities", []entities.EntityInput{{Kind: "channel", Slug: "club",
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Club"}}}}, &made)
 	ch := string(made[0].ID)
 	path := "/entities/" + ch
 
 	// Selling nothing: no offer for the owner, no join for anyone.
-	var d groups.GroupDetail
+	var d entities.EntityDetail
 	f.want(http.StatusOK, ownerToken, "GET", path, nil, &d)
 	if d.Offer != nil || d.Access == nil || !d.Access.Editor {
 		t.Fatalf("an unsold channel as its owner sees it: offer %+v access %+v", d.Offer, d.Access)
@@ -67,7 +67,7 @@ func TestMembersOnlyChannelComments(t *testing.T) {
 	// A free membership: its owner reads the offer to manage it, the paywall
 	// offers it to everyone else.
 	f.want(http.StatusOK, ownerToken, "PUT", path+"/offer", offers.Terms{Currency: "USD"}, nil)
-	var owned, seen groups.GroupDetail
+	var owned, seen entities.EntityDetail
 	f.want(http.StatusOK, ownerToken, "GET", path, nil, &owned)
 	if o := owned.Offer; o == nil || o.State != offers.Active || o.Terms.Amount != 0 || owned.Access.Offer != nil || !owned.Access.Editor {
 		t.Fatalf("the owner's channel: offer %+v access %+v", owned.Offer, owned.Access)
@@ -79,8 +79,8 @@ func TestMembersOnlyChannelComments(t *testing.T) {
 	f.want(http.StatusOK, memberToken, "POST", path+"/join", nil, nil)
 
 	var post catalog.Content
-	members := access.Rule{Level: access.GroupLevel, Group: ch}
-	f.want(http.StatusCreated, ownerToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: ch, Access: &members,
+	members := access.Rule{Level: access.EntityLevel, Entity: ch}
+	f.want(http.StatusCreated, ownerToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerEntityID: ch, Access: &members,
 		Text: map[string]catalog.Text{"en": {Title: "Members night", Body: "for members"}}}, &post)
 	f.want(http.StatusOK, ownerToken, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)
 	thread := "/contents/" + post.ID + "/comments"

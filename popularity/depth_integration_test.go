@@ -49,7 +49,7 @@ func TestIntegrationPopularDepthIsBounded(t *testing.T) {
 
 	source := &depthSource{Source: hub}
 	cache := popularity.NewMemoryCache(0)
-	ranker, err := popularity.New(popularity.Config{Source: source, Policy: popularity.PolicyV1, Cache: cache, MaxDepth: maxDepth, GroupCandidateLimit: maxDepth})
+	ranker, err := popularity.New(popularity.Config{Source: source, Policy: popularity.PolicyV1, Cache: cache, MaxDepth: maxDepth, EntityCandidateLimit: maxDepth})
 	if err != nil {
 		t.Fatal(err)
 	}

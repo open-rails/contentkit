@@ -3,7 +3,7 @@ import type { Card } from "../../client/generated/wire.js";
 import type { HistoryQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
 import { useHistory } from "../../react/discovery.js";
-import { useKinds } from "../../react/groups.js";
+import { useKinds } from "../../react/entities.js";
 import { Button } from "#ckui/ui/button";
 import { formatDate, relativeTime, useAction } from "../social/parts.js";
 import { ContentFilterDialog } from "./filter-dialog.js";
@@ -48,7 +48,7 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
               aspectRatio={p.aspectRatio}
               titlePosition={p.titlePosition}
               loadMedia={p.loadMedia}
-              groupKinds={p.groupKinds}
+              entityKinds={p.entityKinds}
               chips={p.chips}
               chipOverflow={p.chipOverflow}
               chipFit={p.chipFit}

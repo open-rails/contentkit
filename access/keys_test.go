@@ -29,7 +29,7 @@ func TestKeysRoundTrip(t *testing.T) {
 	}{
 		{must(ContentKey("onlydemo", id1)), "onlydemo:content:" + id1, KeyContent},
 		{must(VersionKey("onlydemo", id1, id2)), "onlydemo:content:" + id1 + "/" + id2, KeyVersion},
-		{must(GroupKey("hentai0", id1)), "hentai0:group:" + id1, KeyGroup},
+		{must(EntityKey("hentai0", id1)), "hentai0:group:" + id1, KeyEntity},
 		{must(TierKey("premium")), "premium", KeyTier},
 		{must(TierKey("gold_2-x")), "gold_2-x", KeyTier},
 	} {
@@ -50,13 +50,13 @@ func TestKeysRoundTrip(t *testing.T) {
 		}
 	}
 	v := must(VersionKey("t", id1, id2))
-	if v.Content() != id1 || v.Version() != id2 || v.Tenant() != "t" || v.Group() != "" || v.Tier() != "" {
+	if v.Content() != id1 || v.Version() != id2 || v.Tenant() != "t" || v.Entity() != "" || v.Tier() != "" {
 		t.Fatalf("version key accessors: %+v", v)
 	}
-	if g := must(GroupKey("t", id2)); g.Group() != id2 || g.Content() != "" {
+	if g := must(EntityKey("t", id2)); g.Entity() != id2 || g.Content() != "" {
 		t.Fatal("group key accessors")
 	}
-	if !strings.HasPrefix(v.String(), ContentPrefix("t")) || !strings.HasPrefix(must(GroupKey("t", id1)).String(), GroupPrefix("t")) {
+	if !strings.HasPrefix(v.String(), ContentPrefix("t")) || !strings.HasPrefix(must(EntityKey("t", id1)).String(), EntityPrefix("t")) {
 		t.Fatal("key outside its prefix")
 	}
 	if _, err := (Key{}).MarshalText(); !errors.Is(err, ErrNotContentKey) {
@@ -77,7 +77,7 @@ func TestKeysRefuse(t *testing.T) {
 		if _, err := ContentKey(tc.tenant, tc.id); !errors.Is(err, ErrNotContentKey) {
 			t.Errorf("ContentKey(%q, %q) = %v", tc.tenant, tc.id, err)
 		}
-		if _, err := GroupKey(tc.tenant, tc.id); !errors.Is(err, ErrNotContentKey) {
+		if _, err := EntityKey(tc.tenant, tc.id); !errors.Is(err, ErrNotContentKey) {
 			t.Errorf("GroupKey(%q, %q) = %v", tc.tenant, tc.id, err)
 		}
 		if _, err := VersionKey("t", id1, tc.id); !errors.Is(err, ErrNotContentKey) && tc.id != id1 {

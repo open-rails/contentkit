@@ -13,7 +13,7 @@ import (
 	"github.com/open-rails/authkit/iam"
 
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -121,7 +121,7 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 
 // A group's page lists its memberships: content- and version-level, every
 // role and state, paged by cursor in member order.
-func TestGroupMembers(t *testing.T) {
+func TestEntityMembers(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
@@ -131,24 +131,24 @@ func TestGroupMembers(t *testing.T) {
 	g3, _ := w.published(f, staff, "gallery")
 	label := map[string]string{g1: "01", g2: "02", g3: "03", v2: "20"}
 
-	var made []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{
-		{Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}},
-		{Kind: "tag", Slug: "empty", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Empty"}}},
+	var made []entities.Entity
+	f.want(http.StatusCreated, staff, "POST", "/entities", []entities.EntityInput{
+		{Kind: "tag", Slug: "color", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Color"}}},
+		{Kind: "tag", Slug: "empty", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Empty"}}},
 	}, &made)
 	color, empty := string(made[0].ID), string(made[1].ID)
-	f.want(http.StatusOK, staff, "POST", "/entities/"+color+"/members", []groups.Membership{
-		{ContentID: g3}, {ContentID: g1}, {ContentID: g2, VersionID: v2}, {ContentID: g2, State: groups.MembershipProposed},
+	f.want(http.StatusOK, staff, "POST", "/entities/"+color+"/members", []entities.Membership{
+		{ContentID: g3}, {ContentID: g1}, {ContentID: g2, VersionID: v2}, {ContentID: g2, State: entities.MembershipProposed},
 		{ContentID: g1, Role: "featured"},
 	}, nil)
 
-	page := func(id string, q url.Values) groups.MemberPage {
+	page := func(id string, q url.Values) entities.MemberPage {
 		t.Helper()
-		var p groups.MemberPage
+		var p entities.MemberPage
 		f.want(http.StatusOK, staff, "GET", "/entities/"+id+"/members?"+q.Encode(), nil, &p)
 		return p
 	}
-	key := func(ms []groups.Membership) string {
+	key := func(ms []entities.Membership) string {
 		s := ""
 		for _, m := range ms {
 			s += label[m.ContentID]
@@ -158,7 +158,7 @@ func TestGroupMembers(t *testing.T) {
 			if m.Role != "" {
 				s += ":" + m.Role
 			}
-			if m.State == groups.MembershipProposed {
+			if m.State == entities.MembershipProposed {
 				s += "?"
 			}
 			s += " "

@@ -14,7 +14,7 @@ import { Badge } from "#ckui/ui/badge";
 import { HoverPreview } from "../hover-preview.js";
 import { RenditionImg } from "../rendition-img.js";
 import { RelativeTime } from "../social/parts.js";
-import { GroupAvatar, GroupLink, labelOf, type GroupLike, type Labels } from "../groups/parts.js";
+import { EntityAvatar, EntityLink, labelOf, type EntityLike, type Labels } from "../entities/parts.js";
 import { priceLabel } from "./paywall.js";
 
 export interface ContentCardProps {
@@ -34,7 +34,7 @@ export interface ContentCardProps {
   /** Mount images and previews. False keeps the card's text and reserved cover space. */
   loadMedia?: boolean;
   /** The group kinds whose chips show, in order; default every kind the card names. */
-  groupKinds?: readonly string[];
+  entityKinds?: readonly string[];
   /** Chips per group kind, or `{ base, lg }` to show a different number from the lg breakpoint. Default 3. */
   chips?: number | { base: number; lg: number };
   /** After a kind's chips, a "+N" chip counting the ones left out. Default false. */
@@ -58,7 +58,7 @@ export interface ContentCardProps {
   /** Show the owner group (a channel) when the card has one; default true, false on that group's own feed. */
   owner?: boolean;
   /** The owner group's link; default its canonical path. */
-  ownerHref?: (g: GroupLike) => string | undefined;
+  ownerHref?: (g: EntityLike) => string | undefined;
   /** Over the cover: the host's badges for the card, placed in the cover's box; clicks reach the card. */
   decorate?: (card: Card) => ReactNode;
   /** Mark updated, completed and (for staff) deleted cards over the cover. Default true; false when the host draws cardStatus itself. */
@@ -76,8 +76,8 @@ export interface CardMetadata {
   traits?: boolean | readonly string[];
   pages?: boolean;
   duration?: boolean;
-  /** Group kinds named last in the meta line: the first entity of the first kind the card has, linked. */
-  groups?: readonly string[];
+  /** Entity kinds named last in the meta line: the first entity of the first kind the card has, linked. */
+  entities?: readonly string[];
 }
 
 /** What a card says about the reader's standing and the work's state. */
@@ -197,7 +197,7 @@ function useChipFit(list: HTMLUListElement | null, total: number, chipsKey: stri
 }
 
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, groupKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, status = true, dimDisliked = true, children, className }: ContentCardProps) {
+export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, entityKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, status = true, dimDisliked = true, children, className }: ContentCardProps) {
   const m = useMessages();
   const { presets } = usePresets({ client });
   const coverAspect = aspectRatio ?? ratio(presets.find((p) => p.kind === card.kind && p.name === "cover")?.aspect);
@@ -211,7 +211,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const dim = dimDisliked && st.disliked;
   const v = card.version;
   const progress = card.viewer?.completed ? 1 : card.viewer && card.viewer.progress_max > 0 ? Math.min(1, card.viewer.progress / card.viewer.progress_max) : 0;
-  const kinds = groupKinds ?? Object.keys(card.entities);
+  const kinds = entityKinds ?? Object.keys(card.entities);
   const limit = typeof chips === "number" ? { base: chips, lg: chips } : chips;
   const entityGroups = kinds.map((kind) => {
     const all = (card.entities[kind] ?? []).filter((entity) => !filterEntity || filterEntity(entity, kind));
@@ -220,12 +220,12 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
   const selectedTraits = metadata?.traits;
   const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
-  const metaGroup = metadata?.groups?.map((kind) => (card.entities[kind] ?? []).find((entity) => !filterEntity || filterEntity(entity, kind))).find(Boolean);
+  const metaEntity = metadata?.entities?.map((kind) => (card.entities[kind] ?? []).find((entity) => !filterEntity || filterEntity(entity, kind))).find(Boolean);
   const meta: ReactNode[] = [
     ...(metadata?.languages === false ? [] : v.languages.map(languageName)),
     metadata?.pages !== false && v.pages ? m.plural("contents.pages", v.pages) : null,
     metadata?.duration !== false && minutes ? m.plural("contents.minutes", minutes) : null,
-    metaGroup ? <MetaLink key="group" url={metaGroup.path} name={metaGroup.name || metaGroup.slug} /> : null,
+    metaEntity ? <MetaLink key="group" url={metaEntity.path} name={metaEntity.name || metaEntity.slug} /> : null,
   ].filter(Boolean);
   const title = card.title || card.code;
   const entityClassName = cn("flex flex-wrap", entityStyle === "text" ? "gap-x-[0.3em] gap-y-1 [&>li:not(:last-child)]:after:text-muted-foreground [&>li:not(:last-child)]:after:content-[',']" : "gap-1");
@@ -269,11 +269,11 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
     </li>];
   };
   const entityList = entityGroups.length > 0 ? entityLayout === "rows" ? (
-    <div className="grid gap-1" data-ckui="card-groups" data-layout="rows">
-      {entityGroups.map(({ kind, entities, total }) => <ul key={kind} className={entityClassName} aria-label={labelOf(labels, kind)} data-ckui="card-group-row" data-kind={kind}>{entityItems(kind, entities, total)}</ul>)}
+    <div className="grid gap-1" data-ckui="card-entities" data-layout="rows">
+      {entityGroups.map(({ kind, entities, total }) => <ul key={kind} className={entityClassName} aria-label={labelOf(labels, kind)} data-ckui="card-entity-row" data-kind={kind}>{entityItems(kind, entities, total)}</ul>)}
     </div>
   ) : (
-    <ul ref={setChipList} className={fitting ? cn("relative flex flex-nowrap overflow-hidden", entityStyle === "text" ? "gap-x-2" : "gap-1") : entityClassName} data-ckui="card-groups" data-layout="inline" data-fit={fitting ? "" : undefined}>
+    <ul ref={setChipList} className={fitting ? cn("relative flex flex-nowrap overflow-hidden", entityStyle === "text" ? "gap-x-2" : "gap-1") : entityClassName} data-ckui="card-entities" data-layout="inline" data-fit={fitting ? "" : undefined}>
       {fitting ? fittedItems() : entityGroups.flatMap(({ kind, entities, total }) => entityItems(kind, entities, total))}
     </ul>
   ) : null;
@@ -324,7 +324,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       <div className="grid gap-1">
         {titlePosition === "below" && titleLink}
         {entityStyle === "text" && entityList}
-        {owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} loadMedia={loadMedia} />}
+        {owner && card.owner && <OwnerChip entity={card.owner} href={ownerHref} loadMedia={loadMedia} />}
         {traits.length > 0 && <div className="flex flex-wrap gap-1" data-ckui="card-traits">
           {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
         </div>}
@@ -357,13 +357,13 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
 }
 
 /** The group that owns a content (a channel): its avatar and name, linking to its page. */
-export function OwnerChip({ group, href, className, loadMedia = true }: { group: GroupLike; href?: (g: GroupLike) => string | undefined; className?: string; loadMedia?: boolean }) {
+export function OwnerChip({ entity, href, className, loadMedia = true }: { entity: EntityLike; href?: (g: EntityLike) => string | undefined; className?: string; loadMedia?: boolean }) {
   return (
-    <span className={cn("flex min-w-0 text-xs text-muted-foreground", className)} data-ckui="card-owner" data-id={group.id}>
-      <GroupLink group={group} href={href} className="inline-flex min-w-0 items-center gap-1.5 hover:text-foreground">
-        {loadMedia ? <GroupAvatar group={group} className="size-5 shrink-0 text-[0.625rem]" /> : <span className="size-5 shrink-0 rounded-full bg-muted" aria-hidden />}
-        <span className="truncate">{group.name || group.slug}</span>
-      </GroupLink>
+    <span className={cn("flex min-w-0 text-xs text-muted-foreground", className)} data-ckui="card-owner" data-id={entity.id}>
+      <EntityLink entity={entity} href={href} className="inline-flex min-w-0 items-center gap-1.5 hover:text-foreground">
+        {loadMedia ? <EntityAvatar entity={entity} className="size-5 shrink-0 text-[0.625rem]" /> : <span className="size-5 shrink-0 rounded-full bg-muted" aria-hidden />}
+        <span className="truncate">{entity.name || entity.slug}</span>
+      </EntityLink>
     </span>
   );
 }
@@ -385,7 +385,7 @@ function Chip({ url, name, variant = "chips" }: { url?: string; name: string; va
   );
 }
 
-export interface PostCardProps extends Omit<ContentCardProps, "shape" | "aspectRatio" | "titlePosition" | "chips" | "groupKinds" | "filterEntity" | "entityStyle" | "entityLayout" | "metadata"> {
+export interface PostCardProps extends Omit<ContentCardProps, "shape" | "aspectRatio" | "titlePosition" | "chips" | "entityKinds" | "filterEntity" | "entityStyle" | "entityLayout" | "metadata"> {
   /** Above the title: the post's channel or author; default its owner group's chip. */
   byline?: ReactNode;
 }
@@ -400,7 +400,7 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = tr
   const title = card.title || card.code;
   return (
     <article className={cn("relative grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
-      {byline ?? (owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} loadMedia={loadMedia} className="text-sm" />)}
+      {byline ?? (owner && card.owner && <OwnerChip entity={card.owner} href={ownerHref} loadMedia={loadMedia} className="text-sm" />)}
       <a href={url} onClick={onClick} className="grid gap-2">
         <span className="font-medium break-words hover:underline" data-ckui="card-title">
           {title}

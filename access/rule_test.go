@@ -19,9 +19,9 @@ func TestRuleJSON(t *testing.T) {
 	}{
 		{Rule{Level: Public}, `{"level":"public"}`},
 		{Rule{Level: TierLevel, Tiers: []string{"premium"}, Preview: &Preview{Pages: 3}}, `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`},
-		{Rule{Level: GroupLevel, Group: id1}, `{"level":"group","group_id":"` + id1 + `"}`},
+		{Rule{Level: EntityLevel, Entity: id1}, `{"level":"group","group_id":"` + id1 + `"}`},
 		{Rule{Level: PPV, Releases: []Release{{At: at, Level: Public}}}, `{"level":"ppv","releases":[{"at":"2026-11-01T00:00:00Z","level":"public"}]}`},
-		{Rule{Level: GroupPPV, Group: id1, Preview: &Preview{Segments: 1}}, `{"level":"group_ppv","group_id":"` + id1 + `","preview":{"segments":1}}`},
+		{Rule{Level: EntityPPV, Entity: id1, Preview: &Preview{Segments: 1}}, `{"level":"group_ppv","group_id":"` + id1 + `","preview":{"segments":1}}`},
 	} {
 		b, err := json.Marshal(tc.rule)
 		if err != nil || string(b) != tc.json {
@@ -44,10 +44,10 @@ func TestRuleJSON(t *testing.T) {
 func TestRuleValidate(t *testing.T) {
 	future := time.Now().Add(time.Hour)
 	for _, bad := range []Rule{
-		{}, {Level: "vip"}, {Level: Public, Tiers: []string{"premium"}}, {Level: PPV, Group: id1},
+		{}, {Level: "vip"}, {Level: Public, Tiers: []string{"premium"}}, {Level: PPV, Entity: id1},
 		{Level: TierLevel}, {Level: TierLevel, Tiers: []string{"platinum"}}, {Level: TierLevel, Tiers: []string{"gold", "gold"}},
-		{Level: TierLevel, Tiers: []string{"gold"}, Group: id1}, {Level: GroupLevel}, {Level: GroupPPV, Group: "x"},
-		{Level: GroupLevel, Group: id1, Tiers: []string{"gold"}}, {Level: Public, Preview: &Preview{Pages: 1}},
+		{Level: TierLevel, Tiers: []string{"gold"}, Entity: id1}, {Level: EntityLevel}, {Level: EntityPPV, Entity: "x"},
+		{Level: EntityLevel, Entity: id1, Tiers: []string{"gold"}}, {Level: Public, Preview: &Preview{Pages: 1}},
 		{Level: Public, Releases: []Release{{At: future, Level: Public}}}, {Level: PPV, Preview: &Preview{}}, {Level: PPV, Preview: &Preview{Pages: -1}},
 	} {
 		if err := bad.Validate(tiered); !errors.Is(err, ErrRule) {
@@ -66,8 +66,8 @@ func TestRuleFreeEffectiveFacet(t *testing.T) {
 	if Effective(content, nil).Level != TierLevel || Effective(content, &override).Level != Public {
 		t.Fatal("Effective")
 	}
-	f := Rule{Level: GroupLevel, Group: id1, Releases: []Release{{At: future, Level: Public}}}.Facet()
-	if f.Level != GroupLevel || f.GroupID == nil || *f.GroupID != id1 || f.Tiers == nil || len(f.Tiers) != 0 || len(f.Releases) != 1 || !f.Releases[0].At.Equal(future) {
+	f := Rule{Level: EntityLevel, Entity: id1, Releases: []Release{{At: future, Level: Public}}}.Facet()
+	if f.Level != EntityLevel || f.EntityID == nil || *f.EntityID != id1 || f.Tiers == nil || len(f.Tiers) != 0 || len(f.Releases) != 1 || !f.Releases[0].At.Equal(future) {
 		t.Fatalf("Facet %+v", f)
 	}
 }

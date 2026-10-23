@@ -9,7 +9,7 @@ import (
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/search"
 )
@@ -32,7 +32,7 @@ type ManagementSuggestionsOptions struct {
 // optional-reader, publication and billing rules never substitute for editor
 // authorization; current draft/held names remain separate from public search.
 func (s *Service) ManagementSuggestions(ctx context.Context, o ManagementSuggestionsOptions) (Typeahead, error) {
-	out := Typeahead{Contents: []Card{}, Groups: []groups.GroupCard{}}
+	out := Typeahead{Contents: []Card{}, Entities: []entities.EntityCard{}}
 	if o.Actor.Anonymous || o.Actor.ID == "" {
 		return out, auth.ErrUnauthenticated
 	}
@@ -65,9 +65,9 @@ func (s *Service) ManagementSuggestions(ctx context.Context, o ManagementSuggest
 	}
 	for _, name := range names.Contents {
 		out.Contents = append(out.Contents, Card{ID: name.ID, Kind: name.Kind, Title: name.Title, Language: name.Language,
-			Cover: []media.PublicRendition{}, Version: CardVersion{Languages: []string{}, Traits: []string{}}, Groups: map[string][]Chip{},
+			Cover: []media.PublicRendition{}, Version: CardVersion{Languages: []string{}, Traits: []string{}}, Entities: map[string][]Chip{},
 			Access: CardAccess{Allowed: true, Level: access.Public}, Attributes: map[string]any{}})
 	}
-	out.Groups = names.Entities
+	out.Entities = names.Entities
 	return out, nil
 }

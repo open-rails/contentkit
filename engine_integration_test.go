@@ -32,7 +32,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -79,10 +79,10 @@ func siteConfig(schema string) Config {
 	return Config{Tenant: tenant, Database: DatabaseConfig{Schema: schema},
 		Content: kinds.Config{Languages: []string{"en"}, Restrictions: []string{"restricted"},
 			Kinds: map[string]kinds.Kind{
-				"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"tag"}},
+				"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Entities: []string{"tag"}},
 				"blog":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			},
-			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tag"}}},
+			EntityKinds: map[string]kinds.EntityKind{"tag": {Route: "tag"}}},
 		Interactions: InteractionsConfig{Limits: LimitsConfig{Disabled: true}}}
 }
 
@@ -236,9 +236,9 @@ func TestEngineIntegration(t *testing.T) {
 	if totals.Kinds["gallery"].Public != 1 || totals.Kinds["blog"].Public != 1 {
 		t.Fatalf("totals %+v", totals)
 	}
-	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/entities", []groups.GroupInput{{Kind: "tag", Slug: "moonlit",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Moonlit"}}}}, nil)
-	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/entities", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
+	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/entities", []entities.EntityInput{{Kind: "tag", Slug: "moonlit",
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Moonlit"}}}}, nil)
+	s.call(http.StatusForbidden, user, "POST", "/api/ck/v1/entities", []entities.EntityInput{{Kind: "tag", Slug: "nope"}}, nil)
 	s.call(http.StatusOK, anon, "GET", "/api/ck/v1/entities?kind=tag", nil, nil)
 	s.call(http.StatusNotFound, anon, "GET", "/api/ck/v1/nowhere/at/all/x", nil, nil)
 
@@ -257,7 +257,7 @@ func TestEngineIntegration(t *testing.T) {
 	// The public content model, without server-only parts.
 	var model kindsroute.ContentModel
 	rec := s.call(http.StatusOK, anon, "GET", "/api/ck/v1/kinds", nil, &model)
-	if model.Kinds["gallery"].Route != "g" || model.GroupKinds["tag"].Route != "tag" || len(model.Languages) != 1 || model.Tiers == nil || model.Signals ||
+	if model.Kinds["gallery"].Route != "g" || model.EntityKinds["tag"].Route != "tag" || len(model.Languages) != 1 || model.Tiers == nil || model.Signals ||
 		!strings.HasPrefix(rec.Header().Get("Cache-Control"), "public, max-age=") || strings.Contains(rec.Body.String(), "restrictions") {
 		t.Fatalf("kinds %d %s", rec.Code, rec.Body)
 	}

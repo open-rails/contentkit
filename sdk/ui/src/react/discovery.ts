@@ -4,7 +4,7 @@ import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
 import type { ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
 import { ContentKitError, toContentKitError } from "../client/errors.js";
-import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DailyReleases, DateCount, GroupCard, Interaction, InteractionPage, RecentSearch, Typeahead } from "../client/generated/wire.js";
+import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DailyReleases, DateCount, EntityCard, Interaction, InteractionPage, RecentSearch, Typeahead } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 import { guestStanding, type GuestReadingItem } from "../client/guest-reading-history.js";
@@ -421,7 +421,7 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
 
 export interface UseTypeahead {
   contents: Card[];
-  entities: GroupCard[];
+  entities: EntityCard[];
   /** The query the suggestions answer (trimmed). */
   query: string;
   loading: boolean;

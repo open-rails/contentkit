@@ -16,16 +16,16 @@ import (
 
 func TestListingSummaryCountsSelectionNotPage(t *testing.T) {
 	f := newFixture(t, nil, "")
-	f.group("tag", "big-breasts", "yaoi")
+	f.entity("tag", "big-breasts", "yaoi")
 	f.seed(
 		item{n: 1, age: time.Hour, titles: map[string]string{"en": "Visible"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, age: time.Hour, groups: []string{"big-breasts"}, titles: map[string]string{"en": "Filtered"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, age: time.Hour, groups: []string{"yaoi"}, titles: map[string]string{"en": "Other filtered"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 4, age: time.Hour, groups: []string{"big-breasts", "yaoi"}, titles: map[string]string{"en": "Both"}, versions: []ver{{langs: []string{"en"}}, {langs: []string{"ja"}}}},
+		item{n: 2, age: time.Hour, entities: []string{"big-breasts"}, titles: map[string]string{"en": "Filtered"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, age: time.Hour, entities: []string{"yaoi"}, titles: map[string]string{"en": "Other filtered"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 4, age: time.Hour, entities: []string{"big-breasts", "yaoi"}, titles: map[string]string{"en": "Both"}, versions: []ver{{langs: []string{"en"}}, {langs: []string{"ja"}}}},
 		item{n: 5, age: time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, titles: map[string]string{"en": "Premium"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 6, age: time.Hour, groups: []string{"big-breasts"}, rule: `{"level":"tier","tiers":["premium"]}`, titles: map[string]string{"en": "Filtered premium"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 7, titles: map[string]string{"en": "Gallery 7"}, age: time.Hour, groups: []string{"big-breasts"}, deleted: true, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 8, titles: map[string]string{"en": "Gallery 8"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}, future: true}}},
+		item{n: 6, age: time.Hour, entities: []string{"big-breasts"}, rule: `{"level":"tier","tiers":["premium"]}`, titles: map[string]string{"en": "Filtered premium"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 7, titles: map[string]string{"en": "Gallery 7"}, age: time.Hour, entities: []string{"big-breasts"}, deleted: true, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 8, titles: map[string]string{"en": "Gallery 8"}, age: time.Hour, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}, future: true}}},
 	)
 	preferences, err := json.Marshal(ContentFiltersUpdate{Filters: filterChoices(FilterSetting{EntityID: f.ids["yaoi"], Visible: false})})
 	if err != nil {
@@ -50,11 +50,11 @@ func TestListingSummaryCountsSelectionNotPage(t *testing.T) {
 
 func TestListingSummaryHonorsRequiredAndHardDomainRules(t *testing.T) {
 	f := newFixture(t, nil, "")
-	f.group("tag", "big-breasts", "yaoi", "restricted")
+	f.entity("tag", "big-breasts", "yaoi", "restricted")
 	f.seed(
-		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, groups: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, titles: map[string]string{"en": "Gallery 2"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, titles: map[string]string{"en": "Gallery 3"}, age: time.Hour, groups: []string{"big-breasts", "restricted"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, entities: []string{"big-breasts", "yaoi"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Gallery 2"}, age: time.Hour, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Gallery 3"}, age: time.Hour, entities: []string{"big-breasts", "restricted"}, versions: []ver{{langs: []string{"en"}}}},
 	)
 	for _, tc := range []struct {
 		host string
@@ -70,10 +70,10 @@ func TestListingSummaryHonorsRequiredAndHardDomainRules(t *testing.T) {
 
 func TestListingSummaryKeepsPopularitySelection(t *testing.T) {
 	f := newFixture(t, nil, "")
-	f.group("tag", "big-breasts")
+	f.entity("tag", "big-breasts")
 	f.seed(
-		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, titles: map[string]string{"en": "Gallery 2"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Gallery 2"}, age: time.Hour, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 3, titles: map[string]string{"en": "Gallery 3"}, age: time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
 	)
 	selected, err := f.svc.compile(f.ctx, Reader{Host: "main.test"}, Filter{Kind: "gallery"})
@@ -90,11 +90,11 @@ func TestListingSummaryKeepsPopularitySelection(t *testing.T) {
 
 func TestSearchSummaryMatchesKeywordAndEmptySelection(t *testing.T) {
 	f := newFixture(t, nil, "")
-	f.group("tag", "big-breasts")
+	f.entity("tag", "big-breasts")
 	f.seed(
 		item{n: 1, age: time.Hour, titles: map[string]string{"en": "Moon Story"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, age: time.Hour, titles: map[string]string{"en": "Moon Secret"}, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, age: time.Hour, titles: map[string]string{"en": "Unrelated"}, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, age: time.Hour, titles: map[string]string{"en": "Moon Secret"}, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, age: time.Hour, titles: map[string]string{"en": "Unrelated"}, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
 	)
 	f.docs(doc("gallery", f.cid(1), "en", "Moon Story"), doc("gallery", f.cid(2), "en", "Moon Secret"), doc("gallery", f.cid(3), "en", "Unrelated"))
 	for _, tc := range []struct {
@@ -112,9 +112,9 @@ func TestSearchSummaryMatchesKeywordAndEmptySelection(t *testing.T) {
 func TestListingSummarySettlesIncompleteEntitlements(t *testing.T) {
 	billing := &releaseBilling{held: map[string]bool{}}
 	f := newFixtureBilling(t, nil, "", siteConfig(), billing)
-	f.group("tag", "big-breasts")
+	f.entity("tag", "big-breasts")
 	f.seed(
-		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, groups: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, entities: []string{"big-breasts"}, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 2, titles: map[string]string{"en": "Gallery 2"}, age: time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 	)
 	out, err := f.svc.List(f.ctx, ListOptions{Reader: Reader{Host: "main.test", Actor: access.Actor{ID: "reader"}}, Filter: Filter{Kind: "gallery"}, Summary: true})
@@ -125,8 +125,8 @@ func TestListingSummarySettlesIncompleteEntitlements(t *testing.T) {
 
 func TestListingSummaryWorksWithOnePoolConnection(t *testing.T) {
 	f := newFixture(t, nil, "")
-	f.group("tag", "big-breasts")
-	f.seed(item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}})
+	f.entity("tag", "big-breasts")
+	f.seed(item{n: 1, titles: map[string]string{"en": "Gallery 1"}, age: time.Hour, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}})
 	cfg := f.pool.Config()
 	cfg.MaxConns, cfg.MinConns = 1, 0
 	pool, err := pgxpool.NewWithConfig(f.ctx, cfg)

@@ -50,7 +50,7 @@ export interface ContentKitClient {
   readonly bans: BansClient;
   /** The review queue of held comments and content. */
   readonly moderation: ModerationClient;
-  /** Groups: listings, pages, staff writes and memberships. */
+  /** Entities: listings, pages, staff writes and memberships. */
   readonly entities: EntitiesClient;
   /** Lists, search, typeahead, rails, release dates, content filters, history, signals and exposures. */
   readonly discovery: DiscoveryClient;

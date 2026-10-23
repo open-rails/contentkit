@@ -56,7 +56,7 @@ export const content: typeof en = {
     level_group: "分组成员",
     level_group_ppv: "购买的分组成员",
     tiers: "等级",
-    group: "分组",
+    entity: "分组",
     previewPages: "免费页数",
     previewSegments: "免费章节数",
     onSale: "在售",

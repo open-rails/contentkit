@@ -4,7 +4,7 @@ Each store has a fresh-install baseline, followed by versioned upgrades:
 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
-| PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, groups, memberships, facets, offers, the outbox, import ids, codes, interactions, polls, search, preferences, erasure and media state |
+| PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, offers, the outbox, import ids, codes, interactions, polls, search, preferences, erasure and media state |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
 The PostgreSQL migrator also recognizes the exact baseline shipped before

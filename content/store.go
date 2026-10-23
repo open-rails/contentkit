@@ -45,7 +45,7 @@ type tables struct {
 	commentBans   string
 	codes         string
 	items         string
-	groups        string
+	entities      string
 	bannedWords   string
 	ipBans        string
 
@@ -71,7 +71,7 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 			commentBans:   q("content_comment_bans"),
 			codes:         q("content_codes"),
 			items:         q("content_items"),
-			groups:        q("content_groups"),
+			entities:      q("content_entities"),
 			bannedWords:   q("content_banned_words"),
 			ipBans:        q("content_ip_bans"),
 

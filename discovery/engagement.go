@@ -85,11 +85,11 @@ func (e Engagement) ForSubject(ctx context.Context, subject signal.Subject, q Qu
 
 	// Per-seed slots keep the fused order deterministic (RRF is positional).
 	lists := make([][]search.RRFKey, len(seeds))
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(seedConcurrency)
+	entity, entityCtx := errgroup.WithContext(ctx)
+	entity.SetLimit(seedConcurrency)
 	for i, seed := range seeds {
-		group.Go(func() error {
-			co, err := e.Store.CoEngaged(groupCtx, e.Tenant, seed.ContentRef, signal.CoEngagedOptions{ContentKinds: q.ContentKinds, Window: q.Window, Limit: perSeed})
+		entity.Go(func() error {
+			co, err := e.Store.CoEngaged(entityCtx, e.Tenant, seed.ContentRef, signal.CoEngagedOptions{ContentKinds: q.ContentKinds, Window: q.Window, Limit: perSeed})
 			if err != nil {
 				return err
 			}
@@ -101,7 +101,7 @@ func (e Engagement) ForSubject(ctx context.Context, subject signal.Subject, q Qu
 			return nil
 		})
 	}
-	if err := group.Wait(); err != nil {
+	if err := entity.Wait(); err != nil {
 		return nil, err
 	}
 	fused := search.FuseRRF(lists, search.RRFOptions{K: e.RRFK})

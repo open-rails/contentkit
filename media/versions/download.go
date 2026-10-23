@@ -49,8 +49,8 @@ type DownloadRequest struct {
 	// Language is the version's language; Title is its title, in Language
 	// when it has one there (its content's id when it has none).
 	Language, Title string
-	// Groups are the version's groups, its own and its content's.
-	Groups []DownloadGroup
+	// Entities are the version's entities, its own and its content's.
+	Entities []DownloadEntity
 	// Rule is the version's effective access rule.
 	Rule access.Rule
 	// Released is when the version went live; zero while it is not.
@@ -59,18 +59,18 @@ type DownloadRequest struct {
 	Pages int
 }
 
-// DownloadGroup is a group of a download's version, named in its language,
+// DownloadEntity is an entity of a download's version, named in its language,
 // else the site's default, else another, else by its slug, with its
 // attributes.
-type DownloadGroup struct {
-	kinds.GroupRef
+type DownloadEntity struct {
+	kinds.EntityRef
 	Name       string
 	Attributes map[string]any
 }
 
-// In reports whether the version is in group g.
-func (r DownloadRequest) In(g kinds.GroupRef) bool {
-	return slices.ContainsFunc(r.Groups, func(d DownloadGroup) bool { return d.GroupRef == g })
+// In reports whether the version is in entity g.
+func (r DownloadRequest) In(g kinds.EntityRef) bool {
+	return slices.ContainsFunc(r.Entities, func(d DownloadEntity) bool { return d.EntityRef == g })
 }
 
 // DownloadDecision is a policy's ruling.
@@ -566,7 +566,7 @@ WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3`, s.o.Tenant, v.Conte
 		r.Released = *released
 	}
 	var err error
-	if r.Groups, err = s.downloadGroups(ctx, v); err != nil {
+	if r.Entities, err = s.downloadEntities(ctx, v); err != nil {
 		return grant{}, err
 	}
 	d, err := s.o.Policy.Decide(ctx, r)
@@ -586,22 +586,22 @@ WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3`, s.o.Tenant, v.Conte
 	return g, nil
 }
 
-// downloadGroups are v's active groups, its own and its content's, each
+// downloadEntities are v's active entities, its own and its content's, each
 // named in v's language, else the site's default, else another, else by its
 // slug, with its attributes.
-func (s *Service) downloadGroups(ctx context.Context, v version) ([]DownloadGroup, error) {
-	rows, err := s.o.Pool.Query(ctx, `SELECT DISTINCT g.kind, g.slug, COALESCE((SELECT n.name FROM `+pgxIdent(s.o.Schema, "content_group_names")+` n
- WHERE n.tenant_id = g.tenant_id AND n.group_id = g.id AND n.kind = 'name' ORDER BY n.language = $4 DESC, n.language = $5 DESC, n.language LIMIT 1), g.slug),
+func (s *Service) downloadEntities(ctx context.Context, v version) ([]DownloadEntity, error) {
+	rows, err := s.o.Pool.Query(ctx, `SELECT DISTINCT g.kind, g.slug, COALESCE((SELECT n.name FROM `+pgxIdent(s.o.Schema, "content_entity_names")+` n
+ WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND n.kind = 'name' ORDER BY n.language = $4 DESC, n.language = $5 DESC, n.language LIMIT 1), g.slug),
  g.attributes
-FROM `+pgxIdent(s.o.Schema, "content_memberships")+` m JOIN `+s.t.groups+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id AND g.state = 'active' AND NOT g.internal
+FROM `+pgxIdent(s.o.Schema, "content_memberships")+` m JOIN `+s.t.entities+` g ON g.tenant_id = m.tenant_id AND g.id = m.entity_id AND g.state = 'active' AND NOT g.internal
 WHERE m.tenant_id = $1 AND m.content_id = $2 AND (m.version_id IS NULL OR m.version_id = $3) AND m.state = 'active'
 AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
 ORDER BY g.kind, g.slug`, s.o.Tenant, v.Content, v.Version, v.Language, s.o.Kinds.Languages[0])
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (DownloadGroup, error) {
-		var g DownloadGroup
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (DownloadEntity, error) {
+		var g DownloadEntity
 		return g, row.Scan(&g.Kind, &g.Slug, &g.Name, &g.Attributes)
 	})
 }

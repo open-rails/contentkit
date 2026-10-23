@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 func TestContentEntityScopes(t *testing.T) {
@@ -13,11 +13,11 @@ func TestContentEntityScopes(t *testing.T) {
 	id := f.create("staff", gallery("Independent edition credits", "en", "ja"))
 	initial := f.read("staff", "main.test", id)[0]
 	a, b := initial.Versions[0].ID, initial.Versions[1].ID
-	shared, legacy := f.group("series", "shared-series"), f.group("tag", "legacy-shared-credit")
-	creditA, creditB := f.group("tag", "edition-a-credit"), f.group("tag", "edition-b-credit")
-	internal := f.group("tag", "internal-edition-marker")
+	shared, legacy := f.entity("series", "shared-series"), f.entity("tag", "legacy-shared-credit")
+	creditA, creditB := f.entity("tag", "edition-a-credit"), f.entity("tag", "edition-b-credit")
+	internal := f.entity("tag", "internal-edition-marker")
 	hidden := true
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(internal), Internal: &hidden}}); err != nil {
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(internal), Internal: &hidden}}); err != nil {
 		t.Fatal(err)
 	}
 	f.join(shared, id, "")
@@ -35,16 +35,16 @@ func TestContentEntityScopes(t *testing.T) {
 			t.Fatal(err)
 		}
 		var wire struct {
-			Entities []GroupSummary `json:"entities"`
+			Entities []EntitySummary `json:"entities"`
 			Versions []struct {
-				ID       string         `json:"id"`
-				Entities []GroupSummary `json:"entities"`
+				ID       string          `json:"id"`
+				Entities []EntitySummary `json:"entities"`
 			} `json:"versions"`
 		}
 		if err := json.Unmarshal(raw, &wire); err != nil {
 			t.Fatal(err)
 		}
-		ids := func(gs []GroupSummary) []string {
+		ids := func(gs []EntitySummary) []string {
 			out := make([]string, len(gs))
 			for i, g := range gs {
 				out[i] = g.ID

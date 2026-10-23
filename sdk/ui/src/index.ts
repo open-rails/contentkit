@@ -41,14 +41,14 @@ export { HoverPreview, type HoverPreviewProps } from "./components/hover-preview
 export { LazyMount, type LazyMountProps } from "./components/lazy-mount.js";
 export { MediaReadinessNotice, type MediaReadinessNoticeProps } from "./components/media-readiness-notice.js";
 export * from "./components/social/index.js";
-export * from "./components/groups/index.js";
+export * from "./components/entities/index.js";
 export * from "./components/content/index.js";
 export { ContentAdmin, type ContentAdminProps, type ContentAdminSection } from "./components/admin/content-admin.js";
 export { AdminQuickSearch, type AdminQuickSearchProps } from "./components/admin/quick-search.js";
 export { UserCommentStanding, useUserCommentStandingAccess, type UserCommentStandingProps } from "./components/admin/user-comment-standing.js";
 export { PollManager, pollState, usePollManagerAccess, type PollManagerProps } from "./components/admin/poll-manager.js";
 export { ContentEditor, ContentManager, contentStatus, useContentManagerAccess, type BodyEditorProps, type ContentEditorProps, type ContentManagerProps, type ContentStatus } from "./components/admin/content-manager.js";
-export { GroupManager, useGroupManagerAccess, type GroupManagerProps } from "./components/admin/group-manager.js";
+export { EntityManager, useEntityManagerAccess, type EntityManagerProps } from "./components/admin/entity-manager.js";
 export { MediaItemPanel, VideoMediaEditor, videoPaths, type MediaItemPanelProps, type VideoMediaEditorProps } from "./components/admin/media-item-panel.js";
 export { StatsDashboard, type StatsDashboardProps, type ActivitySeries } from "./components/admin/stats-dashboard.js";
 export { ReaderManifestEditor, type ReaderManifestEditorProps } from "./components/admin/reader-manifest.js";

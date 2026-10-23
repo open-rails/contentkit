@@ -77,8 +77,8 @@ func TestOfferRoutes(t *testing.T) {
 	c := w.content(access.Rule{Level: access.PPV}, "Atlas", creator.ID)
 	v := w.version(c, nil, "Uncut")
 	channel := w.group("channel", "Night Owls", owner.ID)
-	owned := w.content(access.Rule{Level: access.GroupPPV, Group: channel}, "Channel post", "")
-	w.exec(`UPDATE `+w.table("content_items")+` SET owner_group_id = $1 WHERE id = $2`, channel, owned)
+	owned := w.content(access.Rule{Level: access.EntityPPV, Entity: channel}, "Channel post", "")
+	w.exec(`UPDATE `+w.table("content_items")+` SET owner_entity_id = $1 WHERE id = $2`, channel, owned)
 	mine := w.content(access.Rule{Level: access.PPV}, "Stranger's", stranger.ID)
 
 	var o offers.Offer
@@ -131,10 +131,10 @@ func TestJoinAndLibrary(t *testing.T) {
 	owner, viewer := w.customer(), w.customer()
 	a := w.api()
 	free, paid := w.group("channel", "Free Club", owner.ID), w.group("channel", "Paid Club", owner.ID)
-	post := w.content(access.Rule{Level: access.GroupLevel, Group: free}, "For members", "")
+	post := w.content(access.Rule{Level: access.EntityLevel, Entity: free}, "For members", "")
 	postV := w.version(post, nil, "")
 
-	var m offers.GroupJoin
+	var m offers.EntityJoin
 	if got := a.do("POST", "/entities/"+free+"/join", viewer, nil, &m); got != 409 {
 		t.Fatalf("join without an offer: %d", got)
 	}

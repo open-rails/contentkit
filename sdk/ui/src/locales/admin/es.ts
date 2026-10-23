@@ -65,7 +65,7 @@ export const admin: typeof en = {
     changedDuringSave: "Hay cambios nuevos sin guardar. Guárdalos antes de publicar.",
   },
   contentAdmin: {
-    groups: "Grupos",
+    entities: "Grupos",
     modelFailed: "No se pudo cargar el modelo de contenido.",
     title: "Administración de contenido",
     navigation: "Secciones de administración",

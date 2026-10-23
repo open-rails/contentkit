@@ -49,7 +49,7 @@ content_filters:
 		t.Fatalf("policy %+v", c)
 	}
 	d := c.ContentFilters.Domains[0]
-	if d.Filters[1].Toggleable() || !d.Requires(GroupRef{Kind: "tag", Slug: "yaoi"}) || len(d.RequireEntities["blog"]) != 0 {
+	if d.Filters[1].Toggleable() || !d.Requires(EntityRef{Kind: "tag", Slug: "yaoi"}) || len(d.RequireEntities["blog"]) != 0 {
 		t.Fatalf("flat domain %+v", d)
 	}
 	encoded, err := yaml.Marshal(c)
@@ -131,13 +131,13 @@ func TestFlatContentFilterEntryCodecsPreserveTypedReferenceAndDefaults(t *testin
 				if err := format.decode([]byte(raw), &filter); err != nil {
 					t.Fatal(err)
 				}
-				if filter.Group.Kind != "tag" || filter.Group.Slug == "" {
+				if filter.Entity.Kind != "tag" || filter.Entity.Slug == "" {
 					t.Fatalf("typed reference lost: %+v", filter)
 				}
-				if filter.Group.Slug == "restricted" && filter.Toggleable() {
+				if filter.Entity.Slug == "restricted" && filter.Toggleable() {
 					t.Fatal("fixed exclusion became toggleable")
 				}
-				if filter.Group.Slug == "furry" && !filter.Toggleable() {
+				if filter.Entity.Slug == "furry" && !filter.Toggleable() {
 					t.Fatal("omitted user_toggle must allow overrides")
 				}
 				encoded, err := format.encode(filter)

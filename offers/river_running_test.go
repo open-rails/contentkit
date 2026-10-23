@@ -26,7 +26,7 @@ func TestReconcileQueuesFollowupWhileTargetSyncRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := kinds.Config{Languages: []string{"en"},
-		GroupKinds: map[string]kinds.GroupKind{"channel": {Route: "c", Sellable: true}}}
+		EntityKinds: map[string]kinds.EntityKind{"channel": {Route: "c", Sellable: true}}}
 	billing := &heldForPolicyTest{}
 	gate, err := access.NewGate(access.GateConfig{Tenant: "policy", Kinds: cfg, Billing: billing})
 	if err != nil {
@@ -45,11 +45,11 @@ func TestReconcileQueuesFollowupWhileTargetSyncRuns(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	groups := pgx.Identifier{schema, "content_groups"}.Sanitize()
+	entities := pgx.Identifier{schema, "content_entities"}.Sanitize()
 	offers := pgx.Identifier{schema, "content_offers"}.Sanitize()
 	jobs := pgx.Identifier{riverSchema, "river_job"}.Sanitize()
-	target := Target{Kind: GroupTarget, ID: contentref.NewID()}
-	exec(`INSERT INTO `+groups+` (tenant_id,id,kind,slug) VALUES ('policy',$1,'channel','studio')`, target.ID)
+	target := Target{Kind: EntityTarget, ID: contentref.NewID()}
+	exec(`INSERT INTO `+entities+` (tenant_id,id,kind,slug) VALUES ('policy',$1,'channel','studio')`, target.ID)
 	// A previous offer may have a larger revision than the new active offer.
 	// Taking only max(revision) would suppress the active offer's early edits.
 	exec(`INSERT INTO `+offers+` (tenant_id,id,target_kind,target_id,terms,state,revision,synced_revision)

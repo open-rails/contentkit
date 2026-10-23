@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 // ListingSummary describes this query's selection before cursor pagination.
@@ -56,7 +56,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		visibleIDs[row.ID] = struct{}{}
 		if !row.Access.Allowed && !row.Access.Unknown {
 			switch row.Access.Level {
-			case access.TierLevel, access.GroupLevel, access.PPV, access.GroupPPV:
+			case access.TierLevel, access.EntityLevel, access.PPV, access.EntityPPV:
 				out.LockedCount++
 			}
 		}
@@ -66,21 +66,21 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 	}
 	out.Total = len(visibleIDs)
 	hidden := visible.viewer.HiddenContentFilters()
-	var ids []groups.GroupID
+	var ids []entities.EntityID
 	for kind, entries := range hidden {
 		if filter.Kind != "" && kind != filter.Kind {
 			continue
 		}
 		for _, id := range entries {
-			if !slices.Contains(ids, groups.GroupID(id)) {
-				ids = append(ids, groups.GroupID(id))
+			if !slices.Contains(ids, entities.EntityID(id)) {
+				ids = append(ids, entities.EntityID(id))
 			}
 		}
 	}
 	if len(ids) == 0 {
 		return out, nil
 	}
-	entities, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: visible.display})
+	entities, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: visible.display})
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		out.FilteredCount++
 		for i := range out.FilteredEntities {
 			entry := &out.FilteredEntities[i]
-			if slices.Contains(hidden[row.Kind], string(entry.Entity.ID)) && slices.Contains(row.groupIDs, string(entry.Entity.ID)) {
+			if slices.Contains(hidden[row.Kind], string(entry.Entity.ID)) && slices.Contains(row.entityIDs, string(entry.Entity.ID)) {
 				entry.Count++
 			}
 		}
@@ -159,7 +159,7 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	}
 	// Rows load and settle a batch at a time; only the picks span the selection.
 	const batchSize = 2048
-	lean := fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.group_ids, coalesce(f.owner_group_id, ''), f.published_at,
+	lean := fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.entity_ids, coalesce(f.owner_entity_id, ''), f.published_at,
  $3 <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $3)
  FROM %[3]s v
  JOIN %[1]s f ON f.tenant_id = v.tenant_id AND f.version_id = v.id
@@ -178,7 +178,7 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 		}
 		batch, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
 			var c cardRow
-			err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.ID, &c.groupIDs, &c.owner, &c.PublishedAt, &c.creator)
+			err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.ID, &c.entityIDs, &c.owner, &c.PublishedAt, &c.creator)
 			return c, err
 		})
 		if err != nil {

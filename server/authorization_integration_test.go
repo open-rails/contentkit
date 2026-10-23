@@ -60,8 +60,8 @@ engine:
   content:
     languages: [en]
     kinds:
-      gallery: {route: g, presentation: reader, versions: {languages: one}, groups: [team]}
-    group_kinds:
+      gallery: {route: g, presentation: reader, versions: {languages: one}, entities: [team]}
+    entity_kinds:
       team: {route: team, auth_scope: true}
 auth:
   default_tenant_id: %[3]s

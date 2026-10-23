@@ -13,7 +13,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
@@ -1047,7 +1047,7 @@ type GetManageQuery struct {
 	// draft, scheduled, published (live) or deleted; every state but deleted by default
 	State string
 	// only this owner group's, which the caller edits
-	OwnerGroup string
+	OwnerEntity string
 	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
 	Access string
 	// only items whose rule names this configured tier
@@ -1071,8 +1071,8 @@ func (q GetManageQuery) values() url.Values {
 	if q.State != "" {
 		v.Set("state", q.State)
 	}
-	if q.OwnerGroup != "" {
-		v.Set("owner_group", q.OwnerGroup)
+	if q.OwnerEntity != "" {
+		v.Set("owner_group", q.OwnerEntity)
 	}
 	if q.Access != "" {
 		v.Set("access", q.Access)
@@ -1113,7 +1113,7 @@ type GetManageKindQuery struct {
 	// draft, scheduled, published or deleted
 	State string
 	// only this owner group's, which the caller edits
-	OwnerGroup string
+	OwnerEntity string
 	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
 	Access string
 	// only items whose rule names this configured tier
@@ -1137,8 +1137,8 @@ func (q GetManageKindQuery) values() url.Values {
 	if q.State != "" {
 		v.Set("state", q.State)
 	}
-	if q.OwnerGroup != "" {
-		v.Set("owner_group", q.OwnerGroup)
+	if q.OwnerEntity != "" {
+		v.Set("owner_group", q.OwnerEntity)
 	}
 	if q.Access != "" {
 		v.Set("access", q.Access)
@@ -1179,7 +1179,7 @@ type GetManageCountQuery struct {
 	// draft, scheduled, published or deleted
 	State string
 	// only this owner group's, which the caller edits
-	OwnerGroup string
+	OwnerEntity string
 	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
 	Access string
 	// only items whose rule names this configured tier
@@ -1193,8 +1193,8 @@ func (q GetManageCountQuery) values() url.Values {
 	if q.State != "" {
 		v.Set("state", q.State)
 	}
-	if q.OwnerGroup != "" {
-		v.Set("owner_group", q.OwnerGroup)
+	if q.OwnerEntity != "" {
+		v.Set("owner_group", q.OwnerEntity)
 	}
 	if q.Access != "" {
 		v.Set("access", q.Access)
@@ -1666,8 +1666,8 @@ func (q GetEntitiesQuery) values() url.Values {
 }
 
 // GetEntities is GET /v1/entities (public). Lists active entities with name, code, path, cover, avatar, count and a sellable entity's offer and the viewer's membership, filtered, ordered and cursor-paged.
-func (c *Client) GetEntities(ctx context.Context, q GetEntitiesQuery) (groups.GroupPage, error) {
-	var out groups.GroupPage
+func (c *Client) GetEntities(ctx context.Context, q GetEntitiesQuery) (entities.EntityPage, error) {
+	var out entities.EntityPage
 	err := c.call(ctx, http.MethodGet, "/v1/entities", q.values(), nil, &out)
 	return out, err
 }
@@ -1687,8 +1687,8 @@ func (q GetEntityQuery) values() url.Values {
 }
 
 // GetEntity is GET /v1/entities/{id} (public). An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor.
-func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (groups.GroupDetail, error) {
-	var out groups.GroupDetail
+func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (entities.EntityDetail, error) {
+	var out entities.EntityDetail
 	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
@@ -1763,8 +1763,8 @@ func (q GetManageEntitiesQuery) values() url.Values {
 }
 
 // GetManageEntities is GET /v1/manage/entities (staff). Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads.
-func (c *Client) GetManageEntities(ctx context.Context, q GetManageEntitiesQuery) (groups.GroupPage, error) {
-	var out groups.GroupPage
+func (c *Client) GetManageEntities(ctx context.Context, q GetManageEntitiesQuery) (entities.EntityPage, error) {
+	var out entities.EntityPage
 	err := c.call(ctx, http.MethodGet, "/v1/manage/entities", q.values(), nil, &out)
 	return out, err
 }
@@ -1784,8 +1784,8 @@ func (q GetManageEntityQuery) values() url.Values {
 }
 
 // GetManageEntity is GET /v1/manage/entities/{id} (staff). An entity's administration view, including internal classifications and their relationships.
-func (c *Client) GetManageEntity(ctx context.Context, id string, q GetManageEntityQuery) (groups.GroupDetail, error) {
-	var out groups.GroupDetail
+func (c *Client) GetManageEntity(ctx context.Context, id string, q GetManageEntityQuery) (entities.EntityDetail, error) {
+	var out entities.EntityDetail
 	err := c.call(ctx, http.MethodGet, expand("/v1/manage/entities/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
@@ -1825,71 +1825,71 @@ func (q GetMeEntitiesQuery) values() url.Values {
 }
 
 // GetMeEntities is GET /v1/me/entities (user). The viewer's active entities: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the entity's AuthKit scope, or hold the key of, each saying which, as GET /entities lists them.
-func (c *Client) GetMeEntities(ctx context.Context, q GetMeEntitiesQuery) (groups.MyGroupPage, error) {
-	var out groups.MyGroupPage
+func (c *Client) GetMeEntities(ctx context.Context, q GetMeEntitiesQuery) (entities.MyEntityPage, error) {
+	var out entities.MyEntityPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/entities", q.values(), nil, &out)
 	return out, err
 }
 
 // PostEntities is POST /v1/entities (editor). Creates entities with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
-func (c *Client) PostEntities(ctx context.Context, body []groups.GroupInput) ([]groups.Group, error) {
-	var out []groups.Group
+func (c *Client) PostEntities(ctx context.Context, body []entities.EntityInput) ([]entities.Entity, error) {
+	var out []entities.Entity
 	err := c.call(ctx, http.MethodPost, "/v1/entities", nil, body, &out)
 	return out, err
 }
 
 // PatchEntity is PATCH /v1/entities/{id} (editor). Updates a entity's given fields; state restores or deletes it. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
-func (c *Client) PatchEntity(ctx context.Context, id string, body groups.GroupUpdate) (groups.Group, error) {
-	var out groups.Group
+func (c *Client) PatchEntity(ctx context.Context, id string, body entities.EntityUpdate) (entities.Entity, error) {
+	var out entities.Entity
 	err := c.call(ctx, http.MethodPatch, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
 // DeleteEntity is DELETE /v1/entities/{id} (editor). Marks a entity deleted, retires its AuthKit scope and hides its media; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back, and its media within the retention. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
-func (c *Client) DeleteEntity(ctx context.Context, id string) (groups.Group, error) {
-	var out groups.Group
+func (c *Client) DeleteEntity(ctx context.Context, id string) (entities.Entity, error) {
+	var out entities.Entity
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
 // PutEntityNames is PUT /v1/entities/{id}/names (staff). Replaces a entity's names and aliases.
-func (c *Client) PutEntityNames(ctx context.Context, id string, body []groups.Name) ([]groups.Name, error) {
-	var out []groups.Name
+func (c *Client) PutEntityNames(ctx context.Context, id string, body []entities.Name) ([]entities.Name, error) {
+	var out []entities.Name
 	err := c.call(ctx, http.MethodPut, expand("/v1/entities/{id}/names", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
 // PostEntityNames is POST /v1/entities/{id}/names (staff). Adds names and aliases to a entity; a new canonical name demotes the old one to an alias.
-func (c *Client) PostEntityNames(ctx context.Context, id string, body []groups.Name) ([]groups.Name, error) {
-	var out []groups.Name
+func (c *Client) PostEntityNames(ctx context.Context, id string, body []entities.Name) ([]entities.Name, error) {
+	var out []entities.Name
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/names", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
 // DeleteEntityNames is DELETE /v1/entities/{id}/names (staff). Removes names and aliases from a entity.
-func (c *Client) DeleteEntityNames(ctx context.Context, id string, body []groups.Name) ([]groups.Name, error) {
-	var out []groups.Name
+func (c *Client) DeleteEntityNames(ctx context.Context, id string, body []entities.Name) ([]entities.Name, error) {
+	var out []entities.Name
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/names", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
 // PostEntityEdges is POST /v1/entities/{id}/edges (staff). Adds edges from a entity.
-func (c *Client) PostEntityEdges(ctx context.Context, id string, body []groups.EdgeInput) ([]groups.Edge, error) {
-	var out []groups.Edge
+func (c *Client) PostEntityEdges(ctx context.Context, id string, body []entities.EdgeInput) ([]entities.Edge, error) {
+	var out []entities.Edge
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
 // DeleteEntityEdges is DELETE /v1/entities/{id}/edges (staff). Removes edges from a entity.
-func (c *Client) DeleteEntityEdges(ctx context.Context, id string, body []groups.EdgeInput) ([]groups.Edge, error) {
-	var out []groups.Edge
+func (c *Client) DeleteEntityEdges(ctx context.Context, id string, body []entities.EdgeInput) ([]entities.Edge, error) {
+	var out []entities.Edge
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
 // PostEntityMerge is POST /v1/entities/{id}/merge (staff). Merges a entity into another of its kind: memberships, names, edges and children move, and its code redirects.
-func (c *Client) PostEntityMerge(ctx context.Context, id string, body groups.MergeInput) (groups.MergeReport, error) {
-	var out groups.MergeReport
+func (c *Client) PostEntityMerge(ctx context.Context, id string, body entities.MergeInput) (entities.MergeReport, error) {
+	var out entities.MergeReport
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/merge", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
@@ -1914,29 +1914,29 @@ func (q GetEntityMembersQuery) values() url.Values {
 }
 
 // GetEntityMembers is GET /v1/entities/{id}/members (staff). A entity's memberships in member order, paged.
-func (c *Client) GetEntityMembers(ctx context.Context, id string, q GetEntityMembersQuery) (groups.MemberPage, error) {
-	var out groups.MemberPage
+func (c *Client) GetEntityMembers(ctx context.Context, id string, q GetEntityMembersQuery) (entities.MemberPage, error) {
+	var out entities.MemberPage
 	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/members", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
 // PostEntityMembers is POST /v1/entities/{id}/members (staff). Adds contents or versions to a entity, or updates their position, window and state.
-func (c *Client) PostEntityMembers(ctx context.Context, id string, body []groups.Membership) (groups.Written, error) {
-	var out groups.Written
+func (c *Client) PostEntityMembers(ctx context.Context, id string, body []entities.Membership) (entities.Written, error) {
+	var out entities.Written
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/members", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
 // DeleteEntityMembers is DELETE /v1/entities/{id}/members (staff). Removes contents or versions from a entity.
-func (c *Client) DeleteEntityMembers(ctx context.Context, id string, body []groups.Membership) (groups.Written, error) {
-	var out groups.Written
+func (c *Client) DeleteEntityMembers(ctx context.Context, id string, body []entities.Membership) (entities.Written, error) {
+	var out entities.Written
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/members", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
 // PutEntityMembersOrder is PUT /v1/entities/{id}/members/order (staff). Orders an ordered entity: the listed members first, in list order.
-func (c *Client) PutEntityMembersOrder(ctx context.Context, id string, body groups.Order) (groups.Written, error) {
-	var out groups.Written
+func (c *Client) PutEntityMembersOrder(ctx context.Context, id string, body entities.Order) (entities.Written, error) {
+	var out entities.Written
 	err := c.call(ctx, http.MethodPut, expand("/v1/entities/{id}/members/order", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
@@ -1956,8 +1956,8 @@ func (q GetContentEntitiesQuery) values() url.Values {
 }
 
 // GetContentEntities is GET /v1/contents/{id}/entities (staff). A content's memberships, its versions' included, with the entities they name.
-func (c *Client) GetContentEntities(ctx context.Context, id string, q GetContentEntitiesQuery) (groups.ContentMemberships, error) {
-	var out groups.ContentMemberships
+func (c *Client) GetContentEntities(ctx context.Context, id string, q GetContentEntitiesQuery) (entities.ContentMemberships, error) {
+	var out entities.ContentMemberships
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/entities", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
@@ -1977,8 +1977,8 @@ func (q PutContentEntitiesQuery) values() url.Values {
 }
 
 // PutContentEntities is PUT /v1/contents/{id}/entities (staff). Replaces a content's memberships, its versions' included, in the entity kinds named (every kind its kind joins by default).
-func (c *Client) PutContentEntities(ctx context.Context, id string, body groups.ContentGroups, q PutContentEntitiesQuery) (groups.ContentMemberships, error) {
-	var out groups.ContentMemberships
+func (c *Client) PutContentEntities(ctx context.Context, id string, body entities.ContentEntities, q PutContentEntitiesQuery) (entities.ContentMemberships, error) {
+	var out entities.ContentMemberships
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/entities", "{id}", url.PathEscape(id)), q.values(), body, &out)
 	return out, err
 }
@@ -1998,8 +1998,8 @@ func (q PutContentEntitiesSharedQuery) values() url.Values {
 }
 
 // PutContentEntitiesShared is PUT /v1/contents/{id}/entities/shared (staff). Replaces only shared content memberships in the named entity kinds, preserving every version's memberships. Entity kinds must allow the content membership scope; omitted kinds select all such kinds. New names attach to the shared content.
-func (c *Client) PutContentEntitiesShared(ctx context.Context, id string, body groups.ContentGroups, q PutContentEntitiesSharedQuery) (groups.ContentMemberships, error) {
-	var out groups.ContentMemberships
+func (c *Client) PutContentEntitiesShared(ctx context.Context, id string, body entities.ContentEntities, q PutContentEntitiesSharedQuery) (entities.ContentMemberships, error) {
+	var out entities.ContentMemberships
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/entities/shared", "{id}", url.PathEscape(id)), q.values(), body, &out)
 	return out, err
 }
@@ -2019,8 +2019,8 @@ func (q PutContentVersionEntitiesQuery) values() url.Values {
 }
 
 // PutContentVersionEntities is PUT /v1/contents/{id}/versions/{vid}/entities (staff). Replaces only this version's memberships in the named entity kinds, preserving shared and sibling-version memberships. Entity kinds must allow the version membership scope; omitted kinds select all such kinds. New names attach to this version. The version must belong to the content and not be deleted.
-func (c *Client) PutContentVersionEntities(ctx context.Context, id string, vid string, body groups.ContentGroups, q PutContentVersionEntitiesQuery) (groups.ContentMemberships, error) {
-	var out groups.ContentMemberships
+func (c *Client) PutContentVersionEntities(ctx context.Context, id string, vid string, body entities.ContentEntities, q PutContentVersionEntitiesQuery) (entities.ContentMemberships, error) {
+	var out entities.ContentMemberships
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/entities", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), q.values(), body, &out)
 	return out, err
 }
@@ -2249,15 +2249,15 @@ func (c *Client) DeleteEntityOffer(ctx context.Context, id string) (offers.Offer
 }
 
 // PostEntityJoin is POST /v1/entities/{id}/join (user). Joins a public group free to join: grants the viewer its key. Internal entities are not joinable.
-func (c *Client) PostEntityJoin(ctx context.Context, id string) (offers.GroupJoin, error) {
-	var out offers.GroupJoin
+func (c *Client) PostEntityJoin(ctx context.Context, id string) (offers.EntityJoin, error) {
+	var out offers.EntityJoin
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/join", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
 // DeleteEntityJoin is DELETE /v1/entities/{id}/join (user). Leaves a group joined free; a bought membership stays.
-func (c *Client) DeleteEntityJoin(ctx context.Context, id string) (offers.GroupJoin, error) {
-	var out offers.GroupJoin
+func (c *Client) DeleteEntityJoin(ctx context.Context, id string) (offers.EntityJoin, error) {
+	var out offers.EntityJoin
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/join", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
@@ -2348,11 +2348,11 @@ type GetReleasesQuery struct {
 	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
-	Groups []string
+	Entities []string
 	// group ids no listed version is in
-	ExcludeGroups []string
+	ExcludeEntities []string
 	// owner group ids (channels): only content one of them owns
-	OwnerGroup []string
+	OwnerEntity []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2391,14 +2391,14 @@ func (q GetReleasesQuery) values() url.Values {
 	if len(q.Ids) > 0 {
 		v.Set("ids", strings.Join(q.Ids, ","))
 	}
-	if len(q.Groups) > 0 {
-		v.Set("groups", strings.Join(q.Groups, ","))
+	if len(q.Entities) > 0 {
+		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeGroups) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	if len(q.ExcludeEntities) > 0 {
+		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerGroup) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	if len(q.OwnerEntity) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -2510,11 +2510,11 @@ type GetContentsQuery struct {
 	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
-	Groups []string
+	Entities []string
 	// group ids no listed version is in
-	ExcludeGroups []string
+	ExcludeEntities []string
 	// owner group ids (channels): only content one of them owns
-	OwnerGroup []string
+	OwnerEntity []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2565,14 +2565,14 @@ func (q GetContentsQuery) values() url.Values {
 	if len(q.Ids) > 0 {
 		v.Set("ids", strings.Join(q.Ids, ","))
 	}
-	if len(q.Groups) > 0 {
-		v.Set("groups", strings.Join(q.Groups, ","))
+	if len(q.Entities) > 0 {
+		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeGroups) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	if len(q.ExcludeEntities) > 0 {
+		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerGroup) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	if len(q.OwnerEntity) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -2653,11 +2653,11 @@ type GetSearchQuery struct {
 	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
-	Groups []string
+	Entities []string
 	// group ids no listed version is in
-	ExcludeGroups []string
+	ExcludeEntities []string
 	// owner group ids (channels): only content one of them owns
-	OwnerGroup []string
+	OwnerEntity []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2711,14 +2711,14 @@ func (q GetSearchQuery) values() url.Values {
 	if len(q.Ids) > 0 {
 		v.Set("ids", strings.Join(q.Ids, ","))
 	}
-	if len(q.Groups) > 0 {
-		v.Set("groups", strings.Join(q.Groups, ","))
+	if len(q.Entities) > 0 {
+		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeGroups) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	if len(q.ExcludeEntities) > 0 {
+		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerGroup) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	if len(q.OwnerEntity) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -2848,11 +2848,11 @@ type GetContentSimilarQuery struct {
 	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
-	Groups []string
+	Entities []string
 	// group ids no listed version is in
-	ExcludeGroups []string
+	ExcludeEntities []string
 	// owner group ids (channels): only content one of them owns
-	OwnerGroup []string
+	OwnerEntity []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2893,14 +2893,14 @@ func (q GetContentSimilarQuery) values() url.Values {
 	if len(q.Ids) > 0 {
 		v.Set("ids", strings.Join(q.Ids, ","))
 	}
-	if len(q.Groups) > 0 {
-		v.Set("groups", strings.Join(q.Groups, ","))
+	if len(q.Entities) > 0 {
+		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeGroups) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	if len(q.ExcludeEntities) > 0 {
+		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerGroup) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	if len(q.OwnerEntity) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -2964,11 +2964,11 @@ type GetRecommendationsQuery struct {
 	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
-	Groups []string
+	Entities []string
 	// group ids no listed version is in
-	ExcludeGroups []string
+	ExcludeEntities []string
 	// owner group ids (channels): only content one of them owns
-	OwnerGroup []string
+	OwnerEntity []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -3009,14 +3009,14 @@ func (q GetRecommendationsQuery) values() url.Values {
 	if len(q.Ids) > 0 {
 		v.Set("ids", strings.Join(q.Ids, ","))
 	}
-	if len(q.Groups) > 0 {
-		v.Set("groups", strings.Join(q.Groups, ","))
+	if len(q.Entities) > 0 {
+		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeGroups) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	if len(q.ExcludeEntities) > 0 {
+		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerGroup) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	if len(q.OwnerEntity) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -3082,11 +3082,11 @@ type GetReleaseDatesQuery struct {
 	// bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
-	Groups []string
+	Entities []string
 	// group ids no listed version is in
-	ExcludeGroups []string
+	ExcludeEntities []string
 	// owner group ids (channels): only content one of them owns
-	OwnerGroup []string
+	OwnerEntity []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -3128,14 +3128,14 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	if len(q.Ids) > 0 {
 		v.Set("ids", strings.Join(q.Ids, ","))
 	}
-	if len(q.Groups) > 0 {
-		v.Set("groups", strings.Join(q.Groups, ","))
+	if len(q.Entities) > 0 {
+		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeGroups) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeGroups, ","))
+	if len(q.ExcludeEntities) > 0 {
+		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerGroup) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerGroup, ","))
+	if len(q.OwnerEntity) > 0 {
+		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))

@@ -19,7 +19,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/offers"
@@ -33,19 +33,19 @@ const chunk = 1000
 
 // Options configures a Service over the engine's stores.
 type Options struct {
-	Pool    *pgxpool.Pool
-	Schema  string
-	Tenant  string
-	Catalog *catalog.Store
-	Groups  *groups.Store
-	Content *content.Runtime
+	Pool     *pgxpool.Pool
+	Schema   string
+	Tenant   string
+	Catalog  *catalog.Store
+	Entities *entities.Store
+	Content  *content.Runtime
 	// Offers is nil without billing: offers are skipped.
 	Offers *offers.Service
 	// Signals is nil, or answers discovery.ErrNoSignals, without a signal
 	// plane: signals are skipped.
 	Signals *discovery.Service
 	// Rebuild queues the jobs that rebuild what an import changed: search
-	// documents, group counts and listing counts.
+	// documents, entity counts and listing counts.
 	Rebuild func(ctx context.Context) error
 	Logger  *slog.Logger
 }
@@ -59,7 +59,7 @@ type Service struct {
 
 // New checks the options.
 func New(o Options) (*Service, error) {
-	if o.Pool == nil || o.Catalog == nil || o.Groups == nil || o.Content == nil || strings.TrimSpace(o.Tenant) == "" {
+	if o.Pool == nil || o.Catalog == nil || o.Entities == nil || o.Content == nil || strings.TrimSpace(o.Tenant) == "" {
 		return nil, errors.New("importer: Pool, Tenant, Catalog, Groups and Content are required")
 	}
 	if o.Logger == nil {
@@ -117,7 +117,7 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 // RecordCount returns the count checked against MaxRecords, including nested
 // content versions and poll options. Importers can use it to size their batches.
 func (b Batch) RecordCount() int {
-	n := len(b.Groups) + len(b.Memberships) + len(b.Offers) + len(b.Aliases) + len(b.Comments) + len(b.Reactions) + len(b.Favorites) +
+	n := len(b.Entities) + len(b.Memberships) + len(b.Offers) + len(b.Aliases) + len(b.Comments) + len(b.Reactions) + len(b.Favorites) +
 		len(b.Votes) + len(b.Answers) + len(b.LegacyReading) + len(b.Signals) + len(b.Deletes)
 	for _, c := range b.Contents {
 		n += 1 + len(c.Versions)
@@ -151,7 +151,7 @@ type pending struct {
 	ids      []mapping
 }
 
-// section is one record group of a batch.
+// section is one record entity of a batch.
 type section struct {
 	name string
 	n    int
@@ -311,13 +311,13 @@ func classify(err error) (string, string) {
 	switch {
 	case errors.Is(err, content.ErrSubjectErased):
 		return CodeErased, "The person was erased."
-	case errors.Is(err, errNotFound), errors.Is(err, catalog.ErrNotFound), errors.Is(err, groups.ErrNotFound), errors.Is(err, offers.ErrNotFound),
+	case errors.Is(err, errNotFound), errors.Is(err, catalog.ErrNotFound), errors.Is(err, entities.ErrNotFound), errors.Is(err, offers.ErrNotFound),
 		errors.Is(err, content.ErrNotFound), errors.Is(err, codes.ErrNotFound), errors.Is(err, discovery.ErrNotFound):
 		return CodeNotFound, httpapi.Rule(err, httpapi.CodeNotFound)
-	case errors.Is(err, errConflict), errors.Is(err, catalog.ErrConflict), errors.Is(err, groups.ErrConflict), errors.Is(err, offers.ErrConflict),
+	case errors.Is(err, errConflict), errors.Is(err, catalog.ErrConflict), errors.Is(err, entities.ErrConflict), errors.Is(err, offers.ErrConflict),
 		errors.Is(err, content.ErrConflict), errors.Is(err, codes.ErrConflict):
 		return CodeConflict, httpapi.Rule(err, httpapi.CodeConflict)
-	case errors.Is(err, errInvalid), errors.Is(err, catalog.ErrInvalid), errors.Is(err, groups.ErrInvalid), errors.Is(err, offers.ErrInvalid),
+	case errors.Is(err, errInvalid), errors.Is(err, catalog.ErrInvalid), errors.Is(err, entities.ErrInvalid), errors.Is(err, offers.ErrInvalid),
 		errors.Is(err, content.ErrInvalid), errors.Is(err, codes.ErrInvalid), errors.Is(err, discovery.ErrInvalid), errors.Is(err, contentref.ErrInvalidID):
 		return CodeInvalid, httpapi.Rule(err, httpapi.CodeInvalidRequest)
 	case errors.As(err, &pg):
@@ -350,7 +350,7 @@ type resolver struct {
 
 	contentKind    map[string]string
 	versionContent map[string]string
-	groupKind      map[string]string
+	entityKind     map[string]string
 	comments       map[string]bool
 }
 
@@ -452,7 +452,7 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 	for _, id := range r.known {
 		ids = append(ids, id)
 	}
-	r.contentKind, r.versionContent, r.groupKind, r.comments = map[string]string{}, map[string]string{}, map[string]string{}, map[string]bool{}
+	r.contentKind, r.versionContent, r.entityKind, r.comments = map[string]string{}, map[string]string{}, map[string]string{}, map[string]bool{}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -465,7 +465,7 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 	}
 	rows, err := tx.Query(ctx, `SELECT 'c', id, kind FROM `+r.s.qs+`.content_items WHERE tenant_id = $1 AND id = ANY($2)
  UNION ALL SELECT 'v', id, content_id FROM `+r.s.qs+`.content_versions WHERE tenant_id = $1 AND id = ANY($2)
- UNION ALL SELECT 'g', id, kind FROM `+r.s.qs+`.content_groups WHERE tenant_id = $1 AND id = ANY($2)
+ UNION ALL SELECT 'g', id, kind FROM `+r.s.qs+`.content_entities WHERE tenant_id = $1 AND id = ANY($2)
  UNION ALL SELECT 'm', id::text, '' FROM `+r.s.qs+`.content_comments WHERE tenant_id = $1 AND id = ANY($3::uuid[])`, r.s.o.Tenant, ids, uuids)
 	if err != nil {
 		return err
@@ -482,7 +482,7 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 		case "v":
 			r.versionContent[id] = v
 		case "g":
-			r.groupKind[id] = v
+			r.entityKind[id] = v
 		case "m":
 			r.comments[id] = true
 		}
@@ -518,7 +518,7 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 // resolved is what a TargetRef names.
 type resolved struct {
 	ref     contentref.ContentRef // kind and id, version for a version target
-	group   string                // a group target's id
+	entity  string                // an entity target's id
 	content string                // the content of a content or version target
 	version string
 	comment string
@@ -528,7 +528,7 @@ type resolved struct {
 const (
 	allowContent = 1 << iota
 	allowVersion
-	allowGroup
+	allowEntity
 	allowComment
 )
 
@@ -536,7 +536,7 @@ const (
 func (r *resolver) target(t TargetRef, allow int) (resolved, error) {
 	var out resolved
 	n := 0
-	for _, p := range []*Ref{t.Group, t.Comment} {
+	for _, p := range []*Ref{t.Entity, t.Comment} {
 		if p != nil {
 			n++
 		}
@@ -549,24 +549,24 @@ func (r *resolver) target(t TargetRef, allow int) (resolved, error) {
 	}
 	tenant := r.s.o.Tenant
 	switch {
-	case t.Group != nil:
-		if allow&allowGroup == 0 {
+	case t.Entity != nil:
+		if allow&allowEntity == 0 {
 			return out, fmt.Errorf("%w: a group is no target here", errInvalid)
 		}
-		id, err := r.ref(EntityGroup, *t.Group)
+		id, err := r.ref(RecordEntity, *t.Entity)
 		if err != nil || r.collect {
 			return out, err
 		}
-		kind, ok := r.groupKind[id]
+		kind, ok := r.entityKind[id]
 		if !ok {
 			return out, fmt.Errorf("%w: group %s", errNotFound, id)
 		}
-		out.group, out.ref = id, contentref.New(tenant, kind, id)
+		out.entity, out.ref = id, contentref.New(tenant, kind, id)
 	case t.Comment != nil:
 		if allow&allowComment == 0 {
 			return out, fmt.Errorf("%w: a comment is no target here", errInvalid)
 		}
-		id, err := r.ref(EntityComment, *t.Comment)
+		id, err := r.ref(RecordComment, *t.Comment)
 		if err != nil || r.collect {
 			return out, err
 		}
@@ -578,7 +578,7 @@ func (r *resolver) target(t TargetRef, allow int) (resolved, error) {
 		var cid, vid string
 		var err error
 		if t.Content != nil {
-			if cid, err = r.ref(EntityContent, *t.Content); err != nil {
+			if cid, err = r.ref(RecordContent, *t.Content); err != nil {
 				return out, err
 			}
 		}
@@ -586,7 +586,7 @@ func (r *resolver) target(t TargetRef, allow int) (resolved, error) {
 			if allow&allowVersion == 0 {
 				return out, fmt.Errorf("%w: a version is no target here", errInvalid)
 			}
-			if vid, err = r.ref(EntityVersion, *t.Version); err != nil {
+			if vid, err = r.ref(RecordVersion, *t.Version); err != nil {
 				return out, err
 			}
 		} else if allow&allowContent == 0 {

@@ -89,9 +89,9 @@ func serverRoles(engine contentkit.Config) *authkit.Roles {
 	}
 	app.Role(StaffRole, appGrants...)
 	tenant.Role(StaffRole, tenantGrants...)
-	for name, kind := range engine.Content.GroupKinds {
+	for name, kind := range engine.Content.EntityKinds {
 		if kind.AuthScope {
-			r.Persona(name).Declare(access.GroupPermissions(name)...)
+			r.Persona(name).Declare(access.EntityPermissions(name)...)
 		}
 	}
 	return r

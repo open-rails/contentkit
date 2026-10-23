@@ -11,14 +11,14 @@ import (
 	"github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 	ctx := t.Context()
 	r := authkit.NewRoles()
 	channel := r.Persona("channel")
-	permissions := channel.Declare(access.GroupPermissions("channel")...)
+	permissions := channel.Declare(access.EntityPermissions("channel")...)
 	editorRole := channel.Role("editor", permissions[1])
 	r.Root.Role("global-editor", permissions[1])
 	tenants := []contentkit.TenantID{contentkit.NewTenantID(), contentkit.NewTenantID()}
@@ -26,7 +26,7 @@ func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 	ak, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles, c.DefaultTenantID = r, firstTenant }))
 	owner, editor := authtest.NewUser(t, ak), authtest.NewUser(t, ak)
 	bare := uuid.NewString()
-	backends := []groups.Scopes{}
+	backends := []entities.Scopes{}
 	providerIDs := map[string]bool{}
 	providerClients := map[string]*authkit.Client{}
 	var firstID string
@@ -49,10 +49,10 @@ func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := backend.Provision(ctx, []groups.Scope{{ID: bare, Kind: "channel", Owner: localOwner.ID}}); err != nil {
+			if err := backend.Provision(ctx, []entities.Scope{{ID: bare, Kind: "channel", Owner: localOwner.ID}}); err != nil {
 				t.Fatal(err)
 			}
-			id, err := ckauthkit.GroupScopeID(scope, bare)
+			id, err := ckauthkit.EntityScopeID(scope, bare)
 			if err != nil || providerIDs[id] {
 				t.Fatalf("scope ID collision: %s %v", id, err)
 			}
@@ -70,7 +70,7 @@ func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 	authtest.GrantRole(t, ak, iam.GroupByID(firstID), iam.UserSubject(editor.ID), editorRole)
 	check := func(index int, want bool) {
 		t.Helper()
-		got, err := backends[index].(groups.LocalScopes).HoldingScopes(ctx, editor.ID, []string{"channel"}, []string{bare})
+		got, err := backends[index].(entities.LocalScopes).HoldingScopes(ctx, editor.ID, []string{"channel"}, []string{bare})
 		if err != nil || (len(got[bare]) > 0) != want {
 			t.Fatalf("scope %d holdings %+v err %v", index, got, err)
 		}
@@ -96,7 +96,7 @@ func TestAppGroupScopesIsolateSameGroupID(t *testing.T) {
 			t.Fatalf("retirement crossed scopes: %+v %v", g, err)
 		}
 	}
-	if err := backends[0].Provision(ctx, []groups.Scope{{ID: bare, Kind: "channel", Owner: owner.ID}}); err != nil {
+	if err := backends[0].Provision(ctx, []entities.Scope{{ID: bare, Kind: "channel", Owner: owner.ID}}); err != nil {
 		t.Fatal(err)
 	}
 	check(0, false) // restoring a group does not restore the retired team's grants.

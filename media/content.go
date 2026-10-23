@@ -18,7 +18,7 @@ const AvatarPreset = "avatar"
 
 // ForContent derives c from the site's one kinds list: a media kind named
 // after a content kind is that kind's, of Versions, in the app's namespace;
-// every group kind without one declared gets GroupKind's. No other kind has
+// every entity kind without one declared gets GroupKind's. No other kind has
 // versions.
 func ForContent(c Config, k kinds.Config) (Config, error) {
 	out := c
@@ -39,9 +39,9 @@ func ForContent(c Config, k kinds.Config) (Config, error) {
 			}
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(k.GroupKinds)) {
+	for _, name := range slices.Sorted(maps.Keys(k.EntityKinds)) {
 		if !slices.ContainsFunc(out.Kinds, func(mk Kind) bool { return mk.Name == name }) {
-			out.Kinds = append(out.Kinds, GroupKind(name, k.GroupKinds[name]))
+			out.Kinds = append(out.Kinds, EntityKind(name, k.EntityKinds[name]))
 		}
 	}
 	return out, nil
@@ -103,10 +103,10 @@ func downloads(mk *Kind, k kinds.Kind) error {
 	return nil
 }
 
-// GroupKind is a group kind's media: named cover images ("cover/i-{uuid}"),
+// GroupKind is a entity kind's media: named cover images ("cover/i-{uuid}"),
 // and for kinds with avatars (kinds.GroupKind.HasAvatar) named avatars, each
-// the group's selection (groups.Cover.Image) among them.
-func GroupKind(name string, gk kinds.GroupKind) Kind {
+// the group's selection (entities.Cover.Image) among them.
+func EntityKind(name string, gk kinds.EntityKind) Kind {
 	image := func(path string) Upload {
 		return Upload{Path: path + "/{name}", Types: slices.Clone(ImageTypes), MaxBytes: 20 << 20, Named: true, Max: 20}
 	}

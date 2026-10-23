@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 func TestEntityMembershipChangesInvalidatePublishingWithoutRestampingContent(t *testing.T) {
@@ -31,7 +31,7 @@ func TestEntityMembershipChangesInvalidatePublishingWithoutRestampingContent(t *
 	if _, err = f.s.o.Pool.Exec(ctx, `UPDATE `+f.s.items+` SET updated_at=$3 WHERE tenant_id=$1 AND id=$2`, f.s.o.Tenant, op.ContentID, sourceTime); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.s.o.Groups.RemoveMemberships(ctx, []groups.Membership{{GroupID: groups.GroupID(op.Entities[0].ID), ContentID: op.ContentID}}); err != nil {
+	if err = f.s.o.Entities.RemoveMemberships(ctx, []entities.Membership{{EntityID: entities.EntityID(op.Entities[0].ID), ContentID: op.ContentID}}); err != nil {
 		t.Fatal(err)
 	}
 	var revision int64

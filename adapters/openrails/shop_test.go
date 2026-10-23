@@ -14,7 +14,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/testauth"
@@ -26,7 +26,7 @@ import (
 // held to the route catalog.
 type shop struct {
 	*world
-	groups                   *groups.Store
+	groups                   *entities.Store
 	cat                      *catalog.Store
 	staff                    access.Actor
 	catalogAPI, discoveryAPI *httptest.Server
@@ -37,15 +37,15 @@ func newShop(t *testing.T, edits ...func(*openrails.Config)) *shop {
 	ctx := t.Context()
 	s := &shop{world: newWorld(t, edits...), staff: testauth.Actor(access.Actor{ID: "staff"}, catalogStaff{})}
 	var err error
-	if s.groups, err = groups.New(groups.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds,
-		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+	if s.groups, err = entities.New(entities.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds,
+		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return s.cat.ContentChanged(ctx, q, ids)
 		}}); err != nil {
 		t.Fatal(err)
 	}
 	authn := testauth.Auth{Authz: catalogStaff{}}
 	if s.cat, err = catalog.New(ctx, catalog.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds, Auth: authn, Gate: s.gate,
-		Groups: s.groups, Offers: s.offers}); err != nil {
+		Entities: s.groups, Offers: s.offers}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.cat.Close)
@@ -54,7 +54,7 @@ func newShop(t *testing.T, edits ...func(*openrails.Config)) *shop {
 		t.Fatal(err)
 	}
 	disc, err := discovery.New(discovery.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds, Visibility: s.cat,
-		Resolver: s.cat.Resolver(), Gate: s.gate, Groups: s.groups, Hub: h, Sales: s.offers})
+		Resolver: s.cat.Resolver(), Gate: s.gate, Entities: s.groups, Hub: h, Sales: s.offers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,8 +100,8 @@ func (s *shop) get(srv *httptest.Server, as access.Actor, path string, out any) 
 // channel creates a channel owned by owner.
 func (s *shop) channel(slug, name, owner string) string {
 	s.t.Helper()
-	made, err := s.groups.CreateGroups(s.t.Context(), []groups.GroupInput{{Kind: "channel", Slug: slug, OwnerUserID: owner,
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: name}}}})
+	made, err := s.entities.CreateEntities(s.t.Context(), []entities.EntityInput{{Kind: "channel", Slug: slug, OwnerUserID: owner,
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: name}}}})
 	if err != nil {
 		s.t.Fatal(err)
 	}

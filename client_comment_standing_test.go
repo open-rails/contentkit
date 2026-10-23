@@ -39,9 +39,9 @@ func TestClientCommentStandingLanguageAndOptionalCount(t *testing.T) {
 	if err != nil || thread.Count == nil || *thread.Count != 23 {
 		t.Fatalf("thread count: %+v %v", thread, err)
 	}
-	group, err := client.GetEntityCanComment(context.Background(), "tag", ck.GetEntityCanCommentQuery{Language: "en"})
-	if err != nil || group.Count == nil || *group.Count != 0 {
-		t.Fatalf("empty count: %+v %v", group, err)
+	entity, err := client.GetEntityCanComment(context.Background(), "tag", ck.GetEntityCanCommentQuery{Language: "en"})
+	if err != nil || entity.Count == nil || *entity.Count != 0 {
+		t.Fatalf("empty count: %+v %v", entity, err)
 	}
 	locked, err := client.GetContentCanComment(context.Background(), "locked", ck.GetContentCanCommentQuery{})
 	if err != nil || locked.Count != nil || !locked.Locked {

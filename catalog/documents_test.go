@@ -7,18 +7,18 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/search"
 )
 
 // Content items are their own search documents: the worker builds one per
-// item and language from its text, with its groups' names as keywords, and
+// item and language from its text, with its entities' names as keywords, and
 // searches keep only what the viewer's listing shows.
 func TestSearchDocumentsIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	tag := f.group("tag", "seaside")
+	tag := f.entity("tag", "seaside")
 	live := f.create("staff", ContentInput{Kind: "gallery", Text: map[string]Text{"en": {Title: "Blue Ocean", Aliases: []string{"Azure Sea"}}, "ja": {Title: "青い海"}},
 		Versions: []VersionInput{{Languages: []string{"en"}}}})
 	f.publish("staff", live, nil)
@@ -75,14 +75,14 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 		t.Fatalf("Japanese text finds %v", got)
 	}
 
-	// A renamed group's members, inherited ones through a parent included,
+	// A renamed entity's members, inherited ones through a parent included,
 	// are found by the new name only, whichever write renames it.
-	coast := f.group("tag", "coast")
-	parent := groups.GroupID(coast)
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(tag), ParentID: &parent}}); err != nil {
+	coast := f.entity("tag", "coast")
+	parent := entities.EntityID(coast)
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(tag), ParentID: &parent}}); err != nil {
 		t.Fatal(err)
 	}
-	series := f.group("series", "voyage")
+	series := f.entity("series", "voyage")
 	f.join(series, live, "")
 	sync()
 	renamed := func(old, now string) {
@@ -95,20 +95,20 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 			t.Fatalf("the new name %q finds %v", now, got)
 		}
 	}
-	name := func(s string) []groups.Name {
-		return []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: s}}
+	name := func(s string) []entities.Name {
+		return []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: s}}
 	}
-	if err := f.groups.SetNames(f.ctx, []groups.GroupNames{{ID: groups.GroupID(tag), Names: name("Mountain")}}); err != nil {
+	if err := f.entities.SetNames(f.ctx, []entities.EntityNames{{ID: entities.EntityID(tag), Names: name("Mountain")}}); err != nil {
 		t.Fatal(err)
 	}
 	renamed("seaside", "mountain")
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: parent, Names: name("Harbor")}}); err != nil {
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: parent, Names: name("Harbor")}}); err != nil {
 		t.Fatal(err)
 	}
 	renamed("coast", "harbor")
 	// Resending the same names and slug queues none of the members.
 	slug := "coast"
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: parent, Slug: &slug, Names: name("Harbor")}}); err != nil {
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: parent, Slug: &slug, Names: name("Harbor")}}); err != nil {
 		t.Fatal(err)
 	}
 	var queued int
@@ -119,8 +119,8 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.groups.ImportGroups(f.ctx, tx, []groups.ImportGroup{{ID: groups.GroupID(tag), Kind: "tag", Slug: "seaside", ParentID: parent,
-		State: groups.StateActive, Names: name("Summit")}}, false); err != nil {
+	if err := f.entities.ImportEntities(f.ctx, tx, []entities.ImportEntity{{ID: entities.EntityID(tag), Kind: "tag", Slug: "seaside", ParentID: parent,
+		State: entities.StateActive, Names: name("Summit")}}, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(f.ctx); err != nil {
@@ -128,7 +128,7 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 	}
 	renamed("mountain", "summit")
 	// A path entity's rename already re-derived its members; it still does.
-	if err := f.groups.SetNames(f.ctx, []groups.GroupNames{{ID: groups.GroupID(series), Names: name("Odyssey")}}); err != nil {
+	if err := f.entities.SetNames(f.ctx, []entities.EntityNames{{ID: entities.EntityID(series), Names: name("Odyssey")}}); err != nil {
 		t.Fatal(err)
 	}
 	renamed("voyage", "odyssey")

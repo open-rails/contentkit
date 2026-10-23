@@ -75,7 +75,7 @@ func readCommentStanding(t *testing.T, h http.Handler, actor access.Actor, path 
 	return out
 }
 
-func TestCommentStandingCountOwnModerationVersionsAndCanonicalGroups(t *testing.T) {
+func TestCommentStandingCountOwnModerationVersionsAndCanonicalEntities(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
 	res.setCanonical("tag", cid(2), cid(3))

@@ -65,7 +65,7 @@ export const admin: typeof en = {
     changedDuringSave: "保存中に新しい変更がありました。公開する前に保存してください。",
   },
   contentAdmin: {
-    groups: "グループ",
+    entities: "グループ",
     modelFailed: "コンテンツモデルを読み込めませんでした。",
     title: "コンテンツ管理",
     navigation: "管理セクション",

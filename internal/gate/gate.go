@@ -100,7 +100,7 @@ func Can(ctx context.Context, a auth.Authenticator, actor access.Actor, perm str
 // and AuthKit scope (groups' owner_user_id and auth_scope): its owner, or a
 // holder of any of perms in the scope, under the authority of a's root
 // scope. Staff are the caller's to admit. An error never grants.
-func GroupEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, owner, scope string, perms ...string) (bool, error) {
+func EntityEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, owner, scope string, perms ...string) (bool, error) {
 	switch {
 	case actor.Anonymous:
 		return false, nil

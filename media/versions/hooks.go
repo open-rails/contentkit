@@ -33,7 +33,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		case err != nil || ref.TenantID != k.NS() || k.Versions && ref.Version() == "":
 		case k.Versions:
 			owned = append(owned, ref)
-		case s.isGroupKind(k.Name):
+		case s.isEntityKind(k.Name):
 			grouped = append(grouped, ref)
 		case k.Name == s.reg.Config().Avatars.Kind:
 			editor, err := s.avatarEditor(ctx, actor, ref.ContentID)
@@ -48,7 +48,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 	if err := s.resolveOwned(ctx, owned, actor, out); err != nil {
 		return nil, err
 	}
-	if err := s.resolveGroups(ctx, grouped, actor, out); err != nil {
+	if err := s.resolveEntities(ctx, grouped, actor, out); err != nil {
 		return nil, err
 	}
 	if len(others) > 0 && s.o.Others != nil {
@@ -200,8 +200,8 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 		return media.UploadGrant{Allowed: true, Exempt: true}, nil
 	case k.Versions:
 		return s.canEdit(ctx, actor, k, t)
-	case s.isGroupKind(k.Name):
-		return s.canEditGroup(ctx, actor, t)
+	case s.isEntityKind(k.Name):
+		return s.canEditEntity(ctx, actor, t)
 	case k.Name == s.reg.Config().Avatars.Kind:
 		writer, err := s.avatarEditor(ctx, actor, t.Ref.ContentID)
 		self := actor.Member() && actor.AccountID() == t.Ref.ContentID

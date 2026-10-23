@@ -720,7 +720,7 @@ func (s *Store) handleManage(w http.ResponseWriter, r *http.Request) {
 				only = append(only, id)
 			}
 		}
-		ids, err = s.Manage(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerGroup: q.Get("owner_group"),
+		ids, err = s.Manage(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerEntity: q.Get("owner_group"),
 			Text: q.Get("q"), Code: q.Get("code"), Access: q.Get("access"), Tier: q.Get("tier"), IDs: only, Limit: limit, Offset: offset})
 	}
 	var v *Viewer
@@ -763,8 +763,8 @@ type ManageQuery struct {
 	Kind string
 	// State is draft, scheduled, published (live) or deleted; "" is every
 	// state but deleted.
-	State      string
-	OwnerGroup string
+	State       string
+	OwnerEntity string
 	// Text matches title, description or body, ignoring case.
 	Text string
 	// Code selects the item with this content code; with State "" it matches
@@ -783,8 +783,8 @@ type ManageQuery struct {
 const MaxManageIDs = 100
 
 // Manage lists the ids of items actor manages, newest first: every item for
-// root:content:write holders; else what they created, or with OwnerGroup the
-// group's items when they edit it.
+// root:content:write holders; else what they created, or with OwnerEntity the
+// entity's items when they edit it.
 func (s *Store) Manage(ctx context.Context, actor access.Actor, q ManageQuery) ([]string, error) {
 	if q.Limit <= 0 {
 		q.Limit = 20
@@ -815,16 +815,16 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	if err != nil {
 		return "", nil, err
 	}
-	group := false
-	if q.OwnerGroup != "" && !rights.write {
-		editors, err := s.groupEditor(ctx, s.pool, actor, []string{q.OwnerGroup})
+	entity := false
+	if q.OwnerEntity != "" && !rights.write {
+		editors, err := s.entityEditor(ctx, s.pool, actor, []string{q.OwnerEntity})
 		if err != nil {
 			return "", nil, err
 		}
-		if !editors[q.OwnerGroup] {
+		if !editors[q.OwnerEntity] {
 			return "", nil, ErrForbidden
 		}
-		group = true
+		entity = true
 	}
 	var code string
 	if q.Code != "" {
@@ -864,7 +864,7 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	}
 	state += cond
 	return `SELECT c.id FROM ` + s.t.items + ` c WHERE c.tenant_id = $1 AND ` + state + `
- AND ($2 = '' OR c.kind = $2) AND ($3 = '' OR c.owner_group_id = $3)
+ AND ($2 = '' OR c.kind = $2) AND ($3 = '' OR c.owner_entity_id = $3)
  AND ($4 OR $5 OR EXISTS (SELECT 1 FROM ` + s.t.creators + ` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $6))
  AND ($7 = '' OR strpos(lower(coalesce(c.original_title,'')),lower($7))>0 OR EXISTS (
  SELECT 1 FROM ` + s.t.versions + ` v JOIN ` + s.t.versionText + ` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
@@ -873,7 +873,7 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
   AND (strpos(lower(t.title), lower($7)) > 0 OR strpos(lower(t.description), lower($7)) > 0 OR strpos(lower(t.body), lower($7)) > 0)))
  AND ($10 = '' OR EXISTS (SELECT 1 FROM ` + s.qs + `.content_codes k WHERE k.tenant_id = c.tenant_id AND k.content_kind = c.kind AND k.content_id = c.id AND k.code = $10))
  AND (cardinality($11::text[]) = 0 OR c.id = ANY($11::text[]))`,
-		[]any{s.tenant, q.Kind, q.OwnerGroup, rights.write, group, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs)}, nil
+		[]any{s.tenant, q.Kind, q.OwnerEntity, rights.write, entity, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs)}, nil
 }
 
 // ManageCount is how many items a manage listing selects.
@@ -895,7 +895,7 @@ func (s *Store) handleManageCount(w http.ResponseWriter, r *http.Request) {
 	var out ManageCount
 	if err == nil {
 		q := r.URL.Query()
-		out, err = s.CountManaged(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerGroup: q.Get("owner_group"),
+		out, err = s.CountManaged(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerEntity: q.Get("owner_group"),
 			Text: q.Get("q"), Access: q.Get("access"), Tier: q.Get("tier")})
 	}
 	if err != nil {
@@ -940,7 +940,7 @@ func (s *Store) accessCond(level, tier string) (string, error) {
 	switch access.Level(level) {
 	case "":
 		return "", nil
-	case access.Public, access.TierLevel, access.GroupLevel, access.PPV, access.GroupPPV:
+	case access.Public, access.TierLevel, access.EntityLevel, access.PPV, access.EntityPPV:
 	default:
 		return "", invalid("access %q must be public, tier, group, ppv or group_ppv", level)
 	}

@@ -25,13 +25,13 @@ kinds:
     route: g
     presentation: reader
     versions: {languages: one}
-    groups: [tag]
+    entities: [tag]
   blog:
     route: blog
     presentation: post
     versions: {languages: one}
-    groups: [tag]
-group_kinds:
+    entities: [tag]
+entity_kinds:
   tag: {route: tags}
 content_filters:
   applies_to: [gallery, blog]
@@ -50,7 +50,7 @@ content_filters:
 ```
 
 `applies_to` explicitly names the content kinds sharing the filter layer. Each
-must permit the referenced entity kinds in its `groups` list. A filter applies
+must permit the referenced entity kinds in its `entities` list. A filter applies
 to every selected kind. Requirements are independent: in this example galleries
 must have Yaoi, while an untagged blog post remains eligible.
 
@@ -66,8 +66,8 @@ loader: retired per-kind blocks, labels and misspelled fields fail instead of
 silently broadening a restricted domain. Entity display names and translations
 are not configuration fields. Filter rows are flat `{kind, slug, visible,
 user_toggle?}` references in YAML and JSON; the retired `entity: {...}` wrapper
-is rejected. The typed Go API continues to use `ContentFilter.Group` as a
-`GroupRef`, so application code retains the same compiler-checked model.
+is rejected. The typed Go API continues to use `ContentFilter.Entity` as a
+`EntityRef`, so application code retains the same compiler-checked model.
 
 ## Visibility
 

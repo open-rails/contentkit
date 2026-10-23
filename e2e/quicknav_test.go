@@ -11,7 +11,7 @@ import (
 
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 // Admin quick navigation matches current names of drafts and internal
@@ -41,9 +41,9 @@ func TestManagementSearchSuggestions(t *testing.T) {
 	// Staff drafts match as prefixes and outrank the credited draft's substring match.
 	drafts := []string{draft(word + " Alpha"), draft(word + " Beta")}
 	credited := draft("Credited "+word, creatorUser.ID)
-	var created []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: word, Internal: true,
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: word + " Marker"}}}}, &created)
+	var created []entities.Entity
+	f.want(http.StatusCreated, staff, "POST", "/entities", []entities.EntityInput{{Kind: "tag", Slug: word, Internal: true,
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: word + " Marker"}}}}, &created)
 	internal := created[0].ID
 
 	suggest := func(status int, bearer string, q url.Values) discovery.Typeahead {
@@ -71,13 +71,13 @@ func TestManagementSearchSuggestions(t *testing.T) {
 	got := suggest(http.StatusOK, staff, both)
 	want := append(slices.Clone(drafts), credited)
 	slices.Sort(want)
-	if !slices.Equal(ids(got.Contents), want) || len(got.Groups) != 1 || got.Groups[0].ID != internal || !got.Groups[0].Internal {
-		t.Fatalf("staff quick navigation: contents %v, entities %+v", ids(got.Contents), got.Groups)
+	if !slices.Equal(ids(got.Contents), want) || len(got.Entities) != 1 || got.Entities[0].ID != internal || !got.Entities[0].Internal {
+		t.Fatalf("staff quick navigation: contents %v, entities %+v", ids(got.Contents), got.Entities)
 	}
 
 	limited := url.Values{"q": {word}, "include_contents": {"true"}, "include_entities": {"true"}, "limit": {"1"}}
-	if got = suggest(http.StatusOK, creator, limited); !slices.Equal(ids(got.Contents), []string{credited}) || len(got.Groups) != 0 {
-		t.Fatalf("creator quick navigation at limit 1: contents %v, entities %+v", ids(got.Contents), got.Groups)
+	if got = suggest(http.StatusOK, creator, limited); !slices.Equal(ids(got.Contents), []string{credited}) || len(got.Entities) != 0 {
+		t.Fatalf("creator quick navigation at limit 1: contents %v, entities %+v", ids(got.Contents), got.Entities)
 	}
 
 	if got = suggest(http.StatusOK, stranger, url.Values{"q": {word}, "include_contents": {"true"}}); len(got.Contents) != 0 {
@@ -92,7 +92,7 @@ func TestManagementSearchSuggestions(t *testing.T) {
 			t.Fatalf("public typeahead offered draft %s", c.ID)
 		}
 	}
-	for _, g := range public.Groups {
+	for _, g := range public.Entities {
 		if g.ID == internal {
 			t.Fatalf("public typeahead offered internal entity %s", g.ID)
 		}

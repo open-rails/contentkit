@@ -10,7 +10,7 @@ import (
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/domainpolicy"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/readerprefs"
@@ -19,8 +19,8 @@ import (
 
 // ContentFilterState is one configured content filter as the reader has it.
 type ContentFilterState struct {
-	Group          groups.GroupCard `json:"entity"`
-	DefaultVisible bool             `json:"default_visible"`
+	Entity         entities.EntityCard `json:"entity"`
+	DefaultVisible bool                `json:"default_visible"`
 	// Visible is the reader's setting, Overridden whether it is their own.
 	Visible    bool `json:"visible"`
 	Overridden bool `json:"overridden"`
@@ -72,17 +72,17 @@ const (
 	hide = readerprefs.Hide
 )
 
-type filterInventory map[kinds.GroupRef]string
+type filterInventory map[kinds.EntityRef]string
 
-func (s *Service) filterGroups(ctx context.Context) (filterInventory, error) {
+func (s *Service) filterEntities(ctx context.Context) (filterInventory, error) {
 	d, _ := s.o.Kinds.DomainFor(gate.Domain(ctx))
-	return s.filterGroupsForDomains(ctx, []kinds.Domain{d})
+	return s.filterEntitiesForDomains(ctx, []kinds.Domain{d})
 }
 
-func (s *Service) filterGroupsForDomains(ctx context.Context, domains []kinds.Domain) (filterInventory, error) {
+func (s *Service) filterEntitiesForDomains(ctx context.Context, domains []kinds.Domain) (filterInventory, error) {
 	out := filterInventory{}
 	for _, d := range domains {
-		policies, err := domainpolicy.Resolve(ctx, s.o.Pool, s.t.groups, s.o.Tenant, d, s.o.Kinds.ContentFilters.AppliesTo)
+		policies, err := domainpolicy.Resolve(ctx, s.o.Pool, s.t.entities, s.o.Tenant, d, s.o.Kinds.ContentFilters.AppliesTo)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +125,7 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 			return out, err
 		}
 	}
-	inventory, err := s.filterGroups(ctx)
+	inventory, err := s.filterEntities(ctx)
 	if err != nil {
 		return out, err
 	}
@@ -144,25 +144,25 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 			values[k] = v
 		}
 	}
-	var ids []groups.GroupID
+	var ids []entities.EntityID
 	seen := map[string]bool{}
 	for _, id := range inventory {
 		if !seen[id] {
-			ids = append(ids, groups.GroupID(id))
+			ids = append(ids, entities.EntityID(id))
 			seen[id] = true
 		}
 	}
-	cards, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: language})
+	cards, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: language})
 	if err != nil {
 		return out, err
 	}
-	byID := map[string]groups.GroupCard{}
+	byID := map[string]entities.EntityCard{}
 	for _, c := range cards {
 		byID[string(c.ID)] = c
 	}
 	d, _ := s.o.Kinds.DomainFor(gate.Domain(ctx))
 	for _, f := range d.Filters {
-		id := inventory[f.Group]
+		id := inventory[f.Entity]
 		g, ok := byID[id]
 		if !ok {
 			continue
@@ -171,7 +171,7 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 		if !overridden {
 			visible = f.Visible
 		}
-		out.Filters = append(out.Filters, ContentFilterState{Group: g, DefaultVisible: f.Visible, Visible: visible, Overridden: overridden})
+		out.Filters = append(out.Filters, ContentFilterState{Entity: g, DefaultVisible: f.Visible, Visible: visible, Overridden: overridden})
 	}
 	return out, nil
 }
@@ -205,9 +205,9 @@ func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, cho
 	var inventory filterInventory
 	var err error
 	if initialize {
-		inventory, err = s.filterGroupsForDomains(ctx, s.o.Kinds.ContentFilters.Domains)
+		inventory, err = s.filterEntitiesForDomains(ctx, s.o.Kinds.ContentFilters.Domains)
 	} else {
-		inventory, err = s.filterGroups(ctx)
+		inventory, err = s.filterEntities(ctx)
 	}
 	if err != nil {
 		return err

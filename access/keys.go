@@ -14,14 +14,15 @@ type KeyKind uint8
 const (
 	KeyContent KeyKind = iota + 1 // <tenant>:content:<id>: every version of one content item
 	KeyVersion                    // <tenant>:content:<id>/<version>: one version
-	KeyGroup                      // <tenant>:group:<id>: every member of a group, and content whose rule names it
+	KeyEntity                     // <tenant>:group:<id>: every member of an entity, and content whose rule names it
 	KeyTier                       // <tier>: a tier from config, such as premium
 )
 
 const (
 	contentNamespace = "content"
-	groupNamespace   = "group"
-	maxTenant        = 64
+	// Existing billing products and purchases retain this opaque namespace.
+	entityNamespace = "group"
+	maxTenant       = 64
 	// MaxKeyBytes bounds a key: <tenant>:content:<id>/<version>.
 	MaxKeyBytes = maxTenant + len(":content:") + 36 + 1 + 36
 )
@@ -34,7 +35,7 @@ var ErrNotContentKey = errors.New("access: not a content key")
 type Key struct {
 	kind    KeyKind
 	tenant  string
-	id      string // the content or group id
+	id      string // the content or entity id
 	version string // KeyVersion
 }
 
@@ -46,8 +47,8 @@ func VersionKey(tenant, content, version string) (Key, error) {
 	return makeKey(KeyVersion, tenant, content, version)
 }
 
-// GroupKey is the key of group id.
-func GroupKey(tenant, id string) (Key, error) { return makeKey(KeyGroup, tenant, id, "") }
+// EntityKey is the key of entity id.
+func EntityKey(tenant, id string) (Key, error) { return makeKey(KeyEntity, tenant, id, "") }
 
 // TierKey is a tier's key, its bare name: ^[a-z][a-z0-9_-]{0,62}$.
 func TierKey(name string) (Key, error) {
@@ -60,8 +61,8 @@ func TierKey(name string) (Key, error) {
 // ContentPrefix is the keyspace of a tenant's content and version keys.
 func ContentPrefix(tenant string) string { return tenant + ":" + contentNamespace + ":" }
 
-// GroupPrefix is the keyspace of a tenant's group keys.
-func GroupPrefix(tenant string) string { return tenant + ":" + groupNamespace + ":" }
+// EntityPrefix is the keyspace of a tenant's entity keys.
+func EntityPrefix(tenant string) string { return tenant + ":" + entityNamespace + ":" }
 
 // ParseKey parses a key string. Anything outside the grammar is
 // ErrNotContentKey, a bare string that is not a valid tier name included.
@@ -77,8 +78,8 @@ func ParseKey(s string) (Key, error) {
 	switch {
 	case !ok:
 		return Key{}, fmt.Errorf("%w: %q", ErrNotContentKey, s)
-	case ns == groupNamespace:
-		return GroupKey(tenant, id)
+	case ns == entityNamespace:
+		return EntityKey(tenant, id)
 	case ns != contentNamespace:
 		return Key{}, fmt.Errorf("%w: namespace %q", ErrNotContentKey, ns)
 	}
@@ -91,7 +92,7 @@ func ParseKey(s string) (Key, error) {
 // Kind returns what the key grants; 0 for the zero Key.
 func (k Key) Kind() KeyKind { return k.kind }
 
-// Tenant is the tenant of a content, version or group key.
+// Tenant is the tenant of a content, version or entity key.
 func (k Key) Tenant() string { return k.tenant }
 
 // Content is the content id of a content or version key.
@@ -105,9 +106,9 @@ func (k Key) Content() string {
 // Version is the version id of a version key.
 func (k Key) Version() string { return k.version }
 
-// Group is the group id of a group key.
-func (k Key) Group() string {
-	if k.kind == KeyGroup {
+// Entity is the entity id of an entity key.
+func (k Key) Entity() string {
+	if k.kind == KeyEntity {
 		return k.id
 	}
 	return ""
@@ -128,8 +129,8 @@ func (k Key) String() string {
 		return ContentPrefix(k.tenant) + k.id
 	case KeyVersion:
 		return ContentPrefix(k.tenant) + k.id + "/" + k.version
-	case KeyGroup:
-		return GroupPrefix(k.tenant) + k.id
+	case KeyEntity:
+		return EntityPrefix(k.tenant) + k.id
 	case KeyTier:
 		return k.id
 	}

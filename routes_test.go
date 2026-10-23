@@ -2,7 +2,7 @@ package contentkit
 
 import "testing"
 
-func TestParseRouteGroups(t *testing.T) {
+func TestParseRouteEntities(t *testing.T) {
 	g, err := ParseRouteGroups([]string{"content", "media"})
 	if err != nil || g != ContentRoutes|MediaRoutes {
 		t.Fatalf("%v %v", g, err)

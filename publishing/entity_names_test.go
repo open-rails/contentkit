@@ -10,20 +10,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 func TestPublishingEntityNamesReuseSpellingVariantsAndAliases(t *testing.T) {
 	f := newFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	created, err := f.s.o.Groups.CreateGroups(ctx, []groups.GroupInput{
-		{Kind: "tag", Slug: "big-breasts", Names: []groups.Name{
-			{Language: "en", Kind: groups.NameCanonical, Name: "Big Breasts"},
-			{Language: "en", Kind: groups.NameAlias, Name: "Large Bust"},
+	created, err := f.s.o.Entities.CreateEntities(ctx, []entities.EntityInput{
+		{Kind: "tag", Slug: "big-breasts", Names: []entities.Name{
+			{Language: "en", Kind: entities.NameCanonical, Name: "Big Breasts"},
+			{Language: "en", Kind: entities.NameAlias, Name: "Large Bust"},
 		}},
-		{Kind: "artist", Slug: "same-spelling", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Big Breasts"}}},
-		{Kind: "tag", Slug: "other-language", Names: []groups.Name{{Language: "ja", Kind: groups.NameCanonical, Name: "Large Bust"}}},
+		{Kind: "artist", Slug: "same-spelling", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Big Breasts"}}},
+		{Kind: "tag", Slug: "other-language", Names: []entities.Name{{Language: "ja", Kind: entities.NameCanonical, Name: "Large Bust"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -53,9 +53,9 @@ func TestPublishingEntityAliasIsAssociatedWithoutCreatingDuplicate(t *testing.T)
 	f := newFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	created, err := f.s.o.Groups.CreateGroups(ctx, []groups.GroupInput{{Kind: "tag", Slug: "big-breasts", Names: []groups.Name{
-		{Language: "en", Kind: groups.NameCanonical, Name: "Big Breasts"},
-		{Language: "en", Kind: groups.NameAlias, Name: "Large Bust"},
+	created, err := f.s.o.Entities.CreateEntities(ctx, []entities.EntityInput{{Kind: "tag", Slug: "big-breasts", Names: []entities.Name{
+		{Language: "en", Kind: entities.NameCanonical, Name: "Big Breasts"},
+		{Language: "en", Kind: entities.NameAlias, Name: "Large Bust"},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -72,13 +72,13 @@ func TestPublishingEntityAliasIsAssociatedWithoutCreatingDuplicate(t *testing.T)
 			t.Fatalf("%q did not reuse the canonical entity: %+v", name, op.Entities)
 		}
 		var attached bool
-		err = f.s.o.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{f.schema, "content_memberships"}.Sanitize()+` WHERE tenant_id=$1 AND content_id=$2 AND group_id=$3 AND state='active')`, f.s.o.Tenant, op.ContentID, created[0].ID).Scan(&attached)
+		err = f.s.o.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{f.schema, "content_memberships"}.Sanitize()+` WHERE tenant_id=$1 AND content_id=$2 AND entity_id=$3 AND state='active')`, f.s.o.Tenant, op.ContentID, created[0].ID).Scan(&attached)
 		if err != nil || !attached {
 			t.Fatalf("reused entity was not associated: %v %v", attached, err)
 		}
 	}
 	var count int
-	if err = f.s.o.Pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{f.schema, "content_groups"}.Sanitize()+` WHERE tenant_id=$1 AND kind='tag'`, f.s.o.Tenant).Scan(&count); err != nil || count != 1 {
+	if err = f.s.o.Pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{f.schema, "content_entities"}.Sanitize()+` WHERE tenant_id=$1 AND kind='tag'`, f.s.o.Tenant).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("alias created duplicates: %d %v", count, err)
 	}
 }
@@ -143,7 +143,7 @@ func TestPublishingConcurrentEntitySpellingVariantsCreateOnce(t *testing.T) {
 		}
 	}
 	var count int
-	if err = pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{f.schema, "content_groups"}.Sanitize()+` WHERE tenant_id=$1 AND kind='tag'`, f.s.o.Tenant).Scan(&count); err != nil || count != 1 || creations != 1 {
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{f.schema, "content_entities"}.Sanitize()+` WHERE tenant_id=$1 AND kind='tag'`, f.s.o.Tenant).Scan(&count); err != nil || count != 1 || creations != 1 {
 		t.Fatalf("expected one entity creation: rows=%d receipts=%d err=%v", count, creations, err)
 	}
 }
@@ -152,21 +152,21 @@ func TestPublishingEntityNameAmbiguityScopeAndPunctuation(t *testing.T) {
 	f := newFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	series, err := f.s.o.Groups.CreateGroups(ctx, []groups.GroupInput{
-		{Kind: "series", Slug: "one", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "One"}}},
-		{Kind: "series", Slug: "two", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Two"}}},
+	series, err := f.s.o.Entities.CreateEntities(ctx, []entities.EntityInput{
+		{Kind: "series", Slug: "one", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "One"}}},
+		{Kind: "series", Slug: "two", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Two"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := f.s.o.Groups.CreateGroups(ctx, []groups.GroupInput{
-		{Kind: "tag", Slug: "first", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Big Breasts"}}},
-		{Kind: "tag", Slug: "second", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "big-breasts"}}},
-		{Kind: "artist", Slug: "c", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "C"}}},
-		{Kind: "artist", Slug: "cpp", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "C++"}}},
-		{Kind: "artist", Slug: "acdc", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "AC/DC"}}},
-		{Kind: "character", Slug: "same", ScopeID: series[0].ID, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Same Name"}}},
-		{Kind: "character", Slug: "same", ScopeID: series[1].ID, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Same Name"}}},
+	created, err := f.s.o.Entities.CreateEntities(ctx, []entities.EntityInput{
+		{Kind: "tag", Slug: "first", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Big Breasts"}}},
+		{Kind: "tag", Slug: "second", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "big-breasts"}}},
+		{Kind: "artist", Slug: "c", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "C"}}},
+		{Kind: "artist", Slug: "cpp", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "C++"}}},
+		{Kind: "artist", Slug: "acdc", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "AC/DC"}}},
+		{Kind: "character", Slug: "same", ScopeID: series[0].ID, Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Same Name"}}},
+		{Kind: "character", Slug: "same", ScopeID: series[1].ID, Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Same Name"}}},
 	})
 	if err != nil {
 		t.Fatal(err)

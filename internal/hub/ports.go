@@ -16,9 +16,6 @@ type ContentRef = contentref.ContentRef
 // ContentKey is the comparable form of a ContentRef.
 type ContentKey = contentref.ContentKey
 
-// GroupID identifies a group (tag, artist, series, character, channel, rail).
-type GroupID = contentref.GroupID
-
 // DocumentKey identifies one keyword document: a ContentRef in one language.
 type DocumentKey = search.DocumentKey
 

@@ -11,7 +11,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -20,23 +20,23 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	cfg := siteConfig()
 	locked, toggle := false, true
 	cfg.ContentFilters.Domains, cfg.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{
-		{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		{Entity: kinds.EntityRef{Kind: "tag", Slug: "big-breasts"}},
+		{Entity: kinds.EntityRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
 	},
-	}, {Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}, "video": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{
-		{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: false, UserToggle: &locked},
+	}, {Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.EntityRef{"gallery": []kinds.EntityRef{{Kind: "tag", Slug: "yaoi"}}, "video": []kinds.EntityRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{
+		{Entity: kinds.EntityRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		{Entity: kinds.EntityRef{Kind: "tag", Slug: "gore"}, Visible: false, UserToggle: &locked},
 	},
-	}, {Name: "safe", Hosts: []string{"safe.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}}, {Name: "other", Hosts: []string{"other.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: true}}}, {Name: "implicit", Hosts: []string{"implicit.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &toggle}}},
+	}, {Name: "safe", Hosts: []string{"safe.test"}, Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &locked}}}, {Name: "other", Hosts: []string{"other.test"}, Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "gore"}, Visible: true}}}, {Name: "implicit", Hosts: []string{"implicit.test"}, Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: &toggle}}},
 	}, []string{"gallery", "video"}
 	f := newFixtureConfig(t, nil, "", cfg)
-	f.group("tag", "big-breasts", "yaoi", "gore", "restricted")
+	f.entity("tag", "big-breasts", "yaoi", "gore", "restricted")
 	internal := true
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(f.ids["restricted"]), Internal: &internal}}); err != nil {
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(f.ids["restricted"]), Internal: &internal}}); err != nil {
 		t.Fatal(err)
 	}
 	for i, gs := range [][]string{nil, {"big-breasts"}, {"yaoi"}, {"gore"}, {"restricted"}, {"yaoi", "gore"}, {"yaoi", "restricted"}} {
-		f.seed(item{n: i + 1, titles: map[string]string{"en": "Story"}, age: time.Hour, groups: gs, versions: []ver{{langs: []string{"en"}}}})
+		f.seed(item{n: i + 1, titles: map[string]string{"en": "Story"}, age: time.Hour, entities: gs, versions: []ver{{langs: []string{"en"}}}})
 		f.docs(doc("gallery", f.cid(i+1), "en", "Story"))
 	}
 	assertList := func(host, user string, want ...int) {
@@ -142,7 +142,7 @@ func TestDomainPolicyBoundariesAndPreferences(t *testing.T) {
 	renamed := "renamed-restricted"
 	// Simulate a pre-existing broken reference; normal taxonomy writes now
 	// reject invalidating hard policy bindings.
-	f.exec(`UPDATE {s}.content_groups SET slug=$2 WHERE id=$1`, f.ids["restricted"], renamed)
+	f.exec(`UPDATE {s}.content_entities SET slug=$2 WHERE id=$1`, f.ids["restricted"], renamed)
 	assertList("safe.test", "")
 	r = httptest.NewRequest(http.MethodGet, "/contents/"+f.cid(1), nil)
 	r.Host = "safe.test"

@@ -3,11 +3,11 @@ import { useCallback, useMemo, useState } from "react";
 import type { ContentQuery, ListSort } from "../../client/discovery.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { MessageKey, Translator } from "../../i18n/messages.js";
-import { useKinds } from "../../react/groups.js";
+import { useKinds } from "../../react/entities.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
-import { labelOf } from "../groups/parts.js";
+import { labelOf } from "../entities/parts.js";
 import { ContentGrid, type CardListProps, type LockedCards } from "./grid.js";
 
 const SORTS: readonly ListSort[] = ["newest", "popular:7d", "popular:30d", "popular", "top_rated", "most_favorited", "title", "oldest"];

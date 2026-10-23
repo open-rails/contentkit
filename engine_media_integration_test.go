@@ -19,7 +19,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
@@ -48,10 +48,10 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	cfg := siteConfig(schema)
 	cfg.Tenant = env.Tenant
 	blogKind := cfg.Content.Kinds["blog"]
-	blogKind.Groups = []string{"tag"}
+	blogKind.Entities = []string{"tag"}
 	cfg.Content.Kinds["blog"] = blogKind
 	cfg.Content.ContentFilters.Domains, cfg.Content.ContentFilters.AppliesTo = []kinds.Domain{
-		{Name: "main", Hosts: []string{"example.com"}}, {Name: "safe", Hosts: []string{"safe.example"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false}}},
+		{Name: "main", Hosts: []string{"example.com"}}, {Name: "safe", Hosts: []string{"safe.example"}, Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "restricted"}, Visible: false}}},
 	}, []string{"blog"}
 	cfg.Media = &MediaConfig{
 		Config:      media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{blog, folder("poll")}},
@@ -123,13 +123,13 @@ func TestEngineDraftContentImagesIntegration(t *testing.T) {
 	}
 	// An internal classifier is a fixed domain exclusion even with the
 	// default user_toggle setting. Media must obey it independently of UI.
-	var markers []groups.Group
-	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/entities", []groups.GroupInput{{
+	var markers []entities.Entity
+	s.call(http.StatusCreated, staff, "POST", "/api/ck/v1/entities", []entities.EntityInput{{
 		Kind: "tag", Slug: "restricted", Internal: true,
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Restricted"}},
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Restricted"}},
 	}}, &markers)
-	s.call(http.StatusOK, staff, "PUT", "/api/ck/v1/contents/"+post.ID+"/entities", groups.ContentGroups{
-		Memberships: []groups.Membership{{GroupID: markers[0].ID}},
+	s.call(http.StatusOK, staff, "PUT", "/api/ck/v1/contents/"+post.ID+"/entities", entities.ContentEntities{
+		Memberships: []entities.Membership{{EntityID: markers[0].ID}},
 	}, nil)
 	s.call(http.StatusOK, anon, "GET", "http://example.com"+item, nil, nil)
 	for _, actor := range []access.Actor{anon, user, staff} {
@@ -291,14 +291,14 @@ func TestEngineLockedBodyImagesIntegration(t *testing.T) {
 // Engine maintenance keeps old drafts and their media. A deleted channel's
 // media is hidden, kept for a restore through the retention, then purged once.
 // A post with a matured public audience release has its media exposed.
-func TestEngineDraftAndGroupRetentionIntegration(t *testing.T) {
+func TestEngineDraftAndEntityRetentionIntegration(t *testing.T) {
 	ctx := t.Context()
 	env := mediatest.Open(t)
 	pool := pgtest.Pool(t, nil)
 	schema := engineSchema(t, pool)
 	cfg := siteConfig(schema)
 	cfg.Tenant = env.Tenant
-	cfg.Content.GroupKinds["channel"] = kinds.GroupKind{Route: "c", Owner: "user"}
+	cfg.Content.EntityKinds["channel"] = kinds.EntityKind{Route: "c", Owner: "user"}
 	cfg.Media = &MediaConfig{
 		Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "blog",
 			Uploads: []media.Upload{{Path: "{name}", Body: true, Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true, Max: 10},
@@ -396,35 +396,35 @@ WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.P
 		t.Fatalf("released %d (%v); exposes %d after %d", n, err, exposed(), before)
 	}
 
-	made, err := e.groups.CreateGroups(ctx, []groups.GroupInput{{Kind: "channel", Slug: "studio", OwnerUserID: "u1"}})
+	made, err := e.entities.CreateEntities(ctx, []entities.EntityInput{{Kind: "channel", Slug: "studio", OwnerUserID: "u1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ch := made[0].ID
-	if _, err := e.groups.DeleteGroups(ctx, []groups.GroupID{ch}); err != nil {
+	if _, err := e.entities.DeleteEntities(ctx, []entities.EntityID{ch}); err != nil {
 		t.Fatal(err)
 	}
 	if jobs("contentkit_media_expose", string(ch)) == 0 || jobs("contentkit_media_delete_folder", string(ch)) != 0 {
 		t.Fatal("deleting the channel did not hide its media, or deleted it")
 	}
-	if n, err := e.groups.PurgeFolders(ctx); err != nil || n != 0 {
+	if n, err := e.entities.PurgeFolders(ctx); err != nil || n != 0 {
 		t.Fatalf("purged %d (%v) within the retention", n, err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE `+table("content_groups")+` SET deleted_at = now() - interval '31 days' WHERE id = $1`, ch); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE `+table("content_entities")+` SET deleted_at = now() - interval '31 days' WHERE id = $1`, ch); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := e.groups.PurgeFolders(ctx); err != nil || n != 1 || jobs("contentkit_media_delete_folder", string(ch)) != 1 {
+	if n, err := e.entities.PurgeFolders(ctx); err != nil || n != 1 || jobs("contentkit_media_delete_folder", string(ch)) != 1 {
 		t.Fatalf("purged %d (%v) past the retention", n, err)
 	}
-	if n, err := e.groups.PurgeFolders(ctx); err != nil || n != 0 {
+	if n, err := e.entities.PurgeFolders(ctx); err != nil || n != 0 {
 		t.Fatalf("purged again %d (%v)", n, err)
 	}
-	active := groups.StateActive
-	if _, err := e.groups.UpdateGroups(ctx, []groups.GroupUpdate{{ID: ch, State: &active}}); err != nil {
+	active := entities.StateActive
+	if _, err := e.entities.UpdateEntities(ctx, []entities.EntityUpdate{{ID: ch, State: &active}}); err != nil {
 		t.Fatal(err)
 	}
 	var deletedAt, purgedAt *time.Time
-	if err := pool.QueryRow(ctx, `SELECT deleted_at, media_purged_at FROM `+table("content_groups")+` WHERE id = $1`, ch).Scan(&deletedAt, &purgedAt); err != nil ||
+	if err := pool.QueryRow(ctx, `SELECT deleted_at, media_purged_at FROM `+table("content_entities")+` WHERE id = $1`, ch).Scan(&deletedAt, &purgedAt); err != nil ||
 		deletedAt != nil || purgedAt != nil {
 		t.Fatalf("restored: deleted_at %v, media_purged_at %v, %v", deletedAt, purgedAt, err)
 	}

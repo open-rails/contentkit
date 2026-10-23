@@ -11,7 +11,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -24,22 +24,22 @@ func seeded(t *testing.T) *fixture { return seededOn(t, nil, "") }
 
 func seededOn(t *testing.T, ch signal.Conn, chDB string) *fixture {
 	f := newFixture(t, ch, chDB)
-	f.group("tag", "romance", "big-breasts", "yaoi")
-	f.group("artist", "alice")
-	f.group("series", "saga")
+	f.entity("tag", "romance", "big-breasts", "yaoi")
+	f.entity("artist", "alice")
+	f.entity("series", "saga")
 	f.seed(
 		item{n: 1, titles: map[string]string{"en": "Alpha", "ja": "アルファ"}, age: 72 * time.Hour, favorites: 5, attrs: map[string]any{"format": "manga"},
-			versions: []ver{{langs: []string{"en"}, pages: 20}, {langs: []string{"ja"}, traits: []string{"colored"}}}, groups: []string{"romance", "alice", "saga"}},
+			versions: []ver{{langs: []string{"en"}, pages: 20}, {langs: []string{"ja"}, traits: []string{"colored"}}}, entities: []string{"romance", "alice", "saga"}},
 		item{n: 2, titles: map[string]string{"en": "Bravo"}, age: 48 * time.Hour, rule: `{"level":"tier","tiers":["premium"],"preview":{"pages":3}}`,
-			favorites: 9, versions: []ver{{langs: []string{"en"}}}, groups: []string{"big-breasts"}},
+			favorites: 9, versions: []ver{{langs: []string{"en"}}}, entities: []string{"big-breasts"}},
 		item{n: 3, titles: map[string]string{"ja": "チャーリー"}, age: 24 * time.Hour, restrictions: []string{"restricted"}, favorites: 1,
-			attrs: map[string]any{"format": "doujin"}, versions: []ver{{langs: []string{"ja"}}}, groups: []string{"yaoi", "saga"}},
+			attrs: map[string]any{"format": "doujin"}, versions: []ver{{langs: []string{"ja"}}}, entities: []string{"yaoi", "saga"}},
 		item{n: 4, titles: map[string]string{"en": "Delta"}, age: time.Hour, versions: []ver{{langs: []string{"en"}, future: true}}},
 		item{n: 5, titles: map[string]string{"en": "Echo"}, age: time.Hour, draft: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 6, titles: map[string]string{"en": "Foxtrot"}, age: time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 7, kind: "video", titles: map[string]string{"en": "Golf"}, age: 12 * time.Hour, versions: []ver{{langs: []string{"en", "ja"}}}},
 	)
-	f.exec(`UPDATE {s}.content_memberships SET position = CASE content_id WHEN $1 THEN 2 ELSE 1 END WHERE group_id = $2`, f.cid(1), f.ids["saga"])
+	f.exec(`UPDATE {s}.content_memberships SET position = CASE content_id WHEN $1 THEN 2 ELSE 1 END WHERE entity_id = $2`, f.cid(1), f.ids["saga"])
 	return f
 }
 
@@ -67,23 +67,23 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	if alpha.Attributes["format"] != "manga" || alpha.PublishedAt == nil || alpha.Viewer != nil {
 		t.Fatalf("card attributes and anonymous state: %+v", alpha)
 	}
-	if len(alpha.Groups["tag"]) != 1 || alpha.Groups["tag"][0].Name != "Romance" || alpha.Groups["artist"][0].Slug != "alice" || len(alpha.Groups["series"]) != 1 {
-		t.Fatalf("card groups: %+v", alpha.Groups)
+	if len(alpha.Entities["tag"]) != 1 || alpha.Entities["tag"][0].Name != "Romance" || alpha.Entities["artist"][0].Slug != "alice" || len(alpha.Entities["series"]) != 1 {
+		t.Fatalf("card groups: %+v", alpha.Entities)
 	}
-	if p := alpha.Groups["series"][0].Position; p == nil || *p != 2 {
+	if p := alpha.Entities["series"][0].Position; p == nil || *p != 2 {
 		t.Fatalf("Alpha's series chip carries position %v, want its place 2 in the saga", p)
 	}
-	if p := page.Contents[0].Groups["series"][0].Position; p == nil || *p != 1 {
+	if p := page.Contents[0].Entities["series"][0].Position; p == nil || *p != 1 {
 		t.Fatalf("Charlie's series chip carries position %v, want its place 1 in the saga", p)
 	}
-	if p := alpha.Groups["tag"][0].Position; p != nil {
+	if p := alpha.Entities["tag"][0].Position; p != nil {
 		t.Fatalf("a tag chip carries position %d; tags have no order", *p)
 	}
-	if _, rail := alpha.Groups["rail"]; rail {
+	if _, rail := alpha.Entities["rail"]; rail {
 		t.Fatal("a group kind without pages is named on cards")
 	}
 	_, page = f.list(host, "", q("/contents", "kind", "gallery", "card_entities", "artist"))
-	if g := page.Contents[1].Groups; len(g) != 1 || len(g["artist"]) != 1 {
+	if g := page.Contents[1].Entities; len(g) != 1 || len(g["artist"]) != 1 {
 		t.Fatalf("card_entities: %+v", g)
 	}
 
@@ -168,7 +168,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		}
 		// Alpha's Japanese edition leads the saga, and an expired and a future
 		// membership would too; none of them place Alpha's English card.
-		f.exec(`INSERT INTO {s}.content_memberships (tenant_id, group_id, content_id, version_id, role, position, active_from, active_until) VALUES
+		f.exec(`INSERT INTO {s}.content_memberships (tenant_id, entity_id, content_id, version_id, role, position, active_from, active_until) VALUES
  ($1, $2, $3, $4, '', 0, NULL, NULL), ($1, $2, $3, NULL, 'expired', 0, NULL, $5), ($1, $2, $3, NULL, 'future', 0, $6, NULL)`,
 			tenant, f.ids["saga"], f.cid(1), f.vid(1, 1), f.now.Add(-time.Hour), f.now.Add(time.Hour))
 		for lang, want := range map[string][]string{"en": {f.cid(3), f.cid(1)}, "ja": {f.cid(1), f.cid(3)}} {
@@ -203,9 +203,9 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 
 func TestContentFilterUsesEntityLocalizedName(t *testing.T) {
 	f := seeded(t)
-	id := groups.GroupID(f.ids["big-breasts"])
-	if err := f.groups.AddNames(f.ctx, []groups.GroupNames{{ID: id, Names: []groups.Name{
-		{Language: "ja", Kind: groups.NameCanonical, Name: "巨乳"},
+	id := entities.EntityID(f.ids["big-breasts"])
+	if err := f.entities.AddNames(f.ctx, []entities.EntityNames{{ID: id, Names: []entities.Name{
+		{Language: "ja", Kind: entities.NameCanonical, Name: "巨乳"},
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestContentFilterUsesEntityLocalizedName(t *testing.T) {
 		if status, _ := f.call(http.MethodGet, "main.test", "", "/content-filters?language="+tc.language, nil, &result); status != http.StatusOK {
 			t.Fatalf("%s: status %d", tc.language, status)
 		}
-		if len(result.Filters) != 2 || result.Filters[0].Group.Name != tc.want {
+		if len(result.Filters) != 2 || result.Filters[0].Entity.Name != tc.want {
 			t.Fatalf("%s: filter name does not match entity name: %+v", tc.language, result.Filters)
 		}
 	}
@@ -227,28 +227,25 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	if status, _ := f.call(http.MethodGet, host, "plain", "/content-filters", nil, &filters); status != http.StatusOK {
 		t.Fatalf("GET content filters: %d", status)
 	}
-	if len(filters.Filters) != 2 || filters.Filters[0].Group.Name != "Big breasts" || filters.Filters[0].Visible || filters.Filters[0].Overridden ||
-		filters.Filters[1].Group.Name != "Yaoi" || !filters.Filters[1].Visible || filters.IncludeDeleted {
+	if len(filters.Filters) != 2 || filters.Filters[0].Entity.Name != "Big breasts" || filters.Filters[0].Visible || filters.Filters[0].Overridden ||
+		filters.Filters[1].Entity.Name != "Yaoi" || !filters.Filters[1].Visible || filters.IncludeDeleted {
 		t.Fatalf("defaults: %+v", filters)
 	}
 	if status, _ := f.call(http.MethodGet, host, "", "/content-filters", nil, nil); status != http.StatusOK {
 		t.Fatalf("anonymous content filters: %d", status)
 	}
-	// A hidden group's content stays out of other lists, but its own page
+	// A hidden entity's content stays out of other lists, but its own page
 	// shows what its count counts.
-	if err := f.groups.Recount(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := f.groups.List(f.ctx, groups.ListOptions{Kind: "tag", Slug: "big-breasts"})
-	if err != nil || len(dir.Groups) != 1 {
+	dir, err := f.entities.List(f.ctx, entities.ListOptions{Kind: "tag", Slug: "big-breasts"})
+	if err != nil || len(dir.Entities) != 1 {
 		t.Fatalf("directory: %+v %v", dir, err)
 	}
 	for _, user := range []string{"", "plain"} {
 		if got, _ := f.list(host, user, q("/contents", "kind", "gallery")); slices.Contains(got, f.cid(2)) {
 			t.Fatalf("a default-hidden tag listed for %q: %v", user, got)
 		}
-		if got, _ := f.list(host, user, q("/contents", "groups", f.ids["big-breasts"])); len(got) != dir.Groups[0].Count || !reflect.DeepEqual(got, []string{f.cid(2)}) {
-			t.Fatalf("the hidden tag's page for %q = %v, its count %d", user, got, dir.Groups[0].Count)
+		if got, _ := f.list(host, user, q("/contents", "groups", f.ids["big-breasts"])); len(got) != dir.Entities[0].Count || !reflect.DeepEqual(got, []string{f.cid(2)}) {
+			t.Fatalf("the hidden tag's page for %q = %v, its count %d", user, got, dir.Entities[0].Count)
 		}
 	}
 	for _, bad := range []ContentFiltersUpdate{
@@ -371,15 +368,15 @@ func TestSearchAndTypeahead(t *testing.T) {
 	for _, c := range ta.Contents {
 		contents = append(contents, c.ID)
 	}
-	if !reflect.DeepEqual(sorted(contents), sorted([]string{f.cid(1), f.cid(7)})) || len(ta.Groups) != 1 || string(ta.Groups[0].ID) != f.ids["saga"] {
-		t.Fatalf("typeahead = %v %+v", contents, ta.Groups)
+	if !reflect.DeepEqual(sorted(contents), sorted([]string{f.cid(1), f.cid(7)})) || len(ta.Entities) != 1 || string(ta.Entities[0].ID) != f.ids["saga"] {
+		t.Fatalf("typeahead = %v %+v", contents, ta.Entities)
 	}
 	// Own title substrings also complete directly, while ordinary language,
 	// domain, hidden/draft and access eligibility remain enforced.
 	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "alp", "kind", "gallery"), nil, &ta); status != http.StatusOK || len(ta.Contents) != 1 || ta.Contents[0].ID != f.cid(1) {
 		t.Fatalf("title prefix typeahead: %+v", ta)
 	}
-	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "rom", "entity_kinds", "tag"), nil, &ta); status != http.StatusOK || len(ta.Groups) != 1 || ta.Groups[0].Slug != "romance" {
+	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "rom", "entity_kinds", "tag"), nil, &ta); status != http.StatusOK || len(ta.Entities) != 1 || ta.Entities[0].Slug != "romance" {
 		t.Fatalf("tag typeahead: %+v", ta)
 	}
 }
@@ -480,7 +477,7 @@ func TestListFiltersByAccessAndCreator(t *testing.T) {
 }
 
 // The sitemap feed pages a site's public pages: live, listed content in its
-// scope (content filters, a reader's taste, don't apply), and the groups
+// scope (content filters, a reader's taste, don't apply), and the entities
 // holding it, each with the languages served.
 func TestSitemapFeed(t *testing.T) {
 	f := seeded(t)

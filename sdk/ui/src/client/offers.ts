@@ -1,4 +1,4 @@
-import type { GroupJoin, LibraryPage, Offer, OfferPage, Terms } from "./generated/wire.js";
+import type { EntityJoin, LibraryPage, Offer, OfferPage, Terms } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import { call } from "./route.js";
 
@@ -29,16 +29,16 @@ export class OffersClient {
     );
   }
   /** Sells a group: its key opens every member. */
-  sellGroup(id: string, terms: Terms): Promise<Offer> {
-    return this.writeGroup(call(this.http, "PUT", "/entities/{id}/offer", { params: { id }, body: terms }));
+  sellEntity(id: string, terms: Terms): Promise<Offer> {
+    return this.writeEntity(call(this.http, "PUT", "/entities/{id}/offer", { params: { id }, body: terms }));
   }
-  withdrawGroup(id: string): Promise<Offer> {
-    return this.writeGroup(call(this.http, "DELETE", "/entities/{id}/offer", { params: { id } }));
+  withdrawEntity(id: string): Promise<Offer> {
+    return this.writeEntity(call(this.http, "DELETE", "/entities/{id}/offer", { params: { id } }));
   }
   /** Joins a free group (or leaves it): its key granted to the caller. */
-  async join(id: string, member = true): Promise<GroupJoin> {
+  async join(id: string, member = true): Promise<EntityJoin> {
     const emit = this.http.captureChanges();
-    const out: GroupJoin = await call(this.http, member ? "POST" : "DELETE", "/entities/{id}/join", { params: { id } });
+    const out: EntityJoin = await call(this.http, member ? "POST" : "DELETE", "/entities/{id}/join", { params: { id } });
     emit({ type: "access.changed" });
     return out;
   }
@@ -58,7 +58,7 @@ export class OffersClient {
     return out;
   }
 
-  private async writeGroup(p: Promise<Offer>): Promise<Offer> {
+  private async writeEntity(p: Promise<Offer>): Promise<Offer> {
     const emit = this.http.captureChanges();
     const out = await p;
     emit({ type: "entities.changed" });

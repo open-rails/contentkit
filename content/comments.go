@@ -736,7 +736,7 @@ type writeTarget struct {
 // loadForWrite resolves a live comment and authorizes actor as its author or
 // a moderator: a root:comments:moderate holder, and with group its target's
 // group comment moderators (moderates), asked only then.
-func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid string, group bool) (writeTarget, error) {
+func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid string, entity bool) (writeTarget, error) {
 	t, err := c.loadComment(ctx, cid)
 	if err != nil {
 		return t, err
@@ -745,7 +745,7 @@ func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid str
 		return t, nil
 	}
 	err = c.rt.requirePerm(ctx, actor, access.CommentsModerate)
-	if err == nil || !group || !errors.Is(err, errForbidden) {
+	if err == nil || !entity || !errors.Is(err, errForbidden) {
 		return t, err
 	}
 	return t, c.rt.moderates(ctx, actor, t.ref)

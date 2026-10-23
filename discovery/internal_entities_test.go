@@ -7,17 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 )
 
-func TestInternalGroupOffersDoNotLeakThroughCards(t *testing.T) {
+func TestInternalEntityOffersDoNotLeakThroughCards(t *testing.T) {
 	cfg := siteConfig()
-	cfg.GroupKinds["channel"] = kinds.GroupKind{Route: "channels", Sellable: true}
+	cfg.EntityKinds["channel"] = kinds.EntityKind{Route: "channels", Sellable: true}
 	f := newFixtureConfig(t, nil, "", cfg)
-	f.group("channel", "private")
+	f.entity("channel", "private")
 	hidden := true
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(f.ids["private"]), Internal: &hidden}}); err != nil {
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(f.ids["private"]), Internal: &hidden}}); err != nil {
 		t.Fatal(err)
 	}
 	for i, rule := range []string{`{"level":"group","group_id":"` + f.ids["private"] + `"}`, `{"level":"group_ppv","group_id":"` + f.ids["private"] + `"}`, `{"level":"tier","tiers":["premium"]}`} {
@@ -60,14 +60,14 @@ func TestInternalGroupOffersDoNotLeakThroughCards(t *testing.T) {
 func TestInternalEntitiesDoNotConsumeSavedItemsPages(t *testing.T) {
 	f := seeded(t)
 	hidden := true
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(f.ids["yaoi"]), Internal: &hidden}}); err != nil {
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(f.ids["yaoi"]), Internal: &hidden}}); err != nil {
 		t.Fatal(err)
 	}
 	for i, id := range []string{f.ids["romance"], f.ids["yaoi"]} {
 		f.exec(`INSERT INTO {s}.content_favorites (tenant_id,user_id,content_kind,content_id,value,revision,created_at) VALUES ($1,'reader','tag',$2,1,1,now()+$3::interval)`, tenant, id, []string{"1 minute", "2 minutes"}[i])
 	}
 	var page InteractionPage
-	if status, _ := f.call(http.MethodGet, "main.test", "reader", "/me/favorites?target=entities&limit=1", nil, &page); status != http.StatusOK || len(page.Items) != 1 || page.Items[0].Group == nil || string(page.Items[0].Group.ID) != f.ids["romance"] || page.NextCursor != "" {
+	if status, _ := f.call(http.MethodGet, "main.test", "reader", "/me/favorites?target=entities&limit=1", nil, &page); status != http.StatusOK || len(page.Items) != 1 || page.Items[0].Entity == nil || string(page.Items[0].Entity.ID) != f.ids["romance"] || page.NextCursor != "" {
 		t.Fatalf("internal favorite consumed page: %d %+v", status, page)
 	}
 }

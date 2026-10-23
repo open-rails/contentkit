@@ -12,19 +12,19 @@ import (
 
 const joinCleanupTimeout = 10 * time.Second
 
-// GroupJoin is a viewer's free membership of a group.
-type GroupJoin struct {
-	GroupID string     `json:"group_id"`
-	Key     access.Key `json:"key"`
-	Member  bool       `json:"member"`
+// EntityJoin is a viewer's free membership of an entity.
+type EntityJoin struct {
+	EntityID string     `json:"group_id"`
+	Key      access.Key `json:"key"`
+	Member   bool       `json:"member"`
 }
 
-// Join grants actor each group's key free, through Billing: a sellable group
+// Join grants actor each entity's key free, through Billing: a sellable entity
 // whose active offer is free (amount 0). Internal entities cannot be joined. A viewer already holding the key
-// costs no grant. A group without a free offer is ErrNotJoinable, and so is
+// costs no grant. A entity without a free offer is ErrNotJoinable, and so is
 // one whose offer changes during the join: its grant is taken back.
-func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string) ([]GroupJoin, error) {
-	targets, err := s.groupTargets(ctx, actor, groups)
+func (s *Service) Join(ctx context.Context, actor access.Actor, entities []string) ([]EntityJoin, error) {
+	targets, err := s.entityTargets(ctx, actor, entities)
 	if err != nil {
 		return nil, err
 	}
@@ -57,14 +57,14 @@ func (s *Service) Join(ctx context.Context, actor access.Actor, groups []string)
 		return nil, err
 	}
 	held := map[string]bool{}
-	for _, g := range f.Groups() {
+	for _, g := range f.Entities() {
 		held[g] = true
 	}
 	var grants []access.Grant
 	var granted []int // offers index of each grant
-	out := make([]GroupJoin, len(offers))
+	out := make([]EntityJoin, len(offers))
 	for i, o := range offers {
-		out[i] = GroupJoin{GroupID: o.Target.ID, Key: o.Key, Member: true}
+		out[i] = EntityJoin{EntityID: o.Target.ID, Key: o.Key, Member: true}
 		if !held[o.Target.ID] {
 			grants = append(grants, access.Grant{Subject: actor.AccountID(), ProductID: o.ProductID})
 			granted = append(granted, i)
@@ -139,21 +139,21 @@ func (s *Service) free(ctx context.Context, targets []Target) ([]Offer, error) {
 	return offers, nil
 }
 
-// Leave takes back each group's free grant from actor; a bought or
+// Leave takes back each entity's free grant from actor; a bought or
 // subscribed membership stays.
-func (s *Service) Leave(ctx context.Context, actor access.Actor, groups []string) ([]GroupJoin, error) {
-	targets, err := s.groupTargets(ctx, actor, groups)
+func (s *Service) Leave(ctx context.Context, actor access.Actor, entities []string) ([]EntityJoin, error) {
+	targets, err := s.entityTargets(ctx, actor, entities)
 	if err != nil {
 		return nil, err
 	}
 	keys := make([]string, len(targets))
-	out := make([]GroupJoin, len(targets))
+	out := make([]EntityJoin, len(targets))
 	for i, t := range targets {
 		k, err := s.key(t)
 		if err != nil {
 			return nil, err
 		}
-		keys[i], out[i] = k.String(), GroupJoin{GroupID: t.ID, Key: k}
+		keys[i], out[i] = k.String(), EntityJoin{EntityID: t.ID, Key: k}
 	}
 	products, err := s.billing.Products(ctx, keys)
 	if err != nil {
@@ -171,22 +171,22 @@ func (s *Service) Leave(ctx context.Context, actor access.Actor, groups []string
 	return out, s.billing.Revoke(ctx, grants)
 }
 
-func (s *Service) groupTargets(ctx context.Context, actor access.Actor, groups []string) ([]Target, error) {
+func (s *Service) entityTargets(ctx context.Context, actor access.Actor, entities []string) ([]Target, error) {
 	if !actor.Member() {
 		return nil, ErrForbidden
 	}
-	targets := make([]Target, len(groups))
-	for i, g := range groups {
-		targets[i] = Target{Kind: GroupTarget, ID: g}
+	targets := make([]Target, len(entities))
+	for i, g := range entities {
+		targets[i] = Target{Kind: EntityTarget, ID: g}
 	}
 	if err := s.resolve(ctx, s.pool, targets); err != nil {
 		return nil, err
 	}
-	visible, err := s.publicGroups(ctx, groups)
+	visible, err := s.publicEntities(ctx, entities)
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range groups {
+	for _, id := range entities {
 		if !visible[id] {
 			return nil, ErrNotFound
 		}

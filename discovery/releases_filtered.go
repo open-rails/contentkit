@@ -8,33 +8,36 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 // filteredReleases relaxes only optional preferences for a private selection.
 // No omitted content IDs, metadata or covers leave this count path.
 func (s *Service) filteredReleases(ctx context.Context, out *DailyReleases, filter Filter, visible *sel, visibleIDs []string, from, until, now time.Time) error {
 	hidden := visible.viewer.HiddenContentFilters()
-	var ids []groups.GroupID
+	var ids []entities.EntityID
 	for kind, entries := range hidden {
 		if filter.Kind != "" && kind != filter.Kind {
 			continue
 		}
 		for _, id := range entries {
-			if !slices.Contains(ids, groups.GroupID(id)) {
-				ids = append(ids, groups.GroupID(id))
+			if !slices.Contains(ids, entities.EntityID(id)) {
+				ids = append(ids, entities.EntityID(id))
 			}
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	entities, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: visible.display})
+	entityCards, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: visible.display})
 	if err != nil {
 		return err
 	}
-	byID := make(map[string]groups.GroupCard, len(entities))
-	for _, entity := range entities {
+	byID := make(map[string]entities.EntityCard, len(entityCards))
+	for _, entity := range entityCards {
+		// A directory cover can identify an omitted member. Filter explanations
+		// expose the entity and counts, never a member selected as its cover.
+		entity.Cover = nil
 		byID[string(entity.ID)] = entity
 	}
 	entries := []ReleaseFilteredEntity{}
@@ -86,7 +89,7 @@ func (s *Service) filteredReleases(ctx context.Context, out *DailyReleases, filt
 			day.FilteredCount++
 			for j := range day.FilteredEntities {
 				entry := &day.FilteredEntities[j]
-				if slices.Contains(hidden[row.Kind], string(entry.Entity.ID)) && slices.Contains(row.groupIDs, string(entry.Entity.ID)) {
+				if slices.Contains(hidden[row.Kind], string(entry.Entity.ID)) && slices.Contains(row.entityIDs, string(entry.Entity.ID)) {
 					entry.Count++
 				}
 			}

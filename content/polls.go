@@ -362,7 +362,7 @@ func (p *polls) get(ctx context.Context, actor access.Actor, id string) (Poll, e
 
 // attach batch-loads options + the caller's votes into views, sums total_votes,
 // resolves every image with one lookup and, for free_text polls, loads the
-// answer count, the caller's answer and the classifier's groups.
+// answer count, the caller's answer and the classifier's entities.
 func (p *polls) attach(ctx context.Context, actor access.Actor, views []Poll) error {
 	if len(views) == 0 {
 		return nil

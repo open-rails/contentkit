@@ -1,14 +1,14 @@
 import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
 import { admin } from "./admin/zh.js";
 import { social } from "./social/zh.js";
-import { groups } from "./groups/zh.js";
+import { entities } from "./entities/zh.js";
 import { discovery } from "./discovery/zh.js";
 import { content } from "./content/zh.js";
 
 export const zh: ContentKitUiMessageBundle = {
   ...social,
   ...admin,
-  ...groups,
+  ...entities,
   ...discovery,
   ...content,
   common: {

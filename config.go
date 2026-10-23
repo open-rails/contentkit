@@ -19,7 +19,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/avatar"
@@ -44,7 +44,7 @@ type Config struct {
 	Tenant   string         `yaml:"tenant,omitempty" json:"tenant,omitempty"`
 	Database DatabaseConfig `yaml:"database" json:"database"`
 	// Content is the site's content model: languages, tiers, content kinds
-	// (commentable and indexed) and group kinds. Required.
+	// (commentable and indexed) and entity kinds. Required.
 	Content kinds.Config `yaml:"content" json:"content"`
 	// Interactions are what comments, reactions, favorites and polls allow.
 	Interactions InteractionsConfig `yaml:"interactions" json:"interactions"`
@@ -128,7 +128,7 @@ type Rate struct {
 }
 
 // MediaConfig is the media registry (media.Config: its Namespace is the
-// tenant; content kinds' media are their versions', and each group kind
+// tenant; content kinds' media are their versions', and each entity kind
 // gains cover media, media.ForContent) and how ContentKit serves it.
 type MediaConfig struct {
 	// LegacyLayout is a migration-only compatibility mode. It retains old object
@@ -179,7 +179,7 @@ type AvatarsConfig struct {
 }
 
 // MediaKinds is the media registry Config.Media serves, in the tenant's
-// namespace: content kinds' media are their versions', each group kind
+// namespace: content kinds' media are their versions', each entity kind
 // gains cover media (media.ForContent), and the avatar primary holds the
 // avatar kind (Config.Accounts.Avatars or Config.Avatars). The media worker runs it:
 // cmd/media-worker reads it as JSON (`contentkit media-config` prints it),
@@ -337,13 +337,13 @@ type Deps struct {
 	// ActivitySigner optionally signs event-time audience receipts for apps
 	// without media. Media apps reuse their persistent delivery signer.
 	ActivitySigner discovery.ActivitySigner
-	// Scopes provisions and retires the AuthKit groups of auth_scope group
+	// Scopes provisions and retires the AuthKit groups of auth_scope entity
 	// kinds (adapters/authkit.Scopes over an AuthKit client); nil leaves
 	// auth_scope to staff.
-	Scopes groups.Scopes
-	// GroupReferences maintains host-owned catalog links during group changes.
+	Scopes entities.Scopes
+	// EntityReferences maintains host-owned catalog links during entity changes.
 	// Nil preserves the standalone catalog behavior.
-	GroupReferences groups.References
+	EntityReferences entities.References
 	// VersionReferences clears host-owned edition links during permanent purge.
 	VersionReferences catalog.VersionReferenceOwner
 
@@ -360,7 +360,7 @@ type Deps struct {
 
 	// Moderator screens comments and content text; nil publishes everything.
 	Moderator content.ContentModerator
-	// Classifier groups free-text poll answers; nil refuses free-text polls.
+	// Classifier entities free-text poll answers; nil refuses free-text polls.
 	Classifier content.AnswerClassifier
 	// ProviderDataEraser erases what a retaining Moderator or Classifier
 	// keeps; required with one.

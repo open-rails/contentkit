@@ -40,7 +40,7 @@ See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
 | `tenant_id` | one site: `doujins`, `hentai0`, the marketplace |
 | `content_id` | the host-owned work: a gallery, a video, a listing; a canonical UUIDv7, never reused ([Content ids](HOST_INTEGRATION.md#content-ids)) |
 | `content_version_id` | one selectable version of that work (optional) |
-| `group_id` | a group: tag, artist, series, character, channel, playlist, featured rail |
+| `group_id` | an entity: tag, artist, series, character, channel, playlist, featured rail |
 | `ContentRef` | `{TenantID, ContentKind, ContentID, ContentVersionID *string}` — the typed reference every API, key, index and cursor carries |
 
 A language is metadata on a document or version, never part of a reference.
@@ -51,10 +51,10 @@ another tenant is an error, never remapped.
 
 | Package | Owns |
 |---|---|
-| `contentref` | `ContentRef`, `ContentKey`, `GroupID` |
+| `contentref` | `ContentRef`, `ContentKey`, `EntityID` |
 | `contenturl` | uniform content URLs `/{lang}/{route}/{CODE}[/{slug}][?v={version}]`: permanent 9-character codes per tenant, 4-character version codes, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`); the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access and offers](#access-and-offers-access-offers)) |
-| `offers` | offers on content, versions and groups, their OpenRails sync job, free group joins and the library |
+| `offers` | offers on content, versions and entities, their OpenRails sync job, free entity joins and the library |
 | `adapters/openrails` | `access.Billing` over the OpenRails client (its own module) |
 | `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and due cleanup, immediate deletion, `Expose` and relays as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
@@ -66,11 +66,11 @@ another tenant is an error, never remapped.
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
-| `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and groups; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
+| `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and entities; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | Indexed keyword search (exact/alias/substring/prefix/typo, EN/ZH/JA/KO) with eligibility, documents and dirty queue, RRF |
-| `groups` | storage for content entities by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
+| `entities` | storage for content entities by kind (`kinds.Config.EntityKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective entities for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
-| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
+| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, entity popularity through the `Catalog` port (`*entities.Store`) |
 | `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; popular and standing orders; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
@@ -111,8 +111,7 @@ for _, r := range routes {
   versions' (`media.ForContent`, the `media/versions` service). All content
   belongs to ContentKit: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
-  projection repair, erasure, groups' counts and windows,
-  content's scheduled publishing, event retention, counts and purge,
+  projection repair, publication events, event retention and content purge,
   offer sync and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and
@@ -142,7 +141,7 @@ the shared editor's reversible [page review](docs/api/publishing.md#page-normali
 `{Prefix}/v1`. No auth middleware goes in front: each route's gate asks
 `Deps.Auth` who the request is (once) and admits it by its tier:
 
-| Group | Sub-path | Needs |
+| Route group | Sub-path | Needs |
 |---|---|---|
 | `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), content items and versions (`/v1/contents`, `/v1/manage or /v1/manage/{kind}`), catalog totals, comments, reactions, favorites, polls, comment bans, moderation | always |
 | `UploadRoutes` | `/v1/media/upload` | `Config.Media` |
@@ -163,7 +162,7 @@ the shared editor's reversible [page review](docs/api/publishing.md#page-normali
 Refusals carry `auth.Refuse`'s status and `WWW-Authenticate`; an auth outage
 is 503. ContentKit names its staff permissions (`access.Permissions()`); the
 host declares them in its auth's roles from those constants. They are
-root-wide; per-item rights (creators, owner-group editors) are the catalog's. Behind a
+root-wide; per-item rights (creators, owner-entity editors) are the catalog's. Behind a
 proxy, set `Request.RemoteAddr` to the client's address before the routes:
 anonymous reactions, votes and limits are keyed by it. No content kind may
 be named `media`, `codes`, `entities`, `contents`, `kinds`, `catalog` or `notifications`.
@@ -178,7 +177,7 @@ route or a wire type, run `go generate ./internal/contract`;
 
 ## Search
 
-Documents are one per content item or group and language. The engine's
+Documents are one per content item or entity and language. The engine's
 search job keeps them current from the dirty queue and a bounded backfill; rejected documents are
 recorded in `content_search_invalid` until their source changes. Search,
 autocomplete and discovery apply eligibility before every bounded retrieval.
@@ -277,27 +276,27 @@ parses one. Keys are constructed, never typed:
 |---|---|
 | `access.ContentKey` → `<tenant>:content:<id>` | every version of a content item |
 | `access.VersionKey` → `<tenant>:content:<id>/<version>` | one version |
-| `access.GroupKey` → `<tenant>:group:<id>` | every member of the group, and content whose rule names it |
+| `access.EntityKey` → `<tenant>:group:<id>` | every member of the entity, and content whose rule names it |
 | `access.TierKey` → `premium` | versions whose rule names the tier (`kinds.Config.Tiers`) |
 
 A `Rule` is stored as JSON on content (`content_items.access`), as a
-version's override (`content_versions.access`) and on sellable groups:
+version's override (`content_versions.access`) and on sellable entities:
 `{"level": "public" | "tier" | "group" | "ppv" | "group_ppv", "tiers", "group_id", "preview": {"pages" | "segments"}, "releases": [{"at", "level", "tiers", "group_id"}]}`.
 `Rule.Validate(kinds)` checks it; `Rule.Facet()` projects it onto
 `content_facets`. A version opens with any of: its version key, its content
-key, the key of a group holding it, a tier its rule names, its rule's group
+key, the key of an entity holding it, a tier its rule names, its rule's entity
 (`group`), or a public rule or matured public audience release.
 
 A content item's `body` is part of what it sells: reads return it only to its
 editors and to viewers who open a version; others get `description` and the
 paywall `decision`. Content, version and card decisions list `offers`, each
 sold key's offer (`key`, `target`, `terms`, `price_id`; a paid one once
-synced), the shape of a group's `access.offer`; tier keys are the host's to
-label. A `group_ppv` item's product requires the group key
+synced), the shape of an entity's `access.offer`; tier keys are the host's to
+label. A `group_ppv` item's product requires the entity key
 (OpenRails `required_entitlements`), so OpenRails refuses a non-member's order
-(`entitlement_required`) for the key the decision `requires`. Content a group
+(`entitlement_required`) for the key the decision `requires`. Content an entity
 owns (`owner_group_id`, a channel) lists under `owner_group=` and carries the
-group's card as `owner`; owning is not membership and opens nothing.
+entity's card as `owner`; owning is not membership and opens nothing.
 
 ```go
 gate, _ := access.NewGate(access.GateConfig{Tenant: "onlydemo", Kinds: cfg.Kinds, Billing: ckopenrails.Billing(client)})
@@ -322,12 +321,12 @@ prices, _ := offerSvc.Live(ctx, ds[0].Sell)      // which Sell keys are on sale,
 and prices) and free grants. `adapters/openrails.Billing` implements it over
 the OpenRails client, embedded or remote.
 
-`offers` sells content, versions and groups (`PUT|DELETE
+`offers` sells content, versions and entities (`PUT|DELETE
 /contents/{id}/offer`, `/contents/{id}/versions/{vid}/offer`,
 `/entities/{id}/offer`). Its River job syncs each target to one OpenRails
 product whose key and only entitlement is the access key, named after the
 title, with one price (`offers.PriceKey`): a reprice is a new price, a
-withdrawal archives the product and buyers keep their key. A free group
+withdrawal archives the product and buyers keep their key. A free entity
 offer (amount 0) is joined with `POST /entities/{id}/join`; `GET /me/library`
 lists the content a viewer bought.
 
@@ -369,7 +368,7 @@ copying shared memberships into each edition.
 served; the engine builds the uploads, reads, journal, worker queue and jobs
 from it and `Deps.Store`. `Deps.PurgePublic` hears of overwritten public URLs
 for a CDN purge. Every media item is ContentKit's: content kinds' through
-the catalog's resolver, groups', avatars' and, when the registry declares
+the catalog's resolver, entities', avatars' and, when the registry declares
 the `poll` kind, poll images.
 
 The user-avatar kind comes from `github.com/open-rails/contentkit/media/avatar`;
@@ -658,9 +657,9 @@ per release): the client (uploads, commit ops, reads, `waitFor`, frames, HLS),
 content URLs, React hooks and styled components. See
 [sdk/ui/README.md](sdk/ui/README.md).
 
-## Groups
+## Entities
 
-Group kinds come from `kinds.Config.GroupKinds` (ordered, parent, scoped_by,
+Entity kinds come from `kinds.Config.EntityKinds` (ordered, parent, scoped_by,
 owner, sellable, auth_scope, windows, version_level, roles, attributes).
 Reader editors use one page per stable version code. Shared entity edits use
 `PUT /contents/{id}/entities/shared`; per-version credits use
@@ -674,33 +673,41 @@ own scope in a transaction, including newly created entity names, and preserve
 sibling versions. The older all-scopes entity replacement remains available
 for imports and callers deliberately replacing the entire work.
 
-Writes are batches in one transaction; memberships keep
-`content_facets.group_ids` current, `Recount` (an engine job) rebuilds
-per-language counts and automatic covers from the facets, and
-`RefreshWindows` re-derives facets as rail windows open and close.
+Keyword documents include active associations without start or end dates and
+their active ancestors. A static featured rail can contribute keywords;
+scheduled curation is evaluated at read time and is not copied into keyword
+text.
 
-The engine builds the store from `Config.Content`, serves it as
-`EntityRoutes` and runs `Recount` (every 15 minutes) and `RefreshWindows`
-(every minute) as its jobs; groups' keyword documents are its search job's.
+Writes are batches in one transaction. Reads apply association windows and
+derive per-language content counts and automatic covers from current rows;
+these features work with background workers stopped. The engine builds
+`entities.Store` from `Config.Content` and serves it as `EntityRoutes`.
+Only user-owned or permission-scoped entity kinds need lifecycle sync and
+recovery jobs; ordinary taxonomy and featured rails schedule neither.
+
+Go and relational names use entity. Existing HTTP fields such as `group_id`,
+access values `group`/`group_ppv`, and billing keys containing `:group:` retain
+their encodings so saved policies, grants and purchases keep working.
 
 ## Content
 
 `catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
 Writes are batches; each transaction keeps `content_facets` current (rules
-through `access.Rule.Facet`, groups through `EffectiveGroups`), marks search
+through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
 documents dirty, queues `content_events`, renames offers' products after
 titles and calls media (expose, republish, fork, delete). Published with a
 future `publish_at` becomes visible when that time arrives; the periodic job
 records publication and runs its side effects. A deleted item
 stays readable to holders of its own keys; its media is erased after
-`DeletedRetention` unless it was sold.
+`DeletedRetention`. Offers and archived billing products retain purchase identity
+after the content and media are gone.
 
 The `Viewer` is the one visibility rule: published content whose release time
 has arrived, the domain's scope and the viewer's content filters. Every
 published item can be listed; its edition's access rule controls reading.
 It uses `access.Filter.SQL` for lists
 and `Gate.Decide` for items; staff (`root:content:view-restricted`),
-creators and owner-group editors see everything. Discovery lists and searches
+creators and owner-entity editors see everything. Discovery lists and searches
 under it; media and interactions resolve through it. Held text goes to the
 shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
 (`kinds`, `languages`) counts what anyone and each tier opens, per kind and
@@ -741,7 +748,7 @@ routes (signals, exposures, history, popular, similar, recommend) land with
 - Windows are whole UTC days, 7/30/90/365/all, no decay.
 - Rank by a named policy, not the default rank: `popularity.ByName("v1")`,
   `popularity.New(popularity.Config{Source: hub, Policy: policy})` over the engine's hub, then
-  `ranker.Popular` / `ranker.Scores` / `ranker.Groups`
+  `ranker.Popular` / `ranker.Scores` / `ranker.Entities`
   ([docs/popularity-policy.md](docs/popularity-policy.md)).
 - Similar and recommended content draw candidates from `Deps.Candidates`
   (default: co-engagement); see

@@ -10,27 +10,27 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
 )
 
 // PermissionTarget identifies an operation in an engine's fixed tenant/app.
-// An empty GroupID addresses app staff authority; a nonempty GroupID addresses
-// a content group's stored authorization scope. It is not an app selector.
+// An empty EntityID addresses app staff authority; a nonempty EntityID addresses
+// a content entity's stored authorization scope. It is not an app selector.
 type PermissionTarget struct {
 	Permission string
-	GroupID    string
+	EntityID   string
 }
 
-func (e *Engine) validateGroupScopes(provider groups.Scopes) error {
+func (e *Engine) validateEntityScopes(provider entities.Scopes) error {
 	if e.scope == nil {
 		return nil
 	}
-	for _, kind := range e.cfg.Content.GroupKinds {
+	for _, kind := range e.cfg.Content.EntityKinds {
 		if !kind.AuthScope {
 			continue
 		}
-		bound, ok := provider.(groups.AppBinding)
+		bound, ok := provider.(entities.AppBinding)
 		if !ok {
 			return errors.New("contentkit: scoped authorization groups require an app-bound Scopes provider")
 		}
@@ -53,7 +53,7 @@ func (e *Engine) validateGroupScopes(provider groups.Scopes) error {
 // Ordinary accounts need no app registration or membership record.
 //
 // Authorize checks effective authority for the explicit target tenant/app,
-// including the provider's registered root grants. A group grant must belong
+// including the provider's registered root grants. A entity grant must belong
 // to this app. Preserve credential ceilings, revocation and binding.
 // Errors never authorize an operation. Implementations must be concurrent-safe.
 type Authorization interface {
@@ -209,13 +209,13 @@ func (a scopeAuthenticator) ResolveTenantAccount(ctx context.Context, v auth.Ver
 	return actorID, actorID != "", nil
 }
 
-func (a scopeAuthenticator) Authorize(ctx context.Context, v auth.Verified, group, permission string) (bool, error) {
-	if group != "" {
+func (a scopeAuthenticator) Authorize(ctx context.Context, v auth.Verified, entity, permission string) (bool, error) {
+	if entity != "" {
 		if a.engine == nil || a.engine.pool == nil {
 			return false, auth.ErrUnavailable
 		}
 		var local bool
-		err := a.engine.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{a.engine.schema, "content_groups"}.Sanitize()+` WHERE tenant_id=$1 AND auth_scope=$2 AND state='active')`, a.engine.cfg.Tenant, group).Scan(&local)
+		err := a.engine.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{a.engine.schema, "content_entities"}.Sanitize()+` WHERE tenant_id=$1 AND auth_scope=$2 AND state='active')`, a.engine.cfg.Tenant, entity).Scan(&local)
 		if err != nil {
 			return false, err
 		}
@@ -223,7 +223,7 @@ func (a scopeAuthenticator) Authorize(ctx context.Context, v auth.Verified, grou
 			return false, nil
 		}
 	}
-	return a.policy.Authorize(ctx, a.scope, v, PermissionTarget{Permission: permission, GroupID: group})
+	return a.policy.Authorize(ctx, a.scope, v, PermissionTarget{Permission: permission, EntityID: entity})
 }
 
 // Headers preserve the underlying provider's sender-proof and challenge

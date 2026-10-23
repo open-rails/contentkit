@@ -82,12 +82,12 @@ func (rt *Runtime) as(a access.Actor) access.Actor {
 }
 
 // testKinds is a content model with the named content kinds; "tag" is a
-// group kind.
+// entity kind.
 func testKinds(names ...string) kinds.Config {
-	c := kinds.Config{Languages: []string{"en", "ja"}, Kinds: map[string]kinds.Kind{}, GroupKinds: map[string]kinds.GroupKind{}}
+	c := kinds.Config{Languages: []string{"en", "ja"}, Kinds: map[string]kinds.Kind{}, EntityKinds: map[string]kinds.EntityKind{}}
 	for _, n := range names {
 		if n == "tag" {
-			c.GroupKinds[n] = kinds.GroupKind{Route: "tags"}
+			c.EntityKinds[n] = kinds.EntityKind{Route: "tags"}
 			continue
 		}
 		c.Kinds[n] = kinds.Kind{Route: strings.ReplaceAll(n, "_", "-"), Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}}
@@ -99,7 +99,7 @@ func testKinds(names ...string) kinds.Config {
 }
 
 // storeTarget stores a target of kind (a content item, or a group of a
-// group kind) under id, as the catalog or groups would.
+// entity kind) under id, as the catalog or groups would.
 func storeTarget(t *testing.T, rt *Runtime, kind, id string) {
 	t.Helper()
 	typ, ok := rt.targetType(kind)
@@ -107,8 +107,8 @@ func storeTarget(t *testing.T, rt *Runtime, kind, id string) {
 		return
 	}
 	q := `INSERT INTO ` + rt.store.t.items + ` (tenant_id, id, kind) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`
-	if typ == TargetGroup {
-		q = `INSERT INTO ` + rt.store.t.groups + ` (tenant_id, id, kind, slug) VALUES ($1, $2, $3, $2) ON CONFLICT DO NOTHING`
+	if typ == TargetEntity {
+		q = `INSERT INTO ` + rt.store.t.entities + ` (tenant_id, id, kind, slug) VALUES ($1, $2, $3, $2) ON CONFLICT DO NOTHING`
 	}
 	if _, err := rt.store.pool.Exec(context.Background(), q, rt.tenant, id, kind); err != nil {
 		t.Errorf("store target: %v", err)

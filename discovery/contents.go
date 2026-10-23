@@ -26,10 +26,10 @@ type ListOptions struct {
 	// They select activity dates, independently of publication-date filters.
 	ActivityFrom  string
 	ActivityUntil string
-	// CardGroups are the group kinds cards name; every kind with a page by
+	// CardEntities are the entity kinds cards name; every kind with a page by
 	// default.
-	CardGroups []string
-	Cursor     string
+	CardEntities []string
+	Cursor       string
 	// Page numbers pages from 1 instead of Cursor.
 	Page int
 	// Limit defaults to 24 and is capped at 100.
@@ -118,7 +118,7 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 	if err != nil {
 		return ContentPage{Contents: []Card{}}, err
 	}
-	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
+	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
 	for i := range cards {
 		if ranking, ok := srt.rankings[cards[i].ID]; ok {
 			cards[i].Ranking = &ranking

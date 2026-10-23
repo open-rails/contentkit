@@ -39,7 +39,7 @@ and validates their ownership; it creates no tenant, group, account or grant.
 - `TenantActors` reads verified live source-account ownership, defaulting to
   the AuthKit client. It compares that ownership with the target for membership,
   without creating or looking up a target account by matching contact details.
-- `Groups` optionally resolves an explicitly verified legacy content-group
+- `Entities` optionally resolves an explicitly verified legacy content-entity
   binding. New applications use deterministic `AppScopes` IDs.
 
 A dedicated legacy identity issuer may still supply `Accounts` with
@@ -82,11 +82,11 @@ of the target tenant. Native `Publish`, `PublishTx`, batch and HTTP publication
 use the same recipient check before writing; accepted writes retain the durable
 recipient-erasure fence.
 
-For `auth_scope` content groups, `AppScopes(client, scope)` keeps the existing
+For `auth_scope` content entities, `AppScopes(client, scope)` keeps the existing
 deterministic UUID based on tenant, app and content-group ID. It checks the
 provider group's tenant ownership and uses effective Can. The engine still
 checks that every requested scope belongs to an active local content group.
-Group listings intersect directory grant candidates with the request's
+Entity listings intersect directory grant candidates with the request's
 verified permissions, so their editor flags also retain credential ceilings.
 The app UI should request the ordinary effective permission view for its app
 group; `direct=true` remains useful only for questions specifically about

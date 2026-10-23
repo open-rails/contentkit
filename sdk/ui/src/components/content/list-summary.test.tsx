@@ -4,14 +4,14 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createContentKitClient } from "../../client/client.js";
-import type { Card, GroupCard, ListingSummary } from "../../client/generated/wire.js";
+import type { Card, EntityCard, ListingSummary } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/provider.js";
 import { CardGrid, ContentGrid, ContentRail, SearchResults } from "./grid.js";
 import { ContentFavorites } from "./favorites.js";
 import { ContentFilterDialog } from "./filter-dialog.js";
 
 const at = "2026-10-16T00:00:00Z";
-const entity = (id: string): GroupCard => ({ id, kind: "tag", internal: false, slug: id, name: id.toUpperCase(), count: 0, attributes: {}, created_at: at });
+const entity = (id: string): EntityCard => ({ id, kind: "tag", internal: false, slug: id, name: id.toUpperCase(), count: 0, attributes: {}, created_at: at });
 const card = (id: string, allowed = true): Card => ({
   id,
   kind: "gallery",

@@ -23,7 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
@@ -64,8 +64,8 @@ type Options struct {
 	MeasuredEngagement bool
 	// ActivityCohorts are ordered, application-defined readership categories.
 	ActivityCohorts []signal.ActivityCohort
-	// Groups names the groups on cards and in typeahead.
-	Groups *groups.Store
+	// Entities names the entities on cards and in typeahead.
+	Entities *entities.Store
 	// Media resolves cards' covers and ladders; nil leaves them out.
 	Media Media
 	// Sales fills cards' paywall offers; nil leaves them out.
@@ -96,7 +96,7 @@ type Service struct {
 }
 
 type tables struct {
-	facets, items, versions, versionText, text, codes, memberships, groups, prefs, favorites, reactions, counts, searches, searchMarks, erased, creators, comments, eventStreams string
+	facets, items, versions, versionText, text, codes, memberships, entities, prefs, favorites, reactions, counts, searches, searchMarks, erased, creators, comments, eventStreams string
 }
 
 // New validates o.
@@ -104,7 +104,7 @@ func New(o Options) (*Service, error) {
 	if o.Pool == nil || strings.TrimSpace(o.Schema) == "" || strings.TrimSpace(o.Tenant) == "" {
 		return nil, errors.New("discovery: Pool, Schema and Tenant are required")
 	}
-	if o.Visibility == nil || o.Resolver == nil || o.Gate == nil || o.Groups == nil || o.Hub == nil {
+	if o.Visibility == nil || o.Resolver == nil || o.Gate == nil || o.Entities == nil || o.Hub == nil {
 		return nil, errors.New("discovery: Visibility, Resolver, Gate, Groups and Hub are required")
 	}
 	if err := o.Kinds.Validate(); err != nil {
@@ -126,9 +126,9 @@ func New(o Options) (*Service, error) {
 		o.Now = time.Now
 	}
 	q := func(t string) string { return pgx.Identifier{o.Schema, t}.Sanitize() }
-	s := &Service{o: o, t: tables{facets: q("content_facets"), items: q("content_items"), versions: q("content_versions"),
+	s := &Service{o: o, t: tables{facets: q("content_current_facets"), items: q("content_items"), versions: q("content_versions"),
 		versionText: q("content_version_text"), text: q("content_text"), codes: q("content_codes"), memberships: q("content_memberships"),
-		groups: q("content_groups"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"), counts: q("content_interaction_counts"),
+		entities: q("content_entities"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"), counts: q("content_interaction_counts"),
 		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments: q("content_comments"), eventStreams: q("eventlog_streams")}}
 	var err error

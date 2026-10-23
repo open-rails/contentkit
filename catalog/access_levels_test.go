@@ -22,8 +22,8 @@ func TestConfiguredAccessLevelsIntegration(t *testing.T) {
 	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: premium}}}); err != nil {
 		t.Fatal(err)
 	}
-	group := f.group("channel", "studio")
-	for _, rule := range []*access.Rule{{Level: access.PPV}, {Level: access.GroupLevel, Group: group}, {Level: access.GroupPPV, Group: group}, {Level: access.TierLevel, Tiers: []string{"premium"}, Releases: []access.Release{{At: f.now(), Level: access.GroupLevel, Group: group}}}} {
+	entity := f.entity("channel", "studio")
+	for _, rule := range []*access.Rule{{Level: access.PPV}, {Level: access.EntityLevel, Entity: entity}, {Level: access.EntityPPV, Entity: entity}, {Level: access.TierLevel, Tiers: []string{"premium"}, Releases: []access.Release{{At: f.now(), Level: access.EntityLevel, Entity: entity}}}} {
 		t.Run(string(rule.Level), func(t *testing.T) {
 			in := gallery("Denied", "en")
 			in.Access = rule

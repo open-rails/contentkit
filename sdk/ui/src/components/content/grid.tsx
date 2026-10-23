@@ -6,7 +6,7 @@ import type { AccessMode, ContentQuery, HistoryQuery, RailQuery, SearchQuery } f
 import type { Card, ListingSummary } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContents, useExposure, useHistory, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
-import { useKinds } from "../../react/groups.js";
+import { useKinds } from "../../react/entities.js";
 import type { UseList } from "../../react/use-resource.js";
 import { ContentKitContext } from "../../react/context.js";
 import { useContentScope } from "../../react/use-resource.js";
@@ -224,7 +224,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
                     aspectRatio={p.aspectRatio}
                     titlePosition={p.titlePosition}
                     loadMedia={p.loadMedia}
-                    groupKinds={p.groupKinds}
+                    entityKinds={p.entityKinds}
                     chips={p.chips}
                     chipOverflow={p.chipOverflow}
                     chipFit={p.chipFit}
@@ -368,7 +368,7 @@ export interface ContentRailProps extends Omit<CardListProps, "infinite" | "empt
   /** The reader's history: { status: "in_progress" } is a continue-watching rail. */
   history?: HistoryQuery;
   /** An ordered group's members in its order: a featured rail (its windows apply). */
-  group?: string;
+  entity?: string;
   /** Any list: a sort and filters. */
   list?: ContentQuery;
   /** Filters and reader options of a similar or recommended rail. */
@@ -382,17 +382,17 @@ export interface ContentRailProps extends Omit<CardListProps, "infinite" | "empt
  * an ordered group's members or any list. It hides itself when it has none or
  * the site runs without what it needs.
  */
-export function ContentRail({ title, similar, recommendations, history, group, list: listQuery, query = {}, more, ...p }: ContentRailProps) {
+export function ContentRail({ title, similar, recommendations, history, entity, list: listQuery, query = {}, more, ...p }: ContentRailProps) {
   const limit = query.limit ?? p.pageSize ?? 12;
   const q = useMemo(() => ({ ...query, mode: cardListMode(p.locked, query.mode), summary: query.summary ?? true, limit }), [query, limit, p.locked]);
   const listing = useMemo(
     () =>
       listQuery
         ? { ...listQuery, mode: cardListMode(p.locked, listQuery.mode), summary: listQuery.summary ?? true, limit: listQuery.limit ?? limit }
-        : group
-          ? { groups: [group], sort: "position" as const, mode: cardListMode(p.locked), summary: true, limit }
+        : entity
+          ? { groups: [entity], sort: "position" as const, mode: cardListMode(p.locked), summary: true, limit }
           : null,
-    [listQuery, group, limit, p.locked],
+    [listQuery, entity, limit, p.locked],
   );
   const like = useSimilar(recommendations || history || listing ? null : similar, q, { client: p.client });
   const mine = useRecommendations(recommendations ? q : null, { client: p.client });
@@ -408,8 +408,8 @@ export function ContentRail({ title, similar, recommendations, history, group, l
           return { items: l.items, summary: l.summary, loading: l.loading, error: l.error, unavailable: l.error?.code === "not_configured", reload: l.reload };
         })()
       : like;
-  const surface = p.surface ?? (recommendations ? "recommendations" : history ? "history" : group ? "featured" : listing ? "list" : "similar");
-  const source = similar || recommendations || history || group || listing;
+  const surface = p.surface ?? (recommendations ? "recommendations" : history ? "history" : entity ? "featured" : listing ? "list" : "similar");
+  const source = similar || recommendations || history || entity || listing;
   if (!source || rail.unavailable || (!rail.loading && !rail.items.length && !rail.summary?.filtered_count && !rail.summary?.locked_count)) return null;
   const list: SummaryList = { ...rail, loadingMore: false, hasMore: false, loadMore: async () => {} };
   const kind = listQuery?.kind ?? history?.kind ?? q.kind;
@@ -425,7 +425,7 @@ export function ContentRail({ title, similar, recommendations, history, group, l
         surface={surface}
         horizontal={!p.grid}
         list={list}
-        render={JSON.stringify([similar, recommendations, history, group, listing, q])}
+        render={JSON.stringify([similar, recommendations, history, entity, listing, q])}
         filterKinds={kind ? [kind] : undefined}
         filterLanguage={listQuery?.display_language ?? history?.display_language ?? q.display_language ?? listQuery?.language ?? history?.language ?? q.language}
       />

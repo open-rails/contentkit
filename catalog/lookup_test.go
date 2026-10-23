@@ -27,8 +27,8 @@ func TestVersionLookupPreservesSelectionAndAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	premium, draft := ids[0], ids[1]
-	shared := f.group("tag", "shared")
-	edition := f.group("tag", "edition")
+	shared := f.entity("tag", "shared")
+	edition := f.entity("tag", "edition")
 	f.join(shared, parent, "")
 	f.join(edition, parent, premium)
 	f.claim("member", "premium")
@@ -50,8 +50,8 @@ func TestVersionLookupPreservesSelectionAndAccess(t *testing.T) {
 	if !opened.Decision.Allowed || opened.Body == "" || opened.Versions[0].ID != premium {
 		t.Fatalf("the authorized edition was not selected: %+v", opened)
 	}
-	if !slices.ContainsFunc(opened.Groups, func(g GroupSummary) bool { return g.ID == shared }) ||
-		!slices.ContainsFunc(opened.Versions[0].Groups, func(g GroupSummary) bool { return g.ID == edition }) {
+	if !slices.ContainsFunc(opened.Entities, func(g EntitySummary) bool { return g.ID == shared }) ||
+		!slices.ContainsFunc(opened.Versions[0].Entities, func(g EntitySummary) bool { return g.ID == edition }) {
 		t.Fatalf("shared and edition entities were lost: %+v", opened)
 	}
 	for _, id := range []string{draft, parent, "not-an-id"} {

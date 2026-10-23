@@ -6,7 +6,7 @@ import { createContentKitClient } from "../../client/client.js";
 import type { AdminComment, ContentModel, HeldItem } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/provider.js";
 import { UserCommentStanding } from "../admin/user-comment-standing.js";
-import { GroupMembers } from "../groups/group-members.js";
+import { EntityMembers } from "../entities/entity-members.js";
 import { CommentModeration } from "../social/moderation.js";
 
 const callers = ["members", "standing", "queue"] as const;
@@ -43,7 +43,7 @@ function server(caller: Caller, failInitial: boolean) {
 
 function mount(caller: Caller, client: ReturnType<typeof server>["client"]) {
   return render(<ContentKitProvider client={client} viewer="staff">
-    {caller === "members" ? <GroupMembers group={{ id: "g1", kind: "artist", name: "Group", slug: "group" }} renderContent={(member) => <span>{member.content_id} item</span>} /> : caller === "standing" ? <UserCommentStanding user="author" pageSize={1} /> : <CommentModeration sections={["queue"]} pageSize={2} />}
+    {caller === "members" ? <EntityMembers entity={{ id: "g1", kind: "artist", name: "Entity", slug: "group" }} renderContent={(member) => <span>{member.content_id} item</span>} /> : caller === "standing" ? <UserCommentStanding user="author" pageSize={1} /> : <CommentModeration sections={["queue"]} pageSize={2} />}
   </ContentKitProvider>);
 }
 

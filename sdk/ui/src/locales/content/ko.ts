@@ -56,7 +56,7 @@ export const content: typeof en = {
     level_group: "그룹 구성원",
     level_group_ppv: "구매한 그룹 구성원",
     tiers: "등급",
-    group: "그룹",
+    entity: "그룹",
     previewPages: "무료 페이지",
     previewSegments: "무료 챕터",
     onSale: "판매 중",

@@ -18,15 +18,15 @@ import (
 // refuses anyone else's order (entitlement_required, missing the group key the
 // paywall requires) and takes a member's. Once the rule is plain PPV the
 // requirement goes.
-func TestGroupPPVRequiresMembershipIntegration(t *testing.T) {
+func TestEntityPPVRequiresMembershipIntegration(t *testing.T) {
 	// Orders need provider writes; nothing here reaches a provider.
 	s := newShop(t, func(c *openrails.Config) { c.ProviderWriteMode = openrails.ProviderWritesLimited })
 	ctx := t.Context()
 	owner, member, stranger := s.customer(), s.customer(), s.customer()
 	studio := s.channel("studio", "Studio", owner.ID)
-	s.sell(offers.Target{Kind: offers.GroupTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
+	s.sell(offers.Target{Kind: offers.EntityTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
 	none := []catalog.Creator{}
-	post := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.GroupPPV, Group: studio}, OwnerGroupID: studio, Creators: &none,
+	post := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.EntityPPV, Entity: studio}, OwnerEntityID: studio, Creators: &none,
 		Text: map[string]catalog.Text{"en": {Title: "Members' PPV"}}})
 	target := offers.Target{Kind: offers.ContentTarget, ID: post}
 	s.sell(target, offers.Terms{Amount: 2_990_000})

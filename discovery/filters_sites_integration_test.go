@@ -15,18 +15,18 @@ import (
 func TestContentFilterEntrypointDefaults(t *testing.T) {
 	cfg := siteConfig()
 	cfg.ContentFilters.Domains, cfg.ContentFilters.AppliesTo = []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Filters: cfg.ContentFilters.Domains[0].Filters}, {Name: "alternate", Hosts: []string{"alternate.test"}, Filters: []kinds.ContentFilter{
-		{Group: cfg.ContentFilters.Domains[0].Filters[0].Group, Visible: true},
-		{Group: cfg.ContentFilters.Domains[0].Filters[1].Group, Visible: false},
+		{Entity: cfg.ContentFilters.Domains[0].Filters[0].Entity, Visible: true},
+		{Entity: cfg.ContentFilters.Domains[0].Filters[1].Entity, Visible: false},
 	},
-	}, {Name: "strict", Hosts: []string{"strict.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}, "video": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}},
+	}, {Name: "strict", Hosts: []string{"strict.test"}, RequireEntities: map[string][]kinds.EntityRef{"gallery": []kinds.EntityRef{{Kind: "tag", Slug: "yaoi"}}, "video": []kinds.EntityRef{{Kind: "tag", Slug: "yaoi"}}}},
 	}, []string{"gallery", "video"}
 	f := newFixtureConfig(t, nil, "", cfg)
-	f.group("tag", "big-breasts", "yaoi")
+	f.entity("tag", "big-breasts", "yaoi")
 	f.seed(
 		item{n: 1, titles: map[string]string{"en": "Story one"}, age: 4 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, titles: map[string]string{"en": "Story two"}, age: 3 * time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, titles: map[string]string{"en": "Story three"}, age: 2 * time.Hour, groups: []string{"yaoi"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 4, titles: map[string]string{"en": "Story four"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, titles: map[string]string{"en": "Story two"}, age: 3 * time.Hour, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Story three"}, age: 2 * time.Hour, entities: []string{"yaoi"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 4, titles: map[string]string{"en": "Story four"}, age: time.Hour, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
 	)
 	for _, n := range []int{1, 2, 3, 4} {
 		f.docs(doc("gallery", f.cid(n), "en", "Story"))

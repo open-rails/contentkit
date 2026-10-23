@@ -19,15 +19,15 @@ func TestPaywallOffersIntegration(t *testing.T) {
 	owner, creator, stranger := s.customer(), s.customer(), s.customer()
 	studio := s.channel("studio", "Studio", owner.ID)
 	month := 720
-	s.sell(offers.Target{Kind: offers.GroupTarget, ID: studio}, offers.Terms{Amount: 4_990_000, RenewHours: &month})
+	s.sell(offers.Target{Kind: offers.EntityTarget, ID: studio}, offers.Terms{Amount: 4_990_000, RenewHours: &month})
 	credits := []catalog.Creator{{UserID: creator.ID}}
 	none := []catalog.Creator{}
 	ppv := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.PPV}, Creators: &credits,
 		Text:     map[string]catalog.Text{"en": {Title: "Night Train"}},
 		Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"ja"}}}})
-	members := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.GroupLevel, Group: studio}, OwnerGroupID: studio, Creators: &none,
+	members := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.EntityLevel, Entity: studio}, OwnerEntityID: studio, Creators: &none,
 		Text: map[string]catalog.Text{"en": {Title: "Backstage"}}})
-	owned := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.PPV}, OwnerGroupID: studio, Creators: &none,
+	owned := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.PPV}, OwnerEntityID: studio, Creators: &none,
 		Text: map[string]catalog.Text{"en": {Title: "Owned"}}})
 	premium := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Creators: &none,
 		Text: map[string]catalog.Text{"en": {Title: "Premium"}}})
@@ -56,7 +56,7 @@ func TestPaywallOffersIntegration(t *testing.T) {
 	}
 	contentSale := sale(ck(ppv), offers.ContentTarget, ppv, "", 2_990_000, &month, nil)
 	versionSale := sale(vk(ppv, ja), offers.VersionTarget, ja, ppv, 990_000, nil, nil)
-	groupSale := sale(gk(studio), offers.GroupTarget, studio, "", 4_990_000, nil, &month)
+	groupSale := sale(gk(studio), offers.EntityTarget, studio, "", 4_990_000, nil, &month)
 	same := func(name string, got, want []offers.Sale) {
 		t.Helper()
 		if len(got) != len(want) {

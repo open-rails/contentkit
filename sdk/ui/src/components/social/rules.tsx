@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { useId, useMemo, useState } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import { fromLocalInput } from "../../client/group-fields.js";
+import { fromLocalInput } from "../../client/entity-fields.js";
 import { useMessages } from "../../i18n/context.js";
 import { useBannedWords, useIPBans } from "../../react/comments.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";

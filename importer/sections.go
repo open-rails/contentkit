@@ -10,7 +10,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
@@ -27,18 +27,18 @@ func typed[T any](fn func(ctx context.Context, tx pgx.Tx, in []T) error) func(co
 	}
 }
 
-// sections are the batch's record groups in write order.
+// sections are the batch's record entities in write order.
 func (run *batchRun) sections() []section {
 	s, b := run.s, run.b
 	out := []section{
-		{name: SectionGroups, n: len(b.Groups), prepare: run.group,
-			write: typed(func(ctx context.Context, tx pgx.Tx, in []groups.ImportGroup) error {
-				return s.o.Groups.ImportGroups(ctx, tx, in, b.ProvisionScopes)
+		{name: SectionEntities, n: len(b.Entities), prepare: run.entity,
+			write: typed(func(ctx context.Context, tx pgx.Tx, in []entities.ImportEntity) error {
+				return s.o.Entities.ImportEntities(ctx, tx, in, b.ProvisionScopes)
 			})},
 		{name: SectionContents, n: len(b.Contents), prepare: run.content, write: typed(s.o.Catalog.Import)},
 		{name: SectionMemberships, n: len(b.Memberships), prepare: run.memberships,
-			write: typed(func(ctx context.Context, tx pgx.Tx, in []groups.ContentGroups) error {
-				return s.o.Groups.ImportMemberships(ctx, tx, in)
+			write: typed(func(ctx context.Context, tx pgx.Tx, in []entities.ContentEntities) error {
+				return s.o.Entities.ImportMemberships(ctx, tx, in)
 			})},
 		{name: SectionOffers, n: len(b.Offers), prepare: run.offer},
 		{name: SectionAliases, n: len(b.Aliases), prepare: run.alias,
@@ -60,7 +60,7 @@ func (run *batchRun) sections() []section {
 				return s.o.Signals.ImportSignals(ctx, in)
 			})},
 		{name: SectionDeletes, n: len(b.Deletes), prepare: run.deletion, write: typed(s.deletes),
-			first: func(in any) bool { return in.(deletion).entity == EntityGroup }},
+			first: func(in any) bool { return in.(deletion).entity == RecordEntity }},
 	}
 	if s.o.Offers == nil {
 		out[3].skip = "no billing"
@@ -77,50 +77,50 @@ func (run *batchRun) sections() []section {
 	return out
 }
 
-func (run *batchRun) group(r *resolver, i int) (any, string, error) {
-	g := run.b.Groups[i]
-	id, err := r.own(EntityGroup, g.ExternalID, g.ID, g.CreatedAt)
+func (run *batchRun) entity(r *resolver, i int) (any, string, error) {
+	g := run.b.Entities[i]
+	id, err := r.own(RecordEntity, g.ExternalID, g.ID, g.CreatedAt)
 	if err != nil {
 		return nil, g.ExternalID, err
 	}
-	in := groups.ImportGroup{ID: groups.GroupID(id), Kind: g.Kind, Slug: g.Slug, Internal: g.Internal, State: groups.State(g.State), Attributes: g.Attributes,
+	in := entities.ImportEntity{ID: entities.EntityID(id), Kind: g.Kind, Slug: g.Slug, Internal: g.Internal, State: entities.State(g.State), Attributes: g.Attributes,
 		OwnerUserID: g.OwnerUserID, AuthScope: g.AuthScope, Names: g.Names, Text: g.Text, Code: g.Code, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt}
 	if g.Avatar != "" {
-		in.Avatar = &groups.Avatar{Image: g.Avatar}
+		in.Avatar = &entities.Avatar{Image: g.Avatar}
 	}
 	for _, link := range []struct {
 		ref  *Ref
-		into *groups.GroupID
+		into *entities.EntityID
 	}{{g.Scope, &in.ScopeID}, {g.Parent, &in.ParentID}} {
 		if link.ref == nil {
 			continue
 		}
-		id, err := r.ref(EntityGroup, *link.ref)
+		id, err := r.ref(RecordEntity, *link.ref)
 		if err != nil {
 			return nil, g.ExternalID, err
 		}
-		*link.into = groups.GroupID(id)
+		*link.into = entities.EntityID(id)
 	}
 	switch {
 	case g.CoverImage != "" && g.CoverContent != nil:
 		return nil, g.ExternalID, fmt.Errorf("%w: a cover is an image or a content, not both", errInvalid)
 	case g.CoverImage != "":
-		in.Cover = &groups.Cover{Image: g.CoverImage}
+		in.Cover = &entities.Cover{Image: g.CoverImage}
 	case g.CoverContent != nil:
-		id, err := r.ref(EntityContent, *g.CoverContent)
+		id, err := r.ref(RecordContent, *g.CoverContent)
 		if err != nil {
 			return nil, g.ExternalID, err
 		}
-		in.Cover = &groups.Cover{ContentID: id}
+		in.Cover = &entities.Cover{ContentID: id}
 	}
 	if g.Edges != nil {
-		in.Edges = []groups.Edge{}
+		in.Edges = []entities.Edge{}
 		for _, e := range g.Edges {
-			to, err := r.ref(EntityGroup, e.To)
+			to, err := r.ref(RecordEntity, e.To)
 			if err != nil {
 				return nil, g.ExternalID, err
 			}
-			in.Edges = append(in.Edges, groups.Edge{Relation: e.Relation, To: groups.GroupID(to)})
+			in.Edges = append(in.Edges, entities.Edge{Relation: e.Relation, To: entities.EntityID(to)})
 		}
 	}
 	return in, g.ExternalID, nil
@@ -128,20 +128,20 @@ func (run *batchRun) group(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 	c := run.b.Contents[i]
-	id, err := r.own(EntityContent, c.ExternalID, c.ID, c.CreatedAt)
+	id, err := r.own(RecordContent, c.ExternalID, c.ID, c.CreatedAt)
 	if err != nil {
 		return nil, c.ExternalID, err
 	}
 	in := catalog.ImportContent{ID: id, Kind: c.Kind, State: c.State, PublishAt: c.PublishAt, PublishedAt: c.PublishedAt, DeletedAt: c.DeletedAt,
 		OriginalTitle: c.OriginalTitle, OriginalLanguage: c.OriginalLanguage, Comments: c.Comments, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes,
 		Creators: c.Creators, Text: c.Text, Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
-	if c.OwnerGroup != nil {
-		if in.OwnerGroupID, err = r.ref(EntityGroup, *c.OwnerGroup); err != nil {
+	if c.OwnerEntity != nil {
+		if in.OwnerEntityID, err = r.ref(RecordEntity, *c.OwnerEntity); err != nil {
 			return nil, c.ExternalID, err
 		}
 	}
 	for _, v := range c.Versions {
-		vid, err := r.own(EntityVersion, v.ExternalID, v.ID, v.CreatedAt)
+		vid, err := r.own(RecordVersion, v.ExternalID, v.ID, v.CreatedAt)
 		if err != nil {
 			return nil, c.ExternalID, err
 		}
@@ -154,20 +154,20 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) memberships(r *resolver, i int) (any, string, error) {
 	set := run.b.Memberships[i]
-	id, err := r.ref(EntityContent, set.Content)
+	id, err := r.ref(RecordContent, set.Content)
 	if err != nil {
 		return nil, set.Content.ExternalID, err
 	}
-	out := groups.ContentGroups{ContentID: id, Kinds: set.Kinds, Memberships: []groups.Membership{}}
+	out := entities.ContentEntities{ContentID: id, Kinds: set.Kinds, Memberships: []entities.Membership{}}
 	for _, m := range set.Memberships {
-		gid, err := r.ref(EntityGroup, m.Group)
+		gid, err := r.ref(RecordEntity, m.Entity)
 		if err != nil {
 			return nil, set.Content.ExternalID, err
 		}
-		gm := groups.Membership{GroupID: groups.GroupID(gid), ContentID: id, Role: m.Role, Position: m.Position, ActiveFrom: m.ActiveFrom,
-			ActiveUntil: m.ActiveUntil, State: groups.MembershipState(m.State)}
+		gm := entities.Membership{EntityID: entities.EntityID(gid), ContentID: id, Role: m.Role, Position: m.Position, ActiveFrom: m.ActiveFrom,
+			ActiveUntil: m.ActiveUntil, State: entities.MembershipState(m.State)}
 		if m.Version != nil {
-			if gm.VersionID, err = r.ref(EntityVersion, *m.Version); err != nil {
+			if gm.VersionID, err = r.ref(RecordVersion, *m.Version); err != nil {
 				return nil, set.Content.ExternalID, err
 			}
 		}
@@ -178,14 +178,14 @@ func (run *batchRun) memberships(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) offer(r *resolver, i int) (any, string, error) {
 	o := run.b.Offers[i]
-	t, err := r.target(o.Target, allowContent|allowVersion|allowGroup)
+	t, err := r.target(o.Target, allowContent|allowVersion|allowEntity)
 	if err != nil {
 		return nil, "", err
 	}
 	var target offers.Target
 	switch {
-	case t.group != "":
-		target = offers.Target{Kind: offers.GroupTarget, ID: t.group}
+	case t.entity != "":
+		target = offers.Target{Kind: offers.EntityTarget, ID: t.entity}
 	case t.version != "":
 		target = offers.Target{Kind: offers.VersionTarget, ID: t.version, Content: t.content}
 	default:
@@ -196,7 +196,7 @@ func (run *batchRun) offer(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) alias(r *resolver, i int) (any, string, error) {
 	a := run.b.Aliases[i]
-	t, err := r.target(a.Target, allowContent|allowGroup)
+	t, err := r.target(a.Target, allowContent|allowEntity)
 	if err != nil {
 		return nil, a.Key, err
 	}
@@ -205,7 +205,7 @@ func (run *batchRun) alias(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) comment(r *resolver, i int) (any, string, error) {
 	c := run.b.Comments[i]
-	id, err := r.own(EntityComment, c.ExternalID, c.ID, c.CreatedAt)
+	id, err := r.own(RecordComment, c.ExternalID, c.ID, c.CreatedAt)
 	if err != nil {
 		return nil, c.ExternalID, err
 	}
@@ -216,7 +216,7 @@ func (run *batchRun) comment(r *resolver, i int) (any, string, error) {
 	in := content.ImportComment{ID: id, Ref: t.ref, Language: c.Language, UserID: c.UserID, AnonName: c.AnonName, Body: c.Body, DeletedAt: c.DeletedAt,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 	if c.ReplyTo != nil {
-		if in.ReplyToID, err = r.ref(EntityComment, *c.ReplyTo); err != nil {
+		if in.ReplyToID, err = r.ref(RecordComment, *c.ReplyTo); err != nil {
 			return nil, c.ExternalID, err
 		}
 	}
@@ -225,7 +225,7 @@ func (run *batchRun) comment(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) reaction(r *resolver, i int) (any, string, error) {
 	x := run.b.Reactions[i]
-	t, err := r.target(x.Target, allowContent|allowVersion|allowGroup|allowComment)
+	t, err := r.target(x.Target, allowContent|allowVersion|allowEntity|allowComment)
 	if err != nil {
 		return nil, "", err
 	}
@@ -243,14 +243,14 @@ func (run *batchRun) favorite(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) poll(r *resolver, i int) (any, string, error) {
 	p := run.b.Polls[i]
-	id, err := r.own(EntityPoll, p.ExternalID, p.ID, p.CreatedAt)
+	id, err := r.own(RecordPoll, p.ExternalID, p.ID, p.CreatedAt)
 	if err != nil {
 		return nil, p.ExternalID, err
 	}
 	in := content.ImportPoll{ID: id, Kind: p.Kind, Question: p.Question, Language: p.Language, Active: p.Active == nil || *p.Active, LiveAt: p.LiveAt,
 		ClosesAt: p.ClosesAt, DeletedAt: p.DeletedAt, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 	for _, o := range p.Options {
-		oid, err := r.own(EntityOption, o.ExternalID, o.ID, p.CreatedAt)
+		oid, err := r.own(RecordOption, o.ExternalID, o.ID, p.CreatedAt)
 		if err != nil {
 			return nil, p.ExternalID, err
 		}
@@ -261,11 +261,11 @@ func (run *batchRun) poll(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) vote(r *resolver, i int) (any, string, error) {
 	v := run.b.Votes[i]
-	poll, err := r.ref(EntityPoll, v.Poll)
+	poll, err := r.ref(RecordPoll, v.Poll)
 	if err != nil {
 		return nil, "", err
 	}
-	option, err := r.ref(EntityOption, v.Option)
+	option, err := r.ref(RecordOption, v.Option)
 	if err != nil {
 		return nil, "", err
 	}
@@ -274,7 +274,7 @@ func (run *batchRun) vote(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) answer(r *resolver, i int) (any, string, error) {
 	a := run.b.Answers[i]
-	poll, err := r.ref(EntityPoll, a.Poll)
+	poll, err := r.ref(RecordPoll, a.Poll)
 	if err != nil {
 		return nil, "", err
 	}
@@ -302,7 +302,7 @@ type deletion struct {
 func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 	d := run.b.Deletes[i]
 	switch d.Entity {
-	case EntityContent, EntityVersion, EntityGroup, EntityComment, EntityPoll:
+	case RecordContent, RecordVersion, RecordEntity, RecordComment, RecordPoll:
 	default:
 		return nil, d.ExternalID, fmt.Errorf("%w: entity %q is content, version, group, comment or poll", errInvalid, d.Entity)
 	}
@@ -318,11 +318,11 @@ func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 	return deletion{entity: d.Entity, id: id}, d.ExternalID, err
 }
 
-// deletes deletes what the records name: groups, then content and versions,
-// then comments and polls. Groups go first because deleting one takes the
-// group hierarchy lock, which every hierarchy writer takes before content
+// deletes deletes what the records name: entities, then content and versions,
+// then comments and polls. Entities go first because deleting one takes the
+// entity hierarchy lock, which every hierarchy writer takes before content
 // rows; deleting content first would hold content rows while waiting on it.
-// The section's first puts group records ahead, so a one-by-one retry keeps
+// The section's first puts entity records ahead, so a one-by-one retry keeps
 // that order.
 func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
 	by := map[string][]string{}
@@ -332,17 +332,17 @@ func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
 		}
 		by[d.entity] = append(by[d.entity], d.id)
 	}
-	gs := make([]groups.GroupID, len(by[EntityGroup]))
-	for i, id := range by[EntityGroup] {
-		gs[i] = groups.GroupID(id)
+	gs := make([]entities.EntityID, len(by[RecordEntity]))
+	for i, id := range by[RecordEntity] {
+		gs[i] = entities.EntityID(id)
 	}
-	if err := s.o.Groups.ImportDeletes(ctx, tx, gs); err != nil {
+	if err := s.o.Entities.ImportDeletes(ctx, tx, gs); err != nil {
 		return err
 	}
-	if err := s.o.Catalog.ImportDeletes(ctx, tx, by[EntityContent], by[EntityVersion]); err != nil {
+	if err := s.o.Catalog.ImportDeletes(ctx, tx, by[RecordContent], by[RecordVersion]); err != nil {
 		return err
 	}
-	return s.o.Content.ImportDeletes(ctx, tx, by[EntityComment], by[EntityPoll])
+	return s.o.Content.ImportDeletes(ctx, tx, by[RecordComment], by[RecordPoll])
 }
 
 func (run *batchRun) legacyReading(r *resolver, i int) (any, string, error) {

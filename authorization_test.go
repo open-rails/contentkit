@@ -9,7 +9,7 @@ import (
 
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/kinds"
@@ -23,28 +23,28 @@ type authorizationFixture struct {
 }
 
 type boundScopesFixture struct {
-	groups.Scopes
+	entities.Scopes
 	tenant, app string
 }
 
 func (s boundScopesFixture) ContentKitScope() (string, string) { return s.tenant, s.app }
 
-func TestScopedGroupProviderBinding(t *testing.T) {
+func TestScopedEntityProviderBinding(t *testing.T) {
 	scope := Scope{TenantID: NewTenantID(), AppID: NewAppID()}
-	e := Engine{scope: &scope, cfg: Config{Content: kinds.Config{GroupKinds: map[string]kinds.GroupKind{"channel": {AuthScope: true}}}}}
-	if err := e.validateGroupScopes(nil); err == nil {
+	e := Engine{scope: &scope, cfg: Config{Content: kinds.Config{EntityKinds: map[string]kinds.EntityKind{"channel": {AuthScope: true}}}}}
+	if err := e.validateEntityScopes(nil); err == nil {
 		t.Fatal("accepted unbound provider")
 	}
 	for _, p := range []boundScopesFixture{{tenant: scope.TenantID.String(), app: NewAppID().String()}, {tenant: NewTenantID().String(), app: scope.AppID.String()}, {}} {
-		if err := e.validateGroupScopes(p); err == nil {
+		if err := e.validateEntityScopes(p); err == nil {
 			t.Fatal("accepted foreign provider")
 		}
 	}
-	if err := e.validateGroupScopes(boundScopesFixture{tenant: scope.TenantID.String(), app: scope.AppID.String()}); err != nil {
+	if err := e.validateEntityScopes(boundScopesFixture{tenant: scope.TenantID.String(), app: scope.AppID.String()}); err != nil {
 		t.Fatal(err)
 	}
-	e.cfg.Content.GroupKinds = nil
-	if err := e.validateGroupScopes(nil); err != nil {
+	e.cfg.Content.EntityKinds = nil
+	if err := e.validateEntityScopes(nil); err != nil {
 		t.Fatal("ordinary app requires unused group provider", err)
 	}
 }

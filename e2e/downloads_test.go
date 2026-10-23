@@ -28,7 +28,7 @@ import (
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
@@ -50,18 +50,18 @@ type downloads struct {
 	user    string
 	another string
 	// translators are doujins-com, embargo and anonymous (categorical).
-	translators []groups.Group
+	translators []entities.Entity
 }
 
 // join puts c's version in the translator groups of slugs.
 func (d *downloads) join(c catalog.Content, slugs ...string) {
 	d.w.t.Helper()
-	var ms []groups.Membership
+	var ms []entities.Membership
 	for _, slug := range slugs {
-		i := slices.IndexFunc(d.translators, func(g groups.Group) bool { return g.Slug == slug })
-		ms = append(ms, groups.Membership{GroupID: d.translators[i].ID, VersionID: c.Versions[0].ID})
+		i := slices.IndexFunc(d.translators, func(g entities.Entity) bool { return g.Slug == slug })
+		ms = append(ms, entities.Membership{EntityID: d.translators[i].ID, VersionID: c.Versions[0].ID})
 	}
-	d.f.want(http.StatusOK, d.staff, "PUT", "/contents/"+c.ID+"/entities", groups.ContentGroups{Memberships: ms}, nil)
+	d.f.want(http.StatusOK, d.staff, "PUT", "/contents/"+c.ID+"/entities", entities.ContentEntities{Memberships: ms}, nil)
 }
 
 // policy is a host's download policy, as Doujins' legacy rules go: a
@@ -73,20 +73,20 @@ func (d *downloads) join(c catalog.Content, slugs ...string) {
 type policy struct{}
 
 func (policy) Decide(_ context.Context, r versions.DownloadRequest) (versions.DownloadDecision, error) {
-	if r.In(kinds.GroupRef{Kind: "translator", Slug: "embargo"}) && !slices.Contains(r.Tiers, "premium") && !r.Editor {
+	if r.In(kinds.EntityRef{Kind: "translator", Slug: "embargo"}) && !slices.Contains(r.Tiers, "premium") && !r.Editor {
 		if at := r.Released.Add(72 * time.Hour); time.Now().Before(at) {
 			return versions.DownloadDecision{Reason: "release_window", AvailableAt: &at}, nil
 		}
 	}
 	d := versions.DownloadDecision{Allowed: true}
-	if r.In(kinds.GroupRef{Kind: "translator", Slug: "doujins-com"}) && r.Rule.Level == access.TierLevel && slices.Contains(r.Rule.Tiers, "premium") {
+	if r.In(kinds.EntityRef{Kind: "translator", Slug: "doujins-com"}) && r.Rule.Level == access.TierLevel && slices.Contains(r.Rule.Tiers, "premium") {
 		d.Mark = []int{3, 5, 7}
 	}
 	if r.Pages == 0 {
 		d.Mark = []int{1, 2}
 	}
 	var by []string
-	for _, g := range r.Groups {
+	for _, g := range r.Entities {
 		if g.Kind == "translator" && g.Attributes["categorical"] != true {
 			by = append(by, g.Name)
 		}
@@ -126,11 +126,11 @@ func newDownloads(t *testing.T, quotas versions.Downloads) *downloads {
 	}
 	e := w.engine(func(c *contentkit.Config, deps *contentkit.Deps) {
 		c.Content.Kinds["movie"] = kinds.Kind{Route: "movies", Presentation: "player", Versions: kinds.VersionRules{Languages: "one"},
-			Groups: []string{"translator"}}
-		c.Content.GroupKinds["translator"] = kinds.GroupKind{Route: "translators", VersionLevel: true,
+			Entities: []string{"translator"}}
+		c.Content.EntityKinds["translator"] = kinds.EntityKind{Route: "translators", VersionLevel: true,
 			Attributes: map[string]kinds.Attribute{"categorical": {Type: "bool"}}}
 		book := c.Content.Kinds["book"]
-		book.Groups = []string{"translator"}
+		book.Entities = []string{"translator"}
 		c.Content.Kinds["book"] = book
 		c.Media.Config.Kinds = append(c.Media.Config.Kinds, media.Kind{Name: "movie", KeepOriginals: true,
 			Uploads: []media.Upload{{Path: "source", Types: []string{"video/mp4", "video/x-matroska"}, MaxBytes: 1 << 20}},
@@ -139,11 +139,11 @@ func newDownloads(t *testing.T, quotas versions.Downloads) *downloads {
 		deps.Billing, deps.Downloads = ckopenrails.Billing(merchant), policy{}
 	})
 	d.f = serve(t, e)
-	d.f.want(http.StatusCreated, d.staff, "POST", "/entities", []groups.GroupInput{
-		{Kind: "translator", Slug: "doujins-com", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Doujins.com"},
-			{Language: "ja", Kind: groups.NameCanonical, Name: "ドウジンズ"}}},
-		{Kind: "translator", Slug: "embargo", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Embargo"}}},
-		{Kind: "translator", Slug: "anonymous", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Anonymous"}},
+	d.f.want(http.StatusCreated, d.staff, "POST", "/entities", []entities.EntityInput{
+		{Kind: "translator", Slug: "doujins-com", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Doujins.com"},
+			{Language: "ja", Kind: entities.NameCanonical, Name: "ドウジンズ"}}},
+		{Kind: "translator", Slug: "embargo", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Embargo"}}},
+		{Kind: "translator", Slug: "anonymous", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Anonymous"}},
 			Attributes: map[string]any{"categorical": true}}}, &d.translators)
 	key, err := token.ParseKey(w.config().Media.Delivery.SigningKey)
 	if err != nil {

@@ -6,7 +6,7 @@ import type { PresetRule } from "../client/generated/wire.js";
 import { defaultImage, isPattern, ruleDir, stableImage } from "../client/media/rules.js";
 import type { PublicPreset } from "../client/public.js";
 import { useOptionalContentKitClient, useReadScope } from "./context.js";
-import { useKinds } from "./groups.js";
+import { useKinds } from "./entities.js";
 import { useMediaRead } from "./read.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 import { resourcesFor } from "./resources.js";

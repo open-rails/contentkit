@@ -30,11 +30,11 @@ type ViewerOptions struct {
 	Language string
 	// Mode defaults to access.Lock.
 	Mode access.Mode
-	// EditorGroups are owner groups (channels) whose editors see their whole
+	// EditorEntities are owner entities (channels) whose editors see their whole
 	// content in lists; the viewer's editorship of each is checked.
-	EditorGroups []string
-	// Requested are groups a list requires (a group's page): the viewer's
-	// content filters do not hide them, so the page shows what the group's
+	EditorEntities []string
+	// Requested are entities a list requires (an entity's page): the viewer's
+	// content filters do not hide them, so the page shows what the entity's
 	// count counts.
 	Requested []string
 }
@@ -42,7 +42,7 @@ type ViewerOptions struct {
 // Viewer is the one visibility rule (ContentKit #117 spec §4) for one
 // request: live content and versions, the site scope, the
 // viewer's content filters and entitlements, and the staff, creators and
-// owner-group editors who see everything. Listed renders it as SQL over
+// owner-entity editors who see everything. Listed renders it as SQL over
 // content_facets for lists and searches; Store.Contents and Resolver decide
 // items with it.
 type Viewer struct {
@@ -58,13 +58,13 @@ type Viewer struct {
 	policies       domainpolicy.Policies
 	hidden         map[string][]string
 	includeDeleted bool
-	editorGroups   []string
-	// asked are owner groups whose editorship this request already checked.
+	editorEntities []string
+	// asked are owner entities whose editorship this request already checked.
 	asked map[string]bool
 }
 
 // Viewer resolves o once per request: the site, staff rights, entitlements
-// (one billing read, fail-closed when unavailable), the site's required groups
+// (one billing read, fail-closed when unavailable), the site's required entities
 // and the viewer's content filters (config defaults merged with their own).
 func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 	v := &Viewer{s: s, actor: o.Actor, language: o.Language, mode: o.Mode, now: s.now()}
@@ -91,7 +91,7 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		return nil, err
 	}
 	v.filter = f
-	v.policies, err = domainpolicy.Resolve(ctx, s.pool, s.t.groups, s.tenant, v.domain, s.cfg.ContentFilters.AppliesTo)
+	v.policies, err = domainpolicy.Resolve(ctx, s.pool, s.t.entities, s.tenant, v.domain, s.cfg.ContentFilters.AppliesTo)
 	if err != nil {
 		return nil, err
 	}
@@ -134,31 +134,31 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 			}
 		}
 	}
-	v.editorGroups = []string{}
-	if len(o.EditorGroups) > 0 && !v.staff {
-		got := s.readEditors(ctx, o.Actor, o.EditorGroups)
+	v.editorEntities = []string{}
+	if len(o.EditorEntities) > 0 && !v.staff {
+		got := s.readEditors(ctx, o.Actor, o.EditorEntities)
 		v.asked = map[string]bool{}
-		for _, g := range o.EditorGroups {
+		for _, g := range o.EditorEntities {
 			if v.asked[g] = got[g]; got[g] {
-				v.editorGroups = append(v.editorGroups, g)
+				v.editorEntities = append(v.editorEntities, g)
 			}
 		}
-		slices.Sort(v.editorGroups)
+		slices.Sort(v.editorEntities)
 	}
 	return v, nil
 }
 
-// editable reports an owner group the request already knows the viewer
-// edits (ViewerOptions.EditorGroups).
-func (v *Viewer) editable(group string) bool { return slices.Contains(v.editorGroups, group) }
+// editable reports an owner entity the request already knows the viewer
+// edits (ViewerOptions.EditorEntities).
+func (v *Viewer) editable(entity string) bool { return slices.Contains(v.editorEntities, entity) }
 
-// Editors reports, per owner group, whether the viewer edits its content and
-// so opens it: staff edit every group's; anyone else is asked once per group
+// Editors reports, per owner entity, whether the viewer edits its content and
+// so opens it: staff edit every entity's; anyone else is asked once per entity
 // per request, and a failed check reads as not an editor.
-func (v *Viewer) Editors(ctx context.Context, groups []string) map[string]bool {
+func (v *Viewer) Editors(ctx context.Context, entities []string) map[string]bool {
 	out := map[string]bool{}
 	var ask []string
-	for _, g := range groups {
+	for _, g := range entities {
 		switch {
 		case g == "":
 		case v.staff || v.editable(g):
@@ -244,7 +244,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	versions := slices.Sorted(maps.Keys(v.filter.Versions()))
 	args := pgx.NamedArgs{"cv_now": v.now,
 		"cv_language": v.language, "cv_owned": v.filter.Contents(), "cv_owned_versions": versions,
-		"cv_owned_candidates": !v.filter.Complete() && !v.filter.Unknown(), "cv_user": viewerID(v.actor), "cv_editors": v.editorGroups,
+		"cv_owned_candidates": !v.filter.Complete() && !v.filter.Unknown(), "cv_user": viewerID(v.actor), "cv_editors": v.editorEntities,
 		"cv_include_deleted": v.includeDeleted}
 	for k, a := range accessArgs {
 		args[k] = a
@@ -280,7 +280,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 // privileged is the SQL test, over Listed's args, of a row whose channel the
 // viewer edits or whose content they created.
 func (v *Viewer) privileged(alias string) string {
-	return "(" + alias + ".owner_group_id = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.creators +
+	return "(" + alias + ".owner_entity_id = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.creators +
 		" cc WHERE cc.tenant_id = " + alias + ".tenant_id AND cc.content_id = " + alias + ".content_id AND cc.user_id = @cv_user)))"
 }
 
@@ -315,17 +315,17 @@ type facetRow struct {
 	// deleted is the version's own deletion; contentDeleted its content's.
 	deleted, contentDeleted bool
 	// held: the content's latest edit awaits moderation.
-	held                   bool
-	languages              []string
-	rule                   access.Rule
-	restrictions, groupIDs []string
-	ownerGroup             string
-	position               int
+	held                    bool
+	languages               []string
+	rule                    access.Rule
+	restrictions, entityIDs []string
+	ownerEntity             string
+	position                int
 }
 
 func (v *Viewer) live(r facetRow) bool { return r.liveFrom != nil && !r.liveFrom.After(v.now) }
 
-func (v *Viewer) inScope(r facetRow) bool { return v.policies.Allows(r.kind, r.groupIDs) }
+func (v *Viewer) inScope(r facetRow) bool { return v.policies.Allows(r.kind, r.entityIDs) }
 
 // itemView is the rule's verdict on one content item for the viewer.
 type itemView struct {
@@ -337,10 +337,10 @@ type itemView struct {
 }
 
 // decide applies the rule to content items for direct reads: an editor (staff,
-// creator, owner-group editor) sees everything; anyone else sees the live
+// creator, owner-entity editor) sees everything; anyone else sees the live
 // versions of live content in the site's scope, and a deleted one that was
 // live if they hold its content or version key. Optional content filters
-// do not apply to direct reads. With every, each item's owner group is asked
+// do not apply to direct reads. With every, each item's owner entity is asked
 // for editorship (a detail page); else only those of items the rule does not
 // show whole or open.
 func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[string]*itemView, error) {
@@ -350,9 +350,9 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx, `SELECT f.content_id, f.version_id, f.kind, f.live_from, c.state = 'deleted', ver.state = 'deleted', c.moderation <> 'approved',
- f.languages, c.access, ver.access, f.restrictions, f.group_ids, coalesce(f.owner_group_id, ''), f.position,
+ f.languages, c.access, ver.access, f.restrictions, f.entity_ids, coalesce(f.owner_entity_id, ''), f.position,
  EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = f.tenant_id AND cc.content_id = f.content_id AND cc.user_id = $3 AND $3 <> '')
- FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
+ FROM `+s.t.currentFacets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
  JOIN `+s.t.versions+` ver ON ver.tenant_id = f.tenant_id AND ver.id = f.version_id
  WHERE f.tenant_id = $1 AND f.content_id = ANY($2) ORDER BY f.content_id, f.position, f.version_id`, s.tenant, ids, viewerID(v.actor))
 	if err != nil {
@@ -365,7 +365,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		var isCreator bool
 		var crule, vrule []byte
 		if err := rows.Scan(&r.contentID, &r.versionID, &r.kind, &r.liveFrom, &r.contentDeleted, &r.deleted, &r.held, &r.languages,
-			&crule, &vrule, &r.restrictions, &r.groupIDs, &r.ownerGroup, &r.position, &isCreator); err != nil {
+			&crule, &vrule, &r.restrictions, &r.entityIDs, &r.ownerEntity, &r.position, &isCreator); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -383,7 +383,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	}
 	// Live versions are decided by their rule; deleted ones that were live
 	// open only to holders of their own content or version key.
-	known := func(id string) bool { return v.staff || creator[id] || v.editable(byID[id][0].ownerGroup) }
+	known := func(id string) bool { return v.staff || creator[id] || v.editable(byID[id][0].ownerEntity) }
 	var live, held []facetRow
 	for id, rs := range byID {
 		if known(id) {
@@ -401,7 +401,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	}
 	items := make([]access.Item, 0, len(live)+len(held))
 	for _, r := range live {
-		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: r.rule, Groups: r.groupIDs})
+		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: r.rule, Entities: r.entityIDs})
 	}
 	for _, r := range held {
 		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: access.Rule{Level: access.PPV}})
@@ -423,25 +423,25 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		shown[r.contentID] = append(shown[r.contentID], r)
 		decisions[r.versionID] = decision(ds[i])
 	}
-	// Owner-group editorship is asked once per owner group: unless every,
+	// Owner-entity editorship is asked once per owner entity: unless every,
 	// only of items the rule does not show whole (drafts, scheduled, deleted,
 	// held, out of the site's scope) or leaves a version locked, so an editor
-	// is never offered a version of their group's.
-	var groups []string
+	// is never offered a version of their entity's.
+	var entities []string
 	for id, rs := range byID {
-		g := rs[0].ownerGroup
-		if g == "" || known(id) || slices.Contains(groups, g) {
+		g := rs[0].ownerEntity
+		if g == "" || known(id) || slices.Contains(entities, g) {
 			continue
 		}
 		if every || locked[id] || len(shown[id]) == 0 || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
-			groups = append(groups, g)
+			entities = append(entities, g)
 		}
 	}
-	editors := v.Editors(ctx, groups)
+	editors := v.Editors(ctx, entities)
 	for id, rs := range byID {
 		iv := &itemView{found: true, decisions: map[string]Decision{}}
 		out[id] = iv
-		if iv.editor = known(id) || editors[rs[0].ownerGroup]; iv.editor {
+		if iv.editor = known(id) || editors[rs[0].ownerEntity]; iv.editor {
 			for _, r := range rs {
 				if !v.management && !v.inScope(r) {
 					continue
@@ -511,7 +511,7 @@ func (s *Store) directViews(ctx context.Context, actor access.Actor, ids []strin
 // one of its versions is visible by the rule for direct reads (live, deleted
 // and held by its own keys, or edited by the viewer), accessible when the
 // viewer opens it (a content reference: any of its visible versions), with
-// staff, creators and owner-group editors as Editor and the first creator as
+// staff, creators and owner-entity editors as Editor and the first creator as
 // Owner. A reference it omits is unseen.
 func (s *Store) Resolver() resolve.Resolver { return resolver{s} }
 
@@ -540,7 +540,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 			continue
 		}
 		o := owners[ref.ContentID]
-		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: o.creator, Comments: o.comments, OwnerGroup: o.group}
+		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: o.creator, Comments: o.comments, OwnerEntity: o.entity}
 		for _, ver := range iv.versions {
 			if want := ref.Version(); want == "" || ver.versionID == want {
 				res.Visible = true
@@ -555,16 +555,16 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 }
 
 // ownership is a content item's first creator, comments setting and active
-// user-owned owner group.
+// user-owned owner entity.
 type ownership struct {
 	creator, comments string
-	group             *resolve.OwnerGroup
+	entity            *resolve.OwnerEntity
 }
 
 func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership, error) {
 	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, coalesce((SELECT cc.user_id FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id
  AND cc.content_id = c.id ORDER BY cc.position, cc.user_id LIMIT 1), ''), coalesce(g.id, ''), coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
- FROM `+s.t.items+` c LEFT JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id AND g.state = 'active'
+ FROM `+s.t.items+` c LEFT JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_entity_id AND g.state = 'active'
  WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return nil, err
@@ -574,12 +574,12 @@ func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership,
 	for rows.Next() {
 		var id string
 		var o ownership
-		var g resolve.OwnerGroup
+		var g resolve.OwnerEntity
 		if err := rows.Scan(&id, &o.comments, &o.creator, &g.ID, &g.Kind, &g.Owner, &g.Scope); err != nil {
 			return nil, err
 		}
-		if g.ID != "" && s.cfg.GroupKinds[g.Kind].Owner == "user" {
-			o.group = &g
+		if g.ID != "" && s.cfg.EntityKinds[g.Kind].Owner == "user" {
+			o.entity = &g
 		}
 		out[id] = o
 	}
