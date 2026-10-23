@@ -713,6 +713,12 @@ Content jobs use `contentkit_content_*` River kinds. Their previous
 worker retains `contentkit_catalog_deliver_events` until its removal. The Go
 package remains `catalog`; OpenRails uses catalog for its products and prices.
 
+During deployment, keep old workers away from newly named jobs: stop the old
+fleet before starting the new one, or first deploy workers that recognize both
+names while producers still use the old names. River fetches unknown kinds by
+default, so overlapping old and new fleets can fail new jobs. Rollback has the
+same constraint: drain newly named jobs or retain workers that recognize them.
+
 [Content filters](docs/content-filters.md) form one app-scoped entity layer across
 explicit `applies_to` content kinds. Domains define their offered toggles and
 defaults; `require_entities` independently scopes hard requirements by kind.
