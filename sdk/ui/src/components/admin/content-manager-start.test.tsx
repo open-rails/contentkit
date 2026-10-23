@@ -80,7 +80,7 @@ it("asks before switching language discards a post's unsaved text", async () => 
   blogServer();
   fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "Unsaved" } });
   await user.click(screen.getByRole("combobox", { name: "Language" }));
-  await user.click(await screen.findByRole("option", { name: "de" }));
+  await user.click(await screen.findByRole("option", { name: "German" }));
   expect(await screen.findByText("Unsaved changes in this language will be discarded.")).toBeVisible();
   expect(screen.getByLabelText("Title")).toHaveValue("Unsaved");
 });
@@ -94,6 +94,7 @@ it("takes the server's normalized text back after saving, so nothing reads as un
   await waitFor(() => expect(writes).toEqual(["text:Old title"]));
   await waitFor(() => expect(screen.getByLabelText("Body")).toHaveValue("Hello"));
   await user.click(screen.getByRole("combobox", { name: "Language" }));
-  await user.click(await screen.findByRole("option", { name: "de" }));
+  await user.click(await screen.findByRole("option", { name: "German" }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Language" })).toHaveTextContent("German"));
   expect(screen.queryByText("Unsaved changes in this language will be discarded.")).toBeNull();
 });
