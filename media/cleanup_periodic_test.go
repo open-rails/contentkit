@@ -24,7 +24,19 @@ func (idleCleanupStore) List(context.Context, string) iter.Seq2[Object, error] {
 	return func(func(Object, error) bool) {}
 }
 
-func TestCleanupDailyRestartCatchesUp(t *testing.T) {
+type cleanupStartupProbeArgs struct{}
+
+func (cleanupStartupProbeArgs) Kind() string { return "cleanup_startup_probe" }
+
+type cleanupStartupProbeWorker struct {
+	river.WorkerDefaults[cleanupStartupProbeArgs]
+}
+
+func (*cleanupStartupProbeWorker) Work(context.Context, *river.Job[cleanupStartupProbeArgs]) error {
+	return nil
+}
+
+func TestCleanupDailyRestartOnlyCatchesUpWhenDue(t *testing.T) {
 	pool := pgtest.Pool(t, nil)
 	schema := pgtest.Schema(t, t.Context(), pool)
 	riverSchema := pgtest.EmptySchema(t, t.Context(), pool)
@@ -45,29 +57,51 @@ func TestCleanupDailyRestartCatchesUp(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		workers := river.NewWorkers()
+		river.AddWorker(workers, &cleanupStartupProbeWorker{})
+		// A separate native probe makes this test wait for the new leader's
+		// startup batch, without assuming how long its election takes.
+		probe := river.NewPeriodicJob(river.PeriodicInterval(24*time.Hour), func() (river.JobArgs, *river.InsertOpts) {
+			return cleanupStartupProbeArgs{}, &river.InsertOpts{Queue: jobs.cfg.Queue}
+		}, &river.PeriodicJobOpts{ID: "cleanup_startup_probe", RunOnStart: true})
 		client, err := riverhelpers.New(t.Context(), pool, &river.Config{Schema: riverSchema,
+			CompletedJobRetentionPeriod: 72 * time.Hour,
+			Workers:                     workers, PeriodicJobs: []*river.PeriodicJob{probe},
 			FetchPollInterval: 20 * time.Millisecond, FetchCooldown: 10 * time.Millisecond}, jobs.RiverJobs())
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = client.StopAndCancel(context.Background()) })
+		events, unsubscribe := client.Subscribe(river.EventKindJobCompleted)
+		defer unsubscribe()
 		if err := client.Start(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		return client
+		deadline := time.NewTimer(10 * time.Second)
+		defer deadline.Stop()
+		for {
+			select {
+			case event := <-events:
+				if event.Job.Kind == (cleanupStartupProbeArgs{}).Kind() {
+					return client
+				}
+			case <-deadline.C:
+				t.Fatal("new leader did not finish its startup batch")
+			}
+		}
 	}
 	awaitCompleted := func(want int) {
 		t.Helper()
 		deadline := time.Now().Add(10 * time.Second)
+		var count int
 		for time.Now().Before(deadline) {
-			var count int
 			err := pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{riverSchema, "river_job"}.Sanitize()+" WHERE kind='contentkit_media_cleanup_due' AND state='completed'").Scan(&count)
 			if err == nil && count >= want {
 				return
 			}
 			time.Sleep(25 * time.Millisecond)
 		}
-		t.Fatalf("daily cleanup did not complete %d startup runs", want)
+		t.Fatalf("daily cleanup completed %d startup runs, want %d", count, want)
 	}
 	first := start()
 	awaitCompleted(1)
@@ -75,8 +109,23 @@ func TestCleanupDailyRestartCatchesUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := start()
-	awaitCompleted(2)
+	var count int
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{riverSchema, "river_job"}.Sanitize()+" WHERE kind='contentkit_media_cleanup_due'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("recent daily cleanup ran again on restart: count=%d err=%v", count, err)
+	}
 	if err := second.StopAndCancel(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Keep the test fast while representing a genuinely overdue daily run.
+	if _, err := pool.Exec(t.Context(), "UPDATE "+pgx.Identifier{riverSchema, "river_job"}.Sanitize()+`
+		SET created_at=now()-interval '25 hours', scheduled_at=now()-interval '25 hours',
+		attempted_at=now()-interval '25 hours', finalized_at=now()-interval '25 hours'
+		WHERE kind='contentkit_media_cleanup_due'`); err != nil {
+		t.Fatal(err)
+	}
+	third := start()
+	awaitCompleted(2)
+	if err := third.StopAndCancel(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	producer, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: riverSchema})
