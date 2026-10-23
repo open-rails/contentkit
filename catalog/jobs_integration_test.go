@@ -31,7 +31,7 @@ func TestContentJobsDispatchLegacyKinds(t *testing.T) {
 	events, unsubscribe := client.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed)
 	defer unsubscribe()
 	want := make(map[int64]string)
-	for _, name := range []string{"publish_due", "refresh_counts", "purge_deleted", "release_free"} {
+	for _, name := range []string{"publish_due", "purge_deleted"} {
 		for _, prefix := range []string{"contentkit_catalog_", "contentkit_content_"} {
 			kind := prefix + name
 			job, err := client.Insert(ctx, queuedContentArgs{kind: kind}, &river.InsertOpts{Queue: "contentkit_catalog", MaxAttempts: 1})

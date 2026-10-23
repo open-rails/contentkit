@@ -11,7 +11,6 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
-	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/media"
@@ -52,7 +51,6 @@ const (
 	preferenceSyncEvery = 30 * time.Second
 	resyncEvery         = 24 * time.Hour
 	repairEvery         = time.Hour
-	erasureEvery        = 24 * time.Hour
 	reclassifyEvery     = 10 * time.Minute
 	recountEvery        = 15 * time.Minute
 	windowsEvery        = time.Minute
@@ -79,7 +77,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &erasureWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &groupsWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
@@ -106,7 +103,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{}, true)
 			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true}, false)
 			periodic("contentkit_projection_repair", repairEvery, repairArgs{}, true)
-			periodic("contentkit_erasure", erasureEvery, erasureArgs{}, false)
 		}
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
@@ -137,7 +133,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 }
 
 // rebuild queues the jobs that rebuild what an import changed: search
-// documents, group counts and covers, and listing counts. Before Start their
+// documents and group counts and covers. Before Start their
 // periodic first runs do it.
 func (e *Engine) rebuild(ctx context.Context) error {
 	c := e.jobs.bound()
@@ -147,8 +143,7 @@ func (e *Engine) rebuild(ctx context.Context) error {
 	opts := func(queue string) *river.InsertOpts {
 		return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
 	}
-	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}, {Args: groupsArgs{}, InsertOpts: opts(QueueContentKit)},
-		{Args: catalog.RefreshCountsJob(), InsertOpts: opts(catalog.Queue)}}
+	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}, {Args: groupsArgs{}, InsertOpts: opts(QueueContentKit)}}
 	_, err := c.InsertMany(ctx, params)
 	return err
 }
@@ -278,30 +273,6 @@ func (w *repairWorker) Work(ctx context.Context, job *river.Job[repairArgs]) err
 		}
 		opts.After = res.Next
 	}
-}
-
-type erasureArgs struct{}
-
-func (erasureArgs) Kind() string { return "contentkit_erasure" }
-
-// erasureWorker removes residue of every recorded erasure, also after a
-// restore.
-type erasureWorker struct {
-	river.WorkerDefaults[erasureArgs]
-	e *Engine
-}
-
-func (w *erasureWorker) Timeout(*river.Job[erasureArgs]) time.Duration { return time.Hour }
-
-func (w *erasureWorker) Work(ctx context.Context, _ *river.Job[erasureArgs]) error {
-	report, err := w.e.hub.EnforceErasures(ctx)
-	if err = ignoreDisabled(err); err != nil {
-		return err
-	}
-	if !report.Complete() {
-		return fmt.Errorf("contentkit: erasure incomplete: %v", report.Remaining)
-	}
-	return nil
 }
 
 type reclassifyArgs struct{}

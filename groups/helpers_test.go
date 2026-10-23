@@ -75,7 +75,6 @@ func vid(n, i int) string { return fmt.Sprintf("01920000-0000-7000-9000-%010d%02
 type version struct {
 	languages []string
 	live      *time.Time
-	favorites int
 }
 
 var past = time.Now().Add(-time.Hour)
@@ -95,8 +94,8 @@ func (f *fixture) content(kind string, n int, versions ...version) {
 			tenant, vid(n, i), cid(n), i, v.languages); err != nil {
 			f.t.Fatal(err)
 		}
-		if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+q+`.content_facets (tenant_id, content_id, version_id, kind, live_from, languages, access_level, favorites, published_at)
- VALUES ($1, $2, $3, $4, $5, $6, 'public', $7, $5)`, tenant, cid(n), vid(n, i), kind, v.live, v.languages, v.favorites); err != nil {
+		if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+q+`.content_facets (tenant_id, content_id, version_id, kind, live_from, languages, access_level, published_at)
+ VALUES ($1, $2, $3, $4, $5, $6, 'public', $5)`, tenant, cid(n), vid(n, i), kind, v.live, v.languages); err != nil {
 			f.t.Fatal(err)
 		}
 	}

@@ -207,8 +207,8 @@ func TestPurgeErasesInteractionsIntegration(t *testing.T) {
 	}
 }
 
-// A backlog larger than one batch drains in one run; a sold item's deleted
-// versions stay for its holders.
+// A backlog larger than one batch drains in one run, including a sold item's
+// deleted versions.
 func TestPurgeDrainsBacklogIntegration(t *testing.T) {
 	f := newFixture(t, nil)
 	var ids []string
@@ -228,8 +228,8 @@ func TestPurgeDrainsBacklogIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.advance(DefaultDeletedRetention + time.Hour)
-	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != len(ids) {
-		t.Fatalf("purge: %d %v, want %d", n, err, len(ids))
+	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != len(ids)+1 {
+		t.Fatalf("purge: %d %v, want %d", n, err, len(ids)+1)
 	}
 	var items, versions int
 	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_items")).Scan(&items); err != nil {
@@ -238,7 +238,45 @@ func TestPurgeDrainsBacklogIntegration(t *testing.T) {
 	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_versions")+` WHERE id = $1`, soldVersion).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if items != 1 || versions != 1 {
-		t.Fatalf("after draining: %d items, sold item's deleted version kept %d", items, versions)
+	if items != 1 || versions != 0 {
+		t.Fatalf("after draining: %d items, sold item's deleted versions=%d", items, versions)
 	}
+}
+
+// A host may temporarily omit billing. Deletion still records the obligation
+// in retained offers, including version offers beneath a deleted parent.
+func TestPurgeRetiresOffersWithoutBillingIntegration(t *testing.T) {
+	f := newFixture(t, nil)
+	id := f.create("staff", gallery("Purchased", "en"))
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_items")+` SET ever_sold=true WHERE tenant_id=$1 AND id=$2`, tenant, id); err != nil {
+		t.Fatal(err)
+	}
+	f.publish("staff", id, nil)
+	vid := f.read("staff", "main.test", id)[0].Versions[0].ID
+	if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_offers")+`(tenant_id,id,target_kind,target_id,terms,product_id,synced_revision) VALUES
+ ($1,'content-offer','content',$2,'{}','product-content',1),
+ ($1,'version-offer','version',$3,'{}','product-version',1),
+ ('other','other-offer','content',$2,'{}','other-product',1)`, tenant, id, vid); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	check := func() {
+		t.Helper()
+		var pending int
+		if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_offers")+` WHERE tenant_id=$1 AND state='withdrawn' AND revision=2 AND synced_revision=1 AND product_id IS NOT NULL AND content_id=$2`, tenant, id).Scan(&pending); err != nil || pending != 2 {
+			t.Fatalf("retained archive obligations=%d: %v", pending, err)
+		}
+		var state string
+		if err := f.pool.QueryRow(f.ctx, `SELECT state FROM `+f.table("content_offers")+` WHERE tenant_id='other'`).Scan(&state); err != nil || state != "active" {
+			t.Fatalf("other app changed: %s %v", state, err)
+		}
+	}
+	check()
+	f.advance(DefaultDeletedRetention + time.Hour)
+	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != 1 {
+		t.Fatalf("purge: %d %v", n, err)
+	}
+	check()
 }

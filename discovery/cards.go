@@ -115,10 +115,10 @@ type CardAccess struct {
 	Unknown bool `json:"unknown,omitempty"`
 	// Sell are the keys whose purchase opens it; Requires is the key a buyer
 	// holds first.
-	Sell      []string        `json:"sell,omitempty"`
-	Requires  string          `json:"requires,omitempty"`
-	Preview   *access.Preview `json:"preview,omitempty"`
-	FreeAfter *time.Time      `json:"free_after,omitempty"`
+	Sell     []string         `json:"sell,omitempty"`
+	Requires string           `json:"requires,omitempty"`
+	Preview  *access.Preview  `json:"preview,omitempty"`
+	Releases []access.Release `json:"releases,omitempty"`
 	// Offers are the purchasable offers of Sell's keys; tiers are the host's
 	// to label.
 	Offers []offers.Sale `json:"offers,omitempty"`
@@ -241,7 +241,7 @@ func (s *Service) cardRows(ctx context.Context, q *sel, picks []pick) ([]cardRow
 	for k, v := range largs {
 		args[k] = v
 	}
-	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
+	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, coalesce(counts.likes, 0), coalesce(counts.dislikes, 0), coalesce(counts.favorites, 0),
  f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), CASE WHEN c.kind=ANY(@d_title_kinds::text[]) THEN nullif(c.original_title,'') END, t.title, ''),
  CASE WHEN nullif(vt.title,'') IS NOT NULL THEN vt.language WHEN c.kind=ANY(@d_title_kinds::text[]) AND nullif(c.original_title,'') IS NOT NULL THEN coalesce(nullif(c.original_language,''),t.language,'') ELSE coalesce(t.language,'') END,
@@ -253,6 +253,7 @@ FROM unnest(@d_vids::text[]) WITH ORDINALITY AS p(vid, ord)
 JOIN %[1]s f ON f.tenant_id = @d_tenant AND f.version_id = p.vid
 JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
 JOIN %[3]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id
+LEFT JOIN %[10]s counts ON counts.tenant_id = f.tenant_id AND counts.content_kind = f.kind AND counts.content_id = f.content_id AND counts.content_version_id IS NULL
 LEFT JOIN %[4]s cd ON cd.tenant_id = c.tenant_id AND cd.content_kind = c.kind AND cd.content_id = c.id
 LEFT JOIN LATERAL (SELECT x.title, x.language, left(x.description, 600) AS description, x.body_excerpt FROM %[5]s x WHERE x.tenant_id = c.tenant_id AND x.content_id = c.id
  ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1) t ON true
@@ -260,7 +261,7 @@ LEFT JOIN LATERAL (SELECT x.title,x.description,x.language FROM %[6]s x
  WHERE x.tenant_id=v.tenant_id AND x.version_id=v.id
  AND ((c.kind=ANY(@d_title_kinds::text[]) AND x.language=ANY(v.languages)) OR (NOT(c.kind=ANY(@d_title_kinds::text[])) AND x.language=t.language))
  ORDER BY (nullif(x.title,'') IS NOT NULL) DESC,x.language=@d_display DESC,array_position(v.languages,x.language),x.language LIMIT 1) vt ON true
-ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.versionText, s.t.creators, listed, edition.Order("g", "@d_display::text")),
+ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.versionText, s.t.creators, listed, edition.Order("g", "@d_display::text"), s.t.counts),
 		args)
 	if err != nil {
 		return nil, err
@@ -381,9 +382,10 @@ func (s *Service) settle(ctx context.Context, q *sel, rows []cardRow) error {
 	}
 	now := s.o.Now()
 	for i, d := range ds {
-		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, FreeAfter: d.FreeAfter, Level: access.Public}
+		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, Releases: d.Releases, Level: access.Public}
+		a.Releases = slices.DeleteFunc(slices.Clone(a.Releases), func(r access.Release) bool { return internal[r.Group] })
 		if r := items[i].Rule; !r.Free(now) {
-			a.Level, a.Tiers = r.Level, r.Tiers
+			a.Level, a.Tiers = r.Level, r.AudienceTiers(now)
 		}
 		for _, k := range d.Sell {
 			if k.Kind() != access.KeyGroup || !internal[k.Group()] {

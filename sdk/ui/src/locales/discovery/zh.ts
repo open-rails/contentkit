@@ -38,7 +38,6 @@ export const discovery: typeof en = {
     moreChips_one: "另外 {count} 个",
     moreChips_other: "另外 {count} 个",
     completed: "已完成",
-    freeFrom: "{date} 起免费",
     favorites: "收藏",
     likes: "点赞",
     empty: "这里还没有内容。",

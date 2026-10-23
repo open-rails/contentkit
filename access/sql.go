@@ -53,12 +53,15 @@ func (f *Filter) SQL(alias string, mode Mode) (string, map[string]any, error) {
 		"access_groups_complete":   f.anonymous || f.groupsComplete,
 	}
 	return fmt.Sprintf(`(%[1]s.access_level = 'public'
- OR %[1]s.access_free_after <= now()
+ OR EXISTS (SELECT 1 FROM jsonb_array_elements(%[1]s.access_releases) release WHERE (release->>'at')::timestamptz <= now()
+ AND (release->>'level' = 'public'
+ OR (release->>'level' = 'tier' AND ARRAY(SELECT jsonb_array_elements_text(release->'tiers')) && @access_tiers::text[])
+ OR (release->>'level' = 'group' AND release->>'group_id' = ANY(@access_groups::text[]))))
  OR (%[1]s.access_level = 'tier' AND %[1]s.access_tiers && @access_tiers::text[])
  OR (%[1]s.access_level = 'group' AND %[1]s.access_group_id = ANY(@access_groups::text[]))
  OR %[1]s.group_ids && @access_groups::text[]
  OR %[1]s.content_id = ANY(@access_contents::text[])
  OR %[1]s.version_id = ANY(@access_versions::text[])
  OR NOT @access_contents_complete::boolean
- OR (NOT @access_groups_complete::boolean AND (%[1]s.access_level = 'group' OR cardinality(%[1]s.group_ids) > 0)))`, alias), args, nil
+ OR (NOT @access_groups_complete::boolean AND (%[1]s.access_level = 'group' OR cardinality(%[1]s.group_ids) > 0 OR EXISTS (SELECT 1 FROM jsonb_array_elements(%[1]s.access_releases) release WHERE release->>'level' = 'group' AND (release->>'at')::timestamptz <= now()))))`, alias), args, nil
 }

@@ -101,8 +101,8 @@ type Decision struct {
 	Requires *Key
 	// Preview is the part a viewer may read while it is locked.
 	Preview *Preview
-	// FreeAfter is when it opens to anyone.
-	FreeAfter *time.Time
+	// Releases describe upcoming additional audiences.
+	Releases []Release
 }
 
 // Filter reads the viewer's access in one billing read: the configured tiers
@@ -256,6 +256,11 @@ func (g *Gate) Settle(ctx context.Context, actor Actor, f *Filter, items []Item)
 	return keep, slices.Contains(keep, false), err
 }
 
+type releasePlan struct {
+	at   time.Time
+	keys []Key
+}
+
 type itemPlan struct {
 	invalid  bool
 	rule     Rule
@@ -264,6 +269,7 @@ type itemPlan struct {
 	groups   []Key // Item.Groups, and the rule's group for GroupLevel
 	tiers    []Key // TierLevel: the configured ones among the rule's
 	requires *Key  // GroupPPV
+	releases []releasePlan
 }
 
 func (g *Gate) plan(ctx context.Context, items []Item) []itemPlan {
@@ -281,6 +287,9 @@ func (g *Gate) plan(ctx context.Context, items []Item) []itemPlan {
 
 func (g *Gate) planOne(it Item) (itemPlan, error) {
 	p := itemPlan{rule: it.Rule}
+	if err := it.Rule.validateReleases(kinds.Config{Tiers: g.tiers}); err != nil {
+		return p, err
+	}
 	var err error
 	if p.content, err = ContentKey(g.tenant, it.Content); err != nil {
 		return p, err
@@ -319,6 +328,28 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 		}
 	default:
 		return p, fmt.Errorf("%w: unknown level %q", ErrRule, it.Rule.Level)
+	}
+	for _, release := range it.Rule.Releases {
+		rp := releasePlan{at: release.At}
+		switch release.Level {
+		case Public:
+		case TierLevel:
+			for _, tier := range release.Tiers {
+				if !g.tierSet[tier] {
+					return p, ErrRule
+				}
+				rp.keys = append(rp.keys, Key{kind: KeyTier, id: tier})
+			}
+		case GroupLevel:
+			key, err := GroupKey(g.tenant, release.Group)
+			if err != nil {
+				return p, err
+			}
+			rp.keys = append(rp.keys, key)
+		default:
+			return p, ErrRule
+		}
+		p.releases = append(p.releases, rp)
 	}
 	return p, nil
 }
@@ -421,6 +452,11 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 	if p.version != nil {
 		opens = append(opens, *p.version)
 	}
+	for _, release := range p.releases {
+		if !now.Before(release.at) {
+			opens = append(opens, release.keys...)
+		}
+	}
 	for _, k := range opens {
 		if ask(k) {
 			return Decision{Allowed: true}, nil
@@ -447,10 +483,7 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 	if !requiresHeld {
 		d.Requires = p.requires
 	}
-	if p.rule.FreeAfter != nil {
-		t := *p.rule.FreeAfter
-		d.FreeAfter = &t
-	}
+	d.Releases = slices.Clone(p.rule.Releases)
 	return d, nil
 }
 

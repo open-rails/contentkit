@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -228,6 +227,9 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 			return err
 		}
 	}
+	if _, err := s.recordReleases(ctx, tx, ids); err != nil {
+		return err
+	}
 	changed, retitled, err := s.writeImport(ctx, tx, b)
 	if err != nil {
 		return err
@@ -277,10 +279,10 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	if err := s.putCodes(ctx, tx, written); err != nil {
 		return codeError(err)
 	}
-	if err := s.RefreshFacets(ctx, tx, written); err != nil {
+	if err := s.emit(ctx, tx, events...); err != nil {
 		return err
 	}
-	if err := s.emit(ctx, tx, events...); err != nil {
+	if err := s.RefreshFacets(ctx, tx, written); err != nil {
 		return err
 	}
 	if s.media != nil {
@@ -552,9 +554,6 @@ func (s *Store) checkVersionCodes(ctx context.Context, tx pgx.Tx, rows []importV
 	}
 	return fmt.Errorf("%w: version %s cannot take code %s: it has another, or another version of its content has it", ErrConflict, id, code)
 }
-
-// RefreshCountsJob is RefreshCounts' job, for Queue: an import queues it.
-func RefreshCountsJob() river.JobArgs { return refreshCountsArgs{} }
 
 // importTimes are a record's publication times. A published one is live from
 // publish_at (its stored time, else now, when omitted) and went live at
@@ -960,11 +959,21 @@ func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions
 	if err != nil {
 		return err
 	}
+	var releaseIDs []string
 	for locked.Next() {
+		var id string
+		if err := locked.Scan(&id); err != nil {
+			locked.Close()
+			return err
+		}
+		releaseIDs = append(releaseIDs, id)
 	}
 	err = locked.Err()
 	locked.Close()
 	if err != nil {
+		return err
+	}
+	if _, err := s.recordReleases(ctx, tx, releaseIDs); err != nil {
 		return err
 	}
 	if len(contents) > 0 {

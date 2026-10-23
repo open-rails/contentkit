@@ -80,6 +80,14 @@ it does not create a second record.
 The entity that disambiguates a scoped entity, such as the series to which
 a character belongs. The same character name can occur in different series.
 
+**Audience**:
+The readers an access policy names: everyone, or holders of particular tier
+or group entitlements.
+
+**Audience release**:
+The opening of published content to an additional audience at a stated time.
+Earlier audiences keep access. A release does not grant a billing entitlement.
+
 **Publishing operation**:
 One durable submission of content, its associations and an archive, tracked
 from acceptance through processing to a ready draft or publication.

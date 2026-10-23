@@ -275,3 +275,33 @@ the operation reports `scheduled` and the Go helper returns successfully. If
 processing finishes late, release occurs when it is ready. A scheduled receipt
 includes its planned date and content path; the content stays private until
 release. Continue reading the same operation to observe eventual `published`.
+
+
+## Audience releases
+
+Publication dates determine when content and its versions become available.
+An access rule can add audiences at later timestamps through `releases`:
+
+```json
+{
+  "level": "tier", "tiers": ["early"],
+  "releases": [
+    {"at": "2027-01-02T00:00:00Z", "level": "tier", "tiers": ["standard"]},
+    {"at": "2027-01-09T00:00:00Z", "level": "public"}
+  ]
+}
+```
+
+The early audience keeps access as later audiences open. Tier names have no
+implicit ordering. Release audiences use existing tier or group entitlements;
+a public audience needs neither. The content and version publication dates,
+moderation and media readiness still apply. A version override replaces the
+whole inherited access policy. Omitting `releases` keeps ordinary access rules.
+
+Reads evaluate timestamps directly. The five-minute publication recorder adds
+release facts to the retained event log and catches up after downtime. Consumers
+use the event's effective timestamp separately from its recording timestamp.
+Backdating a newly added grant does not pretend access existed before that edit.
+
+The migration converts old `free_after` rules into equivalent public releases.
+New writes use `releases`; Doujins and Hentai0 do not opt in to schedules.

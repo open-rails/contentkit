@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/authkit/auth"
@@ -120,7 +119,7 @@ func TestVersionDefaultsIntegration(t *testing.T) {
 
 // A content item goes draft -> scheduled -> live -> deleted -> restored, and
 // only its editors see it before and while it is not live; a deleted item
-// stays readable to holders of its key, and one never sold is erased after
+// stays readable to holders of its key until it is erased after
 // the retention, rows and all.
 func TestLifecycleIntegration(t *testing.T) {
 	f := newFixture(t, nil)
@@ -219,8 +218,7 @@ func TestLifecycleIntegration(t *testing.T) {
 		t.Fatal("an unpublished item shows")
 	}
 
-	// Purge: a deleted item never sold is erased after the retention; a sold
-	// one stays for its holders.
+	// Purge applies the same retention to sold and never-sold content.
 	sold := f.create("staff", gallery("Sold", "en"))
 	f.publish("staff", sold, nil)
 	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_items")+` SET ever_sold = true WHERE id = $1`, sold); err != nil {
@@ -233,7 +231,7 @@ func TestLifecycleIntegration(t *testing.T) {
 		t.Fatalf("purge inside the retention: %d %v", n, err)
 	}
 	f.advance(DefaultDeletedRetention + time.Hour)
-	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != 1 {
+	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != 2 {
 		t.Fatalf("purge: %d %v", n, err)
 	}
 	var left []string
@@ -243,8 +241,8 @@ func TestLifecycleIntegration(t *testing.T) {
 		_ = rows.Scan(&x)
 		left = append(left, x)
 	}
-	if !slices.Equal(left, []string{sold}) {
-		t.Fatalf("after purge %v, want only the sold item", left)
+	if len(left) != 0 {
+		t.Fatalf("after purge %v, want no remaining content", left)
 	}
 
 	// Every committed change remains independently readable.
@@ -440,49 +438,31 @@ func TestHiddenVersionFollowsTextIntegration(t *testing.T) {
 	}
 }
 
-// Once a free_after time passes, ReleaseFree runs a write's effects for the
-// content once (reads open it from that time on their own): a content update
-// event goes out, and a second run finds nothing; moving free_after arms it
-// again.
-func TestReleaseFreeIntegration(t *testing.T) {
+// Audience release facts use the same recorder as publication.
+func TestAudienceReleaseIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	free := f.now().Add(time.Hour)
-	in := gallery("Soon free", "en")
-	in.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, FreeAfter: &free}
+	at := f.now().Add(time.Hour)
+	in := gallery("Audience release", "en")
+	in.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, Releases: []access.Release{{At: at, Level: access.Public}}}
 	id := f.create("staff", in)
 	f.publish("staff", id, nil)
-	plain := f.create("staff", gallery("Plain", "en"))
-	f.publish("staff", plain, nil)
-	applied := func() bool {
-		t.Helper()
-		var ok bool
-		if err := f.pool.QueryRow(f.ctx, `SELECT bool_and(free_applied) FROM `+pgx.Identifier{f.schema, "content_facets"}.Sanitize()+` WHERE content_id = $1`, id).Scan(&ok); err != nil {
-			t.Fatal(err)
-		}
-		return ok
-	}
-	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 0 || applied() {
-		t.Fatalf("released %d (%v) before free_after", n, err)
-	}
-	if d := f.read("", "main.test", id)[0].Versions[0].Decision; d.Allowed {
-		t.Fatalf("anonymous opens it before free_after: %+v", d)
+	if n, err := f.s.PublishDue(f.ctx); err != nil || n != 0 {
+		t.Fatalf("before: %d %v", n, err)
 	}
 	f.advance(2 * time.Hour)
-	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 1 || !applied() {
-		t.Fatalf("released %d (%v) after free_after", n, err)
+	if n, err := f.s.PublishDue(f.ctx); err != nil || n != 1 {
+		t.Fatalf("after: %d %v", n, err)
 	}
-	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 0 {
-		t.Fatalf("released again %d (%v)", n, err)
+	if n, err := f.s.PublishDue(f.ctx); err != nil || n != 0 {
+		t.Fatalf("retry: %d %v", n, err)
 	}
-	events := readEventLog(t, f)
-	if !slices.ContainsFunc(events, func(e EventRecord) bool { return e.Type == EventContentUpdated && e.ContentID == id }) {
-		t.Fatalf("no update event for the released item: %+v", events)
+	var got []EventRecord
+	for _, event := range readEventLog(t, f) {
+		if event.Type == EventAudienceReleased {
+			got = append(got, event)
+		}
 	}
-	later := f.now().Add(time.Hour)
-	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: &access.Rule{Level: access.PPV, FreeAfter: &later}}}}); err != nil {
-		t.Fatal(err)
-	}
-	if applied() {
-		t.Fatal("a moved free_after stays released")
+	if len(got) != 1 || got[0].ContentID != id || !got[0].OccurredAt.Equal(at) {
+		t.Fatalf("release facts: %+v", got)
 	}
 }

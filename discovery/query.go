@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/edition"
 	"github.com/open-rails/contentkit/kinds"
@@ -78,7 +79,7 @@ type Filter struct {
 	// Creators keeps content one of these users is credited on.
 	Creators []string
 	// Access keeps content at one of these levels: public is what anyone
-	// opens now (free_after included), the others what stays locked at that
+	// opens now (audience releases included), the others what stays locked at that
 	// level.
 	Access []string
 	// Tiers keeps content locked behind one of these tiers.
@@ -320,13 +321,13 @@ func (s *Service) accessFilter(q *sel, levels, tiers []string) error {
 			return fmt.Errorf("%w: tier %q is not configured", ErrInvalid, t)
 		}
 	}
-	const free = "(f.access_level = 'public' OR coalesce(f.access_free_after <= now(), false))"
+	free := access.PublicSQL("f")
 	if len(levels) > 0 {
-		q.and("(("+free+" AND 'public' = ANY(@d_levels::text[])) OR (NOT "+free+" AND f.access_level = ANY(@d_levels::text[])))",
+		q.and("(("+free+" AND 'public' = ANY(@d_levels::text[])) OR (NOT "+free+" AND (f.access_level = ANY(@d_levels::text[]) OR (cardinality("+access.ReleasedTiersSQL("f")+")>0 AND 'tier'=ANY(@d_levels::text[])))))",
 			pgx.NamedArgs{"d_levels": levels})
 	}
 	if len(tiers) > 0 {
-		q.and("(NOT "+free+" AND f.access_level = 'tier' AND f.access_tiers && @d_tiers::text[])", pgx.NamedArgs{"d_tiers": tiers})
+		q.and("(NOT "+free+" AND ((f.access_level = 'tier' AND f.access_tiers && @d_tiers::text[]) OR "+access.ReleasedTiersSQL("f")+" && @d_tiers::text[]))", pgx.NamedArgs{"d_tiers": tiers})
 	}
 	return nil
 }
@@ -474,7 +475,7 @@ type order struct {
 	ranking  *popularity.RankingInfo
 	rankings map[string]ContentRanking
 	// edition keys can differ between a content's versions (version
-	// memberships, copied counts): a content sorts by its shown edition's.
+	// memberships): a content sorts by its shown edition's.
 	edition bool
 }
 
@@ -505,7 +506,8 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		return s.standingOrder(raw, window, true), nil
 	case SortTopRated:
 		if period == "" || period == "all" {
-			o.expr, o.edition = "f.rating", true
+			o.expr = content.RatingSQL("coalesce(counts.likes, 0)", "coalesce(counts.dislikes, 0)")
+			o.join = s.countsJoin()
 			break
 		}
 		window, err := popularity.WindowForPeriod(period, s.now())
@@ -514,7 +516,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		}
 		return s.standingOrder(raw, window, false), nil
 	case SortMostFavorited:
-		o.expr, o.cast, o.edition = "f.favorites::bigint", "bigint", true
+		o.expr, o.cast, o.join = "coalesce(counts.favorites, 0)::bigint", "bigint", s.countsJoin()
 
 	case SortPosition:
 		if len(f.Groups) == 0 {
@@ -540,6 +542,12 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		return o, fmt.Errorf("%w: unknown sort %q", ErrInvalid, raw)
 	}
 	return o, nil
+}
+
+// countsJoin reads the current content-level aggregate once per content,
+// irrespective of how many versions match. Version reactions remain separate.
+func (s *Service) countsJoin() string {
+	return "LEFT JOIN " + s.t.counts + " counts ON counts.tenant_id = f.tenant_id AND counts.content_kind = f.kind AND counts.content_id = f.content_id AND counts.content_version_id IS NULL"
 }
 
 func (s *Service) sortName(raw, kind string) string {

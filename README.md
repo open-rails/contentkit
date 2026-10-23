@@ -282,11 +282,11 @@ parses one. Keys are constructed, never typed:
 
 A `Rule` is stored as JSON on content (`content_items.access`), as a
 version's override (`content_versions.access`) and on sellable groups:
-`{"level": "public" | "tier" | "group" | "ppv" | "group_ppv", "tiers", "group_id", "preview": {"pages" | "segments"}, "free_after"}`.
+`{"level": "public" | "tier" | "group" | "ppv" | "group_ppv", "tiers", "group_id", "preview": {"pages" | "segments"}, "releases": [{"at", "level", "tiers", "group_id"}]}`.
 `Rule.Validate(kinds)` checks it; `Rule.Facet()` projects it onto
 `content_facets`. A version opens with any of: its version key, its content
 key, the key of a group holding it, a tier its rule names, its rule's group
-(`group`), or a free rule (`public`, past `free_after`).
+(`group`), or a public rule or matured public audience release.
 
 A content item's `body` is part of what it sells: reads return it only to its
 editors and to viewers who open a version; others get `description` and the
@@ -304,7 +304,7 @@ gate, _ := access.NewGate(access.GateConfig{Tenant: "onlydemo", Kinds: cfg.Kinds
 f, _ := gate.Filter(ctx, actor)                  // one billing read: tiers, content and group keyspaces
 pred, args, _ := f.SQL("f", access.Hide)         // over content_facets f: only what the viewer opens
 keep, short, _ := gate.Settle(ctx, actor, f, items) // free unless a keyspace was truncated
-ds, _ := gate.Decide(ctx, actor, items)          // Allowed, or Sell, Requires, Preview, FreeAfter
+ds, _ := gate.Decide(ctx, actor, items)          // Allowed, or Sell, Requires, Preview, Releases
 prices, _ := offerSvc.Live(ctx, ds[0].Sell)      // which Sell keys are on sale, with their prices
 ```
 

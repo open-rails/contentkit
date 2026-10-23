@@ -169,6 +169,9 @@ func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn
 }
 
 func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) error {
+	if err := s.retireOffers(ctx, tx, fx.events); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET revision = revision + 1, updated_at = clock_timestamp() WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids); err != nil {
 		return err
 	}
@@ -177,10 +180,10 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 			return err
 		}
 	}
-	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
+	if err := s.emit(ctx, tx, fx.events...); err != nil {
 		return err
 	}
-	if err := s.emit(ctx, tx, fx.events...); err != nil {
+	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
 		return err
 	}
 	if s.media != nil && len(fx.republish) > 0 {
@@ -997,7 +1000,7 @@ const ownedBatch = 100
 // DeleteOwned deletes the live content of the deleted user-owned groups
 // among groups (every one with nil), recording each group as its content's
 // cause (groups.OwnedContent): holders of a deleted item's key still read
-// it, and one never sold is erased after the retention.
+// it until the content is erased after the deletion retention.
 func (s *Store) DeleteOwned(ctx context.Context, groups []string) error {
 	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id
  WHERE c.tenant_id = $1 AND g.state = 'deleted' AND g.kind = ANY($2) AND ($3::text[] IS NULL OR g.id = ANY($3)) AND c.state <> 'deleted'

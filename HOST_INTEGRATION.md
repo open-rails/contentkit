@@ -775,7 +775,7 @@ that fits the reader (`display_language` first, then position).
 A card carries title and path in the display language, cover renditions, the
 version (languages, traits, pages, duration), the version's groups with pages
 by kind, likes, dislikes, favorites and all-time viewers, the access decision
-(`allowed`, `sell`, `requires`, `preview`, `free_after`), the signed-in
+(`allowed`, `sell`, `requires`, `preview`, `releases`), the signed-in
 reader's favorite and progress, `published_at` and attributes. Content
 detail (`GET /contents/{id}`, `.../versions/{vid}`) carries the same
 `viewer` standing on the item and each version, to resume from. Without a
@@ -1479,8 +1479,9 @@ true only when:
    and export evaluates the ledger inside its own statement.
 
 The subject key is dead in that tenant forever. Residue (rows that landed
-after the fence or came back with a restore) is unreadable; the engine's
-erasure job removes it daily. After a restore, re-erase the subjects deleted
+after the fence or came back with a restore) is unreadable. Cleanup is
+explicit: the host can call `hub.EnforceErasures`; ContentKit does not schedule
+an erasure sweep. After a restore, re-erase the subjects deleted
 since the backup. A shared account exists in every tenant:
 each host erases its own tenant.
 

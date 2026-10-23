@@ -50,15 +50,17 @@ func TestPagesListEachContentOnceAcrossVersions(t *testing.T) {
 	}
 }
 
-// Copied counts can differ between a content's versions until the counts job
-// runs; paging by them still lists each content once.
-func TestPagesByCopiedCountsListEachContentOnce(t *testing.T) {
+// All matching versions share one current content aggregate. Version-specific
+// and other-tenant totals must not affect the content order or card counts.
+func TestPagesByLiveCountsListEachContentOnce(t *testing.T) {
 	f := newFixture(t, nil, "")
 	for n := 1; n <= 3; n++ {
 		f.seed(item{n: n, titles: map[string]string{"en": fmt.Sprintf("Counted %d", n)}, age: time.Duration(n) * time.Hour,
 			versions: []ver{{langs: []string{"en"}}, {langs: []string{"ja"}}}})
 	}
-	f.exec(`UPDATE `+f.table("content_facets")+` SET favorites = 5, rating = 0.5 WHERE version_id = $1`, f.vid(1, 0))
+	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,likes,favorites) VALUES ($1,'gallery',$2,9,5)`, tenant, f.cid(1))
+	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,content_version_id,likes,favorites) VALUES ($1,'gallery',$2,$3,100,100)`, tenant, f.cid(2), f.vid(2, 0))
+	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,likes,favorites) VALUES ('other','gallery',$1,100,100)`, f.cid(3))
 	for _, sort := range []string{"most_favorited", "top_rated"} {
 		var got []string
 		for cursor := ""; ; {
@@ -67,6 +69,15 @@ func TestPagesByCopiedCountsListEachContentOnce(t *testing.T) {
 				kv = append(kv, "cursor", cursor)
 			}
 			ids, page := f.list("main.test", "", q("/contents", kv...))
+			for _, card := range page.Contents {
+				likes, favorites := 0, 0
+				if card.ID == f.cid(1) {
+					likes, favorites = 9, 5
+				}
+				if card.Counts.Likes == nil || card.Counts.Favorites == nil || *card.Counts.Likes != likes || *card.Counts.Favorites != favorites {
+					t.Fatalf("%s current counts: %+v", sort, card)
+				}
+			}
 			got = append(got, ids...)
 			if cursor = page.NextCursor; cursor == "" {
 				break

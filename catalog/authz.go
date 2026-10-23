@@ -157,14 +157,14 @@ func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, id
 		}
 	}
 	if g.staff.write {
-		return out, nil
+		return out, s.recordBeforeEdit(ctx, q, ids, out)
 	}
 	for id, o := range out {
 		if !creator[id] && !g.editors[o.ownerGroup] {
 			return nil, ErrForbidden
 		}
 	}
-	return out, nil
+	return out, s.recordBeforeEdit(ctx, q, ids, out)
 }
 
 // authorizeCreate refuses unless actor may create content in ownerGroup: a

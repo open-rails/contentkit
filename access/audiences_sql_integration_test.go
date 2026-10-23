@@ -23,14 +23,17 @@ func TestAudiencesMatchDecide(t *testing.T) {
 	table := func(n string) string { return pgx.Identifier{schema, n}.Sanitize() }
 	past, future := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
 	rules := []access.Rule{
+		{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.TierLevel, Tiers: []string{"premium"}}}},
+		{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: past, Level: access.TierLevel, Tiers: []string{"premium"}}}},
+		{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: future, Level: access.TierLevel, Tiers: []string{"premium"}}}},
 		{Level: access.Public},
 		{Level: access.TierLevel, Tiers: []string{"premium"}},
 		{Level: access.TierLevel, Tiers: []string{"gold", "premium"}},
 		{Level: access.GroupLevel, Group: uid(900)},
 		{Level: access.PPV},
 		{Level: access.GroupPPV, Group: uid(900)},
-		{Level: access.PPV, FreeAfter: &past},
-		{Level: access.TierLevel, Tiers: []string{"gold"}, FreeAfter: &future},
+		{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.Public}}},
+		{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: future, Level: access.Public}}},
 	}
 	var items []access.Item
 	for i, r := range rules {
@@ -42,8 +45,8 @@ func TestAudiencesMatchDecide(t *testing.T) {
 		}{
 			{`INSERT INTO ` + table("content_items") + ` (tenant_id, id, kind) VALUES ($1, $2, 'post')`, []any{tenant, c}},
 			{`INSERT INTO ` + table("content_versions") + ` (tenant_id, id, content_id, languages) VALUES ($1, $2, $3, '{en}')`, []any{tenant, v, c}},
-			{`INSERT INTO ` + table("content_facets") + ` (tenant_id, content_id, version_id, kind, languages, access_level, access_tiers, access_group_id, access_free_after)
-				VALUES ($1, $2, $3, 'post', '{en}', $4, $5, $6, $7)`, []any{tenant, c, v, f.Level, f.Tiers, f.GroupID, f.FreeAfter}},
+			{`INSERT INTO ` + table("content_facets") + ` (tenant_id, content_id, version_id, kind, languages, access_level, access_tiers, access_group_id, access_releases)
+				VALUES ($1, $2, $3, 'post', '{en}', $4, $5, $6, $7)`, []any{tenant, c, v, f.Level, f.Tiers, f.GroupID, f.Releases}},
 		} {
 			if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
 				t.Fatal(err)
@@ -87,7 +90,26 @@ func TestAudiencesMatchDecide(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		filter, err := g.Filter(ctx, viewer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		predicate, parameters, err := filter.SQL("f", access.Hide)
+		if err != nil {
+			t.Fatal(err)
+		}
+		matched, err := pool.Query(ctx, `SELECT version_id FROM `+table("content_facets")+` f WHERE `+predicate, pgx.NamedArgs(parameters))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids, err := pgx.CollectRows(matched, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
 		for i, d := range ds {
+			if slices.Contains(ids, items[i].Version) != d.Allowed {
+				t.Errorf("SQL/Decide mismatch audience=%s rule=%+v", audience, items[i].Rule)
+			}
 			if d.Allowed {
 				want[items[i].Version] = append(want[items[i].Version], audience)
 			}

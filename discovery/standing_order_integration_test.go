@@ -115,7 +115,7 @@ func TestStandingOrderRanksCurrentPeopleInWindow(t *testing.T) {
 	if got, page := f.list("main.test", "", q("/contents", "kind", "gallery", "sort", "top_rated:30d")); got[0] != f.cid(9) || page.Ranking == nil || page.Ranking.Mode != "standing" {
 		t.Fatalf("top_rated:30d = %v %+v", got, page.Ranking)
 	}
-	f.exec(`UPDATE {s}.content_facets SET rating=0.9 WHERE content_id=$1`, f.cid(8))
+	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,likes) VALUES ($1,'gallery',$2,100)`, tenant, f.cid(8))
 	if got, page := f.list("main.test", "", q("/contents", "kind", "gallery", "sort", "top_rated")); got[0] != f.cid(8) || page.Ranking != nil {
 		t.Fatalf("all-time top_rated = %v %+v", got, page.Ranking)
 	}

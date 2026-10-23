@@ -97,9 +97,9 @@ type Decision struct {
 	// Sell is the keys a paywall offers; Requires the key a buyer holds first.
 	Sell     []string `json:"sell,omitempty"`
 	Requires string   `json:"requires,omitempty"`
-	// Preview is what a locked viewer still reads; FreeAfter when it opens to all.
-	Preview   *access.Preview `json:"preview,omitempty"`
-	FreeAfter *time.Time      `json:"free_after,omitempty"`
+	// Preview is what a locked viewer still reads; Releases describe additional audiences.
+	Preview  *access.Preview  `json:"preview,omitempty"`
+	Releases []access.Release `json:"releases,omitempty"`
 	// Offers are the purchasable offers of Sell's keys; tiers are the host's
 	// to label.
 	Offers []offers.Sale `json:"offers,omitempty"`

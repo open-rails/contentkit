@@ -1,5 +1,6 @@
 import { LockIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { ReleaseNotice } from "./release-notice.js";
 import { cn } from "cn";
 import { useCallback, useContext, useMemo, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
@@ -14,7 +15,7 @@ import { useKinds } from "../../react/groups.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
-import { contentError, ErrorLine, formatDate, useAction } from "../social/parts.js";
+import { contentError, ErrorLine, useAction } from "../social/parts.js";
 import { labelOf, type Labels } from "../groups/parts.js";
 import type { PlayerMenuItem } from "../video-player.js";
 
@@ -81,7 +82,7 @@ export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, childre
       </p>
       {preview?.pages ? <p className="text-muted-foreground">{m.plural("paywall.previewPages", preview.pages)}</p> : null}
       {preview?.segments ? <p className="text-muted-foreground">{m.plural("paywall.previewSegments", preview.segments)}</p> : null}
-      {decision.free_after && <p className="text-muted-foreground">{t("paywall.freeFrom", { date: formatDate(m, decision.free_after, false) })}</p>}
+      <ReleaseNotice releases={decision.releases} />
       {!decision.unknown && (
         <div className="flex flex-wrap gap-2" data-ckui="paywall-offers">
           {requires && (

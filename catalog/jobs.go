@@ -16,19 +16,31 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// PublishDue promotes scheduled content items and versions whose time came:
-// it stamps published_at and fires the side effects of going live (facets,
-// search documents, media exposure, events). Visibility itself never waits
-// for it: a scheduled item is live from its time. It returns how many items
-// and versions it promoted.
+// PublishDue records due publication and audience-release facts and refreshes
+// their projections. Reads use publication and audience timestamps directly;
+// this recorder never determines when a viewer gains access. The return value
+// counts the publication stamps and separately caught-up audience releases.
 func (s *Store) PublishDue(ctx context.Context) (int, error) {
 	total := 0
 	deadline := time.Now().Add(purgeBudget)
 	for after := ""; ; {
 		n, next, err := s.publishDue(ctx, after)
 		total += n
+		if err == nil && next == "" && n >= 500 && time.Now().Before(deadline) {
+			after = ""
+			continue
+		}
 		if err != nil || next == "" || time.Now().After(deadline) {
-			return total, err
+			if err != nil {
+				return total, err
+			}
+			for {
+				n, err := s.recordDueReleases(ctx)
+				total += n
+				if err != nil || n < releaseBatch || time.Now().After(deadline) {
+					return total, err
+				}
+			}
 		}
 		after = next
 	}
@@ -49,18 +61,19 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if after == "" {
 		rows, err = tx.Query(ctx, `UPDATE `+s.t.items+` SET published_at = publish_at, updated_at = clock_timestamp(), revision = revision + 1
  WHERE id IN (SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL AND publish_at <= $2
-  AND moderation = 'approved' ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND tenant_id = $1 RETURNING id, kind`, s.tenant, now)
+  AND moderation = 'approved' ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND tenant_id = $1 RETURNING id, kind, published_at`, s.tenant, now)
 		if err != nil {
 			return 0, "", err
 		}
 		for rows.Next() {
 			var id, kind string
-			if err := rows.Scan(&id, &kind); err != nil {
+			var at time.Time
+			if err := rows.Scan(&id, &kind, &at); err != nil {
 				rows.Close()
 				return 0, "", err
 			}
 			ids = append(ids, id)
-			events = append(events, Event{Type: EventContentPublished, Kind: kind, ContentID: id})
+			events = append(events, Event{Type: EventContentPublished, Kind: kind, ContentID: id, OccurredAt: at})
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -82,25 +95,27 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if err != nil {
 		return 0, "", err
 	}
-	rows, err = tx.Query(ctx, `UPDATE `+s.t.versions+` v SET published_at = v.publish_at, updated_at = clock_timestamp(), revision = v.revision + 1
+	rows, err = tx.Query(ctx, `UPDATE `+s.t.versions+` v SET published_at = greatest(v.publish_at,coalesce(c.published_at,c.publish_at)), updated_at = clock_timestamp(), revision = v.revision + 1
  FROM `+s.t.items+` c WHERE v.id IN (SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL
   AND content_id = ANY($3) AND publish_at <= $2 ORDER BY publish_at, id LIMIT 500 FOR UPDATE SKIP LOCKED)
  AND v.tenant_id = $1 AND c.tenant_id = v.tenant_id AND c.id = v.content_id
- RETURNING v.content_id, v.id, c.kind`, s.tenant, now, parents)
+ AND c.state='published' AND c.moderation='approved' AND c.published_at IS NOT NULL AND coalesce(c.published_at,c.publish_at)<=$2
+ RETURNING v.content_id, v.id, c.kind,v.published_at`, s.tenant, now, parents)
 	if err != nil {
 		return 0, "", err
 	}
 	versionCount := 0
 	for rows.Next() {
 		var id, vid, kind string
-		if err := rows.Scan(&id, &vid, &kind); err != nil {
+		var at time.Time
+		if err := rows.Scan(&id, &vid, &kind, &at); err != nil {
 			rows.Close()
 			return 0, "", err
 		}
 		if !slices.Contains(ids, id) {
 			ids = append(ids, id)
 		}
-		events = append(events, Event{Type: EventVersionPublished, Kind: kind, ContentID: id, VersionID: vid})
+		events = append(events, Event{Type: EventVersionPublished, Kind: kind, ContentID: id, VersionID: vid, OccurredAt: at})
 		versionCount++
 	}
 	rows.Close()
@@ -116,93 +131,16 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if len(ids) == 0 {
 		return 0, next, tx.Commit(ctx)
 	}
-	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
+	if err := s.emit(ctx, tx, events...); err != nil {
 		return 0, "", err
 	}
-	if err := s.emit(ctx, tx, events...); err != nil {
+	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
 		return 0, "", err
 	}
 	if err := s.exposeTx(ctx, tx, ids); err != nil {
 		return 0, "", err
 	}
 	return len(events), next, tx.Commit(ctx)
-}
-
-// ReleaseFree runs what follows a free_after time passing: the content items
-// whose versions turned free since the last run get their facets and
-// documents re-derived and their media, body images included, exposed to
-// everyone, as a write would. It returns how many items it released.
-func (s *Store) ReleaseFree(ctx context.Context) (int, error) {
-	total := 0
-	for {
-		n, err := s.releaseFree(ctx)
-		if total += n; err != nil || n < releaseBatch {
-			return total, err
-		}
-	}
-}
-
-const releaseBatch = 200
-
-func (s *Store) releaseFree(ctx context.Context) (int, error) {
-	tx, err := s.begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback(ctx)
-	now := s.now()
-	rows, err := tx.Query(ctx, `SELECT c.id, c.kind FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id IN (SELECT content_id FROM `+s.t.facets+`
- WHERE tenant_id = $1 AND NOT free_applied AND access_free_after <= $2) ORDER BY c.id LIMIT `+strconv.Itoa(releaseBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, now)
-	if err != nil {
-		return 0, err
-	}
-	var ids []string
-	var events []Event
-	for rows.Next() {
-		var id, kind string
-		if err := rows.Scan(&id, &kind); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		ids = append(ids, id)
-		events = append(events, Event{Type: EventContentUpdated, Kind: kind, ContentID: id})
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil || len(ids) == 0 {
-		return 0, err
-	}
-	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
-		return 0, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE `+s.t.facets+` SET free_applied = true WHERE tenant_id = $1 AND content_id = ANY($2) AND access_free_after <= $3`,
-		s.tenant, ids, now); err != nil {
-		return 0, err
-	}
-	if err := s.emit(ctx, tx, events...); err != nil {
-		return 0, err
-	}
-	if err := s.exposeTx(ctx, tx, ids); err != nil {
-		return 0, err
-	}
-	return len(ids), tx.Commit(ctx)
-}
-
-// RefreshCounts copies each content item's interaction counts into its
-// facets: likes, dislikes, favorites and rating (the Wilson lower bound of
-// likes over likes and dislikes). It returns how many facet rows changed.
-func (s *Store) RefreshCounts(ctx context.Context) (int, error) {
-	tag, err := s.pool.Exec(ctx, `UPDATE `+s.t.facets+` f SET likes = n.likes, dislikes = n.dislikes, favorites = n.favorites, rating = n.rating,
- updated_at = clock_timestamp()
- FROM (SELECT f.version_id, coalesce(c.likes, 0) AS likes, coalesce(c.dislikes, 0) AS dislikes, coalesce(c.favorites, 0) AS favorites,
-  `+content.RatingSQL("coalesce(c.likes, 0)", "coalesce(c.dislikes, 0)")+` AS rating
-  FROM `+s.t.facets+` f LEFT JOIN `+s.t.counts+` c ON c.tenant_id = f.tenant_id AND c.content_kind = f.kind AND c.content_id = f.content_id
-   AND c.content_version_id IS NULL WHERE f.tenant_id = $1) n
- WHERE f.tenant_id = $1 AND f.version_id = n.version_id
-  AND (f.likes, f.dislikes, f.favorites, f.rating) IS DISTINCT FROM (n.likes, n.dislikes, n.favorites, n.rating)`, s.tenant)
-	if err != nil {
-		return 0, err
-	}
-	return int(tag.RowsAffected()), nil
 }
 
 // ReconcileFacets explicitly refreshes every item's facets and search-document
@@ -257,17 +195,16 @@ const (
 	purgeBudget = 45 * time.Second
 )
 
-// PurgeDeleted erases what was deleted longer than the retention ago and never
-// sold: content items with their media folders, rows and interactions, then
-// deleted versions of the remaining items. Sold items, and every version of
-// one, stay for their holders. It returns how many items and versions it erased.
+// PurgeDeleted erases content and versions deleted longer than the retention
+// ago, including purchased content. Billing products and purchase history stay;
+// holders lose access to the erased media. It returns the number erased.
 func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
 	if _, err := s.PruneEvents(ctx); err != nil {
 		return 0, err
 	}
 	cutoff := s.now().Add(-s.retention)
 	items, err := s.drain(ctx, func(ctx context.Context) (int, error) {
-		return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND NOT ever_sold AND deleted_at < $2
+		return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND deleted_at < $2
  ORDER BY id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, cutoff)
 	})
 	if err != nil {
@@ -317,6 +254,9 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 	if err := rows.Err(); err != nil || len(ids) == 0 {
 		return 0, err
 	}
+	if err := s.retireOffers(ctx, tx, events); err != nil {
+		return 0, err
+	}
 	if s.media != nil {
 		if err := s.media.Versions.DeleteTx(ctx, tx, contentTargets(ids)); err != nil {
 			return 0, err
@@ -358,7 +298,7 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 }
 
 // eraseVersions deletes one batch of versions deleted before cutoff whose
-// item lives on and was never sold, with their media folders and interactions.
+// item lives on, with their media folders and interactions.
 func (s *Store) eraseVersions(ctx context.Context, cutoff time.Time) (int, error) {
 	deadline := time.Now().Add(purgeBudget)
 	for after := ""; ; {
@@ -376,10 +316,9 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		return 0, "", err
 	}
 	defer tx.Rollback(ctx)
-	// ever_sold belongs to the parent. Fence the first offer before reading
-	// its value, in the same parent-before-version order as catalog edits.
+	// Use the same parent-before-version lock order as catalog edits and offers.
 	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c
- WHERE c.tenant_id = $1 AND c.id > $3 AND c.state <> 'deleted' AND NOT c.ever_sold
+ WHERE c.tenant_id = $1 AND c.id > $3 AND c.state <> 'deleted'
  AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id
   AND v.state = 'deleted' AND v.deleted_at < $2)
  ORDER BY c.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF c SKIP LOCKED`, s.tenant, cutoff, after)
@@ -422,6 +361,9 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		// Release this bounded set before scanning beyond parents whose only
 		// eligible versions are locked. They can be retried by the next run.
 		return 0, next, tx.Commit(ctx)
+	}
+	if err := s.retireOffers(ctx, tx, events); err != nil {
+		return 0, "", err
 	}
 	if s.media != nil {
 		if err := s.media.Versions.DeleteTx(ctx, tx, targets); err != nil {
@@ -493,20 +435,10 @@ func (publishDueArgs) Kind() string { return "contentkit_content_publish_due" }
 // Remove these aliases once those jobs and their retries have drained.
 func (publishDueArgs) KindAliases() []string { return []string{"contentkit_catalog_publish_due"} }
 
-type refreshCountsArgs struct{}
-
-func (refreshCountsArgs) Kind() string          { return "contentkit_content_refresh_counts" }
-func (refreshCountsArgs) KindAliases() []string { return []string{"contentkit_catalog_refresh_counts"} }
-
 type purgeDeletedArgs struct{}
 
 func (purgeDeletedArgs) Kind() string          { return "contentkit_content_purge_deleted" }
 func (purgeDeletedArgs) KindAliases() []string { return []string{"contentkit_catalog_purge_deleted"} }
-
-type releaseFreeArgs struct{}
-
-func (releaseFreeArgs) Kind() string          { return "contentkit_content_release_free" }
-func (releaseFreeArgs) KindAliases() []string { return []string{"contentkit_catalog_release_free"} }
 
 type jobWorker[T river.JobArgs] struct {
 	river.WorkerDefaults[T]
@@ -519,8 +451,8 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 }
 
 // RiverJobs contributes content's periodic jobs to the engine's River
-// client: scheduled publication and free_after releases (every 30s), event
-// log retention, interaction counts (5m), and purging deleted content (1h).
+// client: publication and audience-release facts (every 5m), event
+// log retention and purging deleted content (1h).
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-content", func(_ context.Context, cfg *river.Config) error {
 		if q, ok := cfg.Queues[Queue]; ok && q.MaxWorkers < 1 {
@@ -536,13 +468,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &jobWorker[publishDueArgs]{run: s.PublishDue}) },
 			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &jobWorker[refreshCountsArgs]{run: s.RefreshCounts})
-			},
-			func() error {
 				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted})
-			},
-			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &jobWorker[releaseFreeArgs]{run: s.ReleaseFree})
 			},
 		} {
 			if err := add(); err != nil {
@@ -550,10 +476,8 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			}
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,
-			periodic("contentkit_content_publish_due", 30*time.Second, publishDueArgs{}),
-			periodic("contentkit_content_refresh_counts", 5*time.Minute, refreshCountsArgs{}),
-			periodic("contentkit_content_purge_deleted", time.Hour, purgeDeletedArgs{}),
-			periodic("contentkit_content_release_free", 30*time.Second, releaseFreeArgs{}))
+			periodic("contentkit_content_publish_due", 5*time.Minute, publishDueArgs{}),
+			periodic("contentkit_content_purge_deleted", time.Hour, purgeDeletedArgs{}))
 		return nil
 	}, nil, nil)
 }

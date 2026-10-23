@@ -195,9 +195,7 @@ func activityAudience(rule access.Rule, at time.Time) (string, string, []string)
 	if rule.Free(at) {
 		return "public", "public", nil
 	}
-	if rule.Level == access.TierLevel {
-		tiers := slices.Clone(rule.Tiers)
-		slices.Sort(tiers)
+	if tiers := rule.AudienceTiers(at); len(tiers) > 0 {
 		return "restricted", "tier:" + strings.Join(tiers, ","), tiers
 	}
 	return "restricted", "unknown", nil
