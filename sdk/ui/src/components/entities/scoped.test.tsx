@@ -39,7 +39,7 @@ const wrap = (client: ContentKitClient) =>
 
 it("ScopedEntities: a series lists its characters most used first, linked, with Show more past the limit", async () => {
   const s = setup(Array.from({ length: 4 }, (_, i) => card(i + 1)));
-  render(<ScopedEntities entityy={{ id: "s1", kind: "series" }} limit={3} />, { wrapper: wrap(s.client) });
+  render(<ScopedEntities entity={{ id: "s1", kind: "series" }} limit={3} />, { wrapper: wrap(s.client) });
   const section = await screen.findByRole("region", { name: "Characters" });
   const links = within(section).getAllByRole("link");
   expect(links.map((a) => a.getAttribute("href"))).toEqual(["/en/characters/C1", "/en/characters/C2", "/en/characters/C3"]);
@@ -54,35 +54,35 @@ it("ScopedEntities: nothing for kinds nobody is scoped by, or a scope without me
   const s = setup([]);
   const { container } = render(
     <>
-      <ScopedEntities entityy={{ id: "t1", kind: "tag" }} />
-      <ScopedEntities entityy={{ id: "s1", kind: "series" }} />
+      <ScopedEntities entity={{ id: "t1", kind: "tag" }} />
+      <ScopedEntities entity={{ id: "s1", kind: "series" }} />
     </>,
     { wrapper: wrap(s.client) },
   );
   await vi.waitFor(() => expect(s.queries.length).toBeGreaterThan(0));
   expect(s.queries.every((q) => q.get("scope") === "s1")).toBe(true);
-  expect(container.querySelector("[data-ckui='scoped-group-section']")).toBeNull();
+  expect(container.querySelector("[data-ckui='scoped-entity-section']")).toBeNull();
 });
 
 it("EntityBanner: a character links its series and a series shows its characters", async () => {
   const s = setup([card(1)]);
   const base = { slug: "x", internal: false, state: "active", attributes: {}, names: [], text: [], children: [], edges: [], counts: [], created_at: "", updated_at: "", revision: 1 };
   const character = { ...base, id: "c1", kind: "character", name: "Character 1", scope_id: "s1", scope: { id: "s1", kind: "series", slug: "bleach", internal: false, name: "Bleach", path: "/en/series/S1", count: 3, attributes: {}, created_at: "" } } as unknown as EntityDetail;
-  const { unmount } = render(<EntityBanner entityy={character} />, { wrapper: wrap(s.client) });
+  const { unmount } = render(<EntityBanner entity={character} />, { wrapper: wrap(s.client) });
   expect(screen.getByRole("link", { name: "Bleach" })).toHaveAttribute("href", "/en/series/S1");
   unmount();
-  render(<EntityBanner entityy={{ ...base, id: "s1", kind: "series", name: "Bleach" } as unknown as EntityDetail} />, { wrapper: wrap(s.client) });
+  render(<EntityBanner entity={{ ...base, id: "s1", kind: "series", name: "Bleach" } as unknown as EntityDetail} />, { wrapper: wrap(s.client) });
   expect(await screen.findByRole("link", { name: /Character 1/ })).toHaveAttribute("href", "/en/characters/C1");
 });
 
 it("EntityBanner: a cover tile only for a group with a cover image", () => {
   const s = setup([]);
   const base = { id: "t1", kind: "tag", slug: "romance", name: "Romance", internal: false, state: "active", attributes: {}, names: [], text: [], children: [], edges: [], counts: [], created_at: "", updated_at: "", revision: 1 };
-  const { container, unmount } = render(<EntityBanner entityy={base as unknown as EntityDetail} />, { wrapper: wrap(s.client) });
-  expect(container.querySelector("[data-ckui=group-cover]")).toBeNull();
+  const { container, unmount } = render(<EntityBanner entity={base as unknown as EntityDetail} />, { wrapper: wrap(s.client) });
+  expect(container.querySelector("[data-ckui=entity-cover]")).toBeNull();
   expect(screen.getByRole("heading", { name: "Romance" })).toBeVisible();
   unmount();
   const covered = { ...base, cover: { renditions: [{ url: "https://cdn.test/romance.webp", w: 900, h: 300 }] } };
-  const next = render(<EntityBanner entityy={covered as unknown as EntityDetail} />, { wrapper: wrap(s.client) });
-  expect(next.container.querySelector("[data-ckui=group-cover]")).not.toBeNull();
+  const next = render(<EntityBanner entity={covered as unknown as EntityDetail} />, { wrapper: wrap(s.client) });
+  expect(next.container.querySelector("[data-ckui=entity-cover]")).not.toBeNull();
 });

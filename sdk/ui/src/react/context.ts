@@ -50,7 +50,7 @@ export type SocialOperation =
   | "notifications.read"
   | "notifications.dismiss"
   | "group.load"
-  | "group.save"
+  | "entity.save"
   | "membership.save"
   | "history.forget"
   | "filters.save"

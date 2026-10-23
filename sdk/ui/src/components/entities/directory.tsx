@@ -86,7 +86,7 @@ export function EntityDirectory(p: EntityDirectoryProps) {
               ))}
             </nav>
           )}
-          {!!p.sorts?.length && <SortMenu value={sort} sorts={p.sorts} onChange={chooseSort} label={(s) => t(`groups.directorySort_${s}`)} className="ms-auto" />}
+          {!!p.sorts?.length && <SortMenu value={sort} sorts={p.sorts} onChange={chooseSort} label={(s) => t(`entities.directorySort_${s}`)} className="ms-auto" />}
         </div>
       )}
       {p.pagination === "pages" ? <NumberedEntities {...p} filter={filter} /> : <CursorEntities {...p} filter={filter} />}
@@ -175,13 +175,13 @@ function Entities({ items, loading, error, reload, ...p }: Shown & { items: Enti
           {p.renderEntity ? (
             p.renderEntity(g)
           ) : grid ? (
-            <EntityLink entityy={g} href={p.href} className="group grid gap-1.5">
-              <EntityCover entityy={g} className="aspect-[3/4] w-full" />
+            <EntityLink entity={g} href={p.href} className="group grid gap-1.5">
+              <EntityCover entity={g} className="aspect-[3/4] w-full" />
               <span className="font-medium break-words group-hover:underline">{g.name || g.slug}</span>
               <span className="text-xs text-muted-foreground tabular-nums">{m.plural("entities.items", g.count)}</span>
             </EntityLink>
           ) : (
-            <EntityLink entityy={g} href={p.href} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 hover:bg-muted">
+            <EntityLink entity={g} href={p.href} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 hover:bg-muted">
               <span className="break-words">{g.name || g.slug}</span>
               <span className="text-xs text-muted-foreground tabular-nums" aria-label={m.plural("entities.items", g.count)}>
                 {count(g.count)}

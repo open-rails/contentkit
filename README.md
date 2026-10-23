@@ -674,6 +674,11 @@ own scope in a transaction, including newly created entity names, and preserve
 sibling versions. The older all-scopes entity replacement remains available
 for imports and callers deliberately replacing the entire work.
 
+Keyword documents include active associations without start or end dates and
+their active ancestors. A static featured rail can contribute keywords;
+scheduled curation is evaluated at read time and is not copied into keyword
+text.
+
 Writes are batches in one transaction; memberships keep
 `content_facets.group_ids` current, `Recount` (an engine job) rebuilds
 per-language counts and automatic covers from the facets, and

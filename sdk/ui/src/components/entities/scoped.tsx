@@ -58,7 +58,7 @@ function ScopedSection(p: ScopedEntitiesProps & { kind: string; title: string })
         {shown.map((g) => {
           const body = (
             <>
-              <EntityAvatar entityy={g} className="size-7 text-xs" />
+              <EntityAvatar entity={g} className="size-7 text-xs" />
               <span className="min-w-0 truncate">{g.name || g.slug}</span>
               {g.count > 0 && <span className="text-xs text-muted-foreground tabular-nums">{g.count}</span>}
             </>
@@ -71,7 +71,7 @@ function ScopedSection(p: ScopedEntitiesProps & { kind: string; title: string })
                   {body}
                 </button>
               ) : (
-                <EntityLink entityy={g} href={p.href} className={chip}>
+                <EntityLink entity={g} href={p.href} className={chip}>
                   {body}
                 </EntityLink>
               )}

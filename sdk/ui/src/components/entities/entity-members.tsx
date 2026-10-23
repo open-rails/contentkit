@@ -32,7 +32,7 @@ export interface EntityMembersProps {
   /** Where a member's card links, e.g. its admin editor; none: not a link. */
   contentHref?: (content: Content) => string | undefined;
   /** Where a new item of a content kind starts already in this entity, e.g. the host's editor with `?with=<code>`; none: no action. */
-  newContentHref?: (contentKind: string, entity: EntityMembersProps["group"]) => string | undefined;
+  newContentHref?: (contentKind: string, entity: EntityMembersProps["entity"]) => string | undefined;
   /** Replaces a member's card body; default its cover and title. */
   renderContent?: (member: Membership, content?: Content) => ReactNode;
   /** Select a member's cover as the entity's. */

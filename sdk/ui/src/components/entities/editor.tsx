@@ -189,7 +189,7 @@ function Head({
       <EntityMergeDialog
         open={merging}
         onOpenChange={setMerging}
-        entityy={entity}
+        entity={entity}
         management={management}
         client={client}
         onMerge={async (into) => {
@@ -466,7 +466,7 @@ function Details({ entity, spec, g, labels, onError, client, management }: { man
     }
   };
   return (
-    <Section title={t("entityEditor.details")} ckui="group-details">
+    <Section title={t("entityEditor.details")} ckui="entity-details">
       <form
         className="grid gap-3"
         onSubmit={(e) => {
@@ -510,7 +510,7 @@ function Names({ entity, g, languages, onError }: { entity: EntityDetail; g: Use
   const sorted = [...entity.names].sort((a, b) => a.language.localeCompare(b.language) || (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "name" ? -1 : 1));
   const offered = [...new Set([...languages, ...entity.names.map((n) => n.language)])];
   return (
-    <Section title={t("entityEditor.names")} ckui="group-names-editor">
+    <Section title={t("entityEditor.names")} ckui="entity-names-editor">
       {sorted.length ? (
         <ul className="grid divide-y divide-border rounded-lg border border-border">
           {sorted.map((n) => (
@@ -596,7 +596,7 @@ function Texts({ entity, g, languages, onError }: { entity: EntityDetail; g: Use
     setForm((f) => ({ ...f, [l]: { ...f[l]!, ...patch } }));
   };
   return (
-    <Section title={t("entityEditor.text")} ckui="group-text">
+    <Section title={t("entityEditor.text")} ckui="entity-text">
       <form
         className="grid gap-4"
         onSubmit={(e) => {
@@ -660,12 +660,12 @@ function Images({ entity, spec, onError, client, management }: { management?: bo
   const mode = c?.image ? "image" : c?.content_id && !c.auto ? "content" : "auto";
   const avatar = spec.owner === "user" || !!spec.avatar;
   return (
-    <Section title={t(avatar ? "entityEditor.images" : "entityEditor.cover")} ckui="group-cover-editor">
+    <Section title={t(avatar ? "entityEditor.images" : "entityEditor.cover")} ckui="entity-cover-editor">
       <p className="text-muted-foreground" data-ckui="cover-mode">
         {t(mode === "image" ? "entityEditor.coverImage" : mode === "content" ? "entityEditor.coverContent" : "entityEditor.coverAuto")}
       </p>
-      <EntityImageEditor management={management} entityy={entity} slot="cover" client={client} onError={onError} />
-      {avatar && <EntityImageEditor management={management} entityy={entity} slot="avatar" client={client} onError={onError} />}
+      <EntityImageEditor management={management} entity={entity} slot="cover" client={client} onError={onError} />
+      {avatar && <EntityImageEditor management={management} entity={entity} slot="avatar" client={client} onError={onError} />}
     </Section>
   );
 }
@@ -675,7 +675,7 @@ function Membership({ entity, onError, client }: { entity: EntityDetail; onError
   const ck = useContentKitClient(client);
   const offer = useAction("offer.save", onError);
   return (
-    <Section title={t("entityEditor.membershipPrice")} ckui="group-offer">
+    <Section title={t("entityEditor.membershipPrice")} ckui="entity-offer">
       <OfferFields
         key={entity.offer?.revision}
         offer={entity.offer}
@@ -709,7 +709,7 @@ function Edges({ entity, g, kinds, labels, onError, client, management }: { mana
   };
   const valid = RELATION.test(relation.trim());
   return (
-    <Section title={t("entityEditor.edges")} ckui="group-edges">
+    <Section title={t("entityEditor.edges")} ckui="entity-edges">
       {out.length + incoming.length ? (
         <ul className="grid gap-1.5">
           {out.map((e) => (

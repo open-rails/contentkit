@@ -52,7 +52,7 @@ function setup(newContentHref?: (kind: string, entity: { code?: string }) => str
   render(
     <ContentKitProvider client={client} viewer="staff">
       <EntityMembers
-        entityy={{ id: "g1", kind: "series", name: "Saga", slug: "saga", code: "SAGA1" }}
+        entity={{ id: "g1", kind: "series", name: "Saga", slug: "saga", code: "SAGA1" }}
         contentHref={(c) => `/admin/galleries/${c.code}`}
         newContentHref={newContentHref}
         labels={{ gallery: "Galleries", blog: "Posts" }}

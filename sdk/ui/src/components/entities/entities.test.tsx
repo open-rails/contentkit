@@ -42,18 +42,18 @@ const free = { key, target: { kind: "group" as const, id: "g1" }, terms: { amoun
 
 it("MembershipBox: no Join where the group sells no membership; members stay members", async () => {
   const s = server({});
-  const { container, rerender } = render(<MembershipBox entityy={entity({ key, member: false })} />, { wrapper: wrap(s.client) });
+  const { container, rerender } = render(<MembershipBox entity={entity({ key, member: false })} />, { wrapper: wrap(s.client) });
   expect(container.querySelector('[data-ckui="membership-box"]')).toBeNull();
   expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
 
-  rerender(<MembershipBox entityy={entity({ key, member: true })} />);
+  rerender(<MembershipBox entity={entity({ key, member: true })} />);
   expect(screen.getByText("Member")).toBeInTheDocument();
 });
 
 it("MembershipBox: a free group's Join refused as not joinable says so, not that something changed elsewhere", async () => {
   const s = server({ "POST /entities/g1/join": () => Response.json({ error: "offers: not free to join", code: "not_joinable" }, { status: 409 }) });
   const user = userEvent.setup();
-  render(<MembershipBox entityy={entity({ key, member: false, offer: free })} />, { wrapper: wrap(s.client) });
+  render(<MembershipBox entity={entity({ key, member: false, offer: free })} />, { wrapper: wrap(s.client) });
   await user.click(screen.getByRole("button", { name: "Join" }));
   expect(await screen.findByText("This group isn't open to join right now.")).toBeInTheDocument();
   expect(screen.queryByText(/changed elsewhere/)).toBeNull();
@@ -109,11 +109,11 @@ it("EntityAvatar and EntityCover are styling roots of their own outside a Conten
   const g = { id: "g1", kind: "channel", name: "Studio", slug: "studio" };
   const { container } = render(
     <div>
-      <EntityAvatar entityy={g} className="size-10" />
-      <EntityCover entityy={g} />
+      <EntityAvatar entity={g} className="size-10" />
+      <EntityCover entity={g} />
     </div>,
   );
-  for (const slot of ["group-avatar", "group-cover"]) {
+  for (const slot of ["entity-avatar", "entity-cover"]) {
     const el = container.querySelector(`[data-ckui="${slot}"]`)!;
     expect(el).toHaveClass("ckui");
     expect(el).toHaveAttribute("data-ckui-theme");

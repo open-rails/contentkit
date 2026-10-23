@@ -24,7 +24,7 @@ it("shows matching history before entities and titles, ignoring fillers and favo
   expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/me/searches"))).toHaveLength(1);
   complete!(Response.json({ contents: [{ id: "gallery", kind: "gallery", title: "Inazuma Adventures", path: "/gallery" }], entities: [{ id: "artist", kind: "artist", name: "Inazuma", slug: "inazuma", path: "/artist" }] }));
   await screen.findByRole("option", { name: "Inazuma Adventures" });
-  expect(screen.getAllByRole("option").map((o) => o.getAttribute("data-type"))).toEqual(["recent", "recent", "recent", "recent", "group", "content"]);
+  expect(screen.getAllByRole("option").map((o) => o.getAttribute("data-type"))).toEqual(["recent", "recent", "recent", "recent", "entity", "content"]);
   await user.keyboard("{ArrowDown}{Enter}");
   expect(onSearch).toHaveBeenCalledExactlyOnceWith("Inazuma art");
   expect(navigate).not.toHaveBeenCalled();
@@ -275,7 +275,7 @@ it("renders one flat header list with titles first, title covers, colored entity
   await user.type(screen.getByRole("combobox", { name: "Search" }), "result");
   await screen.findByRole("option", { name: /Gallery result/ });
   const panel = document.querySelector<HTMLDivElement>('[data-ckui="search-panel"]')!;
-  expect([...panel.querySelectorAll('[data-ckui="suggestion"]')].map((option) => option.getAttribute("data-type"))).toEqual(["content", "content", "group", "group", "group", "group"]);
+  expect([...panel.querySelectorAll('[data-ckui="suggestion"]')].map((option) => option.getAttribute("data-type"))).toEqual(["content", "content", "entity", "entity", "entity", "entity"]);
   expect(panel.querySelector("img")).toHaveAttribute("src", "https://media.test/g.webp");
   expect([...panel.querySelectorAll("[data-search-kind]")].map((icon) => icon.getAttribute("data-search-kind"))).toEqual(["artist", "series", "tag", "character"]);
   expect(panel.querySelector('[data-search-kind="artist"]')).toHaveClass("text-blue-500");

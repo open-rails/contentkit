@@ -28,29 +28,29 @@ export interface EntityCoverProps {
 }
 
 /** A entity's cover or avatar image; its own styling root, so it renders anywhere in the host. */
-function EntityImage({ entity, src, className, shape, slot }: EntityCoverProps & { shape: string; slot: "group-cover" | "group-avatar" }) {
+function EntityImage({ entity, src, className, shape, slot }: EntityCoverProps & { shape: string; slot: "entity-cover" | "entity-avatar" }) {
   const scope = useScopeProps();
   const box = cn(scope.className, "overflow-hidden bg-muted", shape, className);
   const root = { "data-ckui-theme": scope["data-ckui-theme"], style: scope.style, "data-ckui": slot };
   const initial = (
-    <span {...root} className={cn(box, "grid place-items-center font-semibold text-muted-foreground", slot === "group-cover" && "text-lg")}>
+    <span {...root} className={cn(box, "grid place-items-center font-semibold text-muted-foreground", slot === "entity-cover" && "text-lg")}>
       {(entity.name || entity.slug).trim().charAt(0).toUpperCase() || "?"}
     </span>
   );
   if (src) return <img {...root} src={src} alt="" className={cn(box, "object-cover")} />;
-  const renditions = (slot === "group-cover" ? entity.cover : entity.avatar)?.renditions;
+  const renditions = (slot === "entity-cover" ? entity.cover : entity.avatar)?.renditions;
   if (renditions?.length) return <RenditionImg {...root} outputs={renditions} fit="cover" skeleton className={box} fallback={initial} />;
   return initial;
 }
 
 /** A entity's cover: its renditions, else its initial on a muted tile. */
 export function EntityCover(p: EntityCoverProps) {
-  return <EntityImage {...p} shape="rounded-md" slot="group-cover" />;
+  return <EntityImage {...p} shape="rounded-md" slot="entity-cover" />;
 }
 
 /** A entity's avatar: its renditions, else its initial in a circle. */
 export function EntityAvatar(p: EntityCoverProps) {
-  return <EntityImage {...p} shape="aspect-square rounded-full" slot="group-avatar" />;
+  return <EntityImage {...p} shape="aspect-square rounded-full" slot="entity-avatar" />;
 }
 
 /** A link to a entity's page: `href`, else its canonical path; in-app through the provider's navigate. */

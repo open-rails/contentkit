@@ -106,12 +106,12 @@ export function EntityBanner(p: EntityBannerProps) {
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="entity-banner" data-kind={g.kind}>
       {/* Without a cover image, a compact header rather than an empty 3:1 tile. */}
-      {cover && <EntityCover entityy={g} className="aspect-[3/1] w-full" />}
+      {cover && <EntityCover entity={g} className="aspect-[3/1] w-full" />}
       <div className={cn("flex flex-wrap gap-4 px-2 sm:px-4", cover ? "items-end" : "items-center")}>
-        <EntityAvatar entityy={g} className={cover ? "-mt-12 size-20 border-4 border-background sm:-mt-16 sm:size-28" : "size-16 sm:size-20"} />
+        <EntityAvatar entity={g} className={cover ? "-mt-12 size-20 border-4 border-background sm:-mt-16 sm:size-28" : "size-16 sm:size-20"} />
         <div className="grid min-w-0 flex-1 gap-1">
           {g.scope && (
-            <EntityLink entityy={g.scope} href={p.href} className="text-xs text-muted-foreground hover:underline">
+            <EntityLink entity={g.scope} href={p.href} className="text-xs text-muted-foreground hover:underline">
               {g.scope.name || g.scope.slug}
             </EntityLink>
           )}
@@ -119,12 +119,12 @@ export function EntityBanner(p: EntityBannerProps) {
           <p className="text-xs text-muted-foreground tabular-nums">{m.plural("entities.items", count)}</p>
         </div>
         <div className="flex flex-wrap items-start gap-2">
-          <MembershipBox entityy={g} onCheckout={p.onCheckout} client={p.client} />
+          <MembershipBox entity={g} onCheckout={p.onCheckout} client={p.client} />
           {p.children}
         </div>
       </div>
       {text?.description && <p className="px-2 break-words whitespace-pre-line sm:px-4">{text.description}</p>}
-      <ScopedEntities entityy={g} language={p.language} labels={p.labels} href={p.href} client={p.client} className="px-2 sm:px-4" />
+      <ScopedEntities entity={g} language={p.language} labels={p.labels} href={p.href} client={p.client} className="px-2 sm:px-4" />
     </ContentKitUiRoot>
   );
 }
@@ -160,7 +160,7 @@ export function EntityImageEditor({ entity, slot, crop = true, client, onError, 
   };
   return (
     <div className={cn("flex flex-wrap items-center gap-3", className)} data-ckui="entity-image-editor" data-slot={slot}>
-      {slot === "avatar" ? <EntityAvatar entityy={shown} src={g.previews.avatar} className="size-28 shrink-0" /> : <EntityCover entityy={shown} src={g.previews.cover} className="aspect-[3/1] w-72 max-w-full" />}
+      {slot === "avatar" ? <EntityAvatar entity={shown} src={g.previews.avatar} className="size-28 shrink-0" /> : <EntityCover entity={shown} src={g.previews.cover} className="aspect-[3/1] w-72 max-w-full" />}
       <div className="grid gap-2">
         <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" variant="outline" disabled={save.pending} onClick={() => input.current?.click()}>

@@ -71,7 +71,7 @@ export function EntityHeader(p: EntityHeaderProps) {
   const count = g.counts.filter((c) => c.language === (p.language ?? "")).reduce((n, c) => n + c.count, 0);
   return root(
     <div className="grid gap-4 sm:grid-cols-[10rem_minmax(0,1fr)]" data-kind={g.kind}>
-      <EntityCover entityy={g} className="aspect-[3/4] w-32 sm:w-40" />
+      <EntityCover entity={g} className="aspect-[3/4] w-32 sm:w-40" />
       <div className="grid content-start gap-3">
         <div className="grid gap-1">
           {(g.parent || g.scope) && (
@@ -81,7 +81,7 @@ export function EntityHeader(p: EntityHeaderProps) {
                 .map((x, i) => (
                   <span key={x.id}>
                     {i > 0 && " · "}
-                    <EntityLink entityy={x} href={p.href} className="hover:underline">
+                    <EntityLink entity={x} href={p.href} className="hover:underline">
                       {x.name || x.slug}
                     </EntityLink>
                   </span>
@@ -121,13 +121,13 @@ export function EntityHeader(p: EntityHeaderProps) {
         {g.children.length > 0 && (
           <nav aria-label={t("entities.children")} className="flex flex-wrap gap-2" data-ckui="entity-children">
             {g.children.map((c) => (
-              <EntityLink key={c.id} entityy={c} href={p.href} className="rounded-md border border-border px-2 py-1 hover:bg-muted">
+              <EntityLink key={c.id} entity={c} href={p.href} className="rounded-md border border-border px-2 py-1 hover:bg-muted">
                 {c.name || c.slug}
               </EntityLink>
             ))}
           </nav>
         )}
-        <ScopedEntities entityy={g} language={p.language} labels={p.labels} href={p.href} client={p.client} />
+        <ScopedEntities entity={g} language={p.language} labels={p.labels} href={p.href} client={p.client} />
         {p.children}
       </div>
     </div>,

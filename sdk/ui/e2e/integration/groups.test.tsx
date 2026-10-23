@@ -80,61 +80,61 @@ describe("groups against the real ContentKit", () => {
     const r = run();
     const c = staff;
     const { result, rerender } = renderHook(({ id }: { id: string | null }) => useEntity(id), { wrapper: wrap(c, "en"), initialProps: { id: null as string | null } });
-    expect(result.current.group).toBeNull();
+    expect(result.current.entity).toBeNull();
     let artist!: Entity;
     await act(async () => {
       artist = await result.current.create({ kind: "artist", slug: `artist-${r}`, names: [name("en", `Artist ${r}`)] });
     });
-    await waitFor(() => expect(result.current.group?.id).toBe(artist.id), wait);
+    await waitFor(() => expect(result.current.entity?.id).toBe(artist.id), wait);
     rerender({ id: artist.id });
 
     const debut = new Date(Date.UTC(2020, 4, 1, 12)).toISOString();
     await act(() => result.current.update({ attributes: { artist_type: "circle", works: 3, active: true, debut } }));
-    await waitFor(() => expect(result.current.group?.attributes).toEqual({ artist_type: "circle", works: 3, active: true, debut: "2020-05-01T12:00:00Z" }), wait);
+    await waitFor(() => expect(result.current.entity?.attributes).toEqual({ artist_type: "circle", works: 3, active: true, debut: "2020-05-01T12:00:00Z" }), wait);
     await expect(result.current.update({ attributes: { artist_type: "band" } })).rejects.toMatchObject({ code: "invalid_request" });
 
     await act(() => result.current.names("add", [name("ja", `アーティスト ${r}`), name("en", `A. ${r}`, "alias")]));
-    await waitFor(() => expect(result.current.group?.names).toHaveLength(3), wait);
+    await waitFor(() => expect(result.current.entity?.names).toHaveLength(3), wait);
     await act(() => result.current.names("add", [name("en", `A. ${r}`)]));
-    await waitFor(() => expect(result.current.group?.name).toBe(`A. ${r}`), wait);
-    expect(result.current.group?.names).toContainEqual(name("en", `Artist ${r}`, "alias"));
+    await waitFor(() => expect(result.current.entity?.name).toBe(`A. ${r}`), wait);
+    expect(result.current.entity?.names).toContainEqual(name("en", `Artist ${r}`, "alias"));
     await act(() => result.current.update({ text: [{ language: "en", description: "Draws things.", sort_key: `a ${r}` }] }));
-    await waitFor(() => expect(result.current.group?.text).toEqual([{ language: "en", description: "Draws things.", sort_key: `a ${r}` }]), wait);
+    await waitFor(() => expect(result.current.entity?.text).toEqual([{ language: "en", description: "Draws things.", sort_key: `a ${r}` }]), wait);
 
     const circle = await create("artist", `circle-${r}`, [name("en", `Circle ${r}`)]);
     await act(() => result.current.edges("add", [{ relation: "member_of", to: circle.id }]));
-    await waitFor(() => expect(result.current.group?.edges).toEqual([{ from: artist.id, relation: "member_of", to: circle.id }]), wait);
+    await waitFor(() => expect(result.current.entity?.edges).toEqual([{ from: artist.id, relation: "member_of", to: circle.id }]), wait);
 
     // The cover: an upload to the group's folder, a member's cover, then automatic.
     await act(async () => {
       await result.current.uploadImage("cover", fixture("small.png", "image/png", "face.png"), { wait: false });
     });
-    await waitFor(() => expect(result.current.group?.cover?.image).toMatch(/^i-[0-9a-f-]{36}$/), wait);
-    const image = result.current.group!.cover!.image!;
+    await waitFor(() => expect(result.current.entity?.cover?.image).toMatch(/^i-[0-9a-f-]{36}$/), wait);
+    const image = result.current.entity!.cover!.image!;
     expect(await h.object({ kind: "artist", id: artist.id }, `cover/${image}`)).not.toBeNull();
     const [member] = await seedContents(staff, [{ kind: "comic", titles: { en: `Member ${r}` }, versions: [{ languages: ["en"] }] }]);
     await staff.entities.addMembers(artist.id, [{ content_id: member!.id }]);
     await act(() => result.current.update({ cover: { content_id: member!.id } }));
-    await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member!.id }), wait);
+    await waitFor(() => expect(result.current.entity?.cover).toEqual({ content_id: member!.id }), wait);
     await act(() => result.current.update({ cover: {} }));
     await h.recount();
     act(() => result.current.reload());
-    await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member!.id, auto: true }), wait);
+    await waitFor(() => expect(result.current.entity?.cover).toEqual({ content_id: member!.id, auto: true }), wait);
 
     // Merge into the circle: the hook shows the survivor, with the names and members moved.
     await act(() => result.current.merge(circle.id));
-    await waitFor(() => expect(result.current.group?.id).toBe(circle.id), wait);
-    expect(result.current.group?.names.map((n) => n.name)).toEqual(expect.arrayContaining([`Circle ${r}`, `A. ${r}`, `Artist ${r}`]));
+    await waitFor(() => expect(result.current.entity?.id).toBe(circle.id), wait);
+    expect(result.current.entity?.names.map((n) => n.name)).toEqual(expect.arrayContaining([`Circle ${r}`, `A. ${r}`, `Artist ${r}`]));
     expect((await staff.entities.members(circle.id)).members.map((m) => m.content_id)).toEqual([member!.id]);
 
     const { result: other } = renderHook(() => useEntity(circle.id), { wrapper: wrap(c, "en") });
-    await waitFor(() => expect(other.current.group?.id).toBe(circle.id), wait);
+    await waitFor(() => expect(other.current.entity?.id).toBe(circle.id), wait);
     await act(() => other.current.remove());
-    expect(other.current.group).toBeNull();
+    expect(other.current.entity).toBeNull();
     expect(other.current.deleted).toMatchObject({ id: circle.id, state: "deleted" });
     await expect(client(h, cfg, null).entities.get(circle.id)).rejects.toMatchObject({ code: "not_found" });
     await act(() => other.current.restore());
-    await waitFor(() => expect(other.current.group?.id).toBe(circle.id), wait);
+    await waitFor(() => expect(other.current.entity?.id).toBe(circle.id), wait);
     expect(other.current.deleted).toBeNull();
   });
 
@@ -200,14 +200,14 @@ describe("groups against the real ContentKit", () => {
   });
 
   it("useKinds reads the content model; staff access to groups", async () => {
-    const { result } = renderHook(() => ({ kinds: useKinds(), staff: useStaffAccess(["groups"] as const) }), { wrapper: wrap(staff) });
+    const { result } = renderHook(() => ({ kinds: useKinds(), staff: useStaffAccess(["entities"] as const) }), { wrapper: wrap(staff) });
     await waitFor(() => expect(result.current.kinds.kinds?.entity_kinds?.artist?.roles).toEqual(["publisher"]), wait);
     expect(result.current.kinds.kinds?.kinds.comic).toMatchObject({ route: "comics", presentation: "reader" });
     expect(result.current.kinds.kinds).not.toHaveProperty("content_filters");
     await waitFor(() => expect(result.current.staff.loading).toBe(false), wait);
-    expect(result.current.staff.allowed.groups).toBe(true);
-    const { result: alice } = renderHook(() => useStaffAccess(["groups"] as const), { wrapper: wrap(client(h, cfg, acc.get("alice"))) });
+    expect(result.current.staff.allowed.entities).toBe(true);
+    const { result: alice } = renderHook(() => useStaffAccess(["entities"] as const), { wrapper: wrap(client(h, cfg, acc.get("alice"))) });
     await waitFor(() => expect(alice.current.loading).toBe(false), wait);
-    expect(alice.current.allowed.groups).toBe(false);
+    expect(alice.current.allowed.entities).toBe(false);
   });
 });

@@ -284,9 +284,9 @@ function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, 
       >
         {(entity) => (
           <>
-            <ScopedEntities entityy={entity} management labels={labels} client={client} onSelect={(c) => loc.go(`${c.kind}/${c.id}`)} />
+            <ScopedEntities entity={entity} management labels={labels} client={client} onSelect={(c) => loc.go(`${c.kind}/${c.id}`)} />
             <EntityMembers
-              entityy={entity}
+              entity={entity}
               labels={labels}
               client={client}
               onError={onError}
