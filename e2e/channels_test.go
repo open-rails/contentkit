@@ -215,7 +215,7 @@ func TestChannels(t *testing.T) {
 	// media, keeping its folder for a restore.
 	var earlier catalog.Content
 	f.want(http.StatusCreated, writerToken, "POST", "/contents", post, &earlier)
-	f.want(http.StatusNoContent, writerToken, "DELETE", "/contents/"+earlier.ID, nil, nil)
+	f.want(http.StatusNoContent, writerToken, "DELETE", "/contents/"+earlier.ID+"/versions/"+earlier.Versions[0].ID, nil, nil)
 	var deleted entities.Entity
 	f.want(http.StatusOK, creatorToken, "DELETE", path, nil, &deleted)
 	if deleted.State != entities.StateDeleted || deleted.AuthScope != "" {

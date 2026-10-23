@@ -1028,5 +1028,3 @@ func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions
 	events = append(events, deleted...)
 	return s.apply(ctx, tx, ids, effects{events: events, expose: true})
 }
-
-// hiddenKinds are the kinds whose one version is hidden.

@@ -99,11 +99,6 @@ export class ContentsClient {
   unpublish(id: string): Promise<Content> {
     return this.write(call(this.http, "POST", "/contents/{id}/unpublish", { params: { id } }));
   }
-  async remove(id: string): Promise<void> {
-    const emit = this.http.captureChanges();
-    await call(this.http, "DELETE", "/contents/{id}", { params: { id } });
-    emit({ type: "content.deleted", id });
-  }
   restore(id: string): Promise<Content> {
     return this.write(call(this.http, "POST", "/contents/{id}/restore", { params: { id } }));
   }
@@ -125,6 +120,7 @@ export class ContentsClient {
   updateVersion(id: string, vid: string, input: VersionInput): Promise<Version> {
     return this.writeVersion(id, call(this.http, "PATCH", "/contents/{id}/versions/{vid}", { params: { id, vid }, body: input }));
   }
+  /** Soft-deletes an edition; deleting the final edition also deletes its parent. */
   async removeVersion(id: string, vid: string): Promise<void> {
     await this.writeVersion(id, call(this.http, "DELETE", "/contents/{id}/versions/{vid}", { params: { id, vid } }));
   }

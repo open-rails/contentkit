@@ -124,10 +124,11 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	}
 	f.want(http.StatusBadRequest, anon, "GET", "/codes/not-a-code", nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/codes/ZZZZZZZZ9", nil, nil)
-	f.want(http.StatusNoContent, staff, "DELETE", "/contents/"+post.ID, nil, nil)
+	f.want(http.StatusNoContent, staff, "DELETE", "/contents/"+post.ID+"/versions/"+post.Versions[0].ID, nil, nil)
 	f.want(http.StatusGone, anon, "GET", "/codes/"+post.Code, nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/contents/"+post.ID, nil, nil)
-	f.want(http.StatusOK, staff, "POST", "/contents/"+post.ID+"/restore", nil, nil)
+	f.want(http.StatusConflict, staff, "POST", "/contents/"+post.ID+"/restore", nil, nil)
+	f.want(http.StatusOK, staff, "PATCH", "/contents/"+post.ID+"/versions/"+post.Versions[0].ID, catalog.VersionInput{State: catalog.StatePublished}, nil)
 	f.want(http.StatusOK, anon, "GET", "/codes/"+post.Code, nil, nil)
 	f.want(http.StatusNotFound, staff, "POST", "/contents/"+post.ID+"/restore", nil, nil)
 

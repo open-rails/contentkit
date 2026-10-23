@@ -50,9 +50,19 @@ function server(items: Content[], o: { count?: ManageCount; fail?: string; model
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     calls.push({ method, path, query: url.searchParams, body });
     if (method === "GET" && path === "/kinds") return Response.json(o.model ?? model);
-    const shown = url.searchParams.get("q") ? [] : items;
+    const state = url.searchParams.get("state");
+    const shown = url.searchParams.get("q") ? [] : items.filter((c) => state === "deleted" ? c.state === "deleted" : c.state !== "deleted");
     if (method === "GET" && path === "/manage/gallery") return Response.json(shown);
     if (method === "GET" && path === "/manage/gallery/count") return Response.json(o.count ?? { total: shown.length });
+    const edition = /^\/contents\/(\w+)\/versions\/(\w+)$/.exec(path);
+    if (edition && (method === "DELETE" || method === "PATCH")) {
+      const found = items.find((c) => c.id === edition[1])!;
+      const version = found.versions.find((v) => v.id === edition[2])!;
+      version.state = method === "DELETE" ? "deleted" : "published";
+      found.state = method === "DELETE" ? "deleted" : "published";
+      found.live = method !== "DELETE";
+      return method === "DELETE" ? new Response(null, { status: 204 }) : Response.json(version);
+    }
     const patch = /^\/contents\/(\w+)$/.exec(path);
     if (method === "GET" && patch) return Response.json(items.find((c) => c.id === patch[1]));
     if (method === "PATCH" && patch) {
@@ -182,6 +192,27 @@ it("visible-version players hide parent Delete in both the list and generic edit
   render(<ContentEditor id="a" kind="gallery" client={s.client} />);
   await screen.findByRole("heading", { name: "Edit" });
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+});
+
+it("deletes and restores a hidden item through its sole version", async () => {
+  const hidden: ContentModel = { ...model, kinds: { gallery: { ...model.kinds.gallery!, versions: { languages: "one", hidden: true } } } };
+  const version: Version = { id: "edition", code: "EDITION", position: 0, languages: ["en"], traits: [], state: "published", live: true, has_audio: false, entities: [], attributes: {}, segments: [], decision: { allowed: true } };
+  const s = server([item("a", "Hidden post", { level: "public" }, { versions: [version] })], { model: hidden });
+  const user = userEvent.setup();
+  render(<Route client={s.client} />);
+  const row = (await screen.findByText("Hidden post")).closest("li")!;
+  await user.click(within(row).getByRole("button", { name: "Delete" }));
+  await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(screen.queryByText("Hidden post")).toBeNull());
+  expect(s.calls.filter((c) => c.method === "DELETE")).toMatchObject([{ path: "/contents/a/versions/edition" }]);
+  await user.click(screen.getByRole("button", { name: /^Deleted$/ }));
+  const deleted = (await screen.findByText("Hidden post")).closest("li")!;
+  await user.click(within(deleted).getByRole("button", { name: "Restore" }));
+  await waitFor(() => expect(screen.queryByText("Hidden post")).toBeNull());
+  expect(s.calls.find((c) => c.method === "PATCH")).toMatchObject({ path: "/contents/a/versions/edition", body: { state: "published" } });
+  expect(s.calls.some((c) => c.path.endsWith("/restore"))).toBe(false);
+  await user.click(screen.getByRole("button", { name: /^Items$/ }));
+  expect(await screen.findByText("Hidden post")).toBeVisible();
 });
 
 const bulkId = (n: number) => `0192f000-0000-7000-8000-${String(n).padStart(12, "0")}`;
