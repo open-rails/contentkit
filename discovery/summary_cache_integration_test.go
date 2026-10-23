@@ -13,6 +13,7 @@ import (
 // entry expires, and never across viewers.
 func TestListingSummaryIsReusedUntilTheCatalogChanges(t *testing.T) {
 	f := newFixture(t, nil, "")
+	f.svc.o.Now = func() time.Time { return f.clock }
 	f.seed(item{n: 1, titles: map[string]string{"en": "Free"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 2, titles: map[string]string{"en": "Premium"}, age: 2 * time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}})
 	const host = "main.test"

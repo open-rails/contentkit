@@ -29,13 +29,15 @@ func TestSignalPlaneRoutes(t *testing.T) {
 	conn := env.Open(t, database)
 	env.Apply(t, conn)
 	f := seededOn(t, conn, database)
+	now := f.now
+	f.svc.o.Now = func() time.Time { return now }
 	const host = "main.test"
 	f.svc.o.ActivityCohorts = []signal.ActivityCohort{
 		{ID: "supporter", Identity: signal.ActivityAccount, AnyTier: []string{"premium"}},
 		{ID: "member", Identity: signal.ActivityAccount},
 		{ID: "guest", Identity: signal.ActivityAnonymous},
 	}
-	at := time.Now().UTC().Add(-time.Hour)
+	at := now.Add(-time.Hour)
 	click := func(content, version, event string) SignalInput {
 		return SignalInput{ContentID: content, VersionID: version, Type: TypeClick, EventID: event, OccurredAt: at}
 	}
@@ -68,10 +70,12 @@ func TestSignalPlaneRoutes(t *testing.T) {
 				Access: readingAccess(at, signal.ActivityScope{Domain: "main", Language: language[n]})})
 		}
 	}
+	// Cohorts use eligibility observed on the reading's UTC day. A separate
+	// subtraction can put this fixture's eligibility on the preceding day.
 	for _, l := range []string{"en", "ja"} {
-		seedPopulation(f, "gallery", signal.ActivityScope{Domain: "main", Language: l}, at.Add(-time.Hour), population, nil)
+		seedPopulation(f, "gallery", signal.ActivityScope{Domain: "main", Language: l}, at, population, nil)
 	}
-	seedPopulation(f, "gallery", signal.ActivityScope{Domain: "main", Language: "en"}, at.Add(-time.Hour), []signal.Subject{{UserID: "p1"}}, []string{"premium"})
+	seedPopulation(f, "gallery", signal.ActivityScope{Domain: "main", Language: "en"}, at, []signal.Subject{{UserID: "p1"}}, []string{"premium"})
 	if err := f.svc.o.Hub.RecordSignals(f.ctx, engagementtest.Native(observed)); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +128,7 @@ func TestSignalPlaneRoutes(t *testing.T) {
 			t.Errorf("activity on %s: %+v", d.Date, d)
 		}
 	}
-	if status != http.StatusOK || len(activity.Days) != 10 || activity.Days[0].Date != time.Now().UTC().Format(time.DateOnly) || !reflect.DeepEqual(day, want) {
+	if status != http.StatusOK || len(activity.Days) != 10 || activity.Days[0].Date != now.Format(time.DateOnly) || !reflect.DeepEqual(day, want) {
 		t.Fatalf("activity: %d %s %+v", status, code, activity)
 	}
 	var mine MyStats
