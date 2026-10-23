@@ -41,3 +41,25 @@ func TestAnonymizationPreservesReaderMetricsAndRejectsOldWrites(t *testing.T) {
 		t.Fatal("a removed account resumed writing")
 	}
 }
+
+func TestAnonymousExposureSurvivesMergeBeforeOldSubjectDeletion(t *testing.T) {
+	st, conn := freshStore(t)
+	ctx := t.Context()
+	old, anonymous := Subject{UserID: "old-account"}, Subject{AnonKey: "fresh-anonymous-key"}
+	if err := st.RecordExposures(ctx, "exposure", []Exposure{{RenderID: "render", Stage: StageServed, Subject: old,
+		Shown: []Placement{{ContentRef: gallery("exposure", cid(1)), Position: 1}}, OccurredAt: at(1, 10)}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.copyAnonymous(ctx, "exposures", "exposure", old, anonymous, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Exec(ctx, "OPTIMIZE TABLE "+testDB+".exposures FINAL"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.mutate(ctx, "exposures", "tenant=? AND subject_kind=? AND subject=?", "exposure", old.Kind(), old.Key()); err != nil {
+		t.Fatal(err)
+	}
+	if n := countWhere(t, conn, "exposures", "tenant=? AND subject_kind=? AND subject=?", "exposure", anonymous.Kind(), anonymous.Key()); n != 1 {
+		t.Fatalf("merge discarded anonymous exposure: %d", n)
+	}
+}

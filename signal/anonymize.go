@@ -36,7 +36,26 @@ SELECT ?,sipHash128(?),now64(6)%s`, st.db, quorumSetting(quorum)), tenant, subje
 	}
 	for pass := 0; pass < maxErasurePasses; pass++ {
 		for _, table := range tables {
-			if err := st.copyAnonymous(ctx, table, tenant, old, anonymous); err != nil {
+			// Pull accepted parts from other replicas before deleting the old
+			// account everywhere. FINAL alone does not synchronize replicas.
+			rows, err := st.conn.Query(ctx, "SELECT count() FROM system.replicas WHERE database=? AND table=?", st.db, table)
+			if err != nil {
+				return err
+			}
+			var replicated uint64
+			if rows.Next() {
+				err = rows.Scan(&replicated)
+			}
+			rows.Close()
+			if err != nil {
+				return err
+			}
+			if replicated != 0 {
+				if err := st.conn.Exec(ctx, "SYSTEM SYNC REPLICA "+st.db+"."+table+" LIGHTWEIGHT"); err != nil {
+					return fmt.Errorf("signal: synchronize %s before anonymization: %w", table, err)
+				}
+			}
+			if err := st.copyAnonymous(ctx, table, tenant, old, anonymous, quorum); err != nil {
 				return err
 			}
 			if err := st.mutate(ctx, table, "tenant=? AND subject_kind=? AND subject=?", tenant, old.Kind(), old.Key()); err != nil {
@@ -62,7 +81,7 @@ SELECT ?,sipHash128(?),now64(6)%s`, st.db, quorumSetting(quorum)), tenant, subje
 // tables. Only the fixed subject-table allowlist reaches this method; columns
 // come from ClickHouse's own schema. Free-form payloads and personal resume
 // positions are not needed for anonymous aggregate statistics.
-func (st *Store) copyAnonymous(ctx context.Context, table, tenant string, old, anonymous Subject) error {
+func (st *Store) copyAnonymous(ctx context.Context, table, tenant string, old, anonymous Subject, quorum uint32) error {
 	rows, err := st.conn.Query(ctx, `SELECT name FROM system.columns WHERE database=? AND table=? AND default_kind NOT IN ('ALIAS','MATERIALIZED') ORDER BY position`, strings.Trim(st.db, "`"), table)
 	if err != nil {
 		return err
@@ -91,6 +110,14 @@ func (st *Store) copyAnonymous(ctx context.Context, table, tenant string, old, a
 			values = append(values, "'{}'")
 		case "resume":
 			values = append(values, "''")
+		case "version":
+			if table == "exposures" {
+				// Exposure identity excludes subject. The anonymous replacement
+				// must beat the original even if a merge runs before deletion.
+				values = append(values, "version+toUInt128(1)")
+			} else {
+				values = append(values, "`version`")
+			}
 		default:
 			values = append(values, "`"+column+"`")
 		}
@@ -104,7 +131,7 @@ func (st *Store) copyAnonymous(ctx context.Context, table, tenant string, old, a
 	}
 	args = append(args, tenant, old.Kind(), old.Key())
 	q := fmt.Sprintf(`INSERT INTO %s.%s (%s) SELECT %s FROM %s.%s FINAL
-WHERE tenant=? AND subject_kind=? AND subject=?`, st.db, table, strings.Join(columns, ","), strings.Join(values, ","), st.db, table)
+WHERE tenant=? AND subject_kind=? AND subject=?%s`, st.db, table, strings.Join(columns, ","), strings.Join(values, ","), st.db, table, quorumSetting(quorum))
 	if err := st.conn.Exec(ctx, q, args...); err != nil {
 		return fmt.Errorf("signal: anonymize %s: %w", table, err)
 	}

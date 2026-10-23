@@ -31,10 +31,10 @@ func (e *Engine) AnonymizeAccount(ctx context.Context, accountID string) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, e.schema+"\x1ferasure\x1f"+e.cfg.Tenant+"\x1f"+accountID); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `INSERT INTO `+table+` (tenant_id,actor_id,state,anonymous_key)
+		return tx.QueryRow(ctx, `INSERT INTO `+table+` AS current (tenant_id,actor_id,state,anonymous_key)
 VALUES ($1,$2,'purging',gen_random_uuid()) ON CONFLICT (tenant_id,actor_id) DO UPDATE
-SET state=CASE WHEN `+table+`.state='purged' THEN 'purged' ELSE 'purging' END,
-anonymous_key=CASE WHEN `+table+`.state='purged' THEN NULL ELSE coalesce(`+table+`.anonymous_key,gen_random_uuid()) END
+SET state=CASE WHEN current.state='purged' THEN 'purged' ELSE 'purging' END,
+anonymous_key=CASE WHEN current.state='purged' THEN NULL ELSE coalesce(current.anonymous_key,gen_random_uuid()) END
 RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Tenant, accountID).Scan(&state, &anonymous)
 	})
 	if err != nil || state == "purged" {

@@ -111,4 +111,20 @@ func TestAccountLifecycleKeepsAnonymousContributionsAndRestoresAuthors(t *testin
 	if !errors.Is(err, content.ErrSubjectErased) {
 		t.Fatalf("removed account could write again: %v", err)
 	}
+	// Import recounts must include the retained anonymous rows; they must not
+	// rebuild totals from signed-in people alone.
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		ref := contentref.New(e.cfg.Tenant, "gallery", item.ID)
+		if err := e.content.ImportReactions(ctx, tx, []content.ImportReaction{{Ref: ref, UserID: "charlie", Value: -1}}); err != nil {
+			return err
+		}
+		return e.content.ImportFavorites(ctx, tx, []content.ImportFavorite{{Ref: ref, UserID: "charlie"}})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var likes, dislikes, favorites int
+	if err := pool.QueryRow(ctx, `SELECT likes,dislikes,favorites FROM `+pgx.Identifier{e.schema, "content_interaction_counts"}.Sanitize()+` WHERE tenant_id=$1 AND content_kind='gallery' AND content_id=$2 AND content_version_id IS NULL`, e.cfg.Tenant, item.ID).Scan(&likes, &dislikes, &favorites); err != nil || likes != 2 || dislikes != 1 || favorites != 3 {
+		t.Fatalf("import recount lost anonymous contributions: %d/%d/%d %v", likes, dislikes, favorites, err)
+	}
 }

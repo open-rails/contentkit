@@ -607,9 +607,24 @@ retries retain revision/time and completed classification. An edit clears the
 old assignment until the new revision is classified; late old results cannot win.
 `POST /polls/{id}/answer {"text"}` creates or replaces the caller's answer.
 
-## Interaction erasure
+## Account lifecycle and interaction erasure
 
-`ck.EraseSubjects(ctx, subjects)` erases deleted accounts from every configured
+Applications consume AuthKit's retained lifecycle events. On `user.deleted`,
+call `ck.SetAccountDeleted(ctx, id, true)`; on restoration pass `false`.
+This changes author display to `<Deleted>` without deleting interactions.
+Check current account state before replaying an old deletion/restoration event.
+
+On `user.purged`, call `ck.AnonymizeAccount(ctx, id)` and advance the application's
+cursor only after it succeeds. Comments and anonymous reaction/favorite/vote
+contributions remain, with their existing counts. Reading statistics move to
+a fresh anonymous key; the temporary account-to-key mapping is discarded on
+completion. Inbox, avatar, recent-search and provider cleanup remains part of
+the operation. A failure is retryable. No periodic erasure sweep is required.
+
+`EraseSubjects` remains an explicit destructive operation for a caller that
+intends to remove the subject's contributions instead of anonymizing them.
+
+`ck.EraseSubjects(ctx, subjects)` erases subjects from every configured
 plane: signals ([completion contract](#subject-erasure-completion-contract)),
 ContentKit interaction data, avatars (on the avatar primary; see Avatars)
 and data retained by moderator/classifier providers. A
