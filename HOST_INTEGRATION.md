@@ -612,14 +612,26 @@ old assignment until the new revision is classified; late old results cannot win
 Applications consume AuthKit's retained lifecycle events. On `user.deleted`,
 call `ck.SetAccountDeleted(ctx, id, true)`; on restoration pass `false`.
 This changes author display to `<Deleted>` without deleting interactions.
+Comment responses use the existing `anon_name` shape without a profile or
+account id, so older UI clients display the same label. Ownership remains in
+storage until purge and is restored with the account.
 Check current account state before replaying an old deletion/restoration event.
 
 On `user.purged`, call `ck.AnonymizeAccount(ctx, id)` and advance the application's
 cursor only after it succeeds. Comments and anonymous reaction/favorite/vote
-contributions remain, with their existing counts. Reading statistics move to
-a fresh anonymous key; the temporary account-to-key mapping is discarded on
+contributions remain, with their existing counts. Their fresh random actor
+key preserves one-person-per-work ranking across versions and interaction
+types. Reading statistics use that anonymous key too; the temporary account-to-key mapping is discarded on
 completion. Inbox, avatar, recent-search and provider cleanup remains part of
 the operation. A failure is retryable. No periodic erasure sweep is required.
+For replicated ClickHouse, configure `ClickHouse.Cluster` with the complete
+single-shard replica set, and route its connection pool only within that set.
+Cleanup verifies Keeper membership and waits for cluster-wide synchronization
+before copying. Missing, unhealthy or incomplete replica configuration keeps
+cleanup pending before moving signal data. Counts retain their totals while
+the signed-in/anonymous reader split changes. Privileged content/group imports
+and moderator provenance remain host responsibilities; this is not a general
+backup-restore or privileged-write policy.
 
 `EraseSubjects` remains an explicit destructive operation for a caller that
 intends to remove the subject's contributions instead of anonymizing them.

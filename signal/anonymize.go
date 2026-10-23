@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
 // AnonymizeSubject moves an account's contributions to a fresh anonymous
@@ -26,35 +28,23 @@ func (st *Store) AnonymizeSubject(ctx context.Context, tenant string, old, anony
 	if err != nil {
 		return err
 	}
-	if err := st.conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.erasures (tenant,subject_hash,erased_at)
-SELECT ?,sipHash128(?),now64(6)%s`, st.db, quorumSetting(quorum)), tenant, subjectHashKey(old)); err != nil {
-		return fmt.Errorf("signal: fence anonymized account: %w", err)
-	}
 	tables, err := st.activeSubjectTables(ctx)
 	if err != nil {
 		return err
 	}
+	replicas, err := st.prepareAnonymousCopy(ctx, append(append([]string{}, tables...), "erasures"), quorum)
+	if err != nil {
+		return err
+	}
+	if err := st.conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.erasures (tenant,subject_hash,erased_at)
+SELECT ?,sipHash128(?),now64(6)%s`, st.db, quorumSetting(quorum)), tenant, subjectHashKey(old)); err != nil {
+		return fmt.Errorf("signal: fence anonymized account: %w", err)
+	}
 	for pass := 0; pass < maxErasurePasses; pass++ {
+		if err := st.syncAnonymousCopy(ctx, replicas); err != nil {
+			return err
+		}
 		for _, table := range tables {
-			// Pull accepted parts from other replicas before deleting the old
-			// account everywhere. FINAL alone does not synchronize replicas.
-			rows, err := st.conn.Query(ctx, "SELECT count() FROM system.replicas WHERE database=? AND table=?", st.db, table)
-			if err != nil {
-				return err
-			}
-			var replicated uint64
-			if rows.Next() {
-				err = rows.Scan(&replicated)
-			}
-			rows.Close()
-			if err != nil {
-				return err
-			}
-			if replicated != 0 {
-				if err := st.conn.Exec(ctx, "SYSTEM SYNC REPLICA "+st.db+"."+table+" LIGHTWEIGHT"); err != nil {
-					return fmt.Errorf("signal: synchronize %s before anonymization: %w", table, err)
-				}
-			}
 			if err := st.copyAnonymous(ctx, table, tenant, old, anonymous, quorum); err != nil {
 				return err
 			}
@@ -75,6 +65,97 @@ SELECT ?,sipHash128(?),now64(6)%s`, st.db, quorumSetting(quorum)), tenant, subje
 		}
 	}
 	return fmt.Errorf("signal: account anonymization incomplete; retry")
+}
+
+// prepareAnonymousCopy verifies the complete replica set before any fence or
+// mutation. Pooled connections must route only within this configured shard.
+func (st *Store) prepareAnonymousCopy(ctx context.Context, tables []string, quorum uint32) ([]string, error) {
+	if st.cluster == "" && quorum > 1 {
+		return nil, fmt.Errorf("signal: anonymization requires a replica-affine copy source or a complete configured cluster; cleanup remains pending")
+	}
+	from := "system.replicas"
+	var args []any
+	if st.cluster != "" {
+		from = "clusterAllReplicas(?,system.replicas)"
+		args = append(args, st.cluster)
+	}
+	args = append(args, st.db, tables)
+	rows, err := st.conn.Query(ctx, `SELECT table,zookeeper_name,zookeeper_path,replica_name,toUInt64(total_replicas),is_readonly,is_session_expired,arraySort(mapKeys(replica_is_active)) FROM `+from+` WHERE database=? AND table IN ? SETTINGS skip_unavailable_shards=0`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("signal: inspect anonymization replica set: %w", err)
+	}
+	type replicaSet struct {
+		keeper, path string
+		names        []string
+		observed     map[string]bool
+	}
+	sets := map[string]*replicaSet{}
+	for rows.Next() {
+		var table, keeper, path, replica string
+		var total uint64
+		var readonly, expired uint8
+		var names []string
+		if err := rows.Scan(&table, &keeper, &path, &replica, &total, &readonly, &expired, &names); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if readonly != 0 || expired != 0 || len(names) != int(total) || total == 0 || (total > 1 && st.cluster == "") {
+			rows.Close()
+			return nil, fmt.Errorf("signal: incomplete or unhealthy anonymization replica set for %s", table)
+		}
+		set := sets[table]
+		if set == nil {
+			set = &replicaSet{keeper: keeper, path: path, names: names, observed: map[string]bool{}}
+			sets[table] = set
+		}
+		if set.keeper != keeper || set.path != path || strings.Join(set.names, "\x00") != strings.Join(names, "\x00") {
+			rows.Close()
+			return nil, fmt.Errorf("signal: anonymization cluster spans inconsistent replica sets for %s", table)
+		}
+		set.observed[replica] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if st.cluster != "" {
+		for _, table := range tables {
+			set := sets[table]
+			if set == nil || len(set.observed) != len(set.names) {
+				return nil, fmt.Errorf("signal: anonymization cluster does not cover every replica of %s", table)
+			}
+			for _, replica := range set.names {
+				if !set.observed[replica] {
+					return nil, fmt.Errorf("signal: anonymization cluster is missing replica %s of %s", replica, table)
+				}
+			}
+		}
+	}
+	var replicated []string
+	for _, table := range tables {
+		if sets[table] != nil {
+			replicated = append(replicated, table)
+		}
+	}
+	return replicated, nil
+}
+
+// Synchronize every source after the account fence commits. A local SYNC and
+// a pooled copy could reach different replicas; ON CLUSTER covers both.
+func (st *Store) syncAnonymousCopy(ctx context.Context, tables []string) error {
+	// 'none' still waits and throws on host failure or timeout. A partially
+	// completed SYNC is harmless; no copy/delete has begun when it returns.
+	syncCtx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"distributed_ddl_output_mode": "none", "distributed_ddl_task_timeout": 60}))
+	for _, table := range tables {
+		onCluster := ""
+		if st.cluster != "" {
+			onCluster = " ON CLUSTER " + st.cluster
+		}
+		if err := st.conn.Exec(syncCtx, "SYSTEM SYNC REPLICA"+onCluster+" "+st.db+"."+table+" LIGHTWEIGHT"); err != nil {
+			return fmt.Errorf("signal: synchronize %s before anonymization: %w", table, err)
+		}
+	}
+	return nil
 }
 
 // copyAnonymous handles both the current schema and optional pre-retirement

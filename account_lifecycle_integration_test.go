@@ -61,9 +61,13 @@ func TestAccountLifecycleKeepsAnonymousContributionsAndRestoresAuthors(t *testin
 		t.Fatal(err)
 	}
 	for _, c := range readComments() {
-		if c.UserID == "alice" && (c.Author == nil || !c.Author.Deleted || c.Author.Username != "") {
+		if c.Body == "discussion by alice" && (c.UserID != "" || c.Author != nil || c.AnonName != "<Deleted>") {
 			t.Fatalf("soft-deleted author still shown: %+v", c)
 		}
+	}
+	var retainedOwner string
+	if err := pool.QueryRow(ctx, `SELECT user_id FROM `+pgx.Identifier{e.schema, "content_comments"}.Sanitize()+` WHERE tenant_id=$1 AND body='discussion by alice'`, e.cfg.Tenant).Scan(&retainedOwner); err != nil || retainedOwner != "alice" {
+		t.Fatalf("soft deletion lost reversible ownership: %q %v", retainedOwner, err)
 	}
 	assertTotals()
 	if err := e.SetAccountDeleted(ctx, "alice", false); err != nil {
@@ -97,9 +101,15 @@ func TestAccountLifecycleKeepsAnonymousContributionsAndRestoresAuthors(t *testin
 	}
 	for _, table := range []string{"content_reactions", "content_favorites"} {
 		var anonymous int
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{e.schema, table}.Sanitize()+` WHERE tenant_id=$1 AND user_id IS NULL AND anonymized`, e.cfg.Tenant).Scan(&anonymous); err != nil || anonymous != 2 {
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{e.schema, table}.Sanitize()+` WHERE tenant_id=$1 AND user_id IS NULL AND anonymous_actor_id IS NOT NULL`, e.cfg.Tenant).Scan(&anonymous); err != nil || anonymous != 2 {
 			t.Fatalf("anonymous %s contributions=%d err=%v", table, anonymous, err)
 		}
+	}
+	var anonymousActors int
+	if err := pool.QueryRow(ctx, `SELECT count(DISTINCT anonymous_actor_id) FROM (
+SELECT anonymous_actor_id FROM `+pgx.Identifier{e.schema, "content_reactions"}.Sanitize()+` WHERE tenant_id=$1
+UNION ALL SELECT anonymous_actor_id FROM `+pgx.Identifier{e.schema, "content_favorites"}.Sanitize()+` WHERE tenant_id=$1) contributions`, e.cfg.Tenant).Scan(&anonymousActors); err != nil || anonymousActors != 2 {
+		t.Fatalf("cross-table anonymous actors collapsed or split: %d %v", anonymousActors, err)
 	}
 	var mappings int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` WHERE tenant_id=$1 AND anonymous_key IS NOT NULL`, e.cfg.Tenant).Scan(&mappings); err != nil || mappings != 0 {

@@ -6,9 +6,53 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/popularity"
 )
+
+func TestAccountAnonymizationPreservesStandingAcrossPeopleAndVersions(t *testing.T) {
+	f := seeded(t)
+	for _, id := range []string{"alice", "bob", "charlie"} {
+		f.react(1, id, 1, f.now)
+	}
+	f.react(1, "dave", -1, f.now)
+	f.favorite(1, "alice", f.now)
+	// Alice's same vote on another edition still represents one person.
+	f.exec(`INSERT INTO {s}.content_reactions (tenant_id,content_kind,content_id,content_version_id,user_id,value,created_at,updated_at,revision)
+ SELECT tenant_id,kind,id,$3,'alice',1,$4,$4,1 FROM {s}.content_items WHERE tenant_id=$1 AND id=$2`, tenant, f.cid(1), f.vids[[2]int{1, 0}], f.now)
+	for _, id := range []string{"x", "y"} {
+		f.react(3, id, 1, f.now)
+	}
+	f.react(3, "z", -1, f.now)
+	rt, err := content.New(f.ctx, content.Options{Pool: f.pool, Schema: f.schema, Tenant: tenant, Auth: testauth.Auth{Authz: staffOnly{}}, Resolver: f.cat.Resolver(), Kinds: siteConfig()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := map[string]ContentPage{}
+	for _, sort := range []string{"popular:30d", "top_rated:30d"} {
+		_, before[sort] = f.list("main.test", "", q("/contents", "kind", "gallery", "sort", sort, "limit", "1"))
+		if len(before[sort].Contents) != 1 || before[sort].Contents[0].ID != f.cid(1) || before[sort].NextCursor == "" {
+			t.Fatalf("unexpected standing fixture: %+v", before[sort])
+		}
+	}
+	for _, id := range []string{"alice", "bob", "charlie", "dave"} {
+		key := uuid.NewString()
+		for range 2 {
+			if err := rt.AnonymizeAccount(f.ctx, id, key); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for sort, want := range before {
+		_, got := f.list("main.test", "", q("/contents", "kind", "gallery", "sort", sort, "limit", "1"))
+		if len(got.Contents) != 1 || got.Contents[0].ID != f.cid(1) || got.NextCursor != want.NextCursor {
+			t.Fatalf("%s standing changed after unlinking accounts: before=%+v after=%+v", sort, want, got)
+		}
+	}
+}
 
 func TestStandingOrderRanksCurrentPeopleInWindow(t *testing.T) {
 	f := seeded(t)

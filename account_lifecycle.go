@@ -40,7 +40,7 @@ RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Tenant, accountID).Scan
 	if err != nil || state == "purged" {
 		return err
 	}
-	if err := e.content.AnonymizeAccount(ctx, accountID); err != nil {
+	if err := e.content.AnonymizeAccount(ctx, accountID, anonymous); err != nil {
 		return err
 	}
 	if err := e.hub.AnonymizeSubject(ctx, signal.Subject{UserID: accountID}, signal.Subject{AnonKey: anonymous}); err != nil && !errors.Is(err, hub.ErrSignalPlaneDisabled) {

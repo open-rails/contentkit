@@ -25,13 +25,19 @@ type Conn interface {
 // Every method is tenant-scoped via its tenant argument; every content
 // reference it receives must belong to that tenant.
 type Store struct {
-	conn Conn
-	db   string
+	conn    Conn
+	db      string
+	cluster string
 }
+
+// StoreOptions identifies the complete, single-shard replica set that pooled
+// connections may use. Cluster is needed for account anonymization when the
+// signal tables have more than one replica.
+type StoreOptions struct{ Cluster string }
 
 // NewStore returns a Store over an existing ClickHouse connection. The schema
 // comes from migrations.ClickHouse; verify it with CheckSchema.
-func NewStore(conn Conn, database string) (*Store, error) {
+func NewStore(conn Conn, database string, options ...StoreOptions) (*Store, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("signal: conn is required")
 	}
@@ -42,7 +48,17 @@ func NewStore(conn Conn, database string) (*Store, error) {
 	if !identRe.MatchString(db) {
 		return nil, fmt.Errorf("signal: invalid database name %q", db)
 	}
-	return &Store{conn: conn, db: db}, nil
+	if len(options) > 1 {
+		return nil, fmt.Errorf("signal: at most one store options value is allowed")
+	}
+	var cluster string
+	if len(options) == 1 {
+		cluster = strings.TrimSpace(options[0].Cluster)
+		if cluster != "" && !identRe.MatchString(cluster) {
+			return nil, fmt.Errorf("signal: invalid cluster name %q", cluster)
+		}
+	}
+	return &Store{conn: conn, db: db, cluster: cluster}, nil
 }
 
 // refColumns are the content reference columns of every signal table.
