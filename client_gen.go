@@ -1304,7 +1304,7 @@ func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string,
 	return out, err
 }
 
-// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Soft-deletes a version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content retains its existing access and purge protections. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Soft-deletes a version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) DeleteContentVersion(ctx context.Context, id string, vid string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, nil)
 }
