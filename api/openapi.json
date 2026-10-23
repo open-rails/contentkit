@@ -3854,9 +3854,22 @@
           {
             "name": "types",
             "in": "query",
-            "description": "event types to include; keep the same selection with a cursor",
+            "description": "legacy comma-separated event types; ignored when type is provided",
             "style": "form",
             "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "exact event types; repeat for multiple values and keep the same selection with a cursor",
+            "style": "form",
+            "explode": true,
             "schema": {
               "type": "array",
               "items": {
@@ -15248,7 +15261,18 @@
           "occurred_at": {
             "type": "string",
             "format": "date-time"
-          }
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "data": {}
         },
         "required": [
           "id",
@@ -15256,7 +15280,10 @@
           "type",
           "kind",
           "content_id",
-          "occurred_at"
+          "occurred_at",
+          "recorded_at",
+          "source",
+          "scope"
         ]
       },
       "ExposureInput": {

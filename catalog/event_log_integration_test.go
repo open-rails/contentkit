@@ -3,8 +3,8 @@ package catalog
 import (
 	"encoding/json"
 	"errors"
+	"github.com/open-rails/helpers/eventlog"
 	"net/http"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -87,6 +87,12 @@ func TestEventLogRetentionDoesNotSkipYoungerPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	all := readEventLog(t, f)
+	if len(all) != 1 || all[0].ContentID != "young" {
+		t.Fatalf("read-time retention: %+v", all)
+	}
+	if _, err := f.s.ListEvents(f.ctx, EventQuery{After: first.NextCursor}); !errors.Is(err, ErrEventCursorExpired) {
+		t.Fatalf("expired before prune: %v", err)
+	}
 	if n, err := f.s.PruneEvents(f.ctx); err != nil || n != 2 {
 		t.Fatalf("pruned %d: %v", n, err)
 	}
@@ -94,7 +100,7 @@ func TestEventLogRetentionDoesNotSkipYoungerPrefix(t *testing.T) {
 		t.Fatalf("expired cursor silently continued: %v", err)
 	}
 	got := readEventLog(t, f)
-	if len(got) != 2 || !reflect.DeepEqual(got, all[2:]) {
+	if len(got) != 1 || got[0].ContentID != "young" {
 		t.Fatalf("retention skipped a younger prefix or later old clock: %+v", got)
 	}
 	beforeAllPrune, err := f.s.ListEvents(f.ctx, EventQuery{})
@@ -181,5 +187,47 @@ func TestEventLogRejectsReusedPositionAfterRestore(t *testing.T) {
 	}
 	if _, err := f.s.ListEvents(f.ctx, EventQuery{After: current.NextCursor}); !errors.Is(err, ErrEventCursorExpired) {
 		t.Fatalf("accepted old stream epoch: %v", err)
+	}
+}
+
+func TestSharedEventReaderPreservesLegacyCursorAndEnvelope(t *testing.T) {
+	f := newFixture(t, nil)
+	emitFacts(t, f, Event{Type: EventContentCreated, Kind: "gallery", ContentID: "one"}, Event{Type: EventContentUpdated, Kind: "gallery", ContentID: "two"})
+	legacy, err := f.s.ListEvents(f.ctx, EventQuery{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor, _, err := decodeEventCursor(legacy.NextCursor)
+	if err != nil || cursor.Boundary == legacy.Events[0].ID {
+		t.Fatalf("legacy boundary lost: %+v %v", cursor, err)
+	}
+	shared, err := f.s.EventReader().ListEvents(f.ctx, eventlog.Query{After: legacy.NextCursor, Limit: 1})
+	if err != nil || len(shared.Events) != 1 {
+		t.Fatalf("shared continuation: %+v %v", shared, err)
+	}
+	e := shared.Events[0]
+	if e.ID == legacy.Events[0].ID || e.Scope != tenant || e.Source != "contentkit" || e.Subject.ID != "two" || e.RecordedAt.IsZero() || !e.OccurredAt.Equal(e.RecordedAt) {
+		t.Fatalf("envelope: %+v", e)
+	}
+	if page, err := f.s.ListEvents(f.ctx, EventQuery{After: shared.NextCursor}); err != nil || len(page.Events) != 0 {
+		t.Fatalf("legacy continuation: %+v %v", page, err)
+	}
+}
+
+func TestSharedEventReaderFutureTypeFilterLimit(t *testing.T) {
+	f := newFixture(t, nil)
+	types := make([]string, eventlog.MaxTypes)
+	for i := range types {
+		types[i] = strings.Repeat("x", 120) + strconv.Itoa(i)
+	}
+	page, err := f.s.EventReader().ListEvents(f.ctx, eventlog.Query{Types: types})
+	if err != nil || page.NextCursor == "" {
+		t.Fatalf("future types: %+v %v", page, err)
+	}
+	if _, err := f.s.EventReader().ListEvents(f.ctx, eventlog.Query{Types: types, After: page.NextCursor}); err != nil {
+		t.Fatalf("large cursor round trip: %v", err)
+	}
+	if _, err := f.s.EventReader().ListEvents(f.ctx, eventlog.Query{Types: append(types, "overflow")}); !errors.Is(err, eventlog.ErrInvalidQuery) {
+		t.Fatalf("type limit: %v", err)
 	}
 }

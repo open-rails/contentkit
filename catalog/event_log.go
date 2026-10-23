@@ -8,11 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/helpers/eventlog"
 )
 
 // DefaultEventRetention is independent of readers' progress.
@@ -33,13 +33,17 @@ type EventQuery struct {
 // EventRecord is an immutable committed catalog fact. IDs are decimal strings
 // so JSON clients do not lose bigint precision.
 type EventRecord struct {
-	ID         string    `json:"id"`
-	Version    int       `json:"version"`
-	Type       string    `json:"type"`
-	Kind       string    `json:"kind"`
-	ContentID  string    `json:"content_id"`
-	VersionID  string    `json:"version_id,omitempty"`
-	OccurredAt time.Time `json:"occurred_at"`
+	ID         string          `json:"id"`
+	Version    int             `json:"version"`
+	Type       string          `json:"type"`
+	Kind       string          `json:"kind"`
+	ContentID  string          `json:"content_id"`
+	VersionID  string          `json:"version_id,omitempty"`
+	OccurredAt time.Time       `json:"occurred_at"`
+	RecordedAt time.Time       `json:"recorded_at"`
+	Source     string          `json:"source"`
+	Scope      string          `json:"scope"`
+	Data       json.RawMessage `json:"data,omitempty"`
 }
 
 // EventPage always provides a continuation, including an empty stream.
@@ -59,29 +63,9 @@ type eventCursor struct {
 	Types    []string `json:"t,omitempty"`
 }
 
-func eventTypes(in []string) ([]string, error) {
-	if len(in) > 32 {
-		return nil, fmt.Errorf("%w: too many event types", ErrEventCursorInvalid)
-	}
-	valid := map[string]bool{
-		EventContentCreated: true, EventContentUpdated: true, EventContentScheduled: true,
-		EventContentPublished: true, EventContentUnpublished: true, EventContentDeleted: true,
-		EventContentRestored: true, EventContentPurged: true, EventVersionCreated: true,
-		EventVersionUpdated: true, EventVersionPublished: true, EventVersionDeleted: true, EventVersionPurged: true,
-	}
-	out := append([]string{}, in...)
-	for _, kind := range out {
-		if !valid[kind] {
-			return nil, fmt.Errorf("%w: unknown event type %q", ErrEventCursorInvalid, kind)
-		}
-	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
-}
-
 func decodeEventCursor(value string) (eventCursor, int64, error) {
 	var c eventCursor
-	if len(value) > 4096 {
+	if len(value) > 32768 {
 		return c, 0, ErrEventCursorInvalid
 	}
 	body, err := base64.RawURLEncoding.DecodeString(value)
@@ -105,114 +89,127 @@ func encodeEventCursor(c eventCursor) string {
 	return base64.RawURLEncoding.EncodeToString(body)
 }
 
-// ListEvents does not mark rows delivered, register a reader, or start a worker.
-// The repeatable-read snapshot binds pagination to one committed stream head.
+// ListEvents preserves the catalog wire format over the shared paging engine.
 func (s *Store) ListEvents(ctx context.Context, query EventQuery) (EventPage, error) {
-	page := EventPage{Events: []EventRecord{}, RetentionSeconds: int64(s.eventRetention / time.Second)}
-	limit := query.Limit
-	if limit == 0 {
-		limit = 100
-	}
-	if limit < 1 || limit > 500 {
-		return page, fmt.Errorf("%w: limit must be between 1 and 500", ErrEventCursorInvalid)
-	}
-	types, err := eventTypes(query.Types)
+	page, err := s.EventReader().ListEvents(ctx, eventlog.Query{After: query.After, Limit: query.Limit, Types: query.Types})
+	result := EventPage{Events: []EventRecord{}, NextCursor: page.NextCursor, HasMore: page.HasMore, RetentionSeconds: page.RetentionSeconds}
 	if err != nil {
-		return page, err
+		switch {
+		case errors.Is(err, eventlog.ErrInvalidQuery), errors.Is(err, eventlog.ErrInvalidCursor):
+			return result, fmt.Errorf("%w: %w", ErrEventCursorInvalid, err)
+		case errors.Is(err, eventlog.ErrExpiredCursor):
+			return result, fmt.Errorf("%w: %w", ErrEventCursorExpired, err)
+		default:
+			return result, err
+		}
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return page, err
+	for _, e := range page.Events {
+		var fact eventPayload
+		if err := json.Unmarshal(e.Data, &fact); err != nil {
+			return result, err
+		}
+		result.Events = append(result.Events, EventRecord{ID: e.ID, Version: e.Version, Type: e.Type, Kind: fact.Kind, ContentID: fact.ContentID, VersionID: fact.VersionID, OccurredAt: e.OccurredAt, RecordedAt: e.RecordedAt, Source: e.Source, Scope: e.Scope, Data: e.Data})
 	}
-	defer tx.Rollback(ctx)
-	var epoch string
-	if err := tx.QueryRow(ctx, `SELECT epoch::text FROM `+s.qs+`.content_event_epoch WHERE singleton`).Scan(&epoch); err != nil {
-		return page, err
-	}
-	var head, floor int64
-	var floorBoundary string
-	err = tx.QueryRow(ctx, `SELECT position,retained_after,coalesce(retained_boundary::text,'') FROM `+s.qs+`.content_event_streams WHERE tenant_id=$1`, s.tenant).Scan(&head, &floor, &floorBoundary)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return page, err
-	}
-	position, boundary := floor, floorBoundary
-	if query.After != "" {
-		cursor, after, err := decodeEventCursor(query.After)
+	return result, nil
+}
+
+// EventReader is bound to this store's app. Public callers use Client.EventReader,
+// which retains the client's authorization and transport behavior.
+func (s *Store) EventReader() eventlog.Reader {
+	return eventlog.Log{Source: "contentkit", Scope: s.tenant, Retention: s.eventRetention, Now: s.now, Codec: catalogCursorCodec{}, ReadSnapshot: func(ctx context.Context, read func(eventlog.Snapshot) error) error {
+		tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 		if err != nil {
-			return page, err
+			return err
 		}
-		if cursor.Scope != s.tenant || !slices.Equal(cursor.Types, types) {
-			return page, ErrEventCursorInvalid
+		defer tx.Rollback(ctx)
+		if err := read(&catalogSnapshot{store: s, tx: tx}); err != nil {
+			return err
 		}
-		if cursor.Epoch != epoch || after < floor || after > head {
-			return page, ErrEventCursorExpired
-		}
-		position, boundary = after, cursor.Boundary
-		want := floorBoundary
-		if after > floor {
-			if err := tx.QueryRow(ctx, `SELECT boundary::text FROM `+s.t.events+` WHERE tenant_id=$1 AND position=$2`, s.tenant, after).Scan(&want); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					return page, ErrEventCursorExpired
-				}
-				return page, err
-			}
-		}
-		if boundary != want {
-			return page, ErrEventCursorExpired
-		}
-	}
-	statement := `SELECT id::text,event_version,type,payload,created_at,position,boundary::text FROM ` + s.t.events + ` WHERE tenant_id=$1 AND position>$2 AND position<=$3`
-	args := []any{s.tenant, position, head}
-	if len(types) > 0 {
-		statement += ` AND type=ANY($4) ORDER BY position LIMIT $5`
-		args = append(args, types, limit+1)
-	} else {
-		statement += ` ORDER BY position LIMIT $4`
-		args = append(args, limit+1)
-	}
-	rows, err := tx.Query(ctx, statement, args...)
+		return tx.Commit(ctx)
+	}}
+}
+
+type catalogCursorCodec struct{}
+
+func (catalogCursorCodec) Encode(c eventlog.Cursor) string {
+	return encodeEventCursor(eventCursor{Version: c.Version, Scope: c.Scope, Epoch: c.Epoch, Position: strconv.FormatInt(c.Position, 10), Boundary: c.Boundary, Types: c.Types})
+}
+func (catalogCursorCodec) Decode(raw string) (eventlog.Cursor, error) {
+	c, p, err := decodeEventCursor(raw)
 	if err != nil {
-		return page, err
+		return eventlog.Cursor{}, eventlog.ErrInvalidCursor
 	}
+	return eventlog.Cursor{Version: c.Version, Source: "contentkit", Scope: c.Scope, Epoch: c.Epoch, Position: p, Boundary: c.Boundary, Types: c.Types}, nil
+}
+
+type catalogSnapshot struct {
+	store  *Store
+	tx     pgx.Tx
+	cutoff time.Time
+	head   int64
+}
+
+func (s *catalogSnapshot) Stream(ctx context.Context, cutoff time.Time) (eventlog.Stream, error) {
+	s.cutoff = cutoff
+	var state eventlog.Stream
+	if err := s.tx.QueryRow(ctx, `SELECT epoch::text FROM `+s.store.qs+`.content_event_epoch WHERE singleton`).Scan(&state.Epoch); err != nil {
+		return state, err
+	}
+	err := s.tx.QueryRow(ctx, `SELECT position,retained_after,coalesce(retained_boundary::text,'') FROM `+s.store.qs+`.content_event_streams WHERE tenant_id=$1`, s.store.tenant).Scan(&state.Head.Number, &state.Floor.Number, &state.Floor.ID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return state, err
+	}
+	s.head = state.Head.Number
+	// Advance only the expired prefix, and exclude later expired rows separately.
+	var floor int64
+	var boundary string
+	err = s.tx.QueryRow(ctx, `SELECT position,boundary::text FROM `+s.store.t.events+` WHERE tenant_id=$1 AND position>$2 AND position<coalesce((SELECT min(position) FROM `+s.store.t.events+` WHERE tenant_id=$1 AND position>$2 AND created_at >= $3),$4+1) ORDER BY position DESC LIMIT 1`, s.store.tenant, state.Floor.Number, cutoff, s.head).Scan(&floor, &boundary)
+	if err == nil {
+		state.Floor = eventlog.Position{Number: floor, ID: boundary}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return state, err
+	}
+	state.Head.ID = state.Floor.ID
+	if state.Head.Number > state.Floor.Number {
+		state.Head.ID, err = s.Boundary(ctx, state.Head.Number)
+		if err != nil {
+			return state, err
+		}
+	}
+	return state, nil
+}
+func (s *catalogSnapshot) Boundary(ctx context.Context, position int64) (string, error) {
+	var id string
+	err := s.tx.QueryRow(ctx, `SELECT boundary::text FROM `+s.store.t.events+` WHERE tenant_id=$1 AND position=$2`, s.store.tenant, position).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", eventlog.ErrExpiredCursor
+	}
+	return id, err
+}
+func (s *catalogSnapshot) Events(ctx context.Context, after int64, types []string, limit int) ([]eventlog.Record, error) {
+	rows, err := s.tx.Query(ctx, `SELECT id::text,event_version,type,payload,created_at,position,boundary::text FROM `+s.store.t.events+` WHERE tenant_id=$1 AND position>$2 AND position<=$3 AND created_at >= $4 AND (cardinality($5::text[])=0 OR type=ANY($5)) ORDER BY position LIMIT $6`, s.store.tenant, after, s.head, s.cutoff, append([]string{}, types...), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []eventlog.Record{}
 	for rows.Next() {
-		var event EventRecord
-		var payload []byte
-		var next int64
-		var token string
-		if err := rows.Scan(&event.ID, &event.Version, &event.Type, &payload, &event.OccurredAt, &next, &token); err != nil {
-			rows.Close()
-			return page, err
+		var r eventlog.Record
+		if err := rows.Scan(&r.Event.ID, &r.Event.Version, &r.Event.Type, &r.Event.Data, &r.Event.RecordedAt, &r.Position, &r.Boundary); err != nil {
+			return nil, err
 		}
 		var fact eventPayload
-		if err := json.Unmarshal(payload, &fact); err != nil {
-			rows.Close()
-			return page, err
+		if err := json.Unmarshal(r.Event.Data, &fact); err != nil {
+			return nil, err
 		}
-		event.Kind, event.ContentID, event.VersionID = fact.Kind, fact.ContentID, fact.VersionID
-		if len(page.Events) == limit {
-			page.HasMore = true
-			break
-		}
-		page.Events = append(page.Events, event)
-		position, boundary = next, token
+		r.Event.Source, r.Event.Scope = "contentkit", s.store.tenant
+		// The legacy log recorded mutation facts at insertion time; both timestamps
+		// coincide. Keep the fields distinct for consumers and future storage.
+		r.Event.OccurredAt = r.Event.RecordedAt
+		r.Event.Subject = eventlog.Subject{Type: fact.Kind, ID: fact.ContentID}
+		result = append(result, r)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return page, err
-	}
-	if !page.HasMore {
-		position, boundary = head, floorBoundary
-		if head > floor {
-			if err := tx.QueryRow(ctx, `SELECT boundary::text FROM `+s.t.events+` WHERE tenant_id=$1 AND position=$2`, s.tenant, head).Scan(&boundary); err != nil {
-				return page, err
-			}
-		}
-	}
-	page.NextCursor = encodeEventCursor(eventCursor{Version: 1, Scope: s.tenant, Epoch: epoch, Position: strconv.FormatInt(position, 10), Boundary: boundary, Types: types})
-	if err := tx.Commit(ctx); err != nil {
-		return EventPage{}, err
-	}
-	return page, nil
+	return result, rows.Err()
 }
 
 // PruneEvents bounds each maintenance run and advances only a contiguous

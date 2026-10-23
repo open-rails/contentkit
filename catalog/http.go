@@ -33,7 +33,7 @@ var languageParam = httpapi.Text("language", "the language to show text in; the 
 var routes = []httpapi.Route[*Store]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/events", Resource: "events", Auth: httpapi.Staff, Perm: access.ContentViewRestricted.String(),
 		Doc:       "Read this app's immutable catalog events in committed order. Readers save their own cursor; reading acknowledges or deletes nothing. Omitting after starts at the oldest retained event. Event-type filters are bound to the continuation; expired or reset cursors require a current-state resync.",
-		Query:     []httpapi.Param{httpapi.Text("after", "opaque continuation from the previous page"), httpapi.Int("limit", "page size: 100 by default, at most 500"), httpapi.List("types", "event types to include; keep the same selection with a cursor")},
+		Query:     []httpapi.Param{httpapi.Text("after", "opaque continuation from the previous page"), httpapi.Int("limit", "page size: 100 by default, at most 500"), httpapi.List("types", "legacy comma-separated event types; ignored when type is provided"), httpapi.Repeated("type", "exact event types; repeat for multiple values and keep the same selection with a cursor")},
 		Responses: []httpapi.Reply{httpapi.OK(EventPage{})}, Errors: []string{httpapi.CodeEventCursorExpired}},
 		Serve: httpapi.H((*Store).handleEvents)},
 
@@ -349,9 +349,13 @@ func (s *Store) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		query.Limit = limit
 	}
-	for _, part := range strings.Split(strings.Join(values["types"], ","), ",") {
-		if kind := strings.TrimSpace(part); kind != "" {
-			query.Types = append(query.Types, kind)
+	if exact, ok := values["type"]; ok {
+		query.Types = exact
+	} else {
+		for _, part := range strings.Split(strings.Join(values["types"], ","), ",") {
+			if kind := strings.TrimSpace(part); kind != "" {
+				query.Types = append(query.Types, kind)
+			}
 		}
 	}
 	page, err := s.ListEvents(r.Context(), query)
