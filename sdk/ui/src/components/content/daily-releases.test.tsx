@@ -74,7 +74,7 @@ it("forwards ordered entity rows to daily release cards", async () => {
   const client = createContentKitClient({ baseUrl: "https://content.test/entity-rows", fetch: async (input) => Response.json(new URL(String(input)).pathname.endsWith("/presets") ? [] : { ...data(), days: [{ date: "2026-10-15", contents: [item], filtered_count: 0, filtered_entities: [] }] }) });
   const view = render(<ContentKitProvider client={client} viewer={null}><DailyReleases entityLayout="rows" entityKinds={["series", "artist"]} /></ContentKitProvider>);
   await screen.findByText("Gallery entities");
-  expect([...view.container.querySelectorAll('[data-ckui="card-group-row"]')].map((row) => row.getAttribute("data-kind"))).toEqual(["series", "artist"]);
+  expect([...view.container.querySelectorAll('[data-ckui="card-entity-row"]')].map((row) => row.getAttribute("data-kind"))).toEqual(["series", "artist"]);
   expect(within(screen.getByRole("list", { name: "Series" })).getByText("A series")).toBeVisible();
   expect(within(screen.getByRole("list", { name: "Artist" })).getByText("An artist")).toBeVisible();
 });

@@ -77,7 +77,7 @@ export interface CardMetadata {
   pages?: boolean;
   duration?: boolean;
   /** Entity kinds named last in the meta line: the first entity of the first kind the card has, linked. */
-  groups?: readonly string[];
+  entities?: readonly string[];
 }
 
 /** What a card says about the reader's standing and the work's state. */
@@ -220,7 +220,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
   const selectedTraits = metadata?.traits;
   const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
-  const metaEntity = metadata?.groups?.map((kind) => (card.entities[kind] ?? []).find((entity) => !filterEntity || filterEntity(entity, kind))).find(Boolean);
+  const metaEntity = metadata?.entities?.map((kind) => (card.entities[kind] ?? []).find((entity) => !filterEntity || filterEntity(entity, kind))).find(Boolean);
   const meta: ReactNode[] = [
     ...(metadata?.languages === false ? [] : v.languages.map(languageName)),
     metadata?.pages !== false && v.pages ? m.plural("contents.pages", v.pages) : null,
@@ -269,11 +269,11 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
     </li>];
   };
   const entityList = entityGroups.length > 0 ? entityLayout === "rows" ? (
-    <div className="grid gap-1" data-ckui="card-groups" data-layout="rows">
-      {entityGroups.map(({ kind, entities, total }) => <ul key={kind} className={entityClassName} aria-label={labelOf(labels, kind)} data-ckui="card-group-row" data-kind={kind}>{entityItems(kind, entities, total)}</ul>)}
+    <div className="grid gap-1" data-ckui="card-entities" data-layout="rows">
+      {entityGroups.map(({ kind, entities, total }) => <ul key={kind} className={entityClassName} aria-label={labelOf(labels, kind)} data-ckui="card-entity-row" data-kind={kind}>{entityItems(kind, entities, total)}</ul>)}
     </div>
   ) : (
-    <ul ref={setChipList} className={fitting ? cn("relative flex flex-nowrap overflow-hidden", entityStyle === "text" ? "gap-x-2" : "gap-1") : entityClassName} data-ckui="card-groups" data-layout="inline" data-fit={fitting ? "" : undefined}>
+    <ul ref={setChipList} className={fitting ? cn("relative flex flex-nowrap overflow-hidden", entityStyle === "text" ? "gap-x-2" : "gap-1") : entityClassName} data-ckui="card-entities" data-layout="inline" data-fit={fitting ? "" : undefined}>
       {fitting ? fittedItems() : entityGroups.flatMap(({ kind, entities, total }) => entityItems(kind, entities, total))}
     </ul>
   ) : null;
@@ -324,7 +324,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       <div className="grid gap-1">
         {titlePosition === "below" && titleLink}
         {entityStyle === "text" && entityList}
-        {owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} loadMedia={loadMedia} />}
+        {owner && card.owner && <OwnerChip entity={card.owner} href={ownerHref} loadMedia={loadMedia} />}
         {traits.length > 0 && <div className="flex flex-wrap gap-1" data-ckui="card-traits">
           {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
         </div>}
@@ -357,12 +357,12 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
 }
 
 /** The group that owns a content (a channel): its avatar and name, linking to its page. */
-export function OwnerChip({ group, href, className, loadMedia = true }: { group: EntityLike; href?: (g: EntityLike) => string | undefined; className?: string; loadMedia?: boolean }) {
+export function OwnerChip({ entity, href, className, loadMedia = true }: { entity: EntityLike; href?: (g: EntityLike) => string | undefined; className?: string; loadMedia?: boolean }) {
   return (
-    <span className={cn("flex min-w-0 text-xs text-muted-foreground", className)} data-ckui="card-owner" data-id={group.id}>
-      <EntityLink entity={group} href={href} className="inline-flex min-w-0 items-center gap-1.5 hover:text-foreground">
-        {loadMedia ? <EntityAvatar entity={group} className="size-5 shrink-0 text-[0.625rem]" /> : <span className="size-5 shrink-0 rounded-full bg-muted" aria-hidden />}
-        <span className="truncate">{group.name || group.slug}</span>
+    <span className={cn("flex min-w-0 text-xs text-muted-foreground", className)} data-ckui="card-owner" data-id={entity.id}>
+      <EntityLink entity={entity} href={href} className="inline-flex min-w-0 items-center gap-1.5 hover:text-foreground">
+        {loadMedia ? <EntityAvatar entity={entity} className="size-5 shrink-0 text-[0.625rem]" /> : <span className="size-5 shrink-0 rounded-full bg-muted" aria-hidden />}
+        <span className="truncate">{entity.name || entity.slug}</span>
       </EntityLink>
     </span>
   );
@@ -400,7 +400,7 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = tr
   const title = card.title || card.code;
   return (
     <article className={cn("relative grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
-      {byline ?? (owner && card.owner && <OwnerChip group={card.owner} href={ownerHref} loadMedia={loadMedia} className="text-sm" />)}
+      {byline ?? (owner && card.owner && <OwnerChip entity={card.owner} href={ownerHref} loadMedia={loadMedia} className="text-sm" />)}
       <a href={url} onClick={onClick} className="grid gap-2">
         <span className="font-medium break-words hover:underline" data-ckui="card-title">
           {title}

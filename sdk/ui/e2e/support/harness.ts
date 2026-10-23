@@ -118,11 +118,6 @@ export class Harness {
     return this.call("POST", "/items", o);
   }
 
-  /** Runs the groups' count and automatic cover job now. */
-  recount(): Promise<void> {
-    return this.call("POST", "/recount");
-  }
-
   updateItem(ref: { kind: string; id: string }, o: { access?: "full" | "none"; hidden?: boolean }): Promise<Item> {
     return this.call("PATCH", `/items/${ref.kind}/${ref.id}`, o);
   }

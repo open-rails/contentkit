@@ -44,13 +44,13 @@ const SORTS: readonly EntitySort[] = ["name", "count", "newest"];
 
 /**
  * Staff: entities per kind. A kind's entities by letter, order and language; a
- * new entity; a entity's editor (EntityEditor) and its members (EntityMembers).
- * Kinds are at basePath/{kind}, a entity at basePath/{kind}/{id}, filters in the query.
+ * new entity; an entity's editor (EntityEditor) and its members (EntityMembers).
+ * Kinds are at basePath/{kind}, an entity at basePath/{kind}/{id}, filters in the query.
  */
 export function EntityManager({ client: own, baseUrl, auth, guard, appearance, className, language, messages, ...p }: EntityManagerProps) {
   const client = useFlowClient({ client: own, baseUrl, auth });
   return (
-    <AdminRoot flow="group-manager" appearance={appearance} className={className} language={language} messages={messages} guard={guard}>
+    <AdminRoot flow="entity-manager" appearance={appearance} className={className} language={language} messages={messages} guard={guard}>
       <Manager {...p} client={client} />
     </AdminRoot>
   );

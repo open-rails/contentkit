@@ -36,9 +36,9 @@ it("keeps the default card metadata and counts unless the host chooses otherwise
   expect(screen.getByText("Colored")).toHaveAttribute("data-ckui", "card-trait");
   expect(screen.getByText("Uncensored")).toHaveAttribute("data-ckui", "card-trait");
   expect(screen.getByText("A tag")).toBeVisible();
-  expect(view.container.querySelector('[data-ckui="card-groups"]')).toHaveAttribute("data-layout", "inline");
-  expect(view.container.querySelector('[data-ckui="card-groups"]')?.tagName).toBe("UL");
-  expect(view.container.querySelector('[data-ckui="card-group-row"]')).toBeNull();
+  expect(view.container.querySelector('[data-ckui="card-entities"]')).toHaveAttribute("data-layout", "inline");
+  expect(view.container.querySelector('[data-ckui="card-entities"]')?.tagName).toBe("UL");
+  expect(view.container.querySelector('[data-ckui="card-entity-row"]')).toBeNull();
   expect(view.container.querySelector('[data-ckui="card-counts"]')).not.toBeNull();
   expect(view.container.querySelector('[data-ckui="card-cover"]')?.contains(screen.getByRole("link", { name: "A gallery" }))).toBe(false);
 });
@@ -49,12 +49,12 @@ it.each(["chips", "text"] as const)("groups %s entities into ordered accessible 
     ...card.entities,
   } };
   const view = render(<ContentCard card={grouped} entityLayout="rows" entityStyle={entityStyle} entityKinds={["series", "missing", "artist", "tag"]} chips={1} filterEntity={(entity, kind) => entity.slug !== "original" && kind !== "tag"} labels={{ series: "Series", artist: "Artists" }} />);
-  const groups = view.container.querySelector('[data-ckui="card-groups"]')!;
+  const groups = view.container.querySelector('[data-ckui="card-entities"]')!;
   expect(groups).toHaveAttribute("data-layout", "rows");
   expect([...groups.children].map((row) => row.getAttribute("data-kind"))).toEqual(["series", "artist"]);
   const series = screen.getByRole("list", { name: "Series" });
   const artists = screen.getByRole("list", { name: "Artists" });
-  expect(series).toHaveAttribute("data-ckui", "card-group-row");
+  expect(series).toHaveAttribute("data-ckui", "card-entity-row");
   expect(series).toHaveClass("flex", "flex-wrap");
   expect(within(series).getAllByRole("listitem")).toHaveLength(1);
   expect(within(series).getByText("A specific series")).toBeVisible();
@@ -64,7 +64,7 @@ it.each(["chips", "text"] as const)("groups %s entities into ordered accessible 
   expect(screen.queryByText(/Original|Second artist|A tag/)).toBeNull();
 
   view.rerender(<ContentCard card={grouped} entityLayout="rows" entityKinds={["missing"]} />);
-  expect(view.container.querySelector('[data-ckui="card-groups"]')).toBeNull();
+  expect(view.container.querySelector('[data-ckui="card-entities"]')).toBeNull();
 });
 
 it("lets a host show only page count, selected traits and filtered series without losing specific names", () => {
@@ -158,7 +158,7 @@ it("counts the chips left out, per breakpoint, only when the host asks", () => {
   const tags = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id, slug: id, name: `Tag ${id}` }));
   const tagged: Card = { ...card, entities: { tag: tags } };
   const view = render(<ContentCard card={tagged} entityKinds={["tag"]} chips={{ base: 3, lg: 4 }} chipOverflow />);
-  const items = [...view.container.querySelectorAll('[data-ckui="card-groups"] > li')];
+  const items = [...view.container.querySelectorAll('[data-ckui="card-entities"] > li')];
   expect(items.map((li) => li.textContent)).toEqual(["Tag a", "Tag b", "Tag c", "Tag d", "+33 more", "+22 more"]);
   expect(items.map((li) => li.className)).toEqual(["", "", "", "hidden lg:list-item", "lg:hidden", "hidden lg:list-item"]);
 
@@ -167,7 +167,7 @@ it("counts the chips left out, per breakpoint, only when the host asks", () => {
 
   view.rerender(<ContentCard card={tagged} entityKinds={["tag"]} chips={3} />);
   expect(view.container.querySelector('[data-ckui="card-chip-more"]')).toBeNull();
-  expect(view.container.querySelectorAll('[data-ckui="card-groups"] > li')).toHaveLength(3);
+  expect(view.container.querySelectorAll('[data-ckui="card-entities"] > li')).toHaveLength(3);
 });
 
 // Each chip is as wide as its text in 10px letters; the list is `width` px.
@@ -185,7 +185,7 @@ const seen = (list: Element) => [...list.children].filter((li) => !li.classList.
 
 it("fits whole chips on one line and counts the rest", () => withWidths(200, () => {
   const view = render(<ContentCard card={{ ...card, entities: { tag: named("bakunyu", "big ass", "double penetration", "tentacles") } }} entityKinds={["tag"]} chips={4} chipOverflow chipFit />);
-  const list = view.container.querySelector('[data-ckui="card-groups"]')!;
+  const list = view.container.querySelector('[data-ckui="card-entities"]')!;
   expect(list).toHaveAttribute("data-fit");
   expect(seen(list)).toEqual(["bakunyu", "big ass", "+2"]);
   expect(list.querySelector('[data-ckui="card-chip-more"]')?.textContent).toBe("+22 more");
@@ -195,7 +195,7 @@ it("fits whole chips on one line and counts the rest", () => withWidths(200, () 
 it("keeps room for the +N even when no kind is over its limit", () => withWidths(190, () => {
   // Without the reserve, three 60px chips (180px) would fill the line and push +N out.
   const view = render(<ContentCard card={{ ...card, entities: { tag: named("aaaaaa", "bbbbbb", "cccccc", "dddddd") } }} entityKinds={["tag"]} chips={4} chipOverflow chipFit />);
-  expect(seen(view.container.querySelector('[data-ckui="card-groups"]')!)).toEqual(["aaaaaa", "bbbbbb", "+2"]);
+  expect(seen(view.container.querySelector('[data-ckui="card-entities"]')!)).toEqual(["aaaaaa", "bbbbbb", "+2"]);
 }));
 
 it("skips chips hidden at this width when fitting", () => withWidths(500, () => {
@@ -203,7 +203,7 @@ it("skips chips hidden at this width when fitting", () => withWidths(500, () => 
   style.textContent = ".hidden { display: none; }";
   try {
     const view = render(<ContentCard card={{ ...card, entities: { tag: named("a", "b"), artist: named("x") } }} entityKinds={["tag", "artist"]} chips={{ base: 1, lg: 2 }} chipOverflow chipFit />);
-    expect(seen(view.container.querySelector('[data-ckui="card-groups"]')!)).toEqual(["a", "x", "+1"]);
+    expect(seen(view.container.querySelector('[data-ckui="card-entities"]')!)).toEqual(["a", "x", "+1"]);
   } finally {
     style.remove();
   }
@@ -211,20 +211,20 @@ it("skips chips hidden at this width when fitting", () => withWidths(500, () => 
 
 it("ends the meta line with the first named group, dot separated and linked", () => {
   const video: Card = { ...card, entities: { ...card.entities, season: [{ id: "season", slug: "season", name: "A season", path: "/seasons/a" }] } };
-  const view = render(<ContentCard card={video} metadata={{ languages: true, pages: false, duration: false, groups: ["missing", "season", "series"] }} />);
+  const view = render(<ContentCard card={video} metadata={{ languages: true, pages: false, duration: false, entities: ["missing", "season", "series"] }} />);
   const meta = view.container.querySelector('[data-ckui="card-meta"]')!;
   expect(meta.textContent).toBe("English · A season");
   expect(meta).toHaveClass("line-clamp-2");
   expect(meta.querySelectorAll('[data-ckui="card-meta-dot"]')).toHaveLength(1);
   expect(within(meta as HTMLElement).getByRole("link", { name: "A season" })).toHaveAttribute("href", "/seasons/a");
 
-  view.rerender(<ContentCard card={video} filterEntity={(_, kind) => kind !== "season"} metadata={{ languages: false, pages: false, duration: false, groups: ["season", "series"] }} />);
+  view.rerender(<ContentCard card={video} filterEntity={(_, kind) => kind !== "season"} metadata={{ languages: false, pages: false, duration: false, entities: ["season", "series"] }} />);
   expect(view.container.querySelector('[data-ckui="card-meta"]')?.textContent).toBe("Original");
 });
 
 it("shrinks the one chip that cannot fit so its +N stays in view", () => withWidths(100, () => {
   const view = render(<ContentCard card={{ ...card, entities: { tag: named("an unreasonably long tag", "b") } }} entityKinds={["tag"]} chips={2} chipOverflow chipFit />);
-  const list = view.container.querySelector('[data-ckui="card-groups"]')!;
+  const list = view.container.querySelector('[data-ckui="card-entities"]')!;
   expect(seen(list)).toEqual(["an unreasonably long tag", "+1"]);
   expect(within(list as HTMLElement).getByText("an unreasonably long tag").closest("li")).toHaveClass("min-w-0", "shrink");
 }));

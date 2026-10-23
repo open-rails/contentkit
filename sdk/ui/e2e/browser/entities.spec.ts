@@ -3,7 +3,7 @@ import type { Entity } from "@openrails/contentkit-ui/client";
 import { contentKit, seedContent } from "../support/seed.ts";
 import { admin, harness, inheritsHostTheme, page as demo, screenshots as dir } from "./pages.ts";
 
-// Entities in demo/groups.tsx (directory, header, a content's groups) and
+// Entities in demo/entities.tsx (directory, header, a content's groups) and
 // EntityManager in demo/admin.tsx, against the real ContentKit.
 test.describe.configure({ timeout: 120_000 });
 test.use({ actionTimeout: 15_000 });
@@ -34,13 +34,13 @@ for (const theme of ["light", "dark"] as const) {
       await ck.entities.addMembers(beta.id, [{ content_id: c.id }]);
     }
     await ck.entities.update(beta.id, { text: [{ language: "en", description: `Beta's story ${r}.` }] });
-    await h.recount();
+
 
     await page.goto(demo("entities.html", null, { kind: "series", parent: parent!.id, theme }));
     const dir_ = page.locator("[data-ckui=entity-directory]");
-    const groups = dir_.locator("[data-ckui=group]");
+    const groups = dir_.locator("[data-ckui=entity]");
     await expect(groups).toHaveText([`3x3 ${r}0`, `Alpha ${r}0`, `Beta ${r}2`], { timeout: 30_000 });
-    await page.screenshot({ path: `${dir}/group-directory-${theme}-${info.project.name}.png`, fullPage: true });
+    await page.screenshot({ path: `${dir}/entity-directory-${theme}-${info.project.name}.png`, fullPage: true });
 
     await dir_.getByRole("button", { name: "B", exact: true }).click();
     await expect(page).toHaveURL(/letter=b/);
@@ -140,21 +140,21 @@ for (const [mode, theme] of [
   test(`group manager: create, edit, names, members, cover, merge, delete and restore (${mode}, ${theme})`, async ({ page }, info) => {
     const { staff, ck } = await staffClient();
     const r = run();
-    await page.goto(admin("/admin/groups/artist", staff, { mode, theme }));
+    await page.goto(admin("/admin/entities/artist", staff, { mode, theme }));
     const flow = page.locator("[data-ckui=entity-manager]");
     await expect(flow.getByRole("heading", { name: "Artist", exact: true })).toBeVisible({ timeout: 30_000 });
-    expect(await inheritsHostTheme(page, "group-manager")).toBe(true);
+    expect(await inheritsHostTheme(page, "entity-manager")).toBe(true);
 
     await flow.getByRole("button", { name: "New: Artist" }).click();
-    await expect(page).toHaveURL(/\/admin\/groups\/artist\/new$/);
+    await expect(page).toHaveURL(/\/admin\/entities\/artist\/new$/);
     await flow.getByLabel("Name (English)").fill(`Studio ${r}`);
     await expect(flow.getByLabel("Slug")).toHaveValue(`studio-${r}`);
     await flow.getByRole("combobox", { name: "Artist type" }).click();
     await page.getByRole("option", { name: "Company" }).click();
     await flow.getByRole("button", { name: "Create" }).click();
-    await expect(page).toHaveURL(/\/admin\/groups\/artist\/[0-9a-f-]{36}$/);
+    await expect(page).toHaveURL(/\/admin\/entities\/artist\/[0-9a-f-]{36}$/);
     const id = page.url().split("/").pop()!;
-    if (mode === "router") await expect(page.locator("[data-demo=router-location]")).toHaveText(`/admin/groups/artist/${id}`);
+    if (mode === "router") await expect(page.locator("[data-demo=router-location]")).toHaveText(`/admin/entities/artist/${id}`);
     await expect(flow.locator("[data-ckui=entity-head]").getByRole("heading", { name: `Studio ${r}` })).toBeVisible();
     expect((await ck.entities.get(id)).attributes).toEqual({ artist_type: "company" });
 
@@ -183,7 +183,7 @@ for (const [mode, theme] of [
     await expect(members.locator(`[data-ckui=entity-member][data-content="${content.id}"]`)).toContainText(`Member ${r}`);
     await members.getByRole("button", { name: `Use as cover: Member ${r}` }).click();
     await expect(flow.locator("[data-ckui=cover-mode]")).toHaveText("A member's cover.");
-    await page.screenshot({ path: `${dir}/group-manager-${mode}-${theme}-${info.project.name}.png`, fullPage: true });
+    await page.screenshot({ path: `${dir}/entity-manager-${mode}-${theme}-${info.project.name}.png`, fullPage: true });
 
     // Merge into another artist: the flow moves to the survivor.
     const [target] = await ck.entities.create([{ kind: "artist", slug: `target-${r}`, names: [name("en", `Target ${r}`)] }]);
@@ -195,7 +195,7 @@ for (const [mode, theme] of [
     await expect(dialog.getByRole("button", { name: "Merge" })).toBeDisabled();
     await dialog.getByLabel("Type merge to confirm").fill("merge");
     await dialog.getByRole("button", { name: "Merge" }).click();
-    await expect(page).toHaveURL(new RegExp(`/admin/groups/artist/${target!.id}$`));
+    await expect(page).toHaveURL(new RegExp(`/admin/entities/artist/${target!.id}$`));
     await expect(flow.locator("[data-ckui=entity-head]").getByRole("heading", { name: `Target ${r}` })).toBeVisible();
     await expect(flow.locator(`[data-ckui=entity-members] [data-ckui=entity-member][data-content="${content.id}"]`)).toContainText(`Member ${r}`);
     await expect(flow.locator("[data-ckui=entity-names-editor]")).toContainText(`Studio ${r}`);
@@ -207,11 +207,11 @@ for (const [mode, theme] of [
     await expect(flow.locator("[data-ckui=entity-head]").getByRole("heading", { name: `Target ${r}` })).toBeVisible();
 
     await flow.getByRole("button", { name: "Back to the list" }).click();
-    await expect(page).toHaveURL(/\/admin\/groups\/artist$/);
+    await expect(page).toHaveURL(/\/admin\/entities\/artist$/);
   });
 }
 
 test("a caller without group permission is told so", async ({ page }) => {
-  await page.goto(admin("/admin/groups", await h.user({ role: "moderator" }), { mode: "router" }));
+  await page.goto(admin("/admin/entities", await h.user({ role: "moderator" }), { mode: "router" }));
   await expect(page.locator("[data-ckui=entity-manager] [data-ckui=no-access]")).toContainText("You don't have permission to manage groups.", { timeout: 30_000 });
 });

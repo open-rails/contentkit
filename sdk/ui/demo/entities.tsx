@@ -44,7 +44,7 @@ function Page() {
             layout={q.get("layout") === "grid" ? "grid" : "list"}
             letter={letter}
             onLetterChange={setLetter}
-            href={(g) => `/groups.html?group=${g.id}&lang=${lang}${q.get("theme") ? `&theme=${q.get("theme")}` : ""}`}
+            href={(g) => `/entities.html?group=${g.id}&lang=${lang}${q.get("theme") ? `&theme=${q.get("theme")}` : ""}`}
           />
         </section>
       )}
