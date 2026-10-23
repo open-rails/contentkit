@@ -716,6 +716,23 @@ export interface ErrorReply {
   available_at?: string;
 }
 
+export interface EventPage {
+  events: EventRecord[];
+  next_cursor: string;
+  has_more: boolean;
+  retention_seconds: number;
+}
+
+export interface EventRecord {
+  id: string;
+  version: number;
+  type: string;
+  kind: string;
+  content_id: string;
+  version_id?: string;
+  occurred_at: string;
+}
+
 export interface ExposureInput {
   render_id: string;
   stage: string;

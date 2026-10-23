@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/contentkit/media"
-	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
+	"github.com/open-rails/contentkit/contentref"
 )
 
-// Event types written to the outbox.
+// Event types recorded with the domain mutation.
 const (
 	EventContentCreated     = "content.created"
 	EventContentUpdated     = "content.updated"
@@ -29,15 +26,12 @@ const (
 	EventVersionPurged      = "version.purged"
 )
 
-// Event is one outbox entry: a change to a content item or one of its
-// versions, delivered at least once in order of ID.
+// Event is the catalog fact appended by a mutation. Readers receive EventRecord.
 type Event struct {
-	ID        int64     `json:"id"`
-	Type      string    `json:"type"`
-	Kind      string    `json:"kind"`
-	ContentID string    `json:"content_id"`
-	VersionID string    `json:"version_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	Type      string
+	Kind      string
+	ContentID string
+	VersionID string
 }
 
 type eventPayload struct {
@@ -46,26 +40,23 @@ type eventPayload struct {
 	VersionID string `json:"version_id,omitempty"`
 }
 
-// Subscriber receives a batch of events in order. An error redelivers the
-// batch later, so a subscriber must be idempotent.
-type Subscriber func(ctx context.Context, events []Event) error
-
-// Subscribe registers an in-process subscriber; DeliverEvents calls every
-// subscriber with every batch.
-func (s *Store) Subscribe(sub Subscriber) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.subscribers = append(s.subscribers, sub)
-}
-
-// emit writes events in q's transaction.
-func (s *Store) emit(ctx context.Context, q Querier, events ...Event) error {
+// emit allocates committed order under this app's row lock. The lock and rows
+// commit with the mutation; a rollback publishes neither a gap nor an event.
+func (s *Store) emit(ctx context.Context, tx pgx.Tx, events ...Event) error {
 	if len(events) == 0 {
 		return nil
 	}
+	if tx == nil {
+		return errors.New("catalog: events require the mutation transaction")
+	}
+	var last int64
+	if err := tx.QueryRow(ctx, `INSERT INTO `+s.qs+`.content_event_streams AS stream (tenant_id,position) VALUES ($1,$2)
+ON CONFLICT (tenant_id) DO UPDATE SET position=stream.position+EXCLUDED.position RETURNING position`, s.tenant, len(events)).Scan(&last); err != nil {
+		return err
+	}
 	types, entities, payloads := make([]string, len(events)), make([]string, len(events)), make([]string, len(events))
 	for i, e := range events {
-		p, err := json.Marshal(eventPayload{e.Kind, e.ContentID, e.VersionID})
+		payload, err := json.Marshal(eventPayload{e.Kind, e.ContentID, e.VersionID})
 		if err != nil {
 			return err
 		}
@@ -73,101 +64,26 @@ func (s *Store) emit(ctx context.Context, q Querier, events ...Event) error {
 		if e.VersionID != "" {
 			entity = e.VersionID
 		}
-		types[i], entities[i], payloads[i] = e.Type, entity, string(p)
+		types[i], entities[i], payloads[i] = e.Type, entity, string(payload)
 	}
-	_, err := q.Exec(ctx, `INSERT INTO `+s.t.events+` (tenant_id, type, entity_id, payload)
- SELECT $1, t, e, p::jsonb FROM unnest($2::text[], $3::text[], $4::text[]) WITH ORDINALITY AS x(t, e, p, n) ORDER BY n`,
-		s.tenant, types, entities, payloads)
-	if err != nil {
-		return err
-	}
-	return s.enqueueEvents(ctx, q)
+	_, err := tx.Exec(ctx, `INSERT INTO `+s.t.events+` (tenant_id,position,type,entity_id,payload,created_at)
+SELECT $1,$2+n,t,e,p::jsonb,clock_timestamp() FROM unnest($3::text[],$4::text[],$5::text[]) WITH ORDINALITY AS x(t,e,p,n) ORDER BY n`,
+		s.tenant, last-int64(len(events)), types, entities, payloads)
+	return err
 }
 
-// Queue delivery with the outbox write. A running delivery may already have
-// read its last batch, so InsertOnce retains one follow-up instead of losing
-// the wake-up. An unbound/older producer is covered by the recovery sweep.
-func (s *Store) enqueueEvents(ctx context.Context, q Querier) error {
-	s.mu.Lock()
-	client := s.jobs
-	s.mu.Unlock()
-	if client == nil {
+// purgeTx is domain cleanup, independent of who reads the public event log.
+func (s *Store) purgeTx(ctx context.Context, tx pgx.Tx, events []Event) error {
+	if s.onPurge == nil || len(events) == 0 {
 		return nil
 	}
-	return media.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-		if tx, ok := q.(pgx.Tx); ok {
-			return client.InsertTx(ctx, tx, args, opts)
+	refs := make([]contentref.ContentRef, 0, len(events))
+	for _, event := range events {
+		ref := s.Ref(event.Kind, event.ContentID)
+		if event.VersionID != "" {
+			ref = ref.WithVersion(event.VersionID)
 		}
-		return client.Insert(ctx, args, opts)
-	}, deliverEventsArgs{}, river.InsertOpts{Queue: Queue, MaxAttempts: 3})
-}
-
-// eventBatch bounds one delivery.
-const eventBatch = 200
-
-// deliveredRetention is how long delivered events stay in the outbox.
-const deliveredRetention = 7 * 24 * time.Hour
-
-// DeliverEvents hands undelivered events to the subscribers in batches, in
-// order, and marks each batch delivered once every subscriber took it; it
-// stops at the first failure, which it returns. Delivered events older than a
-// week are pruned. It returns how many events were delivered.
-func (s *Store) DeliverEvents(ctx context.Context) (int, error) {
-	s.mu.Lock()
-	subs := append([]Subscriber(nil), s.subscribers...)
-	s.mu.Unlock()
-	if _, err := s.pool.Exec(ctx, `DELETE FROM `+s.t.events+` WHERE tenant_id = $1 AND delivered_at < $2`, s.tenant, s.now().Add(-deliveredRetention)); err != nil {
-		return 0, err
+		refs = append(refs, ref)
 	}
-	total := 0
-	for {
-		n, err := s.deliverBatch(ctx, subs)
-		total += n
-		if err != nil || n < eventBatch {
-			return total, err
-		}
-	}
-}
-
-func (s *Store) deliverBatch(ctx context.Context, subs []Subscriber) (int, error) {
-	tx, err := s.begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT id, type, payload, created_at FROM `+s.t.events+`
- WHERE tenant_id = $1 AND delivered_at IS NULL ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`, s.tenant, eventBatch)
-	if err != nil {
-		return 0, err
-	}
-	var batch []Event
-	var ids []int64
-	for rows.Next() {
-		var e Event
-		var raw []byte
-		if err := rows.Scan(&e.ID, &e.Type, &raw, &e.CreatedAt); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		var p eventPayload
-		if err := json.Unmarshal(raw, &p); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		e.Kind, e.ContentID, e.VersionID = p.Kind, p.ContentID, p.VersionID
-		batch, ids = append(batch, e), append(ids, e.ID)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil || len(batch) == 0 {
-		return 0, err
-	}
-	for _, sub := range subs {
-		if err := sub(ctx, batch); err != nil {
-			return 0, errors.Join(errors.New("catalog: event subscriber failed"), err)
-		}
-	}
-	if _, err := tx.Exec(ctx, `UPDATE `+s.t.events+` SET delivered_at = clock_timestamp() WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids); err != nil {
-		return 0, err
-	}
-	return len(batch), tx.Commit(ctx)
+	return s.onPurge(ctx, tx, refs)
 }

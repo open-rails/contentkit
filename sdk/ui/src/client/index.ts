@@ -15,7 +15,7 @@ export {
   type ContentKitErrorInit,
 } from "./errors.js";
 export { IMAGE_SCHEME, imageRef, imageRefs, ContentsClient, type ManageQuery } from "./contents.js";
-export { CatalogClient, type CatalogTotalsQuery } from "./catalog.js";
+export { CatalogClient, type CatalogTotalsQuery, type CatalogEventsQuery } from "./catalog.js";
 export { CommentsClient, type AdminCommentQuery, type CommentQuery } from "./content/comments.js";
 export { ReactionsClient } from "./content/reactions.js";
 export { FavoritesClient, type MineQuery } from "./content/favorites.js";

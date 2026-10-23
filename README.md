@@ -65,7 +65,7 @@ another tenant is an error, never remapped.
 | `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, audio, subtitles, frame grabs; `Frames` for the frame picker |
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
-| `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the `content_events` outbox, search documents, `Totals`, its jobs and `/v1/contents` routes |
+| `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
 | `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and groups; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | Indexed keyword search (exact/alias/substring/prefix/typo, EN/ZH/JA/KO) with eligibility, documents and dirty queue, RRF |
 | `groups` | storage for content entities by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
@@ -112,7 +112,7 @@ for _, r := range routes {
   is the catalog's: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
   projection repair, erasure, groups' counts and windows,
-  the catalog's scheduled publishing, event delivery, counts and purge,
+  the catalog's scheduled publishing, event retention, counts and purge,
   offer sync and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and

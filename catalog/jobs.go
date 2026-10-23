@@ -263,6 +263,9 @@ const (
 // deleted versions of the remaining items. Sold items, and every version of
 // one, stay for their holders. It returns how many items and versions it erased.
 func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
+	if _, err := s.PruneEvents(ctx); err != nil {
+		return 0, err
+	}
 	cutoff := s.now().Add(-s.retention)
 	items, err := s.drain(ctx, func(ctx context.Context) (int, error) {
 		return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND NOT ever_sold AND deleted_at < $2
@@ -367,6 +370,9 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids); err != nil {
 		return 0, err
 	}
+	if err := s.purgeTx(ctx, tx, events); err != nil {
+		return 0, err
+	}
 	if err := s.emit(ctx, tx, events...); err != nil {
 		return 0, err
 	}
@@ -458,6 +464,9 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, vids); err != nil {
 		return 0, "", err
 	}
+	if err := s.purgeTx(ctx, tx, events); err != nil {
+		return 0, "", err
+	}
 	if err := s.emit(ctx, tx, events...); err != nil {
 		return 0, "", err
 	}
@@ -501,26 +510,6 @@ type publishDueArgs struct{}
 
 func (publishDueArgs) Kind() string { return "contentkit_catalog_publish_due" }
 
-type deliverEventsArgs struct {
-	After int64 `json:"after,omitempty"`
-}
-
-func (deliverEventsArgs) Kind() string                      { return "contentkit_catalog_deliver_events" }
-func (a deliverEventsArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
-
-type deliverEventsWorker struct {
-	river.WorkerDefaults[deliverEventsArgs]
-	s *Store
-}
-
-func (w *deliverEventsWorker) Work(ctx context.Context, job *river.Job[deliverEventsArgs]) error {
-	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
-		return err
-	}
-	_, err := w.s.DeliverEvents(ctx)
-	return err
-}
-
 type refreshCountsArgs struct{}
 
 func (refreshCountsArgs) Kind() string { return "contentkit_catalog_refresh_counts" }
@@ -549,7 +538,7 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 
 // RiverJobs contributes the catalog's periodic jobs to the engine's River
 // client: scheduled publication and free_after releases (every 30s), event
-// delivery recovery (5m; writes enqueue immediately), interaction counts (5m),
+// log retention, interaction counts (5m),
 // purging deleted content (1h) and expiring drafts (10m).
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-catalog", func(_ context.Context, cfg *river.Config) error {
@@ -565,9 +554,6 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		}
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &jobWorker[publishDueArgs]{run: s.PublishDue}) },
-			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &deliverEventsWorker{s: s})
-			},
 			func() error {
 				return river.AddWorkerSafely(cfg.Workers, &jobWorker[refreshCountsArgs]{run: s.RefreshCounts})
 			},
@@ -587,21 +573,10 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,
 			periodic("contentkit_catalog_publish_due", 30*time.Second, publishDueArgs{}),
-			periodic("contentkit_catalog_deliver_events", 5*time.Minute, deliverEventsArgs{}),
 			periodic("contentkit_catalog_refresh_counts", 5*time.Minute, refreshCountsArgs{}),
 			periodic("contentkit_catalog_purge_deleted", time.Hour, purgeDeletedArgs{}),
 			periodic("contentkit_catalog_expire_drafts", 10*time.Minute, expireDraftsArgs{}),
 			periodic("contentkit_catalog_release_free", 30*time.Second, releaseFreeArgs{}))
 		return nil
-	}, func(_ context.Context, binding riverhelpers.Binding) error {
-		s.mu.Lock()
-		s.jobs = binding.Client
-		s.mu.Unlock()
-		return nil
-	}, func() error {
-		s.mu.Lock()
-		s.jobs = nil
-		s.mu.Unlock()
-		return nil
-	})
+	}, nil, nil)
 }

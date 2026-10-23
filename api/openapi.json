@@ -3828,6 +3828,76 @@
         ]
       }
     },
+    "/v1/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Read this app's immutable catalog events in committed order. Readers save their own cursor; reading acknowledges or deletes nothing. Omitting after starts at the oldest retained event. Event-type filters are bound to the continuation; expired or reset cursors require a current-state resync.",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "description": "opaque continuation from the previous page",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 100 by default, at most 500",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "description": "event types to include; keep the same selection with a cursor",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "contents",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:content:view-restricted",
+        "x-contentkit-errors": [
+          "event_cursor_expired"
+        ],
+        "x-contentkit-error-sets": [
+          "module:contents",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/catalog/totals": {
       "get": {
         "tags": [
@@ -15128,6 +15198,67 @@
           "code"
         ]
       },
+      "EventPage": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventRecord"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "retention_seconds": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "events",
+          "next_cursor",
+          "has_more",
+          "retention_seconds"
+        ]
+      },
+      "EventRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "type",
+          "kind",
+          "content_id",
+          "occurred_at"
+        ]
+      },
       "ExposureInput": {
         "type": "object",
         "properties": {
@@ -19825,6 +19956,7 @@
           "conflict",
           "content_changed",
           "download_unavailable",
+          "event_cursor_expired",
           "forbidden",
           "gone",
           "image_too_large",
@@ -20087,6 +20219,10 @@
     "download_unavailable": {
       "status": 403,
       "meaning": "The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged."
+    },
+    "event_cursor_expired": {
+      "status": 410,
+      "meaning": "The event cursor predates retained history or names a reset stream; resync current state before continuing."
     },
     "forbidden": {
       "status": 403,

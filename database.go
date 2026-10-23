@@ -19,6 +19,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
+	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -168,6 +169,9 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 		if err := notifypg.Validate(ctx, e.pool, schema); err != nil {
 			return required(err)
 		}
+		if err := notification.ValidateEventCursors(ctx, e.pool, schema); err != nil {
+			return required(err)
+		}
 	}
 	if err := riverhelpers.ValidateMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return required(err)
@@ -199,6 +203,9 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 		if errors.Is(err, ErrScopeConflict) {
 			return err
 		}
+		return required(err)
+	}
+	if err := e.validateCatalogEventHandoff(ctx); err != nil {
 		return required(err)
 	}
 	return nil

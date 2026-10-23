@@ -290,18 +290,18 @@ func (e *Engine) migrate(ctx context.Context) error {
 func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) error {
 	db := stdlib.OpenDBFromPool(e.pool)
 	defer db.Close()
+	if err := e.preflightCatalogEventMigration(ctx); err != nil {
+		return err
+	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
-	if n := e.cfg.Notifications; n != nil {
-		if !schemaRE.MatchString(n.Schema) || strings.TrimSpace(n.Namespace) == "" {
-			return errors.New("contentkit: notifications require a valid schema and namespace")
-		}
-		if err := notification.Migrate(ctx, e.pool, n.Schema); err != nil {
+	accountSchema, _ := e.accountStorage()
+	for schema := range map[string]bool{e.schema: true, accountSchema: true} {
+		if err := notification.Migrate(ctx, e.pool, schema); err != nil {
 			return err
 		}
 	}
-	accountSchema, _ := e.accountStorage()
 	if err := migrations.ApplyAccounts(ctx, db, accountSchema); err != nil {
 		return err
 	}
@@ -324,10 +324,13 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return err
 	}
 	if options.SkipQueues {
-		return nil
+		return e.validateCatalogEventHandoff(ctx)
 	}
 	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
+	}
+	if err := e.migrateCatalogEvents(ctx); err != nil {
+		return err
 	}
 	if account, ok := e.accountMediaStorage(); ok {
 		if err := workqueue.Migrate(ctx, e.pool, account.WorkerSchema); err != nil {
@@ -397,6 +400,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	}
 	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Groups: e.groups,
 		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences, PlayableKinds: playable,
+		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
 	if e.offers != nil {
 		co.Offers = e.offers
@@ -404,7 +408,6 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	if e.catalog, err = catalog.New(ctx, co); err != nil {
 		return err
 	}
-	e.catalog.Subscribe(e.forgetPurged)
 	return nil
 }
 
@@ -884,7 +887,7 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 
 // EraseSubjects erases the shared account inbox/avatar plus this app's data.
 // The identity lifecycle must invoke it for EVERY app of the tenant; AuthKit's
-// AccountIssuers and durable OnPurge deliveries provide that fanout and retry.
+// AccountIssuers and required OnPurge cleanup coordinate that work and retry.
 // It does not discover or erase another engine's catalog on its own.
 //
 // It erases subjects from every plane: signals, interaction data,

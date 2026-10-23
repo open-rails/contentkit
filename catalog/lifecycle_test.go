@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -124,11 +125,6 @@ func TestVersionDefaultsIntegration(t *testing.T) {
 // the retention, rows and all.
 func TestLifecycleIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	var events []Event
-	f.s.Subscribe(func(_ context.Context, batch []Event) error {
-		events = append(events, batch...)
-		return nil
-	})
 	in := gallery("Moonlit Garden", "en", "ja")
 	in.Creators = &[]Creator{{UserID: "alice"}}
 	id := f.create("staff", in)
@@ -252,11 +248,8 @@ func TestLifecycleIntegration(t *testing.T) {
 		t.Fatalf("after purge %v, want only the sold item", left)
 	}
 
-	// Every change reached the outbox and is delivered in order once.
-	n, err := f.s.DeliverEvents(f.ctx)
-	if err != nil || n != len(events) {
-		t.Fatalf("delivered %d (%v), subscriber saw %d", n, err, len(events))
-	}
+	// Every committed change remains independently readable.
+	events := readEventLog(t, f)
 	var types []string
 	for _, e := range events {
 		if e.ContentID == id {
@@ -269,36 +262,8 @@ func TestLifecycleIntegration(t *testing.T) {
 	if !slices.Equal(types, want) {
 		t.Fatalf("events %v\n want %v", types, want)
 	}
-	if n, err := f.s.DeliverEvents(f.ctx); err != nil || n != 0 {
-		t.Fatalf("redelivered %d %v", n, err)
-	}
-}
-
-// A failing subscriber keeps the batch for the next delivery, in order.
-func TestEventsRedeliverAfterFailureIntegration(t *testing.T) {
-	f := newFixture(t, nil)
-	fail := true
-	var seen []string
-	f.s.Subscribe(func(_ context.Context, batch []Event) error {
-		if fail {
-			return errors.New("down")
-		}
-		for _, e := range batch {
-			seen = append(seen, e.Type)
-		}
-		return nil
-	})
-	id := f.create("staff", gallery("One", "en"))
-	f.publish("staff", id, nil)
-	if _, err := f.s.DeliverEvents(f.ctx); err == nil {
-		t.Fatal("a failed delivery reported success")
-	}
-	fail = false
-	if n, err := f.s.DeliverEvents(f.ctx); err != nil || n != 3 {
-		t.Fatalf("redelivery: %d %v", n, err)
-	}
-	if !slices.Equal(seen, []string{EventContentCreated, EventVersionCreated, EventContentPublished}) {
-		t.Fatalf("seen %v", seen)
+	if got := readEventLog(t, f); !reflect.DeepEqual(got, events) {
+		t.Fatal("reading changed the event log")
 	}
 }
 
@@ -484,11 +449,6 @@ func TestDraftExpiryIntegration(t *testing.T) {
 		blog.DraftTTL = 24 * time.Hour
 		o.Kinds.Kinds["blog"] = blog
 	})
-	var events []Event
-	f.s.Subscribe(func(_ context.Context, batch []Event) error {
-		events = append(events, batch...)
-		return nil
-	})
 	post := func(title string) string {
 		return f.create("staff", ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: title}}})
 	}
@@ -517,10 +477,8 @@ func TestDraftExpiryIntegration(t *testing.T) {
 	if want := slices.Sorted(slices.Values([]string{unpublished, fresh, old})); !slices.Equal(left, want) {
 		t.Fatalf("left %v, want %v", left, want)
 	}
-	if _, err := f.s.DeliverEvents(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.ContainsFunc(events, func(e Event) bool { return e.Type == EventContentPurged && e.ContentID == abandoned }) {
+	events := readEventLog(t, f)
+	if !slices.ContainsFunc(events, func(e EventRecord) bool { return e.Type == EventContentPurged && e.ContentID == abandoned }) {
 		t.Fatalf("no purge event for the abandoned draft: %+v", events)
 	}
 	if n, err := f.s.ExpireDrafts(f.ctx); err != nil || n != 0 {
@@ -538,11 +496,6 @@ func TestDraftExpiryIntegration(t *testing.T) {
 // again.
 func TestReleaseFreeIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	var events []Event
-	f.s.Subscribe(func(_ context.Context, batch []Event) error {
-		events = append(events, batch...)
-		return nil
-	})
 	free := f.now().Add(time.Hour)
 	in := gallery("Soon free", "en")
 	in.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, FreeAfter: &free}
@@ -571,10 +524,8 @@ func TestReleaseFreeIntegration(t *testing.T) {
 	if n, err := f.s.ReleaseFree(f.ctx); err != nil || n != 0 {
 		t.Fatalf("released again %d (%v)", n, err)
 	}
-	if _, err := f.s.DeliverEvents(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.ContainsFunc(events, func(e Event) bool { return e.Type == EventContentUpdated && e.ContentID == id }) {
+	events := readEventLog(t, f)
+	if !slices.ContainsFunc(events, func(e EventRecord) bool { return e.Type == EventContentUpdated && e.ContentID == id }) {
 		t.Fatalf("no update event for the released item: %+v", events)
 	}
 	later := f.now().Add(time.Hour)

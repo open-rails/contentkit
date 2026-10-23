@@ -917,6 +917,37 @@ func (c *Client) DeleteModerationIpBans(ctx context.Context, body []string) erro
 	return c.call(ctx, http.MethodDelete, "/v1/moderation/ip-bans", nil, body, nil)
 }
 
+// GetEventsQuery is the query of GetEvents.
+type GetEventsQuery struct {
+	// opaque continuation from the previous page
+	After string
+	// page size: 100 by default, at most 500
+	Limit int
+	// event types to include; keep the same selection with a cursor
+	Types []string
+}
+
+func (q GetEventsQuery) values() url.Values {
+	v := url.Values{}
+	if q.After != "" {
+		v.Set("after", q.After)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if len(q.Types) > 0 {
+		v.Set("types", strings.Join(q.Types, ","))
+	}
+	return v
+}
+
+// GetEvents is GET /v1/events (staff). Read this app's immutable catalog events in committed order. Readers save their own cursor; reading acknowledges or deletes nothing. Omitting after starts at the oldest retained event. Event-type filters are bound to the continuation; expired or reset cursors require a current-state resync.
+func (c *Client) GetEvents(ctx context.Context, q GetEventsQuery) (catalog.EventPage, error) {
+	var out catalog.EventPage
+	err := c.call(ctx, http.MethodGet, "/v1/events", q.values(), nil, &out)
+	return out, err
+}
+
 // GetCatalogTotalsQuery is the query of GetCatalogTotals.
 type GetCatalogTotalsQuery struct {
 	// content kinds to total; every kind by default

@@ -5,10 +5,10 @@ go 1.26.10
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.33.0
-	github.com/open-rails/contentkit v0.108.0
+	github.com/open-rails/authkit v1.34.1
+	github.com/open-rails/contentkit v0.116.0
 	github.com/open-rails/helpers v1.14.1
-	github.com/open-rails/openrails v0.259.0
+	github.com/open-rails/openrails v0.261.0
 	github.com/riverqueue/river v0.49.0
 )
 
