@@ -143,6 +143,8 @@ export const admin: typeof en = {
     wentLive: "{date}부터 진행 중",
   },
   contentManager: {
+    switchLanguage: "언어를 바꿀까요?",
+    discardLanguageEdits: "이 언어에서 저장하지 않은 변경 사항은 버려집니다.",
     manageVersions: "버전 관리",
     noAccess: "게시물을 관리할 권한이 없습니다.",
     back: "모든 게시물",

@@ -142,6 +142,8 @@ export const admin = {
     wentLive: "Live since {date}",
   },
   contentManager: {
+    switchLanguage: "Switch language?",
+    discardLanguageEdits: "Unsaved changes in this language will be discarded.",
     manageVersions: "Manage versions",
     noAccess: "You don't have permission to manage this content.",
     back: "All items",

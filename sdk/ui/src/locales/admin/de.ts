@@ -143,6 +143,8 @@ export const admin: typeof en = {
     wentLive: "Live seit {date}",
   },
   contentManager: {
+    switchLanguage: "Sprache wechseln?",
+    discardLanguageEdits: "Ungespeicherte Änderungen in dieser Sprache werden verworfen.",
     manageVersions: "Versionen verwalten",
     noAccess: "Du hast keine Berechtigung, Beiträge zu verwalten.",
     back: "Alle Beiträge",
