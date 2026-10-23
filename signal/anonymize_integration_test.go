@@ -118,7 +118,7 @@ func TestAnonymousCopyWaitsForEveryReplicaBeforeSwitchingSource(t *testing.T) {
 	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
 	for {
-		rows, err := connB.Query(ctx, `SELECT count() FROM system.processes WHERE query_kind='System' AND startsWith(query,'SYSTEM SYNC REPLICA') AND position(query,?)>0`, testDB+".engagement_segments")
+		rows, err := connB.Query(ctx, `SELECT count() FROM system.processes WHERE query_kind='System' AND position(query,'SYSTEM SYNC REPLICA')>0 AND position(query,?)>0`, testDB+".engagement_segments")
 		if err != nil {
 			t.Fatal(err)
 		}
