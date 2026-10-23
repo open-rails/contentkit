@@ -35,7 +35,7 @@ import (
 // /moderation/held?kind=content).
 const HeldKind = "content"
 
-// DefaultDeletedRetention is how long deleted, never-sold content keeps its
+// DefaultDeletedRetention is how long deleted content keeps its
 // media and can be restored before PurgeDeleted erases it.
 const DefaultDeletedRetention = 30 * 24 * time.Hour
 

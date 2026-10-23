@@ -367,7 +367,7 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	})
 
 	// Version media follows catalog writes: a new version forks a sibling's
-	// pages, and purging a deleted item deletes its media.
+	// pages, and purging a deleted sold item deletes its media.
 	var g catalog.Content
 	must(http.StatusCreated, staff, "POST", "/v1/contents", catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Pages"}},
 		Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &g)
@@ -389,6 +389,10 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 		return ok
 	}
 	eventually(t, "the forked pages", time.Minute, pages)
+	// Sales retain billing history, not the physical media after retention.
+	if _, err := pool.Exec(ctx, `UPDATE `+schema+`.content_items SET ever_sold=true WHERE tenant_id=$1 AND id=$2`, env.Tenant, g.ID); err != nil {
+		t.Fatal(err)
+	}
 	// A rule change republishes the versions that inherit it.
 	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+g.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.PPV}}, nil)
 	must(http.StatusConflict, staff, "DELETE", "/v1/contents/"+g.ID, nil, nil)

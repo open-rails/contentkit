@@ -95,7 +95,7 @@ func TestConcurrentLastVersionDeletionsConverge(t *testing.T) {
 	assertParentCause(t, f, id, StatePublished, false)
 }
 
-func TestEmptyParentRetentionPreservesPurchasedContent(t *testing.T) {
+func TestEmptyParentRetentionAlsoPurgesPurchasedContent(t *testing.T) {
 	f := newFixture(t, nil)
 	plain := f.create("staff", gallery("Never sold", "en"))
 	sold := f.create("staff", gallery("Purchased", "en"))
@@ -112,13 +112,12 @@ func TestEmptyParentRetentionPreservesPurchasedContent(t *testing.T) {
 		t.Fatalf("purged inside retention: %d %v", n, err)
 	}
 	f.advance(30*24*time.Hour + time.Hour)
-	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != 1 {
-		t.Fatalf("expired unsold parent purge: %d %v", n, err)
+	if n, err := f.s.PurgeDeleted(f.ctx); err != nil || n != 2 {
+		t.Fatalf("expired parent purge: %d %v", n, err)
 	}
-	assertParentCause(t, f, sold, StateDeleted, true)
 	var retained int
-	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_versions")+` WHERE tenant_id=$1 AND content_id=$2`, tenant, sold).Scan(&retained); err != nil || retained != 1 {
-		t.Fatalf("purchased edition was not retained: %d %v", retained, err)
+	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_versions")+` WHERE tenant_id=$1 AND content_id=$2`, tenant, sold).Scan(&retained); err != nil || retained != 0 {
+		t.Fatalf("purchased edition was retained: %d %v", retained, err)
 	}
 }
 

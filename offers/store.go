@@ -58,8 +58,8 @@ func (s *Service) PutTx(ctx context.Context, tx pgx.Tx, puts []Put) error {
 			s.tenant, t.Kind, t.ID).Scan(&id, &old)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
-			_, err = tx.Exec(ctx, `INSERT INTO `+s.t.offers+` (tenant_id, id, target_kind, target_id, terms) VALUES ($1, $2, $3, $4, $5)`,
-				s.tenant, contentref.NewID(), t.Kind, t.ID, body)
+			_, err = tx.Exec(ctx, `INSERT INTO `+s.t.offers+` (tenant_id, id, target_kind, target_id, content_id, terms) VALUES ($1, $2, $3, $4, nullif($5,''), $6)`,
+				s.tenant, contentref.NewID(), t.Kind, t.ID, t.Content, body)
 		case err != nil:
 		case old.equal(terms[i]):
 			continue
@@ -124,7 +124,8 @@ func (s *Service) Live(ctx context.Context, keys []access.Key) (map[string]Offer
 	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))
  AND ((o.target_kind = 'group' AND EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id=o.tenant_id AND g.id=o.target_id AND g.state='active' AND NOT g.internal))
  OR (o.target_kind <> 'group' AND EXISTS (SELECT 1 FROM `+s.t.items+` c WHERE c.tenant_id=o.tenant_id
-  AND c.id = CASE WHEN o.target_kind = 'content' THEN o.target_id ELSE v.content_id END AND c.kind = ANY($4::text[]))))`, kinds, ids, s.sellableKinds())
+  AND c.id = CASE WHEN o.target_kind = 'content' THEN o.target_id ELSE v.content_id END AND c.kind = ANY($4::text[])
+  AND c.state <> 'deleted' AND (o.target_kind <> 'version' OR v.state <> 'deleted'))))`, kinds, ids, s.sellableKinds())
 	for _, o := range list {
 		out[o.Key.String()] = o
 	}
@@ -193,7 +194,7 @@ func (s *Service) byID(ctx context.Context, ids []string) ([]Offer, error) {
 
 // query reads offers matching where ($1 is the tenant).
 func (s *Service) query(ctx context.Context, where string, args ...any) ([]Offer, error) {
-	rows, err := s.pool.Query(ctx, `SELECT o.id, o.target_kind, o.target_id, coalesce(v.content_id, ''), o.terms, o.state,
+	rows, err := s.pool.Query(ctx, `SELECT o.id, o.target_kind, o.target_id, coalesce(o.content_id, v.content_id, ''), o.terms, o.state,
 			o.synced_revision >= o.revision, coalesce(o.product_id, ''), coalesce(o.price_id, ''), coalesce(o.last_error, ''), o.revision, o.updated_at
 		FROM `+s.t.offers+` o LEFT JOIN `+s.t.versions+` v ON o.target_kind = 'version' AND v.tenant_id = o.tenant_id AND v.id = o.target_id
 		WHERE o.tenant_id = $1 AND `+where, append([]any{s.tenant}, args...)...)
@@ -218,6 +219,7 @@ func (s *Service) query(ctx context.Context, where string, args ...any) ([]Offer
 }
 
 type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
@@ -238,6 +240,26 @@ func (s *Service) sellableKinds() []string {
 // resolve checks each target exists and may be sold: a version must belong
 // to the content it names, and its content or group's kind must be sellable.
 func (s *Service) resolve(ctx context.Context, q querier, targets []Target) error {
+	// Lock all parents in one stable order before any version or offer row.
+	// Catalog bulk deletion uses this order too; caller order must not create
+	// parent/version cycles when a batch contains more than one work.
+	var parents []string
+	for _, t := range targets {
+		if t.Kind == ContentTarget {
+			parents = append(parents, t.ID)
+		} else if t.Kind == VersionTarget {
+			parents = append(parents, t.Content)
+		}
+	}
+	if len(parents) != 0 {
+		rows, err := q.Query(ctx, `SELECT id FROM `+s.t.items+` WHERE tenant_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE`, s.tenant, parents)
+		if err != nil {
+			return err
+		}
+		if _, err := pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+			return err
+		}
+	}
 	for _, t := range targets {
 		if _, err := s.key(Target{Kind: t.Kind, ID: t.ID, Content: orID(t)}); err != nil {
 			return fmt.Errorf("%w: %w", ErrNotFound, err)
@@ -247,10 +269,14 @@ func (s *Service) resolve(ctx context.Context, q querier, targets []Target) erro
 		var err error
 		switch t.Kind {
 		case ContentTarget:
-			err = q.QueryRow(ctx, `SELECT true, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2 AND state <> 'deleted'`, s.tenant, t.ID).Scan(&ok, &kind)
+			err = q.QueryRow(ctx, `SELECT true, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2 AND state <> 'deleted' FOR UPDATE`, s.tenant, t.ID).Scan(&ok, &kind)
 		case VersionTarget:
-			err = q.QueryRow(ctx, `SELECT v.content_id = $3, c.kind FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
-				WHERE v.tenant_id = $1 AND v.id = $2 AND v.state <> 'deleted' AND c.state <> 'deleted'`, s.tenant, t.ID, t.Content).Scan(&ok, &kind)
+			// Serialize with parent-before-version deletion and purge before
+			// admitting an offer, not only when markSold later updates the parent.
+			err = q.QueryRow(ctx, `SELECT kind FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2 AND state<>'deleted' FOR UPDATE`, s.tenant, t.Content).Scan(&kind)
+			if err == nil {
+				err = q.QueryRow(ctx, `SELECT content_id=$3 FROM `+s.t.versions+` WHERE tenant_id=$1 AND id=$2 AND state<>'deleted' FOR UPDATE`, s.tenant, t.ID, t.Content).Scan(&ok)
+			}
 		case GroupTarget:
 			var kind string
 			err = q.QueryRow(ctx, `SELECT kind FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2 AND state = 'active'`, s.tenant, t.ID).Scan(&kind)
