@@ -661,23 +661,25 @@ func TestImportRoute(t *testing.T) {
 	}
 }
 
-// After an import the engine's jobs rebuild what it changed: search
-// documents, group counts and covers, listing counts.
+// Imported interaction totals are available before workers start. Jobs rebuild
+// search documents and group counts and covers afterward.
 func TestImportRebuildsProjections(t *testing.T) {
 	f := newEngine(t)
-	if err := f.e.Start(t.Context()); err != nil {
-		t.Fatal(err)
-	}
 	if res := f.importBatch(t, catalogBatch()); len(res.Failed) > 0 {
 		t.Fatalf("failures %+v", res.Failed)
 	}
 	g1 := id("gallery", 1)
+	if got := f.scalar(t, `SELECT likes || '/' || favorites FROM $s.content_interaction_counts WHERE content_kind='gallery' AND content_id=$1 AND content_version_id IS NULL`, g1); got != "2/1" {
+		t.Fatalf("immediate imported counts: %q, want 2/1", got)
+	}
+	if err := f.e.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.Now().Add(90 * time.Second)
 	for _, c := range []struct{ name, sql, want string }{
 		{"search documents", `SELECT (count(DISTINCT content_id) = 2 AND count(*) >= 3)::text FROM $s.content_search_documents WHERE content_id IN ($1, '` + id("tag", 1) + `')`, "true"},
 		{"group counts", `SELECT coalesce(max(content_count), 0)::text FROM $s.content_group_counts WHERE group_id = '` + id("tag", 1) + `' AND language = '' AND $1 <> ''`, "1"},
 		{"automatic cover", `SELECT coalesce(cover->>'content_id', '') FROM $s.content_groups WHERE id = '` + id("artist", 1) + `' AND $1 <> ''`, g1},
-		{"listing counts", `SELECT likes || '/' || favorites FROM $s.content_facets WHERE content_id = $1 ORDER BY position LIMIT 1`, "2/1"},
 	} {
 		for {
 			if got := f.scalar(t, c.sql, g1); got == c.want {
