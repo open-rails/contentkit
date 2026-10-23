@@ -75,7 +75,10 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 	if err != nil {
 		return err
 	}
-	if err := rt.Notifications.EraseRecipient(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: actorID}); err != nil {
+	// Every app consumes the terminal event and fences its own inbox scope.
+	// A global fence would block a sibling's startup before its consumer could
+	// finish that sibling's still-pending anonymization.
+	if err := rt.Notifications.EraseAppRecipient(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: actorID}); err != nil {
 		return err
 	}
 	eraseLocalPolicy(ctx, rt.moderator, rt.tenant, []string{actorID})

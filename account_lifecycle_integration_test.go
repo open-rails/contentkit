@@ -128,3 +128,44 @@ func TestAccountLifecycleKeepsAnonymousContributionsAndRestoresAuthors(t *testin
 		t.Fatalf("import recount lost anonymous contributions: %d/%d/%d %v", likes, dislikes, favorites, err)
 	}
 }
+
+func TestPendingAccountAnonymizationResumesAfterRestart(t *testing.T) {
+	ctx := t.Context()
+	pool := pgtest.Pool(t, nil)
+	accountSchema := engineSchema(t, pool)
+	tenantID := NewTenantID()
+	scope := Scope{TenantID: tenantID, AppID: NewAppID()}
+	cfg := scopeConfig(engineSchema(t, pool), scope, "pending-anonymization")
+	cfg.Accounts = &AccountsConfig{Schema: accountSchema}
+	provider := &replayProvider{fail: true}
+	deps := Deps{Postgres: pool, Auth: testauth.Auth{Authz: testauth.All{}}, Authorization: scopeTestAuthorization{}, ProviderDataEraser: provider}
+	first, err := New(ctx, cfg, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.AnonymizeAccount(ctx, "account"); err == nil {
+		t.Fatal("incomplete provider cleanup was acknowledged")
+	}
+	_ = first.Close(ctx)
+	resumed, err := New(ctx, cfg, deps)
+	if err != nil {
+		t.Fatalf("known pending anonymization blocked its consumer's restart: %v", err)
+	}
+	t.Cleanup(func() { _ = resumed.Close(context.Background()) })
+	siblingCfg := scopeConfig(engineSchema(t, pool), Scope{TenantID: tenantID, AppID: NewAppID()}, "sibling")
+	siblingCfg.Accounts = &AccountsConfig{Schema: accountSchema}
+	sibling, err := New(ctx, siblingCfg, Deps{Postgres: pool, Auth: testauth.Auth{Authz: testauth.All{}}, Authorization: scopeTestAuthorization{}})
+	if err != nil {
+		t.Fatalf("app-scoped cleanup blocked a sibling consumer's startup: %v", err)
+	}
+	t.Cleanup(func() { _ = sibling.Close(context.Background()) })
+	provider.fail = false
+	if err := resumed.AnonymizeAccount(ctx, "account"); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	var anonymous *string
+	if err := pool.QueryRow(ctx, `SELECT state,anonymous_key::text FROM `+pgx.Identifier{resumed.schema, "content_account_lifecycle"}.Sanitize()+` WHERE tenant_id=$1 AND actor_id='account'`, resumed.cfg.Tenant).Scan(&state, &anonymous); err != nil || state != "purged" || anonymous != nil {
+		t.Fatalf("restarted anonymization did not finish and remove mapping: %s %v %v", state, anonymous, err)
+	}
+}
