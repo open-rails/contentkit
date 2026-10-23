@@ -29,6 +29,7 @@ export const content = {
     lockedOption: "{name} (locked)",
   },
   contentEditor: {
+    releaseFrom: "{audience} from {date}.",
     releases: "Audience releases",
     addRelease: "Add audience release",
     removeRelease: "Remove release",

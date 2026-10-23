@@ -287,6 +287,9 @@ func (g *Gate) plan(ctx context.Context, items []Item) []itemPlan {
 
 func (g *Gate) planOne(it Item) (itemPlan, error) {
 	p := itemPlan{rule: it.Rule}
+	if err := it.Rule.validateReleases(kinds.Config{Tiers: g.tiers}); err != nil {
+		return p, err
+	}
 	var err error
 	if p.content, err = ContentKey(g.tenant, it.Content); err != nil {
 		return p, err

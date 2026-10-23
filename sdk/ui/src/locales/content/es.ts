@@ -30,6 +30,7 @@ export const content: typeof en = {
     lockedOption: "{name} (bloqueada)",
   },
   contentEditor: {
+    releaseFrom: "{audience} desde {date}.",
     releases: "Publicaciones por audiencia",
     addRelease: "Añadir publicación por audiencia",
     removeRelease: "Eliminar publicación",

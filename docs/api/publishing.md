@@ -301,6 +301,7 @@ whole inherited access policy. Omitting `releases` keeps ordinary access rules.
 Reads evaluate timestamps directly. The five-minute publication recorder adds
 release facts to the retained event log and catches up after downtime. Consumers
 use the event's effective timestamp separately from its recording timestamp.
+Backdating a newly added grant does not pretend access existed before that edit.
 
 The migration converts old `free_after` rules into equivalent public releases.
 New writes use `releases`; Doujins and Hentai0 do not opt in to schedules.

@@ -30,6 +30,7 @@ export const content: typeof en = {
     lockedOption: "{name}（已锁定）",
   },
   contentEditor: {
+    releaseFrom: "从 {date} 起向{audience}开放。",
     releases: "按受众发布时间",
     addRelease: "添加受众发布时间",
     removeRelease: "删除发布时间",

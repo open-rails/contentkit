@@ -146,3 +146,34 @@ func TestAudienceReleaseBackdatedEditOccursWhenGranted(t *testing.T) {
 		t.Fatalf("backdated grant=%+v want%s", events, grantedAt)
 	}
 }
+
+func TestPublishDueDrainsBeyondOneBatch(t *testing.T) {
+	f := newFixture(t, nil)
+	_, err := f.pool.Exec(f.ctx, `WITH seeded AS (
+ INSERT INTO `+f.s.t.items+`(tenant_id,id,kind,state,publish_at,moderation)
+ SELECT $1,gen_random_uuid()::text,'gallery','published',$2::timestamptz,'approved' FROM generate_series(1,501) RETURNING tenant_id,id
+ ) INSERT INTO `+f.s.t.versions+`(tenant_id,id,content_id,languages,state,publish_at)
+ SELECT tenant_id,gen_random_uuid()::text,id,ARRAY['en'],'published',$2 FROM seeded`, tenant, f.now().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := f.s.PublishDue(f.ctx); err != nil || n != 1002 {
+		t.Fatalf("drain=%d %v want1002", n, err)
+	}
+	events := readEventLog(t, f)
+	published := map[string]bool{}
+	for _, event := range events {
+		if event.Type == EventContentPublished {
+			published[event.ContentID] = true
+		}
+		if event.Type == EventVersionPublished && !published[event.ContentID] {
+			t.Fatalf("version event preceded its content: %+v", event)
+		}
+	}
+	if len(published) != 501 {
+		t.Fatalf("published %d items", len(published))
+	}
+	if n, err := f.s.PublishDue(f.ctx); err != nil || n != 0 {
+		t.Fatalf("replay=%d %v", n, err)
+	}
+}

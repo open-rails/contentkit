@@ -30,6 +30,7 @@ export const content: typeof en = {
     lockedOption: "{name} (gesperrt)",
   },
   contentEditor: {
+    releaseFrom: "{audience} ab {date}.",
     releases: "Zielgruppenfreigaben",
     addRelease: "Zielgruppenfreigabe hinzufügen",
     removeRelease: "Freigabe entfernen",

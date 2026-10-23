@@ -32,9 +32,17 @@ func TestAudienceReleaseRejectsLegacyField(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"level":"ppv","free_after":"2027-01-01T00:00:00Z"}`), &r); err == nil {
 		t.Fatal("legacy field accepted")
 	}
+	gate, err := NewGate(GateConfig{Tenant: "site", Kinds: tiered})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, release := range []Release{{Level: Public}, {At: time.Now(), Level: PPV}, {At: time.Now(), Level: TierLevel, Tiers: []string{"missing"}}} {
-		if err := (Rule{Level: PPV, Releases: []Release{release}}).Validate(tiered); err == nil {
+		rule := Rule{Level: PPV, Releases: []Release{release}}
+		if err := rule.Validate(tiered); err == nil {
 			t.Fatalf("invalid release accepted: %+v", release)
+		}
+		if _, err := gate.planOne(Item{Content: id1, Rule: rule}); err == nil {
+			t.Fatalf("gate accepted invalid release: %+v", release)
 		}
 	}
 }
