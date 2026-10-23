@@ -42,7 +42,7 @@ func TestDirectInteractionCountsMigrationPreservesAggregate(t *testing.T) {
 	id, v1, v2 := contentref.NewID(), contentref.NewID(), contentref.NewID()
 	exec(`INSERT INTO `+q+`.content_items(tenant_id,id,kind) VALUES('t',$1,'gallery')`, id)
 	exec(`INSERT INTO `+q+`.content_versions(tenant_id,id,content_id,languages) VALUES('t',$1,$3,'{en}'),('t',$2,$3,'{ja}')`, v1, v2, id)
-	exec(`INSERT INTO `+q+`.content_facets(tenant_id,content_id,version_id,kind,likes,favorites,rating) VALUES('t',$1,$2,'gallery',99,99,0.99),('t',$1,$3,'gallery',88,88,0.88)`, id, v1, v2)
+	exec(`INSERT INTO `+q+`.content_facets(tenant_id,content_id,version_id,kind,languages,likes,favorites,rating) VALUES('t',$1,$2,'gallery','{en}',99,99,0.99),('t',$1,$3,'gallery','{ja}',88,88,0.88)`, id, v1, v2)
 	exec(`INSERT INTO `+q+`.content_interaction_counts(tenant_id,content_kind,content_id,content_version_id,likes,dislikes,favorites) VALUES('t','gallery',$1,NULL,9,1,4),('t','gallery',$1,$2,100,0,100),('other','gallery',$1,NULL,200,0,200)`, id, v1)
 	readAggregate := func() string {
 		t.Helper()
