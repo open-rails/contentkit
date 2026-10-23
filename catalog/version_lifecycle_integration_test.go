@@ -16,9 +16,6 @@ func TestVersionDeletionOwnsParentLifecycle(t *testing.T) {
 	id := f.create("staff", gallery("Edition lifecycle", "en", "ja"))
 	f.publish("staff", id, nil)
 	versions := f.read("staff", "main.test", id)[0].Versions
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{id}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("nonempty parent deletion: %v", err)
-	}
 	remove := func(version string) {
 		t.Helper()
 		if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: version}}); err != nil {

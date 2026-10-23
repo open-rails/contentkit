@@ -89,10 +89,6 @@ var routes = []httpapi.Route[*Store]{
 		Request: ContentPatch{}, Responses: []httpapi.Reply{httpapi.OK(Content{})},
 		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, "not_configured"}},
 		Serve: httpapi.H((*Store).handleUpdate)},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
-		Doc:       "Deletes a hidden-version item or an empty item. For content with visible versions, delete each version instead; the parent is deleted with its last version. Purchased content remains protected from purge." + editorsDoc,
-		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
-		Serve: httpapi.H((*Store).handleDelete)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/restore", Resource: "contents", Auth: httpapi.Public,
 		Doc:       "Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead." + editorsDoc,
 		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
@@ -133,7 +129,7 @@ var routes = []httpapi.Route[*Store]{
 		Request: OrderInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleOrderVersions)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover. Publishing it on a published item is refused (not_ready) while its media is still processing." + editorsDoc,
+		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publishing it on a published item is refused (not_ready) while its media is still processing." + editorsDoc,
 		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, "not_ready"}},
 		Serve: httpapi.H((*Store).handleUpdateVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
@@ -482,18 +478,6 @@ func (s *Store) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.respond(w, r, http.StatusOK, r.PathValue("id"))
-}
-
-func (s *Store) handleDelete(w http.ResponseWriter, r *http.Request) {
-	actor, err := writer(r.Context())
-	if err == nil {
-		err = s.Delete(r.Context(), actor, []string{r.PathValue("id")})
-	}
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusNoContent, nil)
 }
 
 func (s *Store) handleRestore(w http.ResponseWriter, r *http.Request) {
