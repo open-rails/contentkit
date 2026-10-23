@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -38,12 +37,12 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 	// versionFacet is a version's access facet (access.Rule.Facet of its
 	// effective rule) and effective groups.
 	type versionFacet struct {
-		VersionID string       `json:"version_id"`
-		Level     access.Level `json:"level"`
-		Tiers     []string     `json:"tiers"`
-		GroupID   *string      `json:"group_id"`
-		FreeAfter *time.Time   `json:"free_after"`
-		Groups    []string     `json:"groups"`
+		VersionID string           `json:"version_id"`
+		Level     access.Level     `json:"level"`
+		Tiers     []string         `json:"tiers"`
+		GroupID   *string          `json:"group_id"`
+		Releases  []access.Release `json:"releases"`
+		Groups    []string         `json:"groups"`
 	}
 	var facets []versionFacet
 	var versions []string
@@ -60,7 +59,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 			return fmt.Errorf("catalog: version %s: %w", id, err)
 		}
 		f := rule.Facet()
-		facets = append(facets, versionFacet{VersionID: id, Level: f.Level, Tiers: f.Tiers, GroupID: f.GroupID, FreeAfter: f.FreeAfter, Groups: []string{}})
+		facets = append(facets, versionFacet{VersionID: id, Level: f.Level, Tiers: f.Tiers, GroupID: f.GroupID, Releases: f.Releases, Groups: []string{}})
 		versions = append(versions, id)
 	}
 	rows.Close()
@@ -83,7 +82,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 		return err
 	}
 	if _, err := q.Exec(ctx, `INSERT INTO `+s.t.facets+` AS f (tenant_id, content_id, version_id, kind, live_from, deleted, unplayable, languages,
- access_level, access_tiers, access_group_id, access_free_after, restrictions, group_ids, traits, owner_group_id, position, published_at, attributes,
+ access_level, access_tiers, access_group_id, access_releases, restrictions, group_ids, traits, owner_group_id, position, published_at, attributes,
  updated_at)
  SELECT c.tenant_id, c.id, v.id, c.kind,
   CASE WHEN (c.state = 'published' OR (c.state = 'deleted' AND c.published_at IS NOT NULL))
@@ -91,24 +90,28 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
    AND (c.moderation = 'approved' OR c.published_snapshot IS NOT NULL)
    THEN greatest(coalesce(c.published_at, c.publish_at), coalesce(v.published_at, v.publish_at)) END,
   c.state = 'deleted' OR v.state = 'deleted', c.kind = ANY($4::text[]) AND v.playable IS FALSE, v.languages,
-  a.level, a.tiers, a.group_id, a.free_after, c.restrictions, a.groups, v.traits, c.owner_group_id, v.position, coalesce(c.published_at, c.publish_at),
+  a.level, a.tiers, a.group_id, coalesce(a.releases, '[]'::jsonb), c.restrictions, a.groups, v.traits, c.owner_group_id, v.position, coalesce(c.published_at, c.publish_at),
   c.attributes || v.attributes, clock_timestamp()
- FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], group_id text, free_after timestamptz, groups text[])
+ FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], group_id text, releases jsonb, groups text[])
  JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = a.version_id
  JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
  WHERE c.id = ANY($2)
  ON CONFLICT (tenant_id, version_id) DO UPDATE SET content_id = EXCLUDED.content_id, kind = EXCLUDED.kind, live_from = EXCLUDED.live_from,
   deleted = EXCLUDED.deleted, unplayable = EXCLUDED.unplayable, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
-  access_tiers = EXCLUDED.access_tiers, access_group_id = EXCLUDED.access_group_id, access_free_after = EXCLUDED.access_free_after,
+  access_tiers = EXCLUDED.access_tiers, access_group_id = EXCLUDED.access_group_id, access_releases = EXCLUDED.access_releases,
   restrictions = EXCLUDED.restrictions, group_ids = EXCLUDED.group_ids, traits = EXCLUDED.traits, owner_group_id = EXCLUDED.owner_group_id,
   position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes,
-  updated_at = EXCLUDED.updated_at,
-  free_applied = f.free_applied AND f.access_free_after IS NOT DISTINCT FROM EXCLUDED.access_free_after`,
+  updated_at = EXCLUDED.updated_at`,
 		s.tenant, ids, string(data), s.playerKinds()); err != nil {
 		return err
 	}
 	if err := s.recordAccessHistory(ctx, q, ids); err != nil {
 		return err
+	}
+	if tx, ok := q.(pgx.Tx); ok {
+		if _, err := s.recordReleases(ctx, tx, ids); err != nil {
+			return err
+		}
 	}
 	return s.markDocuments(ctx, q, ids)
 }

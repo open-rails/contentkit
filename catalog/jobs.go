@@ -27,8 +27,21 @@ func (s *Store) PublishDue(ctx context.Context) (int, error) {
 	for after := ""; ; {
 		n, next, err := s.publishDue(ctx, after)
 		total += n
+		if err == nil && next == "" && n >= 500 && time.Now().Before(deadline) {
+			after = ""
+			continue
+		}
 		if err != nil || next == "" || time.Now().After(deadline) {
-			return total, err
+			if err != nil {
+				return total, err
+			}
+			for {
+				n, err := s.recordDueReleases(ctx)
+				total += n
+				if err != nil || n < releaseBatch || time.Now().After(deadline) {
+					return total, err
+				}
+			}
 		}
 		after = next
 	}
@@ -49,18 +62,19 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if after == "" {
 		rows, err = tx.Query(ctx, `UPDATE `+s.t.items+` SET published_at = publish_at, updated_at = clock_timestamp(), revision = revision + 1
  WHERE id IN (SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL AND publish_at <= $2
-  AND moderation = 'approved' ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND tenant_id = $1 RETURNING id, kind`, s.tenant, now)
+  AND moderation = 'approved' ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND tenant_id = $1 RETURNING id, kind, published_at`, s.tenant, now)
 		if err != nil {
 			return 0, "", err
 		}
 		for rows.Next() {
 			var id, kind string
-			if err := rows.Scan(&id, &kind); err != nil {
+			var at time.Time
+			if err := rows.Scan(&id, &kind, &at); err != nil {
 				rows.Close()
 				return 0, "", err
 			}
 			ids = append(ids, id)
-			events = append(events, Event{Type: EventContentPublished, Kind: kind, ContentID: id})
+			events = append(events, Event{Type: EventContentPublished, Kind: kind, ContentID: id, OccurredAt: at})
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -82,25 +96,27 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if err != nil {
 		return 0, "", err
 	}
-	rows, err = tx.Query(ctx, `UPDATE `+s.t.versions+` v SET published_at = v.publish_at, updated_at = clock_timestamp(), revision = v.revision + 1
+	rows, err = tx.Query(ctx, `UPDATE `+s.t.versions+` v SET published_at = greatest(v.publish_at,coalesce(c.published_at,c.publish_at)), updated_at = clock_timestamp(), revision = v.revision + 1
  FROM `+s.t.items+` c WHERE v.id IN (SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL
   AND content_id = ANY($3) AND publish_at <= $2 ORDER BY publish_at, id LIMIT 500 FOR UPDATE SKIP LOCKED)
  AND v.tenant_id = $1 AND c.tenant_id = v.tenant_id AND c.id = v.content_id
- RETURNING v.content_id, v.id, c.kind`, s.tenant, now, parents)
+ AND c.state='published' AND c.moderation='approved' AND coalesce(c.published_at,c.publish_at)<=$2
+ RETURNING v.content_id, v.id, c.kind,v.published_at`, s.tenant, now, parents)
 	if err != nil {
 		return 0, "", err
 	}
 	versionCount := 0
 	for rows.Next() {
 		var id, vid, kind string
-		if err := rows.Scan(&id, &vid, &kind); err != nil {
+		var at time.Time
+		if err := rows.Scan(&id, &vid, &kind, &at); err != nil {
 			rows.Close()
 			return 0, "", err
 		}
 		if !slices.Contains(ids, id) {
 			ids = append(ids, id)
 		}
-		events = append(events, Event{Type: EventVersionPublished, Kind: kind, ContentID: id, VersionID: vid})
+		events = append(events, Event{Type: EventVersionPublished, Kind: kind, ContentID: id, VersionID: vid, OccurredAt: at})
 		versionCount++
 	}
 	rows.Close()
@@ -116,75 +132,16 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if len(ids) == 0 {
 		return 0, next, tx.Commit(ctx)
 	}
-	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
+	if err := s.emit(ctx, tx, events...); err != nil {
 		return 0, "", err
 	}
-	if err := s.emit(ctx, tx, events...); err != nil {
+	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
 		return 0, "", err
 	}
 	if err := s.exposeTx(ctx, tx, ids); err != nil {
 		return 0, "", err
 	}
 	return len(events), next, tx.Commit(ctx)
-}
-
-// ReleaseFree runs what follows a free_after time passing: the content items
-// whose versions turned free since the last run get their facets and
-// documents re-derived and their media, body images included, exposed to
-// everyone, as a write would. It returns how many items it released.
-func (s *Store) ReleaseFree(ctx context.Context) (int, error) {
-	total := 0
-	for {
-		n, err := s.releaseFree(ctx)
-		if total += n; err != nil || n < releaseBatch {
-			return total, err
-		}
-	}
-}
-
-const releaseBatch = 200
-
-func (s *Store) releaseFree(ctx context.Context) (int, error) {
-	tx, err := s.begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback(ctx)
-	now := s.now()
-	rows, err := tx.Query(ctx, `SELECT c.id, c.kind FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id IN (SELECT content_id FROM `+s.t.facets+`
- WHERE tenant_id = $1 AND NOT free_applied AND access_free_after <= $2) ORDER BY c.id LIMIT `+strconv.Itoa(releaseBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, now)
-	if err != nil {
-		return 0, err
-	}
-	var ids []string
-	var events []Event
-	for rows.Next() {
-		var id, kind string
-		if err := rows.Scan(&id, &kind); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		ids = append(ids, id)
-		events = append(events, Event{Type: EventContentUpdated, Kind: kind, ContentID: id})
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil || len(ids) == 0 {
-		return 0, err
-	}
-	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
-		return 0, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE `+s.t.facets+` SET free_applied = true WHERE tenant_id = $1 AND content_id = ANY($2) AND access_free_after <= $3`,
-		s.tenant, ids, now); err != nil {
-		return 0, err
-	}
-	if err := s.emit(ctx, tx, events...); err != nil {
-		return 0, err
-	}
-	if err := s.exposeTx(ctx, tx, ids); err != nil {
-		return 0, err
-	}
-	return len(ids), tx.Commit(ctx)
 }
 
 // ReconcileFacets explicitly refreshes every item's facets and search-document
@@ -480,11 +437,6 @@ type purgeDeletedArgs struct{}
 func (purgeDeletedArgs) Kind() string          { return "contentkit_content_purge_deleted" }
 func (purgeDeletedArgs) KindAliases() []string { return []string{"contentkit_catalog_purge_deleted"} }
 
-type releaseFreeArgs struct{}
-
-func (releaseFreeArgs) Kind() string          { return "contentkit_content_release_free" }
-func (releaseFreeArgs) KindAliases() []string { return []string{"contentkit_catalog_release_free"} }
-
 type jobWorker[T river.JobArgs] struct {
 	river.WorkerDefaults[T]
 	run func(context.Context) (int, error)
@@ -496,7 +448,7 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 }
 
 // RiverJobs contributes content's periodic jobs to the engine's River
-// client: scheduled publication and free_after releases (every 30s), event
+// client: publication and audience-release facts (every 5m), event
 // log retention and purging deleted content (1h).
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-content", func(_ context.Context, cfg *river.Config) error {
@@ -515,18 +467,14 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			func() error {
 				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted})
 			},
-			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &jobWorker[releaseFreeArgs]{run: s.ReleaseFree})
-			},
 		} {
 			if err := add(); err != nil {
 				return err
 			}
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,
-			periodic("contentkit_content_publish_due", 30*time.Second, publishDueArgs{}),
-			periodic("contentkit_content_purge_deleted", time.Hour, purgeDeletedArgs{}),
-			periodic("contentkit_content_release_free", 30*time.Second, releaseFreeArgs{}))
+			periodic("contentkit_content_publish_due", 5*time.Minute, publishDueArgs{}),
+			periodic("contentkit_content_purge_deleted", time.Hour, purgeDeletedArgs{}))
 		return nil
 	}, nil, nil)
 }

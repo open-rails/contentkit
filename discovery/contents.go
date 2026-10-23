@@ -201,9 +201,9 @@ func (s *Service) ReleaseDates(ctx context.Context, o ReleaseDatesOptions) (Rele
 		// free count. A sibling cannot move it to another bucket or open it.
 		rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT d.date, count(*)::int, count(*) FILTER (WHERE d.free)::int FROM (
  SELECT to_char(date_trunc(@d_unit::text, p.published_at AT TIME ZONE @d_tz::text), @d_format::text) AS date, p.free FROM (
-  SELECT DISTINCT ON (f.content_id) f.published_at, (f.access_level = 'public' OR f.access_free_after <= now()) AS free
+  SELECT DISTINCT ON (f.content_id) f.published_at, %s AS free
   FROM %s f WHERE %s AND f.published_at IS NOT NULL ORDER BY f.content_id, %s) p) d
-WHERE %s GROUP BY d.date ORDER BY d.date DESC LIMIT @d_limit`, s.t.facets, q.predicate(), preference, before), args)
+WHERE %s GROUP BY d.date ORDER BY d.date DESC LIMIT @d_limit`, access.PublicSQL("f"), s.t.facets, q.predicate(), preference, before), args)
 		if err != nil {
 			return out, err
 		}

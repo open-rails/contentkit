@@ -482,7 +482,7 @@ func (v *Viewer) gateDecide(ctx context.Context, items []access.Item) ([]access.
 }
 
 func decision(d access.Decision) Decision {
-	out := Decision{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, FreeAfter: d.FreeAfter}
+	out := Decision{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, Releases: d.Releases}
 	for _, k := range d.Sell {
 		out.Sell = append(out.Sell, k.String())
 	}

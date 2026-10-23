@@ -242,7 +242,7 @@ export interface CardAccess {
   sell?: string[];
   requires?: string;
   preview?: Preview;
-  free_after?: string;
+  releases?: Release[];
   offers?: Sale[];
 }
 
@@ -603,7 +603,7 @@ export interface Decision {
   sell?: string[];
   requires?: string;
   preview?: Preview;
-  free_after?: string;
+  releases?: Release[];
   offers?: Sale[];
 }
 
@@ -1796,6 +1796,13 @@ export interface RefBody {
   version?: string;
 }
 
+export interface Release {
+  at: string;
+  level: "group" | "group_ppv" | "ppv" | "public" | "tier";
+  tiers?: string[];
+  group_id?: string;
+}
+
 export interface ReleaseDates {
   dates: DateCount[];
   next_cursor?: string;
@@ -1874,7 +1881,7 @@ export interface Rule {
   tiers?: string[];
   group_id?: string;
   preview?: Preview;
-  free_after?: string;
+  releases?: Release[];
 }
 
 export interface Sale {

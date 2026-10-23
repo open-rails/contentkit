@@ -421,7 +421,7 @@ func TestListFiltersByAccessAndCreator(t *testing.T) {
 	f.seed(
 		item{n: 1, titles: map[string]string{"en": "Free"}, age: 4 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 2, titles: map[string]string{"en": "Premium"}, age: 3 * time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, titles: map[string]string{"en": "Released"}, age: 2 * time.Hour, rule: `{"level":"ppv","free_after":"` + past + `"}`, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, titles: map[string]string{"en": "Released"}, age: 2 * time.Hour, rule: `{"level":"ppv","releases":[{"at":"` + past + `","level":"public"}]}`, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 4, titles: map[string]string{"en": "Sold"}, age: time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}},
 	)
 	f.exec(`INSERT INTO {s}.content_creators (tenant_id, content_id, user_id, role) VALUES ($1, $2, 'alice', 'author'), ($1, $3, 'alice', 'artist'), ($1, $3, 'bob', 'author')`,

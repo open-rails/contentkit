@@ -19,7 +19,7 @@ type facet struct {
 	Deleted      bool
 	Languages    []string
 	Level        access.Level
-	FreeAfter    *time.Time
+	Releases     []access.Release
 	Tiers        []string
 	Group        string
 	Restrictions []string
@@ -34,7 +34,7 @@ type facet struct {
 func (f *fixture) facets(id string) []facet {
 	f.t.Helper()
 	rows, err := f.pool.Query(f.ctx, `SELECT version_id, coalesce(live_from <= $2, false), deleted, languages, access_level, access_tiers,
- coalesce(access_group_id, ''), access_free_after, restrictions, group_ids, traits, coalesce(owner_group_id, ''), position, attributes
+ coalesce(access_group_id, ''), access_releases, restrictions, group_ids, traits, coalesce(owner_group_id, ''), position, attributes
  FROM `+f.table("content_facets")+` WHERE tenant_id = $1 AND content_id = $3 ORDER BY position, version_id`, tenant, f.now(), id)
 	if err != nil {
 		f.t.Fatal(err)
@@ -44,7 +44,7 @@ func (f *fixture) facets(id string) []facet {
 	for rows.Next() {
 		var x facet
 		var attrs []byte
-		if err := rows.Scan(&x.Version, &x.Live, &x.Deleted, &x.Languages, &x.Level, &x.Tiers, &x.Group, &x.FreeAfter, &x.Restrictions,
+		if err := rows.Scan(&x.Version, &x.Live, &x.Deleted, &x.Languages, &x.Level, &x.Tiers, &x.Group, &x.Releases, &x.Restrictions,
 			&x.Groups, &x.Traits, &x.Owner, &x.Position, &attrs); err != nil {
 			f.t.Fatal(err)
 		}
@@ -80,13 +80,13 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 		t.Fatalf("published %+v", vs)
 	}
 	free := f.now().Add(24 * time.Hour)
-	err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, FreeAfter: &free}, Restrictions: &[]string{"restricted"}, Attributes: map[string]any{"volume": 2}}}})
+	err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, Releases: []access.Release{{At: free, Level: access.Public}}}, Restrictions: &[]string{"restricted"}, Attributes: map[string]any{"volume": 2}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	vs = f.facets(id)
 	if vs[0].Level != access.TierLevel || !slices.Equal(vs[0].Tiers, []string{"premium"}) ||
-		vs[0].FreeAfter == nil || !vs[0].FreeAfter.Equal(free) ||
+		len(vs[0].Releases) != 1 || !vs[0].Releases[0].At.Equal(free) ||
 		!slices.Equal(vs[1].Restrictions, []string{"restricted"}) || vs[1].Attributes["volume"] != float64(2) || vs[1].Attributes["format"] != nil {
 		t.Fatalf("after the item's edit %+v", vs)
 	}

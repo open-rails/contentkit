@@ -2,6 +2,7 @@ package access_test
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -46,8 +47,8 @@ func TestGateWithoutBilling(t *testing.T) {
 	c, v, grp := uid(1), uid(2), uid(3)
 	items := []access.Item{
 		{Content: c, Version: v, Rule: access.Rule{Level: access.Public}},
-		{Content: c, Version: v, Rule: access.Rule{Level: access.PPV, FreeAfter: &past}},
-		{Content: c, Version: v, Rule: access.Rule{Level: access.PPV, FreeAfter: &future, Preview: &access.Preview{Pages: 2}}},
+		{Content: c, Version: v, Rule: access.Rule{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.Public}}}},
+		{Content: c, Version: v, Rule: access.Rule{Level: access.PPV, Releases: []access.Release{{At: future, Level: access.Public}}, Preview: &access.Preview{Pages: 2}}},
 		{Content: c, Version: v, Rule: access.Rule{Level: access.TierLevel, Tiers: []string{"gold", "premium", "platinum"}}},
 		{Content: c, Rule: access.Rule{Level: access.GroupLevel, Group: grp}},
 		{Content: c, Version: v, Rule: access.Rule{Level: access.GroupPPV, Group: grp}, Groups: []string{uid(4)}},
@@ -63,7 +64,7 @@ func TestGateWithoutBilling(t *testing.T) {
 		}
 		want := []access.Decision{
 			{Allowed: true}, {Allowed: true},
-			{Sell: []access.Key{vk, ck}, Preview: &access.Preview{Pages: 2}, FreeAfter: &future},
+			{Sell: []access.Key{vk, ck}, Preview: &access.Preview{Pages: 2}, Releases: []access.Release{{At: future, Level: access.Public}}},
 			{Sell: []access.Key{gold, premium, vk, ck}},
 			{Sell: []access.Key{gk, ck}},
 			{Sell: []access.Key{vk, ck}, Requires: &gk},
@@ -111,7 +112,7 @@ func TestNewGateRefuses(t *testing.T) {
 
 func same(a, b access.Decision) bool {
 	return a.Allowed == b.Allowed && a.Unknown == b.Unknown && slices.Equal(a.Sell, b.Sell) && equalPtr(a.Requires, b.Requires) &&
-		equalPtr(a.Preview, b.Preview) && equalPtr(a.FreeAfter, b.FreeAfter)
+		equalPtr(a.Preview, b.Preview) && reflect.DeepEqual(a.Releases, b.Releases)
 }
 
 func equalPtr[T comparable](a, b *T) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }

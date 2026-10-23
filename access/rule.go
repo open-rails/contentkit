@@ -37,8 +37,8 @@ type Rule struct {
 	Group string   `json:"group_id,omitempty"` // GroupLevel, GroupPPV
 	// Preview is the part a viewer who does not open it may still read.
 	Preview *Preview `json:"preview,omitempty"`
-	// FreeAfter makes it public from then on.
-	FreeAfter *time.Time `json:"free_after,omitempty"`
+	// Releases add audiences at their release time; earlier rights remain.
+	Releases []Release `json:"releases,omitempty"`
 }
 
 // Preview is the free part of locked content (kinds.Preview).
@@ -84,20 +84,28 @@ func (r Rule) Validate(cfg kinds.Config) error {
 	default:
 		return fmt.Errorf("%w: unknown level %q", ErrRule, r.Level)
 	}
-	if r.Level == Public && (r.Preview != nil || r.FreeAfter != nil) {
-		return fmt.Errorf("%w: a public rule takes no preview or free_after", ErrRule)
+	if r.Level == Public && (r.Preview != nil || len(r.Releases) != 0) {
+		return fmt.Errorf("%w: a public rule takes no preview or releases", ErrRule)
 	}
 	if p := r.Preview; p != nil {
 		if err := p.Validate(); err != nil {
 			return fmt.Errorf("%w: %v", ErrRule, err)
 		}
 	}
-	return nil
+	return r.validateReleases(cfg)
 }
 
-// Free reports whether r opens to anyone at now: public, or past FreeAfter.
+// Free reports whether r opens to anyone at now.
 func (r Rule) Free(now time.Time) bool {
-	return r.Level == Public || r.FreeAfter != nil && !now.Before(*r.FreeAfter)
+	if r.Level == Public {
+		return true
+	}
+	for _, release := range r.Releases {
+		if release.Level == Public && !now.Before(release.At) {
+			return true
+		}
+	}
+	return false
 }
 
 // Effective is a version's rule: its override, else its content's.
@@ -119,17 +127,20 @@ func (r Rule) Previewed(k kinds.Kind) Rule {
 }
 
 // Facet is a rule as the content_facets listing projection stores it:
-// access_level, access_tiers, access_group_id and access_free_after.
+// access_level, access_tiers, access_group_id and access_releases.
 type Facet struct {
-	Level     Level
-	Tiers     []string
-	GroupID   *string
-	FreeAfter *time.Time
+	Level    Level
+	Tiers    []string
+	GroupID  *string
+	Releases []Release
 }
 
 // Facet projects r onto content_facets' access columns.
 func (r Rule) Facet() Facet {
-	f := Facet{Level: r.Level, Tiers: slices.Clone(r.Tiers), FreeAfter: r.FreeAfter}
+	f := Facet{Level: r.Level, Tiers: slices.Clone(r.Tiers), Releases: slices.Clone(r.Releases)}
+	if f.Releases == nil {
+		f.Releases = []Release{}
+	}
 	if f.Tiers == nil {
 		f.Tiers = []string{}
 	}

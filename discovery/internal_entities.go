@@ -11,6 +11,11 @@ import (
 func (s *Service) internalAccessGroups(ctx context.Context, items []access.Item, decisions []access.Decision) (map[string]bool, error) {
 	var ids []string
 	for _, item := range items {
+		for _, release := range item.Rule.Releases {
+			if release.Group != "" {
+				ids = append(ids, release.Group)
+			}
+		}
 		if item.Rule.Group != "" {
 			ids = append(ids, item.Rule.Group)
 		}

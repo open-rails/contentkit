@@ -45,12 +45,12 @@ func TestActivityAvailabilityUsesImmutableIntervals(t *testing.T) {
 	}
 }
 
-func TestActivityAvailabilitySplitsFreeAfterAndUnionsEditions(t *testing.T) {
+func TestActivityAvailabilitySplitsReleasesAndUnionsEditions(t *testing.T) {
 	f := newFixture(t, nil, "")
 	start := f.now.Add(-24 * time.Hour)
 	f.now = start
 	freeAt := start.Add(6 * time.Hour)
-	f.seed(item{n: 1, titles: map[string]string{"en": "Scheduled access"}, rule: `{"level":"tier","tiers":["premium"],"free_after":"` + freeAt.Format(time.RFC3339) + `"}`,
+	f.seed(item{n: 1, titles: map[string]string{"en": "Scheduled access"}, rule: `{"level":"tier","tiers":["premium"],"releases":[{"at":"` + freeAt.Format(time.RFC3339) + `","level":"public"}]}`,
 		versions: []ver{{langs: []string{"en"}}, {langs: []string{"en"}}}})
 	f.svc.o.Now = func() time.Time { return start.Add(24 * time.Hour) }
 	got, err := f.svc.Availability(f.ctx, "gallery", signal.AllTime(), signal.ActivityScope{})

@@ -3,6 +3,7 @@ package groups
 import (
 	"context"
 	"fmt"
+	"github.com/open-rails/contentkit/access"
 
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -48,7 +49,7 @@ DELETE FROM %[3]s gc WHERE gc.tenant_id = $1
  FROM %[1]s f CROSS JOIN LATERAL unnest(array_append(f.group_ids, f.owner_group_id)) AS gid
  LEFT JOIN %[4]s counts ON counts.tenant_id = f.tenant_id AND counts.content_kind = f.kind AND counts.content_id = f.content_id AND counts.content_version_id IS NULL
  WHERE f.tenant_id = $1 AND gid IS NOT NULL AND %[3]s
-  AND (f.access_level = 'public' OR f.access_free_after <= now() OR f.kind = ANY($2::text[]))
+  AND (%[5]s OR f.kind = ANY($2::text[]))
  ORDER BY gid, coalesce(counts.favorites, 0) DESC, f.published_at DESC NULLS LAST, f.content_id),
 auto AS (
  SELECT g.id, CASE WHEN b.content_id IS NULL THEN NULL ELSE jsonb_build_object('content_id', b.content_id, 'auto', true) END AS cover
@@ -56,7 +57,7 @@ auto AS (
  WHERE g.tenant_id = $1 AND g.state = 'active' AND (g.cover IS NULL OR g.cover ? 'auto'))
 UPDATE %[2]s g SET cover = auto.cover FROM auto
  WHERE g.tenant_id = $1 AND g.id = auto.id AND g.cover IS DISTINCT FROM auto.cover`,
-			s.table("content_facets"), s.table("content_groups"), liveListed, s.table("content_interaction_counts")), s.tenant, s.coveredKinds())
+			s.table("content_facets"), s.table("content_groups"), liveListed, s.table("content_interaction_counts"), access.PublicSQL("f")), s.tenant, s.coveredKinds())
 		return err
 	})
 }

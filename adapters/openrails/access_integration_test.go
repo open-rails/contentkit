@@ -159,9 +159,9 @@ func TestDecideStoredRules(t *testing.T) {
 	membersV := w.version(members, nil, "")
 	mppv := w.content(access.Rule{Level: access.GroupPPV, Group: channel}, "Members PPV", "")
 	mppvV := w.version(mppv, nil, "")
-	aged := w.content(access.Rule{Level: access.PPV, FreeAfter: &past}, "Aged", "")
+	aged := w.content(access.Rule{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.Public}}}, "Aged", "")
 	agedV := w.version(aged, nil, "")
-	fresh := w.content(access.Rule{Level: access.PPV, FreeAfter: &future}, "Fresh", "")
+	fresh := w.content(access.Rule{Level: access.PPV, Releases: []access.Release{{At: future, Level: access.Public}}}, "Fresh", "")
 	freshV := w.version(fresh, nil, "")
 	free := w.content(access.Rule{Level: access.Public}, "Free", "")
 	freeV := w.version(free, nil, "")
@@ -239,8 +239,8 @@ func TestDecideStoredRules(t *testing.T) {
 			req = d.Requires.String()
 		}
 		if !slices.Equal(sell, want.sell) || req != want.requires || fmt.Sprint(d.Preview) != fmt.Sprint(want.preview) ||
-			(d.FreeAfter == nil) != (want.after == nil) || d.FreeAfter != nil && !d.FreeAfter.Equal(*want.after) {
-			t.Errorf("item %d: sell %v requires %q preview %v after %v", i, sell, req, d.Preview, d.FreeAfter)
+			(len(d.Releases) == 0) != (want.after == nil) || len(d.Releases) > 0 && !d.Releases[0].At.Equal(*want.after) {
+			t.Errorf("item %d: sell %v requires %q preview %v after %v", i, sell, req, d.Preview, d.Releases)
 		}
 	}
 	// A member buying members-only PPV needs nothing first.
@@ -255,9 +255,9 @@ func TestDecideStoredRules(t *testing.T) {
 func (w *world) facet(it access.Item) {
 	f := it.Rule.Facet()
 	w.exec(`INSERT INTO `+w.table("content_facets")+` (tenant_id, content_id, version_id, kind, languages,
-			access_level, access_tiers, access_group_id, access_free_after, group_ids, published_at)
+			access_level, access_tiers, access_group_id, access_releases, group_ids, published_at)
 		VALUES ($1, $2, $3, 'post', '{en}', $4, $5, $6, $7, $8, now())`,
-		tenant, it.Content, it.Version, f.Level, f.Tiers, f.GroupID, f.FreeAfter, it.Groups)
+		tenant, it.Content, it.Version, f.Level, f.Tiers, f.GroupID, f.Releases, it.Groups)
 }
 
 // Filter.SQL over content_facets admits, per viewer, exactly the versions
@@ -274,8 +274,8 @@ func TestFilterSQLMatchesDecide(t *testing.T) {
 		{Level: access.GroupLevel, Group: channel},
 		{Level: access.PPV},
 		{Level: access.GroupPPV, Group: channel},
-		{Level: access.PPV, FreeAfter: &past},
-		{Level: access.TierLevel, Tiers: []string{"gold"}, FreeAfter: &future},
+		{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.Public}}},
+		{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: future, Level: access.Public}}},
 	}
 	var versions []string
 	for i, r := range rules {
