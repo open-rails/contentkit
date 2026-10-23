@@ -731,6 +731,10 @@ export interface EventRecord {
   content_id: string;
   version_id?: string;
   occurred_at: string;
+  recorded_at: string;
+  source: string;
+  scope: string;
+  data?: unknown;
 }
 
 export interface ExposureInput {

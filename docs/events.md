@@ -7,11 +7,19 @@ them delivered, registers a consumer, or changes another reader's position.
 An embedded or remote Go client uses the same operation:
 
 ```go
-page, err := engine.Client().ListEvents(ctx, catalog.EventQuery{
+page, err := engine.Client().EventReader().ListEvents(ctx, eventlog.Query{
     After: savedCursor,
     Limit: 100,
 })
 ```
+
+`eventlog` is `github.com/open-rails/helpers/eventlog`. `Client.EventReader()`
+uses the existing embedded or HTTP transport and returns the shared envelope;
+`ListEvents` remains available with its catalog-specific records and the same
+cursors. Engine clients retain host authority; remote clients retain the
+caller's credentials. Shared records include source, app scope, subject, payload,
+and separate occurrence and recording timestamps. In legacy storage both
+timestamps are the mutation insertion time.
 
 Remote readers call `GET /v1/events?after=<cursor>&limit=100` under the
 application's ContentKit prefix. The route requires the app's restricted-content
@@ -25,10 +33,15 @@ The reader processes a page and saves `next_cursor` in its own storage after its
 side effects succeed. Retrying the same cursor returns the same retained facts.
 An empty page also supplies a continuation. Optional `types` filters must stay
 the same while using a cursor; a filtered page advances over excluded events.
-Omitting `after` starts at the oldest retained event.
+Omitting `after` starts at the oldest retained event. Filters are sorted and
+deduplicated; unknown future types are valid. The limit defaults to 100 and
+cannot exceed 500; at most 100 type filters are accepted. HTTP clients can send
+repeated `type` parameters for exact values (including commas); these take
+precedence over the legacy comma-separated `types` parameter.
 
 The default retention is ninety days. Applications can set `event_retention`
-(a Go duration, for example `2160h`). Existing catalog maintenance prunes a
+(a Go duration, for example `2160h`). Reads exclude expired records even before
+maintenance runs, including expired rows after a younger row. Existing catalog maintenance prunes a
 bounded expired prefix independently of reader progress. A cursor that predates
 that retained prefix, or names history replaced by a restore/reset, returns
 HTTP 410 with `event_cursor_expired`; resync current state before starting again.

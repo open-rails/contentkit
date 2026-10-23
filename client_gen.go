@@ -923,8 +923,10 @@ type GetEventsQuery struct {
 	After string
 	// page size: 100 by default, at most 500
 	Limit int
-	// event types to include; keep the same selection with a cursor
+	// legacy comma-separated event types; ignored when type is provided
 	Types []string
+	// exact event types; repeat for multiple values and keep the same selection with a cursor
+	Type []string
 }
 
 func (q GetEventsQuery) values() url.Values {
@@ -937,6 +939,9 @@ func (q GetEventsQuery) values() url.Values {
 	}
 	if len(q.Types) > 0 {
 		v.Set("types", strings.Join(q.Types, ","))
+	}
+	for _, s := range q.Type {
+		v.Add("type", s)
 	}
 	return v
 }

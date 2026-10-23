@@ -156,8 +156,8 @@ func TestCatalogEventReadersAreIndependentAndReplayable(t *testing.T) {
 	if err := f.s.ContentChanged(f.ctx, f.pool, []string{id}); err == nil {
 		t.Fatal("accepted nontransactional group callback")
 	}
-	if _, err := f.s.ListEvents(f.ctx, EventQuery{Types: []string{"not.an.event"}}); !errors.Is(err, ErrEventCursorInvalid) {
-		t.Fatalf("unknown type: %v", err)
+	if page, err := f.s.ListEvents(f.ctx, EventQuery{Types: []string{"not.an.event"}}); err != nil || len(page.Events) != 0 || page.NextCursor == "" {
+		t.Fatalf("unknown type: %+v %v", page, err)
 	}
 	if _, err := f.s.ListEvents(f.ctx, EventQuery{Limit: 501}); !errors.Is(err, ErrEventCursorInvalid) {
 		t.Fatalf("unbounded limit: %v", err)
