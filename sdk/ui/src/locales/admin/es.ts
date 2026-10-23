@@ -19,6 +19,7 @@ export const admin: typeof en = {
     sharedHint: "Compartidas por todas las versiones de esta galería.",
     versionDetails: "Detalles de la versión",
     versionEntities: "Etiquetas y créditos de la versión",
+    versionKind: "{kind} (esta versión)",
     versionHint: "Solo para la versión que estás editando.",
     versionMissing: "No se encontró esta versión.",
     leaveVersion: "¿Salir de esta versión?",

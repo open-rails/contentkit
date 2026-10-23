@@ -19,6 +19,7 @@ export const admin: typeof en = {
     sharedHint: "此图库的所有版本共用。",
     versionDetails: "版本详情",
     versionEntities: "版本标签与制作人员",
+    versionKind: "{kind}（此版本）",
     versionHint: "仅适用于正在编辑的版本。",
     versionMissing: "找不到此版本。",
     leaveVersion: "离开此版本？",

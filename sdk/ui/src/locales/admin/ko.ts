@@ -19,6 +19,7 @@ export const admin: typeof en = {
     sharedHint: "이 갤러리의 모든 버전에서 공유됩니다.",
     versionDetails: "버전 세부 정보",
     versionEntities: "버전 태그 및 크레딧",
+    versionKind: "{kind} (이 버전)",
     versionHint: "현재 편집 중인 버전에만 적용됩니다.",
     versionMissing: "이 버전을 찾을 수 없습니다.",
     leaveVersion: "이 버전에서 나갈까요?",

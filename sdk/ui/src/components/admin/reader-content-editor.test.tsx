@@ -889,7 +889,9 @@ it("edits arbitrary version tags separately from shared gallery tags", async () 
   expect(await screen.findByText("Uncensored")).toBeVisible();
   expect(screen.getByText("Shared tag")).toBeVisible();
   expect(screen.queryByText("Colored")).toBeNull();
-  expect(screen.getAllByRole("combobox", { name: "Add: Tag" })).toHaveLength(2);
+  // Gallery and version tag inputs are told apart by name.
+  expect(screen.getByRole("combobox", { name: "Add: Tag" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Add: Tag (this version)" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Remove Uncensored" }));
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   await waitFor(() => expect(writes(s)).toHaveLength(1));

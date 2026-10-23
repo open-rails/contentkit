@@ -19,6 +19,7 @@ export const admin: typeof en = {
     sharedHint: "このギャラリーのすべてのバージョンで共有されます。",
     versionDetails: "バージョンの詳細",
     versionEntities: "バージョンのタグとクレジット",
+    versionKind: "{kind}（このバージョン）",
     versionHint: "編集中のバージョンのみに適用されます。",
     versionMissing: "このバージョンが見つかりません。",
     leaveVersion: "このバージョンを離れますか？",

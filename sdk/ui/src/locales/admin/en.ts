@@ -18,6 +18,7 @@ export const admin = {
     sharedHint: "Shared across every version of this gallery.",
     versionDetails: "Version details",
     versionEntities: "Version tags and credits",
+    versionKind: "{kind} (this version)",
     versionHint: "Only for the version being edited.",
     versionMissing: "This version could not be found.",
     leaveVersion: "Leave this version?",
