@@ -57,6 +57,11 @@ export function allowsIndividualSales(model: ContentModel | null, kind: string):
   return !!spec && (!spec.access_levels?.length || spec.access_levels.some((level) => level === "ppv" || level === "group_ppv"));
 }
 
+/** Whether staff choose a kind's access: it allows more than one level (none listed allows all). */
+export function offersAccessChoice(spec: ContentModel["kinds"][string] | undefined): boolean {
+  return !!spec && (!spec.access_levels?.length || spec.access_levels.length > 1);
+}
+
 function Section({ title, ckui, children }: { title: ReactNode; ckui: string; children: ReactNode }) {
   return (
     <section className="grid gap-3 border-t border-border pt-4" data-ckui={ckui}>
@@ -978,7 +983,7 @@ export function ContentSections({ content, ...p }: Common & { content: Content; 
   return (
     <div className={cn("grid gap-6", p.className)} data-ckui="content-sections">
       <ContentDetailsEditor content={content} {...p} />
-      <AccessEditor content={content} {...p} />
+      {offersAccessChoice(spec) && <AccessEditor content={content} {...p} />}
       <VersionsEditor content={content} {...p} />
       {!!spec?.entities?.length && (
         <section className="grid gap-3 border-t border-border pt-4" data-ckui="content-groups">
