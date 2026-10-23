@@ -50,7 +50,6 @@ describe("groups against the real ContentKit", () => {
         await staff.entities.addMembers(g.id, [{ content_id: c!.id }]);
       }
     }
-    await h.recount();
 
     const c = client(h, cfg, null);
     const { result, rerender } = renderHook((f: GroupFilter) => useGroups(f), {
@@ -117,7 +116,6 @@ describe("groups against the real ContentKit", () => {
     await act(() => result.current.update({ cover: { content_id: member!.id } }));
     await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member!.id }), wait);
     await act(() => result.current.update({ cover: {} }));
-    await h.recount();
     act(() => result.current.reload());
     await waitFor(() => expect(result.current.group?.cover).toEqual({ content_id: member!.id, auto: true }), wait);
 
