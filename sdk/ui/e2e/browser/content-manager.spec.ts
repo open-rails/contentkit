@@ -73,7 +73,8 @@ for (const mode of ["alone", "router"] as const) {
       await page.goto(admin("/admin/posts", editor, { mode, theme, params: { q: tag } }));
       const row = flow.locator("[data-ckui=content-row]", { hasText: `Launch notes ${tag}` });
       await expect(row).toHaveAttribute("data-status", "published", { timeout: 30_000 });
-      await row.getByRole("button", { name: "Delete" }).click();
+      await row.getByRole("button", { name: /^More actions for / }).click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
       await page.getByRole("alertdialog").getByRole("button", { name: "Delete" }).click();
       await expect(row).toHaveCount(0);
       await flow.getByRole("button", { name: "Deleted" }).click();

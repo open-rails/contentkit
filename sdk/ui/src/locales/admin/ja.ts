@@ -220,6 +220,8 @@ export const admin: typeof en = {
     makePremium: "プレミアムにする",
     makeFree: "無料にする",
     select: "{title} を選択",
+    date: "日付",
+    moreActions: "{title} のその他の操作",
     selectPage: "このページをすべて選択",
     selected: "{count} 件選択中",
     clearSelection: "選択を解除",
