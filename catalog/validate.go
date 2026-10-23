@@ -127,6 +127,11 @@ func (s *Store) checkKindRule(kind string, r access.Rule) error {
 	if !k.AllowsAccess(string(r.Level)) {
 		return invalid("kind %s does not allow %s access", kind, r.Level)
 	}
+	for _, release := range r.Releases {
+		if !k.AllowsAccess(string(release.Level)) {
+			return invalid("kind %s does not allow %s releases", kind, release.Level)
+		}
+	}
 	return nil
 }
 

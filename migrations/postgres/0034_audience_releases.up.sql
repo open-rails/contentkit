@@ -10,6 +10,7 @@ UPDATE content_items SET access = pg_temp.migrate_content_release(access) WHERE 
 UPDATE content_versions SET access = pg_temp.migrate_content_release(access) WHERE access ? 'free_after';
 UPDATE content_groups SET access = pg_temp.migrate_content_release(access) WHERE access ? 'free_after';
 UPDATE content_access_history SET snapshot = pg_temp.migrate_content_release(snapshot) WHERE snapshot ? 'free_after';
+DROP FUNCTION pg_temp.migrate_content_release(jsonb);
 
 ALTER TABLE content_facets ADD COLUMN access_releases jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(access_releases)='array'),
  ADD COLUMN next_release_at timestamptz;

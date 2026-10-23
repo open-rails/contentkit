@@ -213,6 +213,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
   const groupKinds = Object.entries(model?.entity_kinds ?? {})
     .filter(([, g]) => g.sellable || g.auth_scope)
     .map(([k]) => k);
+  const releaseLevels = levels.filter((level) => level === "public" || level === "tier" && tiers.length > 0 || level === "group" && groupKinds.length > 0);
   // Picked once the model has loaded: its first group kind until one is chosen.
   const [chosenKind, setGroupKind] = useState<string>();
   const groupKind = chosenKind ?? groupKinds[0] ?? "";
@@ -322,14 +323,14 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
             <Input required type="datetime-local" aria-label={t("contentEditor.versionPublishAt")} value={toLocalInput(release.at)} onChange={(e) => change({ at: fromLocalInput(e.target.value) ?? "" })} />
             <Select value={release.level} onValueChange={(v) => change({ level: v as typeof release.level, tiers: v === "tier" ? tiers.slice(0, 1) : undefined, group_id: undefined })}>
               <SelectTrigger size="sm" aria-label={t("contentEditor.access")}><SelectValue>{(v: string) => t(`contentEditor.level_${v as Rule["level"]}`)}</SelectValue></SelectTrigger>
-              <SelectContent>{["public", ...(tiers.length ? ["tier"] : []), ...(groupKinds.length ? ["group"] : [])].map((level) => <SelectItem key={level} value={level}>{t(`contentEditor.level_${level as Rule["level"]}`)}</SelectItem>)}</SelectContent>
+              <SelectContent>{releaseLevels.map((level) => <SelectItem key={level} value={level}>{t(`contentEditor.level_${level as Rule["level"]}`)}</SelectItem>)}</SelectContent>
             </Select>
             {release.level === "tier" && tiers.map((tier) => <label key={tier} className="flex items-center gap-1"><Switch aria-label={labelOf(labels, tier)} checked={release.tiers?.includes(tier) ?? false} onCheckedChange={(on) => change({ tiers: on ? [...(release.tiers ?? []), tier] : release.tiers?.filter((t) => t !== tier) })} />{labelOf(labels, tier)}</label>)}
             {release.level === "group" && <><span>{release.group_id}</span><GroupPicker kind={groupKind} label={t("contentEditor.group")} client={client} onPick={(g) => change({ group_id: g.id })} /></>}
             <Button type="button" variant="ghost" size="sm" onClick={() => set({ releases: value.releases!.filter((_, i) => i !== index) })}>{t("contentEditor.removeRelease")}</Button>
           </div>;
         })}
-        <Button type="button" variant="outline" size="sm" disabled={(value.releases?.length ?? 0) >= 32} onClick={() => set({ releases: [...(value.releases ?? []), { at: "", level: "public" }] })}>{t("contentEditor.addRelease")}</Button>
+        <Button type="button" variant="outline" size="sm" disabled={!releaseLevels.length || (value.releases?.length ?? 0) >= 32} onClick={() => { const level = releaseLevels[0] ?? "public"; set({ releases: [...(value.releases ?? []), { at: "", level, tiers: level === "tier" ? tiers.slice(0, 1) : undefined }] }); }}>{t("contentEditor.addRelease")}</Button>
       </fieldset>}
     </div>
   );
