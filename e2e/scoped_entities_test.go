@@ -75,7 +75,7 @@ func TestScopedEntityEditsPreserveParentAndSibling(t *testing.T) {
 		t.Helper()
 		var detail catalog.Content
 		f.want(http.StatusOK, "", "GET", "/contents/"+c.ID, nil, &detail)
-		entities := func(got []catalog.EntitySummary, want []entities.EntityID) {
+		assertEntities := func(got []catalog.EntitySummary, want []entities.EntityID) {
 			t.Helper()
 			seen := map[entities.EntityID]bool{}
 			for _, g := range got {
@@ -90,16 +90,16 @@ func TestScopedEntityEditsPreserveParentAndSibling(t *testing.T) {
 				}
 			}
 		}
-		entities(detail.Entities, []entities.EntityID{after, first})
+		assertEntities(detail.Entities, []entities.EntityID{after, first})
 		if len(detail.Versions) != 2 {
 			t.Fatalf("visible versions: %+v", detail.Versions)
 		}
 		for _, version := range detail.Versions {
 			switch version.ID {
 			case a:
-				entities(version.Entities, wantA)
+				assertEntities(version.Entities, wantA)
 			case b:
-				entities(version.Entities, wantB)
+				assertEntities(version.Entities, wantB)
 			default:
 				t.Fatalf("unexpected version %s", version.ID)
 			}
