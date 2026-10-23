@@ -78,31 +78,24 @@ func TestCatalogEventLogPreservesCommitOrderWithoutLockingOtherApps(t *testing.T
 	if err := f.s.emit(ctx, tx, Event{Type: EventContentCreated, Kind: "gallery", ContentID: "first"}); err != nil {
 		t.Fatal(err)
 	}
-	entered, completed := make(chan struct{}), make(chan error, 1)
-	go func() {
-		later, err := f.pool.Begin(ctx)
-		if err != nil {
-			completed <- err
-			return
-		}
-		defer later.Rollback(context.Background())
-		close(entered)
-		if err := f.s.emit(ctx, later, Event{Type: EventContentCreated, Kind: "gallery", ContentID: "second"}); err != nil {
-			completed <- err
-			return
-		}
-		completed <- later.Commit(ctx)
-	}()
-	<-entered
-	select {
-	case err := <-completed:
-		t.Fatalf("later writer escaped the commit-order lock: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	// A later transaction may commit first. Public IDs are not continuation
+	// positions; the still-open transaction must remain readable when it commits.
+	later, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer later.Rollback(context.Background())
+	if err := f.s.emit(ctx, later, Event{Type: EventContentCreated, Kind: "gallery", ContentID: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := later.Commit(ctx); err != nil {
+		t.Fatal(err)
 	}
 	page, err := f.s.ListEvents(ctx, EventQuery{})
-	if err != nil || len(page.Events) != 0 || page.NextCursor == "" {
-		t.Fatalf("uncommitted facts leaked: %+v %v", page, err)
+	if err != nil || len(page.Events) != 1 || page.Events[0].ContentID != "second" {
+		t.Fatalf("committed first: %+v %v", page, err)
 	}
+
 	other, err := New(ctx, Options{Pool: f.pool, Schema: f.schema, Tenant: "another-app", Kinds: config(), Auth: f.auth})
 	if err != nil {
 		t.Fatal(err)
@@ -122,11 +115,8 @@ func TestCatalogEventLogPreservesCommitOrderWithoutLockingOtherApps(t *testing.T
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-completed; err != nil {
-		t.Fatal(err)
-	}
 	page, err = f.s.ListEvents(ctx, EventQuery{After: page.NextCursor})
-	if err != nil || len(page.Events) != 2 || page.Events[0].ContentID != "first" || page.Events[1].ContentID != "second" {
+	if err != nil || len(page.Events) != 1 || page.Events[0].ContentID != "first" {
 		t.Fatalf("committed order skipped a writer: %+v %v", page, err)
 	}
 }

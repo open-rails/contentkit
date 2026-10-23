@@ -46,8 +46,8 @@ func TestCatalogEventRouteEnforcesAppScopeAndAuthenticationChallenge(t *testing.
 	schema := pgtest.Schema(t, t.Context(), pool)
 	allowed := Scope{NewTenantID(), NewAppID()}
 	qs := pgx.Identifier{schema}.Sanitize()
-	if _, err := pool.Exec(t.Context(), `INSERT INTO `+qs+`.content_event_streams(tenant_id,position) VALUES ('catalog-app',1);
- INSERT INTO `+qs+`.content_events(tenant_id,position,type,entity_id,payload) VALUES ('catalog-app',1,'content.created','retired-content','{"kind":"gallery","content_id":"retired-content","future_data":42}')`); err != nil {
+	if _, err := pool.Exec(t.Context(), `INSERT INTO `+qs+`.eventlog_pending(source,scope,id,boundary,event_source,event_type,version,occurred_at,subject_type,subject_id,data)
+ VALUES ('contentkit','catalog-app','1',gen_random_uuid()::text,'contentkit','content.created',1,clock_timestamp(),'gallery','retired-content','{"kind":"gallery","content_id":"retired-content","future_data":42}')`); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {

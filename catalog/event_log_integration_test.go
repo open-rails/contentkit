@@ -83,7 +83,22 @@ func TestEventLogRetentionDoesNotSkipYoungerPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.advance(2 * time.Hour)
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_events")+` SET created_at=$1 WHERE position=3`, f.now()); err != nil {
+	// Simulate imported historical timestamps; runtime updates remain forbidden.
+	tx, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(f.ctx)
+	if _, err := tx.Exec(f.ctx, `ALTER TABLE `+f.table("eventlog_events")+` DISABLE TRIGGER eventlog_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, `UPDATE `+f.table("eventlog_events")+` SET recorded_at=$1 WHERE position=3`, f.now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, `ALTER TABLE `+f.table("eventlog_events")+` ENABLE TRIGGER eventlog_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(f.ctx); err != nil {
 		t.Fatal(err)
 	}
 	all := readEventLog(t, f)
@@ -125,7 +140,7 @@ func TestEventLogRetentionDoesNotSkipYoungerPrefix(t *testing.T) {
 
 func TestEventLogStringIDsAndHTTPAuthorization(t *testing.T) {
 	f := newFixture(t, nil)
-	if _, err := f.pool.Exec(f.ctx, `SELECT setval(pg_get_serial_sequence($1,'id')::regclass,9007199254740992,true)`, f.table("content_events")); err != nil {
+	if _, err := f.pool.Exec(f.ctx, `SELECT setval($1::regclass,9007199254740992,true)`, f.table("content_event_ids")); err != nil {
 		t.Fatal(err)
 	}
 	emitFacts(t, f, Event{Type: EventContentCreated, Kind: "gallery", ContentID: "large-id"})
@@ -165,10 +180,10 @@ func TestEventLogRejectsReusedPositionAfterRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback.Rollback(f.ctx)
-	if _, err := rollback.Exec(f.ctx, `DELETE FROM `+f.table("content_events")+` WHERE tenant_id=$1 AND position=2`, tenant); err != nil {
+	if _, err := rollback.Exec(f.ctx, `DELETE FROM `+f.table("eventlog_events")+` WHERE source='contentkit' AND scope=$1 AND position=2`, tenant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rollback.Exec(f.ctx, `UPDATE `+f.table("content_event_streams")+` SET position=1 WHERE tenant_id=$1`, tenant); err != nil {
+	if _, err := rollback.Exec(f.ctx, `UPDATE `+f.table("eventlog_streams")+` SET position=1,head_id=(SELECT boundary FROM `+f.table("eventlog_events")+` WHERE source='contentkit' AND scope=$1 AND position=1) WHERE source='contentkit' AND scope=$1`, tenant); err != nil {
 		t.Fatal(err)
 	}
 	if err := rollback.Commit(f.ctx); err != nil {
@@ -182,7 +197,7 @@ func TestEventLogRejectsReusedPositionAfterRestore(t *testing.T) {
 	if err != nil || len(current.Events) != 2 || current.Events[1].ContentID != "replacement" {
 		t.Fatalf("new history unavailable: %+v %v", current, err)
 	}
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_event_epoch")+` SET epoch=gen_random_uuid()`); err != nil {
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("eventlog_streams")+` SET epoch=gen_random_uuid()::text`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.s.ListEvents(f.ctx, EventQuery{After: current.NextCursor}); !errors.Is(err, ErrEventCursorExpired) {
@@ -206,7 +221,7 @@ func TestSharedEventReaderPreservesLegacyCursorAndEnvelope(t *testing.T) {
 		t.Fatalf("shared continuation: %+v %v", shared, err)
 	}
 	e := shared.Events[0]
-	if e.ID == legacy.Events[0].ID || e.Scope != tenant || e.Source != "contentkit" || e.Subject.ID != "two" || e.RecordedAt.IsZero() || !e.OccurredAt.Equal(e.RecordedAt) {
+	if e.ID == legacy.Events[0].ID || e.Scope != tenant || e.Source != "contentkit" || e.Subject.ID != "two" || e.RecordedAt.IsZero() || e.OccurredAt.After(e.RecordedAt) {
 		t.Fatalf("envelope: %+v", e)
 	}
 	if page, err := f.s.ListEvents(f.ctx, EventQuery{After: shared.NextCursor}); err != nil || len(page.Events) != 0 {

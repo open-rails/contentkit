@@ -35,7 +35,7 @@ var clockArgs = []string{"cv_now", "ci_now", "d_published_now"}
 
 func (s *Service) cachedListingSummary(ctx context.Context, filter Filter, q *sel, sort order) (*ListingSummary, error) {
 	var stamp int64
-	if err := s.o.Pool.QueryRow(ctx, `SELECT coalesce(max(id), 0) FROM `+s.t.events+` WHERE tenant_id = $1`, s.o.Tenant).Scan(&stamp); err != nil {
+	if err := s.o.Pool.QueryRow(ctx, `SELECT coalesce((SELECT position FROM `+s.t.eventStreams+` WHERE source='contentkit' AND scope=$1),0)`, s.o.Tenant).Scan(&stamp); err != nil {
 		return nil, err
 	}
 	args := maps.Clone(q.args)
