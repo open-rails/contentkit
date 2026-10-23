@@ -1464,8 +1464,9 @@ true only when:
    and export evaluates the ledger inside its own statement.
 
 The subject key is dead in that tenant forever. Residue (rows that landed
-after the fence or came back with a restore) is unreadable; the engine's
-erasure job removes it daily. After a restore, re-erase the subjects deleted
+after the fence or came back with a restore) is unreadable. Cleanup is
+explicit: the host can call `hub.EnforceErasures`; ContentKit does not schedule
+an erasure sweep. After a restore, re-erase the subjects deleted
 since the backup. A shared account exists in every tenant:
 each host erases its own tenant.
 

@@ -141,9 +141,9 @@ func (st *Store) erasedCount(ctx context.Context, tenant string) (uint64, error)
 // it deletes residue left by writers or projections that observed the state
 // before the fence, or rows restored from a backup. Such rows were already
 // unreadable; this removes them physically. There is no cursor, so a delayed
-// write for an old erasure is never skipped. Idempotent; schedule it, and run
-// it after every restore (after re-erasing subjects deleted since the backup,
-// which the host's own deletion ledger knows).
+// write for an old erasure is never skipped. Idempotent and explicitly invoked
+// by the host, including after a restore once the host has replayed subjects
+// deleted since the backup. ContentKit does not schedule an erasure sweep.
 func (st *Store) EnforceErasures(ctx context.Context, tenant string) (ErasureReport, error) {
 	report := ErasureReport{Remaining: map[string]uint64{}}
 	if strings.TrimSpace(tenant) == "" {
