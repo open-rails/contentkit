@@ -19,26 +19,26 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 	}
 	collect := func(d Decision) {
 		for _, release := range d.Releases {
-			add(release.Group)
+			add(release.Entity)
 		}
 		for _, raw := range append(append([]string{}, d.Sell...), d.Requires) {
-			if key, err := access.ParseKey(raw); err == nil && key.Kind() == access.KeyGroup {
-				add(key.Group())
+			if key, err := access.ParseKey(raw); err == nil && key.Kind() == access.KeyEntity {
+				add(key.Entity())
 			}
 		}
 	}
 	for _, c := range items {
-		add(c.OwnerGroupID)
-		add(c.Access.Group)
+		add(c.OwnerEntityID)
+		add(c.Access.Entity)
 		for _, release := range c.Access.Releases {
-			add(release.Group)
+			add(release.Entity)
 		}
 		collect(c.Decision)
 		for _, v := range c.Versions {
 			if v.Access != nil {
-				add(v.Access.Group)
+				add(v.Access.Entity)
 				for _, release := range v.Access.Releases {
-					add(release.Group)
+					add(release.Entity)
 				}
 			}
 			collect(v.Decision)
@@ -47,7 +47,7 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id FROM `+s.t.groups+` WHERE tenant_id=$1 AND id=ANY($2::text[]) AND internal`, s.tenant, ids)
+	rows, err := s.pool.Query(ctx, `SELECT id FROM `+s.t.entities+` WHERE tenant_id=$1 AND id=ANY($2::text[]) AND internal`, s.tenant, ids)
 	if err != nil {
 		return err
 	}
@@ -65,33 +65,33 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 	}
 	privateKey := func(raw string) bool {
 		key, err := access.ParseKey(raw)
-		return err == nil && key.Kind() == access.KeyGroup && internal[key.Group()]
+		return err == nil && key.Kind() == access.KeyEntity && internal[key.Entity()]
 	}
 	redact := func(d *Decision) {
-		d.Releases = slices.DeleteFunc(slices.Clone(d.Releases), func(r access.Release) bool { return internal[r.Group] })
+		d.Releases = slices.DeleteFunc(slices.Clone(d.Releases), func(r access.Release) bool { return internal[r.Entity] })
 		if privateKey(d.Requires) {
 			// No offered purchase may skip this required membership.
 			d.Sell, d.Requires, d.Offers = nil, "", nil
 			return
 		}
 		d.Sell = slices.DeleteFunc(slices.Clone(d.Sell), privateKey)
-		d.Offers = slices.DeleteFunc(slices.Clone(d.Offers), func(sale offers.Sale) bool { return sale.Key.Kind() == access.KeyGroup && internal[sale.Key.Group()] })
+		d.Offers = slices.DeleteFunc(slices.Clone(d.Offers), func(sale offers.Sale) bool { return sale.Key.Kind() == access.KeyEntity && internal[sale.Key.Entity()] })
 	}
 	rule := func(r *access.Rule) {
 		if r == nil {
 			return
 		}
-		r.Releases = slices.DeleteFunc(slices.Clone(r.Releases), func(r access.Release) bool { return internal[r.Group] })
-		if !internal[r.Group] {
+		r.Releases = slices.DeleteFunc(slices.Clone(r.Releases), func(r access.Release) bool { return internal[r.Entity] })
+		if !internal[r.Entity] {
 			return
 		}
-		// The public shape says only that access is locked. The original group
+		// The public shape says only that access is locked. The original entity
 		// rule remains stored and was already evaluated by the access gate.
 		*r = access.Rule{Level: access.PPV, Preview: r.Preview, Releases: r.Releases}
 	}
 	for _, c := range items {
-		if internal[c.OwnerGroupID] {
-			c.OwnerGroupID, c.Owner = "", nil
+		if internal[c.OwnerEntityID] {
+			c.OwnerEntityID, c.Owner = "", nil
 		}
 		rule(&c.Access)
 		redact(&c.Decision)

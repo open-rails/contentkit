@@ -11,14 +11,14 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
-// Interaction targets: content items or groups.
+// Interaction targets: content items or entities.
 const (
 	TargetContents = "contents"
-	TargetGroups   = "entities"
+	TargetEntities = "entities"
 )
 
 // MineOptions select one page of the signed-in reader's favorites or
@@ -27,23 +27,23 @@ type MineOptions struct {
 	Reader
 	// Target is contents (the default) or entities.
 	Target string
-	// Kind is one content kind or group kind; every kind by default.
+	// Kind is one content kind or entity kind; every kind by default.
 	Kind string
 	// Value narrows reactions: like or dislike; both by default.
-	Value      string
-	CardGroups []string
-	Cursor     string
+	Value        string
+	CardEntities []string
+	Cursor       string
 	// Limit defaults to 24 and is capped at 100.
 	Limit int
 	// Summary adds counts scoped to this reader's matching contents, before pagination.
 	Summary bool
 }
 
-// Interaction is one content item or group the reader favorited or reacted
+// Interaction is one content item or entity the reader favorited or reacted
 // to, as its card shows it now.
 type Interaction struct {
-	Content *Card             `json:"content,omitempty"`
-	Group   *groups.GroupCard `json:"entity,omitempty"`
+	Content *Card                `json:"content,omitempty"`
+	Entity  *entities.EntityCard `json:"entity,omitempty"`
 	// Value is the reaction: 1 like, -1 dislike; 1 for a favorite.
 	Value int16 `json:"value"`
 	// At is when the reader favorited or last reacted.
@@ -61,7 +61,7 @@ type InteractionPage struct {
 
 // Favorites pages what the signed-in reader favorited, most recent first: the
 // content items their listing shows (one card per item, whichever version
-// they favorited) or the active groups.
+// they favorited) or the active entities.
 func (s *Service) Favorites(ctx context.Context, o MineOptions) (InteractionPage, error) {
 	return s.mine(ctx, o, s.t.favorites, "x.value = 1", "x.created_at")
 }
@@ -98,11 +98,11 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 		if _, ok := s.o.Kinds.Kinds[o.Kind]; o.Kind != "" && !ok {
 			return out, fmt.Errorf("%w: kind %q is not configured", ErrInvalid, o.Kind)
 		}
-	case TargetGroups:
-		for k := range s.o.Kinds.GroupKinds {
+	case TargetEntities:
+		for k := range s.o.Kinds.EntityKinds {
 			kinds = append(kinds, k)
 		}
-		if _, ok := s.o.Kinds.GroupKinds[o.Kind]; o.Kind != "" && !ok {
+		if _, ok := s.o.Kinds.EntityKinds[o.Kind]; o.Kind != "" && !ok {
 			return out, fmt.Errorf("%w: group kind %q is not configured", ErrInvalid, o.Kind)
 		}
 	default:
@@ -118,7 +118,7 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 	limit := pageLimit(o.Limit, 24)
 	args := pgx.NamedArgs{"d_tenant": s.o.Tenant, "d_user": o.Actor.AccountID(), "d_kinds": kinds, "d_limit": limit + 1, "d_after_at": afterAt, "d_after_id": afterID}
 	var q *sel
-	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = x.tenant_id AND g.id = x.content_id AND g.kind = x.content_kind AND g.state = 'active' AND NOT g.internal)`, s.t.groups)
+	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = x.tenant_id AND g.id = x.content_id AND g.kind = x.content_kind AND g.state = 'active' AND NOT g.internal)`, s.t.entities)
 	if o.Target == TargetContents {
 		if q, err = s.compile(ctx, o.Reader, Filter{Kind: o.Kind, keepUnplayable: true}); err != nil {
 			return out, err
@@ -174,22 +174,22 @@ WHERE @d_after_id = '' OR (at, id) < (@d_after_at, @d_after_id) ORDER BY at DESC
 	for i, x := range got {
 		ids[i] = x.id
 	}
-	if o.Target == TargetGroups {
-		gids := make([]groups.GroupID, len(ids))
+	if o.Target == TargetEntities {
+		gids := make([]entities.EntityID, len(ids))
 		for i, id := range ids {
-			gids[i] = groups.GroupID(id)
+			gids[i] = entities.EntityID(id)
 		}
-		cards, err := s.o.Groups.Cards(ctx, gids, groups.CardOptions{Language: cmpOr(o.DisplayLanguage, o.Language)})
+		cards, err := s.o.Entities.Cards(ctx, gids, entities.CardOptions{Language: cmpOr(o.DisplayLanguage, o.Language)})
 		if err != nil {
 			return out, err
 		}
-		byID := make(map[string]groups.GroupCard, len(cards))
+		byID := make(map[string]entities.EntityCard, len(cards))
 		for _, c := range cards {
 			byID[string(c.ID)] = c
 		}
 		for _, x := range got {
 			if c, ok := byID[x.id]; ok {
-				out.Items = append(out.Items, Interaction{Group: &c, Value: x.value, At: x.at})
+				out.Items = append(out.Items, Interaction{Entity: &c, Value: x.value, At: x.at})
 			}
 		}
 		return out, nil
@@ -198,7 +198,7 @@ WHERE @d_after_id = '' OR (at, id) < (@d_after_at, @d_after_id) ORDER BY at DESC
 	if err != nil {
 		return out, err
 	}
-	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
+	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
 	if err != nil {
 		return out, err
 	}
@@ -233,7 +233,7 @@ func decodeMineCursor(raw string) (time.Time, string, error) {
 var mineParams = []httpapi.Param{
 	httpapi.Text("target", "contents (the default) or entities"),
 	httpapi.Text("kind", "only this content kind or group kind"),
-	cardGroups,
+	cardEntities,
 	httpapi.Text("cursor", "the previous page's next_cursor"),
 	httpapi.Int("limit", "page size: 24 by default, at most 100"),
 	httpapi.Bool("summary", "matching content counts for this caller, on the first page only"),
@@ -259,7 +259,7 @@ func (h handler) mineOptions(r *http.Request) (MineOptions, error) {
 	}
 	q := r.URL.Query()
 	return MineOptions{Reader: readerOf(r), Target: q.Get("target"), Kind: q.Get("kind"), Value: q.Get("value"),
-		CardGroups: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit, Summary: summary}, err
+		CardEntities: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit, Summary: summary}, err
 }
 
 func (h handler) favorites(w http.ResponseWriter, r *http.Request) {

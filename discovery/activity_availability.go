@@ -32,7 +32,7 @@ type accessHistoryState struct {
 	Languages     []string         `json:"languages"`
 	Level         access.Level     `json:"level"`
 	Tiers         []string         `json:"tiers"`
-	Group         string           `json:"group_id"`
+	Entity        string           `json:"group_id"`
 	Releases      []access.Release `json:"releases"`
 }
 
@@ -126,7 +126,7 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
 		if !begin.Before(end) {
 			continue
 		}
-		rule := access.Rule{Level: row.state.Level, Tiers: row.state.Tiers, Group: row.state.Group, Releases: row.state.Releases}
+		rule := access.Rule{Level: row.state.Level, Tiers: row.state.Tiers, Entity: row.state.Entity, Releases: row.state.Releases}
 		appendPart := func(a, b time.Time) {
 			_, audience, tiers := activityAudience(rule, a)
 			if a.Before(b) {

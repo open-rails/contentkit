@@ -191,7 +191,7 @@ export interface Batch {
   source: string;
   preference_floor?: number;
   provision_scopes?: boolean;
-  entities?: GroupRecord[];
+  entities?: EntityRecord[];
   contents?: ContentRecord[];
   memberships?: MembershipSet[];
   offers?: OfferRecord[];
@@ -222,7 +222,7 @@ export interface Card {
   cover: PublicRendition[];
   version: CardVersion;
   entities: Record<string, Chip[]>;
-  owner?: GroupCard;
+  owner?: EntityCard;
   counts: Counts;
   access: CardAccess;
   viewer?: ViewerState;
@@ -397,9 +397,9 @@ export interface Content {
   restrictions: string[];
   attributes: Record<string, unknown>;
   owner_group_id?: string;
-  owner?: GroupCard;
+  owner?: EntityCard;
   creators: Creator[];
-  entities: GroupSummary[];
+  entities: EntitySummary[];
   versions: Version[];
   selected_version_id?: string;
   viewer?: ViewerState;
@@ -415,8 +415,14 @@ export interface Content {
   deleted_at?: string;
 }
 
+export interface ContentEntities {
+  kinds?: string[];
+  memberships: Membership[];
+  create?: NewEntity[];
+}
+
 export interface ContentFilterState {
-  entity: GroupCard;
+  entity: EntityCard;
   default_visible: boolean;
   visible: boolean;
   overridden: boolean;
@@ -439,12 +445,6 @@ export interface ContentFiltersUpdate {
   include_deleted?: boolean;
 }
 
-export interface ContentGroups {
-  kinds?: string[];
-  memberships: Membership[];
-  create?: NewEntity[];
-}
-
 export interface ContentInput {
   kind: string;
   text?: Record<string, CatalogText>;
@@ -462,14 +462,14 @@ export interface ContentInput {
 export interface ContentMemberships {
   content_id: string;
   memberships: Membership[];
-  entities: GroupCard[];
+  entities: EntityCard[];
 }
 
 export interface ContentModel {
   languages: string[];
   tiers: string[];
   kinds: Record<string, Kind>;
-  entity_kinds: Record<string, GroupKind>;
+  entity_kinds: Record<string, EntityKind>;
   signals: boolean;
   avatars?: PresetRule;
 }
@@ -670,6 +670,167 @@ export interface EngagementSnapshot {
   watched?: WatchedRange[];
 }
 
+export interface EntitiesCover {
+  image?: string;
+  content_id?: string;
+  auto?: boolean;
+  renditions?: Rendition[];
+}
+
+export interface EntitiesText {
+  language: string;
+  description?: string;
+  sort_key?: string;
+}
+
+export interface Entity {
+  id: string;
+  kind: string;
+  slug: string;
+  internal: boolean;
+  scope_id?: string;
+  parent_id?: string;
+  state: "active" | "deleted" | "merged";
+  merged_into?: string;
+  attributes: Record<string, unknown>;
+  cover?: EntitiesCover;
+  avatar?: Avatar;
+  owner_user_id?: string;
+  auth_scope?: string;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+}
+
+export interface EntityAccess {
+  key: string;
+  offer?: Sale;
+  member: boolean;
+  editor?: boolean;
+  unknown?: boolean;
+}
+
+export interface EntityCard {
+  id: string;
+  kind: string;
+  slug: string;
+  internal: boolean;
+  scope_id?: string;
+  parent_id?: string;
+  name: string;
+  name_language?: string;
+  code?: string;
+  path?: string;
+  cover?: EntitiesCover;
+  avatar?: Avatar;
+  count: number;
+  attributes: Record<string, unknown>;
+  access?: EntityAccess;
+  created_at: string;
+}
+
+export interface EntityDetail {
+  id: string;
+  kind: string;
+  slug: string;
+  internal: boolean;
+  scope_id?: string;
+  parent_id?: string;
+  state: "active" | "deleted" | "merged";
+  merged_into?: string;
+  attributes: Record<string, unknown>;
+  cover?: EntitiesCover;
+  avatar?: Avatar;
+  owner_user_id?: string;
+  auth_scope?: string;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+  name: string;
+  name_language?: string;
+  code?: string;
+  path?: string;
+  names: Name[];
+  text: EntitiesText[];
+  parent?: EntityCard;
+  scope?: EntityCard;
+  children: EntityCard[];
+  edges: Edge[];
+  counts: Count[];
+  access?: EntityAccess;
+  offer?: Offer;
+}
+
+export interface EntityInput {
+  id?: string;
+  kind: string;
+  slug: string;
+  internal?: boolean;
+  scope_id?: string;
+  parent_id?: string;
+  attributes?: Record<string, unknown>;
+  cover?: EntitiesCover;
+  avatar?: Avatar;
+  owner_user_id?: string;
+  auth_scope?: string;
+  names?: Name[];
+  text?: EntitiesText[];
+}
+
+export interface EntityJoin {
+  group_id: string;
+  key: string;
+  member: boolean;
+}
+
+export interface EntityKind {
+  route?: string;
+  ordered?: boolean;
+  parent?: string;
+  scoped_by?: string;
+  owner?: string;
+  max_per_owner?: number;
+  avatar?: boolean;
+  uploads?: UploadLimits;
+  sellable?: boolean;
+  auth_scope?: boolean;
+  windows?: boolean;
+  membership_scopes?: ("content" | "version")[];
+  version_level?: boolean;
+  creatable?: boolean;
+  roles?: string[];
+  attributes?: Record<string, Attribute>;
+}
+
+export interface EntityPage {
+  entities: EntityCard[];
+  next_cursor?: string;
+  total?: number;
+}
+
+export interface EntityRecord {
+  external_id: string;
+  id?: string;
+  kind: string;
+  slug: string;
+  internal?: boolean;
+  scope?: Ref;
+  parent?: Ref;
+  state?: string;
+  names?: Name[];
+  text?: EntitiesText[];
+  attributes?: Record<string, unknown>;
+  cover_image?: string;
+  cover_content?: Ref;
+  avatar?: string;
+  owner_user_id?: string;
+  auth_scope?: string;
+  edges?: EdgeRecord[];
+  code?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface EntityReference {
   id?: string;
   kind?: string;
@@ -684,6 +845,30 @@ export interface EntityResolution {
   name: string;
   created: boolean;
   scope?: EntityResolution;
+}
+
+export interface EntitySummary {
+  id: string;
+  kind: string;
+  slug: string;
+  name: string;
+  code?: string;
+  path?: string;
+}
+
+export interface EntityUpdate {
+  slug?: string;
+  internal?: boolean;
+  scope_id?: string;
+  parent_id?: string;
+  state?: "active" | "deleted" | "merged";
+  attributes?: Record<string, unknown>;
+  cover?: EntitiesCover;
+  avatar?: Avatar;
+  owner_user_id?: string;
+  auth_scope?: string;
+  names?: Name[];
+  text?: EntitiesText[];
 }
 
 export interface ErrorDetails {
@@ -872,191 +1057,6 @@ export interface Frame {
   of?: string;
 }
 
-export interface Group {
-  id: string;
-  kind: string;
-  slug: string;
-  internal: boolean;
-  scope_id?: string;
-  parent_id?: string;
-  state: "active" | "deleted" | "merged";
-  merged_into?: string;
-  attributes: Record<string, unknown>;
-  cover?: GroupsCover;
-  avatar?: Avatar;
-  owner_user_id?: string;
-  auth_scope?: string;
-  created_at: string;
-  updated_at: string;
-  revision: number;
-}
-
-export interface GroupAccess {
-  key: string;
-  offer?: Sale;
-  member: boolean;
-  editor?: boolean;
-  unknown?: boolean;
-}
-
-export interface GroupCard {
-  id: string;
-  kind: string;
-  slug: string;
-  internal: boolean;
-  scope_id?: string;
-  parent_id?: string;
-  name: string;
-  name_language?: string;
-  code?: string;
-  path?: string;
-  cover?: GroupsCover;
-  avatar?: Avatar;
-  count: number;
-  attributes: Record<string, unknown>;
-  access?: GroupAccess;
-  created_at: string;
-}
-
-export interface GroupDetail {
-  id: string;
-  kind: string;
-  slug: string;
-  internal: boolean;
-  scope_id?: string;
-  parent_id?: string;
-  state: "active" | "deleted" | "merged";
-  merged_into?: string;
-  attributes: Record<string, unknown>;
-  cover?: GroupsCover;
-  avatar?: Avatar;
-  owner_user_id?: string;
-  auth_scope?: string;
-  created_at: string;
-  updated_at: string;
-  revision: number;
-  name: string;
-  name_language?: string;
-  code?: string;
-  path?: string;
-  names: Name[];
-  text: GroupsText[];
-  parent?: GroupCard;
-  scope?: GroupCard;
-  children: GroupCard[];
-  edges: Edge[];
-  counts: Count[];
-  access?: GroupAccess;
-  offer?: Offer;
-}
-
-export interface GroupInput {
-  id?: string;
-  kind: string;
-  slug: string;
-  internal?: boolean;
-  scope_id?: string;
-  parent_id?: string;
-  attributes?: Record<string, unknown>;
-  cover?: GroupsCover;
-  avatar?: Avatar;
-  owner_user_id?: string;
-  auth_scope?: string;
-  names?: Name[];
-  text?: GroupsText[];
-}
-
-export interface GroupJoin {
-  group_id: string;
-  key: string;
-  member: boolean;
-}
-
-export interface GroupKind {
-  route?: string;
-  ordered?: boolean;
-  parent?: string;
-  scoped_by?: string;
-  owner?: string;
-  max_per_owner?: number;
-  avatar?: boolean;
-  uploads?: UploadLimits;
-  sellable?: boolean;
-  auth_scope?: boolean;
-  windows?: boolean;
-  membership_scopes?: ("content" | "version")[];
-  version_level?: boolean;
-  creatable?: boolean;
-  roles?: string[];
-  attributes?: Record<string, Attribute>;
-}
-
-export interface GroupPage {
-  entities: GroupCard[];
-  next_cursor?: string;
-  total?: number;
-}
-
-export interface GroupRecord {
-  external_id: string;
-  id?: string;
-  kind: string;
-  slug: string;
-  internal?: boolean;
-  scope?: Ref;
-  parent?: Ref;
-  state?: string;
-  names?: Name[];
-  text?: GroupsText[];
-  attributes?: Record<string, unknown>;
-  cover_image?: string;
-  cover_content?: Ref;
-  avatar?: string;
-  owner_user_id?: string;
-  auth_scope?: string;
-  edges?: EdgeRecord[];
-  code?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface GroupSummary {
-  id: string;
-  kind: string;
-  slug: string;
-  name: string;
-  code?: string;
-  path?: string;
-}
-
-export interface GroupUpdate {
-  slug?: string;
-  internal?: boolean;
-  scope_id?: string;
-  parent_id?: string;
-  state?: "active" | "deleted" | "merged";
-  attributes?: Record<string, unknown>;
-  cover?: GroupsCover;
-  avatar?: Avatar;
-  owner_user_id?: string;
-  auth_scope?: string;
-  names?: Name[];
-  text?: GroupsText[];
-}
-
-export interface GroupsCover {
-  image?: string;
-  content_id?: string;
-  auto?: boolean;
-  renditions?: Rendition[];
-}
-
-export interface GroupsText {
-  language: string;
-  description?: string;
-  sort_key?: string;
-}
-
 export interface GuestFilterSetting {
   entity_id: string;
   visible?: boolean;
@@ -1126,7 +1126,7 @@ export interface Input {
 
 export interface Interaction {
   content?: Card;
-  entity?: GroupCard;
+  entity?: EntityCard;
   value: number;
   at: string;
 }
@@ -1282,7 +1282,7 @@ export interface MultipartReply {
   max_parts: number;
 }
 
-export interface MyGroup {
+export interface MyEntity {
   id: string;
   kind: string;
   slug: string;
@@ -1293,11 +1293,11 @@ export interface MyGroup {
   name_language?: string;
   code?: string;
   path?: string;
-  cover?: GroupsCover;
+  cover?: EntitiesCover;
   avatar?: Avatar;
   count: number;
   attributes: Record<string, unknown>;
-  access?: GroupAccess;
+  access?: EntityAccess;
   created_at: string;
   owner: boolean;
   editor: boolean;
@@ -1306,8 +1306,8 @@ export interface MyGroup {
   member: boolean;
 }
 
-export interface MyGroupPage {
-  entities: MyGroup[];
+export interface MyEntityPage {
+  entities: MyEntity[];
   next_cursor?: string;
 }
 
@@ -1817,7 +1817,7 @@ export interface ReleaseDay {
 }
 
 export interface ReleaseFilteredEntity {
-  entity: GroupCard;
+  entity: EntityCard;
   count: number;
 }
 
@@ -2011,7 +2011,7 @@ export interface Totals {
 
 export interface Typeahead {
   contents: Card[];
-  entities: GroupCard[];
+  entities: EntityCard[];
 }
 
 export interface UploadLimits {
@@ -2051,7 +2051,7 @@ export interface Version {
   live: boolean;
   access?: Rule;
   attributes: Record<string, unknown>;
-  entities: GroupSummary[];
+  entities: EntitySummary[];
   pages?: number;
   duration_ms?: number;
   width?: number;

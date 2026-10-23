@@ -28,7 +28,7 @@ type SitemapPage struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 }
 
-// SitemapEntry is one public page: a content item or group.
+// SitemapEntry is one public page: a content item or entity.
 type SitemapEntry struct {
 	ID   string `json:"id"`
 	Code string `json:"code"`
@@ -69,7 +69,7 @@ var sitemapRoutes = []httpapi.Route[handler]{
 		Doc: "Pages through the site's public group pages of one kind, by id, for host sitemaps: active groups holding content the site lists, each with the languages that content serves.",
 		Query: []httpapi.Param{httpapi.Text("kind", "the group kind; required"), httpapi.Text("cursor", "the previous page's next_cursor"),
 			httpapi.Int("limit", "page size: 1000 by default, at most 10000")},
-		Responses: []httpapi.Reply{httpapi.OK(SitemapPage{})}}, Serve: httpapi.H(handler.sitemapGroups)},
+		Responses: []httpapi.Reply{httpapi.OK(SitemapPage{})}}, Serve: httpapi.H(handler.sitemapEntities)},
 }
 
 func (h handler) sitemapOptions(r *http.Request) (SitemapOptions, error) {
@@ -88,13 +88,13 @@ func (h handler) sitemapContents(w http.ResponseWriter, r *http.Request) {
 	h.reply(w, r, page, err)
 }
 
-func (h handler) sitemapGroups(w http.ResponseWriter, r *http.Request) {
+func (h handler) sitemapEntities(w http.ResponseWriter, r *http.Request) {
 	o, err := h.sitemapOptions(r)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	page, err := h.s.SitemapGroups(r.Context(), o)
+	page, err := h.s.SitemapEntities(r.Context(), o)
 	h.reply(w, r, page, err)
 }
 
@@ -147,10 +147,10 @@ ORDER BY c.id LIMIT @d_limit`, s.t.items, s.t.facets, s.t.codes, pred)
 	return page, nil
 }
 
-// SitemapGroups pages the site's public pages of a group kind: active
-// groups holding content the site lists.
-func (s *Service) SitemapGroups(ctx context.Context, o SitemapOptions) (SitemapPage, error) {
-	k, ok := s.o.Kinds.GroupKinds[o.Kind]
+// SitemapEntities pages the site's public pages of an entity kind: active
+// entities holding content the site lists.
+func (s *Service) SitemapEntities(ctx context.Context, o SitemapOptions) (SitemapPage, error) {
+	k, ok := s.o.Kinds.EntityKinds[o.Kind]
 	if !ok || k.Route == "" {
 		return SitemapPage{Entries: []SitemapEntry{}}, fmt.Errorf("%w: kind %q is no group kind with pages", ErrInvalid, o.Kind)
 	}
@@ -158,10 +158,10 @@ func (s *Service) SitemapGroups(ctx context.Context, o SitemapOptions) (SitemapP
 		return fmt.Sprintf(`SELECT g.id, coalesce(cd.code, ''), coalesce(cd.slug, g.slug), coalesce(cd.slugs, '{}'), g.updated_at, l.languages
 FROM %[1]s g
 CROSS JOIN LATERAL (SELECT ARRAY(SELECT x.l FROM unnest(@d_langs::text[]) AS x(l) WHERE EXISTS (SELECT 1 FROM %[2]s f
- WHERE f.tenant_id = g.tenant_id AND f.group_ids @> ARRAY[g.id] AND f.languages @> ARRAY[x.l] AND %[4]s)) AS languages) l
+ WHERE f.tenant_id = g.tenant_id AND f.entity_ids @> ARRAY[g.id] AND f.languages @> ARRAY[x.l] AND %[4]s)) AS languages) l
 JOIN %[3]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AND cd.content_id = g.id
 WHERE g.tenant_id = @d_tenant AND g.kind = @d_kind AND g.state = 'active' AND NOT g.internal AND g.id > @d_after AND cardinality(l.languages) > 0
-ORDER BY g.id LIMIT @d_limit`, s.t.groups, s.t.facets, s.t.codes, pred)
+ORDER BY g.id LIMIT @d_limit`, s.t.entities, s.t.facets, s.t.codes, pred)
 	})
 }
 

@@ -33,17 +33,17 @@ func TestRuntimeDiscoveryQueryPlans(t *testing.T) {
 		t.Skip("set CONTENTKIT_QUERY_PLANS to measure query plans")
 	}
 	f := newFixture(t, nil, "")
-	f.group("rail", "featured")
+	f.entity("rail", "featured")
 	entity := f.ids["featured"]
 	f.exec(`INSERT INTO {s}.content_items(tenant_id,id,kind,state)
  SELECT $1,md5(i::text)::uuid::text,'gallery','published' FROM generate_series(1,5000) i`, tenant)
 	f.exec(`INSERT INTO {s}.content_versions(tenant_id,id,content_id,languages,state)
  SELECT tenant_id,md5(id)::uuid::text,id,ARRAY['en'],'published' FROM {s}.content_items WHERE tenant_id=$1`, tenant)
-	f.exec(`INSERT INTO {s}.content_memberships(tenant_id,group_id,content_id)
+	f.exec(`INSERT INTO {s}.content_memberships(tenant_id,entity_id,content_id)
  SELECT tenant_id,$2,id FROM {s}.content_items WHERE tenant_id=$1 ORDER BY id LIMIT 100`, tenant, entity)
-	f.exec(`INSERT INTO {s}.content_facets(tenant_id,content_id,version_id,kind,live_from,languages,access_level,group_ids,published_at)
+	f.exec(`INSERT INTO {s}.content_facets(tenant_id,content_id,version_id,kind,live_from,languages,access_level,entity_ids,published_at)
  SELECT v.tenant_id,v.content_id,v.id,'gallery',now()-interval '1 day',v.languages,'public',
- coalesce(ARRAY(SELECT m.group_id FROM {s}.content_memberships m WHERE m.tenant_id=v.tenant_id AND m.content_id=v.content_id),'{}'),now()-interval '1 day'
+ coalesce(ARRAY(SELECT m.entity_id FROM {s}.content_memberships m WHERE m.tenant_id=v.tenant_id AND m.content_id=v.content_id),'{}'),now()-interval '1 day'
  FROM {s}.content_versions v WHERE v.tenant_id=$1`, tenant)
 	trace := &listingPlanTrace{}
 	cfg := f.pool.Config()
@@ -56,10 +56,10 @@ func TestRuntimeDiscoveryQueryPlans(t *testing.T) {
 	f.svc.o.Pool = pool
 	for _, label := range []string{"timeless", "timed"} {
 		if label == "timed" {
-			f.exec(`UPDATE {s}.content_memberships SET active_from=now()-interval '3 days' WHERE tenant_id=$1 AND group_id=$2`, tenant, entity)
+			f.exec(`UPDATE {s}.content_memberships SET active_from=now()-interval '3 days' WHERE tenant_id=$1 AND entity_id=$2`, tenant, entity)
 		}
 		f.exec(`ANALYZE {s}.content_facets; ANALYZE {s}.content_memberships`)
-		_, err := f.svc.List(f.ctx, ListOptions{Reader: Reader{Actor: access.Actor{Anonymous: true}, Host: "main.test"}, Filter: Filter{Kind: "gallery", Groups: []string{entity}}, Limit: 20})
+		_, err := f.svc.List(f.ctx, ListOptions{Reader: Reader{Actor: access.Actor{Anonymous: true}, Host: "main.test"}, Filter: Filter{Kind: "gallery", Entities: []string{entity}}, Limit: 20})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -41,10 +41,10 @@ func TestRetireLegacySearchIndexes(t *testing.T) {
 	if err := search.UpsertKeywordDocuments(ctx, pool, schema, docs); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO `+qs+`.content_groups(tenant_id,id,kind,slug) VALUES($1,$2,'tag','the-cafe')`, tenant, entity); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO `+qs+`.content_entities(tenant_id,id,kind,slug) VALUES($1,$2,'tag','the-cafe')`, tenant, entity); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO `+qs+`.content_group_names(tenant_id,group_id,language,kind,name)
+	if _, err := pool.Exec(ctx, `INSERT INTO `+qs+`.content_entity_names(tenant_id,entity_id,language,kind,name)
  VALUES($1,$2,'en','name','The Café'),($1,$2,'en','alias','Café')`, tenant, entity); err != nil {
 		t.Fatal(err)
 	}
@@ -144,13 +144,13 @@ func TestRetireLegacySearchIndexes(t *testing.T) {
 		qs+".contentkit_keyword_normalize(text)", qs+".contentkit_search_normalize(text)").Scan(&identity, &matched, &columnEdge, &functionEdge); err != nil || identity != "the cafe" || matched != "cafe" || !columnEdge || !functionEdge {
 		t.Fatalf("identity/search dependency graph changed: %q %q column=%v function=%v %v", identity, matched, columnEdge, functionEdge, err)
 	}
-	_, duplicate := pool.Exec(ctx, `INSERT INTO `+qs+`.content_group_names(tenant_id,group_id,language,kind,name) VALUES($1,$2,'en','alias','THE CAFE')`, tenant, entity)
+	_, duplicate := pool.Exec(ctx, `INSERT INTO `+qs+`.content_entity_names(tenant_id,entity_id,language,kind,name) VALUES($1,$2,'en','alias','THE CAFE')`, tenant, entity)
 	var pgErr *pgconn.PgError
 	if !errors.As(duplicate, &pgErr) || pgErr.Code != "23505" {
 		t.Fatalf("retirement changed canonical alias uniqueness: %v", duplicate)
 	}
 	var names int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+qs+`.content_group_names WHERE tenant_id=$1 AND group_id=$2`, tenant, entity).Scan(&names); err != nil || names != 2 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+qs+`.content_entity_names WHERE tenant_id=$1 AND entity_id=$2`, tenant, entity).Scan(&names); err != nil || names != 2 {
 		t.Fatalf("identity's filler distinction was lost: %d %v", names, err)
 	}
 	managed := options

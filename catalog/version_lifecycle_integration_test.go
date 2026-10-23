@@ -154,15 +154,15 @@ func TestImportedParentDeletionSupersedesEmptyCause(t *testing.T) {
 
 func TestAutomaticParentRestoreDoesNotBypassModerationOrOwnerDeletion(t *testing.T) {
 	f := newFixture(t, nil)
-	owner := f.group("channel", "owner")
+	owner := f.entity("channel", "owner")
 	in := gallery("Owner and moderation", "en")
-	in.OwnerGroupID = owner
+	in.OwnerEntityID = owner
 	id := f.create("staff", in)
 	version := f.read("staff", "main.test", id)[0].Versions[0].ID
 	if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: version}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_groups")+` SET state='deleted' WHERE tenant_id=$1 AND id=$2`, tenant, owner); err != nil {
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_entities")+` SET state='deleted' WHERE tenant_id=$1 AND id=$2`, tenant, owner); err != nil {
 		t.Fatal(err)
 	}
 	restore := func() error {
@@ -172,7 +172,7 @@ func TestAutomaticParentRestoreDoesNotBypassModerationOrOwnerDeletion(t *testing
 	if err := restore(); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("restored content beneath a deleted owner: %v", err)
 	}
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_groups")+` SET state='active' WHERE tenant_id=$1 AND id=$2`, tenant, owner); err != nil {
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_entities")+` SET state='active' WHERE tenant_id=$1 AND id=$2`, tenant, owner); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{id}); err != nil {

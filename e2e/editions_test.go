@@ -18,7 +18,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/token"
@@ -36,7 +36,7 @@ func TestEditionsCarryTheirOwnCovers(t *testing.T) {
 	f := serve(t, w.engine(func(c *contentkit.Config, _ *contentkit.Deps) {
 		c.Content.Languages = append(c.Content.Languages, "zh")
 		album := c.Content.Kinds["album"]
-		album.Groups = []string{"tag"}
+		album.Entities = []string{"tag"}
 		c.Content.Kinds["album"] = album
 	}))
 
@@ -105,11 +105,11 @@ func TestEditionsCarryTheirOwnCovers(t *testing.T) {
 	}
 
 	// A version-level tag on A alone: its list's card is A, linked with ?v=.
-	var tags []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "first-edition",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "First edition"}}}}, &tags)
+	var tags []entities.Entity
+	f.want(http.StatusCreated, staff, "POST", "/entities", []entities.EntityInput{{Kind: "tag", Slug: "first-edition",
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "First edition"}}}}, &tags)
 	tag := tags[0].ID
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/entities", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: tag, VersionID: a.ID}}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/entities", entities.ContentEntities{Memberships: []entities.Membership{{EntityID: tag, VersionID: a.ID}}}, nil)
 	if got := card("display_language=en&groups=" + string(tag)); got.Version.ID != a.ID || got.Cover[0].URL != cover[a.ID] ||
 		!strings.HasSuffix(got.Path, "?v="+a.Code) {
 		t.Fatalf("filtered card %+v", got)
@@ -118,7 +118,7 @@ func TestEditionsCarryTheirOwnCovers(t *testing.T) {
 	// The tag's automatic cover is its member's edition in the reader's language.
 
 	for language, v := range map[string]catalog.Version{"en": b, "zh": z} {
-		var g groups.GroupDetail
+		var g entities.EntityDetail
 		f.want(http.StatusOK, "", "GET", "/entities/"+string(tag)+"?language="+language, nil, &g)
 		if g.Cover == nil || !g.Cover.Auto || g.Cover.ContentID != c.ID || len(g.Cover.Renditions) == 0 || g.Cover.Renditions[0].URL != cover[v.ID] {
 			t.Fatalf("%s group cover %+v, want %s's", language, g.Cover, v.ID)

@@ -8,7 +8,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media/versions"
@@ -81,12 +81,12 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 	if err != nil {
 		return nil, err
 	}
-	var groupIDs []string
+	var entityIDs []string
 	for _, id := range visible {
 		for _, r := range views[id].versions {
-			for _, g := range r.groupIDs {
-				if !slices.Contains(groupIDs, g) {
-					groupIDs = append(groupIDs, g)
+			for _, g := range r.entityIDs {
+				if !slices.Contains(entityIDs, g) {
+					entityIDs = append(entityIDs, g)
 				}
 			}
 		}
@@ -99,8 +99,8 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			continue
 		}
 		c := &Content{ID: id, Kind: it.kind, State: it.state, OriginalTitle: it.originalTitle, OriginalLanguage: it.originalLanguage, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
-			Access: it.access, Restrictions: it.restrictions, Attributes: map[string]any{}, OwnerGroupID: it.ownerGroup, Creators: orEmpty(creators[id]),
-			Groups: []GroupSummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
+			Access: it.access, Restrictions: it.restrictions, Attributes: map[string]any{}, OwnerEntityID: it.ownerEntity, Creators: orEmpty(creators[id]),
+			Entities: []EntitySummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
 			UpdatedAt: it.updatedAt, DeletedAt: it.deletedAt}
 		c.Live = v.itemLive(iv)
 		shown := texts[id]
@@ -171,7 +171,7 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 	if err := s.fillCovers(ctx, built, v.language); err != nil {
 		return nil, err
 	}
-	names, err := s.groupSummaries(ctx, groupIDs, v.language, v.management && v.staff)
+	names, err := s.entitySummaries(ctx, entityIDs, v.language, v.management && v.staff)
 	if err != nil {
 		return nil, err
 	}
@@ -195,14 +195,14 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			}
 		}
 		c.Body = resolveBody(c.Body, c.Images)
-		if s.shows(c.Kind, c.Decision, kinds.ShowGroups) {
-			c.Groups = scopedEntities(scopes[entityScope{content: id}], names)
+		if s.shows(c.Kind, c.Decision, kinds.ShowEntities) {
+			c.Entities = scopedEntities(scopes[entityScope{content: id}], names)
 		}
 		for i := range c.Versions {
 			ver := &c.Versions[i]
-			ver.Groups = []GroupSummary{}
-			if s.shows(c.Kind, ver.Decision, kinds.ShowGroups) {
-				ver.Groups = scopedEntities(scopes[entityScope{content: id, version: ver.ID}], names)
+			ver.Entities = []EntitySummary{}
+			if s.shows(c.Kind, ver.Decision, kinds.ShowEntities) {
+				ver.Entities = scopedEntities(scopes[entityScope{content: id, version: ver.ID}], names)
 			}
 		}
 	}
@@ -228,28 +228,28 @@ func (v *Viewer) itemLive(iv *itemView) bool {
 	return slices.ContainsFunc(iv.versions, func(r facetRow) bool { return v.live(r) && !r.deleted && !r.contentDeleted })
 }
 
-// fillOwners attaches the items' owner groups' cards, avatars and covers
+// fillOwners attaches the items' owner entities' cards, avatars and covers
 // resolved, in one call.
 func (s *Store) fillOwners(ctx context.Context, language string, built map[string]*Content, management bool) error {
-	if s.groups == nil {
+	if s.entities == nil {
 		return nil
 	}
-	var ids []groups.GroupID
+	var ids []entities.EntityID
 	for _, c := range built {
-		if c.OwnerGroupID != "" && !slices.Contains(ids, groups.GroupID(c.OwnerGroupID)) {
-			ids = append(ids, groups.GroupID(c.OwnerGroupID))
+		if c.OwnerEntityID != "" && !slices.Contains(ids, entities.EntityID(c.OwnerEntityID)) {
+			ids = append(ids, entities.EntityID(c.OwnerEntityID))
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	cards, err := s.groups.Cards(ctx, ids, groups.CardOptions{Language: language, Covers: true, IncludeInternal: management})
+	cards, err := s.entities.Cards(ctx, ids, entities.CardOptions{Language: language, Covers: true, IncludeInternal: management})
 	if err != nil {
 		return err
 	}
 	for _, c := range built {
 		for i := range cards {
-			if string(cards[i].ID) == c.OwnerGroupID {
+			if string(cards[i].ID) == c.OwnerEntityID {
 				c.Owner = &cards[i]
 			}
 		}
@@ -446,7 +446,7 @@ func (s *Store) pickLanguage(want string, texts map[string]Text) string {
 }
 
 type itemRow struct {
-	kind, state, ownerGroup           string
+	kind, state, ownerEntity          string
 	originalTitle, originalLanguage   string
 	comments                          string
 	moderation, moderationReason      string
@@ -461,7 +461,7 @@ type itemRow struct {
 }
 
 func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.original_title, ''), coalesce(c.original_language, ''), coalesce(c.owner_group_id, ''), c.moderation, coalesce(c.moderation_reason, ''),
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.original_title, ''), coalesce(c.original_language, ''), coalesce(c.owner_entity_id, ''), c.moderation, coalesce(c.moderation_reason, ''),
  c.access, c.restrictions, c.attributes, c.published_snapshot, c.ever_sold, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
  c.revision, c.comments
  FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
@@ -474,7 +474,7 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 		var id string
 		var r itemRow
 		var access, attrs, snapshot []byte
-		if err := rows.Scan(&id, &r.kind, &r.state, &r.originalTitle, &r.originalLanguage, &r.ownerGroup, &r.moderation, &r.moderationReason, &access, &r.restrictions,
+		if err := rows.Scan(&id, &r.kind, &r.state, &r.originalTitle, &r.originalLanguage, &r.ownerEntity, &r.moderation, &r.moderationReason, &access, &r.restrictions,
 			&attrs, &snapshot, &r.everSold, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments); err != nil {
 			return nil, err
 		}
@@ -647,23 +647,23 @@ func (s *Store) links(ctx context.Context, items map[string]*itemRow) (map[strin
 	return out, rows.Err()
 }
 
-// groupSummaries names the active groups among ids in language, with their
-// pages' paths, as group cards do.
-func (s *Store) groupSummaries(ctx context.Context, ids []string, language string, management bool) (map[string]GroupSummary, error) {
-	out := map[string]GroupSummary{}
-	if len(ids) == 0 || s.groups == nil {
+// groupSummaries names the active entities among ids in language, with their
+// pages' paths, as entity cards do.
+func (s *Store) entitySummaries(ctx context.Context, ids []string, language string, management bool) (map[string]EntitySummary, error) {
+	out := map[string]EntitySummary{}
+	if len(ids) == 0 || s.entities == nil {
 		return out, nil
 	}
-	gids := make([]groups.GroupID, len(ids))
+	gids := make([]entities.EntityID, len(ids))
 	for i, id := range ids {
-		gids[i] = groups.GroupID(id)
+		gids[i] = entities.EntityID(id)
 	}
-	cards, err := s.groups.Cards(ctx, gids, groups.CardOptions{Language: language, IncludeInternal: management})
+	cards, err := s.entities.Cards(ctx, gids, entities.CardOptions{Language: language, IncludeInternal: management})
 	if err != nil {
 		return nil, err
 	}
 	for _, g := range cards {
-		out[string(g.ID)] = GroupSummary{ID: string(g.ID), Kind: g.Kind, Slug: g.Slug, Name: g.Name, Code: g.Code, Path: g.Path}
+		out[string(g.ID)] = EntitySummary{ID: string(g.ID), Kind: g.Kind, Slug: g.Slug, Name: g.Name, Code: g.Code, Path: g.Path}
 	}
 	return out, nil
 }

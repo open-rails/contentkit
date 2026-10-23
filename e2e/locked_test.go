@@ -19,7 +19,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -42,11 +42,11 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 	format := map[string]kinds.Attribute{"format": {Type: "enum", Values: []string{"manga"}}}
 	e := w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
 		book := c.Content.Kinds["book"]
-		book.Groups, book.Attributes = []string{"tag"}, format
-		book.Locked = &kinds.Locked{Show: []string{kinds.ShowCover, kinds.ShowGroups}}
+		book.Entities, book.Attributes = []string{"tag"}, format
+		book.Locked = &kinds.Locked{Show: []string{kinds.ShowCover, kinds.ShowEntities}}
 		c.Content.Kinds["book"] = book
 		album := c.Content.Kinds["album"]
-		album.Groups, album.Attributes = []string{"tag"}, format
+		album.Entities, album.Attributes = []string{"tag"}, format
 		album.Locked = &kinds.Locked{Show: kinds.Shown, Preview: &kinds.Preview{Pages: 2}}
 		c.Content.Kinds["album"] = album
 		for i, k := range c.Media.Config.Kinds {
@@ -58,9 +58,9 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 	})
 	f := serve(t, e)
 
-	var tags []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "vanilla",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Vanilla"}}}}, &tags)
+	var tags []entities.Entity
+	f.want(http.StatusCreated, staff, "POST", "/entities", []entities.EntityInput{{Kind: "tag", Slug: "vanilla",
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Vanilla"}}}}, &tags)
 	premiumRule := access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
 	cover := "i-" + uuid.NewString()
 	seed := func(kind string) string {
@@ -73,7 +73,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 		f.want(http.StatusCreated, staff, "POST", "/contents", catalog.ContentInput{Kind: kind, Access: &premiumRule, Attributes: map[string]any{"format": "manga"},
 			Text: map[string]catalog.Text{"en": {Title: kind + " title", Description: kind + " teaser", Body: "the paid part"}}, Versions: []catalog.VersionInput{v}}, &c)
 		f.want(http.StatusOK, staff, "PATCH", "/contents/"+c.ID+"/versions/"+c.Versions[0].ID, catalog.VersionInput{Cover: &cover}, nil)
-		f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/entities", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: tags[0].ID}}}, nil)
+		f.want(http.StatusOK, staff, "PUT", "/contents/"+c.ID+"/entities", entities.ContentEntities{Memberships: []entities.Membership{{EntityID: tags[0].ID}}}, nil)
 		f.want(http.StatusOK, staff, "POST", "/contents/"+c.ID+"/publish", catalog.PublishInput{}, nil)
 		f.want(http.StatusOK, premiumToken, "POST", "/contents/"+c.ID+"/like", nil, nil)
 		f.want(http.StatusOK, premiumToken, "POST", "/contents/"+c.ID+"/favorite", nil, nil)
@@ -84,7 +84,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 
 	var model kindsroute.ContentModel
 	f.want(http.StatusOK, "", "GET", "/kinds", nil, &model)
-	if l := model.Kinds["book"].Locked; l == nil || !slices.Equal(l.Show, []string{kinds.ShowCover, kinds.ShowGroups}) || l.Preview != nil {
+	if l := model.Kinds["book"].Locked; l == nil || !slices.Equal(l.Show, []string{kinds.ShowCover, kinds.ShowEntities}) || l.Preview != nil {
 		t.Fatalf("the model's book view %+v", l)
 	}
 	if l := model.Kinds["gallery"].Locked; l == nil || !slices.Equal(l.Show, kinds.DefaultLocked.Show) {
@@ -105,7 +105,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 			var c catalog.Content
 			f.want(http.StatusOK, v.token, "GET", "/contents/"+id+"?language=en", nil, &c)
 			ver := c.Versions[0]
-			if c.Title != kind+" title" || c.Cover == nil || c.Cover.Image != cover || ver.Cover == nil || ver.Cover.Image != cover || len(c.Groups) != 1 ||
+			if c.Title != kind+" title" || c.Cover == nil || c.Cover.Image != cover || ver.Cover == nil || ver.Cover.Image != cover || len(c.Entities) != 1 ||
 				c.Decision.Allowed != v.opens ||
 				(c.Body != "") != v.opens || (c.Description != "") != shows || (len(c.Attributes) > 0) != shows {
 				t.Fatalf("%s: detail %+v", name, c)
@@ -121,7 +121,7 @@ func TestLockedContentFollowsItsKindsView(t *testing.T) {
 			f.want(http.StatusOK, v.token, "GET", "/contents?kind="+kind, nil, &page)
 			card := page.Contents[0]
 			n := card.Counts
-			if len(page.Contents) != 1 || card.Title != kind+" title" || len(card.Groups["tag"]) != 1 || (len(card.Attributes) > 0) != shows ||
+			if len(page.Contents) != 1 || card.Title != kind+" title" || len(card.Entities["tag"]) != 1 || (len(card.Attributes) > 0) != shows ||
 				(n.Likes != nil && n.Dislikes != nil) != shows || (n.Favorites != nil) != shows {
 				t.Fatalf("%s: card %+v", name, card)
 			}
@@ -196,7 +196,7 @@ func TestLockedMediaListsNoPages(t *testing.T) {
 	images := []string{"image/png"}
 	f := serve(t, w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
 		gallery := c.Content.Kinds["gallery"]
-		gallery.Locked = &kinds.Locked{Show: []string{kinds.ShowCover, kinds.ShowGroups}}
+		gallery.Locked = &kinds.Locked{Show: []string{kinds.ShowCover, kinds.ShowEntities}}
 		c.Content.Kinds["gallery"] = gallery
 		c.Media.Config.Kinds = append(c.Media.Config.Kinds, media.Kind{Name: "gallery", KeepOriginals: true, ServeOriginals: true,
 			Uploads: []media.Upload{{Path: "cover", Types: images, MaxBytes: 1 << 20}, {Path: "pages/{name}", Types: images, MaxBytes: 1 << 20}},

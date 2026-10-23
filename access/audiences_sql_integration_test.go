@@ -29,9 +29,9 @@ func TestAudiencesMatchDecide(t *testing.T) {
 		{Level: access.Public},
 		{Level: access.TierLevel, Tiers: []string{"premium"}},
 		{Level: access.TierLevel, Tiers: []string{"gold", "premium"}},
-		{Level: access.GroupLevel, Group: uid(900)},
+		{Level: access.EntityLevel, Entity: uid(900)},
 		{Level: access.PPV},
-		{Level: access.GroupPPV, Group: uid(900)},
+		{Level: access.EntityPPV, Entity: uid(900)},
 		{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.Public}}},
 		{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: future, Level: access.Public}}},
 	}
@@ -45,8 +45,8 @@ func TestAudiencesMatchDecide(t *testing.T) {
 		}{
 			{`INSERT INTO ` + table("content_items") + ` (tenant_id, id, kind) VALUES ($1, $2, 'post')`, []any{tenant, c}},
 			{`INSERT INTO ` + table("content_versions") + ` (tenant_id, id, content_id, languages) VALUES ($1, $2, $3, '{en}')`, []any{tenant, v, c}},
-			{`INSERT INTO ` + table("content_facets") + ` (tenant_id, content_id, version_id, kind, languages, access_level, access_tiers, access_group_id, access_releases)
-				VALUES ($1, $2, $3, 'post', '{en}', $4, $5, $6, $7)`, []any{tenant, c, v, f.Level, f.Tiers, f.GroupID, f.Releases}},
+			{`INSERT INTO ` + table("content_facets") + ` (tenant_id, content_id, version_id, kind, languages, access_level, access_tiers, access_entity_id, access_releases)
+				VALUES ($1, $2, $3, 'post', '{en}', $4, $5, $6, $7)`, []any{tenant, c, v, f.Level, f.Tiers, f.EntityID, f.Releases}},
 		} {
 			if _, err := pool.Exec(ctx, q.sql, q.args...); err != nil {
 				t.Fatal(err)

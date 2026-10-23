@@ -13,10 +13,10 @@ import (
 // granted by the base rule or an earlier release. At is bounded by the content
 // and version publication dates. Tier names have no implicit rank.
 type Release struct {
-	At    time.Time `json:"at"`
-	Level Level     `json:"level"`
-	Tiers []string  `json:"tiers,omitempty"`
-	Group string    `json:"group_id,omitempty"`
+	At     time.Time `json:"at"`
+	Level  Level     `json:"level"`
+	Tiers  []string  `json:"tiers,omitempty"`
+	Entity string    `json:"group_id,omitempty"`
 }
 
 // key compares validated releases independently of input ordering.
@@ -36,10 +36,10 @@ func (r Rule) validateReleases(cfg kinds.Config) error {
 		if release.At.IsZero() {
 			return fmt.Errorf("%w: release needs at", ErrRule)
 		}
-		if release.Level != Public && release.Level != TierLevel && release.Level != GroupLevel {
+		if release.Level != Public && release.Level != TierLevel && release.Level != EntityLevel {
 			return fmt.Errorf("%w: release audience must be public, tier or group", ErrRule)
 		}
-		if err := (Rule{Level: release.Level, Tiers: release.Tiers, Group: release.Group}).Validate(cfg); err != nil {
+		if err := (Rule{Level: release.Level, Tiers: release.Tiers, Entity: release.Entity}).Validate(cfg); err != nil {
 			return err
 		}
 		key := release.key()
@@ -52,7 +52,7 @@ func (r Rule) validateReleases(cfg kinds.Config) error {
 }
 
 // AudienceTiers is the union of tier audiences released at now. Public access
-// is reported separately by Free; group/PPV rights require entitlement checks.
+// is reported separately by Free; entity/PPV rights require entitlement checks.
 func (r Rule) AudienceTiers(now time.Time) []string {
 	tiers := []string{}
 	if r.Level == TierLevel {

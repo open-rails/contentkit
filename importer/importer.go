@@ -1,9 +1,9 @@
 // Package importer is ContentKit's bulk import, POST /v1/import: how a legacy
-// importer writes content, groups, interactions and signals. Records are
+// importer writes content, entities, interactions and signals. Records are
 // idempotent by their (source, entity, external id) in content_external_ids
 // and keep the ids they give, so re-running an import converges: changed rows
 // are updated and nothing is duplicated. A record that fails is reported and
-// the rest are written; sending it again resumes. Counts, group counts and
+// the rest are written; sending it again resumes. Counts, entity counts and
 // search documents are rebuilt by the engine's jobs, which an import queues.
 // Media is not imported here: importers ingest files, covers and body images
 // included, into each version's folders through the media upload API
@@ -15,7 +15,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/offers"
 )
 
@@ -35,10 +35,10 @@ type Batch struct {
 	// after a Postgres restore. It only ever advances.
 	PreferenceFloor int64 `json:"preference_floor,omitempty"`
 	// ProvisionScopes lets ContentKit create the AuthKit scope of an
-	// imported group of an auth_scope kind that names none; without it such
-	// a group fails.
+	// imported entity of an auth_scope kind that names none; without it such
+	// an entity fails.
 	ProvisionScopes bool                  `json:"provision_scopes,omitempty"`
-	Groups          []GroupRecord         `json:"entities,omitempty"`
+	Entities        []EntityRecord        `json:"entities,omitempty"`
 	Contents        []ContentRecord       `json:"contents,omitempty"`
 	Memberships     []MembershipSet       `json:"memberships,omitempty"`
 	Offers          []OfferRecord         `json:"offers,omitempty"`
@@ -64,18 +64,18 @@ type Ref struct {
 }
 
 // TargetRef is what an interaction, offer or alias is about: a content item,
-// one version (its content is implied), a group or a comment, as the
+// one version (its content is implied), an entity or a comment, as the
 // section allows.
 type TargetRef struct {
 	Content *Ref `json:"content,omitempty"`
 	Version *Ref `json:"version,omitempty"`
-	Group   *Ref `json:"group,omitempty"`
+	Entity  *Ref `json:"group,omitempty"`
 	Comment *Ref `json:"comment,omitempty"`
 }
 
-// GroupRecord is a group with its names and text. Nil lists keep what is
+// EntityRecord is an entity with its names and text. Nil lists keep what is
 // stored; given ones replace it.
-type GroupRecord struct {
+type EntityRecord struct {
 	ExternalID string `json:"external_id"`
 	// ID is kept when the external id is new (contentref.LegacyID derives a
 	// stable one); generated when empty.
@@ -85,35 +85,35 @@ type GroupRecord struct {
 	// Internal classifications can drive domain policy but never public metadata.
 	// Omission preserves an existing entity's classification; new entities are public.
 	Internal *bool `json:"internal,omitempty"`
-	// Scope is the group a scoped kind's slug is unique within.
+	// Scope is the entity a scoped kind's slug is unique within.
 	Scope  *Ref `json:"scope,omitempty"`
 	Parent *Ref `json:"parent,omitempty"`
 	// State is active (the default) or deleted.
-	State      string         `json:"state,omitempty"`
-	Names      []groups.Name  `json:"names,omitempty"`
-	Text       []groups.Text  `json:"text,omitempty"`
-	Attributes map[string]any `json:"attributes,omitempty"`
-	// CoverImage is an image of the group's media folder (i-{uuid});
+	State      string          `json:"state,omitempty"`
+	Names      []entities.Name `json:"names,omitempty"`
+	Text       []entities.Text `json:"text,omitempty"`
+	Attributes map[string]any  `json:"attributes,omitempty"`
+	// CoverImage is an image of the entity's media folder (i-{uuid});
 	// CoverContent a member whose cover it shows, imported before.
 	CoverImage   string `json:"cover_image,omitempty"`
 	CoverContent *Ref   `json:"cover_content,omitempty"`
-	// Avatar is a user-owned group's avatar: an image of its media folder.
+	// Avatar is a user-owned entity's avatar: an image of its media folder.
 	Avatar string `json:"avatar,omitempty"`
-	// OwnerUserID owns a user-owned kind's group.
+	// OwnerUserID owns a user-owned kind's entity.
 	OwnerUserID string `json:"owner_user_id,omitempty"`
-	// AuthScope is the group's AuthKit scope (an auth_scope kind's); empty
+	// AuthScope is the entity's AuthKit scope (an auth_scope kind's); empty
 	// keeps the stored one.
 	AuthScope string `json:"auth_scope,omitempty"`
-	// Edges replace the group's edges to other groups.
+	// Edges replace the entity's edges to other entities.
 	Edges []EdgeRecord `json:"edges,omitempty"`
-	// Code keeps a content code the group had (9 characters); one is
+	// Code keeps a content code the entity had (9 characters); one is
 	// generated otherwise. A code never changes once given.
 	Code      string     `json:"code,omitempty"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
-// EdgeRecord is a relation from the group to another.
+// EdgeRecord is a relation from the entity to another.
 type EdgeRecord struct {
 	Relation string `json:"relation"`
 	To       Ref    `json:"to"`
@@ -139,11 +139,11 @@ type ContentRecord struct {
 	OriginalLanguage *string `json:"original_language,omitempty"`
 	// Comments is open (the default), closed or hidden.
 	Comments string `json:"comments,omitempty"`
-	// Access defaults to public. A group rule names the group's id.
+	// Access defaults to public. A entity rule names the entity's id.
 	Access       *access.Rule            `json:"access,omitempty"`
 	Restrictions []string                `json:"restrictions,omitempty"`
 	Attributes   map[string]any          `json:"attributes,omitempty"`
-	OwnerGroup   *Ref                    `json:"owner_group,omitempty"`
+	OwnerEntity  *Ref                    `json:"owner_group,omitempty"`
 	Creators     []catalog.Creator       `json:"creators,omitempty"`
 	Text         map[string]catalog.Text `json:"text,omitempty"`
 	// Versions: a kind with hidden versions takes none or one.
@@ -181,7 +181,7 @@ type VersionRecord struct {
 	UpdatedAt *time.Time                     `json:"updated_at,omitempty"`
 }
 
-// MembershipSet replaces a content item's memberships in the listed group
+// MembershipSet replaces a content item's memberships in the listed entity
 // kinds; memberships in other kinds stay.
 type MembershipSet struct {
 	Content     Ref                `json:"content"`
@@ -190,9 +190,9 @@ type MembershipSet struct {
 }
 
 // MembershipRecord places the content item, or one version of it, in a
-// group.
+// entity.
 type MembershipRecord struct {
-	Group       Ref        `json:"group"`
+	Entity      Ref        `json:"group"`
 	Version     *Ref       `json:"version,omitempty"`
 	Role        string     `json:"role,omitempty"`
 	Position    *int       `json:"position,omitempty"`
@@ -202,7 +202,7 @@ type MembershipRecord struct {
 	State string `json:"state,omitempty"`
 }
 
-// OfferRecord puts a content item, a version or a sellable group on sale; the
+// OfferRecord puts a content item, a version or a sellable entity on sale; the
 // offers job syncs it to the billing provider.
 type OfferRecord struct {
 	Target TargetRef    `json:"target"`
@@ -210,7 +210,7 @@ type OfferRecord struct {
 }
 
 // AliasRecord resolves another system's identifier (under the batch's source) to
-// a content item or group: a legacy URL's id, token or name.
+// a content item or entity: a legacy URL's id, token or name.
 type AliasRecord struct {
 	// Kind is the identifier space ("folder", "tag-name").
 	Kind string `json:"kind"`
@@ -239,7 +239,7 @@ type CommentRecord struct {
 }
 
 // ReactionRecord is a person's like (1), dislike (-1) or neutral (0) on a
-// content item, version, comment or group; an anonymous one is keyed by IP.
+// content item, version, comment or entity; an anonymous one is keyed by IP.
 type ReactionRecord struct {
 	Target    TargetRef  `json:"target"`
 	UserID    string     `json:"user_id,omitempty"`
@@ -292,7 +292,7 @@ type VoteRecord struct {
 }
 
 // AnswerRecord is one person's free-text answer to a poll; the classifier
-// groups it later.
+// entities it later.
 type AnswerRecord struct {
 	Poll      Ref        `json:"poll"`
 	UserID    string     `json:"user_id"`
@@ -332,19 +332,19 @@ type SignalRecord struct {
 }
 
 // DeleteRecord deletes a record the source no longer has, as its delete
-// route would: a content item, version, group, comment or poll, by its
+// route would: a content item, version, entity, comment or poll, by its
 // external id under the batch's source. One already deleted (or since
 // erased) stays as it is, so re-sending converges; an external id never
 // imported fails not_found.
 type DeleteRecord struct {
-	// Entity is content, version, group, comment or poll.
+	// Entity is content, version, entity, comment or poll.
 	Entity     string `json:"entity"`
 	ExternalID string `json:"external_id"`
 }
 
 // Sections, in the order a batch writes them.
 const (
-	SectionGroups        = "entities"
+	SectionEntities      = "entities"
 	SectionContents      = "contents"
 	SectionMemberships   = "memberships"
 	SectionOffers        = "offers"
@@ -362,12 +362,12 @@ const (
 
 // Entities of external ids.
 const (
-	EntityContent = "content"
-	EntityVersion = "version"
-	EntityGroup   = "group"
-	EntityComment = "comment"
-	EntityPoll    = "poll"
-	EntityOption  = "poll_option"
+	RecordContent = "content"
+	RecordVersion = "version"
+	RecordEntity  = "group"
+	RecordComment = "comment"
+	RecordPoll    = "poll"
+	RecordOption  = "poll_option"
 )
 
 // Result reports a batch: what each section wrote, the records that failed

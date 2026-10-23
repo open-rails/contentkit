@@ -1,7 +1,7 @@
 // Package authkit keeps ContentKit's group scopes in AuthKit: the
-// groups.Scopes an Engine takes as Deps.Scopes. A group kind with
+// entities.Scopes an Engine takes as Deps.Scopes. A entity kind with
 // auth_scope names an AuthKit persona of the same name; each of its groups
-// is guarded by an AuthKit group keyed by the ContentKit group's id, whose
+// is guarded by an AuthKit group keyed by the ContentKit entity's id, whose
 // holders of {kind}:settings:manage and {kind}:media:write edit it
 // (access.GroupPermissions).
 package authkit
@@ -18,7 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 // Client is what Scopes needs of AuthKit: *authkit.Client.
@@ -35,12 +35,12 @@ type Client interface {
 
 var _ Client = (*authkit.Client)(nil)
 
-// Scopes is groups.Scopes over c.
-func Scopes(c Client) groups.Scopes { return scopes{c: c} }
+// Scopes is entities.Scopes over c.
+func Scopes(c Client) entities.Scopes { return scopes{c: c} }
 
 // AppScopes isolates provider authorization groups even when two apps reuse a
 // content group ID. Existing content references remain unchanged.
-func AppScopes(c Client, scope contentkit.Scope) (groups.Scopes, error) {
+func AppScopes(c Client, scope contentkit.Scope) (entities.Scopes, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ type scopes struct {
 }
 
 // ContentKitScope identifies the app binding of this provider; legacy Scopes
-// returns empty IDs and cannot be used for a scoped app's authorization groups.
+// returns empty IDs and cannot be used for a scoped app's authorization entities.
 func (s scopes) ContentKitScope() (string, string) {
 	if s.app == nil {
 		return "", ""
@@ -75,14 +75,14 @@ func (s scopes) providerID(id string) (string, error) {
 	if s.app == nil {
 		return id, nil
 	}
-	return GroupScopeID(*s.app, id)
+	return EntityScopeID(*s.app, id)
 }
 
 // Provision creates each scope as a group of its kind's persona, its owner
 // seeded with the persona's owner role; one that exists live is kept as it
 // is. A scope retired before (soft-deleted) is purged and created anew: a
 // restored group starts a new team with its owner.
-func (s scopes) Provision(ctx context.Context, list []groups.Scope) error {
+func (s scopes) Provision(ctx context.Context, list []entities.Scope) error {
 	for _, sc := range list {
 		id, err := s.providerID(sc.ID)
 		if err != nil {
@@ -165,7 +165,7 @@ func (s scopes) Holding(ctx context.Context, user string, kinds []string) (map[s
 		if err != nil {
 			return nil, fmt.Errorf("authkit: persona of group kind %s: %w", k, err)
 		}
-		for _, name := range access.GroupPermissions(k) {
+		for _, name := range access.EntityPermissions(k) {
 			p, err := s.c.Permission(name)
 			if err != nil {
 				return nil, fmt.Errorf("authkit: %w", err)
@@ -223,7 +223,7 @@ func (s scopes) HoldingScopes(ctx context.Context, user string, kinds, ids []str
 		if group.DeletedAt != nil || !slices.Contains(kinds, group.Persona.String()) || group.TenantID.String() != s.app.TenantID.String() {
 			continue
 		}
-		for _, name := range access.GroupPermissions(group.Persona.String()) {
+		for _, name := range access.EntityPermissions(group.Persona.String()) {
 			perm, err := s.c.Permission(name)
 			if err != nil {
 				return nil, err

@@ -61,7 +61,7 @@ func TestDailyActivityCohortsDeduplicateAndUseTrustedDayPriority(t *testing.T) {
 	if err != nil || len(partial) != 2 || partial[1].Readers != 2 || partial[1].Cohorts["supporter"] != 1 || len(partial[0].Cohorts) != 0 {
 		t.Fatalf("unmatched readers must stay in the daily total: %+v, %v", partial, err)
 	}
-	// A host that defines no cohorts receives totals, without invented groups.
+	// A host that defines no cohorts receives totals, without invented entities.
 	totals, err := st.Activity(ctx, tenant, "gallery", Window{})
 	if err != nil || len(totals) != 2 || totals[1].Readers != 2 || len(totals[1].Cohorts) != 0 {
 		t.Fatalf("totals = %+v, %v", totals, err)

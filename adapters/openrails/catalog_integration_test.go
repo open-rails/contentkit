@@ -10,7 +10,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/offers"
 )
@@ -30,26 +30,26 @@ func TestCatalogOverOpenRails(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
 	var cat *catalog.Store
-	grp, err := groups.New(groups.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds,
-		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+	grp, err := entities.New(entities.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds,
+		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return cat.ContentChanged(ctx, q, ids)
 		}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cat, err = catalog.New(ctx, catalog.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds,
-		Auth: testauth.Auth{Authz: catalogStaff{}}, Gate: w.gate, Groups: grp, Offers: w.offers}); err != nil {
+		Auth: testauth.Auth{Authz: catalogStaff{}}, Gate: w.gate, Entities: grp, Offers: w.offers}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(cat.Close)
 	staff := testauth.Actor(access.Actor{ID: "staff"}, catalogStaff{})
-	made, err := grp.CreateGroups(ctx, []groups.GroupInput{{Kind: "channel", Slug: "studio", OwnerUserID: "owner",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio"}}}})
+	made, err := grp.CreateEntities(ctx, []entities.EntityInput{{Kind: "channel", Slug: "studio", OwnerUserID: "owner",
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Studio"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	studio := string(made[0].ID)
-	if _, err := w.offers.Put(ctx, []offers.Put{{Target: offers.Target{Kind: offers.GroupTarget, ID: studio}}}); err != nil { // members-only needs a membership
+	if _, err := w.offers.Put(ctx, []offers.Put{{Target: offers.Target{Kind: offers.EntityTarget, ID: studio}}}); err != nil { // members-only needs a membership
 		t.Fatal(err)
 	}
 	post := func(title string, rule access.Rule, languages ...string) string {
@@ -68,7 +68,7 @@ func TestCatalogOverOpenRails(t *testing.T) {
 		return ids[0]
 	}
 	free := post("Free", access.Rule{Level: access.Public}, "en")
-	members := post("Members", access.Rule{Level: access.GroupLevel, Group: studio}, "en")
+	members := post("Members", access.Rule{Level: access.EntityLevel, Entity: studio}, "en")
 	ppv := post("Night Train", access.Rule{Level: access.PPV}, "en", "ja")
 	read := func(a access.Actor, ids ...string) []*catalog.Content {
 		t.Helper()

@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -40,7 +40,7 @@ func decorativePath(entity, title string) string {
 // pathEntities finds each item's path entity: the first effective, active,
 // public content-level membership in its kind's PathEntity, by position, then
 // slug. Items without one are absent.
-func (s *Store) pathEntities(ctx context.Context, q groups.Querier, ids []string) (map[string]entitySlugs, error) {
+func (s *Store) pathEntities(ctx context.Context, q entities.Querier, ids []string) (map[string]entitySlugs, error) {
 	var kinds, entities []string
 	for name, k := range s.cfg.Kinds {
 		if k.PathEntity != "" {
@@ -55,7 +55,7 @@ func (s *Store) pathEntities(ctx context.Context, q groups.Querier, ids []string
  JOIN unnest($2::text[], $3::text[]) AS p(kind, entity) ON p.kind = c.kind
  JOIN `+s.t.memberships+` m ON m.tenant_id = c.tenant_id AND m.content_id = c.id AND m.version_id IS NULL AND m.state = 'active'
   AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
- JOIN `+s.t.groups+` g ON g.tenant_id = m.tenant_id AND g.id = m.group_id AND g.kind = p.entity AND g.state = 'active' AND NOT g.internal
+ JOIN `+s.t.entities+` g ON g.tenant_id = m.tenant_id AND g.id = m.entity_id AND g.kind = p.entity AND g.state = 'active' AND NOT g.internal
  JOIN `+s.qs+`.content_codes k ON k.tenant_id = g.tenant_id AND k.content_kind = g.kind AND k.content_id = g.id AND k.merged_into IS NULL
  WHERE c.tenant_id = $1 AND c.id = ANY($4)
  ORDER BY m.content_id, m.position NULLS LAST, k.slug, g.id`, s.tenant, kinds, entities, ids)
@@ -153,7 +153,7 @@ func RefreshPaths(ctx context.Context, pool *pgxpool.Pool, schema, tenant string
 	visited := 0
 	for _, t := range tenants {
 		s := &Store{pool: pool, schema: schema, qs: pgx.Identifier{schema}.Sanitize(), tenant: t, cfg: model,
-			t: tables{items: q("content_items"), text: q("content_text"), groups: q("content_groups"), memberships: q("content_memberships")}}
+			t: tables{items: q("content_items"), text: q("content_text"), entities: q("content_entities"), memberships: q("content_memberships")}}
 		n, err := s.RefreshPaths(ctx)
 		visited += n
 		if err != nil {

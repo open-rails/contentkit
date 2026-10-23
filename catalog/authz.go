@@ -36,24 +36,24 @@ func (s *Store) staffRights(ctx context.Context, actor access.Actor) (staffRight
 	return r, nil
 }
 
-// groupEditor reports, per owner group, whether actor edits its content: the
-// owner of a user-owned group, or a holder of access.GroupContentWrite of its
+// groupEditor reports, per owner entity, whether actor edits its content: the
+// owner of a user-owned entity, or a holder of access.EntityContentWrite of its
 // kind in its AuthKit scope.
-func (s *Store) groupEditor(ctx context.Context, q Querier, actor access.Actor, groupIDs []string) (map[string]bool, error) {
+func (s *Store) entityEditor(ctx context.Context, q Querier, actor access.Actor, entityIDs []string) (map[string]bool, error) {
 	out := map[string]bool{}
-	if actor.Anonymous || actor.ID == "" || len(groupIDs) == 0 {
+	if actor.Anonymous || actor.ID == "" || len(entityIDs) == 0 {
 		return out, nil
 	}
-	rows, err := q.Query(ctx, `SELECT id, kind, coalesce(owner_user_id, ''), coalesce(auth_scope, '') FROM `+s.t.groups+`
- WHERE tenant_id = $1 AND id = ANY($2) AND (owner_user_id IS NOT NULL OR auth_scope IS NOT NULL)`, s.tenant, groupIDs)
+	rows, err := q.Query(ctx, `SELECT id, kind, coalesce(owner_user_id, ''), coalesce(auth_scope, '') FROM `+s.t.entities+`
+ WHERE tenant_id = $1 AND id = ANY($2) AND (owner_user_id IS NOT NULL OR auth_scope IS NOT NULL)`, s.tenant, entityIDs)
 	if err != nil {
 		return nil, err
 	}
-	type group struct{ kind, owner, scope string }
-	found := map[string]group{}
+	type entity struct{ kind, owner, scope string }
+	found := map[string]entity{}
 	for rows.Next() {
 		var id string
-		var g group
+		var g entity
 		if err := rows.Scan(&id, &g.kind, &g.owner, &g.scope); err != nil {
 			rows.Close()
 			return nil, err
@@ -65,7 +65,7 @@ func (s *Store) groupEditor(ctx context.Context, q Querier, actor access.Actor, 
 		return nil, err
 	}
 	for id, g := range found {
-		ok, err := gate.GroupEditor(ctx, s.guard.Auth, actor, g.owner, g.scope, access.GroupContentWrite(g.kind))
+		ok, err := gate.EntityEditor(ctx, s.guard.Auth, actor, g.owner, g.scope, access.EntityContentWrite(g.kind))
 		if err != nil {
 			return nil, &AuthError{err}
 		}
@@ -76,10 +76,10 @@ func (s *Store) groupEditor(ctx context.Context, q Querier, actor access.Actor, 
 
 // readEditors is groupEditor for reads: a check that fails answers "not an
 // editor", logged, so it never fails a read of what the rule shows anyway.
-func (s *Store) readEditors(ctx context.Context, actor access.Actor, groupIDs []string) map[string]bool {
-	editors, err := s.groupEditor(ctx, s.pool, actor, groupIDs)
+func (s *Store) readEditors(ctx context.Context, actor access.Actor, entityIDs []string) map[string]bool {
+	editors, err := s.entityEditor(ctx, s.pool, actor, entityIDs)
 	if err != nil {
-		s.log.WarnContext(ctx, "catalog: owner-group editor check failed; reading as a non-editor", "groups", groupIDs, "err", err)
+		s.log.WarnContext(ctx, "catalog: owner-group editor check failed; reading as a non-editor", "groups", entityIDs, "err", err)
 		return map[string]bool{}
 	}
 	return editors
@@ -87,9 +87,9 @@ func (s *Store) readEditors(ctx context.Context, actor access.Actor, groupIDs []
 
 // owned is what authorizing a write learned about one content item.
 type owned struct {
-	id, kind, state, ownerGroup string
-	publishedAt, publishAt      bool
-	everSold                    bool
+	id, kind, state, ownerEntity string
+	publishedAt, publishAt       bool
+	everSold                     bool
 }
 
 // grants are the provider's answers a write needs, asked before its
@@ -97,13 +97,13 @@ type owned struct {
 // hold a connection and row locks while waiting on it. They last one write.
 type grants struct {
 	staff staffRights
-	// editors are the owner groups the rows named when asked, and whether
+	// editors are the owner entities the rows named when asked, and whether
 	// the actor edits each.
 	editors map[string]bool
 }
 
 // grantsFor asks the provider what writing ids needs, before any
-// transaction: staff rights, else editorship of the owner groups the rows
+// transaction: staff rights, else editorship of the owner entities the rows
 // name now, read without locking. authorize rechecks them under the lock.
 func (s *Store) grantsFor(ctx context.Context, actor access.Actor, ids []string) (grants, error) {
 	var g grants
@@ -111,26 +111,26 @@ func (s *Store) grantsFor(ctx context.Context, actor access.Actor, ids []string)
 	if g.staff, err = s.staffRights(ctx, actor); err != nil || g.staff.write {
 		return g, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT owner_group_id FROM `+s.t.items+`
- WHERE tenant_id = $1 AND id = ANY($2) AND owner_group_id IS NOT NULL`, s.tenant, ids)
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT owner_entity_id FROM `+s.t.items+`
+ WHERE tenant_id = $1 AND id = ANY($2) AND owner_entity_id IS NOT NULL`, s.tenant, ids)
 	if err != nil {
 		return g, err
 	}
-	groups, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	entities, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
 		return g, err
 	}
-	g.editors, err = s.groupEditor(ctx, s.pool, actor, groups)
+	g.editors, err = s.entityEditor(ctx, s.pool, actor, entities)
 	return g, err
 }
 
 // authorize locks ids for the write and refuses unless actor edits each: a
 // root:content:write holder, one of its creators or an editor of its owner
-// group, by g. An owner group that changed since g was asked is not in it,
+// entity, by g. An owner entity that changed since g was asked is not in it,
 // so refuses. A missing id is ErrNotFound.
 func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, ids []string, g grants) (map[string]owned, error) {
 	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
-	rows, err := q.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.owner_group_id, ''), c.published_at IS NOT NULL, c.publish_at IS NOT NULL, c.ever_sold,
+	rows, err := q.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.owner_entity_id, ''), c.published_at IS NOT NULL, c.publish_at IS NOT NULL, c.ever_sold,
  EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $3 AND $3 <> '')
  FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2) ORDER BY c.id FOR UPDATE`, s.tenant, ids, viewerID(actor))
 	if err != nil {
@@ -141,7 +141,7 @@ func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, id
 	for rows.Next() {
 		var o owned
 		var isCreator bool
-		if err := rows.Scan(&o.id, &o.kind, &o.state, &o.ownerGroup, &o.publishedAt, &o.publishAt, &o.everSold, &isCreator); err != nil {
+		if err := rows.Scan(&o.id, &o.kind, &o.state, &o.ownerEntity, &o.publishedAt, &o.publishAt, &o.everSold, &isCreator); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -160,16 +160,16 @@ func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, id
 		return out, s.recordBeforeEdit(ctx, q, ids, out)
 	}
 	for id, o := range out {
-		if !creator[id] && !g.editors[o.ownerGroup] {
+		if !creator[id] && !g.editors[o.ownerEntity] {
 			return nil, ErrForbidden
 		}
 	}
 	return out, s.recordBeforeEdit(ctx, q, ids, out)
 }
 
-// authorizeCreate refuses unless actor may create content in ownerGroup: a
-// root:content:write holder anywhere, an owner group's editor in it.
-func (s *Store) authorizeCreate(ctx context.Context, q Querier, actor access.Actor, ownerGroups []string) error {
+// authorizeCreate refuses unless actor may create content in ownerEntity: a
+// root:content:write holder anywhere, an owner entity's editor in it.
+func (s *Store) authorizeCreate(ctx context.Context, q Querier, actor access.Actor, ownerEntities []string) error {
 	rights, err := s.staffRights(ctx, actor)
 	if err != nil || rights.write {
 		return err
@@ -177,16 +177,16 @@ func (s *Store) authorizeCreate(ctx context.Context, q Querier, actor access.Act
 	if !actor.Person() {
 		return ErrForbidden
 	}
-	editors, err := s.groupEditor(ctx, q, actor, ownerGroups)
+	editors, err := s.entityEditor(ctx, q, actor, ownerEntities)
 	if err != nil {
 		return err
 	}
-	for _, g := range ownerGroups {
+	for _, g := range ownerEntities {
 		if !editors[g] {
 			return ErrForbidden
 		}
 	}
-	if slices.Contains(ownerGroups, "") {
+	if slices.Contains(ownerEntities, "") {
 		return ErrForbidden
 	}
 	return nil

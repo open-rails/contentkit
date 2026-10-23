@@ -142,7 +142,7 @@ func TestAuthorizationRevalidatesLiveGroupOwnership(t *testing.T) {
 	tenant, _ := iam.ParseTenantID(scope.TenantID.String())
 	app := auth.Scope{Authority: "https://accounts.test", ID: scope.AppID.String()}
 	tenantScope := auth.Scope{Authority: app.Authority, ID: scope.TenantID.String()}
-	contentID, err := ckauthkit.GroupScopeID(scope, "series")
+	contentID, err := ckauthkit.EntityScopeID(scope, "series")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestAuthorizationRevalidatesLiveGroupOwnership(t *testing.T) {
 	}{
 		{"app", app.ID, contentkit.PermissionTarget{Permission: access.CommentsModerate.String()}},
 		{"tenant", tenantScope.ID, contentkit.PermissionTarget{Permission: access.AvatarsWrite.String()}},
-		{"content", contentID, contentkit.PermissionTarget{Permission: "series:settings:manage", GroupID: "series"}},
+		{"content", contentID, contentkit.PermissionTarget{Permission: "series:settings:manage", EntityID: "series"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			original := bindings.groups[test.id]

@@ -16,7 +16,7 @@ import (
 func TestLockedBodyIntegration(t *testing.T) {
 	s := newShop(t)
 	studio := s.channel("studio", "Studio", "owner")
-	s.sell(offers.Target{Kind: offers.GroupTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
+	s.sell(offers.Target{Kind: offers.EntityTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
 	creator, buyer, member, stranger := s.customer(), s.customer(), s.customer(), s.customer()
 	post := func(rule access.Rule, body string) string {
 		creators := []catalog.Creator{{UserID: creator.ID}}
@@ -25,7 +25,7 @@ func TestLockedBodyIntegration(t *testing.T) {
 	}
 	free := post(access.Rule{Level: access.Public}, "Free words")
 	ppv := post(access.Rule{Level: access.PPV}, "Paid words")
-	members := post(access.Rule{Level: access.GroupLevel, Group: studio}, "Members words")
+	members := post(access.Rule{Level: access.EntityLevel, Entity: studio}, "Members words")
 	s.holds(buyer, ck(ppv))
 	s.holds(member, gk(studio))
 	anon := access.Actor{Anonymous: true}

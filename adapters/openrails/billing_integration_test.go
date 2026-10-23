@@ -36,7 +36,7 @@ func TestFilterOverEmbeddedOpenRails(t *testing.T) {
 	if got := f.Versions(); len(got) != 1 || got[uid(5)] != uid(2) {
 		t.Fatalf("versions %v", got)
 	}
-	if got := f.Groups(); !slices.Equal(got, []string{uid(9)}) {
+	if got := f.Entities(); !slices.Equal(got, []string{uid(9)}) {
 		t.Fatalf("groups %v", got)
 	}
 
@@ -45,7 +45,7 @@ func TestFilterOverEmbeddedOpenRails(t *testing.T) {
 	for i := range 50 {
 		it := access.Item{Content: uid(i), Version: uid(100 + i), Rule: access.Rule{Level: access.PPV}}
 		if i%3 == 1 {
-			it.Rule = access.Rule{Level: access.GroupLevel, Group: uid(9)}
+			it.Rule = access.Rule{Level: access.EntityLevel, Entity: uid(9)}
 		}
 		page = append(page, it)
 	}

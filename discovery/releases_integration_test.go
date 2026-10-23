@@ -58,7 +58,7 @@ func TestDailyReleasesHistoricalWindowKeepsBoundsAndSummaries(t *testing.T) {
 	f.now, _ = time.Parse(time.RFC3339, "2026-10-16T02:00:00Z")
 	f.clock = f.now
 	f.svc.o.Now = func() time.Time { return f.now }
-	f.group("tag", "big-breasts")
+	f.entity("tag", "big-breasts")
 	age := func(raw string) time.Duration {
 		at, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
@@ -73,8 +73,8 @@ func TestDailyReleasesHistoricalWindowKeepsBoundsAndSummaries(t *testing.T) {
 		item{n: 4, titles: map[string]string{"en": "Before window"}, age: age("2010-03-13T06:59:59Z"), versions: []ver{{langs: []string{"en"}}}},
 		item{n: 5, titles: map[string]string{"en": "Removed later"}, age: age("2010-03-14T12:00:00Z"), deleted: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 6, titles: map[string]string{"en": "Historical premium"}, age: age("2010-03-14T12:00:00Z"), rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 7, titles: map[string]string{"en": "Filtered in window"}, age: age("2010-03-14T12:00:00Z"), groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 8, titles: map[string]string{"en": "Filtered after window"}, age: age("2010-03-15T06:00:00Z"), groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 7, titles: map[string]string{"en": "Filtered in window"}, age: age("2010-03-14T12:00:00Z"), entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 8, titles: map[string]string{"en": "Filtered after window"}, age: age("2010-03-15T06:00:00Z"), entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
 	)
 	var out DailyReleases
 	if status, code := f.call(http.MethodGet, "main.test", "", "/releases?kind=gallery&days=2&end_date=2010-03-14&time_zone=America%2FDenver", nil, &out); status != http.StatusOK {
@@ -114,7 +114,7 @@ func TestDailyReleasesWindowAndVisibility(t *testing.T) {
 	f.now, _ = time.Parse(time.RFC3339, "2026-10-16T02:00:00Z")
 	f.clock = f.now
 	f.svc.o.Now = func() time.Time { return f.now }
-	f.group("tag", "big-breasts")
+	f.entity("tag", "big-breasts")
 	f.seed(
 		item{n: 1, titles: map[string]string{"en": "Today"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 2, titles: map[string]string{"en": "Yesterday"}, age: 22 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
@@ -124,7 +124,7 @@ func TestDailyReleasesWindowAndVisibility(t *testing.T) {
 		item{n: 6, titles: map[string]string{"en": "Draft"}, age: time.Hour, draft: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 7, titles: map[string]string{"en": "Deleted"}, age: time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 8, titles: map[string]string{"en": "Premium"}, age: time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 9, titles: map[string]string{"en": "Filtered"}, age: time.Hour, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 9, titles: map[string]string{"en": "Filtered"}, age: time.Hour, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
 	)
 	var out DailyReleases
 	if status, code := f.call(http.MethodGet, "main.test", "", "/releases?kind=gallery&time_zone=America%2FDenver", nil, &out); status != http.StatusOK {

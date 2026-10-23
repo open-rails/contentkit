@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/search"
@@ -31,9 +31,9 @@ type SearchOptions struct {
 	Filter
 	Query string
 	// Sort is relevance (the default) or a list sort of the best matches.
-	Sort       string
-	CardGroups []string
-	Cursor     string
+	Sort         string
+	CardEntities []string
+	Cursor       string
 	// Page numbers pages from 1 instead of Cursor.
 	Page int
 	// Limit defaults to 24 and is capped at 100.
@@ -135,7 +135,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPa
 		if err != nil {
 			return empty, err
 		}
-		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
+		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
 		for i := range cards {
 			if ranking, ok := srt.rankings[cards[i].ID]; ok {
 				cards[i].Ranking = &ranking
@@ -170,7 +170,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPa
 	if err != nil {
 		return empty, err
 	}
-	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
+	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
 	out := ContentPage{Contents: cards}
 	if res.HasMore && len(res.Hits) > 0 {
 		out.NextCursor = cursor{Sort: SortRelevance, Value: strconv.Itoa(offset + len(res.Hits)), ID: ids[len(ids)-1], AsOf: q.asOf}.encode()
@@ -184,24 +184,24 @@ type TypeaheadOptions struct {
 	Query string
 	// Kind limits content suggestions to one kind.
 	Kind string
-	// GroupKinds are the group kinds suggested; every kind with a page by
+	// EntityKinds are the entity kinds suggested; every kind with a page by
 	// default.
-	GroupKinds []string
+	EntityKinds []string
 	// Limit is per section: 8 by default, at most 20.
 	Limit int
 }
 
-// Typeahead is the suggestions: content cards and groups, best first.
+// Typeahead is the suggestions: content cards and entities, best first.
 type Typeahead struct {
-	Contents []Card             `json:"contents"`
-	Groups   []groups.GroupCard `json:"entities"`
+	Contents []Card                `json:"contents"`
+	Entities []entities.EntityCard `json:"entities"`
 }
 
-// Typeahead suggests contents the reader's listing shows and active groups,
+// Typeahead suggests contents the reader's listing shows and active entities,
 // matching literal substrings of their own titles, names or aliases, with
 // prefix bias. Full search separately handles contextual keywords and typos.
 func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead, error) {
-	out := Typeahead{Contents: []Card{}, Groups: []groups.GroupCard{}}
+	out := Typeahead{Contents: []Card{}, Entities: []entities.EntityCard{}}
 	text := strings.TrimSpace(o.Query)
 	if text == "" {
 		return out, nil
@@ -231,9 +231,9 @@ func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead,
 	if out.Contents, err = s.cards(ctx, q, picks, cardOptions{lean: true}); err != nil {
 		return out, err
 	}
-	kinds := o.GroupKinds
+	kinds := o.EntityKinds
 	if len(kinds) == 0 {
-		for k, gk := range s.o.Kinds.GroupKinds {
+		for k, gk := range s.o.Kinds.EntityKinds {
 			if gk.Route != "" {
 				kinds = append(kinds, k)
 			}
@@ -241,7 +241,7 @@ func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead,
 		slices.Sort(kinds)
 	}
 	for _, k := range kinds {
-		if _, ok := s.o.Kinds.GroupKinds[k]; !ok {
+		if _, ok := s.o.Kinds.EntityKinds[k]; !ok {
 			return out, fmt.Errorf("%w: group kind %q is not configured", ErrInvalid, k)
 		}
 	}
@@ -249,25 +249,25 @@ func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead,
 		return out, nil
 	}
 	ghits, err := s.o.Hub.Typeahead(ctx, text, hub.TypeaheadOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: kinds, Limit: limit,
-		Eligibility: &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.groups +
+		Eligibility: &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.entities +
 			` g WHERE g.tenant_id = sd.tenant_id AND g.id = sd.content_id AND g.kind = sd.content_kind AND g.state = 'active' AND NOT g.internal)`}})
 	if err != nil {
 		return out, err
 	}
-	gids := make([]groups.GroupID, 0, len(ghits))
+	gids := make([]entities.EntityID, 0, len(ghits))
 	for _, h := range ghits {
-		gids = append(gids, groups.GroupID(h.ContentID))
+		gids = append(gids, entities.EntityID(h.ContentID))
 	}
-	cards, err := s.o.Groups.Cards(ctx, gids, groups.CardOptions{Language: q.display, Covers: true})
+	cards, err := s.o.Entities.Cards(ctx, gids, entities.CardOptions{Language: q.display, Covers: true})
 	if err != nil {
 		return out, err
 	}
-	rank := make(map[groups.GroupID]int, len(gids))
+	rank := make(map[entities.EntityID]int, len(gids))
 	for i, id := range gids {
 		rank[id] = i
 	}
-	slices.SortFunc(cards, func(a, b groups.GroupCard) int { return rank[a.ID] - rank[b.ID] })
-	out.Groups = cards
+	slices.SortFunc(cards, func(a, b entities.EntityCard) int { return rank[a.ID] - rank[b.ID] })
+	out.Entities = cards
 	return out, nil
 }
 

@@ -1,6 +1,6 @@
 // Package contentref defines the reference vocabulary every ContentKit package
 // and port shares: a tenant-scoped reference to content and the identity of a
-// group.
+// entity.
 package contentref
 
 import (
@@ -106,7 +106,7 @@ func (k ContentKey) Ref() ContentRef {
 	return New(k.TenantID, k.ContentKind, k.ContentID).WithVersion(k.ContentVersionID)
 }
 
-// GroupID identifies a group (tag, artist, series, character, channel, rail).
-// A group's search document and code use the group kind as ContentKind and
-// the GroupID as ContentID.
-type GroupID string
+// EntityID identifies an entity (tag, artist, series, character, channel, rail).
+// A entity's search document and code use the entity kind as ContentKind and
+// the EntityID as ContentID.
+type EntityID string

@@ -48,7 +48,7 @@ func NewGate(c GateConfig) (*Gate, error) {
 		return nil, fmt.Errorf("access: GateConfig.Tenant %q must match [a-z0-9_-]{1,64}", c.Tenant)
 	}
 	g := &Gate{billing: c.Billing, tenant: c.Tenant, tierSet: map[string]bool{}, claimable: map[string]bool{},
-		prefixes: []string{ContentPrefix(c.Tenant), GroupPrefix(c.Tenant)}, log: c.Logger}
+		prefixes: []string{ContentPrefix(c.Tenant), EntityPrefix(c.Tenant)}, log: c.Logger}
 	if g.log == nil {
 		g.log = slog.Default()
 	}
@@ -66,7 +66,7 @@ func NewGate(c GateConfig) (*Gate, error) {
 		}
 		g.claimable[t] = true
 	}
-	g.anon = &Filter{g: g, anonymous: true, contentsComplete: true, groupsComplete: true}
+	g.anon = &Filter{g: g, anonymous: true, contentsComplete: true, entitiesComplete: true}
 	return g, nil
 }
 
@@ -82,9 +82,9 @@ type Item struct {
 	Version string
 	// Rule is the version's effective rule (Effective).
 	Rule Rule
-	// Groups are the groups holding the content or version (content_facets
-	// group_ids): a held key of any of them opens it.
-	Groups []string
+	// Entities are the entities holding the content or version (content_facets
+	// entity_ids): a held key of any of them opens it.
+	Entities []string
 }
 
 // Decision is one item's verdict.
@@ -94,10 +94,10 @@ type Decision struct {
 	// offered (the viewer may already hold it).
 	Unknown bool
 	// Sell are the keys whose purchase opens it, the rule's own first (its
-	// tiers or group), then the version's and the content's;
+	// tiers or entity), then the version's and the content's;
 	// offers says which are on sale.
 	Sell []Key
-	// Requires is the key a buyer must hold first (GroupPPV), nil when held.
+	// Requires is the key a buyer must hold first (EntityPPV), nil when held.
 	Requires *Key
 	// Preview is the part a viewer may read while it is locked.
 	Preview *Preview
@@ -106,7 +106,7 @@ type Decision struct {
 }
 
 // Filter reads the viewer's access in one billing read: the configured tiers
-// a token claim does not answer and the tenant's content and group
+// a token claim does not answer and the tenant's content and entity
 // keyspaces. Within WithMemo it is read once per request. An anonymous viewer
 // costs no read. On a failed read Filter returns the fail-closed filter
 // (Unknown) and an error wrapping ErrUnavailable: serve that filter or
@@ -126,8 +126,8 @@ func (g *Gate) Filter(ctx context.Context, actor Actor) (*Filter, error) {
 
 func (g *Gate) read(ctx context.Context, actor Actor) *Filter {
 	claimed := g.claimed(actor)
-	f := &Filter{g: g, tiers: map[string]bool{}, contents: map[string]bool{}, versions: map[string]string{}, groups: map[string]bool{},
-		contentsComplete: true, groupsComplete: true}
+	f := &Filter{g: g, tiers: map[string]bool{}, contents: map[string]bool{}, versions: map[string]string{}, entities: map[string]bool{},
+		contentsComplete: true, entitiesComplete: true}
 	q := Query{Prefixes: g.prefixes, Limit: HeldLimit}
 	for _, t := range g.tiers {
 		if claimed[t] {
@@ -149,7 +149,7 @@ func (g *Gate) read(ctx context.Context, actor Actor) *Filter {
 	if err != nil {
 		g.log.ErrorContext(ctx, "access: entitlements read failed; failing closed", "subject", actor.ID, "err", err)
 		f = &Filter{g: g, unknown: true, err: fmt.Errorf("%w: %w", ErrUnavailable, err), tiers: map[string]bool{},
-			contentsComplete: true, groupsComplete: true}
+			contentsComplete: true, entitiesComplete: true}
 		for t := range claimed {
 			f.tiers[t] = true
 		}
@@ -266,9 +266,9 @@ type itemPlan struct {
 	rule     Rule
 	version  *Key
 	content  Key
-	groups   []Key // Item.Groups, and the rule's group for GroupLevel
+	entities []Key // Item.Entities, and the rule's entity for EntityLevel
 	tiers    []Key // TierLevel: the configured ones among the rule's
-	requires *Key  // GroupPPV
+	requires *Key  // EntityPPV
 	releases []releasePlan
 }
 
@@ -301,12 +301,12 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 		}
 		p.version = &v
 	}
-	for _, id := range it.Groups {
-		k, err := GroupKey(g.tenant, id)
+	for _, id := range it.Entities {
+		k, err := EntityKey(g.tenant, id)
 		if err != nil {
 			return p, err
 		}
-		p.groups = append(p.groups, k)
+		p.entities = append(p.entities, k)
 	}
 	switch it.Rule.Level {
 	case Public, PPV:
@@ -316,13 +316,13 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 				p.tiers = append(p.tiers, Key{kind: KeyTier, id: t})
 			}
 		}
-	case GroupLevel, GroupPPV:
-		k, err := GroupKey(g.tenant, it.Rule.Group)
+	case EntityLevel, EntityPPV:
+		k, err := EntityKey(g.tenant, it.Rule.Entity)
 		if err != nil {
 			return p, fmt.Errorf("%w: %w", ErrRule, err)
 		}
-		if it.Rule.Level == GroupLevel {
-			p.groups = append(p.groups, k)
+		if it.Rule.Level == EntityLevel {
+			p.entities = append(p.entities, k)
 		} else {
 			p.requires = &k
 		}
@@ -340,8 +340,8 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 				}
 				rp.keys = append(rp.keys, Key{kind: KeyTier, id: tier})
 			}
-		case GroupLevel:
-			key, err := GroupKey(g.tenant, release.Group)
+		case EntityLevel:
+			key, err := EntityKey(g.tenant, release.Entity)
 			if err != nil {
 				return p, err
 			}
@@ -448,7 +448,7 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 		}
 		return h
 	}
-	opens := slices.Concat(p.tiers, p.groups, []Key{p.content})
+	opens := slices.Concat(p.tiers, p.entities, []Key{p.content})
 	if p.version != nil {
 		opens = append(opens, *p.version)
 	}
@@ -473,8 +473,8 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 	switch p.rule.Level {
 	case TierLevel:
 		d.Sell = slices.Clone(p.tiers)
-	case GroupLevel:
-		d.Sell = []Key{p.groups[len(p.groups)-1]}
+	case EntityLevel:
+		d.Sell = []Key{p.entities[len(p.entities)-1]}
 	}
 	if p.version != nil {
 		d.Sell = append(d.Sell, *p.version)

@@ -58,7 +58,7 @@ func TestStandingOrderRanksCurrentPeopleInWindow(t *testing.T) {
 	f := seeded(t)
 	f.seed(item{n: 8, titles: map[string]string{"en": "Old publication, new standing"}, age: 800 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 9, titles: map[string]string{"en": "Boundaries and a stale cached rank"}, age: 30 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 10, titles: map[string]string{"en": "Filtered, standing last month"}, age: 30 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}, groups: []string{"big-breasts"}})
+		item{n: 10, titles: map[string]string{"en": "Filtered, standing last month"}, age: 30 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}}}, entities: []string{"big-breasts"}})
 	// Retired open-derived scores and window ratings must never rank.
 	f.exec(`UPDATE {s}.content_facets SET popularity='{"score":{"7d":999,"30d":999,"all":999},"rating":{"7d":1,"30d":1}}' WHERE content_id=$1`, f.cid(9))
 

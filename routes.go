@@ -28,7 +28,7 @@ type Routes struct {
 	Groups RouteGroups
 }
 
-// RouteGroups is a set of route groups.
+// RouteGroups is a set of route entities.
 type RouteGroups uint
 
 const (

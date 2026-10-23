@@ -14,7 +14,7 @@ import (
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
@@ -46,15 +46,15 @@ func managementFixture(t *testing.T) (*fixture, string) {
 	// Public documents keep approved text; operator names reflect the current edit.
 	f.exec(`UPDATE {s}.content_text SET title='Azure Revision' WHERE tenant_id=$1 AND content_id=$2 AND language='en'`, tenant, f.cid(1))
 	f.exec(`UPDATE {s}.content_items SET moderation='held',published_snapshot='{"en":{"title":"Alpha"}}'::jsonb WHERE tenant_id=$1 AND id=$2`, tenant, f.cid(1))
-	f.group("series", "bleach")
-	f.group("tag", "azure-marker")
+	f.entity("series", "bleach")
+	f.entity("tag", "azure-marker")
 	internal := true
-	if _, err = f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(f.ids["azure-marker"]), Internal: &internal}}); err != nil {
+	if _, err = f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(f.ids["azure-marker"]), Internal: &internal}}); err != nil {
 		t.Fatal(err)
 	}
-	f.seed(item{n: 20, titles: map[string]string{"en": "Unrelated Gallery"}, groups: []string{"bleach"}, versions: []ver{{langs: []string{"en"}}}})
+	f.seed(item{n: 20, titles: map[string]string{"en": "Unrelated Gallery"}, entities: []string{"bleach"}, versions: []ver{{langs: []string{"en"}}}})
 	provider := testauth.Auth{Authz: managementRoles{}}
-	cat, err := catalog.New(f.ctx, catalog.Options{Pool: f.pool, Schema: f.schema, Tenant: tenant, Kinds: f.svc.o.Kinds, Auth: provider, Groups: f.groups})
+	cat, err := catalog.New(f.ctx, catalog.Options{Pool: f.pool, Schema: f.schema, Tenant: tenant, Kinds: f.svc.o.Kinds, Auth: provider, Entities: f.entities})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,13 +84,13 @@ func TestManagementSuggestionsUseCurrentPrivateNames(t *testing.T) {
 	if status, code := f.call(http.MethodGet, "gay.test", "staff", managementPath("azure"), nil, &out); status != http.StatusOK {
 		t.Fatalf("%d %s", status, code)
 	}
-	if !reflect.DeepEqual(suggestionIDs(out), []string{f.cid(1), draft}) || len(out.Groups) != 1 || string(out.Groups[0].ID) != f.ids["azure-marker"] || !out.Groups[0].Internal {
+	if !reflect.DeepEqual(suggestionIDs(out), []string{f.cid(1), draft}) || len(out.Entities) != 1 || string(out.Entities[0].ID) != f.ids["azure-marker"] || !out.Entities[0].Internal {
 		t.Fatalf("current draft/held/internal names missing: %+v", out)
 	}
 	if out.Contents[0].Title != "Azure Revision" || out.Contents[1].Title != "Private Azure Draft" || len(out.Contents[0].Cover) != 0 {
 		t.Fatalf("operator targets are lean current names: %+v", out)
 	}
-	if status, _ := f.call(http.MethodGet, "main.test", "staff", managementPath("bleach"), nil, &out); status != http.StatusOK || len(out.Contents) != 0 || len(out.Groups) != 1 || string(out.Groups[0].ID) != f.ids["bleach"] {
+	if status, _ := f.call(http.MethodGet, "main.test", "staff", managementPath("bleach"), nil, &out); status != http.StatusOK || len(out.Contents) != 0 || len(out.Entities) != 1 || string(out.Entities[0].ID) != f.ids["bleach"] {
 		t.Fatalf("associated entity/body leaked into name suggestions: %+v", out)
 	}
 	if status, _ := f.call(http.MethodGet, "gay.test", "staff", managementPath("bravo"), nil, &out); status != http.StatusOK || !reflect.DeepEqual(suggestionIDs(out), []string{f.cid(2)}) {
@@ -101,17 +101,17 @@ func TestManagementSuggestionsUseCurrentPrivateNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jpEntities, err := f.groups.CreateGroups(f.ctx, []groups.GroupInput{{Kind: "tag", Slug: "jp-managed", Internal: true, Names: []groups.Name{{Language: "ja", Kind: groups.NameCanonical, Name: "稲妻"}}}})
+	jpEntities, err := f.entities.CreateEntities(f.ctx, []entities.EntityInput{{Kind: "tag", Slug: "jp-managed", Internal: true, Names: []entities.Name{{Language: "ja", Kind: entities.NameCanonical, Name: "稲妻"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status, _ := f.call(http.MethodGet, "main.test", "staff", managementPath("稲妻"), nil, &out); status != http.StatusOK || !reflect.DeepEqual(suggestionIDs(out), []string{jp[0]}) || out.Contents[0].Language != "ja" || len(out.Groups) != 1 || out.Groups[0].ID != jpEntities[0].ID {
+	if status, _ := f.call(http.MethodGet, "main.test", "staff", managementPath("稲妻"), nil, &out); status != http.StatusOK || !reflect.DeepEqual(suggestionIDs(out), []string{jp[0]}) || out.Contents[0].Language != "ja" || len(out.Entities) != 1 || out.Entities[0].ID != jpEntities[0].ID {
 		t.Fatalf("display language incorrectly hid editable Japanese-only names: %+v", out)
 	}
-	if status, _ := f.call(http.MethodGet, "main.test", "staff", managementPath("the a an"), nil, &out); status != http.StatusOK || len(out.Contents)+len(out.Groups) != 0 {
+	if status, _ := f.call(http.MethodGet, "main.test", "staff", managementPath("the a an"), nil, &out); status != http.StatusOK || len(out.Contents)+len(out.Entities) != 0 {
 		t.Fatalf("filler-only management became a wildcard: %+v", out)
 	}
-	if status, _ := f.call(http.MethodGet, "main.test", "", q("/typeahead", "q", "azure"), nil, &out); status != http.StatusOK || len(out.Contents)+len(out.Groups) != 0 {
+	if status, _ := f.call(http.MethodGet, "main.test", "", q("/typeahead", "q", "azure"), nil, &out); status != http.StatusOK || len(out.Contents)+len(out.Entities) != 0 {
 		t.Fatalf("private current names leaked into public search: %+v", out)
 	}
 	for _, path := range []string{
@@ -136,7 +136,7 @@ func TestManagementSuggestionsCheckSectionsAndTenantIdentity(t *testing.T) {
 		{"staff", []string{f.cid(1), draft}, 1}, {"content-staff", []string{f.cid(1), draft}, 0}, {"entity-staff", []string{}, 1}, {"alice", []string{draft}, 0}, {"auditor", []string{}, 0},
 	} {
 		var out Typeahead
-		if status, code := f.call(http.MethodGet, "main.test", tc.who, managementPath("azure"), nil, &out); status != http.StatusOK || !reflect.DeepEqual(suggestionIDs(out), tc.contents) || len(out.Groups) != tc.entities {
+		if status, code := f.call(http.MethodGet, "main.test", tc.who, managementPath("azure"), nil, &out); status != http.StatusOK || !reflect.DeepEqual(suggestionIDs(out), tc.contents) || len(out.Entities) != tc.entities {
 			t.Errorf("%s: status=%d code=%s out=%+v", tc.who, status, code, out)
 		}
 	}
@@ -163,7 +163,7 @@ func TestManagementSuggestionsCheckSectionsAndTenantIdentity(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("authorized application: %d %s", recorder.Code, recorder.Body.String())
 	}
-	if err = json.Unmarshal(recorder.Body.Bytes(), &out); err != nil || len(out.Contents) != 2 || len(out.Groups) != 0 {
+	if err = json.Unmarshal(recorder.Body.Bytes(), &out); err != nil || len(out.Contents) != 2 || len(out.Entities) != 0 {
 		t.Fatalf("application scope: %+v %v", out, err)
 	}
 }
@@ -183,7 +183,7 @@ func (a managementAppAuth) Authorize(_ context.Context, v auth.Verified, _ strin
 func TestManagementSuggestionsRejectOtherAppGrants(t *testing.T) {
 	f, _ := managementFixture(t)
 	provider := managementAppAuth{app: "doujins"}
-	cat, err := catalog.New(f.ctx, catalog.Options{Pool: f.pool, Schema: f.schema, Tenant: tenant, Kinds: f.svc.o.Kinds, Auth: provider, Groups: f.groups})
+	cat, err := catalog.New(f.ctx, catalog.Options{Pool: f.pool, Schema: f.schema, Tenant: tenant, Kinds: f.svc.o.Kinds, Auth: provider, Entities: f.entities})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,18 +204,18 @@ func TestManagementSuggestionsRejectOtherAppGrants(t *testing.T) {
 	}
 }
 
-func TestManagementAliasRowsGroupBeforeSuggestionLimit(t *testing.T) {
+func TestManagementAliasRowsEntityBeforeSuggestionLimit(t *testing.T) {
 	f, _ := managementFixture(t)
-	f.group("tag", "azure-second")
-	f.exec(`INSERT INTO {s}.content_group_names(tenant_id,group_id,language,kind,name)
+	f.entity("tag", "azure-second")
+	f.exec(`INSERT INTO {s}.content_entity_names(tenant_id,entity_id,language,kind,name)
  SELECT $1,$2,'en','alias','Azure variant '||i::text FROM generate_series(1,200) i`, tenant, f.ids["azure-marker"])
 	// All current-name locales are searched even when the display language is
 	// English. Translated aliases must share the same target budget too.
-	f.exec(`INSERT INTO {s}.content_group_names(tenant_id,group_id,language,kind,name)
+	f.exec(`INSERT INTO {s}.content_entity_names(tenant_id,entity_id,language,kind,name)
  SELECT $1,$2,'x-'||lpad(i::text,3,'0'),'alias','Azure localized variant' FROM generate_series(1,20) i`, tenant, f.ids["azure-marker"])
 	var out Typeahead
 	path := q("/manage/search-suggestions", "q", "azure", "include_entities", "true", "entity_kinds", "tag", "limit", "2")
-	if status, _ := f.call(http.MethodGet, "main.test", "staff", path, nil, &out); status != http.StatusOK || len(out.Groups) != 2 || out.Groups[0].ID == out.Groups[1].ID {
+	if status, _ := f.call(http.MethodGet, "main.test", "staff", path, nil, &out); status != http.StatusOK || len(out.Entities) != 2 || out.Entities[0].ID == out.Entities[1].ID {
 		t.Fatalf("one entity's aliases consumed the result limit: %+v", out)
 	}
 }
@@ -228,17 +228,17 @@ func TestManagementNameViewsUseNativeIndexes(t *testing.T) {
  SELECT $1,'01940000-0000-7000-8000-'||lpad(i::text,12,'0'),'gallery' FROM generate_series(1,20000) i`, tenant)
 	f.exec(`INSERT INTO {s}.content_text(tenant_id,content_id,language,title)
  SELECT tenant_id,id,'en','Filler '||md5(id) FROM {s}.content_items WHERE tenant_id=$1 AND id LIKE '01940000-%'`, tenant)
-	f.exec(`INSERT INTO {s}.content_group_names(tenant_id,group_id,language,kind,name)
+	f.exec(`INSERT INTO {s}.content_entity_names(tenant_id,entity_id,language,kind,name)
  SELECT $1,$2,'en','alias','Filler '||md5(i::text) FROM generate_series(1,20000) i`, tenant, f.ids["azure-marker"])
 	f.exec(`ANALYZE {s}.content_text`)
 	f.exec(`ANALYZE {s}.content_items`)
-	f.exec(`ANALYZE {s}.content_group_names`)
-	f.exec(`ANALYZE {s}.content_groups`)
+	f.exec(`ANALYZE {s}.content_entity_names`)
+	f.exec(`ANALYZE {s}.content_entities`)
 	for _, tc := range []struct{ view, predicate, index string }{
 		{"content_management_content_names", fmt.Sprintf(`%s(sd.title,sd.aliases) LIKE '%%zure%%'`, f.table("contentkit_search_names")), "content_text_management_substring"},
 		{"content_management_content_names", fmt.Sprintf(`%s(sd.title,sd.aliases,'{}'::text[],'') OPERATOR(public.&^) 'private'`, f.table("contentkit_search_terms")), "content_text_management_prefix"},
-		{"content_management_entity_names", fmt.Sprintf(`%s(sd.title,sd.aliases) LIKE '%%zure%%'`, f.table("contentkit_search_names")), "content_group_names_management_substring"},
-		{"content_management_entity_names", fmt.Sprintf(`%s(sd.title,sd.aliases,'{}'::text[],'') OPERATOR(public.&^) 'azure'`, f.table("contentkit_search_terms")), "content_group_names_management_prefix"},
+		{"content_management_entity_names", fmt.Sprintf(`%s(sd.title,sd.aliases) LIKE '%%zure%%'`, f.table("contentkit_search_names")), "content_entity_names_management_substring"},
+		{"content_management_entity_names", fmt.Sprintf(`%s(sd.title,sd.aliases,'{}'::text[],'') OPERATOR(public.&^) 'azure'`, f.table("contentkit_search_terms")), "content_entity_names_management_prefix"},
 	} {
 		rows, err := f.pool.Query(f.ctx, `EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) SELECT sd.content_id FROM `+f.table(tc.view)+` sd WHERE sd.tenant_id=$1 AND sd.language='en' AND `+tc.predicate+` LIMIT 20`, tenant)
 		if err != nil {
@@ -260,7 +260,7 @@ func TestManagementNameViewsUseNativeIndexes(t *testing.T) {
 		t.Logf("%s:\n%s", tc.index, plan.String())
 		sourceTable := "content_text"
 		if tc.view == "content_management_entity_names" {
-			sourceTable = "content_group_names"
+			sourceTable = "content_entity_names"
 		}
 		if !strings.Contains(plan.String(), tc.index) || strings.Contains(plan.String(), "Seq Scan on "+sourceTable) {
 			t.Fatalf("management lookup must use %s:\n%s", tc.index, plan.String())

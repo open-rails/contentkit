@@ -203,12 +203,12 @@ func (m *model) goRoute(b *bytes.Buffer, imp *goImports, name string, r httpapi.
 		qt := name + "Query"
 		fmt.Fprintf(b, "\n// %s is the query of %s.\ntype %s struct {\n", qt, name, qt)
 		for _, p := range r.Query {
-			fmt.Fprintf(b, "\t// %s\n\t%s %s\n", p.Doc, pascal(p.Name), queryGoTypes[p.Kind])
+			fmt.Fprintf(b, "\t// %s\n\t%s %s\n", p.Doc, queryGoName(p.Name), queryGoTypes[p.Kind])
 		}
 		b.WriteString("}\n")
 		fmt.Fprintf(b, "\nfunc (q %s) values() url.Values {\n\tv := url.Values{}\n", qt)
 		for _, p := range r.Query {
-			f := "q." + pascal(p.Name)
+			f := "q." + queryGoName(p.Name)
 			switch p.Kind {
 			case "string":
 				fmt.Fprintf(b, "\tif %s != \"\" {\n\t\tv.Set(%q, %s)\n\t}\n", f, p.Name, f)
@@ -267,4 +267,18 @@ func (m *model) goRoute(b *bytes.Buffer, imp *goImports, name string, r httpapi.
 		}
 	}
 	return nil
+}
+
+// queryGoName keeps domain Go fields canonical without changing HTTP parameters.
+func queryGoName(name string) string {
+	switch name {
+	case "groups":
+		return "Entities"
+	case "exclude_groups":
+		return "ExcludeEntities"
+	case "owner_group":
+		return "OwnerEntity"
+	default:
+		return pascal(name)
+	}
 }

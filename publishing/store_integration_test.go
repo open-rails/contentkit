@@ -20,7 +20,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -70,15 +70,15 @@ func newFixture(t *testing.T, tune ...func(*pgxpool.Config)) fixture {
 	t.Cleanup(pool.Close)
 	roles := databaseRoles{pool}
 	a := testauth.Auth{Authz: roles}
-	model := kinds.Config{Languages: []string{"en", "ja"}, Kinds: map[string]kinds.Kind{"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"artist", "series", "character", "tag"}}}, GroupKinds: map[string]kinds.GroupKind{"artist": {Route: "artists"}, "series": {Route: "series"}, "character": {Route: "characters", ScopedBy: "series"}, "tag": {Route: "tags"}}}
+	model := kinds.Config{Languages: []string{"en", "ja"}, Kinds: map[string]kinds.Kind{"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Entities: []string{"artist", "series", "character", "tag"}}}, EntityKinds: map[string]kinds.EntityKind{"artist": {Route: "artists"}, "series": {Route: "series"}, "character": {Route: "characters", ScopedBy: "series"}, "tag": {Route: "tags"}}}
 	var cat *catalog.Store
-	g, err := groups.New(groups.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Kinds: model, ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+	g, err := entities.New(entities.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Kinds: model, ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 		return cat.ContentChanged(ctx, q, ids)
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cat, err = catalog.New(t.Context(), catalog.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Kinds: model, Auth: a, Groups: g, Body: databaseBody{pool}})
+	cat, err = catalog.New(t.Context(), catalog.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Kinds: model, Auth: a, Entities: g, Body: databaseBody{pool}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func newFixture(t *testing.T, tune ...func(*pgxpool.Config)) fixture {
 	if err = v.Bind(versions.Media{Manifests: jobs.Manifests(), Uploads: up, Jobs: jobs}); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Catalog: cat, Groups: g, Registry: reg, Uploads: up, Manifests: jobs.Manifests(), Versions: v, Auth: a})
+	s, err := New(Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Catalog: cat, Entities: g, Registry: reg, Uploads: up, Manifests: jobs.Manifests(), Versions: v, Auth: a})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestPublishingAtomicMetadataAndReplay(t *testing.T) {
 		t.Fatalf("contents=%d: %v", count, err)
 	}
 	var slug string
-	if err = f.s.o.Pool.QueryRow(ctx, `SELECT slug FROM `+pgx.Identifier{f.schema, "content_groups"}.Sanitize()+` WHERE kind='series'`).Scan(&slug); err != nil || slug != "zenless-zone-zero" {
+	if err = f.s.o.Pool.QueryRow(ctx, `SELECT slug FROM `+pgx.Identifier{f.schema, "content_entities"}.Sanitize()+` WHERE kind='series'`).Scan(&slug); err != nil || slug != "zenless-zone-zero" {
 		t.Fatalf("slug=%q: %v", slug, err)
 	}
 	in.Content.Text["en"] = catalog.Text{Title: "Different"}
@@ -382,7 +382,7 @@ func TestPublishingAtomicMetadataAndReplay(t *testing.T) {
 	if _, err = f.s.Put(ctx, f.actor, uuid.NewString(), bad); err == nil {
 		t.Fatal("invalid metadata accepted")
 	}
-	if err = f.s.o.Pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{f.schema, "content_groups"}.Sanitize()+` WHERE kind='tag'`).Scan(&count); err != nil || count != 0 {
+	if err = f.s.o.Pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{f.schema, "content_entities"}.Sanitize()+` WHERE kind='tag'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("partial taxonomy escaped: %d %v", count, err)
 	}
 	if err = f.s.o.Pool.QueryRow(ctx, `SELECT count(*) FROM `+f.s.items).Scan(&count); err != nil || count != 1 {
@@ -394,8 +394,8 @@ func TestPublishingExactNamesSourceAndOwnership(t *testing.T) {
 	f := newFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	g := f.s.o.Groups
-	created, err := g.CreateGroups(ctx, []groups.GroupInput{{Kind: "tag", Slug: "one", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "One"}, {Language: "en", Kind: groups.NameAlias, Name: "Shared"}}}, {Kind: "tag", Slug: "two", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Two"}, {Language: "en", Kind: groups.NameAlias, Name: "Shared"}}}})
+	g := f.s.o.Entities
+	created, err := g.CreateEntities(ctx, []entities.EntityInput{{Kind: "tag", Slug: "one", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "One"}, {Language: "en", Kind: entities.NameAlias, Name: "Shared"}}}, {Kind: "tag", Slug: "two", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Two"}, {Language: "en", Kind: entities.NameAlias, Name: "Shared"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +440,7 @@ func TestPublishingRejectsUnsupportedAuthorityBeforeWriting(t *testing.T) {
 	if !errors.As(err, &rejected) || rejected.Code != "not_configured" {
 		t.Fatalf("unsupported authority: %v", err)
 	}
-	for _, table := range []string{"content_items", "content_groups", "content_publishing_operations"} {
+	for _, table := range []string{"content_items", "content_entities", "content_publishing_operations"} {
 		var count int
 		err = f.s.o.Pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{f.schema, table}.Sanitize()).Scan(&count)
 		if err != nil || count != 0 {
@@ -457,7 +457,7 @@ func TestPublishingSlugUnicodeAndScopeValidation(t *testing.T) {
 	if _, err := f.s.Put(t.Context(), f.actor, uuid.NewString(), in); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := f.s.o.Pool.Query(t.Context(), `SELECT slug FROM `+pgx.Identifier{f.schema, "content_groups"}.Sanitize()+` ORDER BY slug`)
+	rows, err := f.s.o.Pool.Query(t.Context(), `SELECT slug FROM `+pgx.Identifier{f.schema, "content_entities"}.Sanitize()+` ORDER BY slug`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,8 +489,8 @@ func TestMembershipRemovalAndPublicationUseOneLockOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var group string
-	if err = f.s.o.Pool.QueryRow(ctx, `SELECT group_id FROM `+pgx.Identifier{f.schema, "content_memberships"}.Sanitize()+` WHERE content_id=$1`, op.ContentID).Scan(&group); err != nil {
+	var entity string
+	if err = f.s.o.Pool.QueryRow(ctx, `SELECT entity_id FROM `+pgx.Identifier{f.schema, "content_memberships"}.Sanitize()+` WHERE content_id=$1`, op.ContentID).Scan(&entity); err != nil {
 		t.Fatal(err)
 	}
 	// The publishing fixture deliberately has one connection. A second pool
@@ -500,7 +500,7 @@ func TestMembershipRemovalAndPublicationUseOneLockOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer otherPool.Close()
-	otherGroups, err := groups.New(groups.Options{Pool: otherPool, Schema: f.schema, Tenant: f.s.o.Tenant, Kinds: f.s.o.Catalog.Kinds(), ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+	otherEntities, err := entities.New(entities.Options{Pool: otherPool, Schema: f.schema, Tenant: f.s.o.Tenant, Kinds: f.s.o.Catalog.Kinds(), ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 		return f.s.o.Catalog.ContentChanged(ctx, q, ids)
 	}})
 	if err != nil {
@@ -526,7 +526,7 @@ func TestMembershipRemovalAndPublicationUseOneLockOrder(t *testing.T) {
 	}
 	removed := make(chan error, 1)
 	go func() {
-		removed <- otherGroups.RemoveMemberships(ctx, []groups.Membership{{GroupID: groups.GroupID(group), ContentID: op.ContentID}})
+		removed <- otherEntities.RemoveMemberships(ctx, []entities.Membership{{EntityID: entities.EntityID(entity), ContentID: op.ContentID}})
 	}()
 	select {
 	case err := <-removed:
@@ -556,8 +556,8 @@ func TestPublicationWaitsOutHierarchyChangeBeforeLockingEntities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var group string
-	if err = f.s.o.Pool.QueryRow(ctx, `SELECT group_id FROM `+pgx.Identifier{f.schema, "content_memberships"}.Sanitize()+` WHERE content_id=$1`, op.ContentID).Scan(&group); err != nil {
+	var entity string
+	if err = f.s.o.Pool.QueryRow(ctx, `SELECT entity_id FROM `+pgx.Identifier{f.schema, "content_memberships"}.Sanitize()+` WHERE content_id=$1`, op.ContentID).Scan(&entity); err != nil {
 		t.Fatal(err)
 	}
 	// The publishing fixture deliberately has one connection; the merge and
@@ -574,12 +574,12 @@ func TestPublicationWaitsOutHierarchyChangeBeforeLockingEntities(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer merge.Rollback(ctx)
-	// A merge's lock order: the hierarchy lock, then the groups' rows.
+	// A merge's lock order: the hierarchy lock, then the entities' rows.
 	if _, err = merge.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "contentkit:group-hierarchy:"+f.schema+":"+f.s.o.Tenant); err != nil {
 		t.Fatal(err)
 	}
 	in = request()
-	in.Entities = []EntityReference{{ID: group}}
+	in.Entities = []EntityReference{{ID: entity}}
 	put := make(chan error, 1)
 	go func() {
 		_, err := f.s.Put(ctx, f.actor, uuid.NewString(), in)
@@ -595,7 +595,7 @@ func TestPublicationWaitsOutHierarchyChangeBeforeLockingEntities(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if _, err = merge.Exec(ctx, `SELECT 1 FROM `+pgx.Identifier{f.schema, "content_groups"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, f.s.o.Tenant, group); err != nil {
+	if _, err = merge.Exec(ctx, `SELECT 1 FROM `+pgx.Identifier{f.schema, "content_entities"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, f.s.o.Tenant, entity); err != nil {
 		t.Fatalf("merge locking the entity: %v", err)
 	}
 	if err = merge.Commit(ctx); err != nil {

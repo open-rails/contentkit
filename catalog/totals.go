@@ -183,11 +183,11 @@ func (s *Store) loadTotals(ctx context.Context, keys []totalsKey) (map[totalsKey
 
 // countTotals counts over content_facets: live, not deleted, listed or
 // members-listed versions in the site's scope outside the default-hidden
-// filter groups. Audiences are access.AudiencesSQL's: a free row opens to
+// filter entities. Audiences are access.AudiencesSQL's: a free row opens to
 // anyone and every tier, a tier row to its tiers, others to nobody. Versions collapse to
 // their content item, once per language and once per kind.
 func (s *Store) countTotals(ctx context.Context, site kinds.Domain, kindNames []string) (map[string]Total, error) {
-	policies, err := domainpolicy.Resolve(ctx, s.pool, s.t.groups, s.tenant, site, s.cfg.ContentFilters.AppliesTo)
+	policies, err := domainpolicy.Resolve(ctx, s.pool, s.t.entities, s.tenant, site, s.cfg.ContentFilters.AppliesTo)
 	if err != nil {
 		return nil, err
 	}

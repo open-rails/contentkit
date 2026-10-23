@@ -15,12 +15,12 @@ import (
 // Totals count content items, never versions: once in the kind and once per
 // language any eligible version serves. Public is what an anonymous
 // visitor's listing shows and opens; a tier counts everything its holders
-// open. Group-gated, pay-per-view,
+// open. Entity-gated, pay-per-view,
 // draft, scheduled and deleted items never count; the site's scope and the
 // default content filters apply.
 func TestTotalsIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	yaoi, gore, studio := f.group("tag", "yaoi"), f.group("tag", "gore"), f.group("channel", "studio")
+	yaoi, gore, studio := f.entity("tag", "yaoi"), f.entity("tag", "gore"), f.entity("channel", "studio")
 	f.sell(studio)
 	premium := &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
 	item := func(in ContentInput, publish bool) string {
@@ -45,7 +45,7 @@ func TestTotalsIntegration(t *testing.T) {
 	item(with(gallery("Premium", "en"), func(c *ContentInput) { c.Access = premium }), true)
 	item(with(gallery("Members", "ja"), func(c *ContentInput) { c.Access = premium }), true)
 	item(gallery("Additional", "en"), true)
-	item(with(gallery("Channel", "en"), func(c *ContentInput) { c.Access = &access.Rule{Level: access.GroupLevel, Group: studio} }), true)
+	item(with(gallery("Channel", "en"), func(c *ContentInput) { c.Access = &access.Rule{Level: access.EntityLevel, Entity: studio} }), true)
 	item(with(gallery("Pay per view", "en"), func(c *ContentInput) { c.Access = &access.Rule{Level: access.PPV} }), true)
 	gory := item(gallery("Gory", "en"), true)
 	f.join(gore, gory, "")

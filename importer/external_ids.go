@@ -19,7 +19,7 @@ type ExternalIDsQuery struct {
 
 // ExternalIDList asks one page of an entity's external ids.
 type ExternalIDList struct {
-	// Entity is content, version, group, comment, poll or poll_option; each
+	// Entity is content, version, entity, comment, poll or poll_option; each
 	// at most once per query.
 	Entity string `json:"entity"`
 	// Cursor is the previous page's next_cursor.
@@ -54,12 +54,12 @@ const maxExternalIDs = 10_000
 
 // gone is, per entity, the table of its records and when one is deleted.
 var gone = map[string]struct{ table, join, deleted string }{
-	EntityContent: {"content_items", "r.id = x.id", "r.id IS NULL OR r.state = 'deleted'"},
-	EntityVersion: {"content_versions", "r.id = x.id", "r.id IS NULL OR r.state = 'deleted'"},
-	EntityGroup:   {"content_groups", "r.id = x.id", "r.id IS NULL OR r.state = 'deleted'"},
-	EntityComment: {"content_comments", "r.id = x.id::uuid", "r.id IS NULL OR r.deleted_at IS NOT NULL"},
-	EntityPoll:    {"content_poll_questions", "r.id = x.id::uuid", "r.id IS NULL OR r.deleted_at IS NOT NULL"},
-	EntityOption:  {"content_poll_options", "r.id = x.id::uuid", "r.id IS NULL"},
+	RecordContent: {"content_items", "r.id = x.id", "r.id IS NULL OR r.state = 'deleted'"},
+	RecordVersion: {"content_versions", "r.id = x.id", "r.id IS NULL OR r.state = 'deleted'"},
+	RecordEntity:  {"content_entities", "r.id = x.id", "r.id IS NULL OR r.state = 'deleted'"},
+	RecordComment: {"content_comments", "r.id = x.id::uuid", "r.id IS NULL OR r.deleted_at IS NOT NULL"},
+	RecordPoll:    {"content_poll_questions", "r.id = x.id::uuid", "r.id IS NULL OR r.deleted_at IS NOT NULL"},
+	RecordOption:  {"content_poll_options", "r.id = x.id::uuid", "r.id IS NULL"},
 }
 
 // ExternalIDs pages the external ids imports under q.Source hold, per entity.

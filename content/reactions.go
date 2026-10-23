@@ -203,7 +203,7 @@ func reaction(typ TargetType, method, verb, doc string, value int16) httpapi.Rou
 // lockedNote says in route docs that a content target's counts follow its
 // kind's locked view.
 func lockedNote(typ TargetType, them string) string {
-	if typ == TargetGroup {
+	if typ == TargetEntity {
 		return ""
 	}
 	return " (absent where its kind's locked view hides " + them + ")"
@@ -211,7 +211,7 @@ func lockedNote(typ TargetType, them string) string {
 
 // targetNoun names a target type in route docs.
 func targetNoun(typ TargetType) string {
-	if typ == TargetGroup {
+	if typ == TargetEntity {
 		return "a group"
 	}
 	return "a content item or one of its versions"

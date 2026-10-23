@@ -82,7 +82,7 @@ of the target tenant. Native `Publish`, `PublishTx`, batch and HTTP publication
 use the same recipient check before writing; accepted writes retain the durable
 recipient-erasure fence.
 
-For `auth_scope` content groups, `AppScopes(client, scope)` keeps the existing
+For `auth_scope` content entities, `AppScopes(client, scope)` keeps the existing
 deterministic UUID based on tenant, app and content-group ID. It checks the
 provider group's tenant ownership and uses effective Can. The engine still
 checks that every requested scope belongs to an active local content group.

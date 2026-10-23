@@ -12,18 +12,18 @@ func doujins() Config {
 		Tiers:        []string{"premium"},
 		TokenClaims:  []string{"premium"},
 		Restrictions: []string{"restricted"}, ContentFilters: ContentFilters{AppliesTo: []string{"gallery", "blog"}, Domains: []Domain{
-			{Name: "main", Hosts: []string{"doujins.com"}, Filters: []ContentFilter{{Group: GroupRef{"tag", "big-breasts"}}}},
-			{Name: "gay", Hosts: []string{"doujins.gay"}, RequireEntities: map[string][]GroupRef{"gallery": {{"tag", "yaoi"}}}},
-			{Name: "moe", Hosts: []string{"hmovie-moe.us"}, Filters: []ContentFilter{{Group: GroupRef{"tag", "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()}}},
+			{Name: "main", Hosts: []string{"doujins.com"}, Filters: []ContentFilter{{Entity: EntityRef{"tag", "big-breasts"}}}},
+			{Name: "gay", Hosts: []string{"doujins.gay"}, RequireEntities: map[string][]EntityRef{"gallery": {{"tag", "yaoi"}}}},
+			{Name: "moe", Hosts: []string{"hmovie-moe.us"}, Filters: []ContentFilter{{Entity: EntityRef{"tag", "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()}}},
 		}},
 		Kinds: map[string]Kind{
-			"gallery": {Route: "g", Presentation: "reader", Segments: true, Locked: &Locked{Show: []string{ShowCover, ShowGroups}, Preview: &Preview{Pages: 3}},
+			"gallery": {Route: "g", Presentation: "reader", Segments: true, Locked: &Locked{Show: []string{ShowCover, ShowEntities}, Preview: &Preview{Pages: 3}},
 				Versions:   VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
-				Groups:     []string{"tag", "series", "character", "voice_actor"},
+				Entities:   []string{"tag", "series", "character", "voice_actor"},
 				Attributes: map[string]Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}, Filterable: true}}},
-			"blog": {Route: "blog", Presentation: "post", Groups: []string{"tag"}, Versions: VersionRules{Languages: "one", Hidden: true}},
+			"blog": {Route: "blog", Presentation: "post", Entities: []string{"tag"}, Versions: VersionRules{Languages: "one", Hidden: true}},
 		},
-		GroupKinds: map[string]GroupKind{
+		EntityKinds: map[string]EntityKind{
 			"tag":         {Route: "tags"},
 			"series":      {Route: "series", Ordered: true, Parent: "series"},
 			"character":   {Route: "characters", ScopedBy: "series"},
@@ -40,21 +40,23 @@ func TestValidate(t *testing.T) {
 		"no languages": func(c *Config) { c.Languages = nil },
 		"unknown group kind": func(c *Config) {
 			k := c.Kinds["gallery"]
-			k.Groups = append(k.Groups, "studio")
+			k.Entities = append(k.Entities, "studio")
 			c.Kinds["gallery"] = k
 		},
-		"duplicate route":  func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "g"} },
+		"duplicate route":  func(c *Config) { c.EntityKinds["tag"] = EntityKind{Route: "g"} },
 		"claim not a tier": func(c *Config) { c.TokenClaims = []string{"gold"} },
 		"unknown policy kind": func(c *Config) {
-			c.ContentFilters.Domains[2].RequireEntities = map[string][]GroupRef{"missing": {{"tag", "yaoi"}}}
+			c.ContentFilters.Domains[2].RequireEntities = map[string][]EntityRef{"missing": {{"tag", "yaoi"}}}
 		},
 		"bad presentation":    func(c *Config) { k := c.Kinds["blog"]; k.Presentation = "page"; c.Kinds["blog"] = k },
-		"filter group kind":   func(c *Config) { c.ContentFilters.Domains[0].Filters[0].Group.Kind = "genre" },
+		"filter group kind":   func(c *Config) { c.ContentFilters.Domains[0].Filters[0].Entity.Kind = "genre" },
 		"enum without values": func(c *Config) { c.Kinds["gallery"].Attributes["format"] = Attribute{Type: "enum"} },
-		"cap on a site kind":  func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "tags", MaxPerOwner: 3} },
-		"negative cap":        func(c *Config) { c.GroupKinds["channel"] = GroupKind{Owner: "user", MaxPerOwner: -1} },
-		"site kind uploads":   func(c *Config) { c.GroupKinds["tag"] = GroupKind{Route: "tags", Uploads: UploadLimits{QuotaBytes: 1}} },
-		"empty preview":       func(c *Config) { c.Kinds["gallery"].Locked.Preview = &Preview{} },
+		"cap on a site kind":  func(c *Config) { c.EntityKinds["tag"] = EntityKind{Route: "tags", MaxPerOwner: 3} },
+		"negative cap":        func(c *Config) { c.EntityKinds["channel"] = EntityKind{Owner: "user", MaxPerOwner: -1} },
+		"site kind uploads": func(c *Config) {
+			c.EntityKinds["tag"] = EntityKind{Route: "tags", Uploads: UploadLimits{QuotaBytes: 1}}
+		},
+		"empty preview": func(c *Config) { c.Kinds["gallery"].Locked.Preview = &Preview{} },
 		"segmentless preview": func(c *Config) {
 			k := c.Kinds["blog"]
 			k.Locked = &Locked{Preview: &Preview{Segments: 1}}
@@ -117,7 +119,7 @@ func TestLockedView(t *testing.T) {
 	if l := c.Kinds["blog"].LockedView(); !l.Shows(ShowCover) || l.Shows(ShowComments) || l.Shows(ShowReactions) || l.Preview != nil {
 		t.Fatalf("default locked view %+v", l)
 	}
-	if l := c.Kinds["gallery"].LockedView(); l.Shows(ShowDescription) || !l.Shows(ShowGroups) || l.Preview.Pages != 3 {
+	if l := c.Kinds["gallery"].LockedView(); l.Shows(ShowDescription) || !l.Shows(ShowEntities) || l.Preview.Pages != 3 {
 		t.Fatalf("configured locked view %+v", l)
 	}
 	k := c.Kinds["blog"]
@@ -140,7 +142,7 @@ func TestDomainFor(t *testing.T) {
 func TestDomainContentFilters(t *testing.T) {
 	c := doujins()
 	off := false
-	c.ContentFilters.Domains[1].Filters = []ContentFilter{{Group: GroupRef{"tag", "gore"}, Visible: false, UserToggle: &off}}
+	c.ContentFilters.Domains[1].Filters = []ContentFilter{{Entity: EntityRef{"tag", "gore"}, Visible: false, UserToggle: &off}}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -172,23 +174,23 @@ func TestRejectInvalidDomainFilters(t *testing.T) {
 		"repeated filter": func(c *Config) { d := &c.ContentFilters.Domains[0]; d.Filters = append(d.Filters, d.Filters[0]) },
 		"repeated domain": func(c *Config) { c.ContentFilters.Domains[1].Name = c.ContentFilters.Domains[0].Name },
 		"unknown required content kind": func(c *Config) {
-			c.ContentFilters.Domains[1].RequireEntities = map[string][]GroupRef{"missing": {{"tag", "yaoi"}}}
+			c.ContentFilters.Domains[1].RequireEntities = map[string][]EntityRef{"missing": {{"tag", "yaoi"}}}
 		},
 		"repeated host": func(c *Config) { c.ContentFilters.Domains[1].Hosts = []string{"DOUJINS.COM:443"} },
 		"required and hidden": func(c *Config) {
-			c.ContentFilters.Domains[1].Filters = []ContentFilter{{Group: GroupRef{"tag", "yaoi"}, Visible: false}}
+			c.ContentFilters.Domains[1].Filters = []ContentFilter{{Entity: EntityRef{"tag", "yaoi"}, Visible: false}}
 		},
 		"repeated required": func(c *Config) {
-			c.ContentFilters.Domains[1].RequireEntities["gallery"] = []GroupRef{{"tag", "yaoi"}, {"tag", "yaoi"}}
+			c.ContentFilters.Domains[1].RequireEntities["gallery"] = []EntityRef{{"tag", "yaoi"}, {"tag", "yaoi"}}
 		},
 		"no applies_to":             func(c *Config) { c.ContentFilters.AppliesTo = nil },
 		"unknown applies_to":        func(c *Config) { c.ContentFilters.AppliesTo = []string{"missing"} },
 		"repeated applies_to":       func(c *Config) { c.ContentFilters.AppliesTo = []string{"gallery", "gallery"} },
-		"unsupported shared entity": func(c *Config) { k := c.Kinds["blog"]; k.Groups = nil; c.Kinds["blog"] = k },
+		"unsupported shared entity": func(c *Config) { k := c.Kinds["blog"]; k.Entities = nil; c.Kinds["blog"] = k },
 		"unsupported required entity": func(c *Config) {
-			c.ContentFilters.Domains[1].RequireEntities["gallery"] = []GroupRef{{"voice_actor", "actor"}}
+			c.ContentFilters.Domains[1].RequireEntities["gallery"] = []EntityRef{{"voice_actor", "actor"}}
 			k := c.Kinds["gallery"]
-			k.Groups = []string{"tag"}
+			k.Entities = []string{"tag"}
 			c.Kinds["gallery"] = k
 		},
 	} {
@@ -269,15 +271,15 @@ func TestRoutes(t *testing.T) {
 
 func TestContentFiltersCloneDoesNotAliasConfiguration(t *testing.T) {
 	no := false
-	original := ContentFilters{AppliesTo: []string{"gallery", "blog"}, Domains: []Domain{{Name: "main", Hosts: []string{"example.test"}, RequireEntities: map[string][]GroupRef{"gallery": {{"tag", "yaoi"}}}, Filters: []ContentFilter{{Group: GroupRef{"tag", "restricted"}, UserToggle: &no}}}}}
+	original := ContentFilters{AppliesTo: []string{"gallery", "blog"}, Domains: []Domain{{Name: "main", Hosts: []string{"example.test"}, RequireEntities: map[string][]EntityRef{"gallery": {{"tag", "yaoi"}}}, Filters: []ContentFilter{{Entity: EntityRef{"tag", "restricted"}, UserToggle: &no}}}}}
 	cloned := original.Clone()
 	original.AppliesTo[0] = "changed"
 	original.Domains[0].Name = "changed"
 	original.Domains[0].Hosts[0] = "changed.test"
 	original.Domains[0].RequireEntities["gallery"][0].Slug = "changed"
-	original.Domains[0].Filters[0].Group.Slug = "changed"
+	original.Domains[0].Filters[0].Entity.Slug = "changed"
 	*original.Domains[0].Filters[0].UserToggle = true
-	if cloned.AppliesTo[0] != "gallery" || cloned.Domains[0].Name != "main" || cloned.Domains[0].Hosts[0] != "example.test" || cloned.Domains[0].RequireEntities["gallery"][0].Slug != "yaoi" || cloned.Domains[0].Filters[0].Group.Slug != "restricted" || *cloned.Domains[0].Filters[0].UserToggle {
+	if cloned.AppliesTo[0] != "gallery" || cloned.Domains[0].Name != "main" || cloned.Domains[0].Hosts[0] != "example.test" || cloned.Domains[0].RequireEntities["gallery"][0].Slug != "yaoi" || cloned.Domains[0].Filters[0].Entity.Slug != "restricted" || *cloned.Domains[0].Filters[0].UserToggle {
 		t.Fatalf("mutable source changed snapshot %+v", cloned)
 	}
 }

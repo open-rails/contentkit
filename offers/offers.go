@@ -1,8 +1,8 @@
-// Package offers sells content, versions and groups. Staff and creators put
+// Package offers sells content, versions and entities. Staff and creators put
 // an offer (terms) on a target; an engine River job syncs it to OpenRails as
 // a product whose key and only entitlement is the target's access key, with
 // one price under PriceKey. Prices are immutable, so a reprice is a new
-// price; a withdrawal archives the product. It also serves free group joins
+// price; a withdrawal archives the product. It also serves free entity joins
 // and the viewer's library.
 package offers
 
@@ -31,7 +31,7 @@ var (
 	ErrNotFound  = errors.New("offers: not found")
 	ErrForbidden = errors.New("offers: forbidden")
 	ErrConflict  = errors.New("offers: conflict")
-	// ErrNotJoinable is a join of a group without a free offer.
+	// ErrNotJoinable is a join of an entity without a free offer.
 	ErrNotJoinable = errors.New("offers: not free to join")
 )
 
@@ -41,7 +41,7 @@ type TargetKind string
 const (
 	ContentTarget TargetKind = "content" // every version of a content item
 	VersionTarget TargetKind = "version" // one version
-	GroupTarget   TargetKind = "group"   // a sellable group: its members and its members-only content
+	EntityTarget  TargetKind = "group"   // a sellable entity: its members and its members-only content
 )
 
 // Target is one sold thing. Content is a version's content.
@@ -115,7 +115,7 @@ type Service struct {
 }
 
 type tables struct {
-	offers, items, versions, text, creators, groups, groupNames, facets string
+	offers, items, versions, text, creators, entities, entityNames, facets string
 }
 
 // New validates o.
@@ -131,7 +131,7 @@ func New(o Options) (*Service, error) {
 		return nil, errors.New("offers: Schema is required")
 	}
 	for k, m := range o.Config.Minimum {
-		if k != ContentTarget && k != VersionTarget && k != GroupTarget || m < 0 {
+		if k != ContentTarget && k != VersionTarget && k != EntityTarget || m < 0 {
 			return nil, fmt.Errorf("offers: minimum %s %s", k, m)
 		}
 	}
@@ -142,7 +142,7 @@ func New(o Options) (*Service, error) {
 	s := &Service{pool: o.Pool, tenant: o.Tenant, kinds: o.Kinds, cfg: o.Config, billing: o.Billing, gate: o.Gate,
 		queue: o.Queue, log: o.Logger,
 		t: tables{offers: q("content_offers"), items: q("content_items"), versions: q("content_versions"), text: q("content_text"),
-			creators: q("content_creators"), groups: q("content_groups"), groupNames: q("content_group_names"), facets: q("content_current_facets")}}
+			creators: q("content_creators"), entities: q("content_entities"), entityNames: q("content_entity_names"), facets: q("content_current_facets")}}
 	if s.queue == "" {
 		s.queue = "contentkit_offers"
 	}
@@ -159,21 +159,21 @@ func (s *Service) key(t Target) (access.Key, error) {
 		return access.ContentKey(s.tenant, t.ID)
 	case VersionTarget:
 		return access.VersionKey(s.tenant, t.Content, t.ID)
-	case GroupTarget:
-		return access.GroupKey(s.tenant, t.ID)
+	case EntityTarget:
+		return access.EntityKey(s.tenant, t.ID)
 	}
 	return access.Key{}, fmt.Errorf("%w: target kind %q", ErrInvalid, t.Kind)
 }
 
-// targetOf is the target a content, version or group key sells.
+// targetOf is the target a content, version or entity key sells.
 func targetOf(k access.Key) (Target, bool) {
 	switch k.Kind() {
 	case access.KeyContent:
 		return Target{Kind: ContentTarget, ID: k.Content()}, true
 	case access.KeyVersion:
 		return Target{Kind: VersionTarget, ID: k.Version(), Content: k.Content()}, true
-	case access.KeyGroup:
-		return Target{Kind: GroupTarget, ID: k.Group()}, true
+	case access.KeyEntity:
+		return Target{Kind: EntityTarget, ID: k.Entity()}, true
 	}
 	return Target{}, false
 }
@@ -185,16 +185,16 @@ func (s *Service) tx(ctx context.Context, fn func(pgx.Tx) error) error {
 	return pgx.BeginFunc(ctx, s.pool, fn)
 }
 
-// GroupAccess is a sellable group's sale as a card or page shows it: its
+// EntityAccess is a sellable entity's sale as a card or page shows it: its
 // key, its active offer and the viewer's standing.
-type GroupAccess struct {
+type EntityAccess struct {
 	Key access.Key `json:"key"`
 	// Offer is the active offer as paywalls show it (Sales); nil while the
-	// group sells nothing.
+	// entity sells nothing.
 	Offer *Sale `json:"offer,omitempty"`
 	// Member: the viewer holds the key (bought, subscribed or joined free).
 	Member bool `json:"member"`
-	// Editor: the viewer edits the group's content (its owner, a holder of
+	// Editor: the viewer edits the entity's content (its owner, a holder of
 	// {kind}:content:write in its AuthKit scope), so opens it all and is
 	// offered nothing.
 	Editor bool `json:"editor,omitempty"`
@@ -202,24 +202,24 @@ type GroupAccess struct {
 	Unknown bool `json:"unknown,omitempty"`
 }
 
-// GroupAccess answers, per group in order, its key, active offer and the
+// EntityAccess answers, per entity in order, its key, active offer and the
 // viewer's standing. Internal or inactive entities return ErrNotFound.
 // There is one offers read and at most one billing read
 // (access.Gate.Holds). A failed billing read answers Unknown, not an error.
-func (s *Service) GroupAccess(ctx context.Context, viewer access.Actor, groups []string) ([]GroupAccess, error) {
-	visible, err := s.publicGroups(ctx, groups)
+func (s *Service) EntityAccess(ctx context.Context, viewer access.Actor, entities []string) ([]EntityAccess, error) {
+	visible, err := s.publicEntities(ctx, entities)
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range groups {
+	for _, id := range entities {
 		if !visible[id] {
 			return nil, ErrNotFound
 		}
 	}
-	out := make([]GroupAccess, len(groups))
-	keys := make([]access.Key, len(groups))
-	for i, id := range groups {
-		k, err := access.GroupKey(s.tenant, id)
+	out := make([]EntityAccess, len(entities))
+	keys := make([]access.Key, len(entities))
+	for i, id := range entities {
+		k, err := access.EntityKey(s.tenant, id)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
@@ -243,7 +243,7 @@ func (s *Service) GroupAccess(ctx context.Context, viewer access.Actor, groups [
 	return out, nil
 }
 
-// Joined is the public groups whose key viewer holds, bought, subscribed or joined
+// Joined is the public entities whose key viewer holds, bought, subscribed or joined
 // free: the request's one entitlements read (access.Gate.Filter), at most
 // access.HeldLimit of them. A failed read answers none.
 func (s *Service) Joined(ctx context.Context, viewer access.Actor) ([]string, error) {
@@ -251,8 +251,8 @@ func (s *Service) Joined(ctx context.Context, viewer access.Actor) ([]string, er
 	if err != nil && !errors.Is(err, access.ErrUnavailable) {
 		return nil, err
 	}
-	ids := f.Groups()
-	visible, err := s.publicGroups(ctx, ids)
+	ids := f.Entities()
+	visible, err := s.publicEntities(ctx, ids)
 	if err != nil {
 		return nil, err
 	}

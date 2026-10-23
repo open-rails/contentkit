@@ -10,10 +10,10 @@ import (
 // KnownCardsOptions selects a bounded set of already-known IDs, not a listing.
 type KnownCardsOptions struct {
 	Reader
-	IDs        []string
-	Kind       string
-	CardGroups []string
-	Summary    bool
+	IDs          []string
+	Kind         string
+	CardEntities []string
+	Summary      bool
 }
 
 // KnownCards hydrates explicit IDs in caller order.
@@ -33,7 +33,7 @@ func (s *Service) KnownCards(ctx context.Context, o KnownCardsOptions) (ContentP
 	if err != nil {
 		return out, err
 	}
-	out.Contents, err = s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
+	out.Contents, err = s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
 	if err != nil {
 		return out, err
 	}

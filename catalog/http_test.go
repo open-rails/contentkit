@@ -134,11 +134,11 @@ func TestRoutesIntegration(t *testing.T) {
 	}
 
 	// The manage list: staff see all; others what they created, or an owner
-	// group's they edit.
-	studio := f.group("channel", "studio")
+	// entity's they edit.
+	studio := f.entity("channel", "studio")
 	f.editor("studio", "ed")
 	owned := gallery("Studio draft", "en")
-	owned.OwnerGroupID = studio
+	owned.OwnerEntityID = studio
 	f.want(http.StatusCreated, "ed", "POST", "/v1/contents", owned, &c)
 	f.want(http.StatusForbidden, "bob", "POST", "/v1/contents", owned, nil)
 	var list []Content
@@ -425,7 +425,7 @@ func TestManageAccessAndCountIntegration(t *testing.T) {
 
 func TestManagedCountMatchesSelection(t *testing.T) {
 	f := newFixture(t, nil)
-	studio := f.group("channel", "studio")
+	studio := f.entity("channel", "studio")
 	f.editor("studio", "ed")
 	draft := gallery("Draft", "en")
 	draft.Text["en"] = Text{Title: "Draft", Body: "body-only needle"}
@@ -446,7 +446,7 @@ func TestManagedCountMatchesSelection(t *testing.T) {
 	paid.Creators, paid.Access = &[]Creator{{UserID: "alice"}}, &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
 	f.create("staff", paid)
 	owned := gallery("Owned", "en")
-	owned.OwnerGroupID = studio
+	owned.OwnerEntityID = studio
 	f.create("staff", owned)
 	f.create("staff", ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: "Blog"}}})
 	if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_items")+` (tenant_id,id,kind) VALUES ('other',$1,'gallery')`, published); err != nil {
@@ -461,8 +461,8 @@ func TestManagedCountMatchesSelection(t *testing.T) {
 		{"gallery", "staff", ManageQuery{Kind: "gallery"}, 5},
 		{"creator", "alice", ManageQuery{}, 2},
 		{"unrelated user", "bob", ManageQuery{}, 0},
-		{"owner editor", "ed", ManageQuery{OwnerGroup: studio}, 1},
-		{"staff owner filter", "staff", ManageQuery{OwnerGroup: studio}, 1},
+		{"owner editor", "ed", ManageQuery{OwnerEntity: studio}, 1},
+		{"staff owner filter", "staff", ManageQuery{OwnerEntity: studio}, 1},
 		{"draft", "staff", ManageQuery{Kind: "gallery", State: StateDraft}, 3},
 		{"published", "staff", ManageQuery{State: StatePublished}, 1},
 		{"scheduled", "staff", ManageQuery{State: "scheduled"}, 1},
@@ -497,7 +497,7 @@ func TestManagedCountMatchesSelection(t *testing.T) {
 			t.Fatalf("query %+v: %v, want invalid", q, err)
 		}
 	}
-	if _, err := f.s.CountManaged(f.ctx, f.as("bob"), ManageQuery{OwnerGroup: studio}); !errors.Is(err, ErrForbidden) {
+	if _, err := f.s.CountManaged(f.ctx, f.as("bob"), ManageQuery{OwnerEntity: studio}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("unauthorized group count: %v", err)
 	}
 }

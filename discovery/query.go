@@ -33,7 +33,7 @@ type Reader struct {
 	Host string
 	// Language lists only content with a live version serving it.
 	Language string
-	// DisplayLanguage is the language of titles and group names and the
+	// DisplayLanguage is the language of titles and entity names and the
 	// preferred language of each card's version; Language, else the site's
 	// first.
 	DisplayLanguage string
@@ -50,12 +50,12 @@ type Filter struct {
 	keepUnplayable bool
 	// IDs bounds a public hydration read; normal visibility/domain rules apply.
 	IDs []string
-	// Groups are all required (effective on the card's version); a position
-	// sort orders by the first, which must be of an ordered group kind. A
-	// reader's content filter never hides a group's content from a list
-	// requiring that group.
-	Groups        []string
-	ExcludeGroups []string
+	// Entities are all required (effective on the card's version); a position
+	// sort orders by the first, which must be of an ordered entity kind. A
+	// reader's content filter never hides an entity's content from a list
+	// requiring that entity.
+	Entities        []string
+	ExcludeEntities []string
 	// Traits are all required on the card's version.
 	Traits []string
 	// Attributes are "name:value" equalities on Kind's declared filterable
@@ -73,9 +73,9 @@ type Filter struct {
 	// ViewStatus is unseen, in_progress or completed: the signed-in
 	// reader's own.
 	ViewStatus string
-	// OwnerGroups keeps content one of these groups owns (a channel's feed);
+	// OwnerEntities keeps content one of these entities owns (a channel's feed);
 	// owning is not membership and opens nothing.
-	OwnerGroups []string
+	OwnerEntities []string
 	// Creators keeps content one of these users is credited on.
 	Creators []string
 	// Access keeps content at one of these levels: public is what anyone
@@ -169,22 +169,22 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 			return nil, fmt.Errorf("%w: time zone %q", ErrInvalid, f.TimeZone)
 		}
 	}
-	owners, err := uniqueIDs("owner_group", f.OwnerGroups)
+	owners, err := uniqueIDs("owner_group", f.OwnerEntities)
 	if err != nil {
 		return nil, err
 	}
-	required, err := uniqueIDs("groups", f.Groups)
+	required, err := uniqueIDs("groups", f.Entities)
 	if err != nil {
 		return nil, err
 	}
-	excluded, err := uniqueIDs("exclude_groups", f.ExcludeGroups)
+	excluded, err := uniqueIDs("exclude_groups", f.ExcludeEntities)
 	if err != nil {
 		return nil, err
 	}
 	selected := append(append(append([]string{}, required...), excluded...), owners...)
 	if len(selected) > 0 {
 		var internal bool
-		if err := s.o.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = ANY($2::text[]) AND internal)`, s.o.Tenant, selected).Scan(&internal); err != nil {
+		if err := s.o.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = ANY($2::text[]) AND internal)`, s.o.Tenant, selected).Scan(&internal); err != nil {
 			return nil, err
 		}
 		if internal {
@@ -193,7 +193,7 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 	}
 	// A channel's feed shows its editors the channel's drafts too.
 	if v == nil {
-		v, err = s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorGroups: owners,
+		v, err = s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorEntities: owners,
 			Requested: required})
 		if err != nil {
 			if errors.Is(err, catalog.ErrInvalid) {
@@ -234,13 +234,13 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 		q.and("f.kind = @d_kind", pgx.NamedArgs{"d_kind": f.Kind})
 	}
 	if len(required) > 0 {
-		q.and("f.group_ids @> @d_groups::text[]", pgx.NamedArgs{"d_groups": required})
+		q.and("f.entity_ids @> @d_groups::text[]", pgx.NamedArgs{"d_groups": required})
 	}
 	if len(excluded) > 0 {
-		q.and("NOT (f.group_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": excluded})
+		q.and("NOT (f.entity_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": excluded})
 	}
 	if len(owners) > 0 {
-		q.and("f.owner_group_id = ANY(@d_owners::text[])", pgx.NamedArgs{"d_owners": owners})
+		q.and("f.owner_entity_id = ANY(@d_owners::text[])", pgx.NamedArgs{"d_owners": owners})
 	}
 	if cs, err := uniqueIDs("creators", f.Creators); err != nil {
 		return nil, err
@@ -312,7 +312,7 @@ func (s *Service) accessFilter(q *sel, levels, tiers []string) error {
 		return err
 	}
 	for _, l := range levels {
-		if !slices.Contains([]access.Level{access.Public, access.TierLevel, access.GroupLevel, access.PPV, access.GroupPPV}, access.Level(l)) {
+		if !slices.Contains([]access.Level{access.Public, access.TierLevel, access.EntityLevel, access.PPV, access.EntityPPV}, access.Level(l)) {
 			return fmt.Errorf("%w: access %q is public, tier, group, ppv or group_ppv", ErrInvalid, l)
 		}
 	}
@@ -519,23 +519,23 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		o.expr, o.cast, o.join = "coalesce(counts.favorites, 0)::bigint", "bigint", s.countsJoin()
 
 	case SortPosition:
-		if len(f.Groups) == 0 {
+		if len(f.Entities) == 0 {
 			return o, fmt.Errorf("%w: sort position needs groups: it orders by the first", ErrInvalid)
 		}
-		group := strings.TrimSpace(f.Groups[0])
+		entity := strings.TrimSpace(f.Entities[0])
 		var kind string
-		err := s.o.Pool.QueryRow(ctx, `SELECT kind FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, group).Scan(&kind)
+		err := s.o.Pool.QueryRow(ctx, `SELECT kind FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, entity).Scan(&kind)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows): // lists nothing
 		case err != nil:
 			return o, err
-		case !s.o.Kinds.GroupKinds[kind].Ordered:
+		case !s.o.Kinds.EntityKinds[kind].Ordered:
 			return o, fmt.Errorf("%w: sort position needs an ordered group first; %s groups have no order", ErrInvalid, kind)
 		}
-		o.expr = fmt.Sprintf(`coalesce((SELECT min(m.position) FROM %s m WHERE m.tenant_id = f.tenant_id AND m.group_id = @d_pgroup
+		o.expr = fmt.Sprintf(`coalesce((SELECT min(m.position) FROM %s m WHERE m.tenant_id = f.tenant_id AND m.entity_id = @d_pgroup
  AND m.content_id = f.content_id AND (m.version_id IS NULL OR m.version_id = f.version_id) AND m.state = 'active'
  AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())), 2147483647)::bigint`, s.t.memberships)
-		o.cast, o.desc, o.edition, o.args["d_pgroup"] = "bigint", false, true, group
+		o.cast, o.desc, o.edition, o.args["d_pgroup"] = "bigint", false, true, entity
 	case SortRandom:
 		o.expr, o.cast, o.desc = "md5(f.content_id || @d_seed::text)", "text", false
 	default:
@@ -641,7 +641,7 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 		dir, cmp = "DESC", "<"
 	}
 	// Order the contents first, then pick each one's version. A key every
-	// version shares groups in the sort's order, so an index can end the scan
+	// version shares entities in the sort's order, so an index can end the scan
 	// at the page; an edition's key is read from the edition the card shows.
 	if cur.ID != "" {
 		args["d_cv"], args["d_cid"] = cur.Value, cur.ID

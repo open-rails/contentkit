@@ -25,13 +25,13 @@ var (
 
 // Config is the application's content model.
 type Config struct {
-	Languages      []string             `json:"languages" yaml:"languages"`
-	Tiers          []string             `json:"tiers,omitempty" yaml:"tiers"`
-	TokenClaims    []string             `json:"token_claims,omitempty" yaml:"token_claims"`
-	Restrictions   []string             `json:"restrictions,omitempty" yaml:"restrictions"`
-	ContentFilters ContentFilters       `json:"content_filters,omitempty" yaml:"content_filters"`
-	Kinds          map[string]Kind      `json:"kinds" yaml:"kinds"`
-	GroupKinds     map[string]GroupKind `json:"entity_kinds,omitempty" yaml:"group_kinds"`
+	Languages      []string              `json:"languages" yaml:"languages"`
+	Tiers          []string              `json:"tiers,omitempty" yaml:"tiers"`
+	TokenClaims    []string              `json:"token_claims,omitempty" yaml:"token_claims"`
+	Restrictions   []string              `json:"restrictions,omitempty" yaml:"restrictions"`
+	ContentFilters ContentFilters        `json:"content_filters,omitempty" yaml:"content_filters"`
+	Kinds          map[string]Kind       `json:"kinds" yaml:"kinds"`
+	EntityKinds    map[string]EntityKind `json:"entity_kinds,omitempty" yaml:"entity_kinds"`
 }
 
 // ContentFilters is one app's shared entity-filter policy. Filters apply to
@@ -48,7 +48,7 @@ func (c ContentFilters) Clone() ContentFilters {
 	for i, domain := range out.Domains {
 		domain.Hosts = slices.Clone(domain.Hosts)
 		if domain.RequireEntities != nil {
-			domain.RequireEntities = make(map[string][]GroupRef, len(domain.RequireEntities))
+			domain.RequireEntities = make(map[string][]EntityRef, len(domain.RequireEntities))
 			for kind, refs := range c.Domains[i].RequireEntities {
 				domain.RequireEntities[kind] = slices.Clone(refs)
 			}
@@ -69,15 +69,15 @@ func (c ContentFilters) Clone() ContentFilters {
 // the fallback for unmatched hosts. Name is its stable branding/activity identity;
 // entity display names belong to entity records, never policy config.
 type Domain struct {
-	Name            string                `json:"name" yaml:"name"`
-	Hosts           []string              `json:"hosts,omitempty" yaml:"hosts,omitempty"`
-	RequireEntities map[string][]GroupRef `json:"require_entities,omitempty" yaml:"require_entities,omitempty"`
-	Filters         []ContentFilter       `json:"filters,omitempty" yaml:"filters,omitempty"`
+	Name            string                 `json:"name" yaml:"name"`
+	Hosts           []string               `json:"hosts,omitempty" yaml:"hosts,omitempty"`
+	RequireEntities map[string][]EntityRef `json:"require_entities,omitempty" yaml:"require_entities,omitempty"`
+	Filters         []ContentFilter        `json:"filters,omitempty" yaml:"filters,omitempty"`
 }
 
 // Requires reports whether any content kind requires this entity. Required
 // entities never appear as optional controls that could empty that selection.
-func (d Domain) Requires(ref GroupRef) bool {
+func (d Domain) Requires(ref EntityRef) bool {
 	for _, refs := range d.RequireEntities {
 		if slices.Contains(refs, ref) {
 			return true
@@ -86,8 +86,8 @@ func (d Domain) Requires(ref GroupRef) bool {
 	return false
 }
 
-// GroupRef names an entity by kind and canonical slug.
-type GroupRef struct {
+// EntityRef names an entity by kind and canonical slug.
+type EntityRef struct {
 	Kind string `json:"kind" yaml:"kind"`
 	Slug string `json:"slug" yaml:"slug"`
 }
@@ -96,9 +96,9 @@ type GroupRef struct {
 // UserToggle allows reader overrides. Internal and required entities are
 // never reader-toggleable, irrespective of UserToggle.
 type ContentFilter struct {
-	Group      GroupRef `json:"-" yaml:",inline"`
-	Visible    bool     `json:"visible" yaml:"visible"`
-	UserToggle *bool    `json:"user_toggle,omitempty" yaml:"user_toggle,omitempty"`
+	Entity     EntityRef `json:"-" yaml:",inline"`
+	Visible    bool      `json:"visible" yaml:"visible"`
+	UserToggle *bool     `json:"user_toggle,omitempty" yaml:"user_toggle,omitempty"`
 }
 
 // Toggleable reports whether this rule permits reader overrides. The caller
@@ -137,7 +137,7 @@ type Kind struct {
 	CommentModes []string `json:"comment_modes,omitempty" yaml:"comment_modes"`
 	// Route is the URL segment: /{lang}/{route}/{CODE}/{slug}.
 	Route string `json:"route" yaml:"route"`
-	// PathEntity names one of Groups whose slug prefixes the title in the
+	// PathEntity names one of Entities whose slug prefixes the title in the
 	// decorative path, /{lang}/{route}/{CODE}/{entity}/{title}, for SEO.
 	PathEntity string `json:"path_entity,omitempty" yaml:"path_entity"`
 	// Presentation tells contentkit-ui how to show it: reader, player or post.
@@ -145,8 +145,8 @@ type Kind struct {
 	Versions     VersionRules `json:"versions" yaml:"versions"`
 	// Segments enables ordered, individually released ranges (chapters).
 	Segments bool `json:"segments,omitempty" yaml:"segments"`
-	// Groups are the group kinds content of this kind may join.
-	Groups     []string             `json:"entities,omitempty" yaml:"groups"`
+	// Entities are the entity kinds content of this kind may join.
+	Entities   []string             `json:"entities,omitempty" yaml:"entities"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
@@ -234,7 +234,7 @@ type Locked struct {
 const (
 	ShowDescription = "description" // the content's and versions' descriptions
 	ShowCover       = "cover"
-	ShowGroups      = "entities"
+	ShowEntities    = "entities"
 	ShowAttributes  = "attributes" // the content's and versions' attributes
 	ShowLength      = "length"     // versions' page counts, durations and segments
 	ShowReactions   = "reactions"  // like and dislike counts; locked viewers may react
@@ -243,11 +243,11 @@ const (
 )
 
 // Shown are the properties a Locked view may show.
-var Shown = []string{ShowDescription, ShowCover, ShowGroups, ShowAttributes, ShowLength, ShowReactions, ShowFavorites, ShowComments}
+var Shown = []string{ShowDescription, ShowCover, ShowEntities, ShowAttributes, ShowLength, ShowReactions, ShowFavorites, ShowComments}
 
 // DefaultLocked shows a kind's metadata and cover: no preview, counts or
 // comments.
-var DefaultLocked = Locked{Show: []string{ShowDescription, ShowCover, ShowGroups, ShowAttributes, ShowLength}}
+var DefaultLocked = Locked{Show: []string{ShowDescription, ShowCover, ShowEntities, ShowAttributes, ShowLength}}
 
 // LockedView is k's Locked, else DefaultLocked.
 func (k Kind) LockedView() Locked {
@@ -322,31 +322,31 @@ const (
 	VersionScope MembershipScope = "version"
 )
 
-// GroupKind is one kind of grouping: tag, artist, series, channel, rail, ...
-type GroupKind struct {
+// EntityKind is one kind of grouping: tag, artist, series, channel, rail, ...
+type EntityKind struct {
 	Route string `json:"route,omitempty" yaml:"route"`
 	// Ordered members carry positions (series, playlists, rails).
 	Ordered bool `json:"ordered,omitempty" yaml:"ordered"`
-	// Parent is the group kind a group may sit under (series under series).
+	// Parent is the entity kind an entity may sit under (series under series).
 	Parent string `json:"parent,omitempty" yaml:"parent"`
-	// ScopedBy makes slugs unique within a group of that kind (character
+	// ScopedBy makes slugs unique within an entity of that kind (character
 	// within series).
 	ScopedBy string `json:"scoped_by,omitempty" yaml:"scoped_by"`
 	// Owner is "site" (staff-managed) or "user" (channels, playlists): a
-	// signed-in person creates a user-owned group and owns it.
+	// signed-in person creates a user-owned entity and owns it.
 	Owner string `json:"owner,omitempty" yaml:"owner"`
-	// MaxPerOwner caps the active groups of the kind one person owns; 0 is
+	// MaxPerOwner caps the active entities of the kind one person owns; 0 is
 	// no cap. Staff are not capped.
 	MaxPerOwner int `json:"max_per_owner,omitempty" yaml:"max_per_owner"`
 	// Avatar gives site-owned entities a square avatar beside their cover;
 	// user-owned kinds always have one.
 	Avatar bool `json:"avatar,omitempty" yaml:"avatar"`
 	// Uploads limit what editors other than staff upload to a user-owned
-	// group's media.
+	// entity's media.
 	Uploads UploadLimits `json:"uploads,omitzero" yaml:"uploads"`
-	// Sellable groups carry offers; their key unlocks every member.
+	// Sellable entities carry offers; their key unlocks every member.
 	Sellable bool `json:"sellable,omitempty" yaml:"sellable"`
-	// AuthScope groups name an AuthKit group whose permissions govern their
+	// AuthScope entities name an AuthKit group whose permissions govern their
 	// content (OnlyDemo channels).
 	AuthScope bool `json:"auth_scope,omitempty" yaml:"auth_scope"`
 	// Windows lets memberships carry active_from/active_until (rails).
@@ -360,17 +360,17 @@ type GroupKind struct {
 	// Creatable lets a content edit create an entity of the kind from a name no
 	// entity carries yet; never user-owned or authorization kinds.
 	Creatable bool `json:"creatable,omitempty" yaml:"creatable"`
-	// Roles are membership roles (publisher on an artist group).
+	// Roles are membership roles (publisher on an artist entity).
 	Roles      []string             `json:"roles,omitempty" yaml:"roles"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
 }
 
 // HasAvatar reports whether the kind's entities take an avatar.
-func (k GroupKind) HasAvatar() bool { return k.Owner == "user" || k.Avatar }
+func (k EntityKind) HasAvatar() bool { return k.Owner == "user" || k.Avatar }
 
 // AllowsMembership reports the configured ownership scopes, including the
 // legacy editor default when no explicit scopes were supplied.
-func (k GroupKind) AllowsMembership(scope MembershipScope) bool {
+func (k EntityKind) AllowsMembership(scope MembershipScope) bool {
 	if len(k.MembershipScopes) > 0 {
 		return slices.Contains(k.MembershipScopes, scope)
 	}
@@ -380,12 +380,12 @@ func (k GroupKind) AllowsMembership(scope MembershipScope) bool {
 	return scope == ContentScope
 }
 
-// UploadLimits bound a user-owned group's uploads; zero fields are off.
+// UploadLimits bound a user-owned entity's uploads; zero fields are off.
 type UploadLimits struct {
 	// FilesPerHour and BytesPerDay limit each uploader.
 	FilesPerHour int   `json:"files_per_hour,omitempty" yaml:"files_per_hour"`
 	BytesPerDay  int64 `json:"bytes_per_day,omitempty" yaml:"bytes_per_day"`
-	// QuotaBytes caps the group's stored originals.
+	// QuotaBytes caps the entity's stored originals.
 	QuotaBytes int64 `json:"quota_bytes,omitempty" yaml:"quota_bytes"`
 }
 
@@ -434,7 +434,7 @@ func (c Config) Validate() error {
 		routes[r] = owner
 		return nil
 	}
-	for name, gk := range c.GroupKinds {
+	for name, gk := range c.EntityKinds {
 		if !identRE.MatchString(name) {
 			return fmt.Errorf("%w: group kind %q", ErrInvalid, name)
 		}
@@ -458,7 +458,7 @@ func (c Config) Validate() error {
 			seenScopes[scope] = true
 		}
 		for _, ref := range []string{gk.Parent, gk.ScopedBy} {
-			if _, ok := c.GroupKinds[ref]; ref != "" && !ok {
+			if _, ok := c.EntityKinds[ref]; ref != "" && !ok {
 				return fmt.Errorf("%w: group kind %s names unknown group kind %q", ErrInvalid, name, ref)
 			}
 		}
@@ -527,12 +527,12 @@ func (c Config) Validate() error {
 				return fmt.Errorf("%w: kind %s trait %q", ErrInvalid, name, t)
 			}
 		}
-		for _, g := range k.Groups {
-			if _, ok := c.GroupKinds[g]; !ok {
+		for _, g := range k.Entities {
+			if _, ok := c.EntityKinds[g]; !ok {
 				return fmt.Errorf("%w: kind %s names unknown group kind %q", ErrInvalid, name, g)
 			}
 		}
-		if e := k.PathEntity; e != "" && (!slices.Contains(k.Groups, e) || !c.GroupKinds[e].AllowsMembership(ContentScope)) {
+		if e := k.PathEntity; e != "" && (!slices.Contains(k.Entities, e) || !c.EntityKinds[e].AllowsMembership(ContentScope)) {
 			return fmt.Errorf("%w: kind %s path_entity %q must be one of its content-level groups", ErrInvalid, name, e)
 		}
 		if err := validateAttributes("kind "+name, k.Attributes); err != nil {
@@ -549,8 +549,8 @@ func (c Config) Validate() error {
 			}
 		}
 	}
-	for _, r := range c.groupRefs() {
-		if _, ok := c.GroupKinds[r.Kind]; !ok || r.Slug == "" {
+	for _, r := range c.entityRefs() {
+		if _, ok := c.EntityKinds[r.Kind]; !ok || r.Slug == "" {
 			return fmt.Errorf("%w: group %s/%s names an unknown group kind or no slug", ErrInvalid, r.Kind, r.Slug)
 		}
 	}
@@ -568,18 +568,18 @@ func (c Config) Validate() error {
 		if len(d.Filters) > 0 && len(applies) == 0 {
 			return fmt.Errorf("%w: domain %s filters require explicit applies_to content kinds", ErrInvalid, d.Name)
 		}
-		filters := map[GroupRef]bool{}
+		filters := map[EntityRef]bool{}
 		for _, f := range d.Filters {
-			if filters[f.Group] {
-				return fmt.Errorf("%w: domain %s repeats filter %s/%s", ErrInvalid, d.Name, f.Group.Kind, f.Group.Slug)
+			if filters[f.Entity] {
+				return fmt.Errorf("%w: domain %s repeats filter %s/%s", ErrInvalid, d.Name, f.Entity.Kind, f.Entity.Slug)
 			}
-			filters[f.Group] = true
-			if d.Requires(f.Group) && !f.Visible {
-				return fmt.Errorf("%w: domain %s both requires and hides entity %s/%s", ErrInvalid, d.Name, f.Group.Kind, f.Group.Slug)
+			filters[f.Entity] = true
+			if d.Requires(f.Entity) && !f.Visible {
+				return fmt.Errorf("%w: domain %s both requires and hides entity %s/%s", ErrInvalid, d.Name, f.Entity.Kind, f.Entity.Slug)
 			}
 			for kind := range applies {
-				if !slices.Contains(c.Kinds[kind].Groups, f.Group.Kind) {
-					return fmt.Errorf("%w: domain %s filter entity kind %s cannot be associated with %s", ErrInvalid, d.Name, f.Group.Kind, kind)
+				if !slices.Contains(c.Kinds[kind].Entities, f.Entity.Kind) {
+					return fmt.Errorf("%w: domain %s filter entity kind %s cannot be associated with %s", ErrInvalid, d.Name, f.Entity.Kind, kind)
 				}
 			}
 		}
@@ -588,9 +588,9 @@ func (c Config) Validate() error {
 			if !ok {
 				return fmt.Errorf("%w: domain %s names unknown required content kind %q", ErrInvalid, d.Name, kind)
 			}
-			seen := map[GroupRef]bool{}
+			seen := map[EntityRef]bool{}
 			for _, r := range refs {
-				if seen[r] || !slices.Contains(model.Groups, r.Kind) {
+				if seen[r] || !slices.Contains(model.Entities, r.Kind) {
 					return fmt.Errorf("%w: domain %s has repeated or unsupported required entity %s/%s for %s", ErrInvalid, d.Name, r.Kind, r.Slug, kind)
 				}
 				seen[r] = true
@@ -600,14 +600,14 @@ func (c Config) Validate() error {
 	return nil
 }
 
-func (c Config) groupRefs() []GroupRef {
-	var out []GroupRef
+func (c Config) entityRefs() []EntityRef {
+	var out []EntityRef
 	for _, d := range c.ContentFilters.Domains {
 		for _, refs := range d.RequireEntities {
 			out = append(out, refs...)
 		}
 		for _, f := range d.Filters {
-			out = append(out, f.Group)
+			out = append(out, f.Entity)
 		}
 	}
 	return out
@@ -707,14 +707,14 @@ func (a Attribute) normalize(v any) (any, error) {
 	return nil, fmt.Errorf("%v is not a valid %s", v, a.Type)
 }
 
-// Routes maps every content kind and group kind with a route to it: the
+// Routes maps every content kind and entity kind with a route to it: the
 // first path segment of its pages (contenturl.Routes).
 func (c Config) Routes() map[string]string {
 	out := map[string]string{}
 	for name, k := range c.Kinds {
 		out[name] = k.Route
 	}
-	for name, gk := range c.GroupKinds {
+	for name, gk := range c.EntityKinds {
 		if gk.Route != "" {
 			out[name] = gk.Route
 		}

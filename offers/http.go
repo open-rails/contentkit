@@ -16,7 +16,7 @@ import (
 )
 
 // Handler serves the offers routes: creator and staff offer edits, free
-// group joins, the viewer's library and the staff offer list. a says who
+// entity joins, the viewer's library and the staff offer list. a says who
 // each request is; each request runs in access.WithMemo.
 func (s *Service) Handler(a auth.Authenticator) (http.Handler, error) {
 	if err := gate.Check(a, access.OffersWrite); err != nil {
@@ -39,12 +39,12 @@ type handler struct {
 	auth auth.Authenticator
 }
 
-// codeNotJoinable answers a join of a group without a free offer.
+// codeNotJoinable answers a join of an entity without a free offer.
 const codeNotJoinable = "not_joinable"
 
 const (
 	contentEditors = " For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write."
-	groupEditors   = " For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write."
+	entityEditors  = " For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write."
 )
 
 var routes = []httpapi.Route[handler]{
@@ -52,14 +52,14 @@ var routes = []httpapi.Route[handler]{
 	edit(httpapi.DELETE, "/contents/{id}/offer", "Withdraws a content item's offer; buyers keep it."+contentEditors, nil, withdrawOffer(contentTarget)),
 	edit(httpapi.PUT, "/contents/{id}/versions/{vid}/offer", "Puts an offer on one version: its version key opens it."+contentEditors, Terms{}, putOffer(versionTarget)),
 	edit(httpapi.DELETE, "/contents/{id}/versions/{vid}/offer", "Withdraws a version's offer; buyers keep it."+contentEditors, nil, withdrawOffer(versionTarget)),
-	edit(httpapi.PUT, "/entities/{id}/offer", "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing."+groupEditors,
-		Terms{}, putOffer(groupTarget)),
-	edit(httpapi.DELETE, "/entities/{id}/offer", "Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews."+groupEditors, nil, withdrawOffer(groupTarget)),
+	edit(httpapi.PUT, "/entities/{id}/offer", "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing."+entityEditors,
+		Terms{}, putOffer(entityTarget)),
+	edit(httpapi.DELETE, "/entities/{id}/offer", "Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews."+entityEditors, nil, withdrawOffer(entityTarget)),
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/entities/{id}/join", Resource: "offers", Doc: "Joins a public group free to join: grants the viewer its key. Internal entities are not joinable.",
-		Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(GroupJoin{})}, Errors: []string{httpapi.CodeNotFound, codeNotJoinable}},
+		Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(EntityJoin{})}, Errors: []string{httpapi.CodeNotFound, codeNotJoinable}},
 		Serve: httpapi.H(handler.join)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/entities/{id}/join", Resource: "offers", Doc: "Leaves a group joined free; a bought membership stays.",
-		Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(GroupJoin{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}},
+		Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(EntityJoin{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}},
 		Serve: httpapi.H(handler.leave)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/library", Resource: "offers", Doc: "The content the viewer bought, newest first, deleted content included, within this domain's hard visibility boundary.",
 		Auth: httpapi.User, Query: []httpapi.Param{httpapi.Text("language", "the language of the titles"),
@@ -82,7 +82,7 @@ func contentTarget(r *http.Request) Target { return Target{Kind: ContentTarget, 
 func versionTarget(r *http.Request) Target {
 	return Target{Kind: VersionTarget, ID: r.PathValue("vid"), Content: r.PathValue("id")}
 }
-func groupTarget(r *http.Request) Target { return Target{Kind: GroupTarget, ID: r.PathValue("id")} }
+func entityTarget(r *http.Request) Target { return Target{Kind: EntityTarget, ID: r.PathValue("id")} }
 
 func putOffer(target func(*http.Request) Target) func(handler, http.ResponseWriter, *http.Request) {
 	return func(h handler, w http.ResponseWriter, r *http.Request) {

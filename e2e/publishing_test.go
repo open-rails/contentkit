@@ -111,7 +111,7 @@ func TestPublishingArchiveSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := contentkit.Config{Scope: &scope, LegacyCatalogKey: env.Tenant, Database: contentkit.DatabaseConfig{Schema: schema}, Accounts: &contentkit.AccountsConfig{Schema: schema + "_accounts"},
-		Content: kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"artist", "series", "tag"}}}, GroupKinds: map[string]kinds.GroupKind{"artist": {Route: "artists"}, "series": {Route: "series"}, "tag": {Route: "tags"}}},
+		Content: kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Entities: []string{"artist", "series", "tag"}}}, EntityKinds: map[string]kinds.EntityKind{"artist": {Route: "artists"}, "series": {Route: "series"}, "tag": {Route: "tags"}}},
 		Media: &contentkit.MediaConfig{Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "gallery", KeepOriginals: true,
 			Uploads: []media.Upload{{Path: "cover", Types: []string{"image/png"}, MaxBytes: 1 << 20}, {Path: "originals/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}, {Path: "import/{name}", Types: []string{"application/zip"}, MaxBytes: 10 << 20}},
 			Private: []media.Private{{Name: "low", From: "originals/{name}", To: "low/{name}.webp", Image: &media.Image{Width: 64}}},

@@ -79,7 +79,7 @@ func (s *Service) PutTx(ctx context.Context, tx pgx.Tx, puts []Put) error {
 }
 
 // Withdraw ends each target's active offer, in one transaction, and queues
-// its sync, which archives the product: buyers keep theirs, and a group's
+// its sync, which archives the product: buyers keep theirs, and an entity's
 // subscribers theirs until their paid period ends, without renewing.
 // A target without an active offer is ErrNotFound.
 func (s *Service) Withdraw(ctx context.Context, targets []Target) ([]Offer, error) {
@@ -122,7 +122,7 @@ func (s *Service) Live(ctx context.Context, keys []access.Key) (map[string]Offer
 		return out, nil
 	}
 	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))
- AND ((o.target_kind = 'group' AND EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id=o.tenant_id AND g.id=o.target_id AND g.state='active' AND NOT g.internal))
+ AND ((o.target_kind = 'group' AND EXISTS (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id=o.tenant_id AND g.id=o.target_id AND g.state='active' AND NOT g.internal))
  OR (o.target_kind <> 'group' AND EXISTS (SELECT 1 FROM `+s.t.items+` c WHERE c.tenant_id=o.tenant_id
   AND c.id = CASE WHEN o.target_kind = 'content' THEN o.target_id ELSE v.content_id END AND c.kind = ANY($4::text[])
   AND c.state <> 'deleted' AND (o.target_kind <> 'version' OR v.state <> 'deleted'))))`, kinds, ids, s.sellableKinds())
@@ -168,7 +168,7 @@ func (s *Service) active(ctx context.Context, targets []Target) ([]Offer, error)
 	for i, t := range targets {
 		kinds[i], ids[i] = string(t.Kind), t.ID
 	}
-	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[])) AND (o.target_kind <> 'group' OR EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id=o.tenant_id AND g.id=o.target_id AND g.state='active' AND NOT g.internal))`, kinds, ids)
+	list, err := s.query(ctx, `o.state = 'active' AND (o.target_kind, o.target_id) IN (SELECT * FROM unnest($2::text[], $3::text[])) AND (o.target_kind <> 'group' OR EXISTS (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id=o.tenant_id AND g.id=o.target_id AND g.state='active' AND NOT g.internal))`, kinds, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +238,7 @@ func (s *Service) sellableKinds() []string {
 }
 
 // resolve checks each target exists and may be sold: a version must belong
-// to the content it names, and its content or group's kind must be sellable.
+// to the content it names, and its content or entity's kind must be sellable.
 func (s *Service) resolve(ctx context.Context, q querier, targets []Target) error {
 	// Lock all parents in one stable order before any version or offer row.
 	// Catalog bulk deletion uses this order too; caller order must not create
@@ -277,10 +277,10 @@ func (s *Service) resolve(ctx context.Context, q querier, targets []Target) erro
 			if err == nil {
 				err = q.QueryRow(ctx, `SELECT content_id=$3 FROM `+s.t.versions+` WHERE tenant_id=$1 AND id=$2 AND state<>'deleted' FOR UPDATE`, s.tenant, t.ID, t.Content).Scan(&ok)
 			}
-		case GroupTarget:
+		case EntityTarget:
 			var kind string
-			err = q.QueryRow(ctx, `SELECT kind FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2 AND state = 'active'`, s.tenant, t.ID).Scan(&kind)
-			if err == nil && !s.kinds.GroupKinds[kind].Sellable {
+			err = q.QueryRow(ctx, `SELECT kind FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = $2 AND state = 'active'`, s.tenant, t.ID).Scan(&kind)
+			if err == nil && !s.kinds.EntityKinds[kind].Sellable {
 				return fmt.Errorf("%w: group kind %s is not sellable", ErrConflict, kind)
 			}
 			ok = err == nil
@@ -291,7 +291,7 @@ func (s *Service) resolve(ctx context.Context, q querier, targets []Target) erro
 		if err != nil {
 			return err
 		}
-		if t.Kind != GroupTarget {
+		if t.Kind != EntityTarget {
 			spec, exists := s.kinds.Kinds[kind]
 			if !exists || !spec.Sellable() {
 				return fmt.Errorf("%w: content kind %s does not allow individual sales", ErrConflict, kind)
@@ -316,26 +316,26 @@ func orID(t Target) string {
 }
 
 func (s *Service) markSold(ctx context.Context, tx pgx.Tx, targets []Target) error {
-	var contents, groups []string
+	var contents, entities []string
 	for _, t := range targets {
 		switch t.Kind {
 		case ContentTarget:
 			contents = append(contents, t.ID)
 		case VersionTarget:
 			contents = append(contents, t.Content)
-		case GroupTarget:
-			groups = append(groups, t.ID)
+		case EntityTarget:
+			entities = append(entities, t.ID)
 		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET ever_sold = true WHERE tenant_id = $1 AND id = ANY($2) AND NOT ever_sold`, s.tenant, contents); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE `+s.t.groups+` SET ever_sold = true WHERE tenant_id = $1 AND id = ANY($2) AND NOT ever_sold`, s.tenant, groups)
+	_, err := tx.Exec(ctx, `UPDATE `+s.t.entities+` SET ever_sold = true WHERE tenant_id = $1 AND id = ANY($2) AND NOT ever_sold`, s.tenant, entities)
 	return err
 }
 
 // Resync queues a sync of the active offers of targets in tx, for a change
-// that moves what OpenRails shows (a content or group renamed); targets
+// that moves what OpenRails shows (a content or entity renamed); targets
 // without one cost nothing.
 func (s *Service) Resync(ctx context.Context, tx pgx.Tx, targets []Target) error {
 	kinds, ids := make([]string, len(targets)), make([]string, len(targets))
@@ -362,7 +362,7 @@ func (s *Service) Resync(ctx context.Context, tx pgx.Tx, targets []Target) error
 }
 
 // Authorize admits actor to change targets' offers (editors): staff, the
-// content's creators, and editors of the user-owned group sold or owning the
+// content's creators, and editors of the user-owned entity sold or owning the
 // content.
 func (s *Service) Authorize(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []Target) error {
 	if actor.Anonymous {

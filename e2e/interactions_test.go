@@ -17,7 +17,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/media"
 )
@@ -25,7 +25,7 @@ import (
 // A group imported by staff takes reactions, favorites and comments like
 // content; staff ban words and addresses from comments; a reader's recent
 // searches list and clear.
-func TestGroupInteractionsAndModeration(t *testing.T) {
+func TestEntityInteractionsAndModeration(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
@@ -33,7 +33,7 @@ func TestGroupInteractionsAndModeration(t *testing.T) {
 
 	var res importer.Result
 	f.want(http.StatusOK, staff, "POST", "/import", importer.Batch{Source: "e2e",
-		Groups: []importer.GroupRecord{{ExternalID: "t1", Kind: "tag", Slug: "imported"}}}, &res)
+		Entities: []importer.EntityRecord{{ExternalID: "t1", Kind: "tag", Slug: "imported"}}}, &res)
 	id := res.IDs["group"]["t1"]
 	if id == "" || len(res.Failed) > 0 {
 		t.Fatalf("import %+v", res)
@@ -48,7 +48,7 @@ func TestGroupInteractionsAndModeration(t *testing.T) {
 	}
 	var mine discovery.InteractionPage
 	f.want(http.StatusOK, user, "GET", "/me/reactions?target=entities", nil, &mine)
-	if len(mine.Items) != 1 || mine.Items[0].Group == nil || string(mine.Items[0].Group.ID) != id || mine.Items[0].Value != -1 {
+	if len(mine.Items) != 1 || mine.Items[0].Entity == nil || string(mine.Items[0].Entity.ID) != id || mine.Items[0].Value != -1 {
 		t.Fatalf("my reactions %+v", mine)
 	}
 	f.want(http.StatusOK, user, "DELETE", g+"/reaction", nil, &rc)
@@ -121,7 +121,7 @@ func TestImportedExternalIDPagination(t *testing.T) {
 	f := serve(t, w.engine(nil))
 	var imported importer.Result
 	f.want(http.StatusOK, staff, "POST", "/import", importer.Batch{Source: "e2e-external",
-		Groups: []importer.GroupRecord{
+		Entities: []importer.EntityRecord{
 			{ExternalID: "tag:1", Kind: "tag", Slug: "first"},
 			{ExternalID: "tag:2", Kind: "tag", Slug: "second"},
 			{ExternalID: "tag:3", Kind: "tag", Slug: "third"},
@@ -129,7 +129,7 @@ func TestImportedExternalIDPagination(t *testing.T) {
 	if len(imported.Failed) > 0 || len(imported.IDs["group"]) != 3 {
 		t.Fatalf("import: %+v", imported)
 	}
-	q := importer.ExternalIDsQuery{Source: "e2e-external", Lists: []importer.ExternalIDList{{Entity: importer.EntityGroup, Limit: 1}}}
+	q := importer.ExternalIDsQuery{Source: "e2e-external", Lists: []importer.ExternalIDList{{Entity: importer.RecordEntity, Limit: 1}}}
 	f.want(http.StatusUnauthorized, "", "POST", "/import/external-ids", q, nil)
 	f.want(http.StatusForbidden, user, "POST", "/import/external-ids", q, nil)
 	for n := 1; n <= 3; n++ {
@@ -140,7 +140,7 @@ func TestImportedExternalIDPagination(t *testing.T) {
 		}
 		id := page.Lists[0].IDs[0]
 		want := fmt.Sprintf("tag:%d", n)
-		if page.Lists[0].Entity != importer.EntityGroup || id.ExternalID != want || id.ID != imported.IDs["group"][want] || id.Deleted {
+		if page.Lists[0].Entity != importer.RecordEntity || id.ExternalID != want || id.ID != imported.IDs["group"][want] || id.Deleted {
 			t.Fatalf("page %d: %+v", n, page)
 		}
 		q.Lists[0].Cursor = page.Lists[0].NextCursor
@@ -158,19 +158,19 @@ func TestImportedExternalIDPagination(t *testing.T) {
 
 // A group shows in the typeahead a moment after it is made, well before the
 // next periodic sync: the write queues its documents' sync.
-func TestTypeaheadFollowsGroupWrites(t *testing.T) {
+func TestTypeaheadFollowsEntityWrites(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	f := serve(t, w.engine(nil))
 	shows := func(within time.Duration) bool {
 		name := "Nebula " + uuid.NewString()[:8]
-		var made []groups.Group
-		f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: strings.ReplaceAll(strings.ToLower(name), " ", "-"),
-			Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: name}}}}, &made)
+		var made []entities.Entity
+		f.want(http.StatusCreated, staff, "POST", "/entities", []entities.EntityInput{{Kind: "tag", Slug: strings.ReplaceAll(strings.ToLower(name), " ", "-"),
+			Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: name}}}}, &made)
 		for deadline := time.Now().Add(within); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
 			var got discovery.Typeahead
 			f.want(http.StatusOK, "", "GET", "/typeahead?entity_kinds=tag&q="+url.QueryEscape(name), nil, &got)
-			if len(got.Groups) == 1 && got.Groups[0].ID == made[0].ID {
+			if len(got.Entities) == 1 && got.Entities[0].ID == made[0].ID {
 				return true
 			}
 		}
@@ -229,12 +229,12 @@ func TestImportedLegacyURLsAndComments(t *testing.T) {
 	to := func(ext string) importer.TargetRef {
 		return importer.TargetRef{Content: &importer.Ref{ExternalID: ext}}
 	}
-	tag := func(ext string) importer.TargetRef { return importer.TargetRef{Group: &importer.Ref{ExternalID: ext}} }
+	tag := func(ext string) importer.TargetRef { return importer.TargetRef{Entity: &importer.Ref{ExternalID: ext}} }
 	var res importer.Result
 	f.want(http.StatusOK, staff, "POST", "/import", importer.Batch{Source: "hentai0-legacy",
-		Groups: []importer.GroupRecord{
-			{ExternalID: "tag:1", Kind: "tag", Slug: "colour", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Colour"}}},
-			{ExternalID: "tag:2", Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}}},
+		Entities: []importer.EntityRecord{
+			{ExternalID: "tag:1", Kind: "tag", Slug: "colour", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Colour"}}},
+			{ExternalID: "tag:2", Kind: "tag", Slug: "color", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Color"}}}},
 		Contents: []importer.ContentRecord{gallery(1, "published", "closed"), gallery(2, "published", ""), gallery(3, "draft", ""),
 			gallery(4, "deleted", "")},
 		Aliases: []importer.AliasRecord{{Kind: "video", Key: "101", Target: to("gallery:1")}, {Kind: "video", Key: "101/page", Locator: "3", Target: to("gallery:1")},
@@ -244,8 +244,8 @@ func TestImportedLegacyURLsAndComments(t *testing.T) {
 		t.Fatalf("import %+v", res.Failed)
 	}
 	g1, g2 := res.IDs["content"]["gallery:1"], res.IDs["content"]["gallery:2"]
-	var color groups.GroupDetail
-	f.want(http.StatusOK, staff, "POST", "/entities/"+res.IDs["group"]["tag:1"]+"/merge", groups.MergeInput{Into: groups.GroupID(res.IDs["group"]["tag:2"])}, nil)
+	var color entities.EntityDetail
+	f.want(http.StatusOK, staff, "POST", "/entities/"+res.IDs["group"]["tag:1"]+"/merge", entities.MergeInput{Into: entities.EntityID(res.IDs["group"]["tag:2"])}, nil)
 	f.want(http.StatusOK, "", "GET", "/entities/"+res.IDs["group"]["tag:2"], nil, &color)
 
 	key := func(kind, k string) contenturl.AliasKey {

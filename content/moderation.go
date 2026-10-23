@@ -321,7 +321,7 @@ func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int)
 }
 
 // heldComments pages held comments, of g and the content it owns when set.
-func (rt *Runtime) heldComments(ctx context.Context, page *HeldPage, after time.Time, afterID string, limit int, g *resolve.OwnerGroup) error {
+func (rt *Runtime) heldComments(ctx context.Context, page *HeldPage, after time.Time, afterID string, limit int, g *resolve.OwnerEntity) error {
 	var kind, id string
 	if g != nil {
 		kind, id = g.Kind, g.ID
@@ -330,7 +330,7 @@ func (rt *Runtime) heldComments(ctx context.Context, page *HeldPage, after time.
 			coalesce(moderation_reason, ''), moderation_verdict, updated_at, created_at, moderation_revision
 			FROM `+rt.store.t.comments+` c WHERE tenant_id = $1 AND moderation = 'held' AND deleted_at IS NULL AND (created_at, id::text) > ($2, $3)
 			AND ($5 = '' OR c.content_kind = $5 AND c.content_id = $6 OR (c.content_kind, c.content_id) IN (
-			 SELECT i.kind, i.id FROM `+rt.store.t.items+` i WHERE i.tenant_id = $1 AND i.owner_group_id = $6))
+			 SELECT i.kind, i.id FROM `+rt.store.t.items+` i WHERE i.tenant_id = $1 AND i.owner_entity_id = $6))
 			ORDER BY created_at, id LIMIT $4`, rt.tenant, after, afterID, limit, kind, id)
 	if err != nil {
 		return err

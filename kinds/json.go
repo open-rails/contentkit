@@ -7,7 +7,7 @@ import (
 	"io"
 )
 
-// The Go reference stays typed as GroupRef; files use the same flat fields as
+// The Go reference stays typed as EntityRef; files use the same flat fields as
 // require_entities, with visibility alongside kind and slug.
 type contentFilterJSON struct {
 	Kind       string `json:"kind"`
@@ -17,7 +17,7 @@ type contentFilterJSON struct {
 }
 
 func (f ContentFilter) MarshalJSON() ([]byte, error) {
-	return json.Marshal(contentFilterJSON{f.Group.Kind, f.Group.Slug, f.Visible, f.UserToggle})
+	return json.Marshal(contentFilterJSON{f.Entity.Kind, f.Entity.Slug, f.Visible, f.UserToggle})
 }
 
 func (f *ContentFilter) UnmarshalJSON(data []byte) error {
@@ -25,7 +25,7 @@ func (f *ContentFilter) UnmarshalJSON(data []byte) error {
 	if err := strictJSON(data, &next); err != nil {
 		return fmt.Errorf("%w: content filter JSON: %w", ErrInvalid, err)
 	}
-	*f = ContentFilter{Group: GroupRef{Kind: next.Kind, Slug: next.Slug}, Visible: next.Visible, UserToggle: next.UserToggle}
+	*f = ContentFilter{Entity: EntityRef{Kind: next.Kind, Slug: next.Slug}, Visible: next.Visible, UserToggle: next.UserToggle}
 	return nil
 }
 

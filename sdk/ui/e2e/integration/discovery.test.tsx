@@ -206,7 +206,7 @@ describe("discovery against the real ContentKit", () => {
     const reader = await h.user();
     render(
       <>
-        <ContentRail title="Featured" group={rail!.id} />
+        <ContentRail title="Featured" entity={rail!.id} />
         <ContentRail title="Newest" list={{ kind: "comic", groups: [t.id], sort: "title" }} />
         <ContentRail title="Continue watching" history={{ status: "in_progress" }} />
       </>,

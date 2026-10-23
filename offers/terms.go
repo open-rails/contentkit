@@ -62,13 +62,13 @@ var currencyRe = regexp.MustCompile(`^[A-Z]{3}$`)
 
 // Terms are what an offer sells for.
 type Terms struct {
-	// Amount is the price; "0" makes a group free to join.
+	// Amount is the price; "0" makes an entity free to join.
 	Amount Amount `json:"amount"`
 	// Currency is an ISO 4217 code; Config.Currency when empty.
 	Currency string `json:"currency"`
 	// AccessHours is how long a purchase opens it; none is forever.
 	AccessHours *int `json:"access_hours,omitempty"`
-	// RenewHours makes a group's offer a subscription renewing this often.
+	// RenewHours makes an entity's offer a subscription renewing this often.
 	RenewHours *int `json:"renew_hours,omitempty"`
 }
 
@@ -83,7 +83,7 @@ type Config struct {
 	// Currency is the default currency: USD when empty.
 	Currency string `json:"currency,omitempty" yaml:"currency"`
 	// Minimum is the least amount per target kind; a version without its own
-	// takes content's. Free (0) is allowed for groups only.
+	// takes content's. Free (0) is allowed for entities only.
 	Minimum map[TargetKind]Amount `json:"minimum,omitempty" yaml:"minimum"`
 	// PSPs are the payment providers selling every price.
 	PSPs []string `json:"psps,omitempty" yaml:"psps"`
@@ -112,13 +112,13 @@ func (c Config) normalize(k TargetKind, t Terms) (Terms, error) {
 		return t, fmt.Errorf("%w: currency %q is not an ISO 4217 code", ErrInvalid, t.Currency)
 	case t.Amount < 0 || t.Amount > MaxAmount:
 		return t, fmt.Errorf("%w: amount must be at most %s", ErrInvalid, MaxAmount)
-	case t.Amount == 0 && k != GroupTarget:
+	case t.Amount == 0 && k != EntityTarget:
 		return t, fmt.Errorf("%w: only a group may be free", ErrInvalid)
 	case t.Amount == 0 && (t.RenewHours != nil || t.AccessHours != nil):
 		return t, fmt.Errorf("%w: a free group takes no access or renewal hours", ErrInvalid)
 	case t.Amount > 0 && t.Amount < c.minimum(k):
 		return t, fmt.Errorf("%w: a %s sells for at least %s", ErrInvalid, k, c.minimum(k))
-	case t.RenewHours != nil && k != GroupTarget:
+	case t.RenewHours != nil && k != EntityTarget:
 		return t, fmt.Errorf("%w: only a group renews", ErrInvalid)
 	case t.RenewHours != nil && *t.RenewHours < 1, t.AccessHours != nil && *t.AccessHours < 1:
 		return t, fmt.Errorf("%w: hours must be positive", ErrInvalid)

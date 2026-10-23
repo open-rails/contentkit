@@ -87,8 +87,8 @@ func newWorld(t *testing.T, edits ...func(*openrails.Config)) *world {
 	w.client = &counting{Client: w.bill}
 	w.billing = ckopenrails.Billing(w.client)
 	w.kinds = kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium", "gold"}, TokenClaims: []string{"premium"},
-		Kinds:      map[string]kinds.Kind{"post": {Route: "p", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}}},
-		GroupKinds: map[string]kinds.GroupKind{"channel": {Owner: "user", Sellable: true}, "series": {Sellable: true, Ordered: true}, "tag": {}}}
+		Kinds:       map[string]kinds.Kind{"post": {Route: "p", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}}},
+		EntityKinds: map[string]kinds.EntityKind{"channel": {Owner: "user", Sellable: true}, "series": {Sellable: true, Ordered: true}, "tag": {}}}
 	if err := w.kinds.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func newWorld(t *testing.T, edits ...func(*openrails.Config)) *world {
 		t.Fatal(err)
 	}
 	w.offers, err = offers.New(offers.Options{Pool: pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds, Billing: w.billing, Gate: w.gate,
-		Config: offers.Config{Minimum: map[offers.TargetKind]offers.Amount{offers.ContentTarget: 500_000, offers.GroupTarget: 1_000_000}}})
+		Config: offers.Config{Minimum: map[offers.TargetKind]offers.Amount{offers.ContentTarget: 500_000, offers.EntityTarget: 1_000_000}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,14 +156,14 @@ func (w *world) group(kind, name, owner string) string {
 	if owner != "" {
 		o = &owner
 	}
-	w.exec(`INSERT INTO `+w.table("content_groups")+` (tenant_id, id, kind, slug, owner_user_id) VALUES ($1, $2, $3, $4, $5)`,
+	w.exec(`INSERT INTO `+w.table("content_entities")+` (tenant_id, id, kind, slug, owner_user_id) VALUES ($1, $2, $3, $4, $5)`,
 		tenant, id, kind, strings.ToLower(strings.ReplaceAll(name, " ", "-")), o)
-	w.exec(`INSERT INTO `+w.table("content_group_names")+` (tenant_id, group_id, language, kind, name) VALUES ($1, $2, 'en', 'name', $3)`, tenant, id, name)
+	w.exec(`INSERT INTO `+w.table("content_entity_names")+` (tenant_id, entity_id, language, kind, name) VALUES ($1, $2, 'en', 'name', $3)`, tenant, id, name)
 	return id
 }
 
 func (w *world) member(group, content string) {
-	w.exec(`INSERT INTO `+w.table("content_memberships")+` (tenant_id, group_id, content_id) VALUES ($1, $2, $3)`, tenant, group, content)
+	w.exec(`INSERT INTO `+w.table("content_memberships")+` (tenant_id, entity_id, content_id) VALUES ($1, $2, $3)`, tenant, group, content)
 }
 
 // items reads versions' Items the way listings do: the effective rule from
@@ -176,7 +176,7 @@ func (w *world) items(versions ...string) []access.Item {
 		var crule, vrule []byte
 		var groups []string
 		if err := w.pool.QueryRow(w.t.Context(), `SELECT c.id, c.access, v.access,
-				coalesce((SELECT array_agg(m.group_id ORDER BY m.group_id) FROM `+w.table("content_memberships")+` m
+				coalesce((SELECT array_agg(m.entity_id ORDER BY m.entity_id) FROM `+w.table("content_memberships")+` m
 					WHERE m.tenant_id = c.tenant_id AND m.content_id = c.id AND (m.version_id IS NULL OR m.version_id = v.id)), '{}')
 			FROM `+w.table("content_versions")+` v JOIN `+w.table("content_items")+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
 			WHERE v.tenant_id = $1 AND v.id = $2`, tenant, v).Scan(&content, &crule, &vrule, &groups); err != nil {
@@ -196,7 +196,7 @@ func (w *world) items(versions ...string) []access.Item {
 		if err := rule.Validate(w.kinds); err != nil {
 			w.t.Fatal(err)
 		}
-		out[i] = access.Item{Content: content, Version: v, Rule: rule, Groups: groups}
+		out[i] = access.Item{Content: content, Version: v, Rule: rule, Entities: groups}
 	}
 	return out
 }
@@ -238,7 +238,7 @@ func (w *world) holdsNow(viewer access.Actor, key string) bool {
 
 func ck(id string) string     { return must(access.ContentKey(tenant, id)).String() }
 func vk(c, v string) string   { return must(access.VersionKey(tenant, c, v)).String() }
-func gk(id string) string     { return must(access.GroupKey(tenant, id)).String() }
+func gk(id string) string     { return must(access.EntityKey(tenant, id)).String() }
 func key(s string) access.Key { return must(access.ParseKey(s)) }
 func uid(n int) string        { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
 func ptr[T any](v T) *T       { return &v }

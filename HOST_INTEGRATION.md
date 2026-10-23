@@ -51,14 +51,14 @@ ContentKit names its staff permissions, always the full
 | `access.CommentsModerate` | `root:comments:moderate` | edit, delete and restore anyone's comments; list every comment |
 | `access.CommentsBan` | `root:comments:ban` | ban users from commenting anywhere in the tenant |
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
-| `access.EntitiesWrite` | `root:entities:write` | create, edit, merge and delete groups, and set memberships |
+| `access.EntitiesWrite` | `root:entities:write` | create, edit, merge and delete entities, and set memberships |
 
-A user-owned group kind with `auth_scope` (channels) has its own
-permissions, held in each group's AuthKit scope, whose persona declares
-`access.GroupPermissions(kind)`: `{kind}:content:write` (its content),
-`{kind}:settings:manage` (the group), `{kind}:offers:write`,
+A user-owned entity kind with `auth_scope` (channels) has its own
+permissions, held in each entity's AuthKit scope, whose persona declares
+`access.EntityPermissions(kind)`: `{kind}:content:write` (its content),
+`{kind}:settings:manage` (the entity), `{kind}:offers:write`,
 `{kind}:media:write` and `{kind}:comments:moderate` (delete, hold, release
-and ban on the group's content). The group's owner holds them all.
+and ban on the entity's content). The entity's owner holds them all.
 
 Declare them in the auth's roles from the constants, so a rename breaks the
 build instead of drifting:
@@ -105,7 +105,7 @@ trusted-proxy step before the mount, or every anonymous visitor is the proxy.
 
 A host mounting a module alone passes the same Auth: `content.Options.Auth`
 (and `UserInfo`), `media.HandlerOptions.Auth`,
-`media.UploadHandlerOptions.Auth`, `groups.Store.Handler(auth)`;
+`media.UploadHandlerOptions.Auth`, `entities.Store.Handler(auth)`;
 `contenturl.Router.Handler` needs none.
 
 Hosts use the routes and `ck.Client()` (the same surface in process).
@@ -127,8 +127,8 @@ Mint ids with Postgres 18 `uuidv7()` or `contentref.NewID()`;
 `contentref.Parse` validates untrusted input. A content id names the media
 folder `{tenant}/{kind}/{id}/`, so a reused id (an integer sequence restarted
 after a reset) would hand a new item another's files.
-Group ids follow the same rule: a group is a search document keyed by its
-id (`CreateGroups` mints one when omitted).
+Entity ids follow the same rule: an entity is a search document keyed by its
+id (`CreateEntities` mints one when omitted).
 
 Media never adopts leftovers:
 
@@ -178,7 +178,7 @@ prefix, the code, resolution and canonicalization.
   never changed or reused. `ParseCode` accepts any case, `O`→`0`, `I`/`L`→`1`
   and hyphens. A request with another spelling of the code is redirected to the
   canonical one.
-- **Registration.** Groups and content items register themselves (group
+- **Registration.** Entities and content items register themselves (entity
   slugs come from canonical names, one per language; content slugs from each
   language's slug or title). The bulk import keeps a record's code (`code`).
 - **Versions.** A gallery's editions share its page; the language prefix picks
@@ -202,14 +202,14 @@ byRef, _ := urls.Links(ctx, refs) // list pages: code and slugs for each ref
   slash gets a 301 to the canonical path, with the query (`?v=` included)
   kept. An unprefixed request (an old link) goes to the language
   Accept-Language names, else the default (the first of `Languages`, which
-  the router requires). Every path ContentKit answers (content, cards, groups,
+  the router requires). Every path ContentKit answers (content, cards, entities,
   the codes and alias lookups, sitemap feeds) carries its language prefix and
   that language's slug. `Visibility` returns `Visible`, `Hidden` or `Gone`.
   `Hidden` behaves like an unknown code and serves the host's 404 without
   leaking the slug. `Gone` answers 410. The engine's codes route group answers
-  content items' visibility itself (`catalog.Store.Visibility`). For groups, map the group state: a deleted group
-  is `Gone`, and merged groups already resolve to their survivor.
-  `kinds.Config.Routes()` maps every content and group kind to its route.
+  content items' visibility itself (`catalog.Store.Visibility`). For entities, map the entity state: a deleted entity
+  is `Gone`, and merged entities already resolve to their survivor.
+  `kinds.Config.Routes()` maps every content and entity kind to its route.
   A canonical request reaches the page
   with `FromContext(ctx)`, and gets a `Link: <…>; rel="canonical"` header when
   `BaseURL` is set.
@@ -267,14 +267,14 @@ kinds:
 
 Its id, code, path, title, languages, traits, owner, creators and paywall
 (`decision`) always show; its body and private media never do. A kind
-without `locked` shows `description, cover, groups, attributes, length`: no
+without `locked` shows `description, cover, entities, attributes, length`: no
 preview, counts or comments. With it, exactly what it names.
 
 | `show` | Withheld otherwise |
 |---|---|
 | `description`, `attributes` | the content's and locked versions' (empty) |
-| `cover` | detail and cards (none); nor is it a group's automatic cover |
-| `groups` | detail and cards (none) |
+| `cover` | detail and cards (none); nor is it an entity's automatic cover |
+| `entities` | detail and cards (none) |
 | `length` | versions' and cards' `pages` and `duration_ms`, versions' `segments`; the reader plan's `pages` and locked segments |
 | `reactions` | like and dislike counts (cards, `GET .../reaction`); liking and disliking answer `403 forbidden` |
 | `favorites` | favorite counts (cards, `.../favorite`); favoriting needs only visibility: a wishlist is the reader's own |
@@ -284,10 +284,10 @@ preview, counts or comments. With it, exactly what it names.
 Hidden counts are absent, never zero. `preview` is the free pages or
 segments when the access rule names none; a rule's own `preview` wins.
 Detail, cards (lists, search, typeahead, rails, similar, recommendations,
-group pages, `me` favorites and history), the reader plan and interactions
+entity pages, `me` favorites and history), the reader plan and interactions
 apply it; the media read API lists a locked item's public files alone (its
 cover, and previews where named), never its private files or their count.
-Staff, creators and owner-group editors see everything. Sitemaps,
+Staff, creators and owner-entity editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
 
@@ -317,7 +317,7 @@ media:
   access check, before the quota, for files and zips. The request carries
   the actor, the tiers it holds, `Editor`, the version, its kind, its
   `Language` and `Title` (in that language when it has one there), its
-  groups (`{kind, slug, name, attributes}`, its own and its content's, named in its
+  entities (`{kind, slug, name, attributes}`, its own and its content's, named in its
   language), its effective `access.Rule`, `Released` (when it went live) and
   `Pages` (0 for a file). The decision allows it, or refuses with the host's
   `Reason` and `AvailableAt` (403 `download_unavailable`, nothing charged),
@@ -342,14 +342,14 @@ media:
 
 The content module owns comments, reactions, favorites and polls in
 ContentKit's `content_*` interaction tables. They target ContentKit's own
-content items (optionally one version, `?version=`) and groups, stored under
+content items (optionally one version, `?version=`) and entities, stored under
 the target's kind from `kinds.Config` and its id: `(tenant_id, content_kind,
 content_id, content_version_id)`. Routes are
 `/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment` and
 the same under `/v1/entities/{id}/`, then `/comments/{cid}/...`,
 `/comments/latest`, `/comments/admin?content_kind=&author=`, `/polls...`,
 `/moderation/...`, `/comment-bans...` and `/global-comment-bans...`. A merged
-group answers as its survivor; a deleted one, or content the request's site
+entity answers as its survivor; a deleted one, or content the request's site
 excludes, is `404`.
 
 Comments carry a `language` (one of the site's, or none): `?language=`
@@ -416,7 +416,7 @@ order until staff reorder; contentkit-ui `defaultVersion`, Go
 `catalog.DefaultVersion`). Cards show that version and its cover and link to
 the language page; a card a filter narrows to another version links with
 `?v=`. Detail carries every version's `cover`; `Content.cover` is the default
-edition's (meta tags). Group covers and sitemap `image`s follow the same rule
+edition's (meta tags). Entity covers and sitemap `image`s follow the same rule
 per language.
 
 Nothing stores an image URL: a public file's name carries a generation that
@@ -629,7 +629,7 @@ single-shard replica set, and route its connection pool only within that set.
 Cleanup verifies Keeper membership and waits for cluster-wide synchronization
 before copying. Missing, unhealthy or incomplete replica configuration keeps
 cleanup pending before moving signal data. Counts retain their totals while
-the signed-in/anonymous reader split changes. Privileged content/group imports
+the signed-in/anonymous reader split changes. Privileged content/entity imports
 and moderator provenance remain host responsibilities; this is not a general
 backup-restore or privileged-write policy.
 
@@ -697,8 +697,8 @@ favorites of fenced subjects never export.
 ## Search documents
 
 ContentKit builds its documents: one per content item and language from the
-catalog (title, aliases, its groups' names as keywords; a held edit indexes
-the approved text) and one per group and language. Writes mark them dirty in
+catalog (title, aliases, its entities' names as keywords; a held edit indexes
+the approved text) and one per entity and language. Writes mark them dirty in
 their own transaction; discovery's search applies the catalog's visibility
 rule (`catalog.Viewer`) inside every retrieval route, before any limit.
 
@@ -720,9 +720,9 @@ that fits the reader (`display_language` first, then position).
   serving it), `display_language`, `mode` (`lock` marks locked cards,
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
   `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
-  `position` in the first of `groups`, which must be of an ordered group
+  `position` in the first of `groups`, which must be of an ordered entity
   kind, `random`), `cursor`, `limit`. A reader's content filters never hide
-  a group's content from a list requiring that group: a hidden tag's page
+  an entity's content from a list requiring that entity: a hidden tag's page
   shows what its count counts, while other lists leave it out. A card's
   `access` has the reader's decision (`allowed`, `sell`) and the version's
   effective rule for everyone (`level`, `tiers`; `public` once free), and
@@ -769,7 +769,7 @@ that fits the reader (`display_language` first, then position).
 - `GET|DELETE /me/history`, `POST /signals` (explicit clicks; signed out,
   `session` names the browser), `POST /exposures`.
 - `GET /me/favorites`, `GET /me/reactions`: what the reader favorited or
-  liked and disliked, contents as cards or groups, most recent first.
+  liked and disliked, contents as cards or entities, most recent first.
 - `GET /sitemap/contents?kind=`, `GET /sitemap/entities?kind=` (open): the
   request site's live, listed pages by id (`cursor`, up to 10000 a page),
   each with `lastmod` and its path per language it serves. Content filters
@@ -785,7 +785,7 @@ that fits the reader (`display_language` first, then position).
   people's and those unused for 180 days. Erasure deletes them.
 
 A card carries title and path in the display language, cover renditions, the
-version (languages, traits, pages, duration), the version's groups with pages
+version (languages, traits, pages, duration), the version's entities with pages
 by kind, likes, dislikes, favorites and all-time viewers, the access decision
 (`allowed`, `sell`, `requires`, `preview`, `releases`), the signed-in
 reader's favorite and progress, `published_at` and attributes. Content
@@ -825,7 +825,7 @@ layouts.
   such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
   writes).
 - **Content versions.** `media/versions` answers media's hooks from the
-  content model: editors (staff, creators, owner-group editors) upload, a
+  content model: editors (staff, creators, owner-entity editors) upload, a
   person their own avatar; reads follow the catalog's
   visibility, plus segments' release and the rule's preview;
   a version's media writes its pages, duration, size and
@@ -892,7 +892,7 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
 	Hooks:   media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 ```
 
-- **Site images.** A kind no content or group kind owns (nor `Avatars`, nor
+- **Site images.** A kind no content or entity kind owns (nor `Avatars`, nor
   `poll`) holds images of records the host keeps, keyed by the host's id:
   Doujins' translation requests' covers. In the engine anyone reads its
   public files (`GET /v1/media/{kind}/{id}`) and holders of
@@ -1420,20 +1420,25 @@ the host's periodic jobs. The worker migrates its schema itself.
 - **Visibility**: wire `Hooks.Resolver` and call `ExposeTx` on every
   visibility change; `DeleteItemsTx` removes `public/` first.
 
-## Groups
+## Entities
 
-`groups.Store` owns one tenant's groups in ContentKit's schema; their kinds
-come from `kinds.Config.GroupKinds`. Content joins a group at content level or,
-for a `version_level` kind, one version; `SetContentGroups` replaces a
-content's memberships in the kinds it names. Membership writes, group
-deletes, parent moves and merges keep `content_facets.group_ids` current (a
-version's effective groups, ancestors included: `EffectiveGroups`).
-`Options.ContentChanged` runs in the same transaction for whatever else
-derives from them. Engine jobs: `Recount` (every 15 minutes: (counts per group, content kind and
-language from the facets, and automatic covers) and `RefreshWindows`
-(every minute: featured-rail windows). The engine's search job builds group
-documents. The group route group serves `/v1/entities…` and
-`/v1/contents/{id}/entities`; writes need `root:entities:write`.
+`entities.Store` owns the app's artists, tags, series, characters, channels and
+collections; their kinds come from `kinds.Config.EntityKinds`. Shared and
+version-level associations are replaced independently. Writes refresh timeless
+association facets in the same transaction; readers apply dated associations
+at runtime. Counts and automatic covers are read from current rows, without
+recount or window jobs. Only configured user-owned or permission-scoped entity
+kinds schedule lifecycle recovery. The entity routes remain `/v1/entities…`
+and `/v1/contents/{id}/entities`.
+
+Keyword documents enrich content with timeless active associations and their
+ancestors. A static entry in a window-enabled rail still contributes keywords;
+a dated entry is queried at runtime and never needs a clock-driven reindex.
+
+Legacy HTTP fields (`group_id`, `groups`, `exclude_groups`, `owner_group_id`),
+access values (`group`, `group_ppv`), billing key namespaces (`:group:`) and
+AuthKit permission strings and deterministic scope identities retain their
+encodings. They refer to entities; real AuthKit permission groups remain groups.
 
 ## Preference boundary (reactions and favorites into the signal plane)
 

@@ -18,10 +18,10 @@ func TestHistoricalActivityRanksWindowBeforeVisiblePagination(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	const database = "contentkit_historical_activity_test"
 	f := newFixture(t, env.Fresh(t, database), database)
-	f.group("tag", "romance", "big-breasts", "yaoi")
-	f.seed(item{n: 1, titles: map[string]string{"en": "Alpha"}, age: 100 * 24 * time.Hour, attrs: map[string]any{"format": "manga"}, versions: []ver{{langs: []string{"en"}, pages: 10}}, groups: []string{"romance"}},
-		item{n: 2, titles: map[string]string{"en": "Bravo"}, age: 100 * 24 * time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}, pages: 10}}, groups: []string{"big-breasts"}},
-		item{n: 3, titles: map[string]string{"ja": "チャーリー"}, age: 100 * 24 * time.Hour, restrictions: []string{"restricted"}, versions: []ver{{langs: []string{"ja"}, pages: 10}}, groups: []string{"yaoi"}},
+	f.entity("tag", "romance", "big-breasts", "yaoi")
+	f.seed(item{n: 1, titles: map[string]string{"en": "Alpha"}, age: 100 * 24 * time.Hour, attrs: map[string]any{"format": "manga"}, versions: []ver{{langs: []string{"en"}, pages: 10}}, entities: []string{"romance"}},
+		item{n: 2, titles: map[string]string{"en": "Bravo"}, age: 100 * 24 * time.Hour, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}, pages: 10}}, entities: []string{"big-breasts"}},
+		item{n: 3, titles: map[string]string{"ja": "チャーリー"}, age: 100 * 24 * time.Hour, restrictions: []string{"restricted"}, versions: []ver{{langs: []string{"ja"}, pages: 10}}, entities: []string{"yaoi"}},
 		item{n: 4, titles: map[string]string{"en": "Future edition"}, age: 100 * 24 * time.Hour, versions: []ver{{langs: []string{"en"}, future: true}}},
 		item{n: 5, titles: map[string]string{"en": "Draft"}, age: 100 * 24 * time.Hour, draft: true, versions: []ver{{langs: []string{"en"}, pages: 10}}},
 		item{n: 6, titles: map[string]string{"en": "Deleted"}, age: 100 * 24 * time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}, pages: 10}}},

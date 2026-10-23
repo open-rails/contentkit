@@ -68,7 +68,7 @@ function Rails() {
   const featured = q.get("featured");
   return (
     <>
-      {featured && <ContentRail title="Featured" group={featured} href={href} />}
+      {featured && <ContentRail title="Featured" entity={featured} href={href} />}
       <ContentRail title="Newest" list={{ kind: q.get("kind") ?? "comic", groups, sort: "newest" }} href={href} more={<a href="/content.html?view=listing">All</a>} />
       <ContentRail title="Continue watching" history={{ status: "in_progress" }} href={href} />
     </>

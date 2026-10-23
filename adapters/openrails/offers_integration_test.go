@@ -174,7 +174,7 @@ func TestOfferTargets(t *testing.T) {
 
 	out, err := w.offers.Put(ctx, []offers.Put{
 		{Target: offers.Target{Kind: offers.VersionTarget, ID: v, Content: c}, Terms: offers.Terms{Amount: 1_000_000}},
-		{Target: offers.Target{Kind: offers.GroupTarget, ID: channel}, Terms: offers.Terms{Amount: 4_000_000, RenewHours: &monthly}},
+		{Target: offers.Target{Kind: offers.EntityTarget, ID: channel}, Terms: offers.Terms{Amount: 4_000_000, RenewHours: &monthly}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -189,11 +189,11 @@ func TestOfferTargets(t *testing.T) {
 		t.Fatalf("group product %+v %+v", p, prices)
 	}
 	var sold bool
-	if err := w.pool.QueryRow(ctx, `SELECT ever_sold FROM `+w.table("content_groups")+` WHERE id = $1`, channel).Scan(&sold); err != nil || !sold {
+	if err := w.pool.QueryRow(ctx, `SELECT ever_sold FROM `+w.table("content_entities")+` WHERE id = $1`, channel).Scan(&sold); err != nil || !sold {
 		t.Fatalf("group ever_sold %v %v", sold, err)
 	}
 	// Free again: no price is on sale and the sync stops every renewal.
-	if _, err := w.offers.Put(ctx, []offers.Put{{Target: offers.Target{Kind: offers.GroupTarget, ID: channel}}}); err != nil {
+	if _, err := w.offers.Put(ctx, []offers.Put{{Target: offers.Target{Kind: offers.EntityTarget, ID: channel}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.offers.Sync(ctx, []offers.Target{out[1].Target}); err != nil {
@@ -214,8 +214,8 @@ func TestOfferTargets(t *testing.T) {
 		"over maximum":      {offers.Put{Target: offers.Target{Kind: offers.ContentTarget, ID: c}, Terms: offers.Terms{Amount: offers.MaxAmount + 1}}, offers.ErrInvalid},
 		"version elsewhere": {offers.Put{Target: offers.Target{Kind: offers.VersionTarget, ID: v, Content: other}, Terms: offers.Terms{Amount: 1_000_000}}, offers.ErrNotFound},
 		"unknown content":   {offers.Put{Target: offers.Target{Kind: offers.ContentTarget, ID: uid(77)}, Terms: offers.Terms{Amount: 1_000_000}}, offers.ErrNotFound},
-		"unsellable group":  {offers.Put{Target: offers.Target{Kind: offers.GroupTarget, ID: tag}, Terms: offers.Terms{Amount: 1_000_000}}, offers.ErrConflict},
-		"group below min":   {offers.Put{Target: offers.Target{Kind: offers.GroupTarget, ID: channel}, Terms: offers.Terms{Amount: 500_000}}, offers.ErrInvalid},
+		"unsellable group":  {offers.Put{Target: offers.Target{Kind: offers.EntityTarget, ID: tag}, Terms: offers.Terms{Amount: 1_000_000}}, offers.ErrConflict},
+		"group below min":   {offers.Put{Target: offers.Target{Kind: offers.EntityTarget, ID: channel}, Terms: offers.Terms{Amount: 500_000}}, offers.ErrInvalid},
 	} {
 		if _, err := w.offers.Put(ctx, []offers.Put{tc.put}); !errors.Is(err, tc.want) {
 			t.Errorf("%s: %v, want %v", name, err, tc.want)

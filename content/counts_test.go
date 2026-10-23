@@ -49,7 +49,7 @@ func TestCounts_RollupAggregates(t *testing.T) {
 }
 
 // Reactions on groups are each actor's own, signed in or by IP.
-func TestReactions_PerActorOnGroups(t *testing.T) {
+func TestReactions_PerActorOnEntities(t *testing.T) {
 	res := &fakeResolver{}
 	for _, id := range []string{cid(1), cid(2), cid(3)} {
 		res.set("tag", id, true, true)

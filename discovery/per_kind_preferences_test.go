@@ -15,20 +15,20 @@ import (
 
 func TestSharedEntityPreferencesAcrossContentKinds(t *testing.T) {
 	cfg := siteConfig()
-	cfg.Kinds["blog"] = kinds.Kind{Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}, Groups: []string{"tag"}}
+	cfg.Kinds["blog"] = kinds.Kind{Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}, Entities: []string{"tag"}}
 	cfg.ContentFilters = kinds.ContentFilters{AppliesTo: []string{"gallery", "blog"}, Domains: []kinds.Domain{
-		{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true}, {Group: kinds.GroupRef{Kind: "tag", Slug: "furry"}, Visible: true}}},
-		{Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": {{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true}, {Group: kinds.GroupRef{Kind: "tag", Slug: "furry"}, Visible: true}}},
+		{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "yaoi"}, Visible: true}, {Entity: kinds.EntityRef{Kind: "tag", Slug: "furry"}, Visible: true}}},
+		{Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.EntityRef{"gallery": {{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "yaoi"}, Visible: true}, {Entity: kinds.EntityRef{Kind: "tag", Slug: "furry"}, Visible: true}}},
 	}}
 	f := newFixtureConfig(t, nil, "", cfg)
-	f.group("tag", "yaoi", "furry")
+	f.entity("tag", "yaoi", "furry")
 	for i, it := range []struct {
 		kind string
 		tags []string
 	}{
 		{"gallery", []string{"yaoi", "furry"}}, {"gallery", nil}, {"blog", []string{"yaoi", "furry"}}, {"blog", nil}, {"gallery", []string{"yaoi"}}, {"blog", []string{"yaoi"}},
 	} {
-		f.seed(item{n: i + 1, kind: it.kind, titles: map[string]string{"en": "Story"}, age: time.Hour, groups: it.tags, versions: []ver{{langs: []string{"en"}}}})
+		f.seed(item{n: i + 1, kind: it.kind, titles: map[string]string{"en": "Story"}, age: time.Hour, entities: it.tags, versions: []ver{{langs: []string{"en"}}}})
 	}
 	f.exec(`INSERT INTO {s}.content_filter_prefs(tenant_id,user_id,overrides) VALUES($1,'reader',$2)`, tenant, `{"gallery/`+f.ids["yaoi"]+`":"show","blog/`+f.ids["yaoi"]+`":"hide"}`)
 	check := func(host, kind, user string, want ...int) {
@@ -51,7 +51,7 @@ func TestSharedEntityPreferencesAcrossContentKinds(t *testing.T) {
 	check("gay.test", "gallery", "reader", 1, 5)
 	check("gay.test", "blog", "reader", 3, 4, 6)
 	var controls ContentFilters
-	if status, _ := f.call(http.MethodGet, "gay.test", "reader", "/content-filters", nil, &controls); status != http.StatusOK || len(controls.Filters) != 1 || controls.Filters[0].Group.Slug != "furry" || !slices.Equal(controls.AppliesTo, []string{"gallery", "blog"}) {
+	if status, _ := f.call(http.MethodGet, "gay.test", "reader", "/content-filters", nil, &controls); status != http.StatusOK || len(controls.Filters) != 1 || controls.Filters[0].Entity.Slug != "furry" || !slices.Equal(controls.AppliesTo, []string{"gallery", "blog"}) {
 		t.Fatalf("shared inventory %+v", controls)
 	}
 	patch := func(user, slug string, visible bool) {

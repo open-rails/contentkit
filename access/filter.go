@@ -19,9 +19,9 @@ type Filter struct {
 	tiers     map[string]bool   // configured tiers whose answer is known: claimed or read
 	contents  map[string]bool   // content ids of held content keys
 	versions  map[string]string // version id -> content id of held version keys
-	groups    map[string]bool   // group ids of held group keys
+	entities  map[string]bool   // group ids of held group keys
 	// contentsComplete and groupsComplete: the keyspace was read in full.
-	contentsComplete, groupsComplete bool
+	contentsComplete, entitiesComplete bool
 }
 
 // Anonymous reports a filter of an anonymous viewer: it holds nothing.
@@ -47,12 +47,12 @@ func (f *Filter) Versions() map[string]string {
 }
 
 // Groups returns the group ids whose key the viewer holds, sorted.
-func (f *Filter) Groups() []string { return sortedKeys(f.groups) }
+func (f *Filter) Entities() []string { return sortedKeys(f.entities) }
 
 // Complete reports whether Contents, Versions and Groups are the viewer's
 // whole holdings. An anonymous filter is complete; an unknown one is not.
 func (f *Filter) Complete() bool {
-	return !f.unknown && f.contentsComplete && f.groupsComplete
+	return !f.unknown && f.contentsComplete && f.entitiesComplete
 }
 
 // Allows decides it from the filter alone. known is false when the answer
@@ -85,8 +85,8 @@ func (f *Filter) lookup(k Key) (held, known bool) {
 	case KeyVersion:
 		_, h := f.versions[k.version]
 		return h, h || f.contentsComplete && !f.unknown
-	case KeyGroup:
-		return f.groups[k.id], f.groups[k.id] || f.groupsComplete && !f.unknown
+	case KeyEntity:
+		return f.entities[k.id], f.entities[k.id] || f.entitiesComplete && !f.unknown
 	}
 	return false, true
 }
@@ -113,14 +113,14 @@ func (f *Filter) load(ans Answer, q Query) error {
 				f.contents[k.id] = true
 			case KeyVersion:
 				f.versions[k.version] = k.id
-			case KeyGroup:
-				f.groups[k.id] = true
+			case KeyEntity:
+				f.entities[k.id] = true
 			}
 		}
 		if p == ContentPrefix(f.g.tenant) {
 			f.contentsComplete = !h.Truncated
 		} else {
-			f.groupsComplete = !h.Truncated
+			f.entitiesComplete = !h.Truncated
 		}
 	}
 	return nil

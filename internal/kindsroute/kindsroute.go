@@ -14,10 +14,10 @@ import (
 
 // ContentModel is the public part of kinds.Config.
 type ContentModel struct {
-	Languages  []string                   `json:"languages"`
-	Tiers      []string                   `json:"tiers"`
-	Kinds      map[string]kinds.Kind      `json:"kinds"`
-	GroupKinds map[string]kinds.GroupKind `json:"entity_kinds"`
+	Languages   []string                    `json:"languages"`
+	Tiers       []string                    `json:"tiers"`
+	Kinds       map[string]kinds.Kind       `json:"kinds"`
+	EntityKinds map[string]kinds.EntityKind `json:"entity_kinds"`
 	// Signals: the site records signals and exposures now. Without, clients
 	// send none and read the model again later: a configured signal plane
 	// that is down comes back (history, similar and recommendations answer
@@ -32,7 +32,7 @@ type ContentModel struct {
 // Public is c's public part, with empty lists and maps rather than null and
 // each kind's locked view spelled out.
 func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentModel {
-	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: map[string]kinds.Kind{}, GroupKinds: c.GroupKinds,
+	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: map[string]kinds.Kind{}, EntityKinds: c.EntityKinds,
 		Signals: signals, Avatars: avatars}
 	for name, k := range c.Kinds {
 		l := k.LockedView()
@@ -48,8 +48,8 @@ func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentMode
 	if m.Tiers == nil {
 		m.Tiers = []string{}
 	}
-	if m.GroupKinds == nil {
-		m.GroupKinds = map[string]kinds.GroupKind{}
+	if m.EntityKinds == nil {
+		m.EntityKinds = map[string]kinds.EntityKind{}
 	}
 	return m
 }

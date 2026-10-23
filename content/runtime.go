@@ -51,10 +51,10 @@ type Options struct {
 	// none.
 	Avatars Avatars
 	// Resolver decides interaction targets: content items and their versions
-	// (the catalog's) and groups. Required.
+	// (the catalog's) and entities. Required.
 	Resolver resolve.Resolver
 	// Kinds is the site's content model: interactions target its content
-	// kinds and group kinds, and comments carry one of its languages.
+	// kinds and entity kinds, and comments carry one of its languages.
 	Kinds kinds.Config
 
 	// PreferenceSyncOverlap bounds how long a preference write may take to
@@ -166,7 +166,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("content: Kinds: %w", err)
 	}
 	_, content := opts.Kinds.Kinds[KindComment]
-	if _, group := opts.Kinds.GroupKinds[KindComment]; content || group {
+	if _, entity := opts.Kinds.EntityKinds[KindComment]; content || entity {
 		return nil, fmt.Errorf("content: kind %q is reserved", KindComment)
 	}
 	if opts.ProviderDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
@@ -274,11 +274,11 @@ func (rt *Runtime) accessLog(next http.Handler) http.Handler {
 
 // --- shared helpers used by every module ---
 
-// isRegistered reports a content kind or group kind interactions target.
+// isRegistered reports a content kind or entity kind interactions target.
 func (rt *Runtime) isRegistered(kind string) bool {
 	_, content := rt.cfg.Kinds[kind]
-	_, group := rt.cfg.GroupKinds[kind]
-	return content || group
+	_, entity := rt.cfg.EntityKinds[kind]
+	return content || entity
 }
 
 // checkRef pins a caller-supplied reference to this tenant.

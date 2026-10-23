@@ -86,7 +86,7 @@ func checkComments(c string) error {
 }
 
 // checkRule validates r against the config (access.Rule.Validate) and sorts
-// its tiers; its group is checked against storage on write (checkRuleGroups).
+// its tiers; its entity is checked against storage on write (checkRuleEntities).
 func (s *Store) checkRule(r access.Rule) (access.Rule, error) {
 	if err := r.Validate(s.cfg); err != nil {
 		return r, fmt.Errorf("%w: %w", ErrInvalid, err)
@@ -96,8 +96,8 @@ func (s *Store) checkRule(r access.Rule) (access.Rule, error) {
 }
 
 // defaultRule keeps public access as the default when permitted. A restricted
-// kind instead starts with its first permitted level; group access still
-// requires the caller to name its group explicitly.
+// kind instead starts with its first permitted level; entity access still
+// requires the caller to name its entity explicitly.
 func (s *Store) defaultRule(kind string) access.Rule {
 	k := s.cfg.Kinds[kind]
 	r := access.Rule{Level: access.Public}
@@ -188,27 +188,27 @@ func (s *Store) checkStoredPolicies(ctx context.Context, tx pgx.Tx, ids []string
 	return rows.Err()
 }
 
-// checkRuleGroups refuses a rule naming a group that is not an active group of
+// checkRuleEntities refuses a rule naming an entity that is not an active entity of
 // a sellable kind.
-func (s *Store) checkRuleGroups(ctx context.Context, q Querier, rules ...*access.Rule) error {
+func (s *Store) checkRuleEntities(ctx context.Context, q Querier, rules ...*access.Rule) error {
 	var ids []string
 	for _, r := range rules {
 		if r == nil {
 			continue
 		}
-		if r.Group != "" && !slices.Contains(ids, r.Group) {
-			ids = append(ids, r.Group)
+		if r.Entity != "" && !slices.Contains(ids, r.Entity) {
+			ids = append(ids, r.Entity)
 		}
 		for _, release := range r.Releases {
-			if release.Group != "" && !slices.Contains(ids, release.Group) {
-				ids = append(ids, release.Group)
+			if release.Entity != "" && !slices.Contains(ids, release.Entity) {
+				ids = append(ids, release.Entity)
 			}
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := q.Query(ctx, `SELECT id, kind FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = ANY($2) AND state = 'active'`, s.tenant, ids)
+	rows, err := q.Query(ctx, `SELECT id, kind FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = ANY($2) AND state = 'active'`, s.tenant, ids)
 	if err != nil {
 		return err
 	}
@@ -229,7 +229,7 @@ func (s *Store) checkRuleGroups(ctx context.Context, q Querier, rules ...*access
 		if !ok {
 			return invalid("access group %s does not exist", id)
 		}
-		if !s.cfg.GroupKinds[kind].Sellable {
+		if !s.cfg.EntityKinds[kind].Sellable {
 			return invalid("access group %s is a %s, which is not sellable", id, kind)
 		}
 	}

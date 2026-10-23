@@ -16,20 +16,20 @@ import (
 // other filter, the listing's visibility and the access mode. Owning is not
 // membership: the channel's key opens its members-only posts, not its PPV or
 // members-only PPV ones, and carries no owner into group filters.
-func TestOwnerGroupFeedIntegration(t *testing.T) {
+func TestOwnerEntityFeedIntegration(t *testing.T) {
 	s := newShop(t)
 	ctx := t.Context()
 	member, stranger := s.customer(), s.customer()
 	studio, other := s.channel("studio", "Studio", "owner"), s.channel("other", "Other", "owner")
-	s.sell(offers.Target{Kind: offers.GroupTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
+	s.sell(offers.Target{Kind: offers.EntityTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
 	none := []catalog.Creator{}
 	post := func(owner string, rule access.Rule, title string) string {
-		return s.post(catalog.ContentInput{Access: &rule, OwnerGroupID: owner, Creators: &none, Text: map[string]catalog.Text{"en": {Title: title}}})
+		return s.post(catalog.ContentInput{Access: &rule, OwnerEntityID: owner, Creators: &none, Text: map[string]catalog.Text{"en": {Title: title}}})
 	}
 	free := post(studio, access.Rule{Level: access.Public}, "Night free")
 	ppv := post(studio, access.Rule{Level: access.PPV}, "Night PPV")
-	members := post(studio, access.Rule{Level: access.GroupLevel, Group: studio}, "Night members")
-	membersPPV := post(studio, access.Rule{Level: access.GroupPPV, Group: studio}, "Night members PPV")
+	members := post(studio, access.Rule{Level: access.EntityLevel, Entity: studio}, "Night members")
+	membersPPV := post(studio, access.Rule{Level: access.EntityPPV, Entity: studio}, "Night members PPV")
 	elsewhere := post(other, access.Rule{Level: access.Public}, "Night elsewhere")
 	unowned := post("", access.Rule{Level: access.Public}, "Night unowned")
 	s.holds(member, gk(studio))

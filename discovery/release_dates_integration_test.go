@@ -169,26 +169,26 @@ func TestReleaseDatesKeepFiltersTimeZoneAndCursor(t *testing.T) {
 	billing := &dateBilling{releaseBilling: releaseBilling{held: map[string]bool{}}}
 	f := newFixtureBilling(t, nil, "", siteConfig(), billing)
 	f.now = time.Date(2020, 3, 2, 1, 0, 0, 0, time.UTC)
-	f.group("tag", "big-breasts", "yaoi")
+	f.entity("tag", "big-breasts", "yaoi")
 	f.seed(
-		item{n: 1, titles: map[string]string{"en": "Visible"}, versions: []ver{{langs: []string{"en"}}}, groups: []string{"yaoi"}},
-		item{n: 2, titles: map[string]string{"en": "Earlier"}, age: 48 * time.Hour, versions: []ver{{langs: []string{"en"}}}, groups: []string{"yaoi"}},
-		item{n: 3, titles: map[string]string{"en": "Optional hidden"}, versions: []ver{{langs: []string{"en"}}}, groups: []string{"big-breasts", "yaoi"}},
+		item{n: 1, titles: map[string]string{"en": "Visible"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"yaoi"}},
+		item{n: 2, titles: map[string]string{"en": "Earlier"}, age: 48 * time.Hour, versions: []ver{{langs: []string{"en"}}}, entities: []string{"yaoi"}},
+		item{n: 3, titles: map[string]string{"en": "Optional hidden"}, versions: []ver{{langs: []string{"en"}}}, entities: []string{"big-breasts", "yaoi"}},
 		item{n: 4, titles: map[string]string{"en": "Outside domain"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 5, titles: map[string]string{"en": "Internal fixed hidden"}, versions: []ver{{langs: []string{"en"}}}, restrictions: []string{"restricted"}, groups: []string{"yaoi"}},
-		item{n: 6, titles: map[string]string{"en": "Denied newest bucket"}, age: -24 * time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}, groups: []string{"yaoi"}},
+		item{n: 5, titles: map[string]string{"en": "Internal fixed hidden"}, versions: []ver{{langs: []string{"en"}}}, restrictions: []string{"restricted"}, entities: []string{"yaoi"}},
+		item{n: 6, titles: map[string]string{"en": "Denied newest bucket"}, age: -24 * time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}, entities: []string{"yaoi"}},
 	)
 	for _, tc := range []struct {
-		host   string
-		groups []string
-		want   []DateCount
+		host     string
+		entities []string
+		want     []DateCount
 	}{
 		{"gay.test", nil, []DateCount{{Date: "2020-03-01", Count: 2, Free: 2}, {Date: "2020-02-28", Count: 1, Free: 1}}},
 		{"gay.test", []string{f.ids["big-breasts"]}, []DateCount{{Date: "2020-03-01", Count: 1, Free: 1}}},
 		{"clean.test", []string{f.ids["yaoi"]}, []DateCount{{Date: "2020-03-01", Count: 1, Free: 1}, {Date: "2020-02-28", Count: 1, Free: 1}}},
 	} {
 		o := ReleaseDatesOptions{Reader: Reader{Actor: access.Actor{ID: "reader"}, Host: tc.host, Mode: access.Hide},
-			Filter: Filter{Kind: "gallery", Groups: tc.groups, TimeZone: "America/Los_Angeles"}, By: "day", Limit: 1}
+			Filter: Filter{Kind: "gallery", Entities: tc.entities, TimeZone: "America/Los_Angeles"}, By: "day", Limit: 1}
 		var dates []DateCount
 		for range 4 {
 			page, err := f.svc.ReleaseDates(f.ctx, o)
@@ -205,10 +205,10 @@ func TestReleaseDatesKeepFiltersTimeZoneAndCursor(t *testing.T) {
 			o.Cursor = page.NextCursor
 		}
 		if !reflect.DeepEqual(dates, tc.want) {
-			t.Errorf("%s groups %v: %+v, want %+v", tc.host, tc.groups, dates, tc.want)
+			t.Errorf("%s groups %v: %+v, want %+v", tc.host, tc.entities, dates, tc.want)
 		}
 	}
-	_, err := f.svc.ReleaseDates(f.ctx, ReleaseDatesOptions{Reader: Reader{Host: "main.test"}, Filter: Filter{Groups: []string{f.ids["restricted"]}}})
+	_, err := f.svc.ReleaseDates(f.ctx, ReleaseDatesOptions{Reader: Reader{Host: "main.test"}, Filter: Filter{Entities: []string{f.ids["restricted"]}}})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("internal entity filter: %v", err)
 	}

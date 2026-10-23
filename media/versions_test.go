@@ -38,7 +38,7 @@ func bookKind() media.Kind {
 
 func TestVersionsKind(t *testing.T) {
 	site := kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"book": {Route: "b", Presentation: "reader",
-		Versions: kinds.VersionRules{Languages: "one"}}}, GroupKinds: map[string]kinds.GroupKind{"tag": {}, "series": {},
+		Versions: kinds.VersionRules{Languages: "one"}}}, EntityKinds: map[string]kinds.EntityKind{"tag": {}, "series": {},
 		"channel": {Owner: "user"}}}
 	book := bookKind()
 	cfg, err := media.ForContent(media.Config{Namespace: "site", Kinds: []media.Kind{book, {Name: "tag",
@@ -50,7 +50,7 @@ func TestVersionsKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Every group kind has media; a declared one is kept as declared.
+	// Every entity kind has media; a declared one is kept as declared.
 	for name, uploads := range map[string]string{"tag": "cover", "series": "cover/{name}", "channel": "cover/{name} avatar/{name}"} {
 		k, err := reg.Kind(name)
 		var paths []string

@@ -14,7 +14,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// A media kind no content or group kind owns holds site images, such as the
+// A media kind no content or entity kind owns holds site images, such as the
 // cover of a record the host keeps: staff upload it, anyone reads its public
 // files, nobody else writes it.
 func TestSiteMediaKind(t *testing.T) {

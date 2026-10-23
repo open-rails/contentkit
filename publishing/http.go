@@ -9,7 +9,7 @@ import (
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
@@ -92,7 +92,7 @@ func (s *Store) respond(w http.ResponseWriter, r *http.Request, out Operation, e
 		f = known
 	case errors.Is(err, auth.ErrUnauthenticated), errors.Is(err, auth.ErrExpired), errors.Is(err, auth.ErrRevoked):
 		f = failure("unauthorized", "", "authentication required")
-	case errors.Is(err, auth.ErrForbidden), errors.Is(err, catalog.ErrForbidden), errors.Is(err, groups.ErrForbidden):
+	case errors.Is(err, auth.ErrForbidden), errors.Is(err, catalog.ErrForbidden), errors.Is(err, entities.ErrForbidden):
 		f = failure("forbidden", "", "permission denied")
 	case errors.Is(err, auth.ErrUnavailable), errors.Is(err, media.ErrUnavailable):
 		f = &OperationError{Code: "unavailable", Message: "dependency temporarily unavailable", Retryable: true}
@@ -100,11 +100,11 @@ func (s *Store) respond(w http.ResponseWriter, r *http.Request, out Operation, e
 		f = &OperationError{Code: "unavailable", Message: "the earlier commit is being recovered; retry", Retryable: true}
 	case errors.Is(err, media.ErrCommitIdentity):
 		f = failure("operation_conflict", "", "the upload commit does not match its original operation")
-	case errors.Is(err, catalog.ErrInvalid), errors.Is(err, groups.ErrInvalid):
+	case errors.Is(err, catalog.ErrInvalid), errors.Is(err, entities.ErrInvalid):
 		f = failure("invalid_request", "", err.Error())
-	case errors.Is(err, catalog.ErrConflict), errors.Is(err, groups.ErrConflict):
+	case errors.Is(err, catalog.ErrConflict), errors.Is(err, entities.ErrConflict):
 		f = failure("conflict", "", "conflicting content or metadata")
-	case errors.Is(err, catalog.ErrNotFound), errors.Is(err, groups.ErrNotFound):
+	case errors.Is(err, catalog.ErrNotFound), errors.Is(err, entities.ErrNotFound):
 		f = failure("not_found", "", "not found")
 	case errors.As(err, &ue):
 		f = &OperationError{Code: ue.Code, Message: ue.Message, Retryable: ue.Code == media.CodeUnavailable || ue.Code == media.CodeNotUploaded || ue.Code == media.CodeNotFound || ue.Code == media.CodeIncomplete}

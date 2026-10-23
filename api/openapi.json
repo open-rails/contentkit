@@ -6951,7 +6951,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupPage"
+                  "$ref": "#/components/schemas/EntityPage"
                 }
               }
             }
@@ -6987,7 +6987,7 @@
               "schema": {
                 "type": "array",
                 "items": {
-                  "$ref": "#/components/schemas/GroupInput"
+                  "$ref": "#/components/schemas/EntityInput"
                 }
               }
             }
@@ -7001,7 +7001,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Group"
+                    "$ref": "#/components/schemas/Entity"
                   }
                 }
               }
@@ -7071,7 +7071,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupDetail"
+                  "$ref": "#/components/schemas/EntityDetail"
                 }
               }
             }
@@ -7117,7 +7117,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroupUpdate"
+                "$ref": "#/components/schemas/EntityUpdate"
               }
             }
           }
@@ -7128,7 +7128,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Group"
+                  "$ref": "#/components/schemas/Entity"
                 }
               }
             }
@@ -7177,7 +7177,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Group"
+                  "$ref": "#/components/schemas/Entity"
                 }
               }
             }
@@ -7314,7 +7314,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupPage"
+                  "$ref": "#/components/schemas/EntityPage"
                 }
               }
             }
@@ -7369,7 +7369,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupDetail"
+                  "$ref": "#/components/schemas/EntityDetail"
                 }
               }
             }
@@ -7450,7 +7450,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MyGroupPage"
+                  "$ref": "#/components/schemas/MyEntityPage"
                 }
               }
             }
@@ -8180,7 +8180,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ContentGroups"
+                "$ref": "#/components/schemas/ContentEntities"
               }
             }
           }
@@ -8248,7 +8248,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ContentGroups"
+                "$ref": "#/components/schemas/ContentEntities"
               }
             }
           }
@@ -8324,7 +8324,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ContentGroups"
+                "$ref": "#/components/schemas/ContentEntities"
               }
             }
           }
@@ -9644,7 +9644,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupJoin"
+                  "$ref": "#/components/schemas/EntityJoin"
                 }
               }
             }
@@ -9691,7 +9691,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GroupJoin"
+                  "$ref": "#/components/schemas/EntityJoin"
                 }
               }
             }
@@ -13432,7 +13432,7 @@
           "entities": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/GroupRecord"
+              "$ref": "#/components/schemas/EntityRecord"
             }
           },
           "contents": {
@@ -13573,7 +13573,7 @@
             }
           },
           "owner": {
-            "$ref": "#/components/schemas/GroupCard"
+            "$ref": "#/components/schemas/EntityCard"
           },
           "counts": {
             "$ref": "#/components/schemas/Counts"
@@ -14170,7 +14170,7 @@
             "type": "string"
           },
           "owner": {
-            "$ref": "#/components/schemas/GroupCard"
+            "$ref": "#/components/schemas/EntityCard"
           },
           "creators": {
             "type": "array",
@@ -14181,7 +14181,7 @@
           "entities": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/GroupSummary"
+              "$ref": "#/components/schemas/EntitySummary"
             }
           },
           "versions": {
@@ -14256,11 +14256,34 @@
           "updated_at"
         ]
       },
+      "ContentEntities": {
+        "type": "object",
+        "properties": {
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Membership"
+            }
+          },
+          "create": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NewEntity"
+            }
+          }
+        }
+      },
       "ContentFilterState": {
         "type": "object",
         "properties": {
           "entity": {
-            "$ref": "#/components/schemas/GroupCard"
+            "$ref": "#/components/schemas/EntityCard"
           },
           "default_visible": {
             "type": "boolean"
@@ -14335,29 +14358,6 @@
           }
         }
       },
-      "ContentGroups": {
-        "type": "object",
-        "properties": {
-          "kinds": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "memberships": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Membership"
-            }
-          },
-          "create": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NewEntity"
-            }
-          }
-        }
-      },
       "ContentInput": {
         "type": "object",
         "properties": {
@@ -14424,7 +14424,7 @@
           "entities": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/GroupCard"
+              "$ref": "#/components/schemas/EntityCard"
             }
           }
         },
@@ -14458,7 +14458,7 @@
           "entity_kinds": {
             "type": "object",
             "additionalProperties": {
-              "$ref": "#/components/schemas/GroupKind"
+              "$ref": "#/components/schemas/EntityKind"
             }
           },
           "signals": {
@@ -15069,6 +15069,569 @@
           }
         }
       },
+      "EntitiesCover": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "auto": {
+            "type": "boolean"
+          },
+          "renditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rendition"
+            }
+          }
+        }
+      },
+      "EntitiesText": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "sort_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "language"
+        ]
+      },
+      "Entity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "merged_into": {
+            "type": "string"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover": {
+            "$ref": "#/components/schemas/EntitiesCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "internal",
+          "state",
+          "attributes",
+          "created_at",
+          "updated_at",
+          "revision"
+        ]
+      },
+      "EntityAccess": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Sale"
+          },
+          "member": {
+            "type": "boolean"
+          },
+          "editor": {
+            "type": "boolean"
+          },
+          "unknown": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "member"
+        ]
+      },
+      "EntityCard": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "cover": {
+            "$ref": "#/components/schemas/EntitiesCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "access": {
+            "$ref": "#/components/schemas/EntityAccess"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "internal",
+          "name",
+          "count",
+          "attributes",
+          "created_at"
+        ]
+      },
+      "EntityDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "merged_into": {
+            "type": "string"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover": {
+            "$ref": "#/components/schemas/EntitiesCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitiesText"
+            }
+          },
+          "parent": {
+            "$ref": "#/components/schemas/EntityCard"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/EntityCard"
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityCard"
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Edge"
+            }
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Count"
+            }
+          },
+          "access": {
+            "$ref": "#/components/schemas/EntityAccess"
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "internal",
+          "state",
+          "attributes",
+          "created_at",
+          "updated_at",
+          "revision",
+          "name",
+          "names",
+          "text",
+          "children",
+          "edges",
+          "counts"
+        ]
+      },
+      "EntityInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover": {
+            "$ref": "#/components/schemas/EntitiesCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitiesText"
+            }
+          }
+        }
+      },
+      "EntityJoin": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "member": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "group_id",
+          "key",
+          "member"
+        ]
+      },
+      "EntityKind": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "string"
+          },
+          "ordered": {
+            "type": "boolean"
+          },
+          "parent": {
+            "type": "string"
+          },
+          "scoped_by": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "max_per_owner": {
+            "type": "integer"
+          },
+          "avatar": {
+            "type": "boolean"
+          },
+          "uploads": {
+            "$ref": "#/components/schemas/UploadLimits"
+          },
+          "sellable": {
+            "type": "boolean"
+          },
+          "auth_scope": {
+            "type": "boolean"
+          },
+          "windows": {
+            "type": "boolean"
+          },
+          "membership_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "content",
+                "version"
+              ]
+            }
+          },
+          "version_level": {
+            "type": "boolean"
+          },
+          "creatable": {
+            "type": "boolean"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Attribute"
+            }
+          }
+        }
+      },
+      "EntityPage": {
+        "type": "object",
+        "properties": {
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityCard"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entities"
+        ]
+      },
+      "EntityRecord": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "parent": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "state": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitiesText"
+            }
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover_image": {
+            "type": "string"
+          },
+          "cover_content": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "avatar": {
+            "type": "string"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EdgeRecord"
+            }
+          },
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "EntityReference": {
         "type": "object",
         "properties": {
@@ -15114,6 +15677,88 @@
           "name",
           "created"
         ]
+      },
+      "EntitySummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "name"
+        ]
+      },
+      "EntityUpdate": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "cover": {
+            "$ref": "#/components/schemas/EntitiesCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitiesText"
+            }
+          }
+        }
       },
       "ErrorDetails": {
         "type": "object",
@@ -15701,651 +16346,6 @@
           }
         }
       },
-      "Group": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "internal": {
-            "type": "boolean"
-          },
-          "scope_id": {
-            "type": "string"
-          },
-          "parent_id": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "deleted",
-              "merged"
-            ]
-          },
-          "merged_into": {
-            "type": "string"
-          },
-          "attributes": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "cover": {
-            "$ref": "#/components/schemas/GroupsCover"
-          },
-          "avatar": {
-            "$ref": "#/components/schemas/Avatar"
-          },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "revision": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "slug",
-          "internal",
-          "state",
-          "attributes",
-          "created_at",
-          "updated_at",
-          "revision"
-        ]
-      },
-      "GroupAccess": {
-        "type": "object",
-        "properties": {
-          "key": {
-            "type": "string"
-          },
-          "offer": {
-            "$ref": "#/components/schemas/Sale"
-          },
-          "member": {
-            "type": "boolean"
-          },
-          "editor": {
-            "type": "boolean"
-          },
-          "unknown": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "key",
-          "member"
-        ]
-      },
-      "GroupCard": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "internal": {
-            "type": "boolean"
-          },
-          "scope_id": {
-            "type": "string"
-          },
-          "parent_id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "name_language": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "cover": {
-            "$ref": "#/components/schemas/GroupsCover"
-          },
-          "avatar": {
-            "$ref": "#/components/schemas/Avatar"
-          },
-          "count": {
-            "type": "integer"
-          },
-          "attributes": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "access": {
-            "$ref": "#/components/schemas/GroupAccess"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "slug",
-          "internal",
-          "name",
-          "count",
-          "attributes",
-          "created_at"
-        ]
-      },
-      "GroupDetail": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "internal": {
-            "type": "boolean"
-          },
-          "scope_id": {
-            "type": "string"
-          },
-          "parent_id": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "deleted",
-              "merged"
-            ]
-          },
-          "merged_into": {
-            "type": "string"
-          },
-          "attributes": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "cover": {
-            "$ref": "#/components/schemas/GroupsCover"
-          },
-          "avatar": {
-            "$ref": "#/components/schemas/Avatar"
-          },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "revision": {
-            "type": "integer"
-          },
-          "name": {
-            "type": "string"
-          },
-          "name_language": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "names": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Name"
-            }
-          },
-          "text": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GroupsText"
-            }
-          },
-          "parent": {
-            "$ref": "#/components/schemas/GroupCard"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/GroupCard"
-          },
-          "children": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GroupCard"
-            }
-          },
-          "edges": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Edge"
-            }
-          },
-          "counts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Count"
-            }
-          },
-          "access": {
-            "$ref": "#/components/schemas/GroupAccess"
-          },
-          "offer": {
-            "$ref": "#/components/schemas/Offer"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "slug",
-          "internal",
-          "state",
-          "attributes",
-          "created_at",
-          "updated_at",
-          "revision",
-          "name",
-          "names",
-          "text",
-          "children",
-          "edges",
-          "counts"
-        ]
-      },
-      "GroupInput": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "internal": {
-            "type": "boolean"
-          },
-          "scope_id": {
-            "type": "string"
-          },
-          "parent_id": {
-            "type": "string"
-          },
-          "attributes": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "cover": {
-            "$ref": "#/components/schemas/GroupsCover"
-          },
-          "avatar": {
-            "$ref": "#/components/schemas/Avatar"
-          },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
-          },
-          "names": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Name"
-            }
-          },
-          "text": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GroupsText"
-            }
-          }
-        }
-      },
-      "GroupJoin": {
-        "type": "object",
-        "properties": {
-          "group_id": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "member": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "group_id",
-          "key",
-          "member"
-        ]
-      },
-      "GroupKind": {
-        "type": "object",
-        "properties": {
-          "route": {
-            "type": "string"
-          },
-          "ordered": {
-            "type": "boolean"
-          },
-          "parent": {
-            "type": "string"
-          },
-          "scoped_by": {
-            "type": "string"
-          },
-          "owner": {
-            "type": "string"
-          },
-          "max_per_owner": {
-            "type": "integer"
-          },
-          "avatar": {
-            "type": "boolean"
-          },
-          "uploads": {
-            "$ref": "#/components/schemas/UploadLimits"
-          },
-          "sellable": {
-            "type": "boolean"
-          },
-          "auth_scope": {
-            "type": "boolean"
-          },
-          "windows": {
-            "type": "boolean"
-          },
-          "membership_scopes": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "content",
-                "version"
-              ]
-            }
-          },
-          "version_level": {
-            "type": "boolean"
-          },
-          "creatable": {
-            "type": "boolean"
-          },
-          "roles": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "attributes": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/Attribute"
-            }
-          }
-        }
-      },
-      "GroupPage": {
-        "type": "object",
-        "properties": {
-          "entities": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GroupCard"
-            }
-          },
-          "next_cursor": {
-            "type": "string"
-          },
-          "total": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "entities"
-        ]
-      },
-      "GroupRecord": {
-        "type": "object",
-        "properties": {
-          "external_id": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "internal": {
-            "type": "boolean"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/Ref"
-          },
-          "parent": {
-            "$ref": "#/components/schemas/Ref"
-          },
-          "state": {
-            "type": "string"
-          },
-          "names": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Name"
-            }
-          },
-          "text": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GroupsText"
-            }
-          },
-          "attributes": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "cover_image": {
-            "type": "string"
-          },
-          "cover_content": {
-            "$ref": "#/components/schemas/Ref"
-          },
-          "avatar": {
-            "type": "string"
-          },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
-          },
-          "edges": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EdgeRecord"
-            }
-          },
-          "code": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "GroupSummary": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "slug",
-          "name"
-        ]
-      },
-      "GroupUpdate": {
-        "type": "object",
-        "properties": {
-          "slug": {
-            "type": "string"
-          },
-          "internal": {
-            "type": "boolean"
-          },
-          "scope_id": {
-            "type": "string"
-          },
-          "parent_id": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "deleted",
-              "merged"
-            ]
-          },
-          "attributes": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "cover": {
-            "$ref": "#/components/schemas/GroupsCover"
-          },
-          "avatar": {
-            "$ref": "#/components/schemas/Avatar"
-          },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
-          },
-          "names": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Name"
-            }
-          },
-          "text": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GroupsText"
-            }
-          }
-        }
-      },
-      "GroupsCover": {
-        "type": "object",
-        "properties": {
-          "image": {
-            "type": "string"
-          },
-          "content_id": {
-            "type": "string"
-          },
-          "auto": {
-            "type": "boolean"
-          },
-          "renditions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Rendition"
-            }
-          }
-        }
-      },
-      "GroupsText": {
-        "type": "object",
-        "properties": {
-          "language": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "sort_key": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "language"
-        ]
-      },
       "GuestFilterSetting": {
         "type": "object",
         "properties": {
@@ -16566,7 +16566,7 @@
             "$ref": "#/components/schemas/Card"
           },
           "entity": {
-            "$ref": "#/components/schemas/GroupCard"
+            "$ref": "#/components/schemas/EntityCard"
           },
           "value": {
             "type": "integer"
@@ -17109,7 +17109,7 @@
           "max_parts"
         ]
       },
-      "MyGroup": {
+      "MyEntity": {
         "type": "object",
         "properties": {
           "id": {
@@ -17143,7 +17143,7 @@
             "type": "string"
           },
           "cover": {
-            "$ref": "#/components/schemas/GroupsCover"
+            "$ref": "#/components/schemas/EntitiesCover"
           },
           "avatar": {
             "$ref": "#/components/schemas/Avatar"
@@ -17156,7 +17156,7 @@
             "additionalProperties": {}
           },
           "access": {
-            "$ref": "#/components/schemas/GroupAccess"
+            "$ref": "#/components/schemas/EntityAccess"
           },
           "created_at": {
             "type": "string",
@@ -17194,13 +17194,13 @@
           "member"
         ]
       },
-      "MyGroupPage": {
+      "MyEntityPage": {
         "type": "object",
         "properties": {
           "entities": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/MyGroup"
+              "$ref": "#/components/schemas/MyEntity"
             }
           },
           "next_cursor": {
@@ -18895,7 +18895,7 @@
         "type": "object",
         "properties": {
           "entity": {
-            "$ref": "#/components/schemas/GroupCard"
+            "$ref": "#/components/schemas/EntityCard"
           },
           "count": {
             "type": "integer"
@@ -19537,7 +19537,7 @@
           "entities": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/GroupCard"
+              "$ref": "#/components/schemas/EntityCard"
             }
           }
         },
@@ -19669,7 +19669,7 @@
           "entities": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/GroupSummary"
+              "$ref": "#/components/schemas/EntitySummary"
             }
           },
           "pages": {

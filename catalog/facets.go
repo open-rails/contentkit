@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/search"
 )
 
@@ -22,7 +22,7 @@ import (
 // play yet (playable false; unknown lists).
 // Every
 // write to a content item, its versions, memberships, access, listing,
-// restrictions, traits or attributes calls it before committing; the groups
+// restrictions, traits or attributes calls it before committing; the entities
 // module calls it after membership changes.
 func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []string) error {
 	ids := slices.Compact(slices.Sorted(slices.Values(contentIDs)))
@@ -35,14 +35,14 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 		return err
 	}
 	// versionFacet is a version's access facet (access.Rule.Facet of its
-	// effective rule) and effective groups.
+	// effective rule) and effective entities.
 	type versionFacet struct {
 		VersionID string           `json:"version_id"`
 		Level     access.Level     `json:"level"`
 		Tiers     []string         `json:"tiers"`
-		GroupID   *string          `json:"group_id"`
+		EntityID  *string          `json:"entity_id"`
 		Releases  []access.Release `json:"releases"`
-		Groups    []string         `json:"groups"`
+		Entities  []string         `json:"entities"`
 	}
 	var facets []versionFacet
 	var versions []string
@@ -59,21 +59,21 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 			return fmt.Errorf("catalog: version %s: %w", id, err)
 		}
 		f := rule.Facet()
-		facets = append(facets, versionFacet{VersionID: id, Level: f.Level, Tiers: f.Tiers, GroupID: f.GroupID, Releases: f.Releases, Groups: []string{}})
+		facets = append(facets, versionFacet{VersionID: id, Level: f.Level, Tiers: f.Tiers, EntityID: f.EntityID, Releases: f.Releases, Entities: []string{}})
 		versions = append(versions, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if s.groups != nil && len(versions) > 0 {
-		groups, err := s.groups.EffectiveGroups(ctx, q, versions)
+	if s.entities != nil && len(versions) > 0 {
+		entities, err := s.entities.EffectiveEntities(ctx, q, versions)
 		if err != nil {
 			return err
 		}
 		for i := range facets {
-			if gs := groups[facets[i].VersionID]; len(gs) > 0 {
-				facets[i].Groups = slices.Compact(slices.Sorted(slices.Values(gs)))
+			if gs := entities[facets[i].VersionID]; len(gs) > 0 {
+				facets[i].Entities = slices.Compact(slices.Sorted(slices.Values(gs)))
 			}
 		}
 	}
@@ -82,7 +82,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 		return err
 	}
 	if _, err := q.Exec(ctx, `INSERT INTO `+s.t.facets+` AS f (tenant_id, content_id, version_id, kind, live_from, deleted, unplayable, languages,
- access_level, access_tiers, access_group_id, access_releases, restrictions, group_ids, traits, owner_group_id, position, published_at, attributes,
+ access_level, access_tiers, access_entity_id, access_releases, restrictions, entity_ids, traits, owner_entity_id, position, published_at, attributes,
  updated_at)
  SELECT c.tenant_id, c.id, v.id, c.kind,
   CASE WHEN (c.state = 'published' OR (c.state = 'deleted' AND c.published_at IS NOT NULL))
@@ -90,16 +90,16 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
    AND (c.moderation = 'approved' OR c.published_snapshot IS NOT NULL)
    THEN greatest(coalesce(c.published_at, c.publish_at), coalesce(v.published_at, v.publish_at)) END,
   c.state = 'deleted' OR v.state = 'deleted', c.kind = ANY($4::text[]) AND v.playable IS FALSE, v.languages,
-  a.level, a.tiers, a.group_id, coalesce(a.releases, '[]'::jsonb), c.restrictions, a.groups, v.traits, c.owner_group_id, v.position, coalesce(c.published_at, c.publish_at),
+  a.level, a.tiers, a.entity_id, coalesce(a.releases, '[]'::jsonb), c.restrictions, a.groups, v.traits, c.owner_entity_id, v.position, coalesce(c.published_at, c.publish_at),
   c.attributes || v.attributes, clock_timestamp()
- FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], group_id text, releases jsonb, groups text[])
+ FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], entity_id text, releases jsonb, entities text[])
  JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = a.version_id
  JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
  WHERE c.id = ANY($2)
  ON CONFLICT (tenant_id, version_id) DO UPDATE SET content_id = EXCLUDED.content_id, kind = EXCLUDED.kind, live_from = EXCLUDED.live_from,
   deleted = EXCLUDED.deleted, unplayable = EXCLUDED.unplayable, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
-  access_tiers = EXCLUDED.access_tiers, access_group_id = EXCLUDED.access_group_id, access_releases = EXCLUDED.access_releases,
-  restrictions = EXCLUDED.restrictions, group_ids = EXCLUDED.group_ids, traits = EXCLUDED.traits, owner_group_id = EXCLUDED.owner_group_id,
+  access_tiers = EXCLUDED.access_tiers, access_entity_id = EXCLUDED.access_entity_id, access_releases = EXCLUDED.access_releases,
+  restrictions = EXCLUDED.restrictions, entity_ids = EXCLUDED.entity_ids, traits = EXCLUDED.traits, owner_entity_id = EXCLUDED.owner_entity_id,
   position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes,
   updated_at = EXCLUDED.updated_at`,
 		s.tenant, ids, string(data), s.playerKinds()); err != nil {
@@ -179,30 +179,30 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 	return s.documents(ctx, q)
 }
 
-// GroupsRenamed is groups.Options.NamesChanged: it queues, in one statement,
-// the search documents of every item whose facets name one of the groups
-// (ancestors included), since their keywords are those groups' names. It
+// EntitiesRenamed is entities.Options.NamesChanged: it queues, in one statement,
+// the search documents of every item whose facets name one of the entities
+// (ancestors included), since their keywords are those entities' names. It
 // locks no content and leaves facets and revisions alone.
-func (s *Store) GroupsRenamed(ctx context.Context, q groups.Querier, groupIDs []string) error {
+func (s *Store) EntitiesRenamed(ctx context.Context, q entities.Querier, entityIDs []string) error {
 	tag, err := q.Exec(ctx, `INSERT INTO `+s.qs+`.content_search_dirty (tenant_id, content_kind, content_id, language, reason)
  SELECT c.tenant_id, c.kind, c.id, l.language, 'catalog' FROM `+s.t.items+` c CROSS JOIN LATERAL (
  SELECT t.language FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
  UNION SELECT d.language FROM `+s.t.docs+` d WHERE d.tenant_id = c.tenant_id AND d.content_kind = c.kind AND d.content_id = c.id AND d.content_version_id IS NULL) l
- WHERE c.tenant_id = $1 AND c.id IN (SELECT f.content_id FROM `+s.t.facets+` f WHERE f.tenant_id = $1 AND f.group_ids && $2::text[])
+ WHERE c.tenant_id = $1 AND c.id IN (SELECT f.content_id FROM `+s.t.facets+` f WHERE f.tenant_id = $1 AND f.entity_ids && $2::text[])
  ORDER BY c.kind, c.id, l.language
  ON CONFLICT (tenant_id, content_kind, content_id, content_version_id, language) DO UPDATE SET is_deleted = false, reason = EXCLUDED.reason, updated_at = now()`,
-		s.tenant, groupIDs)
+		s.tenant, entityIDs)
 	if err != nil || tag.RowsAffected() == 0 || s.documents == nil {
 		return err
 	}
 	return s.documents(ctx, q)
 }
 
-// ContentChanged is groups.Options.ContentChanged: after the groups module
-// re-derived the items' group_ids in q's transaction, it re-derives their
+// ContentChanged is entities.Options.ContentChanged: after the entities module
+// re-derived the items' entity_ids in q's transaction, it re-derives their
 // decorative paths (a path entity may have changed), queues their search
-// documents (group names are keywords) and records the change.
-func (s *Store) ContentChanged(ctx context.Context, q groups.Querier, contentIDs []string) error {
+// documents (entity names are keywords) and records the change.
+func (s *Store) ContentChanged(ctx context.Context, q entities.Querier, contentIDs []string) error {
 	tx, ok := q.(pgx.Tx)
 	if !ok {
 		return errors.New("catalog: ContentChanged requires the mutation transaction")

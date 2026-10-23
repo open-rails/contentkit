@@ -266,7 +266,7 @@ func TestLifecycleIntegration(t *testing.T) {
 
 // pooledRoles is the test auth reading its answers over the catalog's own
 // pool, as AuthKit sharing a host's pool does. moved, when set, runs once
-// before the first group-scope answer.
+// before the first entity-scope answer.
 type pooledRoles struct {
 	*roles
 	pool  *pgxpool.Pool
@@ -288,20 +288,20 @@ func (p *pooledRoles) CanIn(ctx context.Context, a access.Actor, scope auth.Scop
 
 // A write asks the authorization provider before it takes a connection and
 // row locks, so a provider sharing a one-connection pool still answers it.
-// The owner group is rechecked under the lock: one that changed after the
+// The owner entity is rechecked under the lock: one that changed after the
 // provider was asked refuses rather than granting on the old answer.
 func TestWriteAuthorizesBeforeItsTransactionIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	studio, other := f.group("channel", "studio"), f.group("channel", "other")
+	studio, other := f.entity("channel", "studio"), f.entity("channel", "other")
 	f.editor("studio", "ed")
 	in := gallery("Shared", "en", "ja")
-	in.OwnerGroupID, in.Creators = studio, &[]Creator{{UserID: "alice"}}
+	in.OwnerEntityID, in.Creators = studio, &[]Creator{{UserID: "alice"}}
 	id := f.create("staff", in)
 
 	one := pgtest.Pool(t, func(c *pgxpool.Config) { c.MaxConns = 1 })
 	provider := &pooledRoles{roles: f.roles, pool: one}
 	s, err := New(f.ctx, Options{Pool: one, Schema: f.schema, Tenant: tenant, Kinds: config(), Auth: testauth.Auth{Authz: provider},
-		Groups: f.groups, Now: f.now})
+		Entities: f.entities, Now: f.now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,14 +344,14 @@ func TestWriteAuthorizesBeforeItsTransactionIntegration(t *testing.T) {
 		ctx, cancel := context.WithTimeout(f.ctx, 5*time.Second)
 		defer cancel()
 		provider.moved = func(ctx context.Context) error {
-			_, err := one.Exec(ctx, `UPDATE `+f.table("content_items")+` SET owner_group_id = $3 WHERE tenant_id = $1 AND id = $2`, tenant, id, other)
+			_, err := one.Exec(ctx, `UPDATE `+f.table("content_items")+` SET owner_entity_id = $3 WHERE tenant_id = $1 AND id = $2`, tenant, id, other)
 			return err
 		}
 		if err := s.DeleteForModeration(ctx, as("ed"), []string{id}); !errors.Is(err, ErrForbidden) {
 			t.Fatalf("the studio's editor deleted an item moved to another group: %v", err)
 		}
 		var state, owner string
-		if err := f.pool.QueryRow(f.ctx, `SELECT state, owner_group_id FROM `+f.table("content_items")+` WHERE tenant_id = $1 AND id = $2`, tenant, id).Scan(&state, &owner); err != nil {
+		if err := f.pool.QueryRow(f.ctx, `SELECT state, owner_entity_id FROM `+f.table("content_items")+` WHERE tenant_id = $1 AND id = $2`, tenant, id).Scan(&state, &owner); err != nil {
 			t.Fatal(err)
 		}
 		if state == StateDeleted || owner != other {
@@ -364,16 +364,16 @@ func TestWriteAuthorizesBeforeItsTransactionIntegration(t *testing.T) {
 // type, restrictions, listing and the access rule.
 func TestValidationIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	channel, unsold := f.group("channel", "studio"), f.group("channel", "quiet")
+	channel, unsold := f.entity("channel", "studio"), f.entity("channel", "quiet")
 	f.sell(channel)
-	tag := f.group("tag", "red")
+	tag := f.entity("tag", "red")
 	ok := gallery("Valid", "en")
 	ok.Attributes = map[string]any{"format": "manga", "volume": float64(3), "complete": true, "released": "2026-01-02T03:04:05Z", "note": "n"}
-	ok.Access = &access.Rule{Level: access.GroupLevel, Group: channel}
+	ok.Access = &access.Rule{Level: access.EntityLevel, Entity: channel}
 	ok.Restrictions = []string{"restricted"}
 	id := f.create("staff", ok)
 	got := f.read("staff", "main.test", id)[0]
-	if got.Attributes["volume"] != float64(3) || got.Attributes["format"] != "manga" || got.Access.Group != channel || got.Restrictions[0] != "restricted" {
+	if got.Attributes["volume"] != float64(3) || got.Attributes["format"] != "manga" || got.Access.Entity != channel || got.Restrictions[0] != "restricted" {
 		t.Fatalf("stored %+v", got)
 	}
 	for name, in := range map[string]ContentInput{
@@ -389,8 +389,8 @@ func TestValidationIntegration(t *testing.T) {
 		"time":                {Kind: "gallery", Attributes: map[string]any{"released": "yesterday"}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"restriction":         {Kind: "gallery", Restrictions: []string{"nsfw"}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"tier":                {Kind: "gallery", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}, Versions: []VersionInput{{Languages: []string{"en"}}}},
-		"group not sellable":  {Kind: "gallery", Access: &access.Rule{Level: access.GroupLevel, Group: tag}, Versions: []VersionInput{{Languages: []string{"en"}}}},
-		"missing group":       {Kind: "gallery", Access: &access.Rule{Level: access.GroupPPV, Group: contentref.NewID()}, Versions: []VersionInput{{Languages: []string{"en"}}}},
+		"group not sellable":  {Kind: "gallery", Access: &access.Rule{Level: access.EntityLevel, Entity: tag}, Versions: []VersionInput{{Languages: []string{"en"}}}},
+		"missing group":       {Kind: "gallery", Access: &access.Rule{Level: access.EntityPPV, Entity: contentref.NewID()}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"hidden with version": {Kind: "blog", Versions: []VersionInput{{Languages: []string{"en"}}}},
 	} {
 		if _, err := f.s.Create(f.ctx, f.as("staff"), []ContentInput{in}); !errors.Is(err, ErrInvalid) {
@@ -398,8 +398,8 @@ func TestValidationIntegration(t *testing.T) {
 		}
 	}
 	// Members-only content needs no membership offer: existing members keep
-	// access and the group may sell one later.
-	members := &access.Rule{Level: access.GroupPPV, Group: unsold}
+	// access and the entity may sell one later.
+	members := &access.Rule{Level: access.EntityPPV, Entity: unsold}
 	quiet := gallery("Quiet", "en")
 	quiet.Access = members
 	if _, err := f.s.Create(f.ctx, f.as("staff"), []ContentInput{quiet}); err != nil {

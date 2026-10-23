@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/offers"
 )
@@ -127,15 +127,15 @@ type Version struct {
 	// Access is the version's own rule; nil inherits the content's.
 	Access     *access.Rule   `json:"access,omitempty"`
 	Attributes map[string]any `json:"attributes"`
-	// Groups are entities attached specifically to this version. Combine them
-	// with Content.Groups when presenting the selected version's credits.
-	Groups     []GroupSummary `json:"entities"`
-	Pages      *int           `json:"pages,omitempty"`
-	DurationMS *int64         `json:"duration_ms,omitempty"`
-	Width      *int           `json:"width,omitempty"`
-	Height     *int           `json:"height,omitempty"`
-	HasAudio   bool           `json:"has_audio"`
-	Ordinal    *int           `json:"ordinal,omitempty"`
+	// Entities are entities attached specifically to this version. Combine them
+	// with Content.Entities when presenting the selected version's credits.
+	Entities   []EntitySummary `json:"entities"`
+	Pages      *int            `json:"pages,omitempty"`
+	DurationMS *int64          `json:"duration_ms,omitempty"`
+	Width      *int            `json:"width,omitempty"`
+	Height     *int            `json:"height,omitempty"`
+	HasAudio   bool            `json:"has_audio"`
+	Ordinal    *int            `json:"ordinal,omitempty"`
 	// Cover is absent when its kind's locked view hides it from the viewer.
 	Cover    *Cover    `json:"cover,omitempty"`
 	Segments []Segment `json:"segments"`
@@ -165,9 +165,9 @@ type ViewerState struct {
 	LastReadAt  *time.Time `json:"last_read_at,omitempty"`
 }
 
-// GroupSummary names one group a content item belongs to; Code and Path are
+// EntitySummary names one entity a content item belongs to; Code and Path are
 // its page, as content's are, when its kind has one.
-type GroupSummary struct {
+type EntitySummary struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
 	Slug string `json:"slug"`
@@ -178,7 +178,7 @@ type GroupSummary struct {
 
 // Content is a content item as a viewer sees it: its text in the viewer's
 // language (falling back), its live versions (every version for editors),
-// groups and attributes. A viewer who opens none of its versions gets what
+// entities and attributes. A viewer who opens none of its versions gets what
 // its kind's locked view shows (kinds.Locked), and of each locked version
 // what that view shows.
 type Content struct {
@@ -216,22 +216,22 @@ type Content struct {
 	Cover *Cover `json:"cover,omitempty"`
 	State string `json:"state"`
 	// Comments is open, closed or hidden.
-	Comments     string         `json:"comments"`
-	PublishAt    *time.Time     `json:"publish_at,omitempty"`
-	PublishedAt  *time.Time     `json:"published_at,omitempty"`
-	Live         bool           `json:"live"`
-	Access       access.Rule    `json:"access"`
-	Restrictions []string       `json:"restrictions"`
-	Attributes   map[string]any `json:"attributes"`
-	OwnerGroupID string         `json:"owner_group_id,omitempty"`
-	// Owner is the owner group's card (a channel's name, path, avatar and
+	Comments      string         `json:"comments"`
+	PublishAt     *time.Time     `json:"publish_at,omitempty"`
+	PublishedAt   *time.Time     `json:"published_at,omitempty"`
+	Live          bool           `json:"live"`
+	Access        access.Rule    `json:"access"`
+	Restrictions  []string       `json:"restrictions"`
+	Attributes    map[string]any `json:"attributes"`
+	OwnerEntityID string         `json:"owner_group_id,omitempty"`
+	// Owner is the owner entity's card (a channel's name, path, avatar and
 	// cover) while it is active.
-	Owner    *groups.GroupCard `json:"owner,omitempty"`
-	Creators []Creator         `json:"creators"`
-	// Groups are shared/null-version memberships. Version-specific entities
-	// are carried by each Version.Groups, never merged across editions here.
-	Groups   []GroupSummary `json:"entities"`
-	Versions []Version      `json:"versions"`
+	Owner    *entities.EntityCard `json:"owner,omitempty"`
+	Creators []Creator            `json:"creators"`
+	// Entities are shared/null-version memberships. Version-specific entities
+	// are carried by each Version.Entities, never merged across editions here.
+	Entities []EntitySummary `json:"entities"`
+	Versions []Version       `json:"versions"`
 	// SelectedVersionID is the edition selected for this response: the direct
 	// version lookup's edition, or the default among the visible versions.
 	SelectedVersionID string `json:"selected_version_id,omitempty"`

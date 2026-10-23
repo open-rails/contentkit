@@ -28,16 +28,16 @@ const (
 	// ScopeGlobal is the whole tenant, managed by holders of root:comments:ban.
 	ScopeGlobal = "global"
 	ownerScope  = "owner:"
-	groupScope  = "group:"
+	entityScope = "group:"
 )
 
 // OwnerScope is the scope of content whose Resolution.Owner is ownerID,
 // managed by that owner.
 func OwnerScope(ownerID string) string { return ownerScope + ownerID }
 
-// GroupScope is the scope of a user-owned group and the content it owns
-// (Resolution.OwnerGroup), managed by the group's comment moderators.
-func GroupScope(groupID string) string { return groupScope + groupID }
+// EntityScope is the scope of a user-owned entity and the content it owns
+// (Resolution.OwnerEntity), managed by the entity's comment moderators.
+func EntityScope(entityID string) string { return entityScope + entityID }
 
 const (
 	maxBanReason = 500 // runes
@@ -87,7 +87,7 @@ type BanInput struct {
 }
 
 // checkCommentBan refuses userID's comment on a target resolved as res when a
-// live ban applies (global, its owner's, its owner group's); of several, the
+// live ban applies (global, its owner's, its owner entity's); of several, the
 // one lasting longest.
 func (rt *Runtime) checkCommentBan(ctx context.Context, userID string, res resolve.Resolution) error {
 	if userID == "" {
@@ -97,8 +97,8 @@ func (rt *Runtime) checkCommentBan(ctx context.Context, userID string, res resol
 	if res.Owner != "" {
 		scopes = append(scopes, OwnerScope(res.Owner))
 	}
-	if g := res.OwnerGroup; g != nil {
-		scopes = append(scopes, GroupScope(g.ID))
+	if g := res.OwnerEntity; g != nil {
+		scopes = append(scopes, EntityScope(g.ID))
 	}
 	var n BanNotice
 	err := rt.store.pool.QueryRow(ctx, `SELECT scope, reason, until FROM `+rt.store.t.commentBans+`
@@ -241,7 +241,7 @@ func (rt *Runtime) enrichBans(ctx context.Context, bans []CommentBan) {
 // --- HTTP ---
 
 func banRoutes() []httpapi.Route[*Runtime] {
-	out := append(append([]httpapi.Route[*Runtime](nil), userBanRoutes...), groupModerationRoutes...)
+	out := append(append([]httpapi.Route[*Runtime](nil), userBanRoutes...), entityModerationRoutes...)
 	for _, typ := range TargetTypes {
 		out = append(out, httpapi.Route[*Runtime]{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/" + string(typ) + "/{id}/can-comment", Resource: "bans", Auth: httpapi.Public,
 			Doc:       "Whether the caller may comment on " + targetNoun(typ) + ", the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.",

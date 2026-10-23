@@ -12,8 +12,8 @@ those with their matching library version before a verified host-owned import
 into fresh stores.
 
 After restoring PostgreSQL, rebuild keyword documents from the host's current
-content and run `groups.Store.Recount` when the backup predates group
-changes. Do not rewind preference revisions against a retained sink: send
+content. Entity counts, covers and association windows are evaluated from
+current rows; no recount or window job is needed. Do not rewind preference revisions against a retained sink: send
 `POST /v1/import` with `preference_floor` before writers resume, as described in the
 [host integration guide](../HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 

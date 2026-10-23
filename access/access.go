@@ -1,6 +1,6 @@
 // Package access is ContentKit's access model: the Actor; the key grammar
 // (<tenant>:content:<id>, <tenant>:content:<id>/<version>, <tenant>:group:<id>
-// and configured tiers); rules stored on content, versions and groups; the
+// and configured tiers); rules stored on content, versions and entities; the
 // Gate deciding versions from one billing read per request, its listing
 // Filter and SQL over content_facets; and the Billing dependency.
 package access

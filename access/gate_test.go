@@ -50,12 +50,12 @@ func TestGateWithoutBilling(t *testing.T) {
 		{Content: c, Version: v, Rule: access.Rule{Level: access.PPV, Releases: []access.Release{{At: past, Level: access.Public}}}},
 		{Content: c, Version: v, Rule: access.Rule{Level: access.PPV, Releases: []access.Release{{At: future, Level: access.Public}}, Preview: &access.Preview{Pages: 2}}},
 		{Content: c, Version: v, Rule: access.Rule{Level: access.TierLevel, Tiers: []string{"gold", "premium", "platinum"}}},
-		{Content: c, Rule: access.Rule{Level: access.GroupLevel, Group: grp}},
-		{Content: c, Version: v, Rule: access.Rule{Level: access.GroupPPV, Group: grp}, Groups: []string{uid(4)}},
+		{Content: c, Rule: access.Rule{Level: access.EntityLevel, Entity: grp}},
+		{Content: c, Version: v, Rule: access.Rule{Level: access.EntityPPV, Entity: grp}, Entities: []string{uid(4)}},
 		{Content: "nope", Rule: access.Rule{Level: access.PPV}},
 		{Content: c, Rule: access.Rule{Level: "vip"}},
 	}
-	ck, vk, gk := key(access.ContentKey(tenant, c)), key(access.VersionKey(tenant, c, v)), key(access.GroupKey(tenant, grp))
+	ck, vk, gk := key(access.ContentKey(tenant, c)), key(access.VersionKey(tenant, c, v)), key(access.EntityKey(tenant, grp))
 	gold, premium := key(access.TierKey("gold")), key(access.TierKey("premium"))
 	for _, viewer := range []access.Actor{{Anonymous: true}, {ID: "u", Kind: auth.SubjectUser}} {
 		ds, err := g.Decide(t.Context(), viewer, items)

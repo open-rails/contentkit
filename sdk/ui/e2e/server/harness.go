@@ -69,26 +69,26 @@ type harness struct {
 // site is the content model: the items tests create (/__test/items) and
 // blogs, each a content kind whose media live in its versions (kinds.json);
 // comics and movies with traits, segments and every group
-// kind; group kinds that between them declare roles, attributes, order,
+// kind; entity kinds that between them declare roles, attributes, order,
 // parents, scopes, windows and version-level memberships; a tier and a
 // content filter.
 var site = func() kinds.Config {
 	one := kinds.VersionRules{Languages: "one"}
 	grouped := []string{"tag", "artist", "series", "character", "voice_actor", "rail"}
 	item := func(route, presentation string) kinds.Kind {
-		return kinds.Kind{Route: route, Presentation: presentation, Versions: one, Groups: []string{"tag", "series", "character"}}
+		return kinds.Kind{Route: route, Presentation: presentation, Versions: one, Entities: []string{"tag", "series", "character"}}
 	}
-	return kinds.Config{Languages: []string{"en", "de", "ja"}, Tiers: []string{"premium"}, TokenClaims: []string{"premium"}, ContentFilters: kinds.ContentFilters{AppliesTo: []string{"comic"}, Domains: []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Group: kinds.GroupRef{Kind: "tag", Slug: "gore"}, Visible: false}}}}}, Kinds: map[string]kinds.Kind{
+	return kinds.Config{Languages: []string{"en", "de", "ja"}, Tiers: []string{"premium"}, TokenClaims: []string{"premium"}, ContentFilters: kinds.ContentFilters{AppliesTo: []string{"comic"}, Domains: []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "gore"}, Visible: false}}}}}, Kinds: map[string]kinds.Kind{
 		"gallery": item("g", "reader"), "album": item("album", "reader"), "note": item("note", "reader"), "channel": item("channel", "reader"),
 		"file": item("file", "reader"), "video": item("v", "player"), "watch": item("watch", "player"), "abr": item("abr", "player"),
 		blogKind: {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 		"comic": {Route: "comics", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
-			Segments: true, Groups: grouped, Sort: "newest",
+			Segments: true, Entities: grouped, Sort: "newest",
 			Attributes: map[string]kinds.Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}, Filterable: true}}},
 		"movie": {Route: "movies", Presentation: "player", Versions: kinds.VersionRules{Languages: "many", Traits: []string{"uncensored"}},
-			Groups: []string{"tag", "series", "rail"}},
+			Entities: []string{"tag", "series", "rail"}},
 	},
-		GroupKinds: map[string]kinds.GroupKind{
+		EntityKinds: map[string]kinds.EntityKind{
 			"tag": {Route: "tag", VersionLevel: true},
 			"artist": {Route: "artists", Roles: []string{"publisher"}, Attributes: map[string]kinds.Attribute{
 				"artist_type": {Type: "enum", Values: []string{"artist", "circle", "company"}},

@@ -16,7 +16,7 @@ import (
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/offers"
 )
@@ -29,12 +29,12 @@ func TestOwnerChip(t *testing.T) {
 	_, creatorToken := w.person(iam.Role{})
 	_, staff := w.person(w.staff)
 	f := serve(t, w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
-		c.Content.GroupKinds["channel"] = channel
+		c.Content.EntityKinds["channel"] = channel
 		d.Scopes = ckauthkit.Scopes(w.ak)
 	}))
-	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio"}}}}, &made)
+	var made []entities.Entity
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []entities.EntityInput{{Kind: "channel", Slug: "studio",
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Studio"}}}}, &made)
 	ch := made[0]
 	ref := media.RefBody{Kind: "channel", ID: string(ch.ID)}
 	itemRef, err := w.reg.Ref("channel", string(ch.ID))
@@ -49,16 +49,16 @@ func TestOwnerChip(t *testing.T) {
 	}
 	avatar, avatarImage := picture("avatar/me.png", "avatar", 32)
 	cover, coverImage := picture("cover/wide.png", "cover", 48)
-	f.want(http.StatusOK, creatorToken, "PATCH", "/entities/"+string(ch.ID), groups.GroupUpdate{Avatar: &groups.Avatar{Image: avatar},
-		Cover: &groups.Cover{Image: cover}}, nil)
+	f.want(http.StatusOK, creatorToken, "PATCH", "/entities/"+string(ch.ID), entities.EntityUpdate{Avatar: &entities.Avatar{Image: avatar},
+		Cover: &entities.Cover{Image: cover}}, nil)
 
 	var owned catalog.Content
-	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: string(ch.ID),
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerEntityID: string(ch.ID),
 		Text: map[string]catalog.Text{"en": {Title: "Hello"}}}, &owned)
 	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+owned.ID+"/publish", catalog.PublishInput{}, nil)
 	w.published(f, staff, "blog")
 
-	chip := func(name string, o *groups.GroupCard) {
+	chip := func(name string, o *entities.EntityCard) {
 		t.Helper()
 		switch {
 		case o == nil || o.ID != ch.ID || o.Kind != "channel" || o.Slug != "studio" || o.Name != "Studio" || o.Path == "":
@@ -91,7 +91,7 @@ func TestOwnerChip(t *testing.T) {
 // membership offer, and the channel among their groups as its writer. A
 // non-member who edits nothing stays locked out and is offered it all.
 // Members-only posts need the channel to sell a membership first.
-func TestOwnerGroupEditors(t *testing.T) {
+func TestOwnerEntityEditors(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
 	_, creatorToken := w.person(iam.Role{})
@@ -99,16 +99,16 @@ func TestOwnerGroupEditors(t *testing.T) {
 	_, strangerToken := w.person(iam.Role{})
 	merchant := channelBilling(w)
 	e := w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
-		c.Content.GroupKinds["channel"] = channel
+		c.Content.EntityKinds["channel"] = channel
 		d.Billing, d.Scopes = ckopenrails.Billing(merchant), ckauthkit.Scopes(w.ak)
 	})
 	f := serve(t, e)
-	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio"}}}}, &made)
+	var made []entities.Entity
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []entities.EntityInput{{Kind: "channel", Slug: "studio",
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Studio"}}}}, &made)
 	ch := string(made[0].ID)
 	authtest.GrantRole(t, w.ak, iam.GroupByID(made[0].AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
-	membersOnly := catalog.ContentInput{Kind: "blog", OwnerGroupID: ch, Access: &access.Rule{Level: access.GroupLevel, Group: ch},
+	membersOnly := catalog.ContentInput{Kind: "blog", OwnerEntityID: ch, Access: &access.Rule{Level: access.EntityLevel, Entity: ch},
 		Text: map[string]catalog.Text{"en": {Title: "Backstage", Description: "Teaser", Body: "Members words"}}}
 	// Members-only needs no offer yet: the channel may sell one later.
 	var members, draft, gallery catalog.Content
@@ -116,10 +116,10 @@ func TestOwnerGroupEditors(t *testing.T) {
 	monthly := 720
 	f.want(http.StatusOK, creatorToken, "PUT", "/entities/"+ch+"/offer", offers.Terms{Amount: 4_990_000, Currency: "USD", RenewHours: &monthly}, nil)
 	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+members.ID+"/publish", catalog.PublishInput{}, nil)
-	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: ch,
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerEntityID: ch,
 		Text: map[string]catalog.Text{"en": {Title: "Next week"}}}, &draft)
 	// A gallery whose first version is free and second sold on its own.
-	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "gallery", OwnerGroupID: ch,
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "gallery", OwnerEntityID: ch,
 		Text:     map[string]catalog.Text{"en": {Title: "Sketches"}},
 		Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"ja"}, Access: &access.Rule{Level: access.PPV}}}}, &gallery)
 	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+gallery.ID+"/publish", catalog.PublishInput{}, nil)
@@ -183,15 +183,15 @@ func TestOwnerGroupEditors(t *testing.T) {
 	}
 
 	for token, editor := range map[string]bool{creatorToken: true, writerToken: true, strangerToken: false} {
-		var page groups.GroupDetail
+		var page entities.EntityDetail
 		f.want(http.StatusOK, token, "GET", "/entities/"+ch, nil, &page)
 		if a := page.Access; a == nil || a.Editor != editor || (a.Offer == nil) != editor {
 			t.Fatalf("the channel's page as an editor (%v): access %+v", editor, a)
 		}
 	}
-	var mine groups.MyGroupPage
+	var mine entities.MyEntityPage
 	f.want(http.StatusOK, writerToken, "GET", "/me/entities", nil, &mine)
-	if len(mine.Groups) != 1 || string(mine.Groups[0].ID) != ch || !mine.Groups[0].Writer || mine.Groups[0].Editor || mine.Groups[0].Owner {
+	if len(mine.Entities) != 1 || string(mine.Entities[0].ID) != ch || !mine.Entities[0].Writer || mine.Entities[0].Editor || mine.Entities[0].Owner {
 		t.Fatalf("the writer's groups %+v", mine)
 	}
 }

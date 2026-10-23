@@ -24,8 +24,8 @@ var currentSearchIndexes = []struct{ name, table string }{
 	{"content_search_documents_names_substring", "content_search_documents"},
 	{"content_text_management_prefix", "content_text"},
 	{"content_text_management_substring", "content_text"},
-	{"content_group_names_management_prefix", "content_group_names"},
-	{"content_group_names_management_substring", "content_group_names"},
+	{"content_entity_names_management_prefix", "content_entity_names"},
+	{"content_entity_names_management_substring", "content_entity_names"},
 }
 
 // IndexRetirement reports one retirement pass: the replacement indexes it

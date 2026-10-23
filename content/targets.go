@@ -13,16 +13,16 @@ import (
 )
 
 // TargetType is what an interaction route names: a content item (optionally
-// one of its versions) or a group. Rows store the target under its kind from
+// one of its versions) or an entity. Rows store the target under its kind from
 // kinds.Config and its id.
 type TargetType string
 
 const (
 	TargetContent TargetType = "contents"
-	TargetGroup   TargetType = "entities"
+	TargetEntity  TargetType = "entities"
 )
 
-// A content item's comments setting (resolve.Resolution.Comments); groups'
+// A content item's comments setting (resolve.Resolution.Comments); entities'
 // comments are always open.
 const (
 	CommentsOpen   = "open"
@@ -32,7 +32,7 @@ const (
 
 // shows reports whether the actor sees property p (kinds.Show*) of a visible
 // target: all of content they open (for a version's, the version) or edit,
-// of the rest what its kind's locked view shows; all of a group.
+// of the rest what its kind's locked view shows; all of an entity.
 func (rt *Runtime) shows(ref contentref.ContentRef, res resolve.Resolution, p string) bool {
 	k, content := rt.cfg.Kinds[ref.ContentKind]
 	return res.Visible && (!content || res.Accessible || res.Editor || k.LockedView().Shows(p))
@@ -56,7 +56,7 @@ func commentsOpen(res resolve.Resolution) error {
 }
 
 // TargetTypes are the route families interactions are served under.
-var TargetTypes = []TargetType{TargetContent, TargetGroup}
+var TargetTypes = []TargetType{TargetContent, TargetEntity}
 
 // versionParam names one version of a content target.
 var versionParam = httpapi.Text("version", "one version of the content item; the item itself by default")
@@ -69,7 +69,7 @@ func targetQuery(typ TargetType, params ...httpapi.Param) []httpapi.Param {
 	return params
 }
 
-// target reads a route's target: the content item or group its id names,
+// target reads a route's target: the content item or entity its id names,
 // under its kind, and for a content item the version ?version names. An
 // unknown id is ErrNotFound.
 func (rt *Runtime) target(req *http.Request, typ TargetType) (contentref.ContentRef, error) {
@@ -77,12 +77,12 @@ func (rt *Runtime) target(req *http.Request, typ TargetType) (contentref.Content
 	if contentref.ValidateID(id) != nil {
 		return contentref.ContentRef{}, ErrNotFound
 	}
-	if typ == TargetGroup && version != "" {
+	if typ == TargetEntity && version != "" {
 		return contentref.ContentRef{}, badRequest("a group has no versions")
 	}
 	table := rt.store.t.items
-	if typ == TargetGroup {
-		table = rt.store.t.groups
+	if typ == TargetEntity {
+		table = rt.store.t.entities
 	}
 	var kind string
 	err := rt.store.pool.QueryRow(req.Context(), `SELECT kind FROM `+table+` WHERE tenant_id = $1 AND id = $2`, rt.tenant, id).Scan(&kind)
@@ -103,8 +103,8 @@ func (rt *Runtime) targetType(kind string) (TargetType, bool) {
 	if _, ok := rt.cfg.Kinds[kind]; ok {
 		return TargetContent, true
 	}
-	if _, ok := rt.cfg.GroupKinds[kind]; ok {
-		return TargetGroup, true
+	if _, ok := rt.cfg.EntityKinds[kind]; ok {
+		return TargetEntity, true
 	}
 	return "", false
 }

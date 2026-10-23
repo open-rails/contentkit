@@ -5,23 +5,23 @@ import (
 	"testing"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 func TestKeywordEntitiesUseTimelessAssociations(t *testing.T) {
 	f := newFixture(t, nil)
 	cfg := config()
-	kind := cfg.GroupKinds["tag"]
+	kind := cfg.EntityKinds["tag"]
 	kind.Windows = true
-	cfg.GroupKinds["tag"] = kind
+	cfg.EntityKinds["tag"] = kind
 	var err error
-	f.groups, err = groups.New(groups.Options{Pool: f.pool, Schema: f.schema, Tenant: tenant, Kinds: cfg})
+	f.entities, err = entities.New(entities.Options{Pool: f.pool, Schema: f.schema, Tenant: tenant, Kinds: cfg})
 	if err != nil {
 		t.Fatal(err)
 	}
-	static, dated, parent := f.group("tag", "static"), f.group("tag", "dated"), f.group("tag", "parent")
-	parentID := groups.GroupID(parent)
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(static), ParentID: &parentID}}); err != nil {
+	static, dated, parent := f.entity("tag", "static"), f.entity("tag", "dated"), f.entity("tag", "parent")
+	parentID := entities.EntityID(parent)
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(static), ParentID: &parentID}}); err != nil {
 		t.Fatal(err)
 	}
 	id := f.create("staff", gallery("Discussion", "en"))
@@ -43,11 +43,11 @@ func TestKeywordEntitiesUseTimelessAssociations(t *testing.T) {
 	}
 	// Enabling windows on a kind does not discard its static associations.
 	check("Static", "Dated", "Parent")
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_memberships")+` SET active_from=now()-interval '3 days' WHERE group_id=$1`, dated); err != nil {
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_memberships")+` SET active_from=now()-interval '3 days' WHERE entity_id=$1`, dated); err != nil {
 		t.Fatal(err)
 	}
 	check("Static", "Parent")
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_memberships")+` SET active_until=now()-interval '2 days' WHERE group_id=$1`, dated); err != nil {
+	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_memberships")+` SET active_until=now()-interval '2 days' WHERE entity_id=$1`, dated); err != nil {
 		t.Fatal(err)
 	}
 	check("Static", "Parent")

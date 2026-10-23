@@ -12,8 +12,8 @@ engine:
   content:
     languages: [en, ja]
     kinds:
-      gallery: {route: g, presentation: reader, versions: {languages: one}, groups: [tag]}
-    group_kinds:
+      gallery: {route: g, presentation: reader, versions: {languages: one}, entities: [tag]}
+    entity_kinds:
       tag: {route: tag}
   interactions:
     anonymous: {comments: true}
@@ -45,7 +45,7 @@ func TestLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := c.Engine
-	if e.Tenant != "site" || e.Database.Schema != "site_contentkit" || e.Content.Kinds["gallery"].Route != "g" || e.Content.GroupKinds["tag"].Route != "tag" ||
+	if e.Tenant != "site" || e.Database.Schema != "site_contentkit" || e.Content.Kinds["gallery"].Route != "g" || e.Content.EntityKinds["tag"].Route != "tag" ||
 		!e.Interactions.Anonymous.Comments || e.Interactions.Limits.Comment[0].Per != 5*time.Minute || e.ClickHouse.Addr != "clickhouse:9000" {
 		t.Fatalf("engine %+v", e)
 	}

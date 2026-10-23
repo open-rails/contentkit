@@ -18,7 +18,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
@@ -35,26 +35,26 @@ func siteConfig() kinds.Config {
 		Tiers:        []string{"premium"},
 		TokenClaims:  []string{"premium"},
 		Restrictions: []string{"restricted"}, ContentFilters: kinds.ContentFilters{AppliesTo: []string{"gallery", "video"}, Domains: []kinds.Domain{{Name: "main", Hosts: []string{"main.test"}, Filters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+			{Entity: kinds.EntityRef{Kind: "tag", Slug: "big-breasts"}},
+			{Entity: kinds.EntityRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
 		},
-		}, {Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.GroupRef{"gallery": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}, "video": []kinds.GroupRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		}, {Name: "gay", Hosts: []string{"gay.test"}, RequireEntities: map[string][]kinds.EntityRef{"gallery": []kinds.EntityRef{{Kind: "tag", Slug: "yaoi"}}, "video": []kinds.EntityRef{{Kind: "tag", Slug: "yaoi"}}}, Filters: []kinds.ContentFilter{
+			{Entity: kinds.EntityRef{Kind: "tag", Slug: "big-breasts"}},
+			{Entity: kinds.EntityRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
 		},
 		}, {Name: "clean", Hosts: []string{"clean.test"}, Filters: append([]kinds.ContentFilter{
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "big-breasts"}},
-			{Group: kinds.GroupRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
-		}, kinds.ContentFilter{Group: kinds.GroupRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()}),
+			{Entity: kinds.EntityRef{Kind: "tag", Slug: "big-breasts"}},
+			{Entity: kinds.EntityRef{Kind: "tag", Slug: "yaoi"}, Visible: true},
+		}, kinds.ContentFilter{Entity: kinds.EntityRef{Kind: "tag", Slug: "restricted"}, Visible: false, UserToggle: func() *bool { b := false; return &b }()}),
 		},
 		}}, Kinds: map[string]kinds.Kind{
 			"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
-				Groups: []string{"tag", "artist", "series", "rail"}, Sort: "newest",
+				Entities: []string{"tag", "artist", "series", "rail"}, Sort: "newest",
 				Locked:     &kinds.Locked{Show: kinds.Shown, Preview: &kinds.Preview{Pages: 2}},
 				Attributes: map[string]kinds.Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}, Filterable: true}}},
-			"video": {Route: "watch", Presentation: "player", Versions: kinds.VersionRules{Languages: "many"}, Groups: []string{"tag"}},
+			"video": {Route: "watch", Presentation: "player", Versions: kinds.VersionRules{Languages: "many"}, Entities: []string{"tag"}},
 		},
-		GroupKinds: map[string]kinds.GroupKind{
+		EntityKinds: map[string]kinds.EntityKind{
 			"tag":    {Route: "tags"},
 			"artist": {Route: "artists"},
 			"series": {Route: "series", Ordered: true},
@@ -72,20 +72,20 @@ func (staffOnly) Can(_ context.Context, a access.Actor, _ string) (bool, error) 
 }
 
 type fixture struct {
-	t      *testing.T
-	ctx    context.Context
-	pool   *pgxpool.Pool
-	schema string
-	now    time.Time
-	clock  time.Time // the catalog's; the seeds publish in the past
-	groups *groups.Store
-	cat    *catalog.Store
-	svc    *Service
-	h      http.Handler
-	ids    map[string]string // group slug -> id
-	cids   map[int]string    // item n -> content id
-	vids   map[[2]int]string // item n, version i -> version id
-	codes  map[int]string    // item n -> content code
+	t        *testing.T
+	ctx      context.Context
+	pool     *pgxpool.Pool
+	schema   string
+	now      time.Time
+	clock    time.Time // the catalog's; the seeds publish in the past
+	entities *entities.Store
+	cat      *catalog.Store
+	svc      *Service
+	h        http.Handler
+	ids      map[string]string // entity slug -> id
+	cids     map[int]string    // item n -> content id
+	vids     map[[2]int]string // item n, version i -> version id
+	codes    map[int]string    // item n -> content code
 }
 
 // newFixture serves discovery over a fresh schema; ch is the signal plane
@@ -106,8 +106,8 @@ func newFixtureBilling(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Conf
 		cids: map[int]string{}, vids: map[[2]int]string{}, codes: map[int]string{}}
 	f.clock = f.now
 	var err error
-	if f.groups, err = groups.New(groups.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg,
-		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+	if f.entities, err = entities.New(entities.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg,
+		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return f.cat.ContentChanged(ctx, q, ids)
 		}}); err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func newFixtureBilling(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Conf
 		t.Fatal(err)
 	}
 	if f.cat, err = catalog.New(ctx, catalog.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg, Auth: testauth.Auth{Authz: staffOnly{}},
-		Gate: gate, Groups: f.groups, PlayableKinds: []string{"video"}, Now: func() time.Time { return f.clock }}); err != nil {
+		Gate: gate, Entities: f.entities, PlayableKinds: []string{"video"}, Now: func() time.Time { return f.clock }}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(f.cat.Close)
@@ -125,7 +125,7 @@ func newFixtureBilling(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Conf
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.svc, err = New(Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg, Gate: gate, Groups: f.groups, Hub: h,
+	if f.svc, err = New(Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: cfg, Gate: gate, Entities: f.entities, Hub: h,
 		Resolver: f.cat.Resolver(), Visibility: f.cat}); err != nil {
 		t.Fatal(err)
 	}
@@ -135,15 +135,15 @@ func newFixtureBilling(t *testing.T, ch signal.Conn, chDB string, cfg kinds.Conf
 	hasRestricted := false
 	for _, d := range cfg.ContentFilters.Domains {
 		for _, rule := range d.Filters {
-			if rule.Group.Kind == "tag" && rule.Group.Slug == "restricted" {
+			if rule.Entity.Kind == "tag" && rule.Entity.Slug == "restricted" {
 				hasRestricted = true
 			}
 		}
 	}
 	if hasRestricted {
-		f.group("tag", "restricted")
+		f.entity("tag", "restricted")
 		internal := true
-		if _, err := f.groups.UpdateGroups(ctx, []groups.GroupUpdate{{ID: groups.GroupID(f.ids["restricted"]), Internal: &internal}}); err != nil {
+		if _, err := f.entities.UpdateEntities(ctx, []entities.EntityUpdate{{ID: entities.EntityID(f.ids["restricted"]), Internal: &internal}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -168,20 +168,20 @@ func (f *fixture) vid(n, i int) string {
 	return fmt.Sprintf("01920000-0000-7000-9000-%010d%02d", n, i)
 }
 
-// group creates groups of kind by slug, with an English name.
-func (f *fixture) group(kind string, slugs ...string) {
+// entity creates entities of kind by slug, with an English name.
+func (f *fixture) entity(kind string, slugs ...string) {
 	f.t.Helper()
-	var in []groups.GroupInput
+	var in []entities.EntityInput
 	for _, s := range slugs {
 		if f.ids[s] != "" {
 			continue
 		}
-		in = append(in, groups.GroupInput{Kind: kind, Slug: s, Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: strings.ToUpper(s[:1]) + strings.ReplaceAll(s[1:], "-", " ")}}})
+		in = append(in, entities.EntityInput{Kind: kind, Slug: s, Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: strings.ToUpper(s[:1]) + strings.ReplaceAll(s[1:], "-", " ")}}})
 	}
 	if len(in) == 0 {
 		return
 	}
-	out, err := f.groups.CreateGroups(f.ctx, in)
+	out, err := f.entities.CreateEntities(f.ctx, in)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ type item struct {
 	deleted      bool
 	favorites    int // the counts job's
 	versions     []ver
-	groups       []string // slugs, content-level memberships
+	entities     []string // slugs, content-level memberships
 }
 
 // seed creates items through the catalog as staff, publishing each age ago.
@@ -231,8 +231,8 @@ func (f *fixture) seed(items ...item) {
 		return &r
 	}
 	for _, it := range items {
-		if slices.Contains(it.restrictions, "restricted") && f.ids["restricted"] != "" && !slices.Contains(it.groups, "restricted") {
-			it.groups = append(it.groups, "restricted")
+		if slices.Contains(it.restrictions, "restricted") && f.ids["restricted"] != "" && !slices.Contains(it.entities, "restricted") {
+			it.entities = append(it.entities, "restricted")
 		}
 		if it.kind == "" {
 			it.kind = "gallery"
@@ -292,12 +292,12 @@ func (f *fixture) seed(items ...item) {
 			f.t.Fatal(err)
 		}
 		f.codes[it.n] = code
-		var ms []groups.Membership
-		for _, slug := range it.groups {
-			ms = append(ms, groups.Membership{GroupID: groups.GroupID(f.ids[slug]), ContentID: id})
+		var ms []entities.Membership
+		for _, slug := range it.entities {
+			ms = append(ms, entities.Membership{EntityID: entities.EntityID(f.ids[slug]), ContentID: id})
 		}
 		if len(ms) > 0 {
-			if err := f.groups.AddMemberships(f.ctx, ms); err != nil {
+			if err := f.entities.AddMemberships(f.ctx, ms); err != nil {
 				f.t.Fatal(err)
 			}
 		}

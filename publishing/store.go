@@ -24,7 +24,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
@@ -35,7 +35,7 @@ type Options struct {
 	Schema    string
 	Tenant    string
 	Catalog   *catalog.Store
-	Groups    *groups.Store
+	Entities  *entities.Store
 	Registry  *media.Registry
 	Uploads   *media.Uploads
 	Manifests *media.Manifests
@@ -54,10 +54,10 @@ type Store struct {
 }
 
 func New(o Options) (*Store, error) {
-	if o.Pool == nil || o.Schema == "" || o.Tenant == "" || o.Catalog == nil || o.Groups == nil || o.Registry == nil || o.Uploads == nil || o.Manifests == nil || o.Versions == nil {
+	if o.Pool == nil || o.Schema == "" || o.Tenant == "" || o.Catalog == nil || o.Entities == nil || o.Registry == nil || o.Uploads == nil || o.Manifests == nil || o.Versions == nil {
 		return nil, errors.New("publishing: pool, catalog, groups and media are required")
 	}
-	if o.Catalog.Tenant() != o.Tenant || o.Groups.Tenant() != o.Tenant {
+	if o.Catalog.Tenant() != o.Tenant || o.Entities.Tenant() != o.Tenant {
 		return nil, errors.New("publishing: catalog scope mismatch")
 	}
 	if err := gate.Check(o.Auth, access.ContentWrite, access.EntitiesWrite); err != nil {
@@ -228,15 +228,15 @@ type record struct {
 	commitID                         string
 	commitStarted                    bool
 	contentRevision, versionRevision int64
-	groupIDs                         []string
+	entityIDs                        []string
 }
 
 func (s *Store) load(ctx context.Context, q catalog.Querier, id string) (record, error) {
 	var r record
 	var req, progress, result, fail, plan, entities []byte
 	err := q.QueryRow(ctx, `SELECT id::text,owner_key,request_hash,request,authority,content_id,version_id,content_revision,version_revision,
-group_ids,entity_resolutions,commit_id::text,upload,upload_expires_at,commit_started,state,progress,result,failure,created_at,updated_at FROM `+s.table+` WHERE tenant_id=$1 AND id=$2`, s.o.Tenant, id).Scan(
-		&r.ID, &r.owner, &r.hash, &req, &r.authority, &r.ContentID, &r.VersionID, &r.contentRevision, &r.versionRevision, &r.groupIDs, &entities, &r.commitID, &plan, &r.expires, &r.commitStarted, &r.State, &progress, &result, &fail, &r.CreatedAt, &r.UpdatedAt)
+entity_ids,entity_resolutions,commit_id::text,upload,upload_expires_at,commit_started,state,progress,result,failure,created_at,updated_at FROM `+s.table+` WHERE tenant_id=$1 AND id=$2`, s.o.Tenant, id).Scan(
+		&r.ID, &r.owner, &r.hash, &req, &r.authority, &r.ContentID, &r.VersionID, &r.contentRevision, &r.versionRevision, &r.entityIDs, &entities, &r.commitID, &plan, &r.expires, &r.commitStarted, &r.State, &progress, &result, &fail, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, failure("not_found", "", "publishing operation not found")
 	}
@@ -311,9 +311,9 @@ func (s *Store) Put(ctx context.Context, actor access.Actor, id string, in Reque
 	if err != nil {
 		return Operation{}, err
 	}
-	groupWriter := s.o.Groups.As(s.o.Auth, actor)
+	entityWriter := s.o.Entities.As(s.o.Auth, actor)
 	if in.CreateMissingEntities {
-		if _, err := groupWriter.PrepareStaffWrite(ctx); err != nil {
+		if _, err := entityWriter.PrepareStaffWrite(ctx); err != nil {
 			return Operation{}, err
 		}
 	}
@@ -356,11 +356,11 @@ func (s *Store) Put(ctx context.Context, actor access.Actor, id string, in Reque
 	// The memberships written below wait out a hierarchy change before the
 	// entities are locked, not after.
 	if len(in.Entities) > 0 {
-		if err = s.o.Groups.LockHierarchyShared(ctx, tx); err != nil {
+		if err = s.o.Entities.LockHierarchyShared(ctx, tx); err != nil {
 			return Operation{}, err
 		}
 	}
-	groupIDs, entities, err := s.resolveGroups(ctx, tx, groupWriter, in.Entities, in.CreateMissingEntities)
+	entityIDs, entityResolutions, err := s.resolveEntities(ctx, tx, entityWriter, in.Entities, in.CreateMissingEntities)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -374,12 +374,12 @@ func (s *Store) Put(ctx context.Context, actor access.Actor, id string, in Reque
 	if err = tx.QueryRow(ctx, `SELECT c.revision,v.id,v.revision FROM `+s.items+` c JOIN `+s.versions+` v ON v.tenant_id=c.tenant_id AND v.content_id=c.id WHERE c.tenant_id=$1 AND c.id=$2`, s.o.Tenant, contentID).Scan(&cr, &versionID, &vr); err != nil {
 		return Operation{}, err
 	}
-	if len(groupIDs) > 0 {
-		ms := make([]groups.Membership, len(groupIDs))
-		for i, g := range groupIDs {
-			ms[i] = groups.Membership{GroupID: groups.GroupID(g)}
+	if len(entityIDs) > 0 {
+		ms := make([]entities.Membership, len(entityIDs))
+		for i, g := range entityIDs {
+			ms[i] = entities.Membership{EntityID: entities.EntityID(g)}
 		}
-		if err = s.o.Groups.SetContentGroupsTx(ctx, tx, []groups.ContentGroups{{ContentID: contentID, Memberships: ms}}); err != nil {
+		if err = s.o.Entities.SetContentEntitiesTx(ctx, tx, []entities.ContentEntities{{ContentID: contentID, Memberships: ms}}); err != nil {
 			return Operation{}, err
 		}
 		// A host's facet callback may advance the catalog revision.
@@ -391,8 +391,8 @@ func (s *Store) Put(ctx context.Context, actor access.Actor, id string, in Reque
 	if in.Source != nil {
 		provider, source = in.Source.Provider, in.Source.ID
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO `+s.table+`(tenant_id,id,owner_key,request_hash,request,authority,content_id,version_id,content_revision,version_revision,group_ids,entity_resolutions,commit_id,source_provider,source_id,publish_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, s.o.Tenant, id, who, hash, raw, authority, contentID, versionID, cr, vr, groupIDs, jsonBytes(entities), uuid.NewString(), provider, source, in.PublishAt)
+	_, err = tx.Exec(ctx, `INSERT INTO `+s.table+`(tenant_id,id,owner_key,request_hash,request,authority,content_id,version_id,content_revision,version_revision,entity_ids,entity_resolutions,commit_id,source_provider,source_id,publish_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, s.o.Tenant, id, who, hash, raw, authority, contentID, versionID, cr, vr, entityIDs, jsonBytes(entityResolutions), uuid.NewString(), provider, source, in.PublishAt)
 	var pe *pgconn.PgError
 	if errors.As(err, &pe) && pe.Code == "23505" {
 		return Operation{}, failure("source_conflict", "source", "source already has a publishing operation")

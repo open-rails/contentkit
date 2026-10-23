@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 // DailyReleasesOptions selects a complete calendar-day window of releases.
@@ -21,8 +21,8 @@ type DailyReleasesOptions struct {
 	// Future dates are rejected. Visibility is evaluated at the current time.
 	EndDate string
 	// TimeZone is an IANA zone, UTC by default.
-	TimeZone   string
-	CardGroups []string
+	TimeZone     string
+	CardEntities []string
 }
 
 type ReleaseDay struct {
@@ -37,8 +37,8 @@ type ReleaseDay struct {
 }
 
 type ReleaseFilteredEntity struct {
-	Entity groups.GroupCard `json:"entity"`
-	Count  int              `json:"count"`
+	Entity entities.EntityCard `json:"entity"`
+	Count  int                 `json:"count"`
 }
 
 // DailyReleases contains every visible card in the requested window, without
@@ -128,7 +128,7 @@ func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (DailyRe
 			picks[i] = r.pick
 			dates[r.content] = r.at.In(loc).Format(time.DateOnly)
 		}
-		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardGroups})
+		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
 		if err != nil {
 			return out, err
 		}

@@ -10,13 +10,13 @@ import (
 
 func TestFavoritesSummaryBelongsToCallerBeforePagination(t *testing.T) {
 	f := newFixture(t, nil, "")
-	f.group("tag", "big-breasts", "restricted")
+	f.entity("tag", "big-breasts", "restricted")
 	f.seed(
 		item{n: 1, age: time.Hour, titles: map[string]string{"en": "Free"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, age: time.Hour, titles: map[string]string{"en": "Filtered favorite"}, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, age: time.Hour, titles: map[string]string{"en": "Filtered favorite"}, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 3, age: time.Hour, titles: map[string]string{"en": "Premium favorite"}, rule: `{"level":"tier","tiers":["premium"]}`, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 4, age: time.Hour, titles: map[string]string{"en": "Someone else's favorite"}, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 5, age: time.Hour, titles: map[string]string{"en": "Hard restricted"}, groups: []string{"restricted", "big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 4, age: time.Hour, titles: map[string]string{"en": "Someone else's favorite"}, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 5, age: time.Hour, titles: map[string]string{"en": "Hard restricted"}, entities: []string{"restricted", "big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
 	)
 	for _, n := range []int{1, 2, 3, 5} {
 		f.exec(`INSERT INTO {s}.content_favorites (tenant_id,user_id,content_kind,content_id,value,revision) VALUES ($1,'reader','gallery',$2,1,1)`, tenant, f.cid(n))
@@ -46,11 +46,11 @@ func TestFavoritesSummaryBelongsToCallerBeforePagination(t *testing.T) {
 
 func TestRecommendationSummaryUsesOnlyConsideredCandidates(t *testing.T) {
 	f := newFixture(t, nil, "")
-	f.group("tag", "big-breasts")
+	f.entity("tag", "big-breasts")
 	f.seed(
 		item{n: 1, age: time.Hour, titles: map[string]string{"en": "Candidate"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 2, age: time.Hour, titles: map[string]string{"en": "Filtered candidate"}, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
-		item{n: 3, age: time.Hour, titles: map[string]string{"en": "Outside candidates"}, groups: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 2, age: time.Hour, titles: map[string]string{"en": "Filtered candidate"}, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
+		item{n: 3, age: time.Hour, titles: map[string]string{"en": "Outside candidates"}, entities: []string{"big-breasts"}, versions: []ver{{langs: []string{"en"}}}},
 	)
 	o := RecommendationOptions{Reader: Reader{Host: "main.test"}, Filter: Filter{Kind: "gallery"}, Summary: true}
 	selected, err := f.svc.compile(f.ctx, o.Reader, o.Filter)

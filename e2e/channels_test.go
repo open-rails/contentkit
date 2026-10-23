@@ -23,7 +23,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/offers"
@@ -31,7 +31,7 @@ import (
 
 // channel is OnlyDemo's channel: user-owned, sellable, AuthKit-scoped, one
 // per person, its creators' uploads limited.
-var channel = kinds.GroupKind{Route: "c", Owner: "user", Sellable: true, AuthScope: true, MaxPerOwner: 1,
+var channel = kinds.EntityKind{Route: "c", Owner: "user", Sellable: true, AuthScope: true, MaxPerOwner: 1,
 	Uploads: kinds.UploadLimits{FilesPerHour: 2, QuotaBytes: 1 << 20}}
 
 // channelBilling is the site's merchant on an embedded OpenRails: its client
@@ -81,19 +81,19 @@ func TestChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
-		c.Content.GroupKinds["channel"] = channel
+		c.Content.EntityKinds["channel"] = channel
 		d.Billing, d.Scopes = ckopenrails.Billing(merchant), ckauthkit.Scopes(w.ak)
 	})
 	f := serve(t, e)
 
-	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio"}}}}, &made)
+	var made []entities.Entity
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []entities.EntityInput{{Kind: "channel", Slug: "studio",
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Studio"}}}}, &made)
 	ch := made[0]
 	if ch.OwnerUserID != creator.ID || ch.AuthScope != string(ch.ID) {
 		t.Fatalf("channel %+v", ch)
 	}
-	f.want(http.StatusConflict, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "another"}}, nil)
+	f.want(http.StatusConflict, creatorToken, "POST", "/entities", []entities.EntityInput{{Kind: "channel", Slug: "another"}}, nil)
 	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(editor.ID), w.channelEditor)
 	path := "/entities/" + string(ch.ID)
 
@@ -110,8 +110,8 @@ func TestChannels(t *testing.T) {
 	}
 	published := publish(t, w, itemRef, plan.Path, "avatar")
 	image := strings.TrimSuffix(strings.TrimPrefix(plan.Path, "avatar/"), ".png")
-	f.want(http.StatusForbidden, strangerToken, "PATCH", path, groups.GroupUpdate{Avatar: &groups.Avatar{Image: image}}, nil)
-	f.want(http.StatusOK, editorToken, "PATCH", path, groups.GroupUpdate{Avatar: &groups.Avatar{Image: image}}, nil)
+	f.want(http.StatusForbidden, strangerToken, "PATCH", path, entities.EntityUpdate{Avatar: &entities.Avatar{Image: image}}, nil)
+	f.want(http.StatusOK, editorToken, "PATCH", path, entities.EntityUpdate{Avatar: &entities.Avatar{Image: image}}, nil)
 
 	// Uploads: two files an hour per uploader, a megabyte per channel.
 	big := presignPNG(ref, "cover/big.png", body)
@@ -125,29 +125,29 @@ func TestChannels(t *testing.T) {
 	f.want(http.StatusForbidden, strangerToken, "PUT", path+"/offer", free, nil)
 	f.want(http.StatusOK, editorToken, "PUT", path+"/offer", free, nil)
 
-	var page groups.GroupPage
+	var page entities.EntityPage
 	f.want(http.StatusOK, viewerToken, "GET", "/entities?kind=channel&language=en", nil, &page)
-	card := page.Groups[0]
-	if len(page.Groups) != 1 || card.Avatar == nil || card.Avatar.Image != image || len(card.Avatar.Renditions) == 0 ||
+	card := page.Entities[0]
+	if len(page.Entities) != 1 || card.Avatar == nil || card.Avatar.Image != image || len(card.Avatar.Renditions) == 0 ||
 		card.Avatar.Renditions[0].URL != published.Renditions[0].URL {
 		t.Fatalf("card avatar %+v, published %+v", card.Avatar, published)
 	}
-	if a := card.Access; a == nil || a.Member || a.Offer == nil || a.Offer.Terms.Amount != 0 || a.Key.Group() != string(ch.ID) {
+	if a := card.Access; a == nil || a.Member || a.Offer == nil || a.Offer.Terms.Amount != 0 || a.Key.Entity() != string(ch.ID) {
 		t.Fatalf("card access %+v", a)
 	}
 	f.want(http.StatusOK, viewerToken, "POST", path+"/join", nil, nil)
-	var d groups.GroupDetail
+	var d entities.EntityDetail
 	f.want(http.StatusOK, viewerToken, "GET", path, nil, &d)
 	if d.Access == nil || !d.Access.Member || d.Avatar == nil || len(d.Avatar.Renditions) == 0 {
 		t.Fatalf("detail after joining: access %+v avatar %+v", d.Access, d.Avatar)
 	}
-	var mine groups.MyGroupPage
+	var mine entities.MyEntityPage
 	f.want(http.StatusOK, viewerToken, "GET", "/me/entities", nil, &mine)
-	if len(mine.Groups) != 1 || !mine.Groups[0].Member || mine.Groups[0].Owner || mine.Groups[0].Editor {
+	if len(mine.Entities) != 1 || !mine.Entities[0].Member || mine.Entities[0].Owner || mine.Entities[0].Editor {
 		t.Fatalf("the viewer's groups %+v", mine)
 	}
 	f.want(http.StatusOK, editorToken, "GET", "/me/entities?kind=channel", nil, &mine)
-	if len(mine.Groups) != 1 || !mine.Groups[0].Editor || mine.Groups[0].Owner {
+	if len(mine.Entities) != 1 || !mine.Entities[0].Editor || mine.Entities[0].Owner {
 		t.Fatalf("the editor's groups %+v", mine)
 	}
 
@@ -170,7 +170,7 @@ func TestChannels(t *testing.T) {
 	}
 
 	// The host's in-process client: staff, without a credential.
-	if _, err := c.PatchEntity(ctx, string(ch.ID), groups.GroupUpdate{Text: []groups.Text{{Language: "en", Description: "Films"}}}); err != nil {
+	if _, err := c.PatchEntity(ctx, string(ch.ID), entities.EntityUpdate{Text: []entities.Text{{Language: "en", Description: "Films"}}}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := c.GetEntity(ctx, string(ch.ID), contentkit.GetEntityQuery{Language: "en"})
@@ -186,17 +186,17 @@ func TestChannels(t *testing.T) {
 	// else does.
 	writer, writerToken := w.person(iam.Role{})
 	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
-	post := catalog.ContentInput{Kind: "blog", OwnerGroupID: string(ch.ID), Text: map[string]catalog.Text{"en": {Title: "Hello"}}}
+	post := catalog.ContentInput{Kind: "blog", OwnerEntityID: string(ch.ID), Text: map[string]catalog.Text{"en": {Title: "Hello"}}}
 	f.want(http.StatusForbidden, strangerToken, "POST", "/contents", post, nil)
 	var made2 catalog.Content
 	f.want(http.StatusCreated, writerToken, "POST", "/contents", post, &made2)
 	comments := "closed"
 	f.want(http.StatusOK, writerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Comments: &comments}, nil)
 	f.want(http.StatusForbidden, strangerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Comments: &comments}, nil)
-	f.want(http.StatusForbidden, writerToken, "PATCH", path, groups.GroupUpdate{Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Mine"}}}, nil)
+	f.want(http.StatusForbidden, writerToken, "PATCH", path, entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Mine"}}}, nil)
 
 	// Renaming the channel renames its product on OpenRails.
-	f.want(http.StatusOK, editorToken, "PATCH", path, groups.GroupUpdate{Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Studio Two"}}}, nil)
+	f.want(http.StatusOK, editorToken, "PATCH", path, entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Studio Two"}}}, nil)
 	bill := ckopenrails.Billing(merchant)
 	for deadline := time.Now().Add(time.Minute); ; time.Sleep(200 * time.Millisecond) {
 		products, err := bill.Products(ctx, []string{card.Access.Key.String()})
@@ -216,9 +216,9 @@ func TestChannels(t *testing.T) {
 	var earlier catalog.Content
 	f.want(http.StatusCreated, writerToken, "POST", "/contents", post, &earlier)
 	f.want(http.StatusNoContent, writerToken, "DELETE", "/contents/"+earlier.ID, nil, nil)
-	var deleted groups.Group
+	var deleted entities.Entity
 	f.want(http.StatusOK, creatorToken, "DELETE", path, nil, &deleted)
-	if deleted.State != groups.StateDeleted || deleted.AuthScope != "" {
+	if deleted.State != entities.StateDeleted || deleted.AuthScope != "" {
 		t.Fatalf("deleted %+v", deleted)
 	}
 	if g, err := w.ak.Group(ctx, iam.GroupByID(string(ch.ID))); err != nil || g.DeletedAt == nil {
@@ -227,7 +227,7 @@ func TestChannels(t *testing.T) {
 	items := pgx.Identifier{w.schema, "content_items"}.Sanitize()
 	stateOf := func(id string) (state, cause string) {
 		t.Helper()
-		if err := w.pool.QueryRow(ctx, `SELECT state, coalesce(deleted_with_group, '') FROM `+items+` WHERE id = $1`, id).Scan(&state, &cause); err != nil {
+		if err := w.pool.QueryRow(ctx, `SELECT state, coalesce(deleted_with_entity, '') FROM `+items+` WHERE id = $1`, id).Scan(&state, &cause); err != nil {
 			t.Fatal(err)
 		}
 		return state, cause
@@ -257,9 +257,9 @@ func TestChannels(t *testing.T) {
 
 	// Restoring brings back the scope, the media and the post its deletion
 	// took; the one deleted before stays deleted.
-	var back groups.Group
-	f.want(http.StatusOK, creatorToken, "PATCH", path, groups.GroupUpdate{State: ptr(groups.StateActive)}, &back)
-	if back.State != groups.StateActive || back.AuthScope != string(ch.ID) {
+	var back entities.Entity
+	f.want(http.StatusOK, creatorToken, "PATCH", path, entities.EntityUpdate{State: ptr(entities.StateActive)}, &back)
+	if back.State != entities.StateActive || back.AuthScope != string(ch.ID) {
 		t.Fatalf("restored %+v", back)
 	}
 	if state, cause := stateOf(made2.ID); state != "draft" || cause != "" {
@@ -330,17 +330,17 @@ func TestChannelPostReads(t *testing.T) {
 	creator, creatorToken := w.person(iam.Role{})
 	counter := scopeCounter{Authenticator: w.ak.Authenticator(), root: w.scope, asked: new(atomic.Int32), fail: new(atomic.Bool)}
 	f := serve(t, w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
-		c.Content.GroupKinds["channel"] = channel
+		c.Content.EntityKinds["channel"] = channel
 		d.Auth, d.Scopes = counter, ckauthkit.Scopes(w.ak)
 	}))
-	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio"}}, &made)
+	var made []entities.Entity
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []entities.EntityInput{{Kind: "channel", Slug: "studio"}}, &made)
 	ch := made[0]
 	if ch.OwnerUserID != creator.ID || ch.AuthScope == "" {
 		t.Fatalf("channel %+v", ch)
 	}
 	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
-	in := catalog.ContentInput{Kind: "blog", OwnerGroupID: string(ch.ID), Creators: &[]catalog.Creator{},
+	in := catalog.ContentInput{Kind: "blog", OwnerEntityID: string(ch.ID), Creators: &[]catalog.Creator{},
 		Text: map[string]catalog.Text{"en": {Title: "Hello"}}}
 	var post, draft catalog.Content
 	f.want(http.StatusCreated, writerToken, "POST", "/contents", in, &post)
@@ -380,16 +380,16 @@ func TestChannelCommentModeration(t *testing.T) {
 	_, otherToken := w.person(iam.Role{})
 	_, staff := w.person(w.staff)
 	f := serve(t, w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
-		c.Content.GroupKinds["channel"] = channel
+		c.Content.EntityKinds["channel"] = channel
 		d.Scopes = ckauthkit.Scopes(w.ak)
 	}))
-	var made []groups.Group
-	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "studio"}}, &made)
+	var made []entities.Entity
+	f.want(http.StatusCreated, creatorToken, "POST", "/entities", []entities.EntityInput{{Kind: "channel", Slug: "studio"}}, &made)
 	ch := made[0]
 	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(moderator.ID), w.channelModerator)
-	f.want(http.StatusCreated, otherToken, "POST", "/entities", []groups.GroupInput{{Kind: "channel", Slug: "other"}}, nil)
+	f.want(http.StatusCreated, otherToken, "POST", "/entities", []entities.EntityInput{{Kind: "channel", Slug: "other"}}, nil)
 	var post catalog.Content
-	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerGroupID: string(ch.ID),
+	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerEntityID: string(ch.ID),
 		Text: map[string]catalog.Text{"en": {Title: "Hello"}}}, &post)
 	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)
 	elsewhere, _ := w.published(f, staff, "blog")
@@ -447,15 +447,15 @@ func TestChannelCommentModeration(t *testing.T) {
 	comment(commenterToken, "/contents/"+elsewhere+"/comments", "elsewhere")
 	var list []content.CommentBan
 	f.want(http.StatusOK, creatorToken, "GET", bans, nil, &list)
-	if len(list) != 1 || list[0].UserID != commenter.ID || list[0].Scope != content.GroupScope(string(ch.ID)) {
+	if len(list) != 1 || list[0].UserID != commenter.ID || list[0].Scope != content.EntityScope(string(ch.ID)) {
 		t.Fatalf("the channel's bans %+v", list)
 	}
 	f.want(http.StatusNoContent, moderatorToken, "DELETE", bans+"/"+commenter.ID, nil, nil)
 	comment(commenterToken, item, "again")
 
-	var mine groups.MyGroupPage
+	var mine entities.MyEntityPage
 	f.want(http.StatusOK, moderatorToken, "GET", "/me/entities", nil, &mine)
-	if g := mine.Groups; len(g) != 1 || g[0].ID != ch.ID || !g[0].Moderator || g[0].Writer || g[0].Editor {
+	if g := mine.Entities; len(g) != 1 || g[0].ID != ch.ID || !g[0].Moderator || g[0].Writer || g[0].Editor {
 		t.Fatalf("the moderator's groups %+v", mine)
 	}
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/kinds"
@@ -24,7 +24,7 @@ type ManagementName struct{ ID, Kind, Title, Language string }
 
 type ManagementNames struct {
 	Contents []ManagementName
-	Entities []groups.GroupCard
+	Entities []entities.EntityCard
 }
 
 type ManagementSearchQuery struct {
@@ -35,10 +35,10 @@ type ManagementSearchQuery struct {
 }
 
 // ManagementSearch uses current operator text, not public approved snapshots.
-// Write/creator/owner-group eligibility runs inside every indexed SQL query
+// Write/creator/owner-entity eligibility runs inside every indexed SQL query
 // before its limit; entity names require the same authority as /manage/entities.
 func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q ManagementSearchQuery) (ManagementNames, error) {
-	out := ManagementNames{Contents: []ManagementName{}, Entities: []groups.GroupCard{}}
+	out := ManagementNames{Contents: []ManagementName{}, Entities: []entities.EntityCard{}}
 	if actor.Anonymous || actor.ID == "" {
 		return out, ErrForbidden
 	}
@@ -61,7 +61,7 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 		names = slices.Clone(names)
 		if len(names) == 0 {
 			if entity {
-				for name := range s.cfg.GroupKinds {
+				for name := range s.cfg.EntityKinds {
 					names = append(names, name)
 				}
 			} else {
@@ -73,7 +73,7 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 		for i, name := range names {
 			name = strings.TrimSpace(name)
 			if entity {
-				if _, ok := s.cfg.GroupKinds[name]; !ok {
+				if _, ok := s.cfg.EntityKinds[name]; !ok {
 					return nil, invalid("entity kind %q is not configured", name)
 				}
 			} else if _, ok := s.cfg.Kinds[name]; !ok {
@@ -121,24 +121,24 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 	}
 	mode := hub.LanguageModeExact
 	if canContents && len(q.ContentKinds) > 0 {
-		var editorGroups []string
+		var editorEntities []string
 		if !rights.write {
-			if source, ok := s.groups.(interface {
-				ContentEditorGroups(context.Context, auth.Authenticator, access.Actor) ([]groups.GroupID, error)
+			if source, ok := s.entities.(interface {
+				ContentEditorEntities(context.Context, auth.Authenticator, access.Actor) ([]entities.EntityID, error)
 			}); ok {
-				ids, err := source.ContentEditorGroups(ctx, s.guard.Auth, actor)
+				ids, err := source.ContentEditorEntities(ctx, s.guard.Auth, actor)
 				if err != nil {
 					return out, err
 				}
 				for _, id := range ids {
-					editorGroups = append(editorGroups, string(id))
+					editorEntities = append(editorEntities, string(id))
 				}
 			}
 		}
-		args := pgx.NamedArgs{"ms_staff": rights.write, "ms_account": actor.AccountID(), "ms_groups": editorGroups}
+		args := pgx.NamedArgs{"ms_staff": rights.write, "ms_account": actor.AccountID(), "ms_groups": editorEntities}
 		allowed := `(@ms_staff OR EXISTS (SELECT 1 FROM ` + s.t.creators + ` cc WHERE cc.tenant_id=c.tenant_id AND cc.content_id=c.id AND cc.user_id=@ms_account AND @ms_account<>'')
- OR EXISTS (SELECT 1 FROM ` + s.t.groups + ` og WHERE og.tenant_id=c.tenant_id AND og.id=c.owner_group_id AND og.state='active' AND og.owner_user_id=@ms_account AND @ms_account<>'')
- OR c.owner_group_id=ANY(@ms_groups::text[]))`
+ OR EXISTS (SELECT 1 FROM ` + s.t.entities + ` og WHERE og.tenant_id=c.tenant_id AND og.id=c.owner_entity_id AND og.state='active' AND og.owner_user_id=@ms_account AND @ms_account<>'')
+ OR c.owner_entity_id=ANY(@ms_groups::text[]))`
 		eligible := &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.items + ` c
  WHERE c.tenant_id=sd.tenant_id AND c.id=sd.content_id AND c.kind=sd.content_kind AND c.state<>'deleted' AND ` + allowed + `)`, Args: args}
 		hits, err := client.Typeahead(ctx, q.Query, hub.TypeaheadOptions{Language: q.Language, LanguageMode: mode, ContentKinds: q.ContentKinds, Limit: q.Limit, Eligibility: eligible, Source: search.CurrentContentNames})
@@ -186,26 +186,26 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 	}
 	if canEntities && len(q.EntityKinds) > 0 {
 		hits, err := client.Typeahead(ctx, q.Query, hub.TypeaheadOptions{Language: q.Language, LanguageMode: mode, ContentKinds: q.EntityKinds, Limit: q.Limit, Source: search.CurrentEntityNames,
-			Eligibility: &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.groups + ` g WHERE g.tenant_id=sd.tenant_id AND g.id=sd.content_id AND g.kind=sd.content_kind AND g.state='active')`}})
+			Eligibility: &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.entities + ` g WHERE g.tenant_id=sd.tenant_id AND g.id=sd.content_id AND g.kind=sd.content_kind AND g.state='active')`}})
 		if err != nil {
 			return out, err
 		}
-		ids := make([]groups.GroupID, 0, len(hits))
-		rank := map[groups.GroupID]int{}
+		ids := make([]entities.EntityID, 0, len(hits))
+		rank := map[entities.EntityID]int{}
 		for i, hit := range hits {
-			id := groups.GroupID(hit.ContentID)
+			id := entities.EntityID(hit.ContentID)
 			ids = append(ids, id)
 			rank[id] = i
 		}
 		if len(ids) > 0 {
-			if s.groups == nil {
+			if s.entities == nil {
 				return out, fmt.Errorf("catalog: entity management is not configured")
 			}
-			out.Entities, err = s.groups.Cards(ctx, ids, groups.CardOptions{Language: q.Language, IncludeInternal: true})
+			out.Entities, err = s.entities.Cards(ctx, ids, entities.CardOptions{Language: q.Language, IncludeInternal: true})
 			if err != nil {
 				return out, err
 			}
-			slices.SortFunc(out.Entities, func(a, b groups.GroupCard) int { return rank[a.ID] - rank[b.ID] })
+			slices.SortFunc(out.Entities, func(a, b entities.EntityCard) int { return rank[a.ID] - rank[b.ID] })
 		}
 	}
 	return out, nil

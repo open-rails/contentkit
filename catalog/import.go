@@ -36,17 +36,17 @@ type ImportContent struct {
 	OriginalTitle    *string
 	OriginalLanguage *string
 	// Comments is open (when empty), closed or hidden.
-	Comments     string
-	Access       *access.Rule
-	Restrictions []string
-	Attributes   map[string]any
-	OwnerGroupID string
-	Creators     []Creator
-	Text         map[string]Text
-	Versions     []ImportVersion
-	Code         string
-	CreatedAt    *time.Time
-	UpdatedAt    *time.Time
+	Comments      string
+	Access        *access.Rule
+	Restrictions  []string
+	Attributes    map[string]any
+	OwnerEntityID string
+	Creators      []Creator
+	Text          map[string]Text
+	Versions      []ImportVersion
+	Code          string
+	CreatedAt     *time.Time
+	UpdatedAt     *time.Time
 }
 
 // ImportVersion is one version of an ImportContent, positioned as listed.
@@ -94,7 +94,7 @@ type importItemRow struct {
 	Access           json.RawMessage `json:"access"`
 	Restrictions     []string        `json:"restrictions"`
 	Attributes       map[string]any  `json:"attributes"`
-	OwnerGroupID     *string         `json:"owner_group_id"`
+	OwnerEntityID    *string         `json:"owner_entity_id"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
@@ -212,7 +212,7 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	if err != nil {
 		return err
 	}
-	if err := s.checkRuleGroups(ctx, tx, rules...); err != nil {
+	if err := s.checkRuleEntities(ctx, tx, rules...); err != nil {
 		return err
 	}
 	if err := s.checkOwners(ctx, tx, owners); err != nil {
@@ -297,7 +297,7 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 }
 
 // importRows turns the checked items into rows, with the rules and owner
-// groups to check.
+// entities to check.
 func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped, hidden map[string]string, now time.Time) (importBatch, []*access.Rule, []string, error) {
 	b := importBatch{fresh: map[string]bool{}, keep: map[codes.Key]string{}}
 	var rules []*access.Rule
@@ -318,9 +318,9 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 		row.PublishAt, row.PublishedAt, row.DeletedAt = importTimes(c.State, c.PublishAt, c.PublishedAt, c.DeletedAt, oldp, now)
 		row.Access, _ = json.Marshal(c.Access)
 		rules = append(rules, c.Access)
-		if c.OwnerGroupID != "" {
-			row.OwnerGroupID = &c.OwnerGroupID
-			owners = append(owners, c.OwnerGroupID)
+		if c.OwnerEntityID != "" {
+			row.OwnerEntityID = &c.OwnerEntityID
+			owners = append(owners, c.OwnerEntityID)
 		}
 		row.CreatedAt, row.UpdatedAt = importStamps(c.CreatedAt, c.UpdatedAt, oldp, now)
 		b.items = append(b.items, row)
@@ -421,21 +421,21 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 	}
 	data := func(v any) string { b, _ := json.Marshal(v); return string(b) }
 	if err := run(changed, `INSERT INTO `+s.t.items+` AS c (tenant_id, id, kind, state, publish_at, published_at, deleted_at, original_title, original_language, comments,
- access, restrictions, attributes, owner_group_id, created_at, updated_at)
+ access, restrictions, attributes, owner_entity_id, created_at, updated_at)
  SELECT $1, r.id, r.kind, r.state, r.publish_at, r.published_at, r.deleted_at, r.original_title, r.original_language, r.comments, r.access, r.restrictions,
-  r.attributes, r.owner_group_id, r.created_at, r.updated_at
+  r.attributes, r.owner_entity_id, r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, kind text, state text, publish_at timestamptz, published_at timestamptz, deleted_at timestamptz,
-  original_title text, original_language text, comments text, access jsonb, restrictions text[], attributes jsonb, owner_group_id text,
+  original_title text, original_language text, comments text, access jsonb, restrictions text[], attributes jsonb, owner_entity_id text,
   created_at timestamptz, updated_at timestamptz)
  ON CONFLICT (tenant_id, id) DO UPDATE SET state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at,
   deleted_at = EXCLUDED.deleted_at, deleted_without_versions=false, original_title = coalesce(EXCLUDED.original_title,c.original_title),
   original_language = coalesce(EXCLUDED.original_language,c.original_language), comments = EXCLUDED.comments,
-  access = EXCLUDED.access, restrictions = EXCLUDED.restrictions, attributes = EXCLUDED.attributes, owner_group_id = EXCLUDED.owner_group_id,
+  access = EXCLUDED.access, restrictions = EXCLUDED.restrictions, attributes = EXCLUDED.attributes, owner_entity_id = EXCLUDED.owner_entity_id,
   created_at = EXCLUDED.created_at
  WHERE (c.state, c.publish_at, c.published_at, c.deleted_at, c.original_title, c.original_language, c.comments, c.access, c.restrictions, c.attributes,
-  c.owner_group_id, c.created_at)
+  c.owner_entity_id, c.created_at)
   IS DISTINCT FROM (EXCLUDED.state, EXCLUDED.publish_at, EXCLUDED.published_at, EXCLUDED.deleted_at, coalesce(EXCLUDED.original_title,c.original_title),
-  coalesce(EXCLUDED.original_language,c.original_language), EXCLUDED.comments, EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_group_id, EXCLUDED.created_at) OR c.deleted_without_versions
+  coalesce(EXCLUDED.original_language,c.original_language), EXCLUDED.comments, EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_entity_id, EXCLUDED.created_at) OR c.deleted_without_versions
  RETURNING c.id`, s.tenant, data(b.items)); err != nil {
 		return nil, nil, err
 	}
@@ -692,8 +692,8 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 			return invalid("%v", err)
 		}
 	}
-	if c.OwnerGroupID != "" {
-		if err := contentref.ValidateID(c.OwnerGroupID); err != nil {
+	if c.OwnerEntityID != "" {
+		if err := contentref.ValidateID(c.OwnerEntityID); err != nil {
 			return invalid("owner group: %v", err)
 		}
 	}
@@ -868,7 +868,7 @@ func (s *Store) checkOwners(ctx context.Context, q Querier, ids []string) error 
 	}
 	var missing string
 	if err := q.QueryRow(ctx, `SELECT coalesce(min(u.id), '') FROM unnest($2::text[]) AS u(id)
- WHERE NOT EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id = $1 AND g.id = u.id AND g.state = 'active')`, s.tenant, ids).Scan(&missing); err != nil {
+ WHERE NOT EXISTS (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id = $1 AND g.id = u.id AND g.state = 'active')`, s.tenant, ids).Scan(&missing); err != nil {
 		return err
 	}
 	if missing != "" {

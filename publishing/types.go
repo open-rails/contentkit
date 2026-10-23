@@ -48,8 +48,8 @@ type Source struct {
 	URL      string `json:"url,omitempty"`
 }
 
-// EntityReference selects a group by ID or an exact localized name. Scope
-// selects the parent kind required by the configured group kind.
+// EntityReference selects an entity by ID or an exact localized name. Scope
+// selects the parent kind required by the configured entity kind.
 type EntityReference struct {
 	ID       string           `json:"id,omitempty"`
 	Kind     string           `json:"kind,omitempty"`

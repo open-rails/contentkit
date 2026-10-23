@@ -14,7 +14,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/edition"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -41,11 +41,11 @@ type Card struct {
 	Language string                  `json:"language"`
 	Cover    []media.PublicRendition `json:"cover"`
 	Version  CardVersion             `json:"version"`
-	// Groups are the version's effective groups with a page, by group kind.
-	Groups map[string][]Chip `json:"entities"`
-	// Owner is the owner group's card (a channel's name, path, avatar and
+	// Entities are the version's effective entities with a page, by entity kind.
+	Entities map[string][]Chip `json:"entities"`
+	// Owner is the owner entity's card (a channel's name, path, avatar and
 	// cover).
-	Owner       *groups.GroupCard    `json:"owner,omitempty"`
+	Owner       *entities.EntityCard `json:"owner,omitempty"`
 	Counts      Counts               `json:"counts"`
 	Access      CardAccess           `json:"access"`
 	Viewer      *catalog.ViewerState `json:"viewer,omitempty"`
@@ -87,8 +87,8 @@ type CardVersion struct {
 	HLS string `json:"hls,omitempty"`
 }
 
-// Chip names one group on a card. Position is the content's sort key in an
-// ordered group: auto-filled from 1, but a host may set any value of 0 or more.
+// Chip names one entity on a card. Position is the content's sort key in an
+// ordered entity: auto-filled from 1, but a host may set any value of 0 or more.
 type Chip struct {
 	ID       string `json:"id"`
 	Slug     string `json:"slug"`
@@ -135,9 +135,9 @@ type ContentPage struct {
 
 // cardOptions shape hydration.
 type cardOptions struct {
-	// chips are the group kinds cards name; nil is every kind with a page.
+	// chips are the entity kinds cards name; nil is every kind with a page.
 	chips []string
-	// lean leaves out groups and the reader's state (typeahead).
+	// lean leaves out entities and the reader's state (typeahead).
 	lean bool
 }
 
@@ -145,7 +145,7 @@ type cardRow struct {
 	Card
 	contentRule access.Rule
 	override    *access.Rule
-	groupIDs    []string
+	entityIDs   []string
 	owner       string
 	creator     bool
 	slug        string
@@ -180,8 +180,8 @@ func (s *Service) lock(rows []cardRow) {
 		if !s.shows(c, kinds.ShowLength) {
 			c.Version.Pages, c.Version.DurationMS = nil, nil
 		}
-		if !s.shows(c, kinds.ShowGroups) {
-			c.groupIDs = nil
+		if !s.shows(c, kinds.ShowEntities) {
+			c.entityIDs = nil
 		}
 		if s.o.Kinds.Kinds[c.Kind].Presentation == "post" {
 			text := c.description
@@ -241,12 +241,12 @@ func (s *Service) cardRows(ctx context.Context, q *sel, picks []pick) ([]cardRow
 	for k, v := range largs {
 		args[k] = v
 	}
-	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, coalesce(counts.likes, 0), coalesce(counts.dislikes, 0), coalesce(counts.favorites, 0),
+	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.entity_ids, coalesce(counts.likes, 0), coalesce(counts.dislikes, 0), coalesce(counts.favorites, 0),
  f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), CASE WHEN c.kind=ANY(@d_title_kinds::text[]) THEN nullif(c.original_title,'') END, t.title, ''),
  CASE WHEN nullif(vt.title,'') IS NOT NULL THEN vt.language WHEN c.kind=ANY(@d_title_kinds::text[]) AND nullif(c.original_title,'') IS NOT NULL THEN coalesce(nullif(c.original_language,''),t.language,'') ELSE coalesce(t.language,'') END,
  coalesce(nullif(vt.description, ''), t.description, ''), coalesce(t.body_excerpt, ''),
- coalesce(f.owner_group_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user),
+ coalesce(f.owner_entity_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user),
  coalesce((SELECT g.version_id FROM %[1]s g WHERE g.tenant_id = f.tenant_id AND g.content_id = f.content_id AND %[8]s
   ORDER BY %[9]s LIMIT 1) = f.version_id, true)
 FROM unnest(@d_vids::text[]) WITH ORDINALITY AS p(vid, ord)
@@ -270,7 +270,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var c cardRow
 		var code string
 		var isDefault bool
-		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.counts.likes,
+		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.entityIDs, &c.counts.likes,
 			&c.counts.dislikes, &c.counts.favorites, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Code, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
 			&c.Version.HasAudio, &code, &c.slug, &c.Title, &c.Language, &c.description, &c.bodyExcerpt, &c.owner, &c.creator, &isDefault)
 		if err != nil {
@@ -286,7 +286,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		if c.Attributes == nil {
 			c.Attributes = map[string]any{}
 		}
-		c.Cover, c.Groups = []media.PublicRendition{}, map[string][]Chip{}
+		c.Cover, c.Entities = []media.PublicRendition{}, map[string][]Chip{}
 		return c, nil
 	})
 	if err != nil {
@@ -363,43 +363,43 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 }
 
 // settle asks the Gate for every card's version in one call. Editors open
-// what they edit (staff, its creators, its owner group's editors):
-// owner-group editorship is asked only of cards the rule leaves locked, once
-// per owner group.
+// what they edit (staff, its creators, its owner entity's editors):
+// owner-entity editorship is asked only of cards the rule leaves locked, once
+// per owner entity.
 func (s *Service) settle(ctx context.Context, q *sel, rows []cardRow) error {
 	items := make([]access.Item, len(rows))
 	for i, c := range rows {
 		items[i] = access.Item{Content: c.ID, Version: c.Version.ID, Rule: access.Effective(c.contentRule, c.override).Previewed(s.o.Kinds.Kinds[c.Kind]),
-			Groups: c.groupIDs}
+			Entities: c.entityIDs}
 	}
 	ds, err := s.o.Gate.Decide(ctx, q.reader.Actor, items)
 	if err != nil && (ds == nil || !errors.Is(err, access.ErrUnavailable)) {
 		return err
 	}
-	internal, err := s.internalAccessGroups(ctx, items, ds)
+	internal, err := s.internalAccessEntities(ctx, items, ds)
 	if err != nil {
 		return err
 	}
 	now := s.o.Now()
 	for i, d := range ds {
 		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, Releases: d.Releases, Level: access.Public}
-		a.Releases = slices.DeleteFunc(slices.Clone(a.Releases), func(r access.Release) bool { return internal[r.Group] })
+		a.Releases = slices.DeleteFunc(slices.Clone(a.Releases), func(r access.Release) bool { return internal[r.Entity] })
 		if r := items[i].Rule; !r.Free(now) {
 			a.Level, a.Tiers = r.Level, r.AudienceTiers(now)
 		}
 		for _, k := range d.Sell {
-			if k.Kind() != access.KeyGroup || !internal[k.Group()] {
+			if k.Kind() != access.KeyEntity || !internal[k.Entity()] {
 				a.Sell = append(a.Sell, k.String())
 			}
 		}
 		if d.Requires != nil {
-			if d.Requires.Kind() == access.KeyGroup && internal[d.Requires.Group()] {
+			if d.Requires.Kind() == access.KeyEntity && internal[d.Requires.Entity()] {
 				a.Sell = nil
 			} else {
 				a.Requires = d.Requires.String()
 			}
 		}
-		if internal[items[i].Rule.Group] && (a.Level == access.GroupLevel || a.Level == access.GroupPPV) {
+		if internal[items[i].Rule.Entity] && (a.Level == access.EntityLevel || a.Level == access.EntityPPV) {
 			a.Level = access.PPV
 		}
 		rows[i].Access = a
@@ -451,30 +451,30 @@ func (s *Service) cardMedia(ctx context.Context, rows []cardRow) error {
 	return nil
 }
 
-// chips names the cards' groups of the kinds asked, by name.
+// chips names the cards' entities of the kinds asked, by name.
 func (s *Service) chips(ctx context.Context, q *sel, rows []cardRow, kinds []string) error {
-	var ids []groups.GroupID
+	var ids []entities.EntityID
 	seen := map[string]bool{}
 	for _, c := range rows {
-		for _, g := range c.groupIDs {
+		for _, g := range c.entityIDs {
 			if !seen[g] {
 				seen[g] = true
-				ids = append(ids, groups.GroupID(g))
+				ids = append(ids, entities.EntityID(g))
 			}
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	cards, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: q.display})
+	cards, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: q.display})
 	if err != nil {
 		return err
 	}
-	byID := make(map[string]groups.GroupCard, len(cards))
+	byID := make(map[string]entities.EntityCard, len(cards))
 	for _, g := range cards {
 		shown := slices.Contains(kinds, g.Kind)
 		if kinds == nil {
-			shown = s.o.Kinds.GroupKinds[g.Kind].Route != ""
+			shown = s.o.Kinds.EntityKinds[g.Kind].Route != ""
 		}
 		if shown {
 			byID[string(g.ID)] = g
@@ -485,29 +485,29 @@ func (s *Service) chips(ctx context.Context, q *sel, rows []cardRow, kinds []str
 		return err
 	}
 	for i := range rows {
-		for _, id := range rows[i].groupIDs {
+		for _, id := range rows[i].entityIDs {
 			if g, ok := byID[id]; ok {
 				chip := Chip{ID: id, Slug: g.Slug, Name: g.Name, Path: g.Path}
 				if p, ok := positions[[2]string{rows[i].ID, id}]; ok {
 					chip.Position = &p
 				}
-				rows[i].Groups[g.Kind] = append(rows[i].Groups[g.Kind], chip)
+				rows[i].Entities[g.Kind] = append(rows[i].Entities[g.Kind], chip)
 			}
 		}
-		for _, cs := range rows[i].Groups {
+		for _, cs := range rows[i].Entities {
 			slices.SortFunc(cs, func(a, b Chip) int { return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
 		}
 	}
 	return nil
 }
 
-// positions reads each card's place in the ordered groups it shows, keyed by
-// content and group: the membership of its content or of its shown version
-// that is active now, as the card's own groups count it.
-func (s *Service) positions(ctx context.Context, rows []cardRow, shown map[string]groups.GroupCard) (map[[2]string]int, error) {
+// positions reads each card's place in the ordered entities it shows, keyed by
+// content and entity: the membership of its content or of its shown version
+// that is active now, as the card's own entities count it.
+func (s *Service) positions(ctx context.Context, rows []cardRow, shown map[string]entities.EntityCard) (map[[2]string]int, error) {
 	var ordered []string
 	for id, g := range shown {
-		if s.o.Kinds.GroupKinds[g.Kind].Ordered {
+		if s.o.Kinds.EntityKinds[g.Kind].Ordered {
 			ordered = append(ordered, id)
 		}
 	}
@@ -519,37 +519,37 @@ func (s *Service) positions(ctx context.Context, rows []cardRow, shown map[strin
 	for i, c := range rows {
 		contents[i], versions[i] = c.ID, c.Version.ID
 	}
-	r, err := s.o.Pool.Query(ctx, `SELECT m.content_id, m.group_id, min(m.position)
+	r, err := s.o.Pool.Query(ctx, `SELECT m.content_id, m.entity_id, min(m.position)
  FROM unnest($3::text[], $4::text[]) AS v(content_id, version_id)
  JOIN `+s.t.memberships+` m ON m.tenant_id = $1 AND m.content_id = v.content_id AND (m.version_id IS NULL OR m.version_id = v.version_id)
- WHERE m.group_id = ANY($2) AND m.state = 'active' AND m.position IS NOT NULL
+ WHERE m.entity_id = ANY($2) AND m.state = 'active' AND m.position IS NOT NULL
   AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
- GROUP BY m.content_id, m.group_id`, s.o.Tenant, ordered, contents, versions)
+ GROUP BY m.content_id, m.entity_id`, s.o.Tenant, ordered, contents, versions)
 	if err != nil {
 		return nil, err
 	}
-	var content, group string
+	var content, entity string
 	var position int
-	_, err = pgx.ForEachRow(r, []any{&content, &group, &position}, func() error {
-		out[[2]string{content, group}] = position
+	_, err = pgx.ForEachRow(r, []any{&content, &entity, &position}, func() error {
+		out[[2]string{content, entity}] = position
 		return nil
 	})
 	return out, err
 }
 
-// owners fills the cards' owner groups, avatars and covers resolved, in one
+// owners fills the cards' owner entities, avatars and covers resolved, in one
 // call.
 func (s *Service) owners(ctx context.Context, q *sel, rows []cardRow) error {
-	var ids []groups.GroupID
+	var ids []entities.EntityID
 	for _, c := range rows {
-		if c.owner != "" && !slices.Contains(ids, groups.GroupID(c.owner)) {
-			ids = append(ids, groups.GroupID(c.owner))
+		if c.owner != "" && !slices.Contains(ids, entities.EntityID(c.owner)) {
+			ids = append(ids, entities.EntityID(c.owner))
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	cards, err := s.o.Groups.Cards(ctx, ids, groups.CardOptions{Language: q.display, Covers: true})
+	cards, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: q.display, Covers: true})
 	if err != nil {
 		return err
 	}

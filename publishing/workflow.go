@@ -284,7 +284,7 @@ func (s *Store) checkRevision(ctx context.Context, tx pgx.Tx, r record) error {
 	if cr != r.contentRevision || vr != r.versionRevision || state != catalog.StateDraft {
 		return failure("content_changed", "content", "draft changed before publication")
 	}
-	rows, err := tx.Query(ctx, `SELECT group_id FROM `+pgx.Identifier{s.o.Schema, "content_memberships"}.Sanitize()+` WHERE tenant_id=$1 AND content_id=$2 AND version_id IS NULL AND state='active' ORDER BY group_id`, s.o.Tenant, r.ContentID)
+	rows, err := tx.Query(ctx, `SELECT entity_id FROM `+pgx.Identifier{s.o.Schema, "content_memberships"}.Sanitize()+` WHERE tenant_id=$1 AND content_id=$2 AND version_id IS NULL AND state='active' ORDER BY entity_id`, s.o.Tenant, r.ContentID)
 	if err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func (s *Store) checkRevision(ctx context.Context, tx pgx.Tx, r record) error {
 	if err != nil {
 		return err
 	}
-	expected := slices.Clone(r.groupIDs)
+	expected := slices.Clone(r.entityIDs)
 	slices.Sort(expected)
 	if !slices.Equal(ids, expected) {
 		return failure("content_changed", "entities", "draft entities changed before publication")

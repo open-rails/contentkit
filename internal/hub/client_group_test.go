@@ -7,7 +7,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 )
 
-func TestGroupByContentOrdersItemsWithoutEnglishPreference(t *testing.T) {
+func TestEntityByContentOrdersItemsWithoutEnglishPreference(t *testing.T) {
 	t.Parallel()
 	v := func(item, version string) ContentRef { return contentref.NewVersion("t", "v", item, version) }
 	docs := []groupedDoc{

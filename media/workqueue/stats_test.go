@@ -50,10 +50,10 @@ VALUES ('contentkit_media_video', '{}', 5, $1, $2, $3, $4, $5, $6)`,
 	if len(statuses) != 5 {
 		t.Fatalf("got %d groups, want 5: %+v", len(statuses), statuses)
 	}
-	byGroup := make(map[string]JobStatus, len(statuses))
+	byEntity := make(map[string]JobStatus, len(statuses))
 	for _, status := range statuses {
 		key := status.Queue + "/" + status.State + "/" + strconv.Itoa(status.Priority)
-		byGroup[key] = status
+		byEntity[key] = status
 	}
 	for key, want := range map[string]struct{ jobs, high int64 }{
 		"media_video_light/available/1": {2, 1},
@@ -62,16 +62,16 @@ VALUES ('contentkit_media_video', '{}', 5, $1, $2, $3, $4, $5, $6)`,
 		"media_image/retryable/1":       {1, 1},
 		"media_image/scheduled/4":       {1, 0},
 	} {
-		got, ok := byGroup[key]
+		got, ok := byEntity[key]
 		if !ok || got.Jobs != want.jobs || got.HighAttemptJobs != want.high {
 			t.Errorf("%s: got %+v (present %t), want %d jobs and %d high attempts", key, got, ok, want.jobs, want.high)
 		}
 	}
-	if age := byGroup["media_video_light/available/1"].OldestAvailableSeconds; age < (2*time.Hour-15*time.Second).Seconds() || age > (2*time.Hour+15*time.Second).Seconds() {
+	if age := byEntity["media_video_light/available/1"].OldestAvailableSeconds; age < (2*time.Hour-15*time.Second).Seconds() || age > (2*time.Hour+15*time.Second).Seconds() {
 		t.Errorf("oldest runnable age = %.0f seconds, want about two hours", age)
 	}
 	for _, key := range []string{"media_video_light/available/2", "media_audio/running/1", "media_image/retryable/1", "media_image/scheduled/4"} {
-		if age := byGroup[key].OldestAvailableSeconds; age != 0 {
+		if age := byEntity[key].OldestAvailableSeconds; age != 0 {
 			t.Errorf("%s: age = %.0f, want zero", key, age)
 		}
 	}

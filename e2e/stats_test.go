@@ -8,7 +8,7 @@ import (
 
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 )
 
 // Host sitemaps page the site's public content and group pages; staff read
@@ -19,10 +19,10 @@ func TestSitemapsAndStats(t *testing.T) {
 	reader, user := w.person(iam.Role{})
 	f := serve(t, w.engine(nil))
 	g, _ := w.published(f, staff, "gallery")
-	var made []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/entities", []groups.GroupInput{{Kind: "tag", Slug: "color",
-		Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}}}, &made)
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+g+"/entities", groups.ContentGroups{Memberships: []groups.Membership{{GroupID: made[0].ID}}}, nil)
+	var made []entities.Entity
+	f.want(http.StatusCreated, staff, "POST", "/entities", []entities.EntityInput{{Kind: "tag", Slug: "color",
+		Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Color"}}}}, &made)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+g+"/entities", entities.ContentEntities{Memberships: []entities.Membership{{EntityID: made[0].ID}}}, nil)
 	f.want(http.StatusCreated, user, "POST", "/contents/"+g+"/comments", content.CommentInput{Body: "nice"}, nil)
 
 	var page discovery.SitemapPage

@@ -8,22 +8,22 @@ import (
 	"testing"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
-func TestInternalAccessGroupIsNotPublicPurchaseMetadata(t *testing.T) {
+func TestInternalAccessEntityIsNotPublicPurchaseMetadata(t *testing.T) {
 	f := newFixture(t, nil)
-	group := f.group("channel", "private-channel")
-	f.sell(group)
+	entity := f.entity("channel", "private-channel")
+	f.sell(entity)
 	hidden := true
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(group), Internal: &hidden}}); err != nil {
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(entity), Internal: &hidden}}); err != nil {
 		t.Fatal(err)
 	}
 	in := gallery("Private group access", "en")
-	in.OwnerGroupID = group
+	in.OwnerEntityID = entity
 	in.Creators = &[]Creator{{UserID: "alice"}}
-	in.Access = &access.Rule{Level: access.GroupLevel, Group: group}
+	in.Access = &access.Rule{Level: access.EntityLevel, Entity: entity}
 	id := f.create("staff", in)
 	f.publish("staff", id, nil)
 	for _, who := range []string{anon, "staff", "alice"} {
@@ -34,14 +34,14 @@ func TestInternalAccessGroupIsNotPublicPurchaseMetadata(t *testing.T) {
 		if content.Decision.Allowed != (who != anon) {
 			t.Fatalf("redaction changed access for %s: %+v", who, content.Decision)
 		}
-		if content.Decision.Requires != "" || content.OwnerGroupID != "" || content.Access.Group != "" {
+		if content.Decision.Requires != "" || content.OwnerEntityID != "" || content.Access.Entity != "" {
 			t.Fatalf("private access metadata for %s: %+v", who, content)
 		}
 		if who == anon && (len(content.Decision.Sell) != 2 || len(content.Versions[0].Decision.Sell) != 2) {
 			t.Fatalf("independent content and version offers lost: %+v", content.Decision)
 		}
 		raw, _ := json.Marshal(content)
-		if strings.Contains(string(raw), group) {
+		if strings.Contains(string(raw), entity) {
 			t.Fatalf("internal entity leaked in public content: %s", raw)
 		}
 	}
@@ -49,14 +49,14 @@ func TestInternalAccessGroupIsNotPublicPurchaseMetadata(t *testing.T) {
 	req.Host = "main.test"
 	w := httptest.NewRecorder()
 	f.s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), group) {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), entity) {
 		t.Fatalf("management lost internal rule: %d %s", w.Code, w.Body)
 	}
 	req = testauth.As(httptest.NewRequest(http.MethodGet, "/manage/gallery", nil), f.as("alice"))
 	req.Host = "main.test"
 	w = httptest.NewRecorder()
 	f.s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), group) {
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), entity) {
 		t.Fatalf("content creator learned internal metadata: %d %s", w.Code, w.Body)
 	}
 
@@ -64,12 +64,12 @@ func TestInternalAccessGroupIsNotPublicPurchaseMetadata(t *testing.T) {
 
 func TestInternalOfferRedactionPreservesPublicAlternatives(t *testing.T) {
 	f := newFixture(t, nil)
-	group := f.group("channel", "private-alternative")
+	entity := f.entity("channel", "private-alternative")
 	hidden := true
-	if _, err := f.groups.UpdateGroups(f.ctx, []groups.GroupUpdate{{ID: groups.GroupID(group), Internal: &hidden}}); err != nil {
+	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(entity), Internal: &hidden}}); err != nil {
 		t.Fatal(err)
 	}
-	key, _ := access.GroupKey(tenant, group)
+	key, _ := access.EntityKey(tenant, entity)
 	public, _ := access.TierKey("premium")
 	content, _ := access.ContentKey(tenant, "01800000-0000-7000-8000-000000000001")
 	items := map[string]*Content{

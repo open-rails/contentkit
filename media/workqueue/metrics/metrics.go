@@ -86,20 +86,20 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		queue, state string
 		priority     int
 	}
-	byGroup := make(map[group]workqueue.JobStatus, len(c.statuses))
+	byEntity := make(map[group]workqueue.JobStatus, len(c.statuses))
 	for _, status := range c.statuses {
-		byGroup[group{status.Queue, status.State, status.Priority}] = status
+		byEntity[group{status.Queue, status.State, status.Priority}] = status
 	}
 	for _, queue := range queues {
 		for priority := 1; priority <= 4; priority++ {
 			label := strconv.Itoa(priority)
 			for _, state := range activeStates {
-				status := byGroup[group{queue, state, priority}]
+				status := byEntity[group{queue, state, priority}]
 				ch <- prometheus.MustNewConstMetric(jobsDesc, prometheus.GaugeValue, float64(status.Jobs), queue, state, label)
 				ch <- prometheus.MustNewConstMetric(highAttemptDesc, prometheus.GaugeValue, float64(status.HighAttemptJobs), queue, state, label)
 			}
 			ch <- prometheus.MustNewConstMetric(oldestAvailableDesc, prometheus.GaugeValue,
-				byGroup[group{queue, "available", priority}].OldestAvailableSeconds, queue, label)
+				byEntity[group{queue, "available", priority}].OldestAvailableSeconds, queue, label)
 		}
 	}
 }

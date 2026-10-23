@@ -83,8 +83,8 @@ func TestListingSummaryRecoversAfterBillingOutage(t *testing.T) {
 			owned := item{n: 2, titles: map[string]string{"en": "Owned"}, age: time.Hour,
 				rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}}}
 			if tc.filtered {
-				f.group("tag", "big-breasts")
-				owned.groups = []string{"big-breasts"}
+				f.entity("tag", "big-breasts")
+				owned.entities = []string{"big-breasts"}
 			}
 			f.seed(item{n: 1, titles: map[string]string{"en": "Free"}, age: time.Hour, versions: []ver{{langs: []string{"en"}}}}, owned)
 			billing.held[tenant+":content:"+f.cid(2)] = true

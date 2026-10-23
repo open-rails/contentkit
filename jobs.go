@@ -75,7 +75,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &groupsWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &entitiesWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &forgetContentsWorker{e: e}) },
 		} {
@@ -114,7 +114,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		j.mu.Unlock()
 		return nil
 	})
-	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs(), e.groups.RiverJobs()}
+	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs(), e.entities.RiverJobs()}
 	if e.media != nil {
 		parts = append(parts, e.media.jobs.RiverJobs(), e.media.versions.RiverJobs())
 	}
@@ -167,7 +167,7 @@ type searchSyncArgs struct{}
 func (searchSyncArgs) Kind() string { return "contentkit_search_sync" }
 
 // searchSyncWorker maintains the keyword documents of content items and
-// groups.
+// entities.
 type searchSyncWorker struct {
 	river.WorkerDefaults[searchSyncArgs]
 	e *Engine
@@ -178,25 +178,25 @@ func (w *searchSyncWorker) Timeout(*river.Job[searchSyncArgs]) time.Duration { r
 func (w *searchSyncWorker) Work(ctx context.Context, _ *river.Job[searchSyncArgs]) error {
 	e := w.e
 	return worker.SyncOnce(ctx, worker.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
-		SupportedLanguages: e.cfg.Content.Languages, Sources: []worker.Source{e.catalog, e.groups}})
+		SupportedLanguages: e.cfg.Content.Languages, Sources: []worker.Source{e.catalog, e.entities}})
 }
 
-type groupsArgs struct {
+type entitiesArgs struct {
 	// Windows refreshes the memberships whose time windows opened or closed;
 	// otherwise it recounts groups and their automatic covers.
 	Windows bool `json:"windows,omitempty"`
 }
 
-func (groupsArgs) Kind() string { return "contentkit_groups" }
+func (entitiesArgs) Kind() string { return "contentkit_groups" }
 
 // groupsWorker drains jobs queued by older hosts. Counts, covers and windows
 // are now read at runtime, so there is no projection left to rebuild.
-type groupsWorker struct {
-	river.WorkerDefaults[groupsArgs]
+type entitiesWorker struct {
+	river.WorkerDefaults[entitiesArgs]
 	e *Engine
 }
 
-func (w *groupsWorker) Work(context.Context, *river.Job[groupsArgs]) error { return nil }
+func (w *entitiesWorker) Work(context.Context, *river.Job[entitiesArgs]) error { return nil }
 
 type searchPruneArgs struct{}
 

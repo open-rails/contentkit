@@ -58,7 +58,7 @@ type Options struct {
 	Tenant string // the content tables' tenant
 	Schema string // ContentKit's schema
 	Pool   *pgxpool.Pool
-	Kinds  kinds.Config       // the site's content and group kinds
+	Kinds  kinds.Config       // the site's content and entity kinds
 	Auth   auth.Authenticator // the host's: staff and group scope checks
 	// AccountExists verifies avatar targets in this tenant's account directory.
 	// Scoped engines install it; nil preserves the legacy host contract.
@@ -98,7 +98,7 @@ type Service struct {
 }
 
 type tables struct {
-	items, versions, segments, publications, groups, facets string
+	items, versions, segments, publications, entities, facets string
 }
 
 // New validates o. Build the media runtime with Hooks, then Bind it.
@@ -120,7 +120,7 @@ func New(o Options) (*Service, error) {
 	}
 	q := func(t string) string { return pgxIdent(o.Schema, t) }
 	s := &Service{o: o, t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"),
-		publications: q("content_version_publications"), groups: q("content_groups"), facets: q("content_facets")}}
+		publications: q("content_version_publications"), entities: q("content_entities"), facets: q("content_facets")}}
 	var err error
 	if s.dl, err = newQuotas(o.Downloads, o.Kinds.Tiers, o.Logger, o.Now); err != nil {
 		return nil, err

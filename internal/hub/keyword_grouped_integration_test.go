@@ -71,7 +71,7 @@ func (f groupedFixture) exec(sql string, args ...any) {
 	}
 }
 
-func TestKeywordGroupedEligibilityIntegration(t *testing.T) {
+func TestKeywordEntityedEligibilityIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	pool := profileDB(t, ctx, "keyword_grouped", migrations.Postgres)

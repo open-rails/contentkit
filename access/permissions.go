@@ -24,15 +24,15 @@ const (
 	CommentsBan Permission = "root:comments:ban"
 	// ModerationReview: list and resolve held comments and content.
 	ModerationReview Permission = "root:moderation:review"
-	// EntitiesWrite: create, edit, merge and delete groups, and set content's
+	// EntitiesWrite: create, edit, merge and delete entities, and set content's
 	// memberships.
 	EntitiesWrite Permission = "root:entities:write"
-	// OffersWrite: put and withdraw offers on any content, version or group;
-	// creators and group owners need it for nobody else's.
+	// OffersWrite: put and withdraw offers on any content, version or entity;
+	// creators and entity owners need it for nobody else's.
 	OffersWrite Permission = "root:offers:write"
 	// NotificationsPublish: publish notices to users' inboxes (a host service).
 	NotificationsPublish Permission = "root:notifications:publish"
-	// ImportWrite: bulk-import content, groups, interactions and signals (a
+	// ImportWrite: bulk-import content, entities, interactions and signals (a
 	// legacy importer).
 	ImportWrite Permission = "root:import:write"
 	// AvatarsWrite: upload, edit and remove anyone's avatar on the avatar
@@ -57,31 +57,31 @@ func Names(ps ...Permission) []string {
 	return out
 }
 
-// Group-scoped permissions are held in a user-owned group's AuthKit scope
-// (groups' auth_scope), whose persona is the group kind:
+// Entity-scoped permissions are held in a user-owned entity's AuthKit scope
+// (entities' auth_scope), whose persona is the entity kind:
 // "{kind}:<resource>:<action>". A host's persona of that name declares them
-// (GroupPermissions).
+// (EntityPermissions).
 
-// GroupContentWrite: create, edit, publish and delete the content the group
-// owns (owner_group), and see its drafts.
-func GroupContentWrite(kind string) string { return kind + ":content:write" }
+// EntityContentWrite: create, edit, publish and delete the content the entity
+// owns (owner_entity), and see its drafts.
+func EntityContentWrite(kind string) string { return kind + ":content:write" }
 
-// GroupSettingsManage: edit the group itself, delete or restore it, and
+// EntitySettingsManage: edit the entity itself, delete or restore it, and
 // put or withdraw its offers and its content's.
-func GroupSettingsManage(kind string) string { return kind + ":settings:manage" }
+func EntitySettingsManage(kind string) string { return kind + ":settings:manage" }
 
-// GroupOffersWrite: put and withdraw the group's offers and its content's.
-func GroupOffersWrite(kind string) string { return kind + ":offers:write" }
+// EntityOffersWrite: put and withdraw the entity's offers and its content's.
+func EntityOffersWrite(kind string) string { return kind + ":offers:write" }
 
-// GroupMediaWrite: upload and edit the group's media.
-func GroupMediaWrite(kind string) string { return kind + ":media:write" }
+// EntityMediaWrite: upload and edit the entity's media.
+func EntityMediaWrite(kind string) string { return kind + ":media:write" }
 
-// GroupCommentsModerate: delete, hold and release comments on the group and
+// EntityCommentsModerate: delete, hold and release comments on the entity and
 // the content it owns, and ban commenters from them.
-func GroupCommentsModerate(kind string) string { return kind + ":comments:moderate" }
+func EntityCommentsModerate(kind string) string { return kind + ":comments:moderate" }
 
-// GroupPermissions is every permission ContentKit checks in a group kind's
+// EntityPermissions is every permission ContentKit checks in an entity kind's
 // AuthKit scopes.
-func GroupPermissions(kind string) []string {
-	return []string{GroupContentWrite(kind), GroupSettingsManage(kind), GroupOffersWrite(kind), GroupMediaWrite(kind), GroupCommentsModerate(kind)}
+func EntityPermissions(kind string) []string {
+	return []string{EntityContentWrite(kind), EntitySettingsManage(kind), EntityOffersWrite(kind), EntityMediaWrite(kind), EntityCommentsModerate(kind)}
 }

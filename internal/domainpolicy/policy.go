@@ -20,7 +20,7 @@ type Policy struct {
 	Required        []string
 	Blocked         []string
 	Toggles         map[string]bool // entity ID to default visibility
-	ToggleRefs      map[kinds.GroupRef]string
+	ToggleRefs      map[kinds.EntityRef]string
 	MissingRequired bool
 	MissingHard     bool
 }
@@ -29,7 +29,7 @@ type Policies map[string]Policy
 // Resolve includes internal entities for policy evaluation, but never puts
 // them in Toggles. Missing fixed exclusions fail only their content kind closed.
 func Resolve(ctx context.Context, q Querier, table, tenant string, d kinds.Domain, appliesTo []string) (Policies, error) {
-	refs := map[kinds.GroupRef]bool{}
+	refs := map[kinds.EntityRef]bool{}
 	targets := map[string]bool{}
 	for _, kind := range appliesTo {
 		targets[kind] = true
@@ -41,15 +41,15 @@ func Resolve(ctx context.Context, q Querier, table, tenant string, d kinds.Domai
 		}
 	}
 	for _, filter := range d.Filters {
-		refs[filter.Group] = true
+		refs[filter.Entity] = true
 	}
 	type entity struct {
 		id       string
 		internal bool
 		active   bool
 	}
-	found := map[kinds.GroupRef]entity{}
-	inactiveInternal := map[kinds.GroupRef]bool{}
+	found := map[kinds.EntityRef]entity{}
+	inactiveInternal := map[kinds.EntityRef]bool{}
 	if len(refs) > 0 {
 		ks, ss := []string{}, []string{}
 		for r := range refs {
@@ -61,7 +61,7 @@ func Resolve(ctx context.Context, q Querier, table, tenant string, d kinds.Domai
 			return nil, err
 		}
 		for rows.Next() {
-			var r kinds.GroupRef
+			var r kinds.EntityRef
 			var e entity
 			if err := rows.Scan(&r.Kind, &r.Slug, &e.id, &e.internal, &e.active); err != nil {
 				rows.Close()
@@ -82,7 +82,7 @@ func Resolve(ctx context.Context, q Querier, table, tenant string, d kinds.Domai
 	}
 	out := Policies{}
 	for kind := range targets {
-		p := Policy{Required: []string{}, Blocked: []string{}, Toggles: map[string]bool{}, ToggleRefs: map[kinds.GroupRef]string{}}
+		p := Policy{Required: []string{}, Blocked: []string{}, Toggles: map[string]bool{}, ToggleRefs: map[kinds.EntityRef]string{}}
 		for _, r := range d.RequireEntities[kind] {
 			if e, ok := found[r]; ok && e.active {
 				p.Required = append(p.Required, e.id)
@@ -94,20 +94,20 @@ func Resolve(ctx context.Context, q Querier, table, tenant string, d kinds.Domai
 			if !slices.Contains(appliesTo, kind) {
 				break
 			}
-			if !f.Visible && inactiveInternal[f.Group] {
+			if !f.Visible && inactiveInternal[f.Entity] {
 				p.MissingHard = true
 				continue
 			}
-			e, ok := found[f.Group]
+			e, ok := found[f.Entity]
 			if !ok || !e.active {
 				if !f.Visible && (!f.Toggleable() || e.internal) {
 					p.MissingHard = true
 				}
 				continue
 			}
-			if f.Toggleable() && !e.internal && !d.Requires(f.Group) {
+			if f.Toggleable() && !e.internal && !d.Requires(f.Entity) {
 				p.Toggles[e.id] = f.Visible
-				p.ToggleRefs[f.Group] = e.id
+				p.ToggleRefs[f.Entity] = e.id
 			} else if !f.Visible {
 				p.Blocked = append(p.Blocked, e.id)
 			}
@@ -158,7 +158,7 @@ func (p Policies) SQL(alias, prefix string) (string, pgx.NamedArgs) {
 		pred := "false"
 		if !rule.MissingHard && !rule.MissingRequired {
 			args[key+"_required"], args[key+"_blocked"] = rule.Required, rule.Blocked
-			pred = alias + ".group_ids @> @" + key + "_required::text[] AND NOT (" + alias + ".group_ids && @" + key + "_blocked::text[])"
+			pred = alias + ".entity_ids @> @" + key + "_required::text[] AND NOT (" + alias + ".entity_ids && @" + key + "_blocked::text[])"
 		}
 		parts = append(parts, "("+alias+".kind = @"+key+"_kind AND ("+pred+"))")
 	}
@@ -179,7 +179,7 @@ func HiddenSQL(hidden map[string][]string, alias, prefix string) (string, pgx.Na
 	for i, kind := range names {
 		key := fmt.Sprintf("%s_%d", prefix, i)
 		args[key+"_kind"], args[key+"_ids"] = kind, hidden[kind]
-		parts = append(parts, "("+alias+".kind <> @"+key+"_kind OR NOT ("+alias+".group_ids && @"+key+"_ids::text[]))")
+		parts = append(parts, "("+alias+".kind <> @"+key+"_kind OR NOT ("+alias+".entity_ids && @"+key+"_ids::text[]))")
 	}
 	if len(parts) == 0 {
 		return "true", args

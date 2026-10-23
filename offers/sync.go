@@ -93,7 +93,7 @@ func (s *Service) syncTarget(ctx context.Context, t Target) (err error) {
 				}
 			}
 		}
-		if active != nil && t.Kind != GroupTarget {
+		if active != nil && t.Kind != EntityTarget {
 			var kind string
 			err := tx.QueryRow(ctx, `SELECT kind FROM `+s.t.items+` c WHERE tenant_id = $1 AND id = $2 AND state <> 'deleted'
  AND ($3::text = '' OR EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.id=$3 AND v.state <> 'deleted'))`, s.tenant, orID(t), versionOf(t)).Scan(&kind)
@@ -176,7 +176,7 @@ func (s *Service) archive(ctx context.Context, t Target, rows []offerRow) (strin
 	if _, err := s.billing.UpdateProducts(ctx, updates); err != nil {
 		return "", err
 	}
-	if t.Kind == GroupTarget {
+	if t.Kind == EntityTarget {
 		if err := s.billing.StopRenewals(ctx, ids); err != nil {
 			return "", err
 		}
@@ -231,7 +231,7 @@ func (s *Service) push(ctx context.Context, tx pgx.Tx, t Target, active *offerRo
 			p = updated[0]
 		}
 	}
-	if t.Kind == GroupTarget && active.terms.RenewHours == nil {
+	if t.Kind == EntityTarget && active.terms.RenewHours == nil {
 		// Free or one-time: no membership renews any more.
 		if err := s.billing.StopRenewals(ctx, []string{p.ID}); err != nil {
 			return "", "", err
@@ -258,12 +258,12 @@ func (s *Service) push(ctx context.Context, tx pgx.Tx, t Target, active *offerRo
 	return p.ID, prices[0].ID, nil
 }
 
-// required is what a buyer of t must already hold: the group's key when the
+// required is what a buyer of t must already hold: the entity's key when the
 // rule it sells under is group_ppv (a content's own rule, a version's
 // effective one).
 func (s *Service) required(ctx context.Context, tx pgx.Tx, t Target) ([]string, error) {
 	out := []string{}
-	if t.Kind == GroupTarget {
+	if t.Kind == EntityTarget {
 		return out, nil
 	}
 	var crule, vrule []byte
@@ -286,10 +286,10 @@ func (s *Service) required(ctx context.Context, tx pgx.Tx, t Target) ([]string, 
 		}
 		rule = access.Effective(rule, &o)
 	}
-	if rule.Level != access.GroupPPV {
+	if rule.Level != access.EntityPPV {
 		return out, nil
 	}
-	k, err := access.GroupKey(s.tenant, rule.Group)
+	k, err := access.EntityKey(s.tenant, rule.Entity)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +297,7 @@ func (s *Service) required(ctx context.Context, tx pgx.Tx, t Target) ([]string, 
 }
 
 // displayName is the product name: the title of the content, with a
-// version's label, or the group's name, in the first configured language
+// version's label, or the entity's name, in the first configured language
 // that has one.
 func (s *Service) displayName(ctx context.Context, tx pgx.Tx, t Target) (string, error) {
 	var name string
@@ -312,9 +312,9 @@ func (s *Service) displayName(ctx context.Context, tx pgx.Tx, t Target) (string,
 				name += " (" + label + ")"
 			}
 		}
-	case GroupTarget:
-		err = tx.QueryRow(ctx, `SELECT coalesce((SELECT name FROM `+s.t.groupNames+` WHERE tenant_id = $1 AND group_id = $2 AND kind = 'name'
-			ORDER BY array_position($3::text[], language), language LIMIT 1), (SELECT slug FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2), '')`,
+	case EntityTarget:
+		err = tx.QueryRow(ctx, `SELECT coalesce((SELECT name FROM `+s.t.entityNames+` WHERE tenant_id = $1 AND entity_id = $2 AND kind = 'name'
+			ORDER BY array_position($3::text[], language), language LIMIT 1), (SELECT slug FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = $2), '')`,
 			s.tenant, t.ID, s.languages()).Scan(&name)
 	}
 	if err != nil {

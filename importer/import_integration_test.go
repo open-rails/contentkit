@@ -28,7 +28,7 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
-	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
@@ -52,7 +52,7 @@ func TestBatchRecordCount(t *testing.T) {
 	}{
 		{"empty", importer.Batch{}, 0},
 		{"metadata", importer.Batch{Source: "legacy", PreferenceFloor: 10, ProvisionScopes: true}, 0},
-		{"groups", importer.Batch{Groups: make([]importer.GroupRecord, 2)}, 2},
+		{"groups", importer.Batch{Entities: make([]importer.EntityRecord, 2)}, 2},
 		{"contents and versions", importer.Batch{Contents: []importer.ContentRecord{{}, {Versions: make([]importer.VersionRecord, 3)}}}, 5},
 		{"memberships", importer.Batch{Memberships: make([]importer.MembershipSet, 2)}, 2},
 		{"offers", importer.Batch{Offers: make([]importer.OfferRecord, 2)}, 2},
@@ -138,10 +138,10 @@ func newEngineWith(t *testing.T, mutate func(*contentkit.Config, *contentkit.Dep
 		Content: kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium"}, Restrictions: []string{"restricted"},
 			Kinds: map[string]kinds.Kind{
 				"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored"}}, Segments: true,
-					Groups: []string{"tag", "artist", "series", "character"}, Attributes: map[string]kinds.Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}}}},
-				"blog": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}, Groups: []string{"tag"}},
+					Entities: []string{"tag", "artist", "series", "character"}, Attributes: map[string]kinds.Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}}}},
+				"blog": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}, Entities: []string{"tag"}},
 			},
-			GroupKinds: map[string]kinds.GroupKind{
+			EntityKinds: map[string]kinds.EntityKind{
 				"tag":       {Route: "tags"},
 				"artist":    {Route: "artists", Roles: []string{"publisher"}},
 				"series":    {Route: "series", Ordered: true, Parent: "series"},
@@ -176,18 +176,18 @@ func catalogBatch() importer.Batch {
 	comment := func(n int) *importer.Ref { return &importer.Ref{ExternalID: "comment:" + string(rune('0'+n))} }
 	return importer.Batch{
 		Source: "test-legacy",
-		Groups: []importer.GroupRecord{
+		Entities: []importer.EntityRecord{
 			{ExternalID: "tag:1", ID: id("tag", 1), Kind: "tag", Slug: "big", Code: "TAG000001",
-				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Big"}, {Language: "en", Kind: groups.NameAlias, Name: "Huge"}},
-				Text:  []groups.Text{{Language: "en", Description: "Big things."}}, CreatedAt: &t0},
-			{ExternalID: "tag:2", Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}, CreatedAt: &t0},
+				Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Big"}, {Language: "en", Kind: entities.NameAlias, Name: "Huge"}},
+				Text:  []entities.Text{{Language: "en", Description: "Big things."}}, CreatedAt: &t0},
+			{ExternalID: "tag:2", Kind: "tag", Slug: "color", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Color"}}, CreatedAt: &t0},
 			{ExternalID: "artist:1", ID: id("artist", 1), Kind: "artist", Slug: "artist-one",
-				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Artist One"}, {Language: "ja", Kind: groups.NameCanonical, Name: "アーティスト"}}},
-			{ExternalID: "series:1", ID: id("series", 1), Kind: "series", Slug: "saga", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Saga"}}},
+				Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Artist One"}, {Language: "ja", Kind: entities.NameCanonical, Name: "アーティスト"}}},
+			{ExternalID: "series:1", ID: id("series", 1), Kind: "series", Slug: "saga", Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Saga"}}},
 			{ExternalID: "series:2", ID: id("series", 2), Kind: "series", Slug: "saga-two", Parent: &importer.Ref{ExternalID: "series:1"},
-				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Saga Two"}}},
+				Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Saga Two"}}},
 			{ExternalID: "char:1", ID: id("character", 1), Kind: "character", Slug: "hero", Scope: &importer.Ref{ExternalID: "series:2"},
-				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Hero"}},
+				Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Hero"}},
 				Edges: []importer.EdgeRecord{{Relation: "member_of", To: importer.Ref{ExternalID: "series:1"}}}},
 		},
 		Contents: []importer.ContentRecord{
@@ -212,15 +212,15 @@ func catalogBatch() importer.Batch {
 				CreatedAt: &t0},
 		},
 		Memberships: []importer.MembershipSet{
-			{Content: gallery1, Kinds: []string{"tag"}, Memberships: []importer.MembershipRecord{{Group: tag(1)}, {Group: tag(2)}}},
-			{Content: gallery1, Kinds: []string{"artist"}, Memberships: []importer.MembershipRecord{{Group: importer.Ref{ExternalID: "artist:1"}},
-				{Group: importer.Ref{ExternalID: "artist:1"}, Role: "publisher"}}},
-			{Content: gallery1, Kinds: []string{"series"}, Memberships: []importer.MembershipRecord{{Group: importer.Ref{ExternalID: "series:2"}, Position: ptr(3)}}},
-			{Content: gallery1, Kinds: []string{"character"}, Memberships: []importer.MembershipRecord{{Group: importer.Ref{ExternalID: "char:1"}}}},
-			{Content: importer.Ref{ExternalID: "post:1"}, Kinds: []string{"tag"}, Memberships: []importer.MembershipRecord{{Group: tag(1)}}},
+			{Content: gallery1, Kinds: []string{"tag"}, Memberships: []importer.MembershipRecord{{Entity: tag(1)}, {Entity: tag(2)}}},
+			{Content: gallery1, Kinds: []string{"artist"}, Memberships: []importer.MembershipRecord{{Entity: importer.Ref{ExternalID: "artist:1"}},
+				{Entity: importer.Ref{ExternalID: "artist:1"}, Role: "publisher"}}},
+			{Content: gallery1, Kinds: []string{"series"}, Memberships: []importer.MembershipRecord{{Entity: importer.Ref{ExternalID: "series:2"}, Position: ptr(3)}}},
+			{Content: gallery1, Kinds: []string{"character"}, Memberships: []importer.MembershipRecord{{Entity: importer.Ref{ExternalID: "char:1"}}}},
+			{Content: importer.Ref{ExternalID: "post:1"}, Kinds: []string{"tag"}, Memberships: []importer.MembershipRecord{{Entity: tag(1)}}},
 		},
 		Offers:  []importer.OfferRecord{{Target: importer.TargetRef{Content: &gallery1}, Terms: offers.Terms{Amount: 4_990_000}}},
-		Aliases: []importer.AliasRecord{{Kind: "folder", Key: "12345", Target: importer.TargetRef{Content: &gallery1}}, {Kind: "tag-name", Key: "Big", Target: importer.TargetRef{Group: ptr(tag(1))}}},
+		Aliases: []importer.AliasRecord{{Kind: "folder", Key: "12345", Target: importer.TargetRef{Content: &gallery1}}, {Kind: "tag-name", Key: "Big", Target: importer.TargetRef{Entity: ptr(tag(1))}}},
 		Comments: []importer.CommentRecord{
 			{ExternalID: "comment:1", ID: id("comment", 1), Target: importer.TargetRef{Content: &gallery1}, Language: "en", UserID: "u-1", Body: "Great", CreatedAt: &t0},
 			{ExternalID: "comment:2", ID: id("comment", 2), Target: importer.TargetRef{Content: &gallery1}, Language: "en", AnonName: "guest", Body: "Agreed",
@@ -234,7 +234,7 @@ func catalogBatch() importer.Batch {
 			{Target: importer.TargetRef{Content: &gallery1}, UserID: "u-2", Value: -1, CreatedAt: &t0},
 			{Target: importer.TargetRef{Content: &gallery1}, IP: "203.0.113.9", Value: 1, CreatedAt: &t0},
 			{Target: importer.TargetRef{Comment: comment(1)}, UserID: "u-1", Value: 1, CreatedAt: &t0},
-			{Target: importer.TargetRef{Group: ptr(tag(1))}, UserID: "u-1", Value: -1, CreatedAt: &t0},
+			{Target: importer.TargetRef{Entity: ptr(tag(1))}, UserID: "u-1", Value: -1, CreatedAt: &t0},
 			{Target: importer.TargetRef{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-3", Value: 0, CreatedAt: &t0},
 		},
 		Favorites: []importer.FavoriteRecord{{Target: importer.TargetRef{Content: &gallery1}, UserID: "u-1", CreatedAt: &t0},
@@ -284,7 +284,7 @@ func (f fixture) fingerprint(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for _, table := range []string{"content_items", "content_text", "content_creators", "content_versions", "content_version_text", "content_segments",
-		"content_facets", "content_events", "content_groups", "content_group_names", "content_group_text", "content_group_edges", "content_memberships",
+		"content_facets", "content_events", "content_entities", "content_entity_names", "content_entity_text", "content_entity_edges", "content_memberships",
 		"content_codes", "content_code_aliases", "content_external_ids", "content_comments", "content_reactions", "content_favorites",
 		"content_interaction_counts", "content_poll_questions", "content_poll_options", "content_poll_votes", "content_poll_answers", "content_search_dirty"} {
 		out[table] = f.scalar(t, `SELECT count(*) || ':' || md5(coalesce(string_agg(x::text, '|' ORDER BY x::text), '')) FROM $s.`+table+` x`)
@@ -327,7 +327,7 @@ func TestImportConverges(t *testing.T) {
 		{`SELECT code FROM $s.content_codes WHERE content_id = $1`, "GAZ000001"},
 		{`SELECT code FROM $s.content_versions WHERE content_id = $1 AND position = 0`, "K3F9"},
 		{`SELECT likes || '/' || dislikes || '/' || favorites || '/' || comment_count FROM $s.content_interaction_counts WHERE content_id = $1 AND content_version_id IS NULL`, "2/1/1/1"},
-		{`SELECT array_length(group_ids, 1)::text FROM $s.content_facets WHERE content_id = $1 AND version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`, "6"},
+		{`SELECT array_length(entity_ids, 1)::text FROM $s.content_facets WHERE content_id = $1 AND version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`, "6"},
 	} {
 		sql, want := c[0], c[1]
 		if got := f.scalar(t, sql, g1); got != want {
@@ -342,7 +342,7 @@ func TestImportConverges(t *testing.T) {
 		{`SELECT state || ' ' || (published_at IS NULL) FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`, "published true"},
 		{`SELECT comments FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`, "open"},
 		{`SELECT array_to_string(languages, ',') FROM $s.content_versions WHERE content_id = '` + id("post", 1) + `' AND $1 <> ''`, "en"},
-		{`SELECT scope_id || ' ' || slug FROM $s.content_groups WHERE id = '` + id("character", 1) + `' AND $1 <> ''`, id("series", 2) + " hero"},
+		{`SELECT scope_id || ' ' || slug FROM $s.content_entities WHERE id = '` + id("character", 1) + `' AND $1 <> ''`, id("series", 2) + " hero"},
 		{`SELECT count(*)::text FROM $s.content_code_aliases WHERE source = 'test-legacy' AND $1 <> ''`, "2"},
 		{`SELECT count(*)::text FROM $s.content_reactions WHERE content_kind = 'tag' AND content_id = '` + id("tag", 1) + `' AND $1 <> ''`, "1"},
 	} {
@@ -487,7 +487,7 @@ func TestImportPartialFailureResumes(t *testing.T) {
 	f := newEngine(t)
 	gallery := func(n int, state string, owner *importer.Ref) importer.ContentRecord {
 		ext := "gallery:" + string(rune('0'+n))
-		return importer.ContentRecord{ExternalID: ext, ID: id("gallery", int64(n)), Kind: "gallery", State: state, OwnerGroup: owner,
+		return importer.ContentRecord{ExternalID: ext, ID: id("gallery", int64(n)), Kind: "gallery", State: state, OwnerEntity: owner,
 			Text: map[string]catalog.Text{"en": {Title: ext}}, Versions: []importer.VersionRecord{{ExternalID: "version:" + ext, Languages: []string{"en"}}}}
 	}
 	b := importer.Batch{Source: "test-legacy",
@@ -511,7 +511,7 @@ func TestImportPartialFailureResumes(t *testing.T) {
 		t.Fatal("the failed records were written")
 	}
 	// Fix the causes and send it all again.
-	b.Groups = []importer.GroupRecord{{ExternalID: "tag:9", ID: id("tag", 9), Kind: "tag", Slug: "nine"}}
+	b.Entities = []importer.EntityRecord{{ExternalID: "tag:9", ID: id("tag", 9), Kind: "tag", Slug: "nine"}}
 	b.Contents[2].State = "published"
 	b.Comments[2].ReplyTo = &importer.Ref{ExternalID: "c:1"}
 	res = f.importBatch(t, b)
@@ -522,7 +522,7 @@ func TestImportPartialFailureResumes(t *testing.T) {
 		{`SELECT count(*)::text FROM $s.content_items WHERE $1 <> ''`, "4"},
 		{`SELECT count(*)::text FROM $s.content_comments WHERE $1 <> ''`, "3"},
 		{`SELECT count(*)::text FROM $s.content_external_ids WHERE entity = 'content' AND $1 <> ''`, "4"},
-		{`SELECT owner_group_id FROM $s.content_items WHERE id = '` + id("gallery", 2) + `' AND $1 <> ''`, id("tag", 9)},
+		{`SELECT owner_entity_id FROM $s.content_items WHERE id = '` + id("gallery", 2) + `' AND $1 <> ''`, id("tag", 9)},
 	} {
 		sql, want := c[0], c[1]
 		if got := f.scalar(t, sql, "x"); got != want {
@@ -613,7 +613,7 @@ func TestImportRoute(t *testing.T) {
 		f.routes.ServeHTTP(rec, req)
 		return rec
 	}
-	b := importer.Batch{Source: "test-legacy", Groups: []importer.GroupRecord{{ExternalID: "t", Kind: "tag", Slug: "t"}}}
+	b := importer.Batch{Source: "test-legacy", Entities: []importer.EntityRecord{{ExternalID: "t", Kind: "tag", Slug: "t"}}}
 	if rec := post("staff", b); rec.Code != http.StatusForbidden {
 		t.Fatalf("staff without the permission: %d %s", rec.Code, rec.Body)
 	}
@@ -675,7 +675,7 @@ func TestImportRebuildsProjections(t *testing.T) {
 	for _, kind := range []string{"tag", "artist"} {
 		rec := httptest.NewRecorder()
 		f.routes.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/entities/"+id(kind, 1), nil))
-		var entity groups.GroupDetail
+		var entity entities.EntityDetail
 		if err := json.Unmarshal(rec.Body.Bytes(), &entity); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("immediate %s: %d %s: %v", kind, rec.Code, rec.Body, err)
 		}
@@ -713,31 +713,31 @@ func TestImportRebuildsProjections(t *testing.T) {
 	}
 }
 
-// A group of an auth_scope kind keeps the AuthKit scope it names; one naming
+// A entity of an auth_scope kind keeps the AuthKit scope it names; one naming
 // none is provisioned only when the batch asks. Avatars and owners import.
-func TestImportGroupScopes(t *testing.T) {
+func TestImportEntityScopes(t *testing.T) {
 	f := newEngine(t)
 	avatar := "i-" + uuid.NewString()
-	channel := func(n int, scope string) importer.GroupRecord {
-		return importer.GroupRecord{ExternalID: "channel:" + string(rune('0'+n)), ID: id("channel", int64(n)), Kind: "channel", Slug: "c" + string(rune('0'+n)),
+	channel := func(n int, scope string) importer.EntityRecord {
+		return importer.EntityRecord{ExternalID: "channel:" + string(rune('0'+n)), ID: id("channel", int64(n)), Kind: "channel", Slug: "c" + string(rune('0'+n)),
 			OwnerUserID: "u-1", Avatar: avatar, AuthScope: scope}
 	}
-	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Groups: []importer.GroupRecord{channel(1, "scope-1"), channel(2, "")}})
+	res := f.importBatch(t, importer.Batch{Source: "test-legacy", Entities: []importer.EntityRecord{channel(1, "scope-1"), channel(2, "")}})
 	if res.Written["entities"] != 1 || len(res.Failed) != 1 || res.Failed[0].ExternalID != "channel:2" || res.Failed[0].Code != "invalid" {
 		t.Fatalf("result %+v", res)
 	}
-	if got := f.scalar(t, `SELECT owner_user_id || ' ' || avatar || ' ' || auth_scope FROM $s.content_groups WHERE id = $1`, id("channel", 1)); got != "u-1 "+avatar+" scope-1" {
+	if got := f.scalar(t, `SELECT owner_user_id || ' ' || avatar || ' ' || auth_scope FROM $s.content_entities WHERE id = $1`, id("channel", 1)); got != "u-1 "+avatar+" scope-1" {
 		t.Fatalf("channel 1: %q", got)
 	}
-	// Re-imported without its scope, a group keeps it.
+	// Re-imported without its scope, an entity keeps it.
 	again := channel(1, "")
-	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Groups: []importer.GroupRecord{again}}); len(res.Failed) > 0 {
+	if res := f.importBatch(t, importer.Batch{Source: "test-legacy", Entities: []importer.EntityRecord{again}}); len(res.Failed) > 0 {
 		t.Fatalf("re-import %+v", res.Failed)
 	}
-	if got := f.scalar(t, `SELECT auth_scope FROM $s.content_groups WHERE id = $1`, id("channel", 1)); got != "scope-1" {
+	if got := f.scalar(t, `SELECT auth_scope FROM $s.content_entities WHERE id = $1`, id("channel", 1)); got != "scope-1" {
 		t.Fatalf("scope after re-import: %q", got)
 	}
-	res = f.importBatch(t, importer.Batch{Source: "test-legacy", ProvisionScopes: true, Groups: []importer.GroupRecord{channel(2, "")}})
+	res = f.importBatch(t, importer.Batch{Source: "test-legacy", ProvisionScopes: true, Entities: []importer.EntityRecord{channel(2, "")}})
 	if len(res.Failed) > 0 || res.Written["entities"] != 1 {
 		t.Fatalf("provisioned import %+v", res)
 	}
@@ -775,7 +775,7 @@ func TestImportThenIngestMedia(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := catalogBatch()
-	res := f.importBatch(t, importer.Batch{Source: b.Source, Groups: b.Groups, Contents: b.Contents[:1]})
+	res := f.importBatch(t, importer.Batch{Source: b.Source, Entities: b.Entities, Contents: b.Contents[:1]})
 	if len(res.Failed) > 0 {
 		t.Fatalf("import %+v", res.Failed)
 	}
@@ -880,7 +880,7 @@ func TestImportCoversPerVersion(t *testing.T) {
 	}
 	b := catalogBatch()
 	record := b.Contents[0]
-	if res := f.importBatch(t, importer.Batch{Source: b.Source, Groups: b.Groups, Contents: []importer.ContentRecord{record}}); len(res.Failed) > 0 {
+	if res := f.importBatch(t, importer.Batch{Source: b.Source, Entities: b.Entities, Contents: []importer.ContentRecord{record}}); len(res.Failed) > 0 {
 		t.Fatalf("import %+v", res.Failed)
 	}
 	legacy := png(t, 12)
@@ -1062,8 +1062,8 @@ func TestImportDeletes(t *testing.T) {
 		{`SELECT bool_and(deleted)::text FROM $s.content_facets WHERE content_id = '` + id("gallery", 3) + `' AND $1 <> ''`, "true"},
 		{`SELECT state FROM $s.content_versions WHERE id = '` + id("version", 2) + `' AND $1 <> ''`, "deleted"},
 		{`SELECT state FROM $s.content_items WHERE id = $1`, "published"},
-		{`SELECT state FROM $s.content_groups WHERE id = (SELECT id FROM $s.content_external_ids WHERE external_id = 'tag:2') AND $1 <> ''`, "deleted"},
-		{`SELECT array_length(group_ids, 1)::text FROM $s.content_facets WHERE content_id = $1 AND version_id = '` + id("version", 1) + `'`, "5"},
+		{`SELECT state FROM $s.content_entities WHERE id = (SELECT id FROM $s.content_external_ids WHERE external_id = 'tag:2') AND $1 <> ''`, "deleted"},
+		{`SELECT array_length(entity_ids, 1)::text FROM $s.content_facets WHERE content_id = $1 AND version_id = '` + id("version", 1) + `'`, "5"},
 		{`SELECT (deleted_at IS NOT NULL)::text FROM $s.content_comments WHERE id = '` + id("comment", 2) + `'::uuid AND $1 <> ''`, "true"},
 		{`SELECT reply_count::text FROM $s.content_comments WHERE id = '` + id("comment", 1) + `'::uuid AND $1 <> ''`, "1"},
 		{`SELECT (deleted_at IS NOT NULL)::text FROM $s.content_poll_questions WHERE question = 'Why?' AND $1 <> ''`, "true"},
@@ -1151,7 +1151,7 @@ func TestImportExternalIDs(t *testing.T) {
 				t.Fatalf("%s maps to %s", x.ExternalID, x.ID)
 			}
 			if !source[x.ExternalID] && !x.Deleted {
-				deletes = append(deletes, importer.DeleteRecord{Entity: importer.EntityContent, ExternalID: x.ExternalID})
+				deletes = append(deletes, importer.DeleteRecord{Entity: importer.RecordContent, ExternalID: x.ExternalID})
 			}
 		}
 		if page.NextCursor == "" {
@@ -1177,17 +1177,17 @@ func TestImportExternalIDs(t *testing.T) {
 	}
 }
 
-// An import deleting content and a group, racing a reparent of a group the
-// content is in, takes the group hierarchy lock before the content row, as
+// An import deleting content and an entity, racing a reparent of an entity the
+// content is in, takes the entity hierarchy lock before the content row, as
 // the reparent does, so neither deadlocks.
 func TestImportDeletesRacingReparent(t *testing.T) {
 	f := newEngine(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	b := catalogBatch()
-	b.Groups = append(b.Groups, importer.GroupRecord{ExternalID: "tag:9", Kind: "tag", Slug: "unrelated"},
-		importer.GroupRecord{ExternalID: "series:6", ID: id("series", 6), Kind: "series", Slug: "orphaned"},
-		importer.GroupRecord{ExternalID: "series:7", Kind: "series", Slug: "orphan", Parent: &importer.Ref{ExternalID: "series:6"}})
+	b.Entities = append(b.Entities, importer.EntityRecord{ExternalID: "tag:9", Kind: "tag", Slug: "unrelated"},
+		importer.EntityRecord{ExternalID: "series:6", ID: id("series", 6), Kind: "series", Slug: "orphaned"},
+		importer.EntityRecord{ExternalID: "series:7", Kind: "series", Slug: "orphan", Parent: &importer.Ref{ExternalID: "series:6"}})
 	if res := f.importBatch(t, b); len(res.Failed) > 0 {
 		t.Fatalf("failures: %+v", res.Failed)
 	}
@@ -1196,7 +1196,7 @@ func TestImportDeletesRacingReparent(t *testing.T) {
 	}
 	// series:7's parent is deleted under it, so deleting series:7 fails at
 	// write time and the chunk retries record by record.
-	if _, err := f.pool.Exec(ctx, q(`UPDATE $s.content_groups SET state = 'deleted' WHERE id = $1`), id("series", 6)); err != nil {
+	if _, err := f.pool.Exec(ctx, q(`UPDATE $s.content_entities SET state = 'deleted' WHERE id = $1`), id("series", 6)); err != nil {
 		t.Fatal(err)
 	}
 	blockedBy := func(pid uint32) uint32 {
@@ -1243,7 +1243,7 @@ func TestImportDeletesRacingReparent(t *testing.T) {
 	importPID := blockedBy(hold.Conn().PgConn().PID())
 	reparented := make(chan error, 1)
 	go func() {
-		_, err := f.e.Client().PatchEntity(ctx, id("series", 2), groups.GroupUpdate{ParentID: ptr(groups.GroupID(""))})
+		_, err := f.e.Client().PatchEntity(ctx, id("series", 2), entities.EntityUpdate{ParentID: ptr(entities.EntityID(""))})
 		reparented <- err
 	}()
 	blockedBy(importPID)

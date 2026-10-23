@@ -47,13 +47,13 @@ func TestAuthorizationSeparatesIdentityIssuerFromPermissionAuthority(t *testing.
 	if allowed, err := policy.Authorize(t.Context(), scope, credential, contentkit.PermissionTarget{Permission: access.CommentsModerate.String()}); err != nil || !allowed {
 		t.Fatalf("app grant at local authority: allowed=%v err=%v", allowed, err)
 	}
-	groupID, err := ckauthkit.GroupScopeID(scope, "group")
+	groupID, err := ckauthkit.EntityScopeID(scope, "group")
 	if err != nil {
 		t.Fatal(err)
 	}
 	credential.wantScope = auth.Scope{Authority: permissionAuthority, ID: groupID}
 	credential.wantPermission = access.CommentsModerate.String()
-	if allowed, err := policy.Authorize(t.Context(), scope, credential, contentkit.PermissionTarget{Permission: access.CommentsModerate.String(), GroupID: "group"}); err != nil || !allowed {
+	if allowed, err := policy.Authorize(t.Context(), scope, credential, contentkit.PermissionTarget{Permission: access.CommentsModerate.String(), EntityID: "group"}); err != nil || !allowed {
 		t.Fatalf("content group at local authority: allowed=%v err=%v", allowed, err)
 	}
 	for _, checked := range credential.checked {
@@ -81,7 +81,7 @@ func TestAuthorizationSeparatesIdentityIssuerFromPermissionAuthority(t *testing.
 		t.Fatal("accepted malformed permission authority")
 	}
 	cfg.PermissionAuthority = permissionAuthority
-	cfg.Groups = func(context.Context, contentkit.Scope, string) (auth.Scope, error) {
+	cfg.Entities = func(context.Context, contentkit.Scope, string) (auth.Scope, error) {
 		return auth.Scope{Authority: identityIssuer, ID: groupID}, nil
 	}
 	policy, err = ckauthkit.NewAuthorization(t.Context(), authorizationGroups{app, scope.TenantID}, cfg)
@@ -89,7 +89,7 @@ func TestAuthorizationSeparatesIdentityIssuerFromPermissionAuthority(t *testing.
 		t.Fatal(err)
 	}
 	before := len(credential.checked)
-	if allowed, err := policy.Authorize(t.Context(), scope, credential, contentkit.PermissionTarget{Permission: access.CommentsModerate.String(), GroupID: "group"}); err == nil || allowed || len(credential.checked) != before {
+	if allowed, err := policy.Authorize(t.Context(), scope, credential, contentkit.PermissionTarget{Permission: access.CommentsModerate.String(), EntityID: "group"}); err == nil || allowed || len(credential.checked) != before {
 		t.Fatalf("foreign content-group authority reached permission checker: allowed=%v err=%v", allowed, err)
 	}
 }

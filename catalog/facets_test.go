@@ -21,9 +21,9 @@ type facet struct {
 	Level        access.Level
 	Releases     []access.Release
 	Tiers        []string
-	Group        string
+	Entity       string
 	Restrictions []string
-	Groups       []string
+	Entities     []string
 	Traits       []string
 	Owner        string
 	Position     int
@@ -34,7 +34,7 @@ type facet struct {
 func (f *fixture) facets(id string) []facet {
 	f.t.Helper()
 	rows, err := f.pool.Query(f.ctx, `SELECT version_id, coalesce(live_from <= $2, false), deleted, languages, access_level, access_tiers,
- coalesce(access_group_id, ''), access_releases, restrictions, group_ids, traits, coalesce(owner_group_id, ''), position, attributes
+ coalesce(access_entity_id, ''), access_releases, restrictions, entity_ids, traits, coalesce(owner_entity_id, ''), position, attributes
  FROM `+f.table("content_facets")+` WHERE tenant_id = $1 AND content_id = $3 ORDER BY position, version_id`, tenant, f.now(), id)
 	if err != nil {
 		f.t.Fatal(err)
@@ -44,8 +44,8 @@ func (f *fixture) facets(id string) []facet {
 	for rows.Next() {
 		var x facet
 		var attrs []byte
-		if err := rows.Scan(&x.Version, &x.Live, &x.Deleted, &x.Languages, &x.Level, &x.Tiers, &x.Group, &x.Releases, &x.Restrictions,
-			&x.Groups, &x.Traits, &x.Owner, &x.Position, &attrs); err != nil {
+		if err := rows.Scan(&x.Version, &x.Live, &x.Deleted, &x.Languages, &x.Level, &x.Tiers, &x.Entity, &x.Releases, &x.Restrictions,
+			&x.Entities, &x.Traits, &x.Owner, &x.Position, &attrs); err != nil {
 			f.t.Fatal(err)
 		}
 		if err := json.Unmarshal(attrs, &x.Attributes); err != nil {
@@ -63,10 +63,10 @@ func (f *fixture) facets(id string) []facet {
 // still read them) marked deleted.
 func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	studio, red, blue := f.group("channel", "studio"), f.group("tag", "red"), f.group("tag", "blue")
+	studio, red, blue := f.entity("channel", "studio"), f.entity("tag", "red"), f.entity("tag", "blue")
 	f.sell(studio)
 	in := gallery("Facets", "en", "ja")
-	in.OwnerGroupID = studio
+	in.OwnerEntityID = studio
 	in.Attributes = map[string]any{"format": "doujin"}
 	id := f.create("staff", in)
 	vs := f.facets(id)
@@ -91,12 +91,12 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 		t.Fatalf("after the item's edit %+v", vs)
 	}
 	_, err = f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: ja, VersionInput: VersionInput{Traits: &[]string{"uncensored"},
-		Access: &access.Rule{Level: access.GroupLevel, Group: studio}, Attributes: map[string]any{"note": "ja only"}}}})
+		Access: &access.Rule{Level: access.EntityLevel, Entity: studio}, Attributes: map[string]any{"note": "ja only"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	vs = f.facets(id)
-	if vs[1].Level != access.GroupLevel || vs[1].Group != studio || !slices.Equal(vs[1].Traits, []string{"uncensored"}) ||
+	if vs[1].Level != access.EntityLevel || vs[1].Entity != studio || !slices.Equal(vs[1].Traits, []string{"uncensored"}) ||
 		vs[1].Attributes["note"] != "ja only" || vs[1].Attributes["volume"] != float64(2) || vs[0].Level != access.TierLevel {
 		t.Fatalf("after the version's edit %+v", vs)
 	}
@@ -115,7 +115,7 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 	f.join(red, id, "")
 	f.join(blue, id, ja)
 	vs = f.facets(id)
-	if !slices.Equal(vs[0].Groups, sorted(red, blue)) || !slices.Equal(vs[1].Groups, []string{red}) {
+	if !slices.Equal(vs[0].Entities, sorted(red, blue)) || !slices.Equal(vs[1].Entities, []string{red}) {
 		t.Fatalf("memberships %+v", vs)
 	}
 	if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: ja}}); err != nil {
@@ -157,29 +157,29 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 	}
 }
 
-// RefreshFacets reads effective groups in the writer's transaction: a
+// RefreshFacets reads effective entities in the writer's transaction: a
 // membership the transaction then rolls back never reaches the facets.
 func TestFacetsShareTheWritersTransactionIntegration(t *testing.T) {
 	f := newFixture(t, nil)
-	tag := f.group("tag", "tag")
+	tag := f.entity("tag", "tag")
 	id := f.create("staff", gallery("Tx", "en"))
 	rollback := pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(f.ctx, `INSERT INTO `+f.table("content_memberships")+` (tenant_id, group_id, content_id) VALUES ($1, $2, $3)`, tenant, tag, id); err != nil {
+		if _, err := tx.Exec(f.ctx, `INSERT INTO `+f.table("content_memberships")+` (tenant_id, entity_id, content_id) VALUES ($1, $2, $3)`, tenant, tag, id); err != nil {
 			return err
 		}
 		if err := f.s.RefreshFacets(f.ctx, tx, []string{id}); err != nil {
 			return err
 		}
-		var groups []string
-		if err := tx.QueryRow(f.ctx, `SELECT group_ids FROM `+f.table("content_facets")+` WHERE content_id = $1`, id).Scan(&groups); err != nil || len(groups) != 1 {
-			t.Errorf("inside the transaction %v %v", groups, err)
+		var entities []string
+		if err := tx.QueryRow(f.ctx, `SELECT entity_ids FROM `+f.table("content_facets")+` WHERE content_id = $1`, id).Scan(&entities); err != nil || len(entities) != 1 {
+			t.Errorf("inside the transaction %v %v", entities, err)
 		}
 		return context.Canceled
 	})
 	if rollback != context.Canceled {
 		t.Fatal(rollback)
 	}
-	if vs := f.facets(id); len(vs[0].Groups) != 0 {
+	if vs := f.facets(id); len(vs[0].Entities) != 0 {
 		t.Fatalf("a rolled back membership reached the facets %+v", vs)
 	}
 	_ = time.Now
