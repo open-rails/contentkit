@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -49,11 +48,7 @@ type Config struct {
 	// AccountSchema and AccountWorkerSchema are the shared tenant avatar state
 	// and queue from contentkit.Config.AccountMedia. Empty retains legacy mode.
 	AccountSchema, AccountWorkerSchema string
-	// Queue selects a one-task process: encode runs video chunks; light runs
-	// video planning/assembly plus the existing image and audio queues.
-	// Empty keeps the long-running all-queue worker.
-	Queue string
-	Store media.Store
+	Store                              media.Store
 	// Kinds is the host's registry. Failed and the catalog retirement barrier
 	// run here; ItemReady and PurgePublic run through the host media queue.
 	Kinds *media.Registry
@@ -83,8 +78,8 @@ type Config struct {
 	MaxPixels           int
 	MaxFrames           int
 	MaxAnimationSeconds float64
-	// VideoTimeout bounds audio-only encoding (default 48 h); video chunks,
-	// planning and assembly each have a one-hour timeout. ImageTimeout bounds
+	// VideoTimeout bounds audio-only encoding (default 48 h); a resumable
+	// video attempt has a one-hour timeout. ImageTimeout bounds
 	// one image job (default 1 h).
 	VideoTimeout time.Duration
 	ImageTimeout time.Duration
@@ -107,16 +102,8 @@ func (c *Config) defaults() error {
 	if c.ContentSchema == "" {
 		return errors.New("media/worker: Config.ContentSchema is required")
 	}
-	if c.Queue != "" && c.Queue != workqueue.VideoLightQueue && c.Queue != workqueue.VideoEncodeQueue {
-		return fmt.Errorf("media/worker: unsupported queue %q", c.Queue)
-	}
 	if c.VideoWorkers <= 0 {
 		c.VideoWorkers = 1
-	}
-	if c.Queue != "" {
-		c.VideoWorkers = 1
-		c.AudioWorkers = 1
-		c.ImageWorkers = 1
 	}
 	if c.ImageWorkers <= 0 {
 		c.ImageWorkers = 2
@@ -136,13 +123,11 @@ func (c *Config) defaults() error {
 	return nil
 }
 
-// Worker is a configured worker; Run drains jobs or exits after one queued job.
+// Worker is a configured worker; Run drains jobs until shutdown.
 type Worker struct {
-	c             Config
-	account       *Worker
-	client        *river.Client[pgx.Tx]
-	singleStarted *atomic.Bool
-	singleDone    <-chan struct{}
+	c       Config
+	account *Worker
+	client  *river.Client[pgx.Tx]
 }
 
 // New builds the River client with the image and video workers. It needs no
@@ -172,13 +157,8 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if !journalExists {
 		return nil, fmt.Errorf("media/worker: missing %s; the host must apply ContentKit migrations", journalTable)
 	}
-	// One-shot workers use pod-private scratch, which Kubernetes removes with
-	// the pod. Sweeping a shared path here could erase another active worker's
-	// chunk when multiple one-shot processes start on the same host.
-	if c.Queue == "" {
-		if err := video.SweepTemp(c.TempDir); err != nil {
-			return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
-		}
+	if err := video.SweepTemp(c.TempDir); err != nil {
+		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
 	}
 	host, err := media.NewHostQueue(c.Pool, c.Kinds, c.HostSchema, c.HostQueue)
 	if err != nil {
@@ -234,7 +214,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		return nil, err
 	}
 	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Timeout: c.VideoTimeout,
-		MaxWorkers: c.VideoWorkers, AudioWorkers: c.AudioWorkers, Queue: c.Queue, Logger: c.Logger})
+		MaxWorkers: c.VideoWorkers, AudioWorkers: c.AudioWorkers, Logger: c.Logger})
 	if err != nil {
 		return nil, err
 	}
@@ -244,9 +224,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		middleware = []rivertype.Middleware{c.Metrics}
 	}
 	contributions := []riverhelpers.Contribution{videos}
-	var singleStarted *atomic.Bool
-	var singleDone <-chan struct{}
-	if c.Queue != workqueue.VideoEncodeQueue {
+	{
 		images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Purge: host.Purge,
 			Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
 		if err != nil {
@@ -267,26 +245,14 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		}, nil, nil)
 		contributions = append(contributions, imageJobs)
 	}
-	if c.Queue != "" {
-		started := &atomic.Bool{}
-		done := make(chan struct{})
-		singleStarted, singleDone = started, done
-		middleware = append(middleware, river.WorkerMiddlewareFunc(func(ctx context.Context, _ *rivertype.JobRow, work func(context.Context) error) error {
-			if !started.CompareAndSwap(false, true) {
-				return river.JobSnooze(5 * time.Second)
-			}
-			defer close(done)
-			return work(ctx)
-		}))
-	}
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
 		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
 		Logger: c.Logger, Hooks: hooks, Middleware: middleware}, contributions...)
 	if err != nil {
 		return nil, err
 	}
-	out := &Worker{c: c, client: client, singleStarted: singleStarted, singleDone: singleDone}
-	if c.AccountSchema != "" && c.Queue == "" {
+	out := &Worker{c: c, client: client}
+	if c.AccountSchema != "" {
 		child := c
 		child.ContentSchema = c.AccountSchema
 		child.Schema = c.AccountWorkerSchema
@@ -308,8 +274,7 @@ func (w *Worker) Client() *river.Client[pgx.Tx] { return w.client }
 const checkTimeout = 10 * time.Second
 
 // Run waits for the bucket (every job needs it; waiting burns no job
-// attempts), then works jobs until ctx is done. Single-queue workers exit
-// after one task or one idle minute. Running jobs get ShutdownGrace before
+// attempts), then works jobs until ctx is done. Running jobs get ShutdownGrace before
 // cancellation. A non-nil error may leave jobs unwinding: the caller must not
 // close their database pool until the worker's River client has stopped.
 func (w *Worker) Run(ctx context.Context) error {
@@ -352,23 +317,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		return err
 	}
 	w.c.Logger.Info("media-worker: started", "schema", w.c.Schema, "video_workers", w.c.VideoWorkers, "image_workers", w.c.ImageWorkers)
-	if w.c.Queue == "" {
-		<-ctx.Done()
-	} else {
-		idle := time.NewTimer(time.Minute)
-		defer idle.Stop()
-		select {
-		case <-ctx.Done():
-		case <-w.singleDone:
-		case <-idle.C:
-			if w.singleStarted.Load() {
-				select {
-				case <-ctx.Done():
-				case <-w.singleDone:
-				}
-			}
-		}
-	}
+	<-ctx.Done()
 	return stopJobs(w.client, w.c.ShutdownGrace, 30*time.Second)
 }
 

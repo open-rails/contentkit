@@ -40,7 +40,7 @@ func (e *env) runningChunk(ref contentref.ContentRef, exited <-chan error, out f
 		var id int64
 		if err := e.pool.QueryRow(e.ctx, `SELECT COALESCE((SELECT id FROM `+e.schema+`.river_job
 WHERE kind = $1 AND state = 'running' AND args->'ref'->>'content_id' = $2 LIMIT 1), 0)`,
-			(workqueue.VideoChunkArgs{}).Kind(), ref.ContentID).Scan(&id); err != nil {
+			(workqueue.VideoArgs{}).Kind(), ref.ContentID).Scan(&id); err != nil {
 			e.t.Fatal(err)
 		}
 		if id == 0 {
@@ -117,7 +117,7 @@ func TestShortVideoOvertakesLongVideo(t *testing.T) {
 	e.put("source", "video/x-matroska", fixture{w: 640, h: 360, secs: 5, rate: 10}.make(t), nil)
 	e.start()
 	for {
-		e.next((workqueue.VideoAssembleArgs{}).Kind())
+		e.next((workqueue.VideoArgs{}).Kind())
 		m, _, err := e.ms.Get(e.ctx, short)
 		if err != nil {
 			t.Fatal(err)

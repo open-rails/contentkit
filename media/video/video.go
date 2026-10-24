@@ -201,6 +201,3 @@ func SweepTemp(dir string) error {
 
 // testBeforePublish runs between the output uploads and the manifest edit.
 var testBeforePublish func()
-
-// testPlanSnapshot runs after a video plan reads the manifest it plans from.
-var testPlanSnapshot func()

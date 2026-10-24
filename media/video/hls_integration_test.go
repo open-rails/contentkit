@@ -144,7 +144,7 @@ func TestProgressiveStages(t *testing.T) {
 	e.put("source", "video/x-matroska", fixture{w: 1280, h: 720, secs: 9, audio: 1, tone: 440}.make(t), nil)
 	var first map[string]string
 	for stage := 1; stage <= 3; stage++ {
-		e.next((workqueue.VideoAssembleArgs{}).Kind())
+		e.next((workqueue.VideoArgs{}).Kind())
 		m := e.manifest()
 		src := e.file(m, "source.mkv")
 		var ladder []string
@@ -277,7 +277,7 @@ func TestRegenerate(t *testing.T) {
 	assembles := func() int {
 		var n int
 		if err := e.pool.QueryRow(e.ctx, `SELECT count(*) FROM `+e.schema+`.river_job WHERE kind = $1 AND state = 'completed'`,
-			(workqueue.VideoAssembleArgs{}).Kind()).Scan(&n); err != nil {
+			(workqueue.VideoArgs{}).Kind()).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n

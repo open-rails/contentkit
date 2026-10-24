@@ -11,7 +11,7 @@ Scoped config needs no `Namespace`. Set `Accounts.Schema` and, when enabled, `Ac
 
 The avatar primary owns the canonical bucket writes. Its journal, allocations, public-image projection and quota state live in `Accounts.Schema`; its processing queue is tenant-owned. `Config.AccountMedia()` returns the schema and worker schema for `worker.Config.AccountSchema` and `AccountWorkerSchema`. Explicit migration records one primary AppID as deployment placement for the tenant; matching replicas may start, and another app must forward. A long-running primary worker drains both its app queue and this account queue. A secondary forwards authenticated writes and owns neither avatar state nor account processing jobs. App-only erasure leaves these tenant account avatars intact.
 
-For one-shot workers, start a separate account worker with `ContentSchema` and `Schema` set to the returned account storage and queue, and omit the additional account fields. Worker processes apply no migrations. The explicit host migration command prepares both queues.
+Worker processes apply no migrations. The explicit host migration command prepares both queues.
 
 ## Gateway deployment
 

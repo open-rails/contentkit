@@ -343,75 +343,6 @@ func (h *host) ref(t *testing.T, kind string) contentref.ContentRef {
 	return ref
 }
 
-func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
-	for _, tc := range []struct{ workerQueue, jobQueue string }{
-		{workqueue.VideoLightQueue, workqueue.VideoLightQueue},
-		{workqueue.VideoLightQueue, workqueue.ImageQueue},
-		{workqueue.VideoLightQueue, workqueue.AudioQueue},
-		{workqueue.VideoEncodeQueue, workqueue.VideoEncodeQueue},
-	} {
-		t.Run(tc.jobQueue, func(t *testing.T) {
-			env := s3test.Open(t)
-			pool := pgtest.Pool(t, nil)
-			schema := workerSchema(t, pool)
-			if err := workqueue.Migrate(context.Background(), pool, schema); err != nil {
-				t.Fatal(err)
-			}
-			scratch := t.TempDir()
-			active := filepath.Join(scratch, "ck-video-active")
-			if err := os.Mkdir(active, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			reg, err := media.NewRegistry(registry(env.Tenant, media.Hooks{}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, ContentSchema: env.ContentSchema(), Store: env.Store, Kinds: reg,
-				Queue: tc.workerQueue, TempDir: scratch, Threads: 2})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := os.Stat(active); err != nil {
-				t.Fatalf("one-shot worker swept another process's scratch: %v", err)
-			}
-			ref, _ := reg.Ref("clip", newID())
-			var args river.JobArgs = workqueue.VideoPlanArgs{Ref: ref}
-			switch tc.jobQueue {
-			case workqueue.VideoEncodeQueue:
-				args = workqueue.VideoChunkArgs{Ref: ref, RunID: uuid.NewString(), Index: 0}
-			case workqueue.ImageQueue:
-				args = workqueue.ImageArgs{Ref: contentref.New(env.Tenant, "missing", newID())}
-			case workqueue.AudioQueue:
-				args = workqueue.AudioArgs{Ref: ref}
-			}
-			var ids []int64
-			for range 2 {
-				result, err := w.Client().Insert(context.Background(), args, &river.InsertOpts{Queue: tc.jobQueue})
-				if err != nil {
-					t.Fatal(err)
-				}
-				ids = append(ids, result.Job.ID)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := w.Run(ctx); err != nil {
-				t.Fatal(err)
-			}
-			if ctx.Err() != nil {
-				t.Fatal("worker did not exit after its first job")
-			}
-			var terminal int
-			if err := pool.QueryRow(context.Background(), "SELECT count(*) FROM "+pgx.Identifier{schema, "river_job"}.Sanitize()+
-				" WHERE id = ANY($1) AND state IN ('completed', 'cancelled', 'discarded')", ids).Scan(&terminal); err != nil {
-				t.Fatal(err)
-			}
-			if terminal != 1 {
-				t.Fatalf("expected one processed job, got %d", terminal)
-			}
-		})
-	}
-}
-
 // A host's deadline context ends Run like a cancellation: River's notifier
 // spins on a context that ended by deadline, so Run must never hand it one.
 func TestRunUnderADeadline(t *testing.T) {
@@ -804,7 +735,7 @@ func TestHostsShareADatabase(t *testing.T) {
 	jobTable := pgx.Identifier{c, "river_job"}.Sanitize()
 	var oldJob int64
 	if err := a.pool.QueryRow(ctx, `SELECT id FROM `+jobTable+` WHERE kind = $1`,
-		(workqueue.VideoPlanArgs{}).Kind()).Scan(&oldJob); err != nil {
+		(workqueue.VideoArgs{}).Kind()).Scan(&oldJob); err != nil {
 		t.Fatal(err)
 	}
 	runTable := pgx.Identifier{c, "encode_run"}.Sanitize()

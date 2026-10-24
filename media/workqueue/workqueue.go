@@ -34,12 +34,11 @@ import (
 // sharing a database must not share one, or one host's worker takes the
 // other's jobs. Queue names are fixed within a schema.
 const (
-	PlaceQueue       = "media_place"        // staged uploads hashed and placed at their blobs
-	ImageQueue       = "media_image"        // image variants, slots and inline images
-	VideoLightQueue  = "media_video_light"  // video probe, tracks and assembly
-	VideoEncodeQueue = "media_video_encode" // bounded video chunks
-	AudioQueue       = "media_audio"        // audio-only files
-	MaxAttempts      = 5
+	PlaceQueue  = "media_place" // staged uploads hashed and placed at their blobs
+	ImageQueue  = "media_image" // image variants, slots and inline images
+	VideoQueue  = "media_video" // resumable video conversion
+	AudioQueue  = "media_audio" // audio-only files
+	MaxAttempts = 5
 	// River counts a rescued hard kill before Work can restore the attempt.
 	// Video jobs enforce MaxAttempts on actual failures inside Work instead.
 	VideoRiverMaxAttempts = 32767
@@ -116,33 +115,16 @@ func (ImageArgs) Kind() string { return "contentkit_media_image" }
 
 func (a ImageArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-// VideoPlanArgs runs an item's video producers (HLS, MP4, Subtitles
-// presets and frames): it plans stale outputs into encode runs.
-type VideoPlanArgs struct {
+// VideoArgs converts an item's stale video presets. One River job owns
+// planning, checkpointed encoding, progressive publication and frames.
+type VideoArgs struct {
 	Ref    contentref.ContentRef `json:"ref"`
 	Preset string                `json:"preset,omitempty"`
 	Force  bool                  `json:"force,omitempty"`
 	Class  media.VideoJobClass   `json:"class,omitempty"`
 }
 
-func (VideoPlanArgs) Kind() string { return "contentkit_media_video" }
-
-// VideoChunkArgs encodes one bounded range of a video run.
-type VideoChunkArgs struct {
-	Ref   contentref.ContentRef `json:"ref"`
-	RunID string                `json:"run_id"`
-	Index int                   `json:"index"`
-}
-
-func (VideoChunkArgs) Kind() string { return "contentkit_media_video_chunk" }
-
-// VideoAssembleArgs publishes one rung after its chunks finish.
-type VideoAssembleArgs struct {
-	Ref   contentref.ContentRef `json:"ref"`
-	RunID string                `json:"run_id"`
-}
-
-func (VideoAssembleArgs) Kind() string { return "contentkit_media_video_assemble" }
+func (VideoArgs) Kind() string { return "contentkit_media_video" }
 
 // AudioArgs runs an item's Audio presets.
 type AudioArgs struct {
@@ -154,7 +136,7 @@ type AudioArgs struct {
 func (AudioArgs) Kind() string { return "contentkit_media_audio" }
 
 // EncodeKinds are the job kinds that report encode progress.
-var EncodeKinds = []string{VideoPlanArgs{}.Kind(), VideoChunkArgs{}.Kind(), VideoAssembleArgs{}.Kind(), AudioArgs{}.Kind()}
+var EncodeKinds = []string{VideoArgs{}.Kind(), AudioArgs{}.Kind()}
 
 // Queue is the host's insert-only client for the worker's jobs; it is the
 // uploads' media.ProcessQueue.
@@ -249,7 +231,7 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 	// drop the job for a source replaced mid-encode. Duplicates serialize on
 	// the worker's per-manifest lock and are no-ops once the manifest is fresh.
 	if f.Video {
-		if _, err := insert(ctx, VideoPlanArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Class: job.Class}, VideoPlanInsertOpts(job.Class)); err != nil {
+		if _, err := insert(ctx, VideoArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Class: job.Class}, VideoInsertOpts(job.Class)); err != nil {
 			return err
 		}
 	}
@@ -266,8 +248,8 @@ func AudioInsertOpts() *river.InsertOpts {
 	return &river.InsertOpts{Queue: AudioQueue, MaxAttempts: MaxAttempts}
 }
 
-// VideoPlanInsertOpts are a video plan's insert options.
-func VideoPlanInsertOpts(class media.VideoJobClass) *river.InsertOpts {
+// VideoInsertOpts are a video plan's insert options.
+func VideoInsertOpts(class media.VideoJobClass) *river.InsertOpts {
 	priority := 1
 	switch class {
 	case media.VideoReencode:
@@ -275,7 +257,7 @@ func VideoPlanInsertOpts(class media.VideoJobClass) *river.InsertOpts {
 	case media.VideoBackfill:
 		priority = 4
 	}
-	return &river.InsertOpts{Queue: VideoLightQueue, Priority: priority, MaxAttempts: VideoRiverMaxAttempts}
+	return &river.InsertOpts{Queue: VideoQueue, Priority: priority, MaxAttempts: VideoRiverMaxAttempts}
 }
 
 // Cancel cancels ref's queued and running image and video jobs, every stage.
@@ -305,8 +287,7 @@ func (q *Queue) CancelTx(ctx context.Context, tx pgx.Tx, ref contentref.ContentR
 	if err != nil {
 		return 0, err
 	}
-	// Chunk completion locks its run before completing the River job. Taking
-	// the same order here avoids a deadlock with a finishing worker.
+	// Lock runs in a stable order before cancelling their owning jobs.
 	runs := pgx.Identifier{q.schema, "encode_run"}.Sanitize()
 	if _, err := tx.Exec(ctx, `WITH targets AS MATERIALIZED (
 SELECT id FROM `+runs+`
@@ -392,7 +373,7 @@ SELECT DISTINCT ON (r.file_name) r.file_name, r.state,
     WHERE run_id = r.id AND state = 'done'), 0),
   COALESCE((SELECT max(end_ms) FROM ` + pgx.Identifier{schema, "encode_chunk"}.Sanitize() + `
     WHERE run_id = r.id), 0),
-  EXISTS (SELECT 1 FROM ` + jobs(schema) + ` j WHERE j.kind = $2 AND j.args->>'run_id' = r.id::text AND j.state = 'running')
+  EXISTS (SELECT 1 FROM ` + jobs(schema) + ` j WHERE j.kind = $2 AND j.args->'ref' = r.ref AND j.state = 'running')
 FROM ` + pgx.Identifier{schema, "encode_run"}.Sanitize() + ` r
 WHERE r.ref = $1 AND r.state IN ('planned', 'encoding', 'assembling')
 ORDER BY r.file_name, r.rung`}, nil
@@ -463,7 +444,7 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 	if err != nil {
 		return st, err
 	}
-	runs, err := s.pool.Query(ctx, s.runSQL, refJSON, (VideoChunkArgs{}).Kind())
+	runs, err := s.pool.Query(ctx, s.runSQL, refJSON, (VideoArgs{}).Kind())
 	if err != nil {
 		return st, err
 	}
