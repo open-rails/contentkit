@@ -1,6 +1,7 @@
 package media
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -35,6 +36,9 @@ revision = gen_random_uuid()`, ref.TenantID, prefix, ref.ContentKind, due, opera
 type purgeContextKey struct{}
 
 type cleanupRecord struct {
+	tenant     string
+	journal    *PGJournal
+	due        time.Time
 	prefix     string
 	revision   uuid.UUID
 	operations []uuid.UUID
@@ -42,18 +46,19 @@ type cleanupRecord struct {
 
 // PurgeRetired is storage work within the existing content-deletion sweep.
 // It finishes exact durable intents and expired allocations; it never discovers
-// objects by scanning the bucket. Failed records remain due for that same sweep.
+// objects by scanning the bucket. The count is attempted folders, including
+// failures, and never exceeds limit. Failed revisions rotate behind this pass
+// so persistent storage failures cannot starve later folders or namespaces.
 func (j *Jobs) PurgeRetired(ctx context.Context, limit int) (int, error) {
 	ctx = context.WithValue(ctx, purgeContextKey{}, true)
 	if limit <= 0 {
 		return 0, errors.New("media: purge limit must be positive")
 	}
 	processed := 0
+	cutoff := j.cfg.Now()
 	var failures error
+	var due []cleanupRecord
 	for _, tenant := range j.cfg.Registry.Namespaces() {
-		if processed >= limit {
-			break
-		}
 		jr := j.cfg.Journal.forTenant(tenant)
 		if jr != j.cfg.Journal {
 			log, err := eventpg.New(jr.pool, eventpg.Config{Schema: jr.schema, Source: "contentkit", Scope: tenant})
@@ -64,49 +69,70 @@ func (j *Jobs) PurgeRetired(ctx context.Context, limit int) (int, error) {
 				failures = errors.Join(failures, err)
 			}
 		}
-		rows, err := jr.pool.Query(ctx, `SELECT folder_prefix,revision,deletion_operations FROM `+jr.cleanup+`
-WHERE tenant_id=$1 AND content_kind=ANY($2) AND due_at<=$3 ORDER BY due_at,folder_prefix LIMIT $4`, tenant, j.cfg.Registry.cleanupKinds(tenant), j.cfg.Now(), limit-processed)
+		rows, err := jr.pool.Query(ctx, `SELECT folder_prefix,revision,deletion_operations,due_at FROM `+jr.cleanup+`
+WHERE tenant_id=$1 AND content_kind=ANY($2) AND due_at<=$3 ORDER BY due_at,folder_prefix LIMIT $4`, tenant, j.cfg.Registry.cleanupKinds(tenant), cutoff, limit)
 		if err != nil {
 			return processed, errors.Join(failures, err)
 		}
 		records, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (cleanupRecord, error) {
-			var c cleanupRecord
-			err := row.Scan(&c.prefix, &c.revision, &c.operations)
+			c := cleanupRecord{tenant: tenant, journal: jr}
+			err := row.Scan(&c.prefix, &c.revision, &c.operations, &c.due)
 			return c, err
 		})
 		if err != nil {
 			return processed, errors.Join(failures, err)
 		}
-		for _, c := range records {
-			if err := ctx.Err(); err != nil {
-				return processed, errors.Join(failures, err)
-			}
-			processed++
-			item, legacy, err := jr.resolveFolder(ctx, jr.pool, j.cfg.Registry, c.prefix)
-			var wait time.Duration
-			if err == nil && item.Ref().TenantID != tenant {
-				err = ErrCommitIdentity
-			}
-			if err == nil {
-				if legacy {
-					err = j.cleanLegacyPublication(ctx, item, c.operations)
-				} else {
-					wait, err = j.cleanupFolder(ctx, item, c.operations)
-				}
-			}
-			if err != nil {
-				failures = errors.Join(failures, fmt.Errorf("purge media %s: %w", c.prefix, err))
-				continue
-			}
-			if wait > 0 {
-				_, err = jr.pool.Exec(ctx, `UPDATE `+jr.cleanup+` SET due_at=$4,revision=gen_random_uuid()
-WHERE tenant_id=$1 AND folder_prefix=$2 AND revision=$3`, tenant, c.prefix, c.revision, j.cfg.Now().Add(wait))
+		due = append(due, records...)
+	}
+	// Each namespace contributes at most limit candidates, but storage work
+	// has one global budget. Fixed registry order cannot consume an account's turn.
+	slices.SortFunc(due, func(a, b cleanupRecord) int {
+		if order := a.due.Compare(b.due); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(a.tenant, b.tenant); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.prefix, b.prefix)
+	})
+	for _, c := range due[:min(limit, len(due))] {
+		tenant, jr := c.tenant, c.journal
+		if err := ctx.Err(); err != nil {
+			return processed, errors.Join(failures, err)
+		}
+		processed++
+		item, legacy, err := jr.resolveFolder(ctx, jr.pool, j.cfg.Registry, c.prefix)
+		var wait time.Duration
+		if err == nil && item.Ref().TenantID != tenant {
+			err = ErrCommitIdentity
+		}
+		if err == nil {
+			if legacy {
+				err = j.cleanLegacyPublication(ctx, item, c.operations)
 			} else {
-				_, err = jr.pool.Exec(ctx, `DELETE FROM `+jr.cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2 AND revision=$3`, tenant, c.prefix, c.revision)
+				wait, err = j.cleanupFolder(ctx, item, c.operations)
 			}
-			if err != nil {
-				return processed, errors.Join(failures, err)
+		}
+		if err != nil {
+			failures = errors.Join(failures, fmt.Errorf("purge media %s: %w", c.prefix, err))
+			// PostgreSQL timestamps have microsecond precision. Advance beyond
+			// even an equal cutoff; the next sweep can retry without overtaking
+			// older untouched work. Never overwrite a concurrent new obligation.
+			_, rotateErr := jr.pool.Exec(ctx, `UPDATE `+jr.cleanup+` SET due_at=$4,revision=gen_random_uuid()
+WHERE tenant_id=$1 AND folder_prefix=$2 AND revision=$3`, tenant, c.prefix, c.revision, cutoff.Add(time.Microsecond))
+			if rotateErr != nil {
+				return processed, errors.Join(failures, rotateErr)
 			}
+			continue
+		}
+		if wait > 0 {
+			_, err = jr.pool.Exec(ctx, `UPDATE `+jr.cleanup+` SET due_at=$4,revision=gen_random_uuid()
+WHERE tenant_id=$1 AND folder_prefix=$2 AND revision=$3`, tenant, c.prefix, c.revision, j.cfg.Now().Add(wait))
+		} else {
+			_, err = jr.pool.Exec(ctx, `DELETE FROM `+jr.cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2 AND revision=$3`, tenant, c.prefix, c.revision)
+		}
+		if err != nil {
+			return processed, errors.Join(failures, err)
 		}
 	}
 	return processed, failures
