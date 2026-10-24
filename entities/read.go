@@ -347,7 +347,7 @@ func (s *Store) path(kind, code, slug, language string) string {
 }
 
 // List pages active entities with their display name, code, path, cover,
-// avatar, count and, for a sellable kind, its sale to the store's viewer
+// avatar, count and, for an entitlement-backed kind, its sale to the store's viewer
 // (As).
 func (s *Store) List(ctx context.Context, opts ListOptions) (EntityPage, error) {
 	if err := s.requireInternalRead(ctx, opts.IncludeInternal); err != nil {
@@ -428,7 +428,7 @@ func (s *Store) Cards(ctx context.Context, ids []EntityID, o CardOptions) ([]Ent
 const maxMergeHops = 8
 
 // Detail returns an active entity with its names, text, parent, scope,
-// children, edges, counts and sale, resolved for language as List does. A merged
+// children, edges, counts and membership standing, resolved for language as List does. A merged
 // entity answers with its survivor; a deleted one is ErrNotFound.
 func (s *Store) Detail(ctx context.Context, id EntityID, language string) (EntityDetail, error) {
 	return s.detail(ctx, id, language, false)

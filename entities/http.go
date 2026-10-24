@@ -19,7 +19,7 @@ import (
 )
 
 // Handler serves the entities API (routes): listings and entity pages, each
-// with the viewer's standing with sellable entities; creator writes of
+// with the viewer's standing with entitlement-backed entities; creator writes of
 // user-owned entities (As); and staff writes for holders of
 // access.EntitiesWrite in a's root scope. Errors are JSON {"error", "code"}:
 // 400 for ErrInvalid, 403 for ErrForbidden, 404 for ErrNotFound, 409 for
@@ -63,7 +63,7 @@ var routes = []httpapi.Route[handler]{
 			httpapi.Int("limit", "page size: 50 by default, at most 200")},
 		Responses: []httpapi.Reply{httpapi.OK(EntityPage{})}}, Serve: httpapi.H(handler.list)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities/{id}", Resource: "entities", Auth: httpapi.Public,
-		Doc:   "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor.",
+		Doc:   "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and membership standing; a merged entity answers with its survivor.",
 		Query: []httpapi.Param{language}, Responses: []httpapi.Reply{httpapi.OK(EntityDetail{})}, Errors: notFound}, Serve: httpapi.H(handler.detail)},
 	staff(httpapi.GET, "/manage/entities", "Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads.", nil, httpapi.OK(EntityPage{}), httpapi.H(handler.manageList), nil,
 		httpapi.Text("state", "active (the default) or deleted, the restorable ones"), httpapi.Text("kind", "only entities of this kind"), httpapi.Text("parent", "only children of this entity"), httpapi.Text("scope", "only entities scoped by this entity"),
