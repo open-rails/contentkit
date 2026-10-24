@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -83,7 +84,12 @@ type dirtyRow struct {
 	Revision  int64
 }
 
-// SyncOnce runs one tick: drain one dirty batch, then a bounded backfill step.
+// dirtyBudget bounds one tick's draining so a large backlog doesn't hold a
+// queue slot for the job's whole timeout; the next tick continues it.
+const dirtyBudget = time.Minute
+
+// SyncOnce runs one tick: drain the dirty queue until it is empty or
+// dirtyBudget has passed, then a bounded backfill step.
 // No connection or transaction is held across source calls: each write is a
 // short transaction fenced by the dirty-queue revision, so overlapping ticks
 // are safe (only duplicated work) and a stale build never overwrites a newer
@@ -116,8 +122,15 @@ func SyncOnce(ctx context.Context, opts Options) error {
 			w.kinds = append(w.kinds, k)
 		}
 	}
-	if err := w.dirty(ctx); err != nil {
-		return err
+	deadline := time.Now().Add(dirtyBudget)
+	for {
+		n, err := w.dirty(ctx)
+		if err != nil {
+			return err
+		}
+		if n < cfg.DirtyBatchSize || time.Now().After(deadline) {
+			break
+		}
 	}
 	return w.backfill(ctx)
 }
@@ -132,11 +145,11 @@ type syncer struct {
 type buildGroup struct{ kind, language string }
 
 // dirty publishes one batch: deletions first, then rebuilds grouped per kind
-// and language for batch-shaped sources.
-func (w syncer) dirty(ctx context.Context) error {
+// and language for batch-shaped sources. It reports the rows it read.
+func (w syncer) dirty(ctx context.Context) (int, error) {
 	batch, err := w.readDirty(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var deletions []dirtyRow
 	grouped := map[buildGroup][]dirtyRow{}
@@ -153,7 +166,7 @@ func (w syncer) dirty(ctx context.Context) error {
 		grouped[g] = append(grouped[g], r)
 	}
 	if err := w.publish(ctx, deletions, nil); err != nil {
-		return err
+		return 0, err
 	}
 	for _, g := range order {
 		members := grouped[g]
@@ -165,21 +178,21 @@ func (w syncer) dirty(ctx context.Context) error {
 		if src, ok := w.sources[g.kind]; ok {
 			var err error
 			if built, err = src.BuildDocuments(ctx, g.kind, g.language, refs); err != nil {
-				return err
+				return 0, err
 			}
 		}
 		byKey := make(map[documentIdentity]search.KeywordDocument, len(built))
 		for _, doc := range built {
 			if doc.TenantID != w.cfg.Tenant || doc.ContentKind != g.kind || doc.Language != g.language {
-				return fmt.Errorf("worker: source returned %s/%s outside the requested %s/%s", doc.ContentRef, doc.Language, g.kind, g.language)
+				return 0, fmt.Errorf("worker: source returned %s/%s outside the requested %s/%s", doc.ContentRef, doc.Language, g.kind, g.language)
 			}
 			byKey[identity(doc.DocumentKey)] = doc
 		}
 		if err := w.publish(ctx, members, byKey); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return len(batch), nil
 }
 
 func (w syncer) readDirty(ctx context.Context) ([]dirtyRow, error) {

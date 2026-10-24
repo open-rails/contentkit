@@ -571,3 +571,30 @@ func TestIntegrationInvalidDirtyIDDoesNotBlockValidDocument(t *testing.T) {
 		t.Fatalf("invalid ID error = %q", failure)
 	}
 }
+
+// A backlog larger than one batch must not leave the newest mark waiting for
+// later ticks: one tick drains the queue.
+func TestIntegrationOneTickDrainsBacklog(t *testing.T) {
+	ctx, pool, schema := workerFixture(t)
+	const backlog = 25
+	m := map[string]string{}
+	for n := 1; n <= backlog+1; n++ {
+		m[cid(n)] = fmt.Sprintf("title %d", n)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,updated_at)
+ SELECT $1,'gallery','01920000-0000-7000-8000-'||lpad(n::text,12,'0'),NULL,'en','2020-01-01'::timestamptz+n*interval '1 second'
+ FROM generate_series(1,$2::int) n`, tenant, backlog+1); err != nil {
+		t.Fatal(err)
+	}
+	opts := workerOptions(pool, schema, titles(m))
+	opts.DirtyBatchSize = 10
+	if err := SyncOnce(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_documents", "tenant_id=$1 AND content_id=$2", tenant, cid(backlog+1)); n != 1 {
+		t.Fatalf("newest mark indexed %d times after one tick, want 1", n)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_dirty", "tenant_id=$1", tenant); n != 0 {
+		t.Fatalf("%d dirty rows left after one tick, want 0", n)
+	}
+}
