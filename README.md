@@ -193,7 +193,8 @@ A full-search score is a match tier: exact title 1, alias 0.9, name prefix
 and typo 0.5–0.52. Queries are capped at 256 characters, 16 tokens and two
 seconds. Each search document stores its normalized terms (migration
 `0043_stored_search_terms`), so a bounded candidate window keeps the strongest
-name matches.
+name matches. A search sorted by newest, title or popularity orders every
+literal match; typo matches come from the nearest-distance window.
 
 `GET /v1/manage/search-suggestions` is private quick navigation to editors.
 Explicitly request `include_contents` and/or `include_entities`, optionally

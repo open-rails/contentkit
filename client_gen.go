@@ -2677,7 +2677,7 @@ type GetSearchQuery struct {
 	DisplayLanguage string
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
-	// relevance (the default) or a list sort of the best matches
+	// relevance (the default) or a list sort of every match
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string

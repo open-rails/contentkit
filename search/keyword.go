@@ -196,6 +196,70 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	return result, nil
 }
 
+// typoWindow is the nearest-distance window KeywordMatch adds typo matches from.
+const typoWindow = 1000
+
+// Match selects the content IDs a keyword query matches, as SQL a listing
+// filters by and then orders and pages itself.
+type Match struct {
+	SQL  string
+	Args pgx.NamedArgs
+}
+
+// KeywordMatch matches query in opts.ContentKinds among documents of any of
+// languages: every literal match, plus the one-edit matches among the nearest
+// typoWindow documents of each language. opts.Language, Limit and Eligibility
+// are ignored; the listing applies its own visibility.
+func KeywordMatch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options, languages []string) (Match, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return Match{}, err
+	}
+	defer tx.Rollback(ctx)
+	k, err := prepareKeyword(ctx, tx, opts.Schema, query)
+	if err != nil {
+		return Match{}, err
+	}
+	if len(k.tokens) == 0 {
+		return Match{SQL: `SELECT NULL::text WHERE false`}, tx.Commit(ctx)
+	}
+	typos := []string{}
+	if k.fuzzy() {
+		if _, err = tx.Exec(ctx, `SET LOCAL pg_trgm.word_similarity_threshold=0.1; SET LOCAL statement_timeout=2000`); err != nil {
+			return Match{}, err
+		}
+		for _, language := range languages {
+			o := Options{Schema: opts.Schema, Tenant: opts.Tenant, Language: language, ContentKinds: opts.ContentKinds}
+			args := pgx.NamedArgs{"q": k.q, "limit": typoWindow}
+			from, where, _, err := hostClauses(o, args)
+			if err != nil {
+				return Match{}, err
+			}
+			hits, _, err := scoreRows(ctx, tx, fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,0,sd.terms,cardinality(sd.aliases) AS aliases
+ FROM %s WHERE %s AND sd.body OPERATOR(%s.%%>) @q ORDER BY sd.body OPERATOR(%s.<->>) @q LIMIT @limit`, from, where, k.trgm, k.trgm), args, opts.Tenant, k)
+			if err != nil {
+				return Match{}, err
+			}
+			for _, h := range hits {
+				typos = append(typos, h.ContentID)
+			}
+		}
+	}
+	qs, err := quoteIdent(opts.Schema)
+	if err != nil {
+		return Match{}, err
+	}
+	routes := k.literalRoutes("sd.content_id", qs+`.content_search_documents sd`,
+		`sd.tenant_id=@k_tenant AND sd.language=ANY(@k_languages::text[]) AND sd.content_kind=ANY(@k_kinds::text[])`, "@k_q", "@k_prefix", "@k_contains")
+	return Match{
+		SQL: strings.Join(append(routes, `SELECT unnest(@k_typos::text[])`), " UNION ALL "),
+		Args: pgx.NamedArgs{"k_tenant": opts.Tenant, "k_languages": languages, "k_kinds": opts.ContentKinds,
+			"k_q": k.q, "k_prefix": k.prefix, "k_contains": k.contains, "k_typos": typos},
+	}, tx.Commit(ctx)
+}
+
 // scoreRows reads one route's rows and keeps the documents keywordScore
 // accepts. Rows are read before scoring so the statement finishes within its
 // timeout however long scoring takes. It reports how many rows the route

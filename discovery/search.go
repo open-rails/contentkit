@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/hub"
@@ -21,9 +19,6 @@ import (
 // SortRelevance orders search results by match, personalized for a signed-in
 // reader.
 const SortRelevance = "relevance"
-
-// sortedMatches bounds the matches a non-relevance search sorts.
-const sortedMatches = 1000
 
 // SearchOptions select one page of keyword search.
 type SearchOptions struct {
@@ -121,16 +116,11 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPa
 			return empty, err
 		}
 		summaryOrder = srt
-		base.Limit = sortedMatches
-		res, err := s.o.Hub.Search(ctx, text, hub.HubSearchOptions{SearchOptions: base})
+		match, err := s.o.Hub.KeywordMatch(ctx, text, base)
 		if err != nil {
 			return empty, err
 		}
-		ids := make([]string, 0, len(res.Hits))
-		for _, h := range res.Hits {
-			ids = append(ids, h.ContentID)
-		}
-		q.and("f.content_id = ANY(@d_matches::text[])", pgx.NamedArgs{"d_matches": ids})
+		q.and("f.content_id IN ("+match.SQL+")", match.Args)
 		picks, next, err := s.page(ctx, q, srt, o.Cursor, limit, offset)
 		if err != nil {
 			return empty, err
