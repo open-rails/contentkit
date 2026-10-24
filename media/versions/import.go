@@ -129,6 +129,9 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		if e.FileInfo().IsDir() || strings.HasPrefix(base, ".") || strings.Contains(e.Name, "__MACOSX/") || !imageName(base) {
 			continue
 		}
+		if e.UncompressedSize64 > maxImportExpanded-expanded {
+			return permanent{fmt.Errorf("archive expanded bytes exceed %d", maxImportExpanded)}
+		}
 		entries = append(entries, e)
 		expanded += e.UncompressedSize64
 	}
@@ -155,6 +158,29 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		sourceNames[i] = path.Base(entry.Name)
 	}
 	cleanedNames := media.CleanPageBatchNames(sourceNames)
+	up := k.Uploads[slices.IndexFunc(k.Uploads, func(u media.Upload) bool { return u.Path == k.Publish.Pages })]
+	// Validate the full archive before attaching any page. The second pass
+	// keeps memory bounded to one page while a malformed later entry cannot
+	// leave an earlier page attached to the gallery.
+	if err := validateArchiveEntries(ctx, entries, up); err != nil {
+		return err
+	}
+	if _, err := s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
+		i := m.Find(f.Path)
+		if i < 0 || m.Files[i].Key() != f.Key() {
+			return errors.New("archive changed during validation")
+		}
+		meta := maps.Clone(m.Files[i].Meta)
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		meta["archive_pages_total"] = len(entries)
+		m.Files[i].Meta = meta
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if err != nil {
 		return err
@@ -174,7 +200,6 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 			}
 		}
 	}
-	up := k.Uploads[slices.IndexFunc(k.Uploads, func(u media.Upload) bool { return u.Path == k.Publish.Pages })]
 	for index, e := range entries {
 		body, err := readEntry(e, up.MaxBytes)
 		if err != nil {
@@ -207,6 +232,31 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 				return permanent{fmt.Errorf("%s: %w", e.Name, err)}
 			}
 			return err
+		}
+	}
+	return nil
+}
+
+// validateArchiveEntries verifies actual decoded bytes, CRC and media types.
+// Header size claims are not a substitute for reading each bounded stream.
+func validateArchiveEntries(ctx context.Context, entries []*zip.File, up media.Upload) error {
+	var expanded int64
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		limit := min(up.MaxBytes, int64(maxImportExpanded)-expanded)
+		if limit <= 0 {
+			return permanent{fmt.Errorf("archive expanded bytes exceed %d", maxImportExpanded)}
+		}
+		body, err := readEntry(entry, limit)
+		if err != nil {
+			return err
+		}
+		expanded += int64(len(body))
+		typ := http.DetectContentType(body)
+		if !slices.Contains(up.Types, typ) {
+			return permanent{fmt.Errorf("%s: pages take no %s", entry.Name, typ)}
 		}
 	}
 	return nil
