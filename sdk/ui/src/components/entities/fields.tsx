@@ -35,7 +35,7 @@ export function AttributeFields({ declared, form, onChange, labels }: { declared
               <Label>{label}{spec.required && " *"}</Label>
               <Select value={String(value) || NONE} required={spec.required} onValueChange={(v) => onChange(name, v === NONE ? "" : String(v))}>
                 <SelectTrigger size="sm" aria-label={label} aria-required={spec.required}>
-                  <SelectValue>{(v: string) => (v === NONE ? (spec.required ? `${label}…` : t("entityEditor.none")) : labelOf(labels, v))}</SelectValue>
+                  <SelectValue>{(v: string) => (v === NONE ? (spec.required ? t("entityEditor.choose") : t("entityEditor.none")) : labelOf(labels, v))}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {!spec.required && <SelectItem value={NONE}>{t("entityEditor.none")}</SelectItem>}

@@ -38,6 +38,7 @@ export const entities: typeof en = {
     details: "세부 정보",
     saved: "저장했습니다.",
     none: "없음",
+    choose: "선택…",
     change: "변경",
     clearField: "{field} 지우기",
     names: "이름과 별칭",
