@@ -1,16 +1,17 @@
 import { cn } from "cn";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
-import type { FileInfo, RefBody } from "../../client/generated/wire.js";
+import type { CommitBody, FileInfo, RefBody } from "../../client/generated/wire.js";
 import { samePath, type Progress, type UploadState } from "../../client/media/client.js";
 import { useMessages } from "../../i18n/context.js";
 import { megabytes } from "../../i18n/messages.js";
 import { useFlowClient } from "../../react/admin.js";
-import { useErrorReporter, useGuarded } from "../../react/context.js";
+import { ContentKitContext, useErrorReporter, useGuarded } from "../../react/context.js";
 import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
 import { ErrorLine } from "../social/parts.js";
+import { MediaReadinessNotice } from "../media-readiness-notice.js";
 import { AdminRoot, type AdminFlowProps } from "./shell.js";
 
 export interface UploadQueueProps extends AdminFlowProps {
@@ -28,7 +29,7 @@ export interface UploadQueueProps extends AdminFlowProps {
   concurrency?: number;
   /** Each committed file: its item and the upload as an editor reads it. */
   onUploaded?: (ref: RefBody, file: FileInfo) => void;
-  /** The localStorage key unfinished uploads are kept under, to resume after a reload. Default "ckui.uploads". */
+  /** The localStorage key prefix for unfinished uploads. Scoped to the API mount and known provider viewer; disabled without a viewer ID. */
   storageKey?: string;
 }
 
@@ -41,6 +42,7 @@ interface Entry {
   status: Status;
   createItem: UploadQueueProps["createItem"];
   progress?: Progress;
+  commit?: CommitBody;
   ref?: RefBody;
   error?: ContentKitError;
   /** Resumed from an upload saved before a reload. */
@@ -52,13 +54,16 @@ interface Saved {
   name: string;
   size: number;
   state?: UploadState;
+  /** Exact generic commit, retained until its result is confirmed. */
+  commit?: CommitBody;
 }
 
 const ACTIVE: readonly Status[] = ["creating", "uploading", "committing"];
 const fingerprint = (f: File) => `${f.name}\u0000${f.size}\u0000${f.lastModified}`;
 let seq = 0;
 
-function readSaved(key: string): Record<string, Saved> {
+function readSaved(key: string | undefined): Record<string, Saved> {
+  if (!key) return {};
   try {
     return JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, Saved>;
   } catch {
@@ -66,7 +71,8 @@ function readSaved(key: string): Record<string, Saved> {
   }
 }
 
-function writeSaved(key: string, fn: (all: Record<string, Saved>) => void) {
+function writeSaved(key: string | undefined, fn: (all: Record<string, Saved>) => void) {
+  if (!key) return;
   try {
     const all = readSaved(key);
     fn(all);
@@ -87,7 +93,7 @@ export function UploadQueue({ client: own, baseUrl, auth, guard, appearance, cla
   const client = useFlowClient({ client: own, baseUrl, auth });
   return (
     <AdminRoot flow="upload-queue" appearance={appearance} className={className} language={language} messages={messages} guard={guard}>
-      <Queue {...p} client={client} />
+      <ScopedQueue {...p} client={client} />
     </AdminRoot>
   );
 }
@@ -96,10 +102,19 @@ type Inner = Omit<UploadQueueProps, "client" | "baseUrl" | "auth" | "guard" | "a
 
 /** The queue inside an admin flow that already has its root (ContentManager's bulk upload). */
 export function UploadQueueBody(p: Inner) {
-  return <Queue {...p} />;
+  return <ScopedQueue {...p} />;
 }
 
-function Queue({ client, createItem, path = "source", target: place, accept, concurrency = 2, onUploaded, onOpen, storageKey = "ckui.uploads", onError }: Inner) {
+// Only a known account may restore uploads from persistent browser storage.
+// Changing the account or API mount remounts the queue and aborts old work.
+function ScopedQueue(p: Inner) {
+  const viewer = useContext(ContentKitContext)?.viewer;
+  const scope = JSON.stringify([p.client.url("upload"), viewer]);
+  const storageKey = typeof viewer === "string" ? `${p.storageKey ?? "ckui.uploads"}:${encodeURIComponent(scope)}` : undefined;
+  return <Queue {...p} key={scope} storageKey={storageKey} />;
+}
+
+function Queue({ client, createItem, path = "source", target: place, accept, concurrency = 2, onUploaded, onOpen, storageKey, onError }: Inner) {
   const m = useMessages();
   const { t } = m;
   const report = useErrorReporter(onError);
@@ -131,25 +146,39 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
         }
         const target = ref;
         patch(entry.id, { ref, error: undefined });
-        const where = latest.current.place;
-        const dest = where ? await guarded(() => where(target, entry.file, ctl.signal)) : { path, type: undefined };
-        patch(entry.id, { status: "uploading" });
-        const remember = (state: UploadState | null) =>
-          writeSaved(storageKey, (all) => void (all[entry.key] = { ref: target, name: entry.file.name, size: entry.file.size, state: state ?? undefined }));
-        const options = { ref, path: dest.path, type: dest.type, signal: ctl.signal, onProgress: (progress: Progress) => patch(entry.id, { progress }), onState: remember };
-        const up = await guarded(async () => {
-          try {
-            return await client.media.upload(entry.file, { ...options, resume: saved?.state });
-          } catch (e) {
-            if (saved?.state && toContentKitError(e).code === "resume_mismatch") return client.media.upload(entry.file, options);
-            throw e;
-          }
-        });
+        let batch = entry.commit ?? saved?.commit;
+        if (!batch) {
+          const where = latest.current.place;
+          const dest = where ? await guarded(() => where(target, entry.file, ctl.signal)) : { path, type: undefined };
+          patch(entry.id, { status: "uploading" });
+          const remember = (state: UploadState | null) =>
+            writeSaved(storageKey, (all) => void (all[entry.key] = { ref: target, name: entry.file.name, size: entry.file.size, state: state ?? undefined }));
+          const options = { ref, path: dest.path, type: dest.type, signal: ctl.signal, onProgress: (progress: Progress) => patch(entry.id, { progress }), onState: remember };
+          const up = await guarded(async () => {
+            try {
+              return await client.media.upload(entry.file, { ...options, resume: saved?.state });
+            } catch (e) {
+              if (saved?.state && toContentKitError(e).code === "resume_mismatch") return client.media.upload(entry.file, options);
+              throw e;
+            }
+          });
+          batch = { ref: target, operation_id: crypto.randomUUID(), ops: [{ op: "put", path: up.path, source_name: up.sourceName, blob: up.blob }] };
+        }
+        const commit = batch;
         patch(entry.id, { status: "committing" });
-        const files = await guarded(() => client.media.commit(target, [{ op: "put", path: up.path, source_name: up.sourceName, blob: up.blob }], { signal: ctl.signal }));
+        const sources = Object.fromEntries(commit.ops.flatMap((op) => op.op === "put" && op.blob ? [[op.blob, entry.file]] : []));
+        const files = await guarded(() => client.media.commit(target, commit.ops, {
+          signal: ctl.signal,
+          operationID: commit.operation_id,
+          sources,
+          onState: (commit) => {
+            patch(entry.id, { commit });
+            writeSaved(storageKey, (all) => void (all[entry.key] = { ref: target, name: entry.file.name, size: entry.file.size, commit }));
+          },
+        }));
         writeSaved(storageKey, (all) => void delete all[entry.key]);
         patch(entry.id, { status: "done", progress: undefined });
-        const file = files.find((f) => samePath(f.path, up.path));
+        const file = files.find((f) => commit.ops.some((op) => op.path && samePath(f.path, op.path)));
         if (file) latest.current.onUploaded?.(target, file);
       } catch (e) {
         const error = toContentKitError(e);
@@ -184,7 +213,7 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
     addEventListener("beforeunload", ask);
     return () => removeEventListener("beforeunload", ask);
   }, [busy]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const running = controllers.current;
     return () => {
       for (const c of running.values()) c.abort();
@@ -308,6 +337,7 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
                   </div>
                 )}
                 {e.error && <ErrorLine>{m.error(e.error)}</ErrorLine>}
+                {e.status === "done" && e.ref && <MediaReadinessNotice item={e.ref} client={client} />}
                 <div className="flex flex-wrap gap-2">
                   {(ACTIVE.includes(e.status) || e.status === "queued") && (
                     <Button size="xs" variant="ghost" onClick={() => pause(e.id)}>

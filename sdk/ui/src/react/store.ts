@@ -48,7 +48,7 @@ const IDLE: ReadEntry = { read: null, loading: false, loaded: false };
 const RATE_LIMIT_RETRIES = 3;
 
 export function readKey(ref: RefBody, o: ReadOptions = {}): string {
-  return JSON.stringify([ref.kind, ref.id, ref.version ?? "", o.prefix ?? "", o.offset ?? 0, o.limit ?? 0, !!o.download, !!o.editor, [...new Set(o.paths ?? [])].sort()]);
+  return JSON.stringify([ref.kind, ref.id, ref.version ?? "", o.prefix ?? "", o.offset ?? 0, o.limit ?? 0, !!o.download, !!o.editor, !!o.status, [...new Set(o.paths ?? [])].sort()]);
 }
 
 /** The read with the upload at path replaced by file in place (appended when new, removed when null). */
@@ -182,7 +182,7 @@ export class ReadStore {
       const { file } = change;
       if (!read) continue;
       // Viewer URLs and responses from an earlier scope require a fresh read.
-      if (!s.options.editor || s.scope !== scope) {
+      if (!s.options.editor || s.options.status || s.scope !== scope) {
         this.load(key, "reload");
         continue;
       }
@@ -203,6 +203,7 @@ export class ReadStore {
 /** Some upload processing in before is done (or failed) in after. */
 function finished(before: ReadResult | null, after: ReadResult): boolean {
   if (!before) return false;
+  if (before.status?.state === "processing" && after.status?.state === "ready") return true;
   const now = new Map(after.files.filter((f) => f.upload).map((f) => [f.path, f]));
   return before.files.some((f) => isProcessing(f) && now.has(f.path) && !isProcessing(now.get(f.path)!));
 }
