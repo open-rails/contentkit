@@ -316,36 +316,6 @@ func TestExactRetirementLateReplayDoesNotRestoreOldMirror(t *testing.T) {
 	}
 }
 
-func TestExactRetirementPurgeRelayFailureRecoversSameKeys(t *testing.T) {
-	f := newFixture(t)
-	f.visible(1)
-	ref := f.ref("gallery", 1)
-	f.put(ref, "cover.png", "image/png", png(1))
-	f.produce(ref)
-	var calls [][]string
-	fail := true
-	m := f.ms.WithPublicPurge(func(_ context.Context, keys []string) error {
-		calls = append(calls, slices.Clone(keys))
-		if fail {
-			return errors.New("queue unavailable")
-		}
-		return nil
-	})
-	if _, err := m.EditExisting(t.Context(), ref, func(m *media.Manifest) error { m.Files = nil; return nil }); err == nil {
-		t.Fatal("failed purge relay did not retain pending commit")
-	}
-	if len(calls) != 1 || len(calls[0]) == 0 {
-		t.Fatal("retired public keys not relayed")
-	}
-	fail = false
-	if err := m.Recover(t.Context(), ref); err != nil {
-		t.Fatal(err)
-	}
-	if len(calls) != 2 || !slices.Equal(calls[0], calls[1]) {
-		t.Fatalf("recovery changed exact purge keys: %+v", calls)
-	}
-}
-
 func TestPublicOnlyRetirementRecoversLateWriteWithoutDiscovery(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)

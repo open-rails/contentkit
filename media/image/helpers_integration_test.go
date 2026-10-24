@@ -98,7 +98,6 @@ type env struct {
 	proc    *image.Processor
 	mu      sync.Mutex
 	failed  []string
-	purged  []string
 	editor  access.Actor
 	mutated func(*media.Config)
 }
@@ -132,12 +131,7 @@ func (e *env) deploy(t *testing.T, mutate func(*media.Config)) {
 	if e.up, err = media.NewUploads(media.UploadOptions{Store: e.Store, Manifests: e.ms}); err != nil {
 		t.Fatal(err)
 	}
-	if e.proc, err = image.New(image.Config{Store: e.Store, Manifests: e.ms, Purge: func(_ context.Context, keys []string) error {
-		e.mu.Lock()
-		e.purged = append(e.purged, keys...)
-		e.mu.Unlock()
-		return nil
-	}}); err != nil {
+	if e.proc, err = image.New(image.Config{Store: e.Store, Manifests: e.ms}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -252,14 +246,6 @@ func (e *env) public(t *testing.T, ref contentref.ContentRef, name string) ([]by
 	defer rc.Close()
 	b, _ := io.ReadAll(rc)
 	return b, obj, true
-}
-
-func (e *env) takePurged() []string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	p := e.purged
-	e.purged = nil
-	return p
 }
 
 func paint(w, h int, fn func(x, y int) color.RGBA) *stdimage.RGBA {

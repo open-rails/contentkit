@@ -6,8 +6,7 @@
 // (media/video, ffmpeg).
 // The host only presigns, commits, exposes and reads. After each job the
 // worker asks the host, through its media queue, to report the item's
-// readiness (Hooks.ItemReady) and to purge the public URLs it changed
-// (Hooks.PurgePublic), so the stock worker needs no host code.
+// readiness (Hooks.ItemReady), so the stock worker needs no host code.
 //
 // The registry is the host's (media.Config, built by the same code or read
 // from its JSON); cmd/media-worker is the stock build for hosts whose kinds
@@ -55,7 +54,7 @@ type Config struct {
 	Queue string
 	Store media.Store
 	// Kinds is the host's registry. Failed and the catalog retirement barrier
-	// run here; ItemReady and PurgePublic run through the host media queue.
+	// run here; ItemReady runs through the host media queue.
 	Kinds *media.Registry
 	// HostSchema and HostQueue are the host's River schema ("" is the
 	// connection's search path) and media queue (default media.DefaultQueue):
@@ -222,7 +221,6 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	manifests = manifests.WithPublicPurge(host.Purge)
 	var observeEncode func(video.EncodeObservation)
 	if c.Metrics != nil {
 		observeEncode = c.Metrics.ObserveEncode
@@ -247,7 +245,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	var singleStarted *atomic.Bool
 	var singleDone <-chan struct{}
 	if c.Queue != workqueue.VideoEncodeQueue {
-		images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Purge: host.Purge,
+		images, err := image.New(image.Config{Store: c.Store, Manifests: manifests,
 			Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
 		if err != nil {
 			return nil, err

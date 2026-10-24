@@ -168,7 +168,7 @@ func TestEngineIntegration(t *testing.T) {
 		},
 		"no auth": func(_ *Config, d *Deps) { d.Auth = nil },
 		"media hooks": func(c *Config, d *Deps) {
-			c.Media = &MediaConfig{Config: media.Config{Hooks: media.Hooks{PurgePublic: func(context.Context, []string) {}}}}
+			c.Media = &MediaConfig{Config: media.Config{Hooks: media.Hooks{Failed: func(context.Context, contentref.ContentRef, string, error) {}}}}
 			d.Store = nil
 		},
 		"bad schema": func(c *Config, _ *Deps) { c.Database.Schema = "Has-Dash" },

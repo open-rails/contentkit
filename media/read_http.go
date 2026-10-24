@@ -170,8 +170,7 @@ func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error)
 	case errors.Is(err, ErrUnavailable):
 		status, code, msg = http.StatusServiceUnavailable, "unavailable", "media storage is unavailable"
 	case errors.Is(err, ErrUpgradeRequired):
-		w.Header().Set("Retry-After", "60")
-		status, code, msg = http.StatusServiceUnavailable, CodeUpgrade, "this item was stored before v0.68; the media upgrade must convert it first"
+		status, code, msg = http.StatusServiceUnavailable, CodeUpgrade, "this item was stored before v0.68; migrate it with ContentKit v0.119.1 first"
 	default:
 		log.Error("media read failed", "path", req.URL.Path, "err", err.Error())
 	}

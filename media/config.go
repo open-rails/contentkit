@@ -322,9 +322,6 @@ type Hooks struct {
 	Resolver resolve.Resolver
 	// CanUpload says who may write which upload path.
 	CanUpload UploadAuthorizer
-	// PurgePublic hears of public URLs overwritten, deleted or first
-	// written (the CDN may hold the default), for a CDN purge.
-	PurgePublic func(ctx context.Context, urls []string)
 	// ItemReady reports an item whose processing settled (ready, or failed
 	// with nothing processing) in a host transaction, after the worker's
 	// job, through the host's media queue. It must be idempotent; an error

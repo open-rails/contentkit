@@ -34,10 +34,7 @@ const Recipe = "webp-1"
 type Config struct {
 	Store     media.Store
 	Manifests *media.Manifests
-	// Purge relays overwritten or deleted public keys to the host's
-	// Hooks.PurgePublic (media.HostQueue.Purge); optional.
-	Purge   func(ctx context.Context, keys []string) error
-	Workers int // uploads decoded at once; default 2
+	Workers   int // uploads decoded at once; default 2
 	// MaxPixels bounds a decoded source, all frames of an animation
 	// together (default 100 MP); MaxFrames and MaxAnimationSeconds bound
 	// animations (defaults 1000 and 60).
@@ -72,9 +69,6 @@ func New(c Config) (*Processor, error) {
 	}
 	if err := start(); err != nil {
 		return nil, fmt.Errorf("media/image: libvips: %w", err)
-	}
-	if c.Purge != nil && c.Manifests.Registry().Config().Hooks.PurgePublic == nil {
-		c.Manifests = c.Manifests.WithPublicPurge(c.Purge)
 	}
 	return &Processor{c: c, reg: c.Manifests.Registry()}, nil
 }
@@ -311,11 +305,11 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			zipped[z.Name] = f
 		}
 	}
-	var purge, orphaned []string
+	var orphaned []string
 	hidden := false
 	k := item.Kind()
 	_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
-		purge, orphaned = purge[:0], orphaned[:0]
+		orphaned = orphaned[:0]
 		// A blob this edit newly references may have been swept or taken
 		// down before it took the folder lock (one shared with an upload
 		// removed meanwhile, too): there reports it still in place. What is
@@ -423,7 +417,6 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 					cur.ClearPending(d.src.Path, pub.Preset)
 				}
 			}
-			purge = append(purge, d.written...)
 		}
 		for _, z := range zips {
 			if f, ok := zipped[z.Name]; ok && f.FP == media.ZipFP(k.ZipInputs(cur, z)) {
@@ -462,7 +455,7 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		return err
 	}
 	if hidden {
-		purge, orphaned = written, nil // deleted under the lock
+		orphaned = nil // deleted under the lock
 	}
 	for _, d := range results {
 		if d.err != nil {
@@ -474,30 +467,26 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			return err
 		}
 	}
-	return p.purge(ctx, purge)
+	return nil
 }
 
-// dropIfHidden deletes and purges keys, the public files of a pass that
+// dropIfHidden deletes keys, the public files of a pass that
 // failed, if the item is hidden or gone by now: checked under the manifest
 // lock, like the closing edit it stands in for. A visible item keeps them:
 // they are current, and the retry finds them fresh.
 func (p *Processor) dropIfHidden(ctx context.Context, item media.Item, keys []string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 	defer cancel()
-	drop := false
 	_, err := p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
-		if drop = cur.Hidden; drop {
+		if cur.Hidden {
 			return p.drop(ctx, keys)
 		}
 		return nil
 	})
 	if errors.Is(err, media.ErrNotFound) {
-		drop, err = true, p.drop(ctx, keys)
+		err = p.drop(ctx, keys)
 	}
-	if err != nil || !drop {
-		return err
-	}
-	return p.purge(ctx, keys)
+	return err
 }
 
 // drop deletes public keys.
@@ -667,11 +656,11 @@ func (p *Processor) permanent(d done, err error) (done, error) {
 	return d, err
 }
 
-// syncPublic deletes (and purges) the public names no attached upload's
+// syncPublic deletes the public names no attached upload's
 // preset expects: a removed upload's, or all of a hidden item's.
 func (p *Processor) syncPublic(ctx context.Context, item media.Item) error {
-	keys, err := p.c.Manifests.SyncPublic(ctx, item.Ref())
-	return errors.Join(err, p.purge(ctx, keys))
+	_, err := p.c.Manifests.SyncPublic(ctx, item.Ref())
+	return err
 }
 
 // editorViews renders the missing editor views of the item's image uploads
@@ -800,13 +789,6 @@ func (p *Processor) read(ctx context.Context, key string, f media.File, k *media
 		return nil, tooLarge(int64(len(b)))
 	}
 	return b, nil
-}
-
-func (p *Processor) purge(ctx context.Context, keys []string) error {
-	if p.c.Purge == nil || len(keys) == 0 {
-		return nil
-	}
-	return p.c.Purge(ctx, keys)
 }
 
 func (p *Processor) failed(ctx context.Context, item media.Item, path string, err error) {

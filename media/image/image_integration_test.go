@@ -121,14 +121,10 @@ func TestSpecChangeAndForce(t *testing.T) {
 }
 
 // Public presets render fixed names through the crop at the preset's
-// aspect, never upscaled, with their provenance as object metadata, and are
-// purged on every write; a removed upload's names are deleted and purged; a
-// hidden item renders none.
+// aspect, never upscaled, with their provenance as object metadata. Replaced
+// and removed uploads retire their old objects; hidden items render none.
 func TestPublicPreset(t *testing.T) {
-	var removed []string
-	e := newEnv(t, func(c *media.Config) {
-		c.Hooks.PurgePublic = func(_ context.Context, urls []string) { removed = append(removed, urls...) }
-	})
+	e := newEnv(t, nil)
 	g := e.ref(t, "gallery", 1)
 	e.put(t, g, "cover.png", "image/png", quadrants(t), media.Op{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 400, H: 1}}})
 	e.process(t, media.ProcessJob{Ref: g})
@@ -149,33 +145,32 @@ func TestPublicPreset(t *testing.T) {
 	} else if w, h := webpSize(t, b); w != 400 || h != 133 {
 		t.Fatalf("cover-600 is %dx%d", w, h)
 	}
-	if p := e.takePurged(); len(p) != 3 {
-		t.Fatalf("purged %v", p)
-	}
+	item, _ := e.reg.Item(g)
+	before := e.file(t, g, "cover.png")
+	publication, _ := before.Publication("cover")
+	oldNames := publication.NamesOnDisk()
 	e.process(t, media.ProcessJob{Ref: g})
-	if p := e.takePurged(); len(p) != 0 {
-		t.Fatalf("an unchanged cover was rewritten: %v", p)
+	after := e.file(t, g, "cover.png")
+	unchanged, _ := after.Publication("cover")
+	if !reflect.DeepEqual(publication, unchanged) {
+		t.Fatal("an unchanged cover was republished")
 	}
 	e.commit(t, g, media.Op{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 200, Y: 100, W: 200, H: 1}}})
 	e.process(t, media.ProcessJob{Ref: g})
 	b, _, _ := e.public(t, g, "cover-150.webp")
 	pixels(t, b, 150, 50, map[[2]int]color.RGBA{{75, 25}: white})
-	if p := e.takePurged(); len(p) != 3 {
-		t.Fatalf("re-crop purged %v", p)
+	for _, name := range oldNames {
+		key, _ := item.Public(name)
+		if _, err := e.Store.Head(t.Context(), key); !errors.Is(err, media.ErrNotFound) {
+			t.Fatalf("re-crop kept retired cover %s: %v", key, err)
+		}
 	}
-	if len(removed) != 3 {
-		t.Fatalf("re-crop did not retire its old public generation: %v", removed)
-	}
-	removed = nil
 	if _, err := e.up.Commit(context.Background(), e.editor, g, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 50, H: 1}}}}); err == nil {
 		t.Fatal("an edit under MinWidth accepted")
 	}
 	e.commit(t, g, media.Op{Op: media.OpRemove, Path: "cover.png"})
 	if _, _, ok := e.public(t, g, "cover-150.webp"); ok {
 		t.Fatal("remove returned before public cleanup")
-	}
-	if len(removed) != 3 {
-		t.Fatalf("removal purged %v", removed)
 	}
 	e.process(t, media.ProcessJob{Ref: g})
 	// A hidden item renders nothing public.
@@ -762,10 +757,9 @@ func TestFullManifestStopsProcessing(t *testing.T) {
 	if f, _ := m.Get("files/a.png"); !m.Full || f.Fail() != nil || len(f.Pending) == 0 {
 		t.Fatalf("full %v, upload %+v", m.Full, f)
 	}
-	purged := len(e.takePurged())
 	e.process(t, media.ProcessJob{Ref: p})
-	if m := e.manifest(t, p); len(m.Outputs("files/a.png", "web")) != 0 || len(e.takePurged()) != 0 {
-		t.Fatalf("a full item was processed again (%d purged before)", purged)
+	if m := e.manifest(t, p); len(m.Outputs("files/a.png", "web")) != 0 {
+		t.Fatal("a full item was processed again")
 	}
 	e.commit(t, p, media.Op{Op: media.OpMeta})
 	if m := e.manifest(t, p); m.Full {

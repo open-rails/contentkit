@@ -255,7 +255,7 @@ func (e *Engine) validate(deps Deps) error {
 			return err
 		}
 		h := cfg.Media.Hooks
-		if h.Resolver != nil || h.CanUpload != nil || h.PurgePublic != nil || h.ItemReady != nil || h.ItemProgressed != nil || h.ItemCommitted != nil || h.BeforeRetire != nil || h.Failed != nil {
+		if h.Resolver != nil || h.CanUpload != nil || h.ItemReady != nil || h.ItemProgressed != nil || h.ItemCommitted != nil || h.BeforeRetire != nil || h.Failed != nil {
 			return errors.New("contentkit: Config.Media.Hooks is set: media's providers come from Deps")
 		}
 		if deps.Store == nil {
@@ -450,7 +450,6 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		return nil, err
 	}
 	reg.Hooks = m.versions.Hooks()
-	reg.Hooks.PurgePublic = deps.PurgePublic
 	if m.reg, err = media.NewRegistry(reg); err != nil {
 		return nil, err
 	}

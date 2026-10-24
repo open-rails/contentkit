@@ -16,7 +16,7 @@ import (
 )
 
 // Expose brings an item's public files to its visibility, resolved for an
-// anonymous viewer (Hooks.Resolver). Hiding deletes and purges public/,
+// anonymous viewer (Hooks.Resolver). Hiding deletes public/,
 // records Hidden, and deletes again what a pass wrote meanwhile; it needs no
 // readable manifest, so a manifest over its bound still hides. Unhiding
 // marks the public presets pending on their kept sources and asks the worker
@@ -115,7 +115,7 @@ func setHidden(k *Kind, m *Manifest, hidden bool) {
 	}
 }
 
-// deletePublic deletes the item's public files and purges them.
+// deletePublic deletes the item's public files.
 func (j *Jobs) deletePublic(ctx context.Context, item Item) error {
 	return j.manifests.cleanup(ctx, item, true, func(*Manifest, bool) (journalEffects, error) {
 		var effects journalEffects

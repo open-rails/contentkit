@@ -206,14 +206,13 @@ func (j *Jobs) list(ctx context.Context, prefix string) ([]Object, error) {
 
 // deleteFolder removes every object under prefix but other items' folders
 // within it: the manifest and public/ first, so readers stop resolving the
-// item and public URLs stop answering, before its blobs go. Removed public
-// keys are purged.
+// item and public URLs stop answering, before its blobs go.
 func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	objs, err := j.list(ctx, prefix)
 	if err != nil {
 		return err
 	}
-	var first, public, rest []string
+	var first, rest []string
 	for _, o := range objs {
 		if o.Key == prefix+layout.AreaPublic+"/"+layout.ErasureFenceName {
 			continue
@@ -227,7 +226,6 @@ func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 			first = append(first, o.Key)
 		case layout.AreaPublic:
 			first = append(first, o.Key)
-			public = append(public, o.Key)
 		default:
 			rest = append(rest, o.Key)
 		}
@@ -235,7 +233,6 @@ func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	if err := j.deleteKeys(ctx, first); err != nil {
 		return err
 	}
-	j.purge(ctx, public)
 	return j.deleteKeys(ctx, rest)
 }
 
@@ -361,7 +358,7 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 					}
 					m, _, err := j.manifests.get(ctx, item.ManifestKey())
 					if errors.Is(err, ErrUpgradeRequired) {
-						continue // never deleted before the upgrade reads it
+						continue // preserve old formats for migration with the previous release
 					} else if err != nil && !errors.Is(err, ErrNotFound) {
 						return rep, err
 					}

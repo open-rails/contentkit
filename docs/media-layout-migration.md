@@ -21,7 +21,7 @@ For one-shot workers, start a separate account worker with `ContentSchema` and `
 
 Stop the affected writers and drain their media jobs. Keep the original buckets and registry configuration available. The reusable operations are:
 
-1. Build explicit `media.LayoutMapping{From, To, Owner}` entries from catalog/account ownership. Preserve a charged app/group quota owner in `Owner`; account kinds default to the account ID. Call `media.PlanLayoutMigration(ctx, sourceManifests, destinationRegistry, mappings)` and save the JSON plan outside the bucket. This reads and hashes every referenced blob, editor view and public rendition. It rejects unresolved commits, staged uploads and pending producers. Upgrade older manifest formats before planning.
+1. Build explicit `media.LayoutMapping{From, To, Owner}` entries from catalog/account ownership. Preserve a charged app/group quota owner in `Owner`; account kinds default to the account ID. Call `media.PlanLayoutMigration(ctx, sourceManifests, destinationRegistry, mappings)` and save the JSON plan outside the bucket. This reads and hashes every referenced blob, editor view and public rendition. It rejects unresolved commits, staged uploads and pending producers. Migrate pre-v0.68 manifests with ContentKit v0.119.1 before planning.
 2. Call `media.ApplyLayoutMigration(ctx, sourceManifests, destinationJobs, plan)`. It compares source ETags and content, copies only missing objects with conditional writes, verifies SHA-256 bytes, and adopts each destination manifest through the normal journal protocol. Existing different bytes are refused. It is safe to repeat the same plan after interruption. Originals are never deleted.
 3. Check the resulting API and gateway reads, then switch the scoped writer to the new layout. Retain the plan and originals throughout the rollback window.
 
@@ -33,7 +33,7 @@ alone does not prove its objects moved. If only the legacy root exists, finish
 the copy and cutover above with the previous release, then retry the upgrade.
 The reader migration selects the exact bound app root and preserves legacy
 journal history; it refuses missing, foreign or malformed bound ownership.
-Unbound legacy installations retain their existing unique-source upgrade path.
+Unbound installations retain their existing unique-source layout migration path.
 Already-applied reader migrations keep their original recorded bytes and digest.
 
 ## Rollback

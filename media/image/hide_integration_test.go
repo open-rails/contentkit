@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,12 +72,7 @@ func (c counted) Read(p []byte) (int, error) {
 // processor is a Processor over s instead of the env's store.
 func (e *env) processor(t *testing.T, s media.Store) *image.Processor {
 	t.Helper()
-	p, err := image.New(image.Config{Store: s, Manifests: e.ms, Purge: func(_ context.Context, keys []string) error {
-		e.mu.Lock()
-		e.purged = append(e.purged, keys...)
-		e.mu.Unlock()
-		return nil
-	}})
+	p, err := image.New(image.Config{Store: s, Manifests: e.ms})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,16 +94,8 @@ func (s switchable) Resolve(_ context.Context, refs []contentref.ContentRef, _ a
 // when publication fails partway through.
 func TestHideDuringPass(t *testing.T) {
 	hidden := new(atomic.Bool)
-	var e *env
-	e = newEnv(t, func(c *media.Config) {
+	e := newEnv(t, func(c *media.Config) {
 		c.Hooks.Resolver = switchable{hidden}
-		c.Hooks.PurgePublic = func(_ context.Context, urls []string) {
-			e.mu.Lock()
-			defer e.mu.Unlock()
-			for _, u := range urls {
-				e.purged = append(e.purged, strings.TrimPrefix(u, "https://media.test/v1/"))
-			}
-		}
 	})
 	jobs, err := media.NewJobs(media.JobsConfig{Store: e.Store, Registry: e.reg, Locker: s3test.Locker(t, e.Store), Journal: e.journal})
 	if err != nil {
@@ -146,7 +132,6 @@ func TestHideDuringPass(t *testing.T) {
 			mu.Unlock()
 			return put()
 		}}
-		e.takePurged()
 		err := e.processor(t, s).Process(ctx, media.ProcessJob{Ref: ref})
 		if !hidden.Load() {
 			t.Fatalf("publication did not reach the hide hook: %v", err)
@@ -167,12 +152,6 @@ func TestHideDuringPass(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Fatalf("pass %d (fail at %d): %s survived the hide", n, failAt, o.Key)
-		}
-		purged := e.takePurged()
-		for _, k := range wrote {
-			if !slices.Contains(purged, k) {
-				t.Fatalf("pass %d: %s not purged (%v)", n, k, purged)
-			}
 		}
 		if !e.manifest(t, ref).Hidden {
 			t.Fatal("not hidden")
