@@ -168,9 +168,14 @@ func TestPublicPreset(t *testing.T) {
 	if _, err := e.up.Commit(context.Background(), e.editor, g, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 50, H: 1}}}}); err == nil {
 		t.Fatal("an edit under MinWidth accepted")
 	}
+	current := e.file(t, g, "cover.png")
+	removed, _ := current.Publication("cover")
 	e.commit(t, g, media.Op{Op: media.OpRemove, Path: "cover.png"})
-	if _, _, ok := e.public(t, g, "cover-150.webp"); ok {
-		t.Fatal("remove returned before public cleanup")
+	for _, name := range removed.NamesOnDisk() {
+		key, _ := item.Public(name)
+		if _, err := e.Store.Head(t.Context(), key); !errors.Is(err, media.ErrNotFound) {
+			t.Fatalf("remove returned before deleting public object %s: %v", key, err)
+		}
 	}
 	e.process(t, media.ProcessJob{Ref: g})
 	// A hidden item renders nothing public.
