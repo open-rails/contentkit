@@ -661,8 +661,8 @@ func TestImportRoute(t *testing.T) {
 	}
 }
 
-// Imported interaction totals and entity counts/covers are available before
-// workers start. Only keyword documents require the search worker.
+// Imported interaction totals are available before workers start. Jobs rebuild
+// search documents and entity counts and covers afterward.
 func TestImportRebuildsProjections(t *testing.T) {
 	f := newEngine(t)
 	if res := f.importBatch(t, catalogBatch()); len(res.Failed) > 0 {
@@ -672,32 +672,14 @@ func TestImportRebuildsProjections(t *testing.T) {
 	if got := f.scalar(t, `SELECT likes || '/' || favorites FROM $s.content_interaction_counts WHERE content_kind='gallery' AND content_id=$1 AND content_version_id IS NULL`, g1); got != "2/1" {
 		t.Fatalf("immediate imported counts: %q, want 2/1", got)
 	}
-	for _, kind := range []string{"tag", "artist"} {
-		rec := httptest.NewRecorder()
-		f.routes.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/entities/"+id(kind, 1), nil))
-		var entity entities.EntityDetail
-		if err := json.Unmarshal(rec.Body.Bytes(), &entity); err != nil || rec.Code != http.StatusOK {
-			t.Fatalf("immediate %s: %d %s: %v", kind, rec.Code, rec.Body, err)
-		}
-		if entity.Cover == nil || !entity.Cover.Auto || entity.Cover.ContentID != g1 {
-			t.Fatalf("immediate %s cover: %+v", kind, entity.Cover)
-		}
-		found := false
-		for _, count := range entity.Counts {
-			if count.Language == "" && count.Count == 1 {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("immediate %s counts: %+v", kind, entity.Counts)
-		}
-	}
 	if err := f.e.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(90 * time.Second)
 	for _, c := range []struct{ name, sql, want string }{
 		{"search documents", `SELECT (count(DISTINCT content_id) = 2 AND count(*) >= 3)::text FROM $s.content_search_documents WHERE content_id IN ($1, '` + id("tag", 1) + `')`, "true"},
+		{"entity counts", `SELECT coalesce(max(content_count), 0)::text FROM $s.content_entity_counts WHERE entity_id = '` + id("tag", 1) + `' AND language = '' AND $1 <> ''`, "1"},
+		{"automatic cover", `SELECT coalesce(cover->>'content_id', '') FROM $s.content_entities WHERE id = '` + id("artist", 1) + `' AND $1 <> ''`, g1},
 	} {
 		for {
 			if got := f.scalar(t, c.sql, g1); got == c.want {

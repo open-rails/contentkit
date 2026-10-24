@@ -360,6 +360,9 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	}
 	// A hidden entity's content stays out of other lists, but its own page
 	// shows what its count counts.
+	if err := f.entities.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
 	dir, err := f.entities.List(f.ctx, entities.ListOptions{Kind: "tag", Slug: "big-breasts"})
 	if err != nil || len(dir.Entities) != 1 {
 		t.Fatalf("directory: %+v %v", dir, err)

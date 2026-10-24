@@ -34,7 +34,7 @@ for (const theme of ["light", "dark"] as const) {
       await ck.entities.addMembers(beta.id, [{ content_id: c.id }]);
     }
     await ck.entities.update(beta.id, { text: [{ language: "en", description: `Beta's story ${r}.` }] });
-
+    await h.recount();
 
     await page.goto(demo("entities.html", null, { kind: "series", parent: parent!.id, theme }));
     const dir_ = page.locator("[data-ckui=entity-directory]");

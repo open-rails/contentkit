@@ -665,9 +665,12 @@ their active ancestors. A static featured rail can contribute keywords;
 scheduled curation is evaluated at read time and is not copied into keyword
 text.
 
-Writes are batches in one transaction. Reads apply association windows and
-derive per-language content counts and automatic covers from current rows;
-these features work with background workers stopped. The engine builds
+Writes are batches in one transaction. Engine jobs keep the rest current:
+`Recount` (every 5 minutes, and after an import) rebuilds per-language content
+counts and automatic covers from the facets, and `RefreshWindows` (every
+minute) applies association windows that opened or closed since a facet was
+written, so listings trail a window by up to a minute and catch up after an
+outage. Direct access decisions apply windows at once. The engine builds
 `entities.Store` from `Config.Content` and serves it as `EntityRoutes`.
 Only user-owned or permission-scoped entity kinds need lifecycle sync and
 recovery jobs; ordinary taxonomy and featured rails schedule neither.
