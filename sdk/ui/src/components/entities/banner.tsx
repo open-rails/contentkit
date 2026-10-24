@@ -142,7 +142,7 @@ export function EntityImageEditor({ entity, slot, crop = true, client, onError, 
   };
   return (
     <div className={cn("flex flex-wrap items-center gap-3", className)} data-ckui="entity-image-editor" data-slot={slot}>
-      {slot === "avatar" ? <EntityAvatar entity={shown} src={g.previews.avatar} className="size-28 shrink-0" /> : <EntityCover entity={shown} src={g.previews.cover} className="aspect-[3/1] w-72 max-w-full" />}
+      {slot === "avatar" ? <EntityAvatar entity={shown} src={g.previews.avatar} className="size-14 shrink-0" /> : <EntityCover entity={shown} src={g.previews.cover} className="aspect-[3/1] w-72 max-w-full" />}
       <div className="grid gap-2">
         <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" variant="outline" disabled={save.pending} onClick={() => input.current?.click()}>

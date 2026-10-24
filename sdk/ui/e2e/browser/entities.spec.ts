@@ -190,7 +190,8 @@ for (const [mode, theme] of [
     // Merge into another artist: the flow moves to the survivor.
     const [target] = await ck.entities.create([{ kind: "artist", slug: `target-${r}`, names: [name("en", `Target ${r}`)] }]);
     await searchable(ck, "artist", `Target ${r}`);
-    await flow.getByRole("button", { name: "Merge" }).click();
+    await flow.locator("[data-ckui=entity-head]").getByRole("button", { name: /^More actions for / }).click();
+    await page.getByRole("menuitem", { name: "Merge" }).click();
     const dialog = page.locator("[data-ckui=entity-merge-dialog]");
     await dialog.getByRole("combobox", { name: "Merge into" }).fill(`Target ${r}`);
     await page.getByRole("option", { name: new RegExp(`Target ${r}`) }).click();
@@ -202,7 +203,8 @@ for (const [mode, theme] of [
     await expect(flow.locator(`[data-ckui=entity-members] [data-ckui=entity-member][data-content="${content.id}"]`)).toContainText(`Member ${r}`);
     await expect(flow.locator("[data-ckui=entity-names-editor]")).toContainText(`Studio ${r}`);
 
-    await flow.locator("[data-ckui=entity-head]").getByRole("button", { name: "Delete" }).click();
+    await flow.locator("[data-ckui=entity-head]").getByRole("button", { name: /^More actions for / }).click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
     await page.locator("[data-ckui=entity-delete-dialog]").getByRole("button", { name: "Delete" }).click();
     await expect(flow.locator("[data-ckui=entity-deleted]")).toContainText("is deleted.");
     await flow.getByRole("button", { name: "Restore" }).click();
