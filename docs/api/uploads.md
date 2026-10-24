@@ -34,6 +34,12 @@ different set of operations under the same ID. Conflicting input is rejected.
 The browser upload queue keeps the pending body scoped to its API and account.
 Use a separate unauthenticated storage client; storage redirects are refused.
 
+If the Go helper's commit response is interrupted, `errors.As` can retrieve a
+`*contentkit.MediaCommitError`. Persist its `Commit` body and retry that body
+with `PostMediaUploadCommit`; `Unwrap` retains the original failure for normal
+retry decisions. Reuploading with a newly constructed body under the same
+operation ID is not a substitute for replaying the accepted request.
+
 ## Processing status
 
 Poll the existing media-read API for the same owner. Editor reads include

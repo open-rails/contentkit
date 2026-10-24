@@ -13,7 +13,7 @@ it("shows ZIP, thumbnail and encoding progress without implying automatic public
     state: "processing", failure_count: 0, uploads: { completed: 5, total: 30, failed: 0 },
     archives: { completed: 0, total: 1, failed: 0, pages: { completed: 3, total: 30, failed: 0 } },
     presets: [{ name: "thumbnail", completed: 5, total: 30, failed: 0 }],
-    encoding: { phase: "encoding", percent: 20, segments_done: 2, segments_total: 10 }, failures: [],
+    encoding: { phase: "encoding", at: 0, percent: 20, segments_done: 2, segments_total: 10 }, failures: [],
   })} />);
   expect(screen.getByText("ZIP extraction: 0/1")).toBeInTheDocument();
   expect(screen.getByText("ZIP pages: 3/30")).toBeInTheDocument();
