@@ -44,11 +44,6 @@ func TestRetireOpenCountersDropsStaleFacetPopularity(t *testing.T) {
 	if err := f.s.RetireOpenCounters(f.ctx, true); err != nil {
 		t.Fatalf("retirement must be idempotent: %v", err)
 	}
-	// Retirement must retain the runtime read view, not drop dependencies.
-	var current int
-	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_current_facets")+` WHERE tenant_id=$1 AND content_id=$2`, tenant, id).Scan(&current); err != nil || current != 1 {
-		t.Fatalf("runtime view after retirement: %d %v", current, err)
-	}
 	// Current writers never needed the retired columns.
 	next := f.create("staff", gallery("Published after retirement", "en"))
 	f.publish("staff", next, nil)

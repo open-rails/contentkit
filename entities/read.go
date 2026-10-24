@@ -215,7 +215,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	}
 	countKind := ""
 	if ck := strings.TrimSpace(opts.ContentKind); ck != "" {
-		countKind, c.args["content_kind"] = " AND f.kind = @content_kind", ck
+		countKind, c.args["content_kind"] = " AND ec.content_kind = @content_kind", ck
 	}
 	if opts.Cursor != "" {
 		var cur listCursor
@@ -245,9 +245,8 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
 	count := "coalesce(cc.n, 0)"
-	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT count(DISTINCT f.content_id)::int AS n FROM %s f
- WHERE %s AND (@count_language='' OR f.languages @> ARRAY[@count_language::text])%s) cc ON true`, s.memberFacetsSQL(), liveListed, countKind)
-	c.args["covered_kinds"] = s.coveredKinds()
+	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT sum(ec.content_count)::int AS n FROM %s ec
+ WHERE ec.tenant_id = g.tenant_id AND ec.entity_id = g.id AND ec.language = @count_language%s) cc ON true`, s.table("content_entity_counts"), countKind)
 	displayJoins := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT nn.name,nn.language,nn.normalized FROM %s nn
  WHERE nn.tenant_id=g.tenant_id AND nn.entity_id=g.id AND nn.kind='name'
  ORDER BY CASE WHEN nn.language=@language THEN 0 WHEN nn.language='en' THEN 1 ELSE 2+coalesce(array_position(@fallback::text[],nn.language),1000) END,nn.language LIMIT 1) nm ON true
@@ -274,14 +273,14 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		order = count + " DESC, g.id"
 	}
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
- coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), %[11]s, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
 FROM %[1]s
-%[12]s
+%[11]s
 LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AND cd.content_id = g.id
 %[7]s
 %[8]s`,
 		from, s.table("content_entity_names"), s.table("content_entity_text"), s.table("content_codes"),
-		count, sortName, counts, predicate, scope, parent, s.coverSQL(), displayJoins)
+		count, sortName, counts, predicate, scope, parent, displayJoins)
 	c.sql = base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
 		c.count = "SELECT count(*) FROM (" + base + ") counted"
