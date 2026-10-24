@@ -121,7 +121,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 	_, err = admin.PatchContent(t.Context(), locked.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}})
 	must(t, err)
 	must(t, a.engine.Start(t.Context()))
-	waitFor(t, func() bool {
+	waitForWithin(t, 45*time.Second, func() bool {
 		found, err := public.GetSearch(t.Context(), ck.GetSearchQuery{Q: "CriticalVis", Kind: "article", Mode: "hide"})
 		must(t, err)
 		return len(found.Contents) != 0

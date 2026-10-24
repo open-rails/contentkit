@@ -203,7 +203,12 @@ CREATE CONSTRAINT TRIGGER zzz_critical_delay AFTER INSERT ON %s.eventlog_pending
 
 func waitFor(t *testing.T, ready func() bool) {
 	t.Helper()
-	timer, tick := time.NewTimer(10*time.Second), time.NewTicker(50*time.Millisecond)
+	waitForWithin(t, 10*time.Second, ready)
+}
+
+func waitForWithin(t *testing.T, timeout time.Duration, ready func() bool) {
+	t.Helper()
+	timer, tick := time.NewTimer(timeout), time.NewTicker(50*time.Millisecond)
 	defer timer.Stop()
 	defer tick.Stop()
 	for {
