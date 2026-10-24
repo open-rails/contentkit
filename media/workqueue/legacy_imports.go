@@ -16,11 +16,8 @@ func (q *Queue) AdoptVersionImports(ctx context.Context, hostSchema, catalogSche
 	if hostSchema == "" {
 		hostSchema = "public"
 	}
-	if err := ValidSchema(hostSchema); err != nil {
-		return err
-	}
-	if err := ValidSchema(catalogSchema); err != nil {
-		return err
+	if catalogSchema == "" {
+		return fmt.Errorf("media/workqueue: catalog schema is required for ZIP import handoff")
 	}
 	old := pgx.Identifier{hostSchema, "river_job"}.Sanitize()
 	items := pgx.Identifier{catalogSchema, "content_items"}.Sanitize()

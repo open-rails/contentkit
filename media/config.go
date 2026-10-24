@@ -105,7 +105,7 @@ type Upload struct {
 	Path string `json:"path"`
 	// ArchiveTo expands a ZIP into this image upload pattern during ingestion.
 	// It is media-level policy and may target gallery pages or body images.
-	ArchiveTo string `json:"archive_to,omitempty"`
+	ArchiveTo string `json:"archive_to,omitempty" yaml:"archive_to"`
 	// Body marks a content kind's body images (Named, with a private image
 	// preset and no public one): each version keeps its copy in private/,
 	// which only the version's openers read.
