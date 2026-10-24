@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"os"
 	"path"
@@ -217,8 +218,10 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		ext := strings.ToLower(path.Ext(e.Name))
 		target := dir + name + ext
 		expectedPages[target] = sum
+
+		end := math.MaxInt
 		if _, err := s.m.Uploads.Ingest(ctx, system, media.IngestRequest{Ref: ref, Path: target, Type: typ,
-			Body: bytes.NewReader(body), Size: int64(len(body)), Meta: metaFile.Meta}); err != nil {
+			Body: bytes.NewReader(body), Size: int64(len(body)), Meta: metaFile.Meta, Index: &end}); err != nil {
 			if _, refused := media.AsUploadError(err); refused {
 				return permanent{fmt.Errorf("%s: %w", e.Name, err)}
 			}

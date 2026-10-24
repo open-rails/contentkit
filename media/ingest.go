@@ -41,6 +41,9 @@ type IngestRequest struct {
 	From string
 	Size int64 // expected size, checked when > 0; required when the actor is rate- or quota-limited
 	Meta map[string]any
+	// Index places a new upload among its Upload's attached uploads, as
+	// Op.Index does; nil keeps the natural-sort position.
+	Index *int
 
 	// Resume continues a multipart write a previous Ingest left behind:
 	// parts already stored with the same bytes are not uploaded again (the
@@ -164,7 +167,7 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		return IngestResult{}, err
 	}
 	res.Staged = temp
-	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(temp, "u-"), []Op{{Op: OpPut, Path: req.Path, SourceName: req.Path, Blob: temp, Meta: req.Meta}})
+	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(temp, "u-"), []Op{{Op: OpPut, Path: req.Path, SourceName: req.Path, Blob: temp, Meta: req.Meta, Index: req.Index}})
 	if err != nil {
 		return IngestResult{}, err
 	}
@@ -189,7 +192,7 @@ func (u *Uploads) ingestCopy(ctx context.Context, actor access.Actor, item Item,
 			_ = u.o.Limiter.Settle(ctx, Settlement{Tenant: req.Ref.TenantID, Keys: []string{key}})
 		}
 	}()
-	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(s.Blob, "u-"), []Op{{Op: OpPut, Path: s.Path, Blob: s.Blob, Meta: req.Meta}})
+	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(s.Blob, "u-"), []Op{{Op: OpPut, Path: s.Path, Blob: s.Blob, Meta: req.Meta, Index: req.Index}})
 	if err != nil {
 		return IngestResult{}, err
 	}
