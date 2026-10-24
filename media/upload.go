@@ -405,7 +405,7 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 }
 
 // Commit applies ops to ref's manifest in one conditional write. operationID
-// is a caller-stable UUID for the complete ordered batch: reuse it after an
+// is a caller-stable UUIDv4 or UUIDv7 for the complete ordered batch: reuse it after an
 // uncertain response, but never for different inputs. Replays authorize again
 // and return the current manifest without repeating the original edit. Every op
 // is authorized against what it writes (Hooks.CanUpload). A put names a
@@ -436,6 +436,11 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		return nil, uploadErr(CodeInvalid, "operation_id must be a canonical nonzero UUID")
 	}
 	trusted := actor.Kind == "contentkit:system" && actor.ID == "contentkit" && !actor.Anonymous
+	// Deterministic internal IDs share this journal. Untrusted callers must
+	// not reserve a lifecycle receipt belonging to another media item.
+	if !trusted && (id.Variant() != uuid.RFC4122 || id.Version() != 4 && id.Version() != 7) {
+		return nil, uploadErr(CodeInvalid, "operation_id must be a UUIDv4 or UUIDv7")
+	}
 	limit := 1000
 	if trusted {
 		limit = 2*MaxUploads + 1 // one metadata put and move per source, plus regeneration
