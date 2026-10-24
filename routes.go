@@ -57,11 +57,9 @@ const (
 	// ImportRoutes: the bulk import a legacy importer writes through
 	// (/v1/import).
 	ImportRoutes
-	// PublishingRoutes: durable archive submissions (/v1/publishing-operations).
-	PublishingRoutes
 
 	// AllRoutes is every route group.
-	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | EntityRoutes | NotificationRoutes | DiscoveryRoutes | ImportRoutes | PublishingRoutes
+	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | EntityRoutes | NotificationRoutes | DiscoveryRoutes | ImportRoutes
 )
 
 var groupModules = []struct {
@@ -77,11 +75,10 @@ var groupModules = []struct {
 	{NotificationRoutes, []httpapi.Module{httpapi.Notifications}, "notifications"},
 	{DiscoveryRoutes, []httpapi.Module{httpapi.Discovery}, "discovery"},
 	{ImportRoutes, []httpapi.Module{httpapi.Import}, "import"},
-	{PublishingRoutes, []httpapi.Module{httpapi.Publishing}, "publishing"},
 }
 
 // ParseRouteGroups reads route group names ("content", "upload", "media",
-// "codes", "entities", "notifications", "discovery", "import", "publishing" or "all"), as a server's configuration
+// "codes", "entities", "notifications", "discovery", "import" or "all"), as a server's configuration
 // lists them.
 func ParseRouteGroups(names []string) (RouteGroups, error) {
 	var out RouteGroups
@@ -134,7 +131,7 @@ func (e *Engine) Routes(selection Routes) ([]Route, error) {
 	return []Route{{Path: prefix + httpapi.Version + "/", Handler: e.dispatch(prefix, modules)}}, nil
 }
 
-var needs = map[RouteGroups]string{UploadRoutes: "Config.Media", MediaRoutes: "Config.Media", PublishingRoutes: "Config.Media"}
+var needs = map[RouteGroups]string{UploadRoutes: "Config.Media", MediaRoutes: "Config.Media"}
 
 // RouteGroups is every route group the engine can serve: those whose modules
 // its Config provides.

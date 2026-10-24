@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,7 +20,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Archive import limits: images per archive and expanded bytes.
@@ -93,7 +91,7 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 		if _, err := s.m.Uploads.CommitChecked(ctx, system, ref, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: f.Path, Blob: f.Blob, Edit: f.Edit, Meta: meta}}, func(m *media.Manifest) error {
 			i := m.Find(f.Path)
 			if i < 0 || m.Files[i].Key() != f.Key() {
-				return ErrArchiveChanged
+				return errors.New("versions: archive changed while importing")
 			}
 			return nil
 		}); err != nil {
@@ -104,14 +102,6 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 }
 
 func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentref.ContentRef, f media.File) error {
-	operation, _ := f.Meta[ArchiveOperation].(string)
-	expected, _ := f.Meta[ArchiveSHA256].(string)
-	if operation != "" {
-		digest, ok := layout.BlobDigest(f.Blob)
-		if !ok || hex.EncodeToString(digest) != expected {
-			return permanent{errors.New("archive checksum does not match its publishing declaration")}
-		}
-	}
 	item, err := s.reg.Item(ref)
 	if err != nil {
 		return err
@@ -172,9 +162,6 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 	dir := strings.TrimSuffix(k.Publish.Pages, "{name}")
 	names := map[string]bool{}
 	archiveHash := pageDigest(f)
-	if archiveHash == "" {
-		archiveHash = expected
-	}
 	existing := map[int]media.File{}
 	for _, f := range m.Files {
 		if f.IsUpload() && inPattern(k.Publish.Pages, f.Path) {
@@ -188,7 +175,6 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		}
 	}
 	up := k.Uploads[slices.IndexFunc(k.Uploads, func(u media.Upload) bool { return u.Path == k.Publish.Pages })]
-	expectedPages := map[string]string{}
 	for index, e := range entries {
 		body, err := readEntry(e, up.MaxBytes)
 		if err != nil {
@@ -202,9 +188,8 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		sum := hex.EncodeToString(raw[:])
 		if previous, ok := existing[index+1]; ok {
 			if pageDigest(previous) != sum || pageMeta(previous).SourceEntry != e.Name {
-				return permanent{ErrArchiveChanged}
+				return permanent{errors.New("archive page changed during import")}
 			}
-			expectedPages[previous.Path] = sum
 			continue
 		}
 		name, span, flags := plannedPageName(cleanedNames[index], names)
@@ -216,7 +201,6 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		writePageMeta(&metaFile, pm)
 		ext := strings.ToLower(path.Ext(e.Name))
 		target := dir + name + ext
-		expectedPages[target] = sum
 		if _, err := s.m.Uploads.Ingest(ctx, system, media.IngestRequest{Ref: ref, Path: target, Type: typ,
 			Body: bytes.NewReader(body), Size: int64(len(body)), Meta: metaFile.Meta}); err != nil {
 			if _, refused := media.AsUploadError(err); refused {
@@ -224,39 +208,6 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 			}
 			return err
 		}
-	}
-	if operation != "" {
-		_, err := s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
-			pages := archivePages(k, m)
-			if len(pages) != len(expectedPages) {
-				return permanent{ErrArchiveChanged}
-			}
-			for _, page := range pages {
-				if expectedPages[page.Path] != page.SHA256 {
-					return permanent{ErrArchiveChanged}
-				}
-			}
-			var receipts map[string]archiveReceipt
-			if existing := m.Meta[archiveReceipts]; existing != nil {
-				b, err := json.Marshal(existing)
-				if err != nil {
-					return err
-				}
-				if err := json.Unmarshal(b, &receipts); err != nil {
-					return err
-				}
-			}
-			if receipts == nil {
-				receipts = map[string]archiveReceipt{}
-			}
-			receipts[operation] = archiveReceipt{SHA256: expected, Pages: pages}
-			if m.Meta == nil {
-				m.Meta = map[string]any{}
-			}
-			m.Meta[archiveReceipts] = receipts
-			return nil
-		})
-		return err
 	}
 	return nil
 }

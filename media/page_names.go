@@ -320,7 +320,7 @@ func clientUploadOps(input []Op) []Op {
 			continue
 		}
 		meta := clearArchiveState(ops[i].Meta)
-		for _, key := range []string{"page", "publishing_archives", "publishing_cover_errors"} {
+		for _, key := range []string{"page"} {
 			delete(meta, key)
 		}
 		if len(meta) == 0 {

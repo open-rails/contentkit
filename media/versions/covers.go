@@ -56,9 +56,6 @@ func (s *Service) applyCover(ctx context.Context, k *media.Kind, t Target) error
 	var ops []media.Op
 	switch {
 	case page == nil && auto == nil:
-		if m != nil && m.Meta[archiveReceipts] != nil {
-			return s.failArchiveCover(ctx, k, t, "cover_source_unavailable")
-		}
 		return nil
 	case page == nil:
 		ops = []media.Op{{Op: media.OpRemove, Path: auto.Path, Meta: map[string]any{media.MetaAutoCover: true}}}
@@ -73,25 +70,9 @@ func (s *Service) applyCover(ctx context.Context, k *media.Kind, t Target) error
 		// A page the cover upload cannot take (its type, its size, a dropped
 		// original) leaves the version on its kind's default cover.
 		s.o.Logger.WarnContext(ctx, "versions: no automatic cover", "version", t.Version, "error", err)
-		if m != nil && m.Meta[archiveReceipts] != nil && permanentCoverRejection(ue.Code) {
-			return s.failArchiveCover(ctx, k, t, ue.Code)
-		}
 		return nil
 	}
-	if err == nil && page == nil && m != nil && m.Meta[archiveReceipts] != nil {
-		return s.failArchiveCover(ctx, k, t, "cover_source_unavailable")
-	}
 	return err
-}
-
-func permanentCoverRejection(code string) bool {
-	switch code {
-	case media.CodeInvalid, media.CodeNotFound, media.CodeTooManyFiles, media.CodeTooLarge, media.CodeType,
-		media.CodeImageTooSmall, media.CodeImageTooLarge, media.CodeImageUnreadable,
-		media.CodeAnimationNotAllowed, media.CodeAnimationTooLong, media.CodeAnimationUnsupported:
-		return true
-	}
-	return false
 }
 
 // coverSource is the leading page upload of version t, whose manifest is m,
