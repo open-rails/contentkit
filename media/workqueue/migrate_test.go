@@ -92,6 +92,12 @@ func TestMigrateResumesVideoCheckpoints(t *testing.T) {
  VALUES ('contentkit_media_video_assemble','{}',32767,'media_video_light','completed',now())`); err != nil {
 		t.Fatal(err)
 	}
+	// A queued request for another preset cannot adopt the orphaned HLS run.
+	var scoped int64
+	if err := pool.QueryRow(ctx, `INSERT INTO `+jobs(schema)+` (kind,args,max_attempts,queue,state)
+ VALUES ('contentkit_media_video',jsonb_build_object('ref',$1::jsonb,'preset','mp4-other'),32767,'media_video_light','available') RETURNING id`, ref).Scan(&scoped); err != nil {
+		t.Fatal(err)
+	}
 	for range 2 {
 		if err := Migrate(ctx, pool, schema); err != nil {
 			t.Fatal(err)
@@ -99,10 +105,14 @@ func TestMigrateResumesVideoCheckpoints(t *testing.T) {
 	}
 	var active, retired, history int
 	if err := pool.QueryRow(ctx, `SELECT
- count(*) FILTER (WHERE kind='contentkit_media_video' AND queue='media_video' AND state='available' AND args->'ref'=$1::jsonb),
+ count(*) FILTER (WHERE kind='contentkit_media_video' AND queue='media_video' AND state='available' AND args->'ref'=$1::jsonb AND COALESCE(args->>'preset','')=''),
  count(*) FILTER (WHERE id=$2 AND state='cancelled'),
  count(*) FILTER (WHERE kind='contentkit_media_video_assemble' AND state='completed') FROM `+jobs(schema), ref, child).Scan(&active, &retired, &history); err != nil || active != 1 || retired != 1 || history != 1 {
 		t.Fatalf("video=%d retired=%d history=%d: %v", active, retired, history, err)
+	}
+	var scopedPreserved bool
+	if err := pool.QueryRow(ctx, `SELECT queue='media_video' AND state='available' AND args->>'preset'='mp4-other' FROM `+jobs(schema)+` WHERE id=$1`, scoped).Scan(&scopedPreserved); err != nil || !scopedPreserved {
+		t.Fatalf("scoped request preserved=%t: %v", scopedPreserved, err)
 	}
 	var done, planned int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state='done' AND output->>'240-h264'='temp/checkpoint.mp4'), count(*) FILTER (WHERE state='planned' AND output IS NULL) FROM `+schema+`.encode_chunk WHERE run_id=$1`, run).Scan(&done, &planned); err != nil || done != 1 || planned != 1 {
