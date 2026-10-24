@@ -144,7 +144,7 @@ func benchSample(t *testing.T, src string) {
 			// Wait for every video job in this sample's private schema.
 			rows, err := e.pool.Query(e.ctx, `SELECT kind, bool_and(state = 'completed'),
 COALESCE(sum(extract(epoch FROM finalized_at - attempted_at)), 0)
-FROM `+jobTable+` WHERE queue IN ($1, $2) GROUP BY kind`, workqueue.VideoLightQueue, workqueue.VideoEncodeQueue)
+FROM `+jobTable+` WHERE queue IN ($1, $2) GROUP BY kind`, workqueue.VideoQueue, workqueue.VideoQueue)
 			if err != nil {
 				t.Fatal(err)
 			}

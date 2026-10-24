@@ -242,7 +242,7 @@ func (e *env) start() {
 		e.t.Fatal(err)
 	}
 	var stop func()
-	e.events, stop = e.worker.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
+	e.events, stop = e.worker.Subscribe(river.EventKindJobSnoozed, river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
 	if err := e.worker.Start(e.ctx); err != nil {
 		e.t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ WHERE kind = ANY($1) AND state IN ('available', 'pending', 'retryable', 'running
 	}
 }
 
-// next waits for the next completed job of kind.
+// next waits for the next successful completed or checkpointed job of kind.
 func (e *env) next(kind string) {
 	e.t.Helper()
 	deadline := time.After(10 * time.Minute)
@@ -389,7 +389,7 @@ func (e *env) next(kind string) {
 			if ev.Kind == river.EventKindJobFailed {
 				e.t.Fatalf("job %s %d failed: %+v", ev.Job.Kind, ev.Job.ID, ev.Job.Errors)
 			}
-			if ev.Kind == river.EventKindJobCompleted && ev.Job.Kind == kind {
+			if (ev.Kind == river.EventKindJobCompleted || ev.Kind == river.EventKindJobSnoozed) && ev.Job.Kind == kind {
 				return
 			}
 		case <-deadline:

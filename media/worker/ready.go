@@ -25,7 +25,9 @@ type readyHook struct {
 }
 
 func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err error) (result error) {
-	if err != nil || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
+	workErr := err
+	var snooze *river.JobSnoozeError
+	if err != nil && !errors.As(err, &snooze) || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
 	}
 	// Output can become visible before this final manifest read. An outage
@@ -35,11 +37,11 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 		Ref contentref.ContentRef `json:"ref"`
 	}
 	if err := json.Unmarshal(job.EncodedArgs, &args); err != nil {
-		return nil // the job itself decoded them
+		return workErr // the job itself decoded them
 	}
 	m, _, err := h.manifests.Get(ctx, args.Ref)
 	if errors.Is(err, media.ErrNotFound) {
-		return nil // deleted meanwhile
+		return workErr // deleted meanwhile
 	} else if err != nil {
 		return err
 	}
@@ -47,14 +49,17 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 	if err != nil {
 		return err
 	}
-	// Only assembly and audio jobs publish renditions, so only they can make
+	// Video and audio jobs publish renditions, so only they can make
 	// a processing item playable.
 	if k.Readiness(m).State == media.StateProcessing && (!publishes(job.Kind) || !k.Playable(m)) {
-		return nil
+		return workErr
 	}
-	return h.host.Ready(ctx, args.Ref)
+	if readyErr := h.host.Ready(ctx, args.Ref); readyErr != nil {
+		return readyErr
+	}
+	return workErr
 }
 
 func publishes(kind string) bool {
-	return kind == (workqueue.VideoAssembleArgs{}).Kind() || kind == (workqueue.AudioArgs{}).Kind()
+	return kind == (workqueue.VideoArgs{}).Kind() || kind == (workqueue.AudioArgs{}).Kind()
 }

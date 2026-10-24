@@ -579,7 +579,10 @@ Personalized, watermarked archives stream per request with
 Ordinary reader archives use the bounded, on-demand private cache described
 above; only non-reader ZIP processing presets are generated ahead of time.
 
-**Video** (`media/video`): an `HLS` preset encodes the ladder (rung = short
+**Video** (`media/video`): one `contentkit_media_video` job on `media_video` owns
+planning, conversion and publication. It checkpoints bounded encoded ranges,
+yields between them so shorter videos can run, and resumes successful ranges
+after shutdown. An `HLS` preset encodes the ladder (rung = short
 side, default 2160/1080/480, none above the source) in each of the worker's
 codecs (`MEDIA_WORKER_CODECS`, default `av1,h264`), plus AAC per audio
 track, WebVTT per text subtitle and a seek sprite. Each rendition is one

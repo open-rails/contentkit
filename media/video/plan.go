@@ -15,14 +15,12 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 const (
-	chunkWindow          = 2
 	maxVideoChunksPerRun = 5000
 )
 
@@ -66,39 +64,22 @@ func (c WorkerConfig) jobTable() string {
 // videoFamily are the presets the video plan produces.
 func videoFamily(p *media.Private) bool { return isEncode(p) || p.Subtitles != nil }
 
-// planVideo brings an item's video presets (and frames) up to date: it
-// converts subtitles, and probes each source with stale HLS or MP4 outputs
-// and records the encode runs; it never downloads a video or encodes one.
-func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArgs) error {
+// planVideo probes stale sources and prepares durable conversion checkpoints.
+// It also converts subtitles and refreshes generated frames.
+func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoArgs) error {
 	e := c.Encoder
 	item, err := e.ms.Registry().Item(args.Ref)
 	if err != nil {
 		return river.JobCancel(err)
 	}
-	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:video:"+args.Ref.String(), false)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return river.JobSnooze(lockedSnooze)
-	}
-	defer release()
 	if e.full(ctx, item) {
 		return nil
-	}
-	if args.Force {
-		if err := e.force(ctx, item, args.Preset, videoFamily); err != nil {
-			return err
-		}
 	}
 	man, _, err := e.ms.Get(ctx, args.Ref)
 	if errors.Is(err, media.ErrNotFound) {
 		return nil
 	} else if err != nil {
 		return err
-	}
-	if testPlanSnapshot != nil {
-		testPlanSnapshot()
 	}
 	var errs []error
 	// settle records one upload's result; false once the item is Full (the
@@ -494,15 +475,10 @@ ON CONFLICT (run_id, ordinal) DO NOTHING`, id, ordinal, bound[0], bound[1]); err
 		}
 		return nil
 	}
-	previousComplete := true
 	for i, stage := range stages {
 		var copyCodec media.Codec
 		if i == len(stages)-1 {
 			copyCodec = passthrough
-		}
-		priority := workqueue.VideoPlanInsertOpts(class).Priority
-		if i > 0 && priority == 1 {
-			priority = 2
 		}
 		var id string
 		err := tx.QueryRow(ctx, `INSERT INTO `+c.runTable()+`
@@ -546,93 +522,18 @@ SET state = 'complete', updated_at = now() WHERE id = $1`, id); err != nil {
 				}
 			}
 			if _, err := tx.Exec(ctx, `UPDATE `+c.chunkTable()+`
-SET state = 'planned', job_id = NULL, output = NULL, finished_at = NULL WHERE run_id = $1`, id); err != nil {
+SET state = 'planned', output = NULL, finished_at = NULL WHERE run_id = $1`, id); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE `+c.runTable()+`
-SET state = 'planned', released = 0, completed = 0, class = $2, updated_at = now() WHERE id = $1`, id, string(class)); err != nil {
+SET state = 'planned', class = $2, updated_at = now() WHERE id = $1`, id, string(class)); err != nil {
 				return err
 			}
 			state = "planned"
 		}
-		if previousComplete {
-			if state == "assembling" {
-				var active bool
-				if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.jobTable()+`
-WHERE kind = $1 AND args->>'run_id' = $2 AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled'))`,
-					(workqueue.VideoAssembleArgs{}).Kind(), id).Scan(&active); err != nil {
-					return err
-				}
-				if !active {
-					client := river.ClientFromContext[pgx.Tx](ctx)
-					if client == nil {
-						return errors.New("media/video: worker River client missing from context")
-					}
-					if _, err := client.InsertTx(ctx, tx, workqueue.VideoAssembleArgs{Ref: ref, RunID: id},
-						&river.InsertOpts{Queue: workqueue.VideoLightQueue, Priority: priority, MaxAttempts: workqueue.VideoRiverMaxAttempts}); err != nil {
-						return err
-					}
-				}
-			} else if err := c.releaseWindow(ctx, tx, id, ref, priority); err != nil {
-				return err
-			}
-		}
-		previousComplete = state == "complete"
+
 	}
 	return tx.Commit(ctx)
-}
-
-// releaseWindow is called with its run row locked by the caller or by this
-// SELECT. It never leaves more than chunkWindow active tasks for one run.
-func (c WorkerConfig) releaseWindow(ctx context.Context, tx pgx.Tx, id string, ref contentref.ContentRef, priority int) error {
-	var state string
-	if err := tx.QueryRow(ctx, `SELECT state FROM `+c.runTable()+` WHERE id = $1 FOR UPDATE`, id).Scan(&state); err != nil {
-		return err
-	}
-	if state == "complete" || state == "cancelled" || state == "assembling" {
-		return nil
-	}
-	// A cancelled or discarded River job no longer occupies the window.
-	if _, err := tx.Exec(ctx, `UPDATE `+c.chunkTable()+` c SET state = 'planned', job_id = NULL
-WHERE c.run_id = $1 AND c.state = 'queued' AND NOT EXISTS (
-  SELECT 1 FROM `+c.jobTable()+` j WHERE j.id = c.job_id
-    AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled'))`, id); err != nil {
-		return err
-	}
-	var active int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+c.chunkTable()+`
-WHERE run_id = $1 AND state = 'queued'`, id).Scan(&active); err != nil {
-		return err
-	}
-	rows, err := tx.Query(ctx, `SELECT ordinal FROM `+c.chunkTable()+`
-WHERE run_id = $1 AND state = 'planned' ORDER BY ordinal LIMIT $2`, id, chunkWindow-active)
-	if err != nil {
-		return err
-	}
-	ordinals, err := pgx.CollectRows(rows, pgx.RowTo[int])
-	if err != nil {
-		return err
-	}
-	client := river.ClientFromContext[pgx.Tx](ctx)
-	if client == nil {
-		return errors.New("media/video: worker River client missing from context")
-	}
-	for _, ordinal := range ordinals {
-		result, err := client.InsertTx(ctx, tx, workqueue.VideoChunkArgs{Ref: ref, RunID: id, Index: ordinal},
-			&river.InsertOpts{Queue: workqueue.VideoEncodeQueue, Priority: priority, MaxAttempts: workqueue.VideoRiverMaxAttempts})
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE `+c.chunkTable()+`
-SET state = 'queued', job_id = $3 WHERE run_id = $1 AND ordinal = $2`, id, ordinal, result.Job.ID); err != nil {
-			return err
-		}
-	}
-	if len(ordinals) > 0 {
-		_, err = tx.Exec(ctx, `UPDATE `+c.runTable()+`
-SET state = 'encoding', released = released + $2, updated_at = now() WHERE id = $1`, id, len(ordinals))
-	}
-	return err
 }
 
 func (c WorkerConfig) loadRun(ctx context.Context, id string) (encodeRun, error) {

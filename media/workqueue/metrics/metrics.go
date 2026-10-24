@@ -29,11 +29,11 @@ var (
 	collectionSuccessDesc = prometheus.NewDesc("media_video_queue_collection_success", "Whether the current queue snapshot was read successfully (1) or failed (0).", nil, nil)
 )
 
-var queues = [...]string{workqueue.PlaceQueue, workqueue.ImageQueue, workqueue.VideoLightQueue, workqueue.VideoEncodeQueue, workqueue.AudioQueue}
+var queues = [...]string{workqueue.PlaceQueue, workqueue.ImageQueue, workqueue.VideoQueue, workqueue.AudioQueue}
 var activeStates = [...]string{"available", "pending", "retryable", "running", "scheduled"}
 
 // Collector serves the latest queue snapshot read by an always-on host's River
-// leader. A one-shot media worker can scale to zero and cannot expose backlog.
+// leader. Media workers can scale to zero, so they cannot own backlog polling.
 type Collector struct {
 	pool      *pgxpool.Pool
 	schema    string

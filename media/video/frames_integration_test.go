@@ -61,7 +61,7 @@ func TestFrames(t *testing.T) {
 	}
 	// The commit queued a plan and an image job; the grab another of each
 	// (the image job absorbed by the one still waiting).
-	plans := (workqueue.VideoPlanArgs{}).Kind()
+	plans := (workqueue.VideoArgs{}).Kind()
 	if e.jobs((workqueue.ImageArgs{}).Kind()) != 1 || e.jobs(plans) != 2 {
 		t.Fatalf("%d image jobs, %d plans", e.jobs((workqueue.ImageArgs{}).Kind()), e.jobs(plans))
 	}

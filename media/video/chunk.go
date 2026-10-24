@@ -15,41 +15,17 @@ import (
 	"slices"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
-func (c WorkerConfig) encodeChunk(ctx context.Context, job *river.Job[workqueue.VideoChunkArgs]) error {
+// encodeChunk checkpoints one bounded range; its owning video job resumes it.
+func (c WorkerConfig) encodeChunk(ctx context.Context, run encodeRun, ch encodeChunk, jobID int64) error {
 	e := c.Encoder
-	run, err := c.loadRun(ctx, job.Args.RunID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return river.JobCancel(err)
-	} else if err != nil {
-		return err
-	}
-	if !run.Ref.Equal(job.Args.Ref) || run.State == "cancelled" || run.State == "complete" {
-		return nil
-	}
-	if run.State != "encoding" {
-		return river.JobSnooze(30 * time.Second)
-	}
-	ch, err := c.chunk(ctx, run.ID, job.Args.Index)
-	if err != nil {
-		return err
-	}
 	if ch.Output != nil {
-		return c.completeChunk(ctx, job, run, ch)
-	}
-	fair, err := c.overTenantShare(ctx, run.Ref.TenantID)
-	if err != nil {
-		return err
-	}
-	if fair {
-		return river.JobSnooze(30 * time.Second)
+		return nil
 	}
 	w, ok, err := c.current(ctx, run)
 	if err != nil {
@@ -71,7 +47,7 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, job *river.Job[workqueue.
 		return err
 	}
 	defer os.RemoveAll(dir)
-	progress := newProgress(ctx, c.report(job.ID), e.c.ProgressInterval, time.Now, nil)
+	progress := newProgress(ctx, c.report(jobID), e.c.ProgressInterval, time.Now, nil)
 	fp := progress.file(run.File)
 	defer progress.done(run.File)
 	fp.probed(float64(ch.EndMS-ch.StartMS)/1000, dir)
@@ -154,7 +130,7 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, job *river.Job[workqueue.
 		output[name] = key
 	}
 	ch.Output = output
-	return c.completeChunk(ctx, job, run, ch)
+	return c.completeChunk(ctx, run, ch)
 }
 
 // runWork is a run's current state: its upload, preset and probed plan.
@@ -236,7 +212,7 @@ func (c WorkerConfig) overTenantShare(ctx context.Context, tenant string) (bool,
   EXISTS (SELECT 1 FROM `+c.jobTable()+` WHERE kind = $1
     AND (state = 'available' OR state IN ('retryable', 'scheduled') AND scheduled_at <= now())
     AND args->'ref'->>'tenant_id' IS DISTINCT FROM $2)`,
-		(workqueue.VideoChunkArgs{}).Kind(), tenant).Scan(&own, &running, &otherWaiting)
+		(workqueue.VideoArgs{}).Kind(), tenant).Scan(&own, &running, &otherWaiting)
 	if err != nil {
 		return false, err
 	}
@@ -278,67 +254,15 @@ func (e *Encoder) putChunk(ctx context.Context, item media.Item, runID string, o
 	return key, err
 }
 
-func (c WorkerConfig) completeChunk(ctx context.Context, job *river.Job[workqueue.VideoChunkArgs], run encodeRun, ch encodeChunk) error {
+func (c WorkerConfig) completeChunk(ctx context.Context, run encodeRun, ch encodeChunk) error {
 	output, err := json.Marshal(ch.Output)
 	if err != nil {
 		return err
 	}
-	tx, err := c.Pool.Begin(ctx)
-	if err != nil {
-		return snoozeOnShutdown(ctx, err)
-	}
-	defer tx.Rollback(ctx)
-	var state string
-	var priority int
-	if err := tx.QueryRow(ctx, `SELECT r.state, CASE WHEN r.class = 'reencode' THEN 3 WHEN r.class = 'backfill' THEN 4
-WHEN r.rung = (SELECT min(other.rung) FROM `+c.runTable()+` other
-  WHERE other.ref = r.ref AND other.file_name = r.file_name AND other.source_name = r.source_name
-    AND other.source_etag = r.source_etag AND other.spec = r.spec)
-THEN 1 ELSE 2 END FROM `+c.runTable()+` r WHERE r.id = $1 FOR UPDATE`, run.ID).Scan(&state, &priority); err != nil {
-		return err
-	}
-	if state == "cancelled" || state == "complete" {
-		return nil
-	}
-	if state != "encoding" {
-		return river.JobSnooze(30 * time.Second)
-	}
-	result, err := tx.Exec(ctx, `UPDATE `+c.chunkTable()+`
-SET state = 'done', output = $4, finished_at = now()
-WHERE run_id = $1 AND ordinal = $2 AND job_id = $3 AND state = 'queued'`, run.ID, ch.Ordinal, job.ID, output)
-	if err != nil {
-		return err
-	}
-	if result.RowsAffected() == 0 {
-		return nil
-	}
-	var remaining int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+c.chunkTable()+` WHERE run_id = $1 AND state != 'done'`, run.ID).Scan(&remaining); err != nil {
-		return err
-	}
-	if remaining == 0 {
-		if _, err := tx.Exec(ctx, `UPDATE `+c.runTable()+`
-SET state = 'assembling', completed = completed + 1, updated_at = now() WHERE id = $1`, run.ID); err != nil {
-			return err
-		}
-		client := river.ClientFromContext[pgx.Tx](ctx)
-		if _, err := client.InsertTx(ctx, tx, workqueue.VideoAssembleArgs{Ref: run.Ref, RunID: run.ID},
-			&river.InsertOpts{Queue: workqueue.VideoLightQueue, Priority: priority, MaxAttempts: workqueue.VideoRiverMaxAttempts}); err != nil {
-			return err
-		}
-	} else {
-		if _, err := tx.Exec(ctx, `UPDATE `+c.runTable()+`
-SET completed = completed + 1, updated_at = now() WHERE id = $1`, run.ID); err != nil {
-			return err
-		}
-		if err := c.releaseWindow(ctx, tx, run.ID, run.Ref, priority); err != nil {
-			return err
-		}
-	}
-	if _, err := river.JobCompleteTx[*riverpgxv5.Driver](ctx, tx, job); err != nil {
-		return err
-	}
-	return snoozeOnShutdown(ctx, tx.Commit(ctx))
+	_, err = c.Pool.Exec(ctx, `UPDATE `+c.chunkTable()+` SET state = 'done', output = $3, finished_at = now()
+ WHERE run_id = $1 AND ordinal = $2 AND EXISTS (
+ SELECT 1 FROM `+c.runTable()+` WHERE id = $1 AND state IN ('planned', 'encoding'))`, run.ID, ch.Ordinal, output)
+	return snoozeOnShutdown(ctx, err)
 }
 
 func (c WorkerConfig) cancelRun(ctx context.Context, id string) error {

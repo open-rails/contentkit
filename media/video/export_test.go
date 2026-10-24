@@ -8,12 +8,6 @@ func SetBeforePublish(fn func()) func() {
 	return func() { testBeforePublish = nil }
 }
 
-// SetPlanSnapshot runs fn after each video plan reads the manifest it plans from.
-func SetPlanSnapshot(fn func()) func() {
-	testPlanSnapshot = fn
-	return func() { testPlanSnapshot = nil }
-}
-
 // SetNVENCCQOffset overrides NVENC's CQ offset over the rung CRF of codec c.
 func SetNVENCCQOffset(c media.Codec, o int) func() {
 	old := nvencCQOffset[c]
