@@ -128,29 +128,3 @@ func TestFilterTruncated(t *testing.T) {
 		t.Fatalf("Settle sent %d requests, want 1", n)
 	}
 }
-
-// A batch carrying legacy PSPs on any price is refused before OpenRails
-// creates a single price.
-func TestCreatePricesRefusesPSPsAtomically(t *testing.T) {
-	w := newWorld(t)
-	ctx := t.Context()
-	key := ck(uid(7))
-	made, err := w.billing.CreateProducts(ctx, []access.NewProduct{{Key: key, DisplayName: "Atomic", Entitlements: []string{key}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = w.billing.CreatePrices(ctx, []access.NewPrice{
-		{ProductID: made[0].ID, Key: "once", Amount: 500, Currency: "USD"},
-		{ProductID: made[0].ID, Key: "legacy", Amount: 700, Currency: "USD", PSPs: []string{"nmi"}},
-	})
-	if err == nil {
-		t.Fatal("legacy PSPs accepted")
-	}
-	got, err := w.billing.Products(ctx, []string{key})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := len(got[key].Prices); n != 0 {
-		t.Fatalf("refused batch left %d prices", n)
-	}
-}

@@ -22,7 +22,6 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/offers"
 )
 
 const tenant = "onlydemo"
@@ -42,7 +41,7 @@ func (c *counting) take() int { return int(c.n.Swap(0)) }
 
 // world is ContentKit's schema and a real embedded OpenRails on the
 // CONTENTKIT_TEST_URL database (CONTENTKIT_TEST_REQUIRE_DB=1 fails instead of
-// skipping), with a Gate and the offers Service over them.
+// skipping), with a read-only entitlement Gate over them.
 type world struct {
 	t       *testing.T
 	pool    *pgxpool.Pool
@@ -52,7 +51,6 @@ type world struct {
 	billing access.Billing
 	kinds   kinds.Config
 	gate    *access.Gate
-	offers  *offers.Service
 	n       int
 }
 
@@ -88,16 +86,11 @@ func newWorld(t *testing.T, edits ...func(*openrails.Config)) *world {
 	w.billing = ckopenrails.Billing(w.client)
 	w.kinds = kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium", "gold"}, TokenClaims: []string{"premium"},
 		Kinds:       map[string]kinds.Kind{"post": {Route: "p", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}}},
-		EntityKinds: map[string]kinds.EntityKind{"channel": {Owner: "user", Sellable: true}, "series": {Sellable: true, Ordered: true}, "tag": {}}}
+		EntityKinds: map[string]kinds.EntityKind{"channel": {Owner: "user", Entitled: true}, "series": {Entitled: true, Ordered: true}, "tag": {}}}
 	if err := w.kinds.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	if w.gate, err = access.NewGate(access.GateConfig{Tenant: tenant, Kinds: w.kinds, Billing: w.billing}); err != nil {
-		t.Fatal(err)
-	}
-	w.offers, err = offers.New(offers.Options{Pool: pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds, Billing: w.billing, Gate: w.gate,
-		Config: offers.Config{Minimum: map[offers.TargetKind]offers.Amount{offers.ContentTarget: 500_000, offers.EntityTarget: 1_000_000}}})
-	if err != nil {
 		t.Fatal(err)
 	}
 	return w

@@ -7,7 +7,6 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // A post's body is the locked bundle's: GET /v1/contents/{id} shows it to
@@ -16,7 +15,6 @@ import (
 func TestLockedBodyIntegration(t *testing.T) {
 	s := newShop(t)
 	studio := s.channel("studio", "Studio", "owner")
-	s.sell(offers.Target{Kind: offers.EntityTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
 	creator, buyer, member, stranger := s.customer(), s.customer(), s.customer(), s.customer()
 	post := func(rule access.Rule, body string) string {
 		creators := []catalog.Creator{{UserID: creator.ID}}
