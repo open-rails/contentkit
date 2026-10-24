@@ -73,3 +73,7 @@ export { useMessages } from "./i18n/context.js";
 export { NotificationInbox, NotificationBell, type NotificationInboxProps, type NotificationBellProps } from "./components/notifications.js";
 
 export { BillingNotification, isBillingNotification, billingNotificationAction, type BillingNotificationActions, type BillingNotificationAction } from "./components/billing-notification.js";
+
+export { ContentUpload, type ContentUploadProps } from "./components/admin/content-upload.js";
+export type { BulkDraftDefaults } from "./components/admin/bulk-drafts.js";
+export { MediaProcessingPanel, type MediaProcessingPanelProps } from "./components/media-processing-panel.js";
