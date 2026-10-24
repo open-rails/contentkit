@@ -32,8 +32,8 @@ func TestKeywordProfileIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND (table_name LIKE 'embedding%' OR table_name LIKE 'search\\_%')").Scan(&embedding); err != nil {
 		t.Fatal(err)
 	}
-	if tables != 3 || columns != 28 || embedding != 0 {
-		t.Fatalf("schema=%d tables/%d columns, %d pre-ContentKit tables; want 3/28/0", tables, columns, embedding)
+	if tables != 3 || columns != 29 || embedding != 0 {
+		t.Fatalf("schema=%d tables/%d columns, %d pre-ContentKit tables; want 3/29/0", tables, columns, embedding)
 	}
 	client, err := NewClient(ClientConfig{Pool: pool, Schema: "app", Tenant: testTenant})
 	if err != nil {

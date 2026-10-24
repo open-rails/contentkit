@@ -167,7 +167,10 @@ func TestPublishingReconcileOrderUpgrade(t *testing.T) {
 	}
 }
 
-func TestNamePrefixIndexUpgrade(t *testing.T) {
+// A document written before the stored terms keeps its title, gains terms
+// derived from its fields (not the dropped raw text), and only the current
+// search indexes remain.
+func TestSearchDocumentUpgrade(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
 	schema := pgtest.EmptySchema(t, ctx, pool)
@@ -205,9 +208,9 @@ func TestNamePrefixIndexUpgrade(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT title FROM `+quoted+`.content_search_documents`).Scan(&title); err != nil || title != "Business Question" {
 		t.Fatalf("upgrade changed existing documents: %q %v", title, err)
 	}
-	var present bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname=$1 AND indexname='content_search_documents_name_prefix')`, schema).Scan(&present); err != nil || !present {
-		t.Fatalf("name prefix index missing after upgrade: %v", err)
+	var terms []string
+	if err := pool.QueryRow(ctx, `SELECT terms FROM `+quoted+`.content_search_documents`).Scan(&terms); err != nil || !slices.Equal(terms, []string{"business question"}) {
+		t.Fatalf("stored terms after upgrade = %q %v", terms, err)
 	}
 	var identity, searched, empty, voiced, unvoiced string
 	if err := pool.QueryRow(ctx, `SELECT `+quoted+`.contentkit_keyword_normalize('The Café'),
@@ -218,13 +221,18 @@ func TestNamePrefixIndexUpgrade(t *testing.T) {
 	if identity != "the cafe" || searched != "cafe" || empty != "" || voiced != "ガンダム" || unvoiced != "カンタム" {
 		t.Fatalf("search normalization changed identity/native scripts: identity=%q search=%q filler=%q voiced=%q unvoiced=%q", identity, searched, empty, voiced, unvoiced)
 	}
-	var retained int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname=$1 AND indexname=ANY($2::text[])`, schema, []string{
-		"content_search_documents_keyword_exact", "content_search_documents_keyword_fuzzy", "content_search_documents_keyword_native", "content_search_documents_name_prefix",
-		"content_search_documents_search_exact", "content_search_documents_search_fuzzy", "content_search_documents_search_native", "content_search_documents_search_substring",
-		"content_search_documents_names_prefix", "content_search_documents_names_substring",
-	}).Scan(&retained); err != nil || retained != 10 {
-		t.Fatalf("rolling upgrade must retain old and new search indexes: %d %v", retained, err)
+	var indexes []string
+	if err := pool.QueryRow(ctx, `SELECT coalesce(array_agg(indexname ORDER BY indexname),'{}') FROM pg_indexes WHERE schemaname=$1 AND tablename='content_search_documents' AND indexname LIKE 'content_search_documents\_%' AND indexname<>'content_search_documents_key'`, schema).Scan(&indexes); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"content_search_documents_body_fuzzy", "content_search_documents_body_substring", "content_search_documents_kind_language",
+		"content_search_documents_names_prefix", "content_search_documents_names_substring", "content_search_documents_terms", "content_search_documents_terms_native"}
+	if !slices.Equal(indexes, want) {
+		t.Fatalf("search indexes after upgrade = %q, want %q", indexes, want)
+	}
+	var wrappers int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname IN ('contentkit_keyword_terms','contentkit_keyword_text')`, schema).Scan(&wrappers); err != nil || wrappers != 0 {
+		t.Fatalf("legacy search wrappers left: %d %v", wrappers, err)
 	}
 }
 
@@ -257,7 +265,7 @@ func TestPostgresBaseline(t *testing.T) {
 		}
 		applied = append(applied, f)
 	}
-	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql", "0011_search_substrings.up.sql", "0012_management_names.up.sql", "0013_code_paths.up.sql", "0014_page_notices.up.sql", "0015_pages_added.up.sql", "0016_body_excerpt.up.sql", "0017_reader_chapter_starts.up.sql", "0018_media_commit_notifications.up.sql", "0019_offer_targets.up.sql", "0020_listing_order_index.up.sql", "0021_publishing_reconcile_order.up.sql", "0022_management_order_index.up.sql", "0023_playable_versions.up.sql", "0024_original_titles_and_publication_visibility.up.sql", "0025_empty_version_lifecycle.up.sql", "0026_empty_publication_pages.up.sql", "0027_due_media_cleanup.up.sql", "0028_reader_metadata_snapshots.up.sql", "0029_version_storage_owner.up.sql", "0030_structured_post_excerpt.up.sql", "0031_notification_event_cursors.up.sql", "0032_catalog_event_log.up.sql", "0033_shared_catalog_event_storage.up.sql", "0034_audience_releases.up.sql", "0035_direct_interaction_counts.up.sql", "0036_retained_offer_targets.up.sql", "0037_account_anonymization.up.sql", "0038_runtime_entity_reads.up.sql", "0039_entity_terminology.up.sql"}
+	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql", "0011_search_substrings.up.sql", "0012_management_names.up.sql", "0013_code_paths.up.sql", "0014_page_notices.up.sql", "0015_pages_added.up.sql", "0016_body_excerpt.up.sql", "0017_reader_chapter_starts.up.sql", "0018_media_commit_notifications.up.sql", "0019_offer_targets.up.sql", "0020_listing_order_index.up.sql", "0021_publishing_reconcile_order.up.sql", "0022_management_order_index.up.sql", "0023_playable_versions.up.sql", "0024_original_titles_and_publication_visibility.up.sql", "0025_empty_version_lifecycle.up.sql", "0026_empty_publication_pages.up.sql", "0027_due_media_cleanup.up.sql", "0028_reader_metadata_snapshots.up.sql", "0029_version_storage_owner.up.sql", "0030_structured_post_excerpt.up.sql", "0031_notification_event_cursors.up.sql", "0032_catalog_event_log.up.sql", "0033_shared_catalog_event_storage.up.sql", "0034_audience_releases.up.sql", "0035_direct_interaction_counts.up.sql", "0036_retained_offer_targets.up.sql", "0037_account_anonymization.up.sql", "0038_runtime_entity_reads.up.sql", "0039_entity_terminology.up.sql", "0043_stored_search_terms.up.sql"}
 	if err := rows.Err(); err != nil || !slices.Equal(applied, want) {
 		t.Fatalf("ledger %v %v", applied, err)
 	}

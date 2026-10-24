@@ -84,7 +84,7 @@ func markDirty(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 func document(t *testing.T, ctx context.Context, pool *pgxpool.Pool, schema string) string {
 	t.Helper()
 	var s string
-	if err := pool.QueryRow(ctx, "SELECT raw_document FROM "+schema+".content_search_documents WHERE tenant_id=$1 AND content_id=$2", tenant, cid(1)).Scan(&s); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT title FROM "+schema+".content_search_documents WHERE tenant_id=$1 AND content_id=$2", tenant, cid(1)).Scan(&s); err != nil {
 		t.Fatal(err)
 	}
 	return s

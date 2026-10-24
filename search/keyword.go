@@ -25,7 +25,8 @@ type documentKey struct {
 // names precede aliases, name prefixes/substrings, contextual token matches,
 // then conservative one-edit typos. Common English fillers are search-only
 // normalization, never entity identity normalization.
-// PostgreSQL retrieves bounded candidates; Go never scans the document catalog.
+// PostgreSQL ranks literal candidates by match tier over the stored terms, so
+// a bounded window keeps the strongest matches; Go then scores that window.
 // The eligibility join runs inside every route before its limit.
 func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
 	return queryDocuments(ctx, pool, query, opts, keywordSearch)
@@ -55,106 +56,125 @@ func queryDocuments(ctx context.Context, pool *pgxpool.Pool, query string, opts 
 	return result, tx.Commit(ctx)
 }
 
+// keywordQuery is one normalized request and the SQL operators it uses.
+type keywordQuery struct {
+	q        string
+	tokens   []string
+	prefix   string
+	contains string
+	// trgm and native are the schemas of pg_trgm and PGroonga, quoted.
+	trgm, native string
+}
+
+func prepareKeyword(ctx context.Context, tx pgx.Tx, schema, query string) (keywordQuery, error) {
+	var k keywordQuery
+	if utf8.RuneCountInString(query) > 256 {
+		return k, fmt.Errorf("%w: keyword query exceeds 256 characters", ErrInvalidQuery)
+	}
+	qs, err := quoteIdent(schema)
+	if err != nil {
+		return k, err
+	}
+	// Normalize in the same database function as the stored terms. This avoids
+	// Go/Postgres Unicode casing and locale differences.
+	var trgm, native string
+	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_search_normalize($1),
+ (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'),
+ (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&k.q, &trgm, &native)
+	if err != nil {
+		return k, err
+	}
+	k.tokens = keywordTokens(k.q)
+	if len(k.tokens) > 16 {
+		return k, fmt.Errorf("%w: keyword query exceeds 16 tokens", ErrInvalidQuery)
+	}
+	k.trgm, _ = quoteIdent(trgm)
+	k.native, _ = quoteIdent(native)
+	k.contains = literalSubstring(k.q)
+	// Tokens contain letters/numbers only and are lowercase. Appending '*' makes
+	// each token a literal prefix, never an OR/NOT/query-language operator.
+	prefixes := make([]string, len(k.tokens))
+	for i, t := range k.tokens {
+		prefixes[i] = t + "*"
+	}
+	k.prefix = strings.Join(prefixes, " ")
+	return k, nil
+}
+
+// fuzzy reports whether typo tolerance applies. Its trigram prefilter admits
+// nearly every row, so it is always a bounded nearest-distance window; Go
+// accepts at most one edit.
+func (k keywordQuery) fuzzy() bool { return utf8.RuneCountInString(k.q) >= 3 }
+
+// literalRoutes match what keywordScore accepts without a typo: the exact term,
+// every token as a word prefix, or the query inside a name (or, for a
+// native-script query, inside any term). Each route selects cols from the
+// documents filtered by where through its own index; combined in one WHERE,
+// the planner would scan and evaluate PGroonga row by row.
+func (k keywordQuery) literalRoutes(cols, from, where, q, prefix, contains string) []string {
+	contained := ` AND EXISTS (SELECT 1 FROM unnest(sd.terms[1:1+cardinality(sd.aliases)]) AS name WHERE strpos(name,` + q + `)>0)`
+	if hasNativeScript(k.q) {
+		contained = ``
+	}
+	base := `SELECT ` + cols + ` FROM ` + from + ` WHERE ` + where + ` AND `
+	return []string{
+		base + `sd.terms @> ARRAY[` + q + `::text]`,
+		base + fmt.Sprintf(`sd.terms OPERATOR(%s.&@~) %s`, k.native, prefix),
+		base + `sd.body LIKE ` + contains + ` ESCAPE E'\\'` + contained,
+	}
+}
+
+// tierSQL orders literal candidates as keywordScore ranks them by name, over
+// rows carrying terms and their alias count; contextual token matches share
+// the lowest literal tier.
+const tierSQL = `CASE WHEN sd.terms[1]=@q THEN 4
+ WHEN @q=ANY(sd.terms[2:1+sd.aliases]) THEN 3
+ WHEN starts_with(sd.terms[1],@q) THEN 2
+ WHEN EXISTS (SELECT 1 FROM unnest(sd.terms[2:1+sd.aliases]) AS name WHERE starts_with(name,@q)) THEN 2
+ WHEN strpos(sd.terms[1],@q)>0 THEN 1
+ WHEN EXISTS (SELECT 1 FROM unnest(sd.terms[2:1+sd.aliases]) AS name WHERE strpos(name,@q)>0) THEN 1
+ ELSE 0 END`
+
 func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Result, error) {
 	var result Result
-	if utf8.RuneCountInString(query) > 256 {
-		return result, fmt.Errorf("%w: keyword query exceeds 256 characters", ErrInvalidQuery)
+	k, err := prepareKeyword(ctx, tx, opts.Schema, query)
+	if err != nil {
+		return result, err
 	}
-	args := pgx.NamedArgs{"q": "", "prefix": "", "contains": "", "limit": 0}
+	if len(k.tokens) == 0 {
+		result.Hits = []Hit{}
+		return result, nil
+	}
+	sqlLimit := min(MaxCandidateLimit, max(100, opts.Limit*8))
+	args := pgx.NamedArgs{"q": k.q, "prefix": k.prefix, "contains": k.contains, "limit": sqlLimit}
 	from, where, priority, err := hostClauses(opts, args)
 	if err != nil {
 		return result, err
 	}
-	qs, _ := quoteIdent(opts.Schema)
-	// Normalize in the same database function as the expression indexes. This
-	// avoids Go/Postgres Unicode casing and locale differences.
-	var q, trgmSchema, nativeSchema string
-	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_search_normalize($1),
- (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'),
- (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&q, &trgmSchema, &nativeSchema)
-	if err != nil {
-		return result, err
-	}
-	tokens := keywordTokens(q)
-	if len(tokens) == 0 {
-		result.Hits = []Hit{}
-		return result, nil
-	}
-	if len(tokens) > 16 {
-		return result, fmt.Errorf("%w: keyword query exceeds 16 tokens", ErrInvalidQuery)
-	}
-	qt, _ := quoteIdent(trgmSchema)
-	qn, _ := quoteIdent(nativeSchema)
-	terms := qs + `.contentkit_search_terms(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
-	corpus := qs + `.contentkit_search_text(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
-	sqlLimit := min(MaxCandidateLimit, max(100, opts.Limit*8))
-	args["q"], args["limit"] = q, sqlLimit
-	args["contains"] = literalSubstring(q)
-	// Tokens contain letters/numbers only and are lowercase. Appending '*' makes
-	// each token a literal prefix, never an OR/NOT/query-language operator.
-	prefixes := make([]string, len(tokens))
-	for i, t := range tokens {
-		prefixes[i] = t + "*"
-	}
-	args["prefix"] = strings.Join(prefixes, " ")
 	const order = `sd.content_kind,sd.content_id,sd.content_version_id NULLS FIRST`
-	selectSQL := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s AS priority,%s AS fields,cardinality(sd.aliases) AS aliases FROM %s WHERE %s AND `, priority, terms, from, where)
-	// Keep the normalized fields in a streaming projection. OFFSET 0 prevents
-	// flattening that would recompute them for both exact-rank expressions.
-	exact := `SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,sd.priority,sd.fields,sd.aliases FROM (` +
-		selectSQL + terms + ` @> ARRAY[@q::text] OFFSET 0) sd
- ORDER BY (sd.fields[1]=@q) DESC,(@q=ANY(sd.fields[2:1+sd.aliases])) DESC,` + order + ` LIMIT @limit`
-	prefix := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix ORDER BY %s LIMIT @limit`, terms, qn, order)
-	substring := selectSQL + corpus + ` LIKE @contains ESCAPE E'\\' ORDER BY ` + order + ` LIMIT @limit`
-	// The GiST word-distance order can stop after a bounded number of candidates.
-	// Acceptance below requires at most one Unicode edit, not a low similarity
-	// threshold. Queries of one/two characters never enter the fuzzy route.
-	fuzzy := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.%%>) @q ORDER BY %s OPERATOR(%s.<->>) @q,%s LIMIT @limit`, corpus, qt, corpus, qt, order)
+	cols := priority + ` AS priority,sd.terms,cardinality(sd.aliases) AS aliases`
+	literal := strings.Join(k.literalRoutes(`sd.content_kind,sd.content_id,sd.content_version_id,sd.language,`+cols, from, where, "@q", "@prefix", "@contains"), " UNION ")
+	queries := []string{`SELECT * FROM (` + literal + `) sd ORDER BY ` + tierSQL + ` DESC,` + order + ` LIMIT @limit`}
+	if k.fuzzy() {
+		queries = append(queries, fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s FROM %s WHERE %s AND sd.body OPERATOR(%s.%%>) @q ORDER BY sd.body OPERATOR(%s.<->>) @q,%s LIMIT @limit`, cols, from, where, k.trgm, k.trgm, order))
+	}
 	// The whole request has a two-second ceiling (or an earlier caller deadline),
 	// including candidate scoring. SET LOCAL applies before retrieval and cannot leak into
 	// another pooled request. A SELECT CTE setting the GUC has ambiguous timing.
 	if _, err = tx.Exec(ctx, `SET LOCAL pg_trgm.word_similarity_threshold=0.1; SET LOCAL statement_timeout=2000`); err != nil {
 		return result, err
 	}
-	queries := []string{exact, prefix, substring}
-	if utf8.RuneCountInString(q) >= 3 {
-		queries = append(queries, fuzzy)
-	}
 	found := map[documentKey]Hit{}
 	for _, query := range queries {
-		rows, err := tx.Query(ctx, query, args)
+		hits, seen, err := scoreRows(ctx, tx, query, args, opts.Tenant, k)
 		if err != nil {
 			return result, err
 		}
-		seen := 0
-		for rows.Next() {
-			if err := ctx.Err(); err != nil {
-				rows.Close()
-				return result, err
+		for _, h := range hits {
+			key := documentKey{h.Key(), h.Language}
+			if old, ok := found[key]; !ok || h.Score > old.Score {
+				found[key] = h
 			}
-			seen++
-			h := Hit{ContentRef: contentref.ContentRef{TenantID: opts.Tenant}}
-			var fields []string
-			var aliases int
-			if err := rows.Scan(&h.ContentKind, &h.ContentID, &h.ContentVersionID, &h.Language, &h.Priority, &fields, &aliases); err != nil {
-				rows.Close()
-				return result, err
-			}
-			h.Score = keywordScore(ctx, q, tokens, fields, aliases)
-			if err := ctx.Err(); err != nil {
-				rows.Close()
-				return result, err
-			}
-			if h.Score > 0 {
-				k := documentKey{h.Key(), h.Language}
-				if old, ok := found[k]; !ok || h.Score > old.Score {
-					found[k] = h
-				}
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return result, err
 		}
 		if seen >= sqlLimit {
 			result.Truncated = true
@@ -174,6 +194,40 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	}
 	result.Hits = out
 	return result, nil
+}
+
+// scoreRows reads one route's rows and keeps the documents keywordScore
+// accepts. Rows are read before scoring so the statement finishes within its
+// timeout however long scoring takes. It reports how many rows the route
+// returned.
+func scoreRows(ctx context.Context, tx pgx.Tx, query string, args pgx.NamedArgs, tenant string, k keywordQuery) ([]Hit, int, error) {
+	type row struct {
+		hit     Hit
+		fields  []string
+		aliases int
+	}
+	rows, err := tx.Query(ctx, query, args)
+	if err != nil {
+		return nil, 0, err
+	}
+	read, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
+		x := row{hit: Hit{ContentRef: contentref.ContentRef{TenantID: tenant}}}
+		err := r.Scan(&x.hit.ContentKind, &x.hit.ContentID, &x.hit.ContentVersionID, &x.hit.Language, &x.hit.Priority, &x.fields, &x.aliases)
+		return x, err
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	var hits []Hit
+	for _, x := range read {
+		if x.hit.Score = keywordScore(ctx, k.q, k.tokens, x.fields, x.aliases); x.hit.Score > 0 {
+			hits = append(hits, x.hit)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+	}
+	return hits, len(read), nil
 }
 
 func hitLess(a, b Hit) bool {

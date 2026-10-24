@@ -1064,11 +1064,10 @@ Inazuma created it. Full `GET /v1/search` retains broader keyword and typo
 matching. Visibility, tenant, language and version eligibility still apply.
 The host owns search-page navigation and suggestion links.
 
-Core migration `0011_search_substrings` adds search-only indexes for native
-literal substring retrieval and normalized full search; apply normal migrations
-before serving the new core. Original functions/indexes remain in place so
-0.103 writers can overlap during an upgrade. Native query-plan tests verify
-the indexed Latin/CJK paths against a 50,000-document catalog.
+Search documents store their normalized terms (core migration
+`0043_stored_search_terms`); apply normal migrations before serving the new
+core. Native query-plan tests verify the indexed Latin/CJK paths against a
+50,000-document catalog.
 `ReaderSettings` combines language selection and content filters in one dialog:
 
 ```tsx
