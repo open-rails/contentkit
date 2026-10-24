@@ -151,6 +151,12 @@ type HubSearchOptions struct {
 	Personalize *Personalization
 }
 
+// KeywordMatch is the SQL selecting every content item matching userText; see
+// Client.KeywordMatch.
+func (h *Hub) KeywordMatch(ctx context.Context, userText string, opts SearchOptions) (search.Match, error) {
+	return h.client.KeywordMatch(ctx, userText, opts)
+}
+
 func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions) (SearchResult, error) {
 	if opts.Personalize == nil {
 		return h.client.Search(ctx, userText, opts.SearchOptions)

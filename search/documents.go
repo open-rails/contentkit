@@ -78,14 +78,13 @@ type documentRow struct {
 	Title            string   `json:"title,omitempty"`
 	Aliases          []string `json:"aliases"`
 	Keywords         []string `json:"keywords"`
-	Raw              string   `json:"raw,omitempty"`
 }
 
 func keyRow(k DocumentKey) documentRow {
 	return documentRow{TenantID: k.TenantID, ContentKind: k.ContentKind, ContentID: k.ContentID, ContentVersionID: k.ContentVersionID, Language: k.Language}
 }
 
-const rowColumns = `(tenant_id text,content_kind text,content_id text,content_version_id text,language text,title text,aliases text[],keywords text[],raw text)`
+const rowColumns = `(tenant_id text,content_kind text,content_id text,content_version_id text,language text,title text,aliases text[],keywords text[])`
 
 // UpsertKeywordDocuments derives every lexical projection from structured
 // input for a batch of documents of any tenant, kind or language.
@@ -110,7 +109,6 @@ func UpsertKeywordDocuments(ctx context.Context, db Executor, schema string, doc
 		}
 		row := keyRow(doc.DocumentKey)
 		row.Title, row.Aliases, row.Keywords = doc.Title, append([]string{}, doc.Aliases...), append([]string{}, doc.Keywords...)
-		row.Raw = strings.Join(append(append([]string{doc.Title}, row.Aliases...), row.Keywords...), "\n")
 		rows = append(rows, row)
 	}
 	if len(rows) > 0 {
@@ -118,10 +116,10 @@ func UpsertKeywordDocuments(ctx context.Context, db Executor, schema string, doc
 		if err != nil {
 			return err
 		}
-		query := fmt.Sprintf(`INSERT INTO %s.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,aliases,keywords,raw_document,created_at,updated_at)
-   SELECT r.tenant_id,r.content_kind,r.content_id,r.content_version_id,r.language,r.title,r.aliases,r.keywords,r.raw,now(),now()
+		query := fmt.Sprintf(`INSERT INTO %s.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,aliases,keywords,created_at,updated_at)
+   SELECT r.tenant_id,r.content_kind,r.content_id,r.content_version_id,r.language,r.title,r.aliases,r.keywords,now(),now()
    FROM jsonb_to_recordset($1::jsonb) AS r%s
-   ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO UPDATE SET title=EXCLUDED.title,aliases=EXCLUDED.aliases,keywords=EXCLUDED.keywords,raw_document=EXCLUDED.raw_document,updated_at=now()`, qs, rowColumns)
+   ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO UPDATE SET title=EXCLUDED.title,aliases=EXCLUDED.aliases,keywords=EXCLUDED.keywords,updated_at=now()`, qs, rowColumns)
 		if _, err := db.Exec(ctx, query, data); err != nil {
 			return err
 		}

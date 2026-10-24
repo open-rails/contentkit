@@ -17,14 +17,18 @@ func (s *Service) searchSummary(ctx context.Context, o SearchOptions, selected *
 	if err != nil {
 		return nil, err
 	}
-	limit := search.MaxCandidateLimit
+	opts := hub.SearchOptions{Language: relaxed.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind),
+		Eligibility: s.eligibility(relaxed), Limit: search.MaxCandidateLimit, CandidateLimit: search.MaxCandidateLimit}
 	if o.Sort != "" && o.Sort != SortRelevance {
-		limit = sortedMatches
+		match, err := s.o.Hub.KeywordMatch(ctx, o.Query, opts)
+		if err != nil {
+			return nil, err
+		}
+		return s.listingSummary(ctx, o.Filter, selected, sort, &summaryCandidates{selection: func(q *sel) *sel {
+			return q.with("f.content_id IN ("+match.SQL+")", match.Args)
+		}})
 	}
-	res, err := s.o.Hub.Search(ctx, o.Query, hub.HubSearchOptions{SearchOptions: hub.SearchOptions{
-		Language: relaxed.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind),
-		Eligibility: s.eligibility(relaxed), Limit: limit, CandidateLimit: search.MaxCandidateLimit,
-	}})
+	res, err := s.o.Hub.Search(ctx, o.Query, hub.HubSearchOptions{SearchOptions: opts})
 	if err != nil {
 		return nil, err
 	}
