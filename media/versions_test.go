@@ -14,7 +14,7 @@ import (
 func bookKind() media.Kind {
 	pngs := []string{"image/png"}
 	return media.Kind{Name: "book", KeepOriginals: true,
-		Publish: &media.Publish{Pages: "pages/{name}", Renditions: []string{"read", "thumb"}, Previews: "preview", Playback: "listen",
+		Publish: &media.Publish{Pages: "pages/{name}", Renditions: []string{"read", "thumb"}, Previews: "preview", Playback: "audio/{name}",
 			Import: "import/{name}", Download: "zip"},
 		Uploads: []media.Upload{
 			{Path: "cover", Types: pngs, MaxBytes: 1 << 20},
@@ -28,7 +28,6 @@ func bookKind() media.Kind {
 			{Name: "thumb", From: "pages/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 10}},
 			{Name: "high", From: "pages/{name}", To: "high/{name}.webp", Image: &media.Image{}},
 			{Name: "zip", To: "download/pages.zip", Zip: "high/", HostOnly: true},
-			{Name: "listen", From: "audio/{name}", To: "listen/{name}/", Audio: &media.Audio{}},
 		},
 		Public: []media.Public{
 			{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{100}},

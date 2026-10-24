@@ -37,7 +37,6 @@ VALUES ('contentkit_media_video', '{}', 5, $1, $2, $3, $4, $5, $6)`,
 	insert(schema, VideoQueue, "available", 1, 3, now.Add(-2*time.Hour))
 	insert(schema, VideoQueue, "available", 1, 0, now.Add(-10*time.Minute))
 	insert(schema, VideoQueue, "available", 2, 4, now.Add(time.Hour))
-	insert(schema, AudioQueue, "running", 1, 2, now)
 	insert(schema, ImageQueue, "retryable", 1, 3, now)
 	insert(schema, ImageQueue, "scheduled", 4, 0, now.Add(time.Hour))
 	insert(schema, VideoQueue, "completed", 1, 5, now.Add(-3*time.Hour))
@@ -47,8 +46,8 @@ VALUES ('contentkit_media_video', '{}', 5, $1, $2, $3, $4, $5, $6)`,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(statuses) != 5 {
-		t.Fatalf("got %d groups, want 5: %+v", len(statuses), statuses)
+	if len(statuses) != 4 {
+		t.Fatalf("got %d groups, want 4: %+v", len(statuses), statuses)
 	}
 	byEntity := make(map[string]JobStatus, len(statuses))
 	for _, status := range statuses {
@@ -58,7 +57,6 @@ VALUES ('contentkit_media_video', '{}', 5, $1, $2, $3, $4, $5, $6)`,
 	for key, want := range map[string]struct{ jobs, high int64 }{
 		"media_video/available/1": {2, 1},
 		"media_video/available/2": {1, 1},
-		"media_audio/running/1":   {1, 0},
 		"media_image/retryable/1": {1, 1},
 		"media_image/scheduled/4": {1, 0},
 	} {
@@ -70,7 +68,7 @@ VALUES ('contentkit_media_video', '{}', 5, $1, $2, $3, $4, $5, $6)`,
 	if age := byEntity["media_video/available/1"].OldestAvailableSeconds; age < (2*time.Hour-15*time.Second).Seconds() || age > (2*time.Hour+15*time.Second).Seconds() {
 		t.Errorf("oldest runnable age = %.0f seconds, want about two hours", age)
 	}
-	for _, key := range []string{"media_video/available/2", "media_audio/running/1", "media_image/retryable/1", "media_image/scheduled/4"} {
+	for _, key := range []string{"media_video/available/2", "media_image/retryable/1", "media_image/scheduled/4"} {
 		if age := byEntity[key].OldestAvailableSeconds; age != 0 {
 			t.Errorf("%s: age = %.0f, want zero", key, age)
 		}

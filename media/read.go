@@ -608,7 +608,7 @@ func (e *editorViews) url(ctx context.Context, f File) (string, error) {
 func (r *Reader) addProgress(files []FileInfo, st EncodeStatus) {
 	for i := range files {
 		f := &files[i]
-		if !f.Upload || len(f.Pending) == 0 || !(isVideoType(f.Type) || isAudioType(f.Type)) {
+		if !f.Upload || len(f.Pending) == 0 || !isVideoType(f.Type) {
 			continue
 		}
 		if p, ok := st.Files[f.Path]; ok {

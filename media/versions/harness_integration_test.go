@@ -60,7 +60,7 @@ func mediaKinds(ns string, hooks media.Hooks) media.Config {
 		Kinds: []media.Kind{
 			{Name: "gallery", Versions: true, KeepOriginals: true,
 				Publish: &media.Publish{Pages: "originals/{name}", Renditions: []string{"low", "thumb"}, Previews: "preview",
-					Playback: "listen", Import: "import/{name}", Download: "zip"},
+					Playback: "audio/{name}", Import: "import/{name}", Download: "zip"},
 				Uploads: []media.Upload{
 					{Path: "cover", Types: pngs, MaxBytes: 10 << 20},
 					{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20},
@@ -73,7 +73,6 @@ func mediaKinds(ns string, hooks media.Hooks) media.Config {
 					{Name: "thumb", From: "originals/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 40, Height: 60, Fit: media.FitCover}},
 					{Name: "high", From: "originals/{name}", To: "high/{name}.webp", Image: &media.Image{}},
 					{Name: "zip", To: "download/pages.zip", Download: "{title}.zip", Zip: "high/", HostOnly: true},
-					{Name: "listen", From: "audio/{name}", To: "listen/{name}/", Audio: &media.Audio{}},
 				},
 				Public: []media.Public{
 					{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{64}},

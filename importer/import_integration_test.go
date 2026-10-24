@@ -754,11 +754,10 @@ func TestImportThenIngestMedia(t *testing.T) {
 		pngs := []string{"image/png"}
 		cfg.Media = &contentkit.MediaConfig{
 			Config: media.Config{BaseURL: "https://media.test", Kinds: []media.Kind{{Name: "gallery", KeepOriginals: true,
-				Publish: &media.Publish{Pages: "originals/{name}", Renditions: []string{"low"}, Playback: "listen"},
+				Publish: &media.Publish{Pages: "originals/{name}", Renditions: []string{"low"}, Playback: "audio/{name}"},
 				Uploads: []media.Upload{{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20},
 					{Path: "audio/{name}", Types: []string{"audio/mpeg"}, MaxBytes: 10 << 20}},
-				Private: []media.Private{{Name: "low", From: "originals/{name}", To: "low/{name}.webp", Image: &media.Image{Width: 64, Quality: 80}},
-					{Name: "listen", From: "audio/{name}", To: "listen/{name}/", Audio: &media.Audio{}}}}}},
+				Private: []media.Private{{Name: "low", From: "originals/{name}", To: "low/{name}.webp", Image: &media.Image{Width: 64, Quality: 80}}}}}},
 			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
 			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true}}
 		deps.Store = env.Store

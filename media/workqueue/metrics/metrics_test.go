@@ -54,7 +54,6 @@ func TestCollector(t *testing.T) {
 		{workqueue.VideoArgs{Ref: ref("tenant-b", "video")}, river.InsertOpts{Queue: workqueue.VideoQueue, Priority: 1, Pending: true}},
 		{workqueue.VideoArgs{Ref: ref("tenant-c", "video")}, river.InsertOpts{Queue: workqueue.VideoQueue, Priority: 3}},
 		{workqueue.ImageArgs{Ref: ref("tenant-b", "gallery")}, river.InsertOpts{Queue: workqueue.ImageQueue, Priority: 1}},
-		{workqueue.AudioArgs{Ref: ref("tenant-c", "audio")}, river.InsertOpts{Queue: workqueue.AudioQueue, Priority: 4}},
 	} {
 		if _, err := client.Insert(ctx, job.args, &job.opts); err != nil {
 			t.Fatal(err)
@@ -124,7 +123,6 @@ func TestCollector(t *testing.T) {
 		`media_video_jobs{priority="1",queue="media_video",state="pending"} 1`,
 		`media_video_jobs{priority="3",queue="media_video",state="available"} 1`,
 		`media_video_jobs{priority="1",queue="media_image",state="available"} 1`,
-		`media_video_jobs{priority="4",queue="media_audio",state="available"} 1`,
 		`media_video_high_attempt_jobs{priority="1",queue="media_video",state="available"} 1`,
 		`media_video_tenant_backlog{tenant="tenant-a"} 2`,
 		`media_video_tenant_backlog{tenant="tenant-b"} 1`,

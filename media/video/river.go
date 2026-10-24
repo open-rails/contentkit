@@ -21,21 +21,17 @@ import (
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
-// WorkerConfig configures resumable video conversion and audio jobs.
+// WorkerConfig configures resumable video conversion.
 type WorkerConfig struct {
-	Encoder *Encoder // its Manifests carry the host's registry
-	Pool    *pgxpool.Pool
-	Schema  string // the host's worker schema (workqueue.ValidSchema)
-	// Timeout bounds an audio job. A video attempt checkpoints one bounded
-	// range and has a one-hour timeout; audio keeps its 48-hour default.
-	Timeout      time.Duration
-	MaxWorkers   int           // concurrent video jobs per process; default 1 (ffmpeg uses every core)
-	AudioWorkers int           // concurrent audio jobs per process; default 2
-	ChunkTarget  time.Duration // estimated CPU work per chunk; default 5 minutes
-	Logger       *slog.Logger
+	Encoder     *Encoder // its Manifests carry the host's registry
+	Pool        *pgxpool.Pool
+	Schema      string        // the host's worker schema (workqueue.ValidSchema)
+	MaxWorkers  int           // concurrent video jobs per process; default 1
+	ChunkTarget time.Duration // estimated CPU work per chunk; default 5 minutes
+	Logger      *slog.Logger
 }
 
-// Contribution registers the video and audio workers and queues for
+// Contribution registers the video worker and queue for
 // riverhelpers.New on a client with c.Schema.
 func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 	if c.Encoder == nil || c.Pool == nil {
@@ -49,29 +45,17 @@ func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 		if cfg.Schema != c.Schema {
 			return fmt.Errorf("media/video: River schema must be %q, not %q", c.Schema, cfg.Schema)
 		}
-		for _, q := range []string{workqueue.VideoQueue, workqueue.AudioQueue} {
-			if _, ok := cfg.Queues[q]; ok {
-				return fmt.Errorf("media/video: queue %q already registered", q)
-			}
+		if _, ok := cfg.Queues[workqueue.VideoQueue]; ok {
+			return fmt.Errorf("media/video: queue %q already registered", workqueue.VideoQueue)
 		}
 		cfg.Queues[workqueue.VideoQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
-		cfg.Queues[workqueue.AudioQueue] = river.QueueConfig{MaxWorkers: c.AudioWorkers}
-		if err := river.AddWorkerSafely(cfg.Workers, &videoWorker{c: c}); err != nil {
-			return err
-		}
-		return river.AddWorkerSafely(cfg.Workers, &audioWorker{c: c})
+		return river.AddWorkerSafely(cfg.Workers, &videoWorker{c: c})
 	}, nil, nil), nil
 }
 
 func (c WorkerConfig) defaults() WorkerConfig {
-	if c.Timeout <= 0 {
-		c.Timeout = 48 * time.Hour
-	}
 	if c.MaxWorkers <= 0 {
 		c.MaxWorkers = 1
-	}
-	if c.AudioWorkers <= 0 {
-		c.AudioWorkers = 2
 	}
 	if c.ChunkTarget <= 0 {
 		c.ChunkTarget = 5 * time.Minute
@@ -82,7 +66,7 @@ func (c WorkerConfig) defaults() WorkerConfig {
 	return c
 }
 
-// ClientConfig is a River client configuration running only c's video and audio jobs.
+// ClientConfig is a River client configuration running only c's video jobs.
 func ClientConfig(c WorkerConfig) *river.Config {
 	c = c.defaults()
 	return &river.Config{Schema: c.Schema, JobTimeout: time.Hour,
@@ -276,40 +260,9 @@ SET attempt = $2 WHERE id = $1 AND state = 'running' AND attempt = $3`, job.ID, 
 }
 
 // lockedSnooze is how long a job waits while another job of its item holds
-// the item's plan or audio lock; the later job then finds the work done or
+// the item's plan lock; the later job then finds the work done or
 // does what the earlier one did not see.
 const lockedSnooze = 5 * time.Second
-
-type audioWorker struct {
-	river.WorkerDefaults[workqueue.AudioArgs]
-	c WorkerConfig
-}
-
-func (w *audioWorker) Timeout(*river.Job[workqueue.AudioArgs]) time.Duration { return w.c.Timeout }
-
-// Work produces the item's stale Audio presets under the item's audio lock,
-// so a video encode of the same item does not hold it back.
-func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioArgs]) (err error) {
-	defer func() { err = media.SnoozeUnavailable(ctx, w.c.store(), job.JobRow, err) }()
-	item, err := w.c.Encoder.ms.Registry().Item(job.Args.Ref)
-	if err != nil {
-		return river.JobCancel(err)
-	}
-	// The lock's own connection lives outside Pool.
-	release, ok, err := pglock.Acquire(ctx, w.c.Pool, "contentkit:media:audio:"+job.Args.Ref.String(), false)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return river.JobSnooze(lockedSnooze)
-	}
-	defer release()
-	defer w.c.clearProgress(ctx, job.ID)
-	if err = w.c.Encoder.audio(ctx, item, job.Args, w.c.report(job.ID)); errors.Is(err, media.ErrManifestTooLarge) {
-		return w.c.full(ctx, job.Args.Ref, err)
-	}
-	return err
-}
 
 // full marks the item Full (its outputs do not fit) and ends the job: a
 // retry would only be refused again.

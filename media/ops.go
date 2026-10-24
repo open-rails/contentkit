@@ -502,6 +502,12 @@ func (o *opRun) place(g, i int, f File, index *int) error {
 	m.index = nil
 	if old.Source() != f.Source() {
 		o.regrab(old.Path)
+		// Retired producers cannot refresh retained legacy outputs. Keep them
+		// only while the original source bytes stay unchanged.
+		m.Files = slices.DeleteFunc(m.Files, func(out File) bool {
+			return !out.IsUpload() && out.From == f.Path && o.k.private(out.Preset) == nil
+		})
+		m.index = nil
 	}
 	return nil
 }

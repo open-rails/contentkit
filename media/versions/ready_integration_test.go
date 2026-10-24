@@ -69,7 +69,7 @@ func TestPendingUntilPublished(t *testing.T) {
 	}
 	edit(func(f *media.File) { f.Failed = nil })
 
-	// Audio is waited for once the version has some; image-only versions never are.
+	// Audio is available after placement; a retired conversion cannot keep it pending.
 	s.mustUpload(s.creator, ref, "audio/theme", "audio/wav", wav(t))
 	s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Playback != nil && len(p.Playback.Tracks) == 1 })
 	if p := pending(); len(p) != 0 {
@@ -85,7 +85,7 @@ func TestPendingUntilPublished(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if p := pending(); len(p) != 1 || p[0].Reason != "playback media is still processing" {
-		t.Fatalf("producing audio: %+v", p)
+	if p := pending(); len(p) != 0 {
+		t.Fatalf("retired audio conversion kept playback pending: %+v", p)
 	}
 }

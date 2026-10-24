@@ -159,7 +159,7 @@ func TestPublication(t *testing.T) {
 		s.tenant, v.Version)
 	fan = s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return p.Playback != nil })
 	if !eq(locks(fan), []bool{false, false, false}) || !fan.Segments[2].Released || fan.Playback.Tracks[0].Name != "theme" ||
-		fan.Playback.Tracks[0].Path != "listen/theme/audio.m4a" || fan.Publication != editor.Publication || fan.Playback.Item != canonical {
+		fan.Playback.Tracks[0].Path != "audio/theme.wav" || fan.Publication != editor.Publication || fan.Playback.Item != canonical {
 		t.Fatalf("released plan %+v", fan)
 	}
 	track := fan.Playback.Tracks[0].Path

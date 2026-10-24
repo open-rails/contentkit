@@ -105,16 +105,28 @@ func (r Readiness) Ready() bool { return r.State == StateReady }
 
 // Readiness is the manifest's readiness under k.
 func (k *Kind) Readiness(m *Manifest) Readiness {
+	return k.readiness(m, false)
+}
+
+// NeedsProcessing includes staged uploads, whose private renditions can be
+// prepared before Save. Public renditions still wait for attachment.
+func (k *Kind) NeedsProcessing(m *Manifest) bool {
+	return len(k.readiness(m, true).Processing) != 0
+}
+
+func (k *Kind) readiness(m *Manifest, includeUnattached bool) Readiness {
 	var r Readiness
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached {
+		if !f.IsUpload() || f.Unattached && !includeUnattached {
 			continue
 		}
+		public := !m.Hidden && !f.Unattached
+		measure := includeUnattached && isImageType(f.Type) && (f.W <= 0 || f.H <= 0) && len(k.Presets(f.Path, false)) != 0
 		switch {
-		case f.Fail() != nil:
+		case f.Fail() != nil && !k.audioOriginal(f):
 			r.Failed = append(r.Failed, f.Path)
-		case f.Blob == "" || slices.ContainsFunc(f.Pending, func(p string) bool { return !m.Hidden || k.public(p) == nil }) ||
-			!m.Hidden && slices.ContainsFunc(f.Public, func(p Publication) bool { return !p.Ready() }):
+		case f.Blob == "" || measure || slices.ContainsFunc(f.Pending, func(p string) bool { return k.private(p) != nil || public && k.public(p) != nil }) ||
+			public && slices.ContainsFunc(f.Public, func(p Publication) bool { return !p.Ready() }):
 			r.Processing = append(r.Processing, f.Path)
 		}
 	}
@@ -178,7 +190,7 @@ func (k *Kind) Normalize(m *Manifest) {
 // frame, it is no body image (new versions copy those, editors view them),
 // and nothing is pending or failed from it.
 func (k *Kind) droppable(m *Manifest, f File) bool {
-	if k.KeepOriginals || k.IsPageUpload(f) || k.AudioUpload(f) || f.Blob == "" || len(f.Pending) > 0 || f.Fail() != nil || len(k.PublicFor(f.Path)) > 0 {
+	if k.KeepOriginals || k.IsPageUpload(f) || k.audioOriginal(f) || f.Blob == "" || len(f.Pending) > 0 || f.Fail() != nil || len(k.PublicFor(f.Path)) > 0 {
 		return false
 	}
 	i, _, _, _, ok := k.upload(f.Path)

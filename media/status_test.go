@@ -228,3 +228,36 @@ func TestStatusDefersUnattachedPublicEncoding(t *testing.T) {
 		t.Fatalf("deferred public work kept a stale encoding checkpoint: %+v", got)
 	}
 }
+
+func TestStagedPrivateProcessingSurvivesAudioPassThrough(t *testing.T) {
+	k := &Kind{Uploads: []Upload{{Path: "body/{name}", Types: []string{"image/png"}}, {Path: "audio/{name}", Types: []string{"audio/wav"}}}, Private: []Private{{Name: "read", From: "body/{name}"}}, Public: []Public{{Name: "thumb", From: "body/{name}"}}}
+	compileStatusKind(t, k)
+	m := &Manifest{Files: []File{{Path: "body/new.png", Type: "image/png", Blob: statusBlob("new page"), Unattached: true, Pending: []string{"read", "thumb"}}}}
+	if k.Readiness(m).State != StateReady || !k.NeedsProcessing(m) || statusOf(k, m, EncodeStatus{}).State != StateProcessing {
+		t.Fatal("staged private image processing was suppressed by publication readiness")
+	}
+	m.Files[0].Pending = []string{"thumb"}
+	m.Files[0].W, m.Files[0].H = 10, 20
+	if k.NeedsProcessing(m) {
+		t.Fatal("staged public output scheduled processing before attachment")
+	}
+	m.Files[0].W, m.Files[0].H = 0, 0
+	if !k.NeedsProcessing(m) {
+		t.Fatal("new image measurement/editor preparation was skipped")
+	}
+	for _, unattached := range []bool{false, true} {
+		audio := File{Path: "audio/theme.wav", Type: "audio/wav", Blob: statusBlob("original audio"), Unattached: unattached, Pending: []string{"listen"}}
+		audio.Failed = NewFailure(audio, &ImageError{Code: CodeInvalid, Message: "retired audio encoder failure"})
+		m = &Manifest{Files: []File{audio}}
+		got := statusOf(k, m, EncodeStatus{Files: map[string]EncodeProgress{audio.Path: {Phase: PhaseEncoding}}})
+		if k.NeedsProcessing(m) || got.State != StateReady || got.Uploads.Completed != 1 || got.FailureCount != 0 || got.Encoding != nil {
+			t.Fatalf("placed original audio retained obsolete conversion work: %+v", got)
+		}
+		if k.AudioUpload(audio) == unattached {
+			t.Fatal("unattached audio became readable or attached audio was denied")
+		}
+		if info := uploadInfo(audio, k); len(info.Pending) != 0 || info.Failed != nil {
+			t.Fatalf("editor row retained obsolete audio work: %+v", info)
+		}
+	}
+}

@@ -64,8 +64,6 @@ func FromEnv(ctx context.Context) (Config, error) {
 //	MEDIA_WORKER_ENCODER         auto (default: per codec NVENC if a probe encode works, else CPU), cpu or nvenc
 //	MEDIA_WORKER_CONCURRENCY     video jobs per process (default 1)
 //	MEDIA_WORKER_IMAGE_CONCURRENCY  image jobs per process (default 2)
-//	MEDIA_WORKER_AUDIO_CONCURRENCY  audio jobs per process (default 2)
-//	MEDIA_WORKER_JOB_TIMEOUT     per audio job (default 48h); video tasks use 1h
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 func (c *Config) TuningFromEnv() error {
 	for k, p := range map[string]*string{"MEDIA_ACCOUNT_SCHEMA": &c.AccountSchema, "MEDIA_ACCOUNT_WORKER_SCHEMA": &c.AccountWorkerSchema, "MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_CONTENT_SCHEMA": &c.ContentSchema, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_HOST_QUEUE": &c.HostQueue, "MEDIA_WORKER_TMP": &c.TempDir,
@@ -81,14 +79,14 @@ func (c *Config) TuningFromEnv() error {
 		}
 	}
 	for k, p := range map[string]*int{"MEDIA_WORKER_THREADS": &c.Threads, "MEDIA_WORKER_CONCURRENCY": &c.VideoWorkers,
-		"MEDIA_WORKER_IMAGE_CONCURRENCY": &c.ImageWorkers, "MEDIA_WORKER_AUDIO_CONCURRENCY": &c.AudioWorkers} {
+		"MEDIA_WORKER_IMAGE_CONCURRENCY": &c.ImageWorkers} {
 		n, err := intEnv(k, *p)
 		if err != nil {
 			return err
 		}
 		*p = n
 	}
-	for k, p := range map[string]*time.Duration{"MEDIA_HOST_GRACE": &c.Grace, "MEDIA_WORKER_JOB_TIMEOUT": &c.VideoTimeout,
+	for k, p := range map[string]*time.Duration{"MEDIA_HOST_GRACE": &c.Grace,
 		"MEDIA_WORKER_SHUTDOWN_GRACE": &c.ShutdownGrace} {
 		d, err := durationEnv(k, *p)
 		if err != nil {

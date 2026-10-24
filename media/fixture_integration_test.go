@@ -463,7 +463,7 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 		}
 		for _, p := range k.PrivateFor(u.Path) {
 			area := k.Area("", p.Name)
-			if from, _, _ := layout.SplitBlobRef(u.Blob); p.Zip != "" || p.HLS != nil || p.Audio != nil || area == from && area == layout.AreaPrivate {
+			if from, _, _ := layout.SplitBlobRef(u.Blob); p.Zip != "" || p.HLS != nil || area == from && area == layout.AreaPrivate {
 				continue
 			}
 			sum, _ := layout.BlobDigest(u.Blob)
@@ -488,7 +488,7 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 				continue
 			}
 			for _, p := range k.PrivateFor(u.Path) {
-				if p.Zip != "" || p.HLS != nil || p.Audio != nil {
+				if p.Zip != "" || p.HLS != nil {
 					continue
 				}
 				blob := u.Blob

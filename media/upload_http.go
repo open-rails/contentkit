@@ -192,12 +192,16 @@ func (h uploadHandler) commit(w http.ResponseWriter, r *http.Request) {
 
 // uploadInfo is an upload as an editor reads it, without URLs.
 func uploadInfo(f File, k *Kind) FileInfo {
-	pending := f.Pending
-	if importPending(k, f) && !slices.Contains(pending, "extract") {
-		pending = append(slices.Clone(pending), "extract")
+	pending := slices.DeleteFunc(slices.Clone(f.Pending), func(name string) bool { return k.private(name) == nil && k.public(name) == nil })
+	if statusArchivePending(k, f) {
+		pending = append(pending, "extract")
+	}
+	failed := f.Fail()
+	if k.audioOriginal(f) {
+		failed = nil
 	}
 	return FileInfo{Path: f.Path, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur, Upload: true,
-		PageID: k.PageID(f), CreateID: f.CreateID, Staged: f.Staged != "", Edit: f.Edit, Frame: f.Frame, Meta: f.Meta, Unattached: f.Unattached, Pending: pending, Failed: f.Fail()}
+		PageID: k.PageID(f), CreateID: f.CreateID, Staged: f.Staged != "", Edit: f.Edit, Frame: f.Frame, Meta: f.Meta, Unattached: f.Unattached, Pending: pending, Failed: failed}
 }
 
 func (h uploadHandler) frame(w http.ResponseWriter, r *http.Request) {

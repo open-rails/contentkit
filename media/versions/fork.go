@@ -100,7 +100,7 @@ func forkSource(k *media.Kind, m *media.Manifest, playback bool) (string, []medi
 	}
 	var audio string
 	if k.Publish != nil && k.Publish.Playback != "" {
-		audio = private(k, k.Publish.Playback).From
+		audio = k.Publish.Playback
 	}
 	var files []media.File
 	for _, f := range m.Files {

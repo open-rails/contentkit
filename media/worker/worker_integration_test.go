@@ -76,7 +76,6 @@ func registry(ns string, hooks media.Hooks) media.Config {
 			Uploads: []media.Upload{{Path: "pages/{name}", Types: pngs, MaxBytes: 10 << 20}, {Path: "tracks/{name}", Types: []string{"audio/wav"}, MaxBytes: 10 << 20}},
 			Private: []media.Private{
 				{Name: "thumb", From: "pages/{name}", To: "thumbs/{name}.webp", Image: &media.Image{Width: 100, Height: 150}},
-				{Name: "listen", From: "tracks/{name}", To: "listen/{name}/", Audio: &media.Audio{}},
 			},
 		},
 	}}
@@ -654,6 +653,20 @@ func TestUnattachedThenAttached(t *testing.T) {
 	}
 }
 
+func TestUnattachedCoverIsMeasuredBeforeAttachment(t *testing.T) {
+	h := newHost(t)
+	ref := h.ref(t, "gallery")
+	p, blob := h.stage(t, ref, "cover", "image/png", pngImage(t, 600, 200, 8))
+	h.commit(t, ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
+	eventually(t, "unattached cover dimensions", time.Minute, func() bool {
+		file, ok := h.file(ref, p)
+		return ok && file.Unattached && file.W == 600 && file.H == 200
+	})
+	if got := h.read(t, ref, access.Actor{Anonymous: true, IP: "203.0.113.10"}, false); len(got) != 0 {
+		t.Fatalf("unattached cover was published: %+v", got)
+	}
+}
+
 // A worker started while the bucket is down waits (taking no jobs, so none
 // burn attempts), then works the queue once the bucket answers.
 func TestWorkerWaitsForTheBucket(t *testing.T) {
@@ -1112,7 +1125,7 @@ func TestWorkerOutageSnoozesAreCapped(t *testing.T) {
 
 // An item whose outputs overrun its manifest's bound (here: padded after
 // the commit, past what the commit projected) is marked Full by the first
-// producer that cannot record: image and audio work stop, later commits
+// producer that cannot record: image work stops, later commits
 // queue no work, and a commit that shrinks it resumes processing to the end.
 func TestFullItemStopsAndRecovers(t *testing.T) {
 	h := newHost(t)
@@ -1121,19 +1134,6 @@ func TestFullItemStopsAndRecovers(t *testing.T) {
 	var ops []media.Op
 	for i := range 3 {
 		p, name := h.stage(t, ref, fmt.Sprintf("pages/%d.png", i), "image/png", pngImage(t, 60, 80, uint8(i)))
-		ops = append(ops, media.Op{Op: media.OpPut, Path: p, Blob: name})
-	}
-	dir := t.TempDir()
-	for i := range 2 {
-		wav := filepath.Join(dir, fmt.Sprintf("%d.wav", i))
-		if out, err := exec.Command("ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", fmt.Sprintf("sine=frequency=%d:duration=1", 440+i*100), "-y", wav).CombinedOutput(); err != nil {
-			t.Fatalf("ffmpeg: %v: %s", err, out)
-		}
-		body, err := os.ReadFile(wav)
-		if err != nil {
-			t.Fatal(err)
-		}
-		p, name := h.stage(t, ref, fmt.Sprintf("tracks/%d.wav", i), "audio/wav", body)
 		ops = append(ops, media.Op{Op: media.OpPut, Path: p, Blob: name})
 	}
 	h.commit(t, ref, ops...)
@@ -1180,13 +1180,12 @@ func TestFullItemStopsAndRecovers(t *testing.T) {
 	eventually(t, "the jobs settled", time.Minute, idle)
 	before := jobs()
 	h.commit(t, ref, media.Op{Op: media.OpRegenerate})
-	h.commit(t, ref, media.Op{Op: media.OpRegenerate, Preset: "listen"})
 	time.Sleep(2 * time.Second)
 	if n := jobs(); n != before {
 		t.Fatalf("a full item queued %d jobs", n-before)
 	}
 	k, _ := h.reg.Kind("album")
-	if m := manifest(); len(m.Outputs("pages/0.png", "thumb"))+len(m.Outputs("tracks/0.wav", "listen")) != 0 || k.Readiness(m).State != media.StateFull {
+	if m := manifest(); len(m.Outputs("pages/0.png", "thumb")) != 0 || k.Readiness(m).State != media.StateFull {
 		t.Fatalf("readiness of a full item: %+v", k.Readiness(m))
 	}
 
@@ -1196,11 +1195,6 @@ func TestFullItemStopsAndRecovers(t *testing.T) {
 	for i := range 3 {
 		if len(m.Outputs(fmt.Sprintf("pages/%d.png", i), "thumb")) != 1 {
 			t.Fatalf("page %d not thumbed", i)
-		}
-	}
-	for i := range 2 {
-		if len(m.Outputs(fmt.Sprintf("tracks/%d.wav", i), "listen")) != 2 {
-			t.Fatalf("track %d: %v", i, m.Outputs(fmt.Sprintf("tracks/%d.wav", i), "listen"))
 		}
 	}
 }

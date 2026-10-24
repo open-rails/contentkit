@@ -85,7 +85,7 @@ func (r *Reader) Status(ctx context.Context, ref contentref.ContentRef, actor ac
 
 func (r *Reader) statusProgress(ctx context.Context, ref contentref.ContentRef, m *Manifest) EncodeStatus {
 	if r.o.Progress != nil && slices.ContainsFunc(m.Files, func(f File) bool {
-		return f.IsUpload() && len(f.Pending) > 0 && (isVideoType(f.Type) || isAudioType(f.Type))
+		return f.IsUpload() && len(f.Pending) > 0 && isVideoType(f.Type)
 	}) {
 		if progress, err := r.o.Progress.EncodeProgress(ctx, ref); err == nil {
 			return progress
@@ -97,7 +97,7 @@ func (r *Reader) statusProgress(ctx context.Context, ref contentref.ContentRef, 
 func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 	out := &MediaStatus{State: k.Readiness(m).State, Presets: []PresetStatus{}, Failures: []ProcessingFailure{}}
 	if slices.ContainsFunc(m.Files, func(f File) bool {
-		return f.IsUpload() && statusHasPending(k, m, f) && (isVideoType(f.Type) || isAudioType(f.Type))
+		return f.IsUpload() && statusHasPending(k, m, f) && isVideoType(f.Type)
 	}) {
 		out.Encoding = progress.Current()
 	}
@@ -133,6 +133,9 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 			continue
 		}
 		failed := f.Fail()
+		if k.audioOriginal(f) {
+			failed = nil // An obsolete conversion failure does not block original playback.
+		}
 		if failed != nil {
 			failures = true
 		} else if f.Blob == "" || statusHasPending(k, m, f) {
@@ -224,7 +227,7 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 
 func statusHasPending(k *Kind, m *Manifest, f File) bool {
 	return slices.ContainsFunc(f.Pending, func(name string) bool {
-		return k.public(name) == nil || !m.Hidden && !f.Unattached
+		return k.private(name) != nil || !m.Hidden && !f.Unattached && k.public(name) != nil
 	})
 }
 

@@ -151,22 +151,25 @@ func tracksOf(k *media.Kind, m *media.Manifest) ([]track, error) {
 	if m.Meta[forkMeta] != nil {
 		return nil, ErrNotReady
 	}
-	a := private(k, k.Publish.Playback)
 	out := []track{}
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached || !inPattern(a.From, f.Path) {
+		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Playback, f.Path) {
 			continue
 		}
-		if f.Fail() != nil {
+		if f.Fail() != nil && !k.AudioUpload(f) {
 			continue // a failed track is left out, not waited for
 		}
-		if f.Blob == "" || slices.Contains(f.Pending, a.Name) {
+		if f.Blob == "" {
 			return nil, ErrNotReady
 		}
 		name := k.NameOf(f.Path)
 		t := track{Name: name, Upload: f.Path, Source: f.Key()}
-		for _, o := range m.Outputs(f.Path, a.Name) {
-			if strings.HasSuffix(o.Path, "/audio.m4a") && o.Blob != "" && !o.Gone && o.Size > 0 {
+		if k.AudioUpload(f) {
+			t.File = rendition{Path: f.Path, Blob: f.Blob, Type: f.Type, Size: f.Size, Dur: f.Dur}
+		}
+		// Retained conversions stay usable; no new converted outputs are made.
+		for _, o := range m.Files {
+			if o.From == f.Path && strings.HasSuffix(o.Path, "/audio.m4a") && strings.HasPrefix(o.Type, "audio/") && o.Blob != "" && !o.Gone && o.Size > 0 {
 				t.File = rendition{Path: o.Path, Blob: o.Blob, Type: o.Type, Size: o.Size, Dur: o.Dur}
 			}
 		}

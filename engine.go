@@ -434,7 +434,7 @@ func (e *Engine) playableKinds() ([]string, error) {
 	var out []string
 	for _, k := range mc.Kinds {
 		if e.cfg.Content.Kinds[k.Name].Presentation == "player" &&
-			slices.ContainsFunc(k.Private, func(p media.Private) bool { return p.HLS != nil || p.Audio != nil }) {
+			slices.ContainsFunc(k.Private, func(p media.Private) bool { return p.HLS != nil }) {
 			out = append(out, k.Name)
 		}
 	}

@@ -2,12 +2,14 @@ package workqueue
 
 import (
 	"context"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/migratekit"
 	"testing"
 	"testing/fstest"
 
 	riverhelpers "github.com/open-rails/helpers/river"
 
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 )
 
@@ -117,5 +119,67 @@ func TestMigrateResumesVideoCheckpoints(t *testing.T) {
 	var done, planned int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state='done' AND output->>'240-h264'='temp/checkpoint.mp4'), count(*) FILTER (WHERE state='planned' AND output IS NULL) FROM `+schema+`.encode_chunk WHERE run_id=$1`, run).Scan(&done, &planned); err != nil || done != 1 || planned != 1 {
 		t.Fatalf("done=%d planned=%d: %v", done, planned, err)
+	}
+}
+
+// Only unfinished standalone conversions retire; immutable terminal history and
+// video work survive, including repeated migration startup.
+func TestMigrateRetiresAudioConversions(t *testing.T) {
+	ctx := t.Context()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	affected := contentref.NewID()
+	for _, state := range []string{"available", "pending", "retryable", "running", "scheduled", "completed", "discarded", "cancelled"} {
+		ref := affected
+		if state == "completed" || state == "discarded" || state == "cancelled" {
+			ref = contentref.NewID() // terminal-only items need no new processing pass
+		}
+		_, err := pool.Exec(ctx, `INSERT INTO `+jobs(schema)+` (kind,args,max_attempts,queue,state,finalized_at)
+   VALUES ('contentkit_media_audio',jsonb_build_object('test_state',$1::text,'ref',jsonb_build_object('tenant_id','site','content_kind','post','content_id',$2::text)),5,'media_audio',$1::`+pgx.Identifier{schema, "river_job_state"}.Sanitize()+`,
+    CASE WHEN $1 IN ('completed','discarded','cancelled') THEN now() ELSE NULL END)`, state, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		if err := Migrate(ctx, pool, schema); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var passes int
+	var immediate bool
+	if err := pool.QueryRow(ctx, `SELECT count(*),coalesce(bool_and(queue='media_ingest' AND state='available' AND attempt=0 AND scheduled_at<=clock_timestamp() AND args->'ref'->>'content_id'=$1),false)
+FROM `+jobs(schema)+` WHERE kind='contentkit_media_ingest'`, affected).Scan(&passes, &immediate); err != nil || passes != 1 || !immediate {
+		t.Fatalf("ready passes=%d immediate=%t err=%v", passes, immediate, err)
+	}
+	rows, err := pool.Query(ctx, `SELECT args->>'test_state', state::text, finalized_at IS NOT NULL FROM `+jobs(schema)+` WHERE kind='contentkit_media_audio' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var before, after string
+		var terminal bool
+		if err := rows.Scan(&before, &after, &terminal); err != nil {
+			t.Fatal(err)
+		}
+		want := before
+		if before != "completed" && before != "discarded" {
+			want = "cancelled"
+		}
+		if after != want || !terminal {
+			t.Fatalf("%s became %s, finalized %t", before, after, terminal)
+		}
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if n != 8 {
+		t.Fatalf("retained %d rows, want8", n)
 	}
 }

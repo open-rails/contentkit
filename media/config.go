@@ -115,7 +115,7 @@ type Upload struct {
 	Max      int      `json:"max,omitempty"`    // uploads matching Path; 0 is unlimited
 	Frames   string   `json:"frames,omitempty"` // may be grabbed from a frame of this video upload (the frame op)
 	Named    bool     `json:"named,omitempty"`  // the server names it ({name} is "i-{uuid}"): inline images
-	// Video bounds a video or audio upload as probed from its real stream;
+	// Video bounds a video upload as probed from its real stream;
 	// nil or zero fields take the defaults (DefaultVideoLimits).
 	Video *VideoLimits `json:"video,omitempty"`
 }
@@ -133,7 +133,7 @@ type Publish struct {
 	// Previews names the legacy preview policy preset (First caps its count).
 	// Reader plans sign existing renditions; no preview uploads are created.
 	Previews string `json:"previews,omitempty"`
-	// Playback is the private Audio preset whose existing M4As the reader uses.
+	// Playback is the declared {name} audio upload the reader plays unchanged.
 	Playback string `json:"playback,omitempty"`
 	// Import is the {name} upload of page archives (application/zip),
 	// expanded into Pages in name order.
@@ -147,11 +147,11 @@ type Publish struct {
 // migration. New registries never register a kind with this suffix.
 const PublishedSuffix = ".published"
 
-// VideoLimits bound what one video or audio upload may cost the worker; an
+// VideoLimits bound what one video upload may cost the worker; an
 // upload past them fails (video_too_long, video_too_large,
 // video_over_budget) before any encode runs.
 type VideoLimits struct {
-	MaxSeconds float64 `json:"max_seconds,omitempty"` // real running time (audio too)
+	MaxSeconds float64 `json:"max_seconds,omitempty"` // real running time
 	MaxFPS     float64 `json:"max_fps,omitempty"`     // output frame rate (at most 60); a faster source is encoded at it
 	MaxPixels  int     `json:"max_pixels,omitempty"`  // displayed frame area
 	// MaxWork bounds the planned encode: the sum over the HLS and MP4
@@ -167,7 +167,7 @@ type Private struct {
 	From string `json:"from,omitempty"`
 	// To is the output path template: a file ("low-res/{name}.webp",
 	// "video/source-1080p.mp4") or, for producers with several outputs, a
-	// directory ending in "/" ("hls/", "listen/{name}/"). Source-format
+	// directory ending in "/" ("hls/"). Source-format
 	// images end in {ext}, the upload's extension: "download/{name}{ext}".
 	To string `json:"to"`
 	// Download is the human name template a download read signs into the
@@ -181,7 +181,6 @@ type Private struct {
 	HLS       *HLS       `json:"hls,omitempty"`
 	MP4       *MP4       `json:"mp4,omitempty"`
 	Zip       string     `json:"zip,omitempty"` // the files under this prefix, in manifest order: "high/"
-	Audio     *Audio     `json:"audio,omitempty"`
 	Subtitles *Subtitles `json:"subtitles,omitempty"`
 	// Choose is an optional per-file image spec (Go only, not in the JSON
 	// registry); nil keeps Image.
@@ -283,14 +282,6 @@ type HLS struct {
 type MP4 struct {
 	Rung    int    `json:"rung"`
 	Profile string `json:"profile,omitempty"`
-}
-
-// Audio is AAC-LC: an HLS audio track ({To}audio.mp4) and a faststart M4A
-// ({To}audio.m4a).
-type Audio struct {
-	// Loudness normalizes to this integrated loudness in LUFS (EBU R128),
-	// e.g. -16; 0 keeps the source's level.
-	Loudness float64 `json:"loudness,omitempty"`
 }
 
 // Subtitles converts SRT, SSA/ASS and WebVTT to clean UTF-8 WebVTT. A video

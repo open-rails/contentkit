@@ -82,13 +82,9 @@ func (k *Kind) validatePublish() error {
 		}
 	}
 	if p.Playback != "" {
-		a := k.private(p.Playback)
-		ok := false
-		if a != nil {
-			_, ok = strings.CutSuffix(a.To, nameVar+"/")
-		}
-		if a == nil || a.Audio == nil || !ok {
-			return fmt.Errorf("Playback %q is no Audio preset to {dir}{name}/", p.Playback)
+		i := k.uploadIndex(p.Playback)
+		if i < 0 || k.patterns[i].literal != "" || slices.ContainsFunc(k.Uploads[i].Types, func(t string) bool { return !isAudioType(t) }) || slices.Contains(k.Downloads, p.Playback) {
+			return fmt.Errorf("Playback %q is no audio upload outside Downloads", p.Playback)
 		}
 	}
 	if p.Import != "" {
@@ -225,7 +221,11 @@ func (k *Kind) NameOf(path string) string {
 // AudioUpload is an attached audio asset declared by this kind. It may be
 // played with an ordinary media grant without exposing other original uploads.
 func (k *Kind) AudioUpload(f File) bool {
-	if !f.IsUpload() || f.Unattached || f.Gone || f.Blob == "" || !isAudioType(f.Type) {
+	return !f.Unattached && k.audioOriginal(f)
+}
+
+func (k *Kind) audioOriginal(f File) bool {
+	if !f.IsUpload() || f.Gone || f.Blob == "" || !isAudioType(f.Type) {
 		return false
 	}
 	i, _, _, _, ok := k.upload(f.Path)
@@ -437,7 +437,7 @@ func (k *Kind) UploadRules() []UploadRule {
 		if i := slices.IndexFunc(k.Public, func(p Public) bool { return p.From == u.Path }); i >= 0 {
 			r.Aspect, r.MinWidth = k.Public[i].Image.Aspect, k.Public[i].Image.MinWidth
 		}
-		if slices.ContainsFunc(u.Types, func(t string) bool { return isVideoType(t) || isAudioType(t) }) {
+		if slices.ContainsFunc(u.Types, isVideoType) {
 			lim := u.Video.Limits()
 			r.Video = &lim
 		}
@@ -572,8 +572,8 @@ func (l *VideoLimits) validate(types []string) error {
 	if l == nil {
 		return nil
 	}
-	if !slices.ContainsFunc(types, func(t string) bool { return isVideoType(t) || isAudioType(t) }) {
-		return errors.New("video limits on an upload of neither video nor audio")
+	if !slices.ContainsFunc(types, isVideoType) {
+		return errors.New("video limits on an upload without video")
 	}
 	finite := func(v float64) bool { return v >= 0 && !math.IsInf(v, 0) && !math.IsNaN(v) }
 	if !finite(l.MaxSeconds) || !finite(l.MaxFPS) || l.MaxFPS > 60 || l.MaxPixels < 0 || !finite(l.MaxWork) {
@@ -594,7 +594,7 @@ func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
 	}
 	names[p.Name] = true
 	producers := 0
-	for _, set := range []bool{p.Image != nil, p.HLS != nil, p.MP4 != nil, p.Zip != "", p.Audio != nil, p.Subtitles != nil} {
+	for _, set := range []bool{p.Image != nil, p.HLS != nil, p.MP4 != nil, p.Zip != "", p.Subtitles != nil} {
 		if set {
 			producers++
 		}
@@ -609,7 +609,7 @@ func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
 	} else if k.uploadIndex(p.From) < 0 {
 		return fmt.Errorf("From %q is no upload path", p.From)
 	}
-	dir := p.HLS != nil || p.Audio != nil
+	dir := p.HLS != nil
 	sourceFormat := p.Image != nil && p.Image.Format == ImageFormatSource
 	if !validTemplate(p.To, dir) || slices.ContainsFunc(placeholders(p.To), func(s string) bool { return s != "name" && !(sourceFormat && s == "ext") }) {
 		return fmt.Errorf("invalid To %q (a path with {name}; source-format images may also use {ext})", p.To)
@@ -638,10 +638,7 @@ func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
 		if p.MP4.Rung < 2 || p.MP4.Rung > 4320 || p.MP4.Rung%2 != 0 || !validProfile(p.MP4.Profile) {
 			return fmt.Errorf("invalid MP4 rung %d or profile", p.MP4.Rung)
 		}
-	case p.Audio != nil:
-		if l := p.Audio.Loudness; l != 0 && (l < -70 || l > -5) {
-			return fmt.Errorf("invalid loudness %g LUFS", l)
-		}
+
 	}
 	return nil
 }
@@ -799,8 +796,8 @@ const (
 // upload it is the larger of a failure record and what success writes: an
 // entry for every output its presets have yet to write (an HLS ladder's
 // tracks one by one: a rendition per rung and codec, the sprite, and as many
-// audio and subtitle tracks as a source may carry; an Audio preset's track
-// and M4A), its measured fields, and a staged upload's or frame's blob.
+// audio and subtitle tracks as a source may carry), its measured fields,
+// and a staged upload's or frame's blob.
 // Then the zips, and the public presets' pending names an unhide adds.
 // Commits bound the manifest with it; an item whose outputs still overrun
 // it is marked Full by the worker.
@@ -846,8 +843,6 @@ func (k *Kind) Unwritten(m *Manifest) int64 {
 			case p.HLS != nil:
 				ladder := cmp.Or(len(p.HLS.Ladder), len(DefaultLadder))
 				entries, size = int64(3*ladder+1+MaxAudioTracks+MaxSubtitleTracks), trackEntryBytes
-			case p.Audio != nil:
-				entries, size = 2, trackEntryBytes
 			}
 			if p.Download != "" {
 				size += maxNameBytes + 16

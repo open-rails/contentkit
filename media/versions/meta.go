@@ -207,7 +207,7 @@ func names(k *media.Kind, m *media.Manifest) (pages, files map[string]bool) {
 	duplicates := map[string]bool{}
 	var audio string
 	if k.Publish.Playback != "" {
-		audio = private(k, k.Publish.Playback).From
+		audio = k.Publish.Playback
 	}
 	for _, f := range m.Files {
 		switch {

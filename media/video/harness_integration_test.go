@@ -51,15 +51,14 @@ var (
 
 // opts shape a test's video kind and worker.
 type opts struct {
-	ladder   []int         // HLS ladder; nil is the default
-	mp4      []int         // MP4 presets "mp4-{n}" at these rungs
-	codecs   []media.Codec // the worker's; default H.264 only
-	chunk    time.Duration // WorkerConfig.ChunkTarget
-	loudness float64
-	profile  string             // the HLS and MP4 presets' profile
-	limits   *media.VideoLimits // the source's and audio's Upload.Video
-	encoder  string             // default EncoderCPU
-	shared   bool               // also a "clip" kind in a shared namespace
+	ladder  []int              // HLS ladder; nil is the default
+	mp4     []int              // MP4 presets "mp4-{n}" at these rungs
+	codecs  []media.Codec      // the worker's; default H.264 only
+	chunk   time.Duration      // WorkerConfig.ChunkTarget
+	profile string             // the HLS and MP4 presets' profile
+	limits  *media.VideoLimits // the video source's Upload.Video
+	encoder string             // default EncoderCPU
+	shared  bool               // also a "clip" kind in a shared namespace
 }
 
 // testKind is a Hentai0-like video kind: a source with an HLS ladder and MP4
@@ -70,12 +69,11 @@ func testKind(o opts) media.Kind {
 			{Path: "source", Types: videoTypes, MaxBytes: 1 << 30, Video: o.limits},
 			{Path: "subs/{name}", Types: media.SubtitleTypes, MaxBytes: 32 << 20},
 			{Path: "poster", Types: imageTypes, MaxBytes: 10 << 20, Frames: "source"},
-			{Path: "audio/{name}", Types: audioTypes, MaxBytes: 64 << 20, Video: o.limits},
+			{Path: "audio/{name}", Types: audioTypes, MaxBytes: 64 << 20},
 		},
 		Private: []media.Private{
 			{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: o.ladder, Profile: o.profile}},
 			{Name: "vtt", From: "subs/{name}", To: "vtt/{name}.vtt", Subtitles: &media.Subtitles{}},
-			{Name: "listen", From: "audio/{name}", To: "listen/{name}/", Audio: &media.Audio{Loudness: o.loudness}},
 		},
 		Public: []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{320}}},
 	}
@@ -195,7 +193,7 @@ func newEnvOn(t *testing.T, s3 *s3test.Env, o opts, schema, contentSchema string
 		}
 		t.Fatal(err)
 	}
-	e.wc = video.WorkerConfig{Encoder: e.enc, Pool: e.pool, Schema: e.schema, Timeout: time.Hour, ChunkTarget: o.chunk}
+	e.wc = video.WorkerConfig{Encoder: e.enc, Pool: e.pool, Schema: e.schema, ChunkTarget: o.chunk}
 	e.ref = e.refOf("video", 1)
 	return e
 }

@@ -91,7 +91,7 @@ export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient):
 /** Every file of an editor read, in shared chunks. */
 export const ALL_EDITOR_FILES = { start: 0, end: Number.MAX_SAFE_INTEGER, chunk: 200 };
 
-/** A {name} upload of audio: the source a kind's playback preset converts. */
+/** A {name} upload of audio played directly by the reader. */
 export const isAudioRule = (rule: UploadRule) => isPattern(rule.path) && !rule.page && rule.types.some(isAudioType);
 
 /**
