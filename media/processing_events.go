@@ -35,11 +35,11 @@ type ProcessingEvent struct {
 	Playable     bool            `json:"playable"`
 }
 
-// CompleteProcessing commits a changed processor observation and its real
-// metadata work together. The caller must return an error to its processing job
+// CompleteProcessing commits any changed processor observation together with
+// its idempotent metadata work. The caller must return an error to its processing job
 // if this fails. Retrying re-reads current media under a per-item database lock;
 // the durable fingerprint suppresses duplicate facts even after log retention.
-func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentref.ContentRef, changed func(context.Context, pgx.Tx, Readiness) error) error {
+func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentref.ContentRef, metadata func(context.Context, pgx.Tx, Readiness) error) error {
 	if manifests == nil {
 		return errors.New("media: processing completion needs Manifests")
 	}
@@ -92,11 +92,18 @@ func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentre
 		if len(m.Files) == 0 && len(old) == 0 {
 			return nil
 		}
+		readiness := k.Readiness(m)
+		// Event deduplication must not suppress an idempotent metadata repair.
+		// A prior snapshot job may have failed after the observation committed.
+		if metadata != nil {
+			if err := metadata(ctx, tx, readiness); err != nil {
+				return err
+			}
+		}
 		if string(old) == string(fingerprint[:]) {
 			return nil
 		}
 		eventType := EventProcessingProgressed
-		readiness := k.Readiness(m)
 		if status.State != StateProcessing {
 			eventType = EventProcessingCompleted
 		}
@@ -116,11 +123,6 @@ func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentre
 		}
 		if err := log.AppendTx(ctx, tx, eventlog.Event{ID: id, Source: "contentkit", Scope: scope, Type: eventType, Version: 1, OccurredAt: at, Subject: eventlog.Subject{Type: ref.ContentKind, ID: ref.ContentID}, Data: payload}); err != nil {
 			return err
-		}
-		if changed != nil {
-			if err := changed(ctx, tx, readiness); err != nil {
-				return err
-			}
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO `+table+` (tenant_id,folder_prefix,fingerprint,observed_at) VALUES($1,$2,$3,$4)
 ON CONFLICT(tenant_id,folder_prefix) DO UPDATE SET fingerprint=excluded.fingerprint,observed_at=excluded.observed_at`, ref.TenantID, item.Prefix(), fingerprint[:], at)

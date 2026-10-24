@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -30,7 +31,12 @@ func TestProcessingMigrationRetiresOwnedJobsAndBackfillsOnce(t *testing.T) {
 		t.Helper()
 		body, _ := json.Marshal(map[string]any{"ref": ref})
 		var id int64
-		err := pool.QueryRow(ctx, `INSERT INTO `+jobs+` (kind,args,max_attempts,queue,state,finalized_at) VALUES($1,$2,5,'contentkit_media',$3,CASE WHEN $3 IN ('completed','cancelled','discarded') THEN now() ELSE NULL END) RETURNING id`, kind, body, state).Scan(&id)
+		var finalized *time.Time
+		if state == "completed" {
+			at := time.Now()
+			finalized = &at
+		}
+		err := pool.QueryRow(ctx, `INSERT INTO `+jobs+` (kind,args,max_attempts,queue,state,finalized_at) VALUES($1,$2,5,'contentkit_media',$3,$4) RETURNING id`, kind, body, state, finalized).Scan(&id)
 		if err != nil {
 			t.Fatal(err)
 		}

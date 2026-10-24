@@ -149,9 +149,6 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 	if k.Publish == nil {
 		return nil
 	}
-	if err := s.removeLegacyPreviews(ctx, k, t); err != nil {
-		return err
-	}
 	// The first presign creates the manifest before any upload; publishing it
 	// would answer readers an empty plan. That upload's commit queues the next pass.
 	m, err := s.manifest(ctx, k, t)

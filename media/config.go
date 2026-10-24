@@ -130,8 +130,9 @@ type Publish struct {
 	// Renditions are the private image presets from Pages a reader reads,
 	// the first at reading size: "low", "thumb".
 	Renditions []string `json:"renditions"`
-	// Previews names the legacy preview policy preset (First caps its count).
-	// Reader plans sign existing renditions; no preview uploads are created.
+	// Previews names a declared public preview preset (First caps the reader
+	// preview count). Its uploads render normally; reader plans may also sign
+	// existing private renditions under the live access policy.
 	Previews string `json:"previews,omitempty"`
 	// Playback is the declared {name} audio upload the reader plays unchanged.
 	Playback string `json:"playback,omitempty"`

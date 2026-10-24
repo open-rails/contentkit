@@ -139,13 +139,15 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 				c.Schema, table)
 		}
 	}
-	var journalExists bool
-	journalTable := pgx.Identifier{c.ContentSchema, "content_media_commits"}.Sanitize()
-	if err := c.Pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", journalTable).Scan(&journalExists); err != nil {
-		return nil, fmt.Errorf("media/worker: check media journal: %w", err)
-	}
-	if !journalExists {
-		return nil, fmt.Errorf("media/worker: missing %s; the host must apply ContentKit migrations", journalTable)
+	for _, object := range []string{"content_media_commits", "content_media_processing", "eventlog_pending", "content_event_ids"} {
+		name := pgx.Identifier{c.ContentSchema, object}.Sanitize()
+		var exists bool
+		if err := c.Pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", name).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("media/worker: check completion storage: %w", err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("media/worker: missing %s; the host must apply ContentKit migrations", name)
+		}
 	}
 	if err := video.SweepTemp(c.TempDir); err != nil {
 		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)

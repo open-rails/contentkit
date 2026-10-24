@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	eventpg "github.com/open-rails/helpers/eventlog/postgres"
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -169,21 +168,6 @@ func (w *cleanupDueWorker) Timeout(*river.Job[cleanupDueArgs]) time.Duration { r
 
 func (w *cleanupDueWorker) Work(ctx context.Context, job *river.Job[cleanupDueArgs]) (err error) {
 	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
-	// The same existing bounded maintenance pass prunes shared-account facts.
-	// App log retention remains owned by its configured catalog store.
-	for _, namespace := range w.j.cfg.Registry.Namespaces() {
-		if namespace == w.j.cfg.Registry.Namespace() {
-			continue
-		}
-		journal := w.j.cfg.Journal.forTenant(namespace)
-		log, err := eventpg.New(journal.pool, eventpg.Config{Schema: journal.schema, Source: "contentkit", Scope: namespace})
-		if err != nil {
-			return err
-		}
-		if _, err := log.Prune(ctx, 1000); err != nil {
-			return err
-		}
-	}
 	for {
 		n, err := w.j.CleanupDue(ctx, 1000)
 		if err != nil || n < 1000 {

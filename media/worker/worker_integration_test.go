@@ -995,11 +995,22 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 			}
 		})
 	}
-	if _, err := admin.Exec(ctx, "ALTER TABLE "+pgx.Identifier{contentSchema, "content_media_commits"}.Sanitize()+" RENAME TO content_media_commits_missing"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := worker.New(ctx, cfg); err == nil || !strings.Contains(err.Error(), contentSchema) || !strings.Contains(err.Error(), "content_media_commits") {
-		t.Fatalf("worker accepted a missing journal or did not identify it: %v", err)
+	for _, table := range []string{"content_media_commits", "content_media_processing", "eventlog_pending"} {
+		t.Run(table, func(t *testing.T) {
+			name := pgx.Identifier{contentSchema, table}.Sanitize()
+			hidden := pgx.Identifier{contentSchema, table + "_missing"}.Sanitize()
+			if _, err := admin.Exec(ctx, "ALTER TABLE "+name+" RENAME TO "+pgx.Identifier{table + "_missing"}.Sanitize()); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if _, err := admin.Exec(ctx, "ALTER TABLE "+hidden+" RENAME TO "+pgx.Identifier{table}.Sanitize()); err != nil {
+					t.Error(err)
+				}
+			})
+			if _, err := worker.New(ctx, cfg); err == nil || !strings.Contains(err.Error(), contentSchema) || !strings.Contains(err.Error(), table) {
+				t.Fatalf("worker accepted missing completion storage %s: %v", table, err)
+			}
+		})
 	}
 }
 

@@ -90,3 +90,8 @@ CREATE TABLE IF NOT EXISTS content_media_processing (
     PRIMARY KEY (tenant_id, folder_prefix)
 );
 
+
+-- Existing account ownership claims also get stable empty-stream cursors.
+INSERT INTO eventlog_streams(source,scope)
+SELECT 'contentkit','tenant_' || tenant_id::text FROM content_account_bindings
+ON CONFLICT DO NOTHING;

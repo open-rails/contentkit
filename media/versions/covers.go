@@ -12,13 +12,13 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// A reader version without a cover of its own shows its first released
+// A reader version without a cover of its own shows its first ready
 // page: its cover upload is a copy of that page, marked media.MetaAutoCover.
 // A cover an editor uploads replaces it and is never touched; once that is
 // removed, the next publication brings the automatic one back.
 
 // applyCover brings version t's automatic cover to its source page, removing
-// it when the version shows no released page.
+// it when the source page is removed. Release dates do not alter public files.
 func (s *Service) applyCover(ctx context.Context, k *media.Kind, t Target) error {
 	cover := public(k, media.CoverPreset)
 	if cover == nil {
@@ -76,7 +76,7 @@ func (s *Service) applyCover(ctx context.Context, k *media.Kind, t Target) error
 }
 
 // coverSource is the leading page upload of version t, whose manifest is m,
-// while its current pages publication has it released; nil without one.
+// from its current ready-file snapshot; nil without one.
 func (s *Service) coverSource(ctx context.Context, t Target, m *media.Manifest) (*media.File, error) {
 	p, err := s.current(ctx, s.o.Pool, t, kindPages)
 	if err != nil || p == nil || m == nil {
@@ -86,15 +86,7 @@ func (s *Service) coverSource(ctx context.Context, t Target, m *media.Manifest) 
 	if err := json.Unmarshal(p.Source, &snap); err != nil {
 		return nil, err
 	}
-	segs, err := s.segments(ctx, s.o.Pool, []string{t.Version})
-	if err != nil {
-		return nil, err
-	}
-	chapters, err := resolveChapterStarts(segs[t.Version], snap.Pages)
-	if err != nil {
-		return nil, err
-	}
-	if len(snap.Pages) == 0 || released(chapters, len(snap.Pages), s.o.Now()) == 0 {
+	if len(snap.Pages) == 0 {
 		return nil, nil
 	}
 	f, ok := m.Get(snap.Pages[0].Path)
