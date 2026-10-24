@@ -608,7 +608,6 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 			return tooManyFiles(MaxUploads, "an item holds at most %d uploads", MaxUploads)
 		}
 		mutation.effects.Cancel = removesPending(prior, ops)
-		mutation.effects.Notify = u.reg.cfg.Hooks.ItemCommitted != nil
 		job := ProcessJob{Ref: ref, Place: len(m.StagedNames()) > 0 || item.Kind().pendingArchives(m)}
 		for _, op := range ops {
 			if op.Op == OpRegenerate {

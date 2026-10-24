@@ -351,6 +351,13 @@ func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.Ingest
 	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), a.After); err != nil {
 		return err
 	}
+	if a.Commit != "" {
+		if err := w.manifests.CompleteCommit(ctx, a.Ref, a.Commit); err != nil {
+			return err
+		}
+	} else if err := w.manifests.Recover(ctx, a.Ref); err != nil {
+		return err
+	}
 	if _, err := w.manifests.Place(ctx, a.Ref); err != nil {
 		return full(ctx, w.manifests, a.Ref, err)
 	}
@@ -387,6 +394,9 @@ func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageAr
 		return river.JobCancel(err)
 	}
 	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
+		return err
+	}
+	if err := w.manifests.Recover(ctx, pj.Ref); err != nil {
 		return err
 	}
 	return full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj))

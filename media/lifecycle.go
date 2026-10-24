@@ -127,6 +127,23 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 	return err
 }
 
+// retireFolder executes a committed owner intent. Its stable operation keeps
+// retry cleanup bound to this incarnation even if the item is recreated.
+func (j *Jobs) retireFolder(ctx context.Context, item Item, intent manifestCommit) error {
+	d := intent.Effects.FolderDelete
+	if d.Completed {
+		return nil
+	}
+	operation := uuid.NewSHA1(intent.ID, []byte("delete"))
+	if err := j.deleteItem(ctx, item, d.Owner, operation, d.Incarnation, time.Time{}, false); err != nil {
+		return err
+	}
+	jr := j.cfg.Journal.forTenant(item.Ref().TenantID)
+	_, err := jr.pool.Exec(ctx, `UPDATE `+jr.table+` SET effects=jsonb_set(effects,'{folder_delete,completed}','true'),updated_at=now()
+WHERE tenant_id=$1 AND operation_id=$2`, item.Ref().TenantID, intent.ID)
+	return err
+}
+
 // repeatDeletion never lists the folder again. A final late-upload pass can
 // safely run after reset because these physical names are permanently retired.
 func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUID) error {

@@ -90,6 +90,7 @@ func jobs(schema string) string { return pgx.Identifier{schema, "river_job"}.San
 // IngestArgs places an item's staged uploads (media.Manifests.Place), then
 // enqueues its processing: media.ProcessJob's fields.
 type IngestArgs struct {
+	Commit string                `json:"commit,omitempty"`
 	Ref    contentref.ContentRef `json:"ref"`
 	Preset string                `json:"preset,omitempty"`
 	Force  bool                  `json:"force,omitempty"`
@@ -204,8 +205,8 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 	if err != nil {
 		return err
 	}
-	if job.Place {
-		return media.InsertOnce(ctx, insert, IngestArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force},
+	if job.Place || job.Commit != "" {
+		return media.InsertOnce(ctx, insert, IngestArgs{Ref: job.Ref, Commit: job.Commit, Preset: job.Preset, Force: job.Force},
 			river.InsertOpts{Queue: IngestQueue, MaxAttempts: MaxAttempts})
 	}
 	f := FamiliesOf(item.Kind(), job.Preset)
