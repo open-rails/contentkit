@@ -185,6 +185,7 @@ func (r *resolver) Resolve(_ context.Context, refs []contentref.ContentRef, a ac
 // "staff" is exempt.
 type authorizer struct {
 	archiveTo string
+	grants    map[string]media.UploadGrant
 	mu        sync.Mutex
 	targets   []media.UploadTarget
 }
@@ -192,7 +193,11 @@ type authorizer struct {
 func (a *authorizer) CanUpload(_ context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	a.mu.Lock()
 	a.targets = append(a.targets, t)
+	grant, custom := a.grants[t.Ref.ContentID]
 	a.mu.Unlock()
+	if custom {
+		return grant, nil
+	}
 	return media.UploadGrant{Allowed: actor.ID != "reader" && !actor.Anonymous, Owner: "owner", Exempt: actor.ID == "staff", ArchiveTo: a.archiveTo}, nil
 }
 

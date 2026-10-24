@@ -145,6 +145,10 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 	}
 	zr, err := zip.OpenReader(zipFile.Name())
 	if err != nil {
+		var disk *os.PathError
+		if errors.As(err, &disk) {
+			return err
+		}
 		return uploadErr(CodeInvalid, "invalid ZIP archive: %v", err)
 	}
 	defer zr.Close()

@@ -276,14 +276,22 @@ func (o *opRun) apply(n int, op Op) error {
 				o.dropZips(p)
 			}
 		}
-		m.Files = slices.DeleteFunc(m.Files, func(x File) bool {
-			return slices.Contains(gone, x.Path) || !x.IsUpload() && slices.Contains(gone, x.From)
-		})
+		o.dropUploads(gone)
 	case OpRename:
 		return o.rename(f, op.To)
 	}
 	m.index = nil
 	return nil
+}
+
+func (o *opRun) dropUploads(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	o.m.Files = slices.DeleteFunc(o.m.Files, func(file File) bool {
+		return slices.Contains(paths, file.Path) || !file.IsUpload() && slices.Contains(paths, file.From)
+	})
+	o.m.index = nil
 }
 
 // dropZips removes zips bundling the upload at path or its outputs; the
@@ -445,12 +453,7 @@ func (o *opRun) put(op Op) error {
 	if err := o.place(g, i, f, op.Index); err != nil {
 		return err
 	}
-	if len(cancelled) > 0 {
-		m.Files = slices.DeleteFunc(m.Files, func(file File) bool {
-			return slices.Contains(cancelled, file.Path) || !file.IsUpload() && slices.Contains(cancelled, file.From)
-		})
-		m.index = nil
-	}
+	o.dropUploads(cancelled)
 	if !f.Unattached && k.ArchiveDestination(f.Path) != "" {
 		return o.attachArchiveBatch(f)
 	}
@@ -580,7 +583,8 @@ func (o *opRun) copy(op Op, src []File) error {
 		return uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 	}
 	f := src[0]
-	f.Public = nil // copied originals never transfer another item's allocation
+	f.Public = nil    // copied originals never transfer another item's allocation
+	f.Admission = nil // copied ZIPs must be admitted by their destination owner
 	if op.Meta != nil {
 		f.Meta = maps.Clone(op.Meta)
 	} else if f.Meta[MetaAutoCover] != nil {
@@ -617,7 +621,7 @@ func (o *opRun) copy(op Op, src []File) error {
 	}
 	from := f.Path
 	f.Path, f.Unattached, f.CreateID = stem+"."+ext, false, ""
-	if k.IsPageUpload(f) {
+	if k.IsPageUpload(f) || f.Meta["page"] != nil {
 		// A copied page is a new source entry, not the old page's manual
 		// choice or logical identity. Its bytes remain traceable by digest.
 		f.Meta = maps.Clone(f.Meta)
@@ -626,6 +630,9 @@ func (o *opRun) copy(op Op, src []File) error {
 		f.Meta = withPageSource(f.Meta, k.NameOf(f.Path), original)
 	}
 	f.Meta = clearArchiveState(f.Meta)
+	if err := o.admitSource(&f, -1); err != nil {
+		return err
+	}
 	if metaBytes(f.Meta) > MaxMetaBytes {
 		return uploadErr(CodeTooLarge, "page source metadata exceeds %d bytes", MaxMetaBytes)
 	}
@@ -649,6 +656,10 @@ func (o *opRun) copy(op Op, src []File) error {
 		src = src[:1]
 	}
 	i := o.stem(stem)
+	var cancelled []string
+	if i >= 0 && m.Files[i].Source() != f.Source() {
+		cancelled = o.cancelledArchivePages(m.Files[i])
+	}
 	if i >= 0 && op.Meta[MetaAutoCover] == true && m.Files[i].Meta[MetaAutoCover] != true {
 		return uploadErr(CodeConflict, "an editor owns cover %q", m.Files[i].Path)
 	}
@@ -669,6 +680,7 @@ func (o *opRun) copy(op Op, src []File) error {
 	if err := o.place(g, i, f, nil); err != nil {
 		return err
 	}
+	o.dropUploads(cancelled)
 	for _, out := range src[1:] {
 		out.From = f.Path
 		if p := k.private(out.Preset); p != nil {

@@ -11,6 +11,9 @@ import (
 // A background importer uses the same owner and ceiling when attaching decoded
 // originals. Quota <= 0 is unlimited, as in PGLimits.Quota.
 type SourceAdmission struct {
+	// Generation is the accepting commit ID. Removing and re-adding a retained
+	// ZIP creates fresh work; metadata edits keep the existing generation.
+	Generation string `json:"generation"`
 	Target     string `json:"target"`
 	Accounting bool   `json:"accounting,omitempty"`
 	Owner      string `json:"owner,omitempty"`
@@ -49,6 +52,9 @@ func (o *opRun) admitSource(f *File, previous int) error {
 			return err
 		}
 		if fresh.Owner == prior.Owner {
+			if prior.Generation != "" {
+				fresh.Generation = prior.Generation
+			}
 			f.Admission = fresh
 		}
 		return nil

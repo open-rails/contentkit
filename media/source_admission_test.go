@@ -42,6 +42,15 @@ func TestArchiveDestinationIsConfiguredWithoutCatalog(t *testing.T) {
 	}
 }
 
+func TestManifestCloneOwnsArchiveAdmission(t *testing.T) {
+	source := &Manifest{Files: []File{{Admission: &SourceAdmission{Generation: "accepted", Owner: "original"}}}}
+	copy := source.Clone()
+	copy.Files[0].Admission.Owner = "changed"
+	if source.Files[0].Admission.Owner != "original" {
+		t.Fatal("manifest edit mutated cached archive authority")
+	}
+}
+
 func admissionTestKind(t *testing.T) *Kind {
 	t.Helper()
 	reg, err := NewRegistry(Config{Namespace: "site", Kinds: []Kind{{Name: "post", Uploads: []Upload{{Path: "zip/{name}", ArchiveTo: "body/{name}", Types: []string{"application/zip"}, MaxBytes: 1 << 20}, {Path: "body/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true, Max: 100}}}}})

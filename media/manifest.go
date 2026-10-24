@@ -441,6 +441,10 @@ func (m *Manifest) Clone() *Manifest {
 	out.Files = make([]File, len(m.Files))
 	for i, f := range m.Files {
 		f.Meta, f.Pending = cloneMap(f.Meta), slices.Clone(f.Pending)
+		if f.Admission != nil {
+			admission := *f.Admission
+			f.Admission = &admission
+		}
 		if f.Editor != nil {
 			editor := *f.Editor
 			f.Editor = &editor

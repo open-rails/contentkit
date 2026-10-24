@@ -528,7 +528,7 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 			if err := o.archiveAllowed(source, destination); err != nil {
 				return nil, err
 			}
-			admission := &SourceAdmission{Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Target: destination, Accounting: u.o.Limiter != nil}
+			admission := &SourceAdmission{Generation: id.String(), Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Target: destination, Accounting: u.o.Limiter != nil}
 			if admission.Enforce {
 				quota, err := u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
 				if err != nil {
@@ -695,23 +695,26 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 		ref  contentref.ContentKey
 		path string
 	}
-	seen := map[target]bool{}
+	seen := map[target]UploadGrant{}
 	var grant *UploadGrant
-	check := func(t UploadTarget) error {
-		if seen[target{t.Ref.Key(), t.Path}] {
-			return nil
+	check := func(t UploadTarget) (UploadGrant, error) {
+		key := target{t.Ref.Key(), t.Path}
+		if known, ok := seen[key]; ok {
+			return known, nil
 		}
-		seen[target{t.Ref.Key(), t.Path}] = true
 		g, err := u.authorize(ctx, actor, t)
 		if err != nil {
-			return err
+			return UploadGrant{}, err
 		}
-		if grant == nil {
-			grant = &g
-		} else if t.Ref.Equal(item.Ref()) && (g.Owner != grant.Owner || g.Exempt != grant.Exempt) {
-			return uploadErr(CodeForbidden, "the commit's paths have different owners")
+		if t.Ref.Equal(item.Ref()) {
+			if grant == nil {
+				grant = &g
+			} else if g.Owner != grant.Owner || g.Exempt != grant.Exempt {
+				return UploadGrant{}, uploadErr(CodeForbidden, "the commit's paths have different owners")
+			}
 		}
-		return nil
+		seen[key] = g
+		return g, nil
 	}
 	for _, op := range ops {
 		t := UploadTarget{Ref: item.Ref()}
@@ -724,13 +727,17 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 				return UploadGrant{}, uploadErr(CodeInvalid, "copy from %q: not a media item of this kind", op.From.ID)
 			}
 			stem, _ := splitExt(op.From.Path)
-			if err := check(UploadTarget{Ref: src, Path: stem}); err != nil {
+			if _, err := check(UploadTarget{Ref: src, Path: stem}); err != nil {
 				return UploadGrant{}, err
 			}
 			t.Path, _ = splitExt(cmpOr(op.To, op.From.Path))
 		}
-		if err := check(t); err != nil {
+		destination, err := check(t)
+		if err != nil {
 			return UploadGrant{}, err
+		}
+		if expected := item.Kind().ArchiveDestination(t.Path); op.Op == OpCopy && expected != "" && destination.ArchiveTo != expected {
+			return UploadGrant{}, uploadErr(CodeForbidden, "ZIP copy requires an explicitly approved destination")
 		}
 	}
 	return *grant, nil

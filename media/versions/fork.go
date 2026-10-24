@@ -104,8 +104,8 @@ func forkSource(k *media.Kind, m *media.Manifest, playback bool) (string, []medi
 	}
 	var files []media.File
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached || k.Publish != nil && (k.Publish.Import != "" && inPattern(k.Publish.Import, f.Path) ||
-			k.Publish.Previews != "" && inPattern(public(k, k.Publish.Previews).From, f.Path)) || !playback && audio != "" && inPattern(audio, f.Path) {
+		if !f.IsUpload() || f.Unattached || k.ArchiveDestination(f.Path) != "" ||
+			k.Publish != nil && k.Publish.Previews != "" && inPattern(public(k, k.Publish.Previews).From, f.Path) || !playback && audio != "" && inPattern(audio, f.Path) {
 			continue
 		}
 		if f.Blob == "" {

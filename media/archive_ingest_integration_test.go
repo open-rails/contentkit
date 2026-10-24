@@ -38,6 +38,10 @@ func TestGenericArchiveIngestionReplaysAndPreservesServerMetadata(t *testing.T) 
 		t.Fatal(err)
 	}
 	first, _ := m.Get(p)
+	generation := first.Admission.Generation
+	if generation == "" {
+		t.Fatal("source admission has no accepting commit identity")
+	}
 	if first.Meta["archive_completed_sha256"] == nil || archiveCount(first.Meta["archive_pages_total"]) != 2 {
 		t.Fatalf("completed source=%+v", first)
 	}
@@ -70,7 +74,7 @@ func TestGenericArchiveIngestionReplaysAndPreservesServerMetadata(t *testing.T) 
 		t.Fatal(err)
 	}
 	updated, _ := m.Get(p)
-	if updated.Meta["archive_completed_sha256"] != first.Meta["archive_completed_sha256"] || updated.Meta["caption"] != "changed" {
+	if updated.Meta["archive_completed_sha256"] != first.Meta["archive_completed_sha256"] || updated.Meta["caption"] != "changed" || updated.Admission.Generation != generation {
 		t.Fatalf("same-source edit lost completion: %+v", updated.Meta)
 	}
 	// The same ZIP bytes adopted under another path have their own completion
@@ -251,6 +255,121 @@ func TestReplacingStagedArchiveRetiresItsUnusedPages(t *testing.T) {
 	m, _, err := f.ms.Get(t.Context(), ref)
 	if err != nil || len(m.Files) != 2 || slices.ContainsFunc(m.Files, func(file media.File) bool { return !file.Unattached }) {
 		t.Fatalf("replacement batch=%+v err=%v", m, err)
+	}
+}
+
+func TestCopiedArchiveUsesDestinationPermissionAndQuota(t *testing.T) {
+	for _, limited := range []bool{false, true} {
+		name, quota := "admitted", int64(8<<20)
+		if limited {
+			name, quota = "quota-limited", 64<<10+1
+		}
+		t.Run(name, func(t *testing.T) {
+			f, ledger := archiveFixture(t, quota)
+			from, to := f.ref("post", 7), f.ref("post", 8)
+			f.visible(7)
+			f.visible(8)
+			sourceGrant := media.UploadGrant{Allowed: true, Exempt: true, Owner: "source-owner", ArchiveTo: "inline/{name}"}
+			destinationGrant := media.UploadGrant{Allowed: true, Owner: "destination-owner"}
+			f.auth.grants = map[string]media.UploadGrant{from.ContentID: sourceGrant, to.ContentID: destinationGrant}
+			body := archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 14), "2.png": archivePNG(t, 15)})
+			p, blob := f.upload(from, "zip/original", "application/zip", body)
+			original := f.commit(from, media.Op{Op: media.OpPut, Path: p, Blob: blob})
+			operation := media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: from.ContentID, Path: p}, To: "zip/copied.zip"}
+			if _, err := f.up.Commit(t.Context(), f.editor, to, uuid.NewString(), []media.Op{operation}); code(err) != media.CodeForbidden {
+				t.Fatalf("source admission authorized destination expansion: %v", err)
+			}
+			destinationGrant.ArchiveTo = "inline/{name}"
+			f.auth.grants[to.ContentID] = destinationGrant
+			id := uuid.NewString()
+			copied, err := f.up.Commit(t.Context(), f.editor, to, id, []media.Op{operation})
+			if err != nil {
+				t.Fatal(err)
+			}
+			file, ok := copied.Get(operation.To)
+			if !ok || !matchesBlob(file.Blob, body) || file.Admission == nil || file.Admission.Owner != destinationGrant.Owner || !file.Admission.Enforce || file.Admission.Generation != id {
+				t.Fatalf("copy did not acquire destination admission: %+v", file)
+			}
+			if _, err := f.up.Commit(t.Context(), f.editor, to, id, []media.Op{operation}); err != nil {
+				t.Fatalf("exact copy retry: %v", err)
+			}
+			if err := f.ms.IngestArchives(t.Context(), to, ""); err != nil {
+				t.Fatal(err)
+			}
+			result, _, err := f.ms.Get(t.Context(), to)
+			if err != nil {
+				t.Fatal(err)
+			}
+			file, _ = result.Get(operation.To)
+			if limited && (len(result.Files) != 1 || file.Fail() == nil) || !limited && (len(result.Files) != 3 || file.Fail() != nil) {
+				t.Fatalf("destination quota was not enforced: %+v", result.Files)
+			}
+			for owner, expected := range map[string]int64{sourceGrant.Owner: original.UploadBytes(), destinationGrant.Owner: result.UploadBytes()} {
+				used, pending, err := ledger.Usage(t.Context(), to.TenantID, owner)
+				if err != nil || used != expected || pending != 0 {
+					t.Fatalf("owner %s charged %d, expected %d; pending=%d err=%v", owner, used, expected, pending, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRemovedArchiveCanBeReaddedFromRetainedAlias(t *testing.T) {
+	f, _ := archiveFixture(t, 8<<20)
+	ref := f.ref("post", 9)
+	f.visible(9)
+	p, blob := f.upload(ref, "zip/book", "application/zip", archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 16)}))
+	f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob})
+	if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := f.ms.Get(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := m.Get(p)
+	f.commit(ref, media.Op{Op: media.OpPut, Path: "zip/alias.zip", Blob: first.Blob}, media.Op{Op: media.OpRemove, Path: p})
+	m = f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: first.Blob})
+	reattached, _ := m.Get(p)
+	if reattached.Admission.Generation == first.Admission.Generation {
+		t.Fatal("re-adding retained bytes reused a retired source admission")
+	}
+	for range 2 {
+		if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, _, err = f.ms.Get(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reattached, _ = m.Get(p)
+	if reattached.Meta["archive_completed_sha256"] == nil || len(m.Files) != 3 {
+		t.Fatalf("re-added source stayed pending or duplicated pages: %+v", m.Files)
+	}
+}
+
+func TestCopyReplacesStagedArchiveWithoutKeepingUnusedPages(t *testing.T) {
+	f, _ := archiveFixture(t, 8<<20)
+	to, from := f.ref("post", 10), f.ref("post", 11)
+	f.visible(10)
+	f.visible(11)
+	p, blob := f.upload(to, "zip/staged", "application/zip", archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 17), "2.png": archivePNG(t, 18)}))
+	f.commit(to, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
+	if err := f.ms.IngestArchives(t.Context(), to, ""); err != nil {
+		t.Fatal(err)
+	}
+	f.put(from, "zip/new", "application/zip", archiveBytes(t, map[string][]byte{"new.png": archivePNG(t, 19)}))
+	m := f.commit(to, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: from.ContentID, Path: "zip/new.zip"}, To: p})
+	if len(m.Files) != 1 || m.Files[0].Path != p {
+		t.Fatalf("copy replacement retained old staged pages: %+v", m.Files)
+	}
+	if err := f.ms.IngestArchives(t.Context(), to, ""); err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := f.ms.Get(t.Context(), to)
+	if err != nil || len(m.Files) != 2 || slices.ContainsFunc(m.Files, func(file media.File) bool { return file.Unattached }) {
+		t.Fatalf("copy replacement attached wrong batch: %+v / %v", m, err)
 	}
 }
 
