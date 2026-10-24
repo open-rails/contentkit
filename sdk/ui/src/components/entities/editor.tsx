@@ -22,7 +22,6 @@ import { Textarea } from "#ckui/ui/textarea";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
 import { useConfirm } from "../admin/shell.js";
 import { AttributeFields, formOf } from "./fields.js";
-import { useContentKitClient } from "../../react/context.js";
 import { EntityImageEditor } from "./banner.js";
 import { EntityPicker, labelOf, useEntityNames, type EntityLike, type Labels } from "./parts.js";
 

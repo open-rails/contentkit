@@ -60,10 +60,12 @@ export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, childre
         <div className="flex flex-wrap gap-2" data-ckui="paywall-actions">
           {keys.map((key) => {
             const tier = siteTiers.includes(key) || !!tiers?.[key];
+            const label = tier ? t("paywall.subscribe", { tier: tiers?.[key]?.label ?? labelOf(labels, key) }) : t("paywall.getAccess");
+            const price = tier ? tiers?.[key]?.price : undefined;
             return (
-              <Button key={key} size="sm" disabled={!!required && key !== required} onClick={() => onCheckout({ key })} data-ckui={tier ? "paywall-tier" : "paywall-access"} data-tier={tier ? key : undefined}>
-                {tier ? t("paywall.subscribe", { tier: tiers?.[key]?.label ?? labelOf(labels, key) }) : t("paywall.getAccess")}
-                {tier && tiers?.[key]?.price && <span className="ms-1 opacity-80">{tiers[key]!.price}</span>}
+              <Button key={key} size="sm" aria-label={price ? `${label} ${price}` : label} disabled={!!required && key !== required} onClick={() => onCheckout({ key })} data-ckui={tier ? "paywall-tier" : "paywall-access"} data-tier={tier ? key : undefined}>
+                {label}
+                {price && <span className="ms-1 opacity-80">{price}</span>}
               </Button>
             );
           })}

@@ -6,7 +6,7 @@ import type { Edit, EntityAccess, EntityDetail } from "../../client/generated/wi
 import type { EntityImageSlot } from "../../client/entities.js";
 import { decodeImage, type CropSource } from "../../client/image.js";
 import { useMessages } from "../../i18n/context.js";
-import { ContentKitContext, useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
+import { ContentKitContext, type ContentKitErrorHandler } from "../../react/context.js";
 import { useEntity } from "../../react/entities.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Badge } from "#ckui/ui/badge";
