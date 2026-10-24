@@ -25,7 +25,7 @@ import (
 )
 
 const archiveImageLimit = 2000
-const archiveCommitBatch = 32
+const archiveCommitBatch = 8
 const archiveExpandedLimit = int64(2 << 30)
 
 var errArchiveChanged = errors.New("media: archive source changed during ingestion")

@@ -24,7 +24,7 @@ type interruptedArchiveStore struct {
 func (s *interruptedArchiveStore) Put(ctx context.Context, key string, body io.Reader, size int64, opts media.PutOptions) (media.Object, error) {
 	if strings.Contains(key, "/private/") || strings.Contains(key, "/download/") {
 		s.pages++
-		if s.pages > 32 {
+		if s.pages > 8 {
 			return media.Object{}, media.ErrUnavailable
 		}
 	}
@@ -39,7 +39,7 @@ func TestArchiveCheckpointRetryAndConcurrentOwnerEdits(t *testing.T) {
 			ref := f.ref("post", 1)
 			ctx := f.workerContext(t.Context())
 			files := map[string][]byte{}
-			for i := 0; i < 40; i++ {
+			for i := 0; i < 25; i++ {
 				files[fmt.Sprintf("page%02d.png", i)] = archivePNG(t, uint8(i))
 			}
 			source := archiveBytes(t, files)
@@ -50,7 +50,7 @@ func TestArchiveCheckpointRetryAndConcurrentOwnerEdits(t *testing.T) {
 				t.Fatalf("interrupted batch: %v", err)
 			}
 			status, err := f.rd.Status(t.Context(), ref, f.editor)
-			if err != nil || status.Archives.Pages == nil || status.Archives.Pages.Completed != 32 || status.Archives.Pages.Total != 40 || status.Archives.Completed != 0 {
+			if err != nil || status.Archives.Pages == nil || status.Archives.Pages.Completed != 8 || status.Archives.Pages.Total != 25 || status.Archives.Completed != 0 {
 				t.Fatalf("committed checkpoint status: %+v %v", status, err)
 			}
 			events, err := eventpg.New(f.env.Pool(), eventpg.Config{Schema: f.env.ContentSchema(), Source: "contentkit", Scope: ref.TenantID})
@@ -67,7 +67,7 @@ func TestArchiveCheckpointRetryAndConcurrentOwnerEdits(t *testing.T) {
 				if err := json.Unmarshal(event.Data, &fact); err != nil {
 					t.Fatal(err)
 				}
-				seen = seen || fact.Archives.Pages != nil && fact.Archives.Pages.Completed == 32
+				seen = seen || fact.Archives.Pages != nil && fact.Archives.Pages.Completed == 8
 			}
 			if !seen {
 				t.Fatal("running ingest did not append its committed page progress")
@@ -103,7 +103,7 @@ func TestArchiveCheckpointRetryAndConcurrentOwnerEdits(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := 40
+			want := 25
 			if change == "replace" {
 				want = 1
 			}
