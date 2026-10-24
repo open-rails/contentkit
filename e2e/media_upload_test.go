@@ -264,6 +264,30 @@ func TestMediaUploadSurvivesRestartWithoutPublishing(t *testing.T) {
 	if _, err = client.PatchContent(ctx, created.ID, catalog.ContentPatch{OriginalTitle: &title}); err != nil {
 		t.Fatal(err)
 	}
+	// Renditions can finish before the version worker records the reader
+	// snapshot. Its normal reader endpoint returns 202 until that is ready.
+	for {
+		preview, err := client.GetContentVersionReader(ctx, created.ID, ref.Version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if preview.Status == http.StatusOK {
+			var plan versions.ReaderPlan
+			if err := preview.Decode(&plan); err != nil {
+				t.Fatal(err)
+			}
+			if plan.Pages != nil && *plan.Pages == 3 {
+				break
+			}
+		} else if preview.Status != http.StatusAccepted {
+			t.Fatalf("reader preparation: %d", preview.Status)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("reader snapshot never became ready")
+		case <-time.After(40 * time.Millisecond):
+		}
+	}
 	if _, err = client.PostContentPublish(ctx, created.ID, catalog.PublishInput{}); err != nil {
 		t.Fatal(err)
 	}

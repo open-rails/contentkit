@@ -51,6 +51,8 @@ test.describe("resume", () => {
     await expect(entry.getByRole("progressbar")).toHaveAttribute("aria-valuenow", /^[1-9][0-9]?$/, { timeout: 60_000 });
     await entry.getByRole("button", { name: "Pause" }).click();
     await expect(entry).toHaveAttribute("data-status", "paused");
+    const resumeKey = await page.evaluate(() => Object.keys(localStorage).find((key) => key.startsWith("ckui.uploads:")));
+    expect(resumeKey).toBeDefined();
     const id = await page.evaluate(() => localStorage.getItem("demo.last")!);
     const version = await page.evaluate(() => localStorage.getItem("demo.version")!);
     await h.clearFaults(id);
@@ -62,7 +64,7 @@ test.describe("resume", () => {
     await expect(entry).toContainText("Resumed");
     await expect(entry).toHaveAttribute("data-status", "done", { timeout: 120_000 });
     await expect(page.locator("[data-demo=created]")).toHaveText("1");
-    expect(await page.evaluate(() => localStorage.getItem("ckui.uploads"))).toBeNull();
+    expect(await page.evaluate((key) => localStorage.getItem(key!), resumeKey)).toBeNull();
     await expect
       .poll(() => h.object({ kind: "file", id, version }, "file"), { timeout: 60_000 })
       .toEqual({ size, sha256: createHash("sha256").update(Buffer.alloc(size, 7)).digest("hex") });
