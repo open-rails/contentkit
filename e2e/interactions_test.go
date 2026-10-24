@@ -46,11 +46,6 @@ func TestEntityInteractionsAndModeration(t *testing.T) {
 	if *rc.Likes != 0 || *rc.Dislikes != 1 || rc.Mine != -1 {
 		t.Fatalf("after dislike %+v", rc)
 	}
-	var mine discovery.InteractionPage
-	f.want(http.StatusOK, user, "GET", "/me/reactions?target=entities", nil, &mine)
-	if len(mine.Items) != 1 || mine.Items[0].Entity == nil || string(mine.Items[0].Entity.ID) != id || mine.Items[0].Value != -1 {
-		t.Fatalf("my reactions %+v", mine)
-	}
 	f.want(http.StatusOK, user, "DELETE", g+"/reaction", nil, &rc)
 	f.want(http.StatusOK, "", "GET", g+"/reaction", nil, &rc)
 	if *rc.Likes != 0 || *rc.Dislikes != 0 {

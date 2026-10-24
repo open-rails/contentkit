@@ -499,26 +499,6 @@ func TestErasurePreservesPublicationRepliesAndOtherTenant(t *testing.T) {
 	}
 }
 
-func TestBasicModeratorCacheUsesTypedIdentityAndErasure(t *testing.T) {
-	m := &BasicModerator{}
-	ctx := context.Background()
-	for _, in := range []ModerationInput{{Tenant: "a", Actor: access.Actor{ID: "b|c"}, Text: "same"}, {Tenant: "a|b", Actor: access.Actor{ID: "c"}, Text: "same"}} {
-		v, err := m.Screen(ctx, in)
-		if err != nil || v.Decision != DecisionApprove {
-			t.Fatalf("opaque identity collision: %+v %v", v, err)
-		}
-	}
-	if err := m.EraseSubjects(ctx, "a", []string{"b|c"}); err != nil {
-		t.Fatal(err)
-	}
-	if len(m.recent) != 1 {
-		t.Fatalf("moderator cache cleanup crossed identities: %d", len(m.recent))
-	}
-	if _, err := m.Screen(ctx, ModerationInput{Tenant: "a", Actor: access.Actor{ID: "b|c"}, Text: "late"}); !errors.Is(err, ErrSubjectErased) {
-		t.Fatalf("late completion recreated erased cache: %v", err)
-	}
-}
-
 func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})

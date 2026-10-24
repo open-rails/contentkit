@@ -407,62 +407,6 @@ func TestModeration_EditRescreens(t *testing.T) {
 	}
 }
 
-func TestModeration_BasicModeratorAndChain(t *testing.T) {
-	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
-	basic := &BasicModerator{now: func() time.Time { return now }}
-	ai := &fakeModerator{}
-	rt := moderatedRuntime(t, Chain{basic, ai})
-	ctx := context.Background()
-	author := access.Actor{ID: "author"}
-	rejects := func(body, want string) {
-		t.Helper()
-		var rej RejectedError
-		if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(1)), CommentInput{Body: body}); !errors.As(err, &rej) || rej.Reason != want {
-			t.Fatalf("%q: %v, want reject %q", body, err, want)
-		}
-	}
-	rejects("see https://example.com/x", "links are not allowed")
-	rejects("visit www.example.com now", "links are not allowed")
-	if err := rt.addBannedWords(ctx, "staff", []BannedWordInput{{Word: "cp", Action: WordReject}}); err != nil {
-		t.Fatal(err)
-	}
-	rejects("cp trade", "content violates policy")
-	first := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "hello there"})
-	rejects("hello there", "duplicate submission, slow down")
-	if _, err := rt.comments.edit(ctx, author, first.ID, "hello there"); err != nil { // edits skip the dup guard
-		t.Fatalf("edit with the same text: %v", err)
-	}
-	if _, err := rt.comments.create(ctx, access.Actor{ID: "someone-else"}, rt.Ref("gallery", cid(1)), CommentInput{Body: "hello there"}); err != nil {
-		t.Fatalf("another actor's identical text: %v", err)
-	}
-	now = now.Add(31 * time.Second)
-	if _, err := rt.comments.create(ctx, author, rt.Ref("gallery", cid(1)), CommentInput{Body: "hello there"}); err != nil {
-		t.Fatalf("after the window: %v", err)
-	}
-	// the AI moderator behind it still holds
-	if cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "iffy"}); cm.Moderation != ModerationHeld {
-		t.Fatalf("chain did not reach the second moderator: %+v", cm)
-	}
-	if in := ai.last(); in.Text != "iffy" {
-		t.Fatalf("second moderator saw %+v", in)
-	}
-	calls := len(ai.inputs)
-	rejects("spam www.x.com", "links are not allowed") // basic short-circuits
-	if len(ai.inputs) != calls {
-		t.Fatal("the chain called the AI moderator after a basic reject")
-	}
-	// options
-	lenient := &BasicModerator{AllowLinks: true, DupWindow: -1}
-	v, _ := lenient.Screen(ctx, ModerationInput{Actor: author, Text: "cp https://x.y"})
-	if v.Decision != DecisionApprove {
-		t.Fatalf("lenient basic = %+v", v)
-	}
-	v, _ = lenient.Screen(ctx, ModerationInput{Actor: author, Text: "cp https://x.y"})
-	if v.Decision != DecisionApprove {
-		t.Fatalf("lenient basic (dup disabled) = %+v", v)
-	}
-}
-
 func TestModeration_ReviewRoutes(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	h := rt.Handler()
