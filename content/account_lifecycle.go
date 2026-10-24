@@ -91,7 +91,6 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 	if err := rt.Notifications.EraseAppRecipient(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: actorID}); err != nil {
 		return err
 	}
-	eraseLocalPolicy(ctx, rt.moderator, rt.tenant, []string{actorID})
 	if rt.providerEraser != nil {
 		return rt.providerEraser.EraseSubjects(ctx, rt.tenant, []string{actorID})
 	}

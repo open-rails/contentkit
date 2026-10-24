@@ -2,12 +2,10 @@ package content
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,91 +122,6 @@ func viewerID(a access.Actor) string {
 // placeholder bound to viewerID (an empty id matches no author).
 func visiblePred(n int) string {
 	return "(moderation = '" + ModerationApproved + "' OR user_id = $" + strconv.Itoa(n) + ")"
-}
-
-// --- Chain and BasicModerator ---
-
-// Chain runs moderators in order; the first reject or review verdict wins and
-// an error fails the chain. Put a BasicModerator in front of an AI moderator.
-type Chain []ContentModerator
-
-func (c Chain) Screen(ctx context.Context, in ModerationInput) (Verdict, error) {
-	for _, m := range c {
-		v, err := m.Screen(ctx, in)
-		if err != nil || v.Decision != DecisionApprove {
-			return v, err
-		}
-	}
-	return Verdict{Decision: DecisionApprove, Model: "contentkit/chain"}, nil
-}
-
-// BasicModerator is the deterministic policy: reject links and near-instant
-// duplicate submissions from one actor (banned words are data: rules.go).
-// The dup guard is per process; multi-replica hosts wanting global dedup
-// wire their own.
-type BasicModerator struct {
-	AllowLinks bool          // default false: reject bodies containing URLs
-	DupWindow  time.Duration // 0 = 30s; negative disables
-
-	once   sync.Once
-	mu     sync.Mutex
-	recent map[duplicateKey]time.Time
-	erased map[subjectKey]bool
-	swept  time.Time
-	now    func() time.Time
-}
-
-const basicModel = "contentkit/basic"
-
-var urlRe = regexp.MustCompile(`(?i)\b(?:https?://|www\.)\S+`)
-
-func (m *BasicModerator) init() {
-	m.once.Do(func() {
-		if m.DupWindow == 0 {
-			m.DupWindow = 30 * time.Second
-		}
-		if m.now == nil {
-			m.now = time.Now
-		}
-		m.recent = map[duplicateKey]time.Time{}
-		m.erased = map[subjectKey]bool{}
-	})
-}
-
-// Screen applies the rules to Title and Text. Edits skip the dup guard.
-func (m *BasicModerator) Screen(_ context.Context, in ModerationInput) (Verdict, error) {
-	m.init()
-	text := strings.TrimSpace(in.Title + "\n" + in.Text)
-	if !m.AllowLinks && urlRe.MatchString(text) {
-		return Verdict{Decision: DecisionReject, Reason: "links are not allowed", Model: basicModel}, nil
-	}
-	if m.DupWindow > 0 && in.ItemID == "" {
-		actor := in.Actor.ID
-		if actor == "" {
-			actor = in.Actor.IP
-		}
-		subject := subjectKey{in.Tenant, actor}
-		key := duplicateKey{subject, sha256.Sum256([]byte(text))}
-		now := m.now()
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if m.erased[subject] {
-			return Verdict{}, ErrSubjectErased
-		}
-		if now.Sub(m.swept) >= m.DupWindow { // bound memory once per window
-			m.swept = now
-			for k, t := range m.recent {
-				if now.Sub(t) >= m.DupWindow {
-					delete(m.recent, k)
-				}
-			}
-		}
-		if t, ok := m.recent[key]; ok && now.Sub(t) < m.DupWindow {
-			return Verdict{Decision: DecisionReject, Reason: "duplicate submission, slow down", Model: basicModel}, nil
-		}
-		m.recent[key] = now
-	}
-	return Verdict{Decision: DecisionApprove, Model: basicModel}, nil
 }
 
 // --- review queue ---
@@ -542,55 +455,12 @@ func (rt *Runtime) handleResolve(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, ReviewOutcome{Decision: in.Decision})
 }
 
-func (*BasicModerator) StatelessPolicy() {}
-
 func policyIsStateless(p any) bool {
 	if p == nil {
 		return true
 	}
-	if chain, ok := p.(Chain); ok {
-		for _, m := range chain {
-			if !policyIsStateless(m) {
-				return false
-			}
-		}
-		return true
-	}
 	_, ok := p.(StatelessPolicy)
 	return ok
-}
-
-type subjectKey struct{ tenant, subject string }
-type duplicateKey struct {
-	subject subjectKey
-	digest  [32]byte
-}
-
-func (m *BasicModerator) EraseSubjects(_ context.Context, tenant string, ids []string) error {
-	m.init()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, id := range ids {
-		k := subjectKey{tenant, id}
-		m.erased[k] = true
-		for cached := range m.recent {
-			if cached.subject == k {
-				delete(m.recent, cached)
-			}
-		}
-	}
-	return nil
-}
-
-func eraseLocalPolicy(ctx context.Context, p any, tenant string, ids []string) {
-	switch m := p.(type) {
-	case *BasicModerator:
-		_ = m.EraseSubjects(ctx, tenant, ids)
-	case Chain:
-		for _, part := range m {
-			eraseLocalPolicy(ctx, part, tenant, ids)
-		}
-	}
 }
 
 // Moderator breaker defaults.

@@ -501,17 +501,10 @@ refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
 every comment and free-text answer before the moderator; an IP-banned write
 answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
 
-`content.BasicModerator{AllowLinks, DupWindow}` is the deterministic default
-(links, per-process duplicate guard); compose it in front of an AI moderator
-with `content.Chain{basic, ai}`: the first reject/review wins, an error
-fails the chain closed.
-
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
 `Screen` instead of `Check`; return `Verdict{Decision: DecisionReject, Reason}`
 where it returned `RejectModeration(reason)`, `DecisionApprove` where it
-returned nil; wire `Options.Moderator = content.Chain{&content.BasicModerator{},
-userIntelligence.Moderator}` once User Intelligence's `moderate` module exists;
-grant `root:moderation:review` and point the admin review page at
+returned nil; grant `root:moderation:review` and point the admin review page at
 `/moderation/held` and `/moderation/{kind}/{id}/resolve`.
 
 Each `Screen` is bounded by `Options.ModeratorTimeout` (5s); a failure holds
@@ -684,9 +677,7 @@ runs after the SQL commit and must durably fence those subjects and remove
 retained data, including against calls already in flight; a queued delete is
 not completion. Multiple retaining providers need a composite eraser; provider
 implementations stay outside ContentKit. Ports that retain nothing implement
-`StatelessPolicy()`: `BasicModerator` does (its duplicate cache is keyed by
-subject and cleared on erase), and a `Chain` is stateless only when every member
-is. Construction rejects a retaining port without an eraser; nil is never an
+`StatelessPolicy()`. Construction rejects a retaining port without an eraser; nil is never an
 outage fallback.
 
 The library tests qualify the port contract and source fences against real
@@ -1526,7 +1517,7 @@ Nothing reads cached facet scores. See
 - Create and reuse one `contentkit.Engine` per tenant.
 - Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
 - Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
-- Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
+- Wire `Options.Moderator`, `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
