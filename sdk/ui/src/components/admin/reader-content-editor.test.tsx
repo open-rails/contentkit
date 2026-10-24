@@ -177,6 +177,19 @@ it("opens a complete reader workspace without a create-draft step or writes on m
   expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
 });
 
+it("shows the first page as the thumbnail until one is chosen, and no Publication panel before there is a gallery", async () => {
+  const single: ContentModel = { ...model, kinds: { gallery: { ...model.kinds.gallery!, comment_modes: ["open"] } } };
+  const small: FileInfo = { path: "renditions/001-small.webp", from: page.path, type: "image/webp", url: "https://test.invalid/page-small.webp", w: 200, h: 267 };
+  const s = server({ model: single, media: read([page, small]) });
+  const fresh = render(<ContentEditor client={s.client} kind="gallery" id={null} />);
+  await screen.findByLabelText("Gallery files");
+  expect(screen.queryByRole("heading", { name: "Publication" })).toBeNull();
+  fresh.unmount();
+  render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
+  expect(await screen.findByRole("heading", { name: "Publication" })).toBeVisible();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Thumbnail" }).querySelector("img")).toHaveAttribute("src", small.url));
+});
+
 it("loads an editor response that supplies its localized fields without a text map", async () => {
   const s = server({ noText: true });
   render(<ContentEditor client={s.client} kind="gallery" id="c1" />);
@@ -604,7 +617,7 @@ it("adds a version from a sibling: creates it, then copies its files, audio and 
   expect(within(dialog).getByRole("button", { name: "Add version" })).toBeDisabled();
   forked = true;
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add version" })).toBeNull(), { timeout: 4_000 });
-  expect(screen.getByRole("combobox", { name: "Versions" })).toHaveTextContent("ja");
+  expect(screen.getByRole("combobox", { name: "Versions" })).toHaveTextContent("Japanese");
 });
 
 it("follows a copy after its dialog closes: the added version keeps uploads blocked and shows the copy until its receipt, then reads its files and chapters again", async () => {
@@ -617,7 +630,7 @@ it("follows a copy after its dialog closes: the added version keeps uploads bloc
   expect(await within(dialog).findByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add version" })).toBeNull());
-  await waitFor(() => expect(screen.getByRole("combobox", { name: "Versions" })).toHaveTextContent("ja"));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Versions" })).toHaveTextContent("Japanese"));
   // No barrier yet: the workspace follows the copy itself.
   expect(await screen.findByText("Copying files from Edition one. This can take a moment.")).toBeVisible();
   expect(screen.getByLabelText("Gallery files")).toBeDisabled();

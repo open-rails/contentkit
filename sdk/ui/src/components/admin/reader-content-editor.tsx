@@ -1,3 +1,5 @@
+import { ImageAdd01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { parseAttributes } from "../../client/entity-fields.js";
 import { toContentKitError } from "../../client/errors.js";
@@ -9,7 +11,7 @@ import { isProcessing, pageRemoved } from "../../client/media/windows.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useContent } from "../../react/contents.js";
 import { useErrorReporter, useGuarded } from "../../react/context.js";
-import { useMediaFolder } from "../../react/folder.js";
+import { thumbnailOf, useMediaFolder } from "../../react/folder.js";
 import { useReaderFileDraft } from "../../react/reader-file-draft.js";
 import { DraftHistoryProvider, useDraftHistory } from "../../react/draft-history.js";
 import { useContentEntities } from "../../react/entities.js";
@@ -366,7 +368,9 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   }, [page, pages]);
   const rules = folder.groups.flatMap((g) => (g.rule ? [g.rule] : []));
   const coverFile = version?.cover?.image ? files.find((f) => f.upload && !ruleFor(rules, f.path)?.page && stem(f.path).split("/").at(-1) === version.cover?.image) : undefined;
-  const coverSrc = version?.cover?.url || coverFile?.editor_url || coverFile?.url;
+  // Until it has a cover of its own, a version shows its first page's small rendition, as published versions do.
+  const firstPage = pages[0] && thumbnailOf(folder.read.read, pages[0]);
+  const coverSrc = version?.cover?.url || coverFile?.editor_url || coverFile?.url || firstPage?.url;
   const coverCrop = useEditorCrop(ref ?? NO_REF, thumb?.path, { client, onError: p.onError, onSaved: () => setThumb(null) });
   const editThumbnail = (path: string) => setThumb({ path, aspect: ruleFor(rules, path)?.aspect ?? "" });
   const mediaFailed = !!folder.error || folder.queue.items.some((q) => q.status === "failed") || files.some((f) => f.failed);
@@ -579,7 +583,9 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   if (p.id && !item) return ed.error ? <LoadFailed error={ed.error} message={t("contentManager.loadFailed")} retry={ed.reload} /> : <Rows />;
   const status = item ? contentStatus(item) : "draft";
   const changeDetails = (patch: Partial<typeof details.value>) => details.edit((d) => ({ ...d, ...patch }));
-  const versionChoices = versions.map((v) => ({ id: v.id, label: versionLabel(v, (l) => languages.find((x) => x.value === l)?.label ?? l, p.labels) + (v.state === "deleted" ? ` · ${t("contentManager.deleted")}` : "") }));
+  // The host's label for a language, unless it is only the code.
+  const nameOf = (l: string) => { const label = languages.find((x) => x.value === l)?.label; return label && label !== l ? label : languageName(l); };
+  const versionChoices = versions.map((v) => ({ id: v.id, label: versionLabel(v, nameOf, p.labels) + (v.state === "deleted" ? ` · ${t("contentManager.deleted")}` : "") }));
   const choiceLabel = (id: string) => versionChoices.find((v) => v.id === id)?.label ?? "";
   const discardLocalEdits = () => {
     folder.discard();
@@ -627,7 +633,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
         event.preventDefault();
         if (event.shiftKey) history.redo(); else history.undo();
       }}>
-        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background/95 p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-background p-4" data-ckui="editor-header">
           <button
             type="button"
             className="h-36 shrink-0 overflow-hidden rounded-md border border-border bg-muted disabled:cursor-default sm:h-40"
@@ -638,11 +644,16 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             onClick={() => setCoverChoices(true)}
             data-ckui="editor-thumbnail"
           >
-            {coverSrc && <img src={coverSrc} alt="" className="size-full object-cover" />}
+            {coverSrc ? <img src={coverSrc} alt="" className="size-full object-cover" /> : (
+              <span className="grid size-full place-content-center justify-items-center gap-1.5 p-2 text-center text-xs text-muted-foreground">
+                <HugeiconsIcon icon={ImageAdd01Icon} strokeWidth={2} className="size-6" />
+                {t("readerEditor.thumbnail")}
+              </span>
+            )}
           </button>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-32 flex-1">
             <h1 className="sr-only">{text.title || t("readerEditor.new")}</h1>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <Badge variant={item?.live ? "default" : "outline"}>{t("readerEditor.galleryStatus", { status: t(`contentManager.${status}`) })}</Badge>
               {version && <span>{t("contentEditor.pageCount", { count: folder.read.read ? selectedPages : version.pages ?? 0 })}</span>}
               {allocating && <span role="status">{t("common.saving")}</span>}
@@ -663,6 +674,10 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             </a>
           )}
           <div ref={setVersionScheduleTarget} className="min-w-48" data-ckui="version-schedule-header" />
+        </div>
+        {/* Only the actions stay pinned while editing, below any host header that sets --ckui-sticky-top. */}
+        <div className="sticky top-[var(--ckui-sticky-top,0px)] z-10 flex flex-wrap items-center justify-end gap-3 rounded-xl border border-border bg-background px-4 py-3 shadow-sm transition-[top] duration-300 motion-reduce:transition-none" data-ckui="editor-toolbar">
+          <p className="me-auto min-w-0 truncate text-sm font-medium max-sm:hidden" aria-hidden>{(originalAndVersion ? displayTitle : text.title) || t("readerEditor.new")}</p>
           <div ref={setVersionRestoreTarget} data-ckui="version-restore-header" />
           {!editionDeleted && (item && !unsaved && !saving ? (
             <span role="status" className="text-sm text-muted-foreground" data-ckui="editor-saved">
@@ -825,12 +840,13 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 client={client}
               />
             </Panel>}
-            <Panel title={t("readerEditor.publication")}>
+            {/* A new gallery has nothing to publish yet, unless comments can be set. */}
+            {(item || spec.comment_modes?.length !== 1) && <Panel title={t("readerEditor.publication")}>
               {item && version && (
                 <div className="grid gap-1 text-sm">
                   <p className="font-medium">
                     {t("readerEditor.versionStatus", {
-                      language: version.languages.map((l) => { const label = languages.find((x) => x.value === l)?.label; return label && label !== l ? label : languageName(l); }).join(", "),
+                      language: version.languages.map(nameOf).join(", "),
                       status: t(version.state === "deleted" ? "contentManager.deleted" : version.state === "draft" ? "contentManager.draft" : version.publish_at && Date.parse(version.publish_at) > Date.now() ? "contentManager.scheduled" : item.live ? "contentManager.published" : "readerEditor.ready"),
                     })}
                   </p>
@@ -874,7 +890,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 <div ref={setVersionActionsTarget} className="contents" data-ckui="version-destructive-actions" />
               </div>
               <ErrorLine error={actions.error} />
-            </Panel>
+            </Panel>}
           </aside>
         </fieldset>
         <Dialog open={coverChoices} onOpenChange={(open) => !cover.pending && setCoverChoices(open)}>
@@ -903,7 +919,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
         }}>
           <DialogContent>
             <DialogHeader><DialogTitle>{t("contentEditor.addVersion")}</DialogTitle></DialogHeader>
-            <AddVersion languages={model.languages} many={spec.versions.languages === "many"} pending={addVersion.pending || !!copying}
+            <AddVersion heading={false} languages={model.languages} many={spec.versions.languages === "many"} pending={addVersion.pending || !!copying}
               sources={versions.filter((v) => v.state !== "deleted").map((v) => ({ id: v.id, label: versionChoices.find((c) => c.id === v.id)?.label ?? v.code, audio: v.has_audio, chapters: !!spec.segments && v.segments.length > 0 }))}
               onAdd={(input, from) => {
                 if (!item) return;

@@ -804,6 +804,12 @@ The host still owns navigation outside the flow, including browser Back handling
   letter capitalized, the New button and the empty state; generic wording
   without it). `useContentManagerAccess()`.
 
+  A reader kind's editor keeps its save, undo and publish actions pinned as
+  the page scrolls. A host with its own sticky header sets
+  `--ckui-sticky-top` on an ancestor to that header's visible height, so the
+  actions stop below it; `appearance.variables.stickyTop` sets a fixed value
+  instead and takes precedence.
+
   Post editors label the preview text **Summary (optional)**. A supplied
   summary becomes the list excerpt; otherwise ContentKit extracts the opening
   plain text from the post body (HTML, plain text or Quill Delta), without image

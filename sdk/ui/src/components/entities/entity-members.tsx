@@ -23,6 +23,7 @@ import { WindowFields } from "./entity-chips.js";
 import { labelOf, type Labels } from "./parts.js";
 
 const NONE = "__none__";
+const UNDO_MS = 8000;
 // The managed listing hydrates at most this many ids per request.
 const BATCH = 100;
 
@@ -92,6 +93,13 @@ export function EntityMembers(p: EntityMembersProps) {
   const save = useAction("membership.save", p.onError);
   const [editing, setEditing] = useState<string | null>(null);
   const [win, setWin] = useState<{ from?: string; until?: string }>({});
+  // The last removal, offered back for a few seconds.
+  const [removed, setRemoved] = useState<{ member: Membership; name: string } | null>(null);
+  useEffect(() => {
+    if (!removed) return;
+    const timer = setTimeout(() => setRemoved(null), UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [removed]);
   const title = (x: Membership) => contents.get(x.content_id ?? "")?.title || x.content_id || "";
   const spoken = (x: Member) => `${title(x)}${x.version_id ? ` (${t("memberships.version")})` : ""}`;
   // Every role of one member shares its place: order unique content and version pairs.
@@ -124,7 +132,7 @@ export function EntityMembers(p: EntityMembersProps) {
         </Button>
       )}
       <Button size="icon-xs" variant="secondary" disabled={save.pending} aria-label={t("memberships.remove", { name: spoken(x) })} title={t("common.remove")}
-        onClick={() => void save.run(() => members.remove([strip(x)]))}>
+        onClick={() => void save.run(() => members.remove([strip(x)])).then((d) => d !== undefined && setRemoved({ member: strip(x), name: spoken(x) }))}>
         <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2.5} />
       </Button>
     </>
@@ -175,7 +183,8 @@ export function EntityMembers(p: EntityMembersProps) {
         )}
         <span className="flex flex-wrap gap-1">{badges(x, c)}</span>
         {dates(x)}
-        <span className="absolute end-1 top-1 flex gap-1 opacity-0 transition-opacity group-hover/member:opacity-100 focus-within:opacity-100">{actions(x)}</span>
+        {/* Shown on touch screens, which have no hover; quieter until hovered where there is one. */}
+        <span className="absolute end-1 top-1 flex gap-1 transition-opacity [@media(hover:hover)]:not-group-hover/member:not-focus-within:opacity-70">{actions(x)}</span>
       </li>
     );
   };
@@ -217,12 +226,15 @@ export function EntityMembers(p: EntityMembersProps) {
       });
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="entity-members">
-      <h3 className="font-medium">{t("memberships.members")}</h3>
+      <div className="grid gap-0.5">
+        <h3 className="text-base font-semibold">{t("memberships.members")}</h3>
+        <p className="text-xs text-muted-foreground">{t("entityEditor.savesNow")}</p>
+      </div>
       {starts.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {starts.map((x) => (
             <a key={x.kind} href={x.href} className={buttonVariants({ variant: "outline", size: "sm" })} data-ckui="entity-member-new">
-              {t("memberships.newContent", { kind: labelOf(p.labels, x.kind), name: p.entity.name })}
+              {t("memberships.newContent", { kind: labelOf(p.labels, x.kind, "one"), name: p.entity.name })}
             </a>
           ))}
         </div>
@@ -271,6 +283,26 @@ export function EntityMembers(p: EntityMembersProps) {
           </Button>
         </div>
       )}
+      {/* Held at the bottom of the screen while the members are in view, wherever the removed one was. */}
+      <div role="status" className="sticky bottom-4 z-10 empty:hidden" data-ckui="member-removed">
+        {removed && (
+          <span className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-background px-4 py-3 shadow-md">
+            <span className="min-w-0 flex-1 break-words">{t("memberships.removed", { name: removed.name })}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={save.pending}
+              onClick={() => {
+                // Its own position comes back with it, so an ordered member returns to its place.
+                const member = removed.member;
+                void save.run(() => members.add([member])).then((d) => d !== undefined && setRemoved(null));
+              }}
+            >
+              {t("editor.undo")}
+            </Button>
+          </span>
+        )}
+      </div>
       <ErrorLine error={save.error} />
     </ContentKitUiRoot>
   );
@@ -364,7 +396,7 @@ function AddContent({ spec, labels, client, onAdd }: { spec: EntityKind; labels?
               >
                 {c.cover[0]?.url ? <img src={c.cover[0].url} alt="" className="h-9 w-6 shrink-0 rounded-sm object-cover" /> : <span aria-hidden className="h-9 w-6 shrink-0 rounded-sm bg-muted" />}
                 <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                <span className="text-xs text-muted-foreground">{labelOf(labels, c.kind)}</span>
+                <span className="text-xs text-muted-foreground">{labelOf(labels, c.kind, "one")}</span>
               </li>
             ))}
           </ul>

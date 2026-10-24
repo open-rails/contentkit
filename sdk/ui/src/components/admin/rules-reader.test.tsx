@@ -190,9 +190,19 @@ it("ReaderManifestEditor: seeds every stored cue and flags one naming audio the 
   const user = userEvent.setup();
   render(<ReaderManifestEditor kind="gallery" content="c1" version="v1" />, { wrapper: wrap(s.client) });
   expect(await screen.findByRole("combobox", { name: "Cue 1 audio" })).toHaveTextContent("003");
-  expect(screen.getByText("Track 1: names audio this version doesn't have.")).toBeInTheDocument();
+  expect(screen.getByText("Track 1: names audio this version doesn't have.").closest("[data-ckui=reader-background]")).toBe(screen.getByRole("combobox", { name: "Track 1 audio" }).closest("[data-ckui=reader-background]"));
   await user.click(screen.getByRole("button", { name: "Remove track 1" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText("Manifest saved.")).toBeInTheDocument();
   expect(s.bodies["PUT /contents/c1/versions/v1/reader"]).toEqual([{ schema_version: 1, anchors: [], background: [], foreground: [{ file: "003", page: hash("003") }] }]);
+});
+
+it("ReaderManifestEditor: matching says how many earlier cues it replaced", async () => {
+  const stored: ReaderMeta = { schema_version: 1, anchors: [], background: [], foreground: [{ file: "003", page: hash("002") }] };
+  const s = server({});
+  vi.spyOn(s.client.media, "read").mockImplementation(async () => read(stored));
+  const user = userEvent.setup();
+  render(<ReaderManifestEditor kind="gallery" content="c1" version="v1" />, { wrapper: wrap(s.client) });
+  await user.click(await screen.findByRole("button", { name: "Match audio to pages" }));
+  expect(screen.getByText("Matched 2 audio files to pages or anchors. Earlier cues replaced: 1.")).toBeInTheDocument();
 });
