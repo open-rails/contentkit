@@ -15,8 +15,23 @@ func statusBlob(value string) string {
 	return layout.BlobName(sum[:], "00000000-0000-4000-8000-000000000001")
 }
 
+// The unit fixtures use only path/preset selection, so compile the upload
+// patterns that NewRegistry would normally install before status reads.
+func compileStatusKind(t *testing.T, k *Kind) {
+	t.Helper()
+	k.patterns = make([]pattern, len(k.Uploads))
+	for i, u := range k.Uploads {
+		p, ok := parsePattern(u.Path)
+		if !ok {
+			t.Fatalf("invalid fixture upload pattern: %s", u.Path)
+		}
+		k.patterns[i] = p
+	}
+}
+
 func TestStatusCountsWholeManifestAndArchiveEntries(t *testing.T) {
 	k := &Kind{Publish: &Publish{Pages: "pages/{name}", Import: "import/{name}"}, Uploads: []Upload{{Path: "pages/{name}"}, {Path: "import/{name}"}}, Private: []Private{{Name: "read", From: "pages/{name}"}}, Public: []Public{{Name: "thumb", From: "pages/{name}"}}}
+	compileStatusKind(t, k)
 	zip := File{Path: "import/book.zip", Type: "application/zip", Blob: statusBlob("zip"), Meta: map[string]any{"archive_pages_total": float64(4)}}
 	digest, _ := layout.BlobDigest(zip.Blob)
 	meta := func() map[string]any {
@@ -58,6 +73,7 @@ func TestStatusCountsWholeManifestAndArchiveEntries(t *testing.T) {
 
 func TestStatusBoundsFailuresAndKeepsRealEncodingProgress(t *testing.T) {
 	k := &Kind{Uploads: []Upload{{Path: "video"}}, Private: []Private{{Name: "stream", From: "video"}}}
+	compileStatusKind(t, k)
 	m := &Manifest{}
 	for range 40 {
 		f := File{Path: "video.mp4", Type: "video/mp4", Blob: statusBlob("failed")}
@@ -82,6 +98,7 @@ func TestStatusBoundsFailuresAndKeepsRealEncodingProgress(t *testing.T) {
 
 func TestArchiveStatusKeepsCompletedExtractionAndCountsExcludedPagesOnce(t *testing.T) {
 	k := &Kind{Publish: &Publish{Pages: "pages/{name}", Import: "import/{name}"}, Uploads: []Upload{{Path: "pages/{name}"}, {Path: "import/{name}"}}}
+	compileStatusKind(t, k)
 	archive := File{Path: "import/book.zip", Blob: statusBlob("zip"), Meta: map[string]any{"archive_pages_total": 3}}
 	raw, _ := layout.BlobDigest(archive.Blob)
 	sum := hex.EncodeToString(raw)
@@ -108,9 +125,13 @@ func TestArchiveStatusKeepsCompletedExtractionAndCountsExcludedPagesOnce(t *test
 
 func TestStatusRejectsUnownedPublicGenerationAndPendingPrivateOutput(t *testing.T) {
 	k := &Kind{Uploads: []Upload{{Path: "pages/{name}"}}, Private: []Private{{Name: "read", From: "pages/{name}"}}, Public: []Public{{Name: "thumb", From: "pages/{name}"}}}
+	compileStatusKind(t, k)
 	source := File{Path: "pages/1.png", Blob: statusBlob("current"), Pending: []string{"read"}, Public: []Publication{{Preset: "thumb", Source: "old-source", State: PublicationReady}}}
 	m := &Manifest{Files: []File{source, {Path: "read/1.webp", From: source.Path, Preset: "read", Blob: statusBlob("old output")}}}
 	got := statusOf(k, m, EncodeStatus{})
+	if len(got.Presets) != 2 {
+		t.Fatalf("expected both rendition presets: %+v", got.Presets)
+	}
 	for _, preset := range got.Presets {
 		if preset.Completed != 0 {
 			t.Fatalf("stale/pending output counted ready: %+v", preset)
