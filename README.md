@@ -282,6 +282,29 @@ concepts. OpenRails's `required_entitlements` can require a channel membership
 before a customer buys an individually gated item. Product/price edits report
 OpenRails errors directly. They do not first save local terms for later sync.
 
+For example, after creating a ContentKit item, its authoring flow can create a
+native OpenRails product and price with the OpenRails Go client:
+
+```go
+key, err := access.ContentKey(tenant, contentID)
+if err != nil { return err }
+product, err := billingClient.CreateProduct(ctx, billing.CreateProductParams{
+    Key: "content-" + contentID, DisplayName: title,
+    Entitlements: []string{key.String()},
+})
+if err != nil { return err }
+_, err = billingClient.CreatePrice(ctx, billing.CreatePriceParams{
+    ProductID: product.ID, Key: "standard", UnitAmount: 5_000_000, Currency: "USD",
+})
+return err
+```
+
+Here `billing` is `github.com/open-rails/openrails/billing`; amounts are in
+millionths of a currency unit, so the example price is $5. The same calls work
+through the embedded or remote OpenRails client. Price history, retries and
+checkout are owned by OpenRails. A channel product uses `access.EntityKey`
+instead, while a Premium product grants the configured tier key.
+
 `Rule` is stored on content and optional version overrides. It is validated
 against the model and projected onto `content_facets`. `Gate` reads grants
 through `access.Billing.Held`; optional `access.TenureReader` supplies account

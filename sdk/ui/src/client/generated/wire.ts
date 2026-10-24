@@ -194,7 +194,6 @@ export interface Batch {
   entities?: EntityRecord[];
   contents?: ContentRecord[];
   memberships?: MembershipSet[];
-  offers?: OfferRecord[];
   aliases?: AliasRecord[];
   comments?: CommentRecord[];
   reactions?: ReactionRecord[];
@@ -243,7 +242,6 @@ export interface CardAccess {
   requires?: string;
   preview?: Preview;
   releases?: Release[];
-  offers?: Sale[];
 }
 
 export interface CardVersion {
@@ -407,8 +405,6 @@ export interface Content {
   text?: Record<string, CatalogText>;
   moderation?: ModerationState;
   moderation_reason?: string;
-  ever_sold?: boolean;
-  offer?: Offer;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -604,7 +600,6 @@ export interface Decision {
   requires?: string;
   preview?: Preview;
   releases?: Release[];
-  offers?: Sale[];
 }
 
 export interface DeleteRecord {
@@ -704,7 +699,6 @@ export interface Entity {
 
 export interface EntityAccess {
   key: string;
-  offer?: Sale;
   member: boolean;
   editor?: boolean;
   unknown?: boolean;
@@ -758,7 +752,6 @@ export interface EntityDetail {
   edges: Edge[];
   counts: Count[];
   access?: EntityAccess;
-  offer?: Offer;
 }
 
 export interface EntityInput {
@@ -777,12 +770,6 @@ export interface EntityInput {
   text?: EntitiesText[];
 }
 
-export interface EntityJoin {
-  group_id: string;
-  key: string;
-  member: boolean;
-}
-
 export interface EntityKind {
   route?: string;
   ordered?: boolean;
@@ -792,7 +779,7 @@ export interface EntityKind {
   max_per_owner?: number;
   avatar?: boolean;
   uploads?: UploadLimits;
-  sellable?: boolean;
+  entitled?: boolean;
   auth_scope?: boolean;
   windows?: boolean;
   membership_scopes?: ("content" | "version")[];
@@ -1340,30 +1327,6 @@ export interface NoticePage {
   preview_url?: string;
 }
 
-export interface Offer {
-  id: string;
-  target: Target;
-  key: string;
-  terms: Terms;
-  state: "active" | "withdrawn";
-  synced: boolean;
-  product_id?: string;
-  price_id?: string;
-  last_error?: string;
-  revision: number;
-  updated_at: string;
-}
-
-export interface OfferPage {
-  offers: Offer[];
-  next_cursor?: string;
-}
-
-export interface OfferRecord {
-  target: TargetRef;
-  terms: Terms;
-}
-
 export interface Op {
   op: OpName;
   source_name?: string;
@@ -1885,13 +1848,6 @@ export interface Rule {
   releases?: Release[];
 }
 
-export interface Sale {
-  key: string;
-  target: Target;
-  terms: Terms;
-  price_id?: string;
-}
-
 export interface Segment {
   position: number;
   title?: string;
@@ -1975,24 +1931,11 @@ export interface StagedCopy {
   size: number;
 }
 
-export interface Target {
-  kind: "content" | "group" | "version";
-  id: string;
-  content_id?: string;
-}
-
 export interface TargetRef {
   content?: Ref;
   version?: Ref;
   group?: Ref;
   comment?: Ref;
-}
-
-export interface Terms {
-  amount: string;
-  currency: string;
-  access_hours?: number;
-  renew_hours?: number;
 }
 
 export interface TicketBody {
@@ -2062,7 +2005,6 @@ export interface Version {
   segments: Segment[];
   decision: Decision;
   text?: Record<string, VersionText>;
-  offer?: Offer;
   viewer?: ViewerState;
 }
 
