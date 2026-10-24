@@ -30,10 +30,6 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 )
 
-// HeldKind is the review queue's kind for held content (content.Runtime's
-// /moderation/held?kind=content).
-const HeldKind = "content"
-
 // DefaultDeletedRetention is how long deleted content keeps its
 // media and can be restored before PurgeDeleted erases it.
 const DefaultDeletedRetention = 30 * 24 * time.Hour
@@ -51,11 +47,6 @@ type Querier interface {
 type Entities interface {
 	EffectiveEntities(ctx context.Context, q entities.Querier, versionIDs []string) (map[string][]string, error)
 	Cards(ctx context.Context, ids []entities.EntityID, o entities.CardOptions) ([]entities.EntityCard, error)
-}
-
-// Moderation screens text before it publishes: content.Runtime.
-type Moderation interface {
-	Screen(ctx context.Context, in content.ModerationInput) (content.Screening, error)
 }
 
 // Standing reads a signed-in person's standing with content items and
@@ -83,9 +74,6 @@ type Options struct {
 	// its Options.ContentChanged to Store.ContentChanged and its
 	// Options.NamesChanged to Store.EntitiesRenamed.
 	Entities Entities
-	// Moderation screens text of content that is or goes live; nil approves
-	// unless contentkit.NewRuntime binds its content runtime (BindModeration).
-	Moderation Moderation
 	// Body sanitizes text bodies; nil strips tags.
 	Body Sanitizer
 	// DeletedRetention: see DefaultDeletedRetention.
@@ -118,7 +106,6 @@ type Store struct {
 	guard          *gate.Gate
 	accessG        *access.Gate
 	entities       Entities
-	moderator      Moderation
 	body           Sanitizer
 	media          *Media
 	standing       Standing
@@ -162,7 +149,7 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 			entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
 			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),
 			reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")},
-		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities, moderator: opts.Moderation,
+		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities,
 		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, documents: opts.DocumentsChanged, references: opts.References,
 		playable: slices.Sorted(slices.Values(opts.PlayableKinds)), now: opts.Now, log: opts.Logger,
 	}
@@ -205,14 +192,6 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 
 // Close releases the totals cache.
 func (s *Store) Close() { s.totals.Close() }
-
-// BindModeration screens through m when Options.Moderation is nil, so one
-// moderator serves comments and catalog text; call it before serving.
-func (s *Store) BindModeration(m Moderation) {
-	if s.moderator == nil {
-		s.moderator = m
-	}
-}
 
 // BindStanding fills detail reads' viewer state from st; call it once,
 // before serving.

@@ -240,8 +240,6 @@ export const social: typeof en = {
     loadFailed: "Die Kommentare konnten nicht geladen werden.",
     stale: "Der Text wurde seit dem Laden bearbeitet; prüf ihn erneut.",
     loadMore: "Mehr anzeigen",
-    queueComments: "Kommentare",
-    queueContent: "Beiträge",
     noAccess: "Du hast keine Berechtigung, Kommentare zu moderieren.",
     author: "Autor",
     authorPlaceholder: "Nach Benutzer-ID filtern",

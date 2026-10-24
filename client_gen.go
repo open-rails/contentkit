@@ -841,7 +841,7 @@ func (c *Client) GetEntityCanComment(ctx context.Context, id string, q GetEntity
 
 // GetModerationHeldQuery is the query of GetModerationHeld.
 type GetModerationHeldQuery struct {
-	// comment or content
+	// comment
 	Kind string
 	// the previous page's next
 	Cursor string
@@ -863,14 +863,14 @@ func (q GetModerationHeldQuery) values() url.Values {
 	return v
 }
 
-// GetModerationHeld is GET /v1/moderation/held (staff). Held comments or content items awaiting review, oldest first.
+// GetModerationHeld is GET /v1/moderation/held (staff). Held comments awaiting review, oldest first.
 func (c *Client) GetModerationHeld(ctx context.Context, q GetModerationHeldQuery) (content.HeldPage, error) {
 	var out content.HeldPage
 	err := c.call(ctx, http.MethodGet, "/v1/moderation/held", q.values(), nil, &out)
 	return out, err
 }
 
-// PostModerationResolve is POST /v1/moderation/{kind}/{id}/resolve (staff). Approves (publishes) or rejects a held comment or content item, at the revision the queue listed.
+// PostModerationResolve is POST /v1/moderation/{kind}/{id}/resolve (staff). Approves (publishes) or rejects a held comment, at the revision the queue listed.
 func (c *Client) PostModerationResolve(ctx context.Context, kind string, id string, body content.ResolveInput) (content.ReviewOutcome, error) {
 	var out content.ReviewOutcome
 	err := c.call(ctx, http.MethodPost, expand("/v1/moderation/{kind}/{id}/resolve", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), nil, body, &out)
@@ -991,7 +991,7 @@ func (q GetContentQuery) values() url.Values {
 	return v
 }
 
-// GetContent is GET /v1/contents/{id} (public). A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state.
+// GetContent is GET /v1/contents/{id} (public). A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version and every language.
 func (c *Client) GetContent(ctx context.Context, id string, q GetContentQuery) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
@@ -1234,7 +1234,7 @@ func (c *Client) PostContentRestore(ctx context.Context, id string) (catalog.Con
 	return out, err
 }
 
-// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentPublish(ctx context.Context, id string, body catalog.PublishInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/publish", "{id}", url.PathEscape(id)), nil, body, &out)
@@ -1248,7 +1248,7 @@ func (c *Client) PostContentUnpublish(ctx context.Context, id string) (catalog.C
 	return out, err
 }
 
-// PutContentText is PUT /v1/contents/{id}/text/{language} (public). Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PutContentText is PUT /v1/contents/{id}/text/{language} (public). Sets a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PutContentText(ctx context.Context, id string, language string, body catalog.Text) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/text/{language}", "{id}", url.PathEscape(id), "{language}", url.PathEscape(language)), nil, body, &out)

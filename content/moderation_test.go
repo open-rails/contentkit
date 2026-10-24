@@ -37,7 +37,7 @@ func (m *fakeModerator) Screen(_ context.Context, in ModerationInput) (Verdict, 
 		return Verdict{Decision: "maybe", Model: "fake-llm"}, nil
 	}
 	v := Verdict{Decision: DecisionApprove, Model: "fake-llm", PromptVersion: "v1", Confidence: 0.9}
-	text := strings.ToLower(in.Title + " " + in.Text)
+	text := strings.ToLower(in.Text)
 	switch {
 	case strings.Contains(text, "spam"):
 		v.Decision, v.Reason = DecisionReject, "spam is not allowed"
@@ -104,7 +104,6 @@ func contains(ids []string, id string) bool {
 
 func TestModeration_WithoutModeratorPublishes(t *testing.T) {
 	rt := moderatedRuntime(t, nil)
-	ctx := context.Background()
 	author := access.Actor{ID: "author"}
 	cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "iffy spam or not, it publishes"})
 	if cm.Moderation != "" || countsOf(t, rt, ref("gallery", cid(1))).CommentCount != 1 {
@@ -115,9 +114,6 @@ func TestModeration_WithoutModeratorPublishes(t *testing.T) {
 	}
 	if ids := heldIDs(t, rt, KindComment); len(ids) != 0 {
 		t.Fatalf("held queue = %v, want empty", ids)
-	}
-	if sc, err := rt.Screen(ctx, ModerationInput{Actor: access.Actor{ID: "reviewer"}, Kind: "content", Title: "iffy", Text: "spam"}); err != nil || sc.State != ModerationApproved {
-		t.Fatalf("Screen without a moderator = %+v %v, want approved", sc, err)
 	}
 }
 
@@ -328,11 +324,6 @@ func TestModeration_FailClosed(t *testing.T) {
 	odd := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "fine too"})
 	if odd.Moderation != ModerationHeld || odd.ModerationReason != heldReason {
 		t.Fatalf("unknown decision must hold: %+v", odd)
-	}
-	// Another module's text fails closed the same way.
-	mod.odd, mod.fail = false, true
-	if sc, err := rt.Screen(context.Background(), ModerationInput{Actor: access.Actor{ID: "reviewer"}, Kind: "content", Title: "t", Text: "b"}); err != nil || sc.State != ModerationHeld || len(sc.Verdict) == 0 {
-		t.Fatalf("Screen under a failing moderator = %+v %v, want held", sc, err)
 	}
 }
 

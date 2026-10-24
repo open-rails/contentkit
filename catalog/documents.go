@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"context"
-	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
@@ -14,8 +13,7 @@ import (
 
 // Content items are keyword documents of their own: one per item and
 // language it has text in (no version), built by the search worker
-// from that text (its last approved text while an edit awaits review) with
-// the names of the item's timeless entities as keywords. Dated curation uses
+// from that text with the names of the item's timeless entities as keywords. Dated curation uses
 // runtime entity filters; it does not enter clock-dependent keyword text. Drafts and deleted items have
 // none; whom a document shows to is the visibility rule's, at query time
 // (Viewer.Eligibility).
@@ -74,7 +72,7 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.moderation, c.published_snapshot -> $3, t.title, t.aliases, coalesce(c.original_title,''),
+	rows, err := s.pool.Query(ctx, `SELECT c.id, t.title, t.aliases, coalesce(c.original_title,''),
  ARRAY(SELECT vt.title FROM `+s.t.versions+` v JOIN `+s.t.versionText+` vt ON vt.tenant_id=v.tenant_id AND vt.version_id=v.id
  WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND (v.publish_at IS NULL OR v.publish_at<=clock_timestamp())
  AND vt.language=ANY(v.languages) AND vt.title<>'' ORDER BY (vt.language=$3) DESC,v.position,vt.language),
@@ -89,22 +87,15 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
 	defer rows.Close()
 	var docs []search.KeywordDocument
 	for rows.Next() {
-		var id, moderation, original string
-		var snapshot []byte
+		var id, original string
 		var title *string
 		var aliases, keywords, editionTitles []string
-		if err := rows.Scan(&id, &moderation, &snapshot, &title, &aliases, &original, &editionTitles, &keywords); err != nil {
+		if err := rows.Scan(&id, &title, &aliases, &original, &editionTitles, &keywords); err != nil {
 			return nil, err
 		}
 		doc := search.KeywordDocument{DocumentKey: search.DocumentKey{ContentRef: s.Ref(kind, id), Language: language}, Keywords: keywords}
 		switch {
-		case moderation != "approved" && snapshot != nil:
-			var t Text
-			if err := json.Unmarshal(snapshot, &t); err != nil {
-				return nil, err
-			}
-			doc.Title, doc.Aliases = t.Title, t.Aliases
-		case moderation == "approved" && (title != nil || s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion):
+		case title != nil || s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion:
 			if title != nil {
 				doc.Title = *title
 			}

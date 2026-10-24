@@ -150,8 +150,8 @@ func TestAudienceReleaseBackdatedEditOccursWhenGranted(t *testing.T) {
 func TestPublishDueDrainsBeyondOneBatch(t *testing.T) {
 	f := newFixture(t, nil)
 	_, err := f.pool.Exec(f.ctx, `WITH seeded AS (
- INSERT INTO `+f.s.t.items+`(tenant_id,id,kind,state,publish_at,moderation)
- SELECT $1,gen_random_uuid()::text,'gallery','published',$2::timestamptz,'approved' FROM generate_series(1,501) RETURNING tenant_id,id
+ INSERT INTO `+f.s.t.items+`(tenant_id,id,kind,state,publish_at)
+ SELECT $1,gen_random_uuid()::text,'gallery','published',$2::timestamptz FROM generate_series(1,501) RETURNING tenant_id,id
  ) INSERT INTO `+f.s.t.versions+`(tenant_id,id,content_id,languages,state,publish_at)
  SELECT tenant_id,gen_random_uuid()::text,id,ARRAY['en'],'published',$2 FROM seeded`, tenant, f.now().Add(-time.Hour))
 	if err != nil {

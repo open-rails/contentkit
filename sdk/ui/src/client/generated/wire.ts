@@ -402,8 +402,6 @@ export interface Content {
   viewer?: ViewerState;
   editor: boolean;
   text?: Record<string, CatalogText>;
-  moderation?: ModerationState;
-  moderation_reason?: string;
   revision: number;
   created_at: string;
   updated_at: string;

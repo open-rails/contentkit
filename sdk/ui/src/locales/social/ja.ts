@@ -240,8 +240,6 @@ export const social: typeof en = {
     loadFailed: "コメントを読み込めませんでした。",
     stale: "一覧の表示後に編集されました。もう一度確認してください。",
     loadMore: "さらに表示",
-    queueComments: "コメント",
-    queueContent: "投稿",
     noAccess: "コメントをモデレートする権限がありません。",
     author: "投稿者",
     authorPlaceholder: "ユーザー ID で絞り込む",
