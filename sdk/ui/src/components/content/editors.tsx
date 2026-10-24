@@ -483,12 +483,12 @@ export function versionLabel(v: Version, languageName: (l: string) => string, la
 function VersionStatus({ version }: { version: Version }) {
   const { t } = useMessages();
   if (version.state === "deleted") {
-    return <span className="text-sm text-muted-foreground">{t("contentManager.deleted")}</span>;
+    return <span className="text-sm text-muted-foreground" data-ckui="version-status" data-state="deleted">{t("contentManager.deleted")}</span>;
   }
   const color = version.live ? "bg-success" : version.state === "draft" ? "bg-muted-foreground/50" : "bg-sky-500";
   const label = version.live ? t("contentEditor.live") : version.state === "draft" ? t("contentManager.draft") : t("contentManager.scheduled");
   return (
-    <span className="inline-flex items-center gap-1.5 text-sm text-foreground">
+    <span className="inline-flex items-center gap-1.5 text-sm text-foreground" data-ckui="version-status" data-state={version.live ? "live" : version.state}>
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", color)} />
       {label}
     </span>

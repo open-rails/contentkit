@@ -32,12 +32,13 @@ it("the content manager creates video content and opens an added version as a dr
     return section!;
   }, wait);
   expect(versions.querySelectorAll('[data-ckui="version-row"]')).toHaveLength(1);
+  await user.click(within(versions).getByRole("button", { name: "Add version" }));
   await user.click(within(versions).getByRole("combobox", { name: "Version language" }));
   await user.click(await screen.findByRole("option", { name: "German" }));
   await user.click(within(versions).getByRole("button", { name: "Add version" }));
   await waitFor(() => expect(versions.querySelectorAll('[data-ckui="version-row"]')).toHaveLength(2), wait);
   const added = versions.querySelectorAll<HTMLElement>('[data-ckui="version-row"]')[1]!;
-  expect(added.querySelector('[data-slot="badge"]')).toHaveTextContent("Draft");
+  expect(added.querySelector('[data-ckui="version-status"]')).toHaveTextContent("Draft");
   expect(within(added).queryByRole("switch", { name: "Draft" })).toBeNull();
   const [created] = await c.contents.manage({ kind: "video", q: title });
   expect(created).toBeDefined();
