@@ -4,6 +4,8 @@ Uploads, processing and publication are separate actions. Create the content/ver
 
 `contentkit_media_ingest` on `media_ingest` owns staged placement and ZIP expansion. It then schedules image/video processing. There is no separate host ZIP-import job or upload-and-publish operation.
 
+Reader snapshots wake from durable commit and media progress/ready notifications. An attempt whose files are still processing finishes and waits for the next notification instead of polling every five seconds. Progress arriving during a running snapshot queues a follow-up, so ready pages can appear while unrelated video processing continues. Storage/database errors still retry; fork and body-copy waits retain their own retry behavior.
+
 ## Configure ZIP sources
 
 A media upload accepting `application/zip` can set `archive_to` to another configured `{name}` image upload. This works without a catalog or reader kind, including named body-image destinations. Existing reader `Publish.Import` / `Publish.Pages` mappings are also supported.

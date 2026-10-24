@@ -122,7 +122,13 @@ func (w *publishWorker) Work(ctx context.Context, job *river.Job[publishArgs]) e
 	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
 		return err
 	}
-	return outcome(w.s.publish(ctx, Target{Content: job.Args.Content, Version: job.Args.Version}))
+	err := w.s.publish(ctx, Target{Content: job.Args.Content, Version: job.Args.Version})
+	if errors.Is(err, ErrNotReady) {
+		// Commits and durable media progress/ready relays enqueue the next
+		// snapshot attempt, including a follow-up if this job is still running.
+		return nil
+	}
+	return outcome(err)
 }
 
 // publish records ready-file snapshots and the independent cover teaser.

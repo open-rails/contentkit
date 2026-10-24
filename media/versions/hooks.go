@@ -280,8 +280,8 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 
 }
 
-// itemProgressed records the facts of a version still processing once it
-// plays, so listings show it before its last rendition is out.
+// itemProgressed records partial media facts and wakes reader snapshots before
+// unrelated processing finishes. The wakeup commits with those facts.
 func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error {
 	k, err := s.reg.Kind(ref.ContentKind)
 	if err != nil || !k.Versions || ref.Version() == "" {
@@ -298,7 +298,13 @@ func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.
 	} else if err != nil {
 		return err
 	}
-	return s.recordFacts(ctx, tx, k, v, m)
+	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
+		return err
+	}
+	if k.Publish != nil {
+		return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
+	}
+	return nil
 }
 
 // beforeRetire serializes snapshot invalidation with publishers. A publisher

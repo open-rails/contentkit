@@ -30,6 +30,7 @@ import (
 	"github.com/open-rails/authkit/auth"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -233,6 +234,11 @@ type siteOptions struct {
 	reader func(*media.ReaderOptions)
 	// workerStore intercepts the standalone worker storage in protocol tests.
 	workerStore func(*site) media.Store
+	// hostHooks can hold a job at its completion boundary for wakeup tests.
+	hostHooks []rivertype.Hook
+	// workerHooks and shutdownGrace bound held producer jobs in protocol tests.
+	workerHooks   []rivertype.Hook
+	shutdownGrace time.Duration
 }
 
 func newSite(t *testing.T, o siteOptions) *site {
@@ -317,7 +323,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 		t.Fatal(err)
 	}
 	client, err := riverhelpers.New(ctx, s.pool, &river.Config{Schema: host, FetchPollInterval: 100 * time.Millisecond,
-		FetchCooldown: 50 * time.Millisecond}, s.jobs.RiverJobs(), s.svc.RiverJobs())
+		FetchCooldown: 50 * time.Millisecond, Hooks: o.hostHooks}, s.jobs.RiverJobs(), s.svc.RiverJobs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +348,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 		workerStore = o.workerStore(s)
 	}
 	w, err := worker.New(ctx, worker.Config{Pool: s.pool, Schema: workers, ContentSchema: s.schema, Store: workerStore, Kinds: workerRegistry,
-		HostSchema: host, TempDir: t.TempDir(), Threads: 1, ImageWorkers: 1, VideoWorkers: 1})
+		HostSchema: host, TempDir: t.TempDir(), Threads: 1, ImageWorkers: 1, VideoWorkers: 1, RiverHooks: o.workerHooks, ShutdownGrace: o.shutdownGrace})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -489,7 +489,7 @@ func (w *readyWorker) Work(ctx context.Context, job *river.Job[readyArgs]) (err 
 	}
 	r := item.Kind().Readiness(m)
 	if r.State == StateProcessing {
-		if hooks.ItemProgressed == nil || !item.Kind().Playable(m) {
+		if hooks.ItemProgressed == nil || item.Kind().Publish == nil && !item.Kind().Playable(m) {
 			return nil // a later job reports it
 		}
 		return pgx.BeginFunc(ctx, w.j.cfg.Pool, func(tx pgx.Tx) error { return hooks.ItemProgressed(ctx, tx, item.Ref()) })
