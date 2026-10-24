@@ -30,16 +30,21 @@ const suggestion = { id: "c4", kind: "gallery", code: "C4", title: "Gamma", cove
 
 function setup(newContentHref?: (kind: string, entity: { code?: string }) => string | undefined) {
   const added: unknown[] = [];
+  const removed: unknown[] = [];
   const manageIds: string[][] = [];
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const path = url.pathname.slice(url.pathname.indexOf("/v1") + 3);
     if (path === "/kinds") return Response.json(model);
+    if (path === "/entities/g1/members" && init?.method === "DELETE") {
+      removed.push(JSON.parse(String(init.body)));
+      return Response.json({ count: 1 });
+    }
     if (path === "/entities/g1/members" && init?.method === "POST") {
       added.push(JSON.parse(String(init.body)));
       return Response.json({ count: 1 });
     }
-    if (path === "/entities/g1/members") return Response.json({ members: [{ content_id: "c1" }, { content_id: "c2" }, { content_id: "c3" }] });
+    if (path === "/entities/g1/members") return Response.json({ members: [{ content_id: "c1", role: "lead" }, { content_id: "c2" }, { content_id: "c3" }] });
     if (path === "/manage") {
       const ids = url.searchParams.getAll("ids").flatMap((x) => x.split(",")).filter(Boolean);
       manageIds.push(ids);
@@ -55,11 +60,11 @@ function setup(newContentHref?: (kind: string, entity: { code?: string }) => str
         entity={{ id: "g1", kind: "series", name: "Saga", slug: "saga", code: "SAGA1" }}
         contentHref={(c) => `/admin/galleries/${c.code}`}
         newContentHref={newContentHref}
-        labels={{ gallery: "Galleries", blog: "Posts" }}
+        labels={{ gallery: { one: "Gallery", other: "Galleries" }, blog: "Posts" }}
       />
     </ContentKitProvider>,
   );
-  return { added, manageIds };
+  return { added, removed, manageIds };
 }
 
 it("shows members as cover cards grouped by content kind, with access and state, hydrated in one managed read", async () => {
@@ -87,7 +92,19 @@ it("adds a member by searching its title, without typing ids", async () => {
 
 it("starts a new item already in the group, only for content kinds that join it", async () => {
   setup((kind, entity) => `/admin/${kind}/new?with=${entity.code}`);
-  const start = await screen.findByRole("link", { name: "New Galleries in Saga" });
+  const start = await screen.findByRole("link", { name: "New Gallery in Saga" });
   expect(start).toHaveAttribute("href", "/admin/gallery/new?with=SAGA1");
   expect(screen.queryByRole("link", { name: /^New Posts/ })).toBeNull();
+});
+
+it("offers a removed member back, role included, through Undo", async () => {
+  const { added, removed } = setup();
+  await screen.findByText("Alpha");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Remove Alpha" }));
+  await waitFor(() => expect(removed).toEqual([[{ content_id: "c1", role: "lead" }]]));
+  const status = await screen.findByText("Removed Alpha.");
+  await user.click(within(status.closest("[role=status]")!).getByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(added).toEqual([[{ content_id: "c1", role: "lead" }]]));
+  await waitFor(() => expect(screen.queryByText("Removed Alpha.")).toBeNull());
 });

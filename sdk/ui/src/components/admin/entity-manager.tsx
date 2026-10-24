@@ -60,7 +60,7 @@ export function EntityManager({ client: own, baseUrl, auth, guard, appearance, c
 }
 
 type Inner = Omit<EntityManagerProps, "client" | "baseUrl" | "auth" | "guard" | "appearance" | "className" | "language" | "messages"> & { client: ContentKitClient };
-type Ctx = Inner & { loc: AdminLocation; kind: string; kinds: ContentModel; onLeaveGuard: NonNullable<EntityEditorProps["onLeaveGuard"]>; merged: (into: string) => void };
+type Ctx = Inner & { loc: AdminLocation; href?: (view: string) => string; kind: string; kinds: ContentModel; onLeaveGuard: NonNullable<EntityEditorProps["onLeaveGuard"]>; merged: (into: string) => void };
 
 function Manager({ basePath, navigation, ...p }: Inner) {
   const { t } = useMessages();
@@ -90,12 +90,14 @@ function Manager({ basePath, navigation, ...p }: Inner) {
   if (!list.length) return <p className="text-muted-foreground">{t("entityManager.noKinds")}</p>;
   const [k, sub] = loc.view.split("/");
   const kind = list.includes(k ?? "") ? k! : list[0]!;
-  const ctx: Ctx = { ...p, loc: { ...loc, go }, kind, kinds, onLeaveGuard: registerLeaveGuard, merged: (into) => loc.go(`${kind}/${into}`, undefined, { replace: true }) };
+  // Routed flows link their views, so staff can open them in new tabs.
+  const href = basePath === undefined ? undefined : (view: string) => `${basePath.replace(/\/+$/, "")}/${view}`;
+  const ctx: Ctx = { ...p, loc: { ...loc, go }, href, kind, kinds, onLeaveGuard: registerLeaveGuard, merged: (into) => loc.go(`${kind}/${into}`, undefined, { replace: true }) };
   return (
     <>
       {p.kindTabs !== false && list.length > 1 && (
         <Tabs value={kind} onValueChange={(v) => go(String(v))}>
-          <TabsList className="flex-wrap group-data-horizontal/tabs:h-auto">
+          <TabsList variant="line" className="flex-wrap group-data-horizontal/tabs:h-auto">
             {list.map((x) => (
               <TabsTrigger key={x} value={x} className="h-7.5">
                 {labelOf(p.labels, x)}
@@ -118,7 +120,7 @@ function Back({ loc, kind }: { loc: AdminLocation; kind: string }) {
   );
 }
 
-function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize = 50 }: Ctx) {
+function List({ loc, href, kind, kinds, client, contentKind, labels, onError, pageSize = 50 }: Ctx) {
   const m = useMessages();
   const { t } = m;
   const languageName = useLanguageName();
@@ -159,7 +161,7 @@ function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize
     <div className="grid gap-5" data-ckui="entity-list" data-kind={kind}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold tracking-tight">{label}</h2>
-        <Button size="sm" aria-label={t("entityManager.new", { kind: label })} onClick={() => loc.go(`${kind}/new`)}>
+        <Button size="sm" aria-label={t("entityManager.new", { kind: labelOf(labels, kind, "one") })} onClick={() => loc.go(`${kind}/new`)}>
           <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
           {t("entityManager.newShort")}
         </Button>
@@ -218,7 +220,7 @@ function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize
             variant="ghost"
             aria-pressed={letter === l}
             aria-label={l === undefined ? undefined : l === "#" ? t("entities.otherLetters") : l.toUpperCase()}
-            className={cn("min-w-7", letter === l ? "bg-muted text-foreground" : "text-muted-foreground")}
+            className={cn("min-w-7 max-sm:h-10 max-sm:min-w-10", letter === l ? "bg-muted text-foreground" : "text-muted-foreground")}
             onClick={() => filter({ letter: l })}
           >
             {l === undefined ? t("entities.all") : l.toUpperCase()}
@@ -261,9 +263,9 @@ function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize
                   {deleted ? (
                     <span className="truncate font-medium text-muted-foreground line-through">{g.name || g.slug}</span>
                   ) : (
-                    <button type="button" className="truncate text-start font-medium underline-offset-4 hover:underline" title={g.name || g.slug} onClick={() => loc.go(`${kind}/${g.id}`)}>
+                    <EntityLink href={href?.(`${kind}/${g.id}`)} title={g.name || g.slug} onOpen={() => loc.go(`${kind}/${g.id}`)}>
                       {g.name || g.slug}
-                    </button>
+                    </EntityLink>
                   )}
                   {g.internal && <span className="shrink-0 text-xs text-muted-foreground">{t("entityEditor.internal")}</span>}
                 </div>
@@ -297,6 +299,32 @@ function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize
         </div>
       )}
     </div>
+  );
+}
+
+/** An entity's name opening its editor: a link when the flow is routed, so it also opens in a new tab. */
+function EntityLink({ href, title, onOpen, children }: { href?: string; title: string; onOpen: () => void; children: ReactNode }) {
+  const className = "truncate text-start font-medium underline-offset-4 hover:underline";
+  if (!href)
+    return (
+      <button type="button" className={className} title={title} onClick={onOpen}>
+        {children}
+      </button>
+    );
+  return (
+    <a
+      href={href}
+      className={className}
+      title={title}
+      onClick={(e) => {
+        // A modified or middle click opens it the browser's way.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        onOpen();
+      }}
+    >
+      {children}
+    </a>
   );
 }
 

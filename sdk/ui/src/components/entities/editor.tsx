@@ -199,9 +199,11 @@ function EditForm({ entity, spec, languages, g, kinds, onLeaveGuard, ...p }: Ent
     <>
       {dialog}
       <Head management={p.management} entity={entity} g={g} labels={p.labels} onMerged={p.onMerged} onDeleted={p.onDeleted} onError={p.onError} client={p.client} />
-      <div className="flex flex-wrap items-center gap-3" data-ckui="entity-save">
-        <Button size="sm" disabled={save.pending || !dirty || !details.slug.trim() || (!!spec.scoped_by && !details.scope)} onClick={() => void submit()}>{save.pending ? t("common.saving") : t("common.save")}</Button>
+      {/* Pinned below any host header that sets --ckui-sticky-top, so Save stays in reach down the page. */}
+      <div className="sticky top-[var(--ckui-sticky-top,0px)] z-10 flex flex-wrap items-center justify-end gap-3 rounded-xl border border-border bg-background px-4 py-2.5 shadow-sm transition-[top] duration-300 motion-reduce:transition-none" data-ckui="entity-save">
+        <p className="me-auto min-w-0 truncate font-medium max-sm:hidden" aria-hidden>{entity.name || entity.slug}</p>
         <span role="status" className="text-muted-foreground">{dirty ? t("entitySave.unsaved") : saved ? t("entityEditor.saved") : ""}</span>
+        <Button size="sm" disabled={save.pending || !dirty || !details.slug.trim() || (!!spec.scoped_by && !details.scope)} onClick={() => void submit()}>{save.pending ? t("common.saving") : t("common.save")}</Button>
       </div>
       {invalid && <ErrorLine>{invalid}</ErrorLine>}
       {failedParts && <ErrorLine>{t("entitySave.saveFailed", { parts: failedParts })} {save.error && contentError(m, save.error)}</ErrorLine>}
@@ -216,11 +218,14 @@ function EditForm({ entity, spec, languages, g, kinds, onLeaveGuard, ...p }: Ent
   );
 }
 
-function Section({ title, children, ckui, action }: { title: ReactNode; children: ReactNode; ckui: string; action?: ReactNode }) {
+function Section({ title, children, ckui, action, note }: { title: ReactNode; children: ReactNode; ckui: string; action?: ReactNode; note?: ReactNode }) {
   return (
     <section className="grid gap-3" data-ckui={ckui}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-medium">{title}</h3>
+        <div className="grid gap-0.5">
+          <h3 className="text-base font-semibold">{title}</h3>
+          {note && <p className="text-xs text-muted-foreground">{note}</p>}
+        </div>
         {action}
       </div>
       {children}
@@ -267,8 +272,8 @@ function Head({
   const remove = useAction("entity.save", onError);
   return (
     <div className="flex flex-wrap items-center gap-2" data-ckui="entity-head">
-      <h2 className="text-base font-semibold break-words">{entity.name || entity.slug}</h2>
-      <Badge variant="outline">{labelOf(labels, entity.kind)}</Badge>
+      <h2 className="text-xl font-semibold tracking-tight break-words">{entity.name || entity.slug}</h2>
+      <Badge variant="outline">{labelOf(labels, entity.kind, "one")}</Badge>
       <div className="ms-auto flex flex-wrap gap-2">
         <Button size="sm" variant="outline" onClick={() => setMerging(true)}>
           {t("entityEditor.merge")}
@@ -398,6 +403,8 @@ export function EntityMergeDialog({ open, onOpenChange, entity, onMerge, languag
   );
 }
 
+const Required = () => <span aria-hidden> *</span>;
+
 /** A parent or scope: the chosen entity with a change and a clear, or a picker. */
 function EntityField({ label, kind, value, onChange, exclude, required, client, management }: { management?: boolean; label: string; kind: string; value: EntityLike | null; onChange: (g: EntityLike | null) => void; exclude?: string[]; required?: boolean; client?: ContentKitClient }) {
   const { t } = useMessages();
@@ -405,7 +412,7 @@ function EntityField({ label, kind, value, onChange, exclude, required, client, 
     <div className="grid gap-1.5" data-ckui="entity-field">
       <span className="text-sm font-medium">
         {label}
-        {required && <span aria-hidden> *</span>}
+        {required && <Required />}
       </span>
       {value ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -439,6 +446,12 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
   const [invalid, setInvalid] = useState<string | null>(null);
   const create = useAction("entity.save", onError);
   const first = names[languages[0]!] ?? "";
+  // What Create waits for, named as the labels name it.
+  const missing = [
+    !first.trim() && t("entityEditor.nameIn", { language: languageName(languages[0]!) }),
+    !slug.trim() && t("entityEditor.slug"),
+    spec.scoped_by && !scope && labelOf(labels, spec.scoped_by, "one"),
+  ].filter((x): x is string => !!x);
   useEffect(() => {
     if (!slugEdited) setSlug(slugify(first));
   }, [first, slugEdited]);
@@ -466,15 +479,21 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
         void submit();
       }}
     >
-      <h2 className="text-base font-semibold">{t("entityEditor.newTitle", { kind: labelOf(labels, kind) })}</h2>
+      <h2 className="text-xl font-semibold tracking-tight">{t("entityEditor.newTitle", { kind: labelOf(labels, kind, "one") })}</h2>
       {languages.map((l, i) => (
         <div key={l} className="grid gap-1.5">
-          <Label htmlFor={`${id}-${l}`}>{t("entityEditor.nameIn", { language: languageName(l) })}</Label>
+          <Label htmlFor={`${id}-${l}`}>
+            {t("entityEditor.nameIn", { language: languageName(l) })}
+            {i === 0 && <Required />}
+          </Label>
           <Input id={`${id}-${l}`} className="h-8" lang={l} required={i === 0} value={names[l] ?? ""} onChange={(e) => setNames((n) => ({ ...n, [l]: e.target.value }))} />
         </div>
       ))}
       <div className="grid gap-1.5">
-        <Label htmlFor={`${id}-slug`}>{t("entityEditor.slug")}</Label>
+        <Label htmlFor={`${id}-slug`}>
+          {t("entityEditor.slug")}
+          <Required />
+        </Label>
         <Input
           id={`${id}-slug`}
           className="h-8"
@@ -486,15 +505,22 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
           }}
         />
       </div>
-      {spec.scoped_by && <EntityField management={management} label={labelOf(labels, spec.scoped_by)} kind={spec.scoped_by} value={scope} onChange={setScope} required client={client} />}
+      {spec.scoped_by && <EntityField management={management} label={labelOf(labels, spec.scoped_by, "one")} kind={spec.scoped_by} value={scope} onChange={setScope} required client={client} />}
       {spec.parent && <EntityField management={management} label={t("entityEditor.parent")} kind={spec.parent} value={parent} onChange={setParent} client={client} />}
       {management && <InternalField id={`${id}-internal`} checked={internal} onChange={setInternal} />}
       <AttributeFields declared={declared} form={attrs} onChange={(n, v) => setAttrs((a) => ({ ...a, [n]: v }))} labels={labels} />
       {invalid && <ErrorLine>{invalid}</ErrorLine>}
       {create.error && <ErrorLine>{contentError(m, create.error)}</ErrorLine>}
-      <Button type="submit" className="justify-self-start" disabled={create.pending || !first.trim() || !slug.trim() || (!!spec.scoped_by && !scope)}>
-        {create.pending ? t("common.saving") : t("entityEditor.create")}
-      </Button>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit" disabled={create.pending || missing.length > 0} aria-describedby={missing.length ? `${id}-missing` : undefined}>
+          {create.pending ? t("common.saving") : t("entityEditor.create")}
+        </Button>
+        {missing.length > 0 && (
+          <p id={`${id}-missing`} className="text-muted-foreground" data-ckui="entity-create-missing">
+            {t("entityEditor.stillNeeded", { fields: missing.join(", ") })}
+          </p>
+        )}
+      </div>
     </form>
   );
 }
@@ -520,10 +546,13 @@ function Details({ entity, spec, form, onChange: edit, labels, client, managemen
     <Section title={t("entityEditor.details")} ckui="entity-details">
       <div className="grid gap-3">
         <div className="grid gap-1.5">
-          <Label htmlFor={`${id}-slug`}>{t("entityEditor.slug")}</Label>
+          <Label htmlFor={`${id}-slug`}>
+            {t("entityEditor.slug")}
+            <Required />
+          </Label>
           <Input id={`${id}-slug`} className="h-8" required value={slug} onChange={(e) => edit({ slug: e.target.value })} />
         </div>
-        {spec.scoped_by && <EntityField management={management} label={labelOf(labels, spec.scoped_by)} kind={spec.scoped_by} value={scope} onChange={(scope) => edit({ scope })} required client={client} />}
+        {spec.scoped_by && <EntityField management={management} label={labelOf(labels, spec.scoped_by, "one")} kind={spec.scoped_by} value={scope} onChange={(scope) => edit({ scope })} required client={client} />}
         {spec.parent && <EntityField management={management} label={t("entityEditor.parent")} kind={spec.parent} value={parent} onChange={(parent) => edit({ parent })} exclude={[entity.id]} client={client} />}
         {management && <InternalField id={`${id}-internal`} checked={internal} onChange={(internal) => edit({ internal })} />}
         <AttributeFields declared={spec.attributes ?? {}} form={attrs} onChange={(n, v) => edit({ attrs: { ...attrs, [n]: v } })} labels={labels} />
@@ -626,14 +655,14 @@ function Texts({ form, languages, onChange: set }: { form: Record<string, Text>;
               value={form[l]?.description ?? ""}
               onChange={(e) => set(l, { description: e.target.value })}
             />
-            <Label htmlFor={`${id}-${l}-s`} className="sr-only">
-              {t("entityEditor.sortKeyIn", { language: languageName(l) })}
+            <Label htmlFor={`${id}-${l}-s`} className="text-xs font-normal text-muted-foreground">
+              {t("entityEditor.sortKey")}
             </Label>
             <Input
               id={`${id}-${l}-s`}
               className="h-8"
               lang={l}
-              placeholder={t("entityEditor.sortKey")}
+              aria-label={t("entityEditor.sortKeyIn", { language: languageName(l) })}
               value={form[l]?.sort_key ?? ""}
               onChange={(e) => set(l, { sort_key: e.target.value })}
             />
@@ -650,7 +679,7 @@ function Images({ entity, spec, onError, client, management }: { management?: bo
   const mode = c?.image ? "image" : c?.content_id && !c.auto ? "content" : "auto";
   const avatar = spec.owner === "user" || !!spec.avatar;
   return (
-    <Section title={t(avatar ? "entityEditor.images" : "entityEditor.cover")} ckui="entity-cover-editor">
+    <Section title={t(avatar ? "entityEditor.images" : "entityEditor.cover")} ckui="entity-cover-editor" note={t("entityEditor.savesNow")}>
       <p className="text-muted-foreground" data-ckui="cover-mode">
         {t(mode === "image" ? "entityEditor.coverImage" : mode === "content" ? "entityEditor.coverContent" : "entityEditor.coverAuto")}
       </p>
@@ -699,7 +728,7 @@ function Edges({ entity, g, kinds, labels, onError, client, management }: { mana
   };
   const valid = RELATION.test(relation.trim());
   return (
-    <Section title={t("entityEditor.edges")} ckui="entity-edges">
+    <Section title={t("entityEditor.edges")} ckui="entity-edges" note={t("entityEditor.savesNow")}>
       {out.length + incoming.length ? (
         <ul className="grid gap-1.5">
           {out.map((e) => (

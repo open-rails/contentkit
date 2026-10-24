@@ -14,10 +14,14 @@ import { ErrorLine } from "../social/parts.js";
 /** A entity as covers and links need it. */
 export type EntityLike = Pick<EntityCard, "id" | "kind" | "name" | "slug" | "path"> & { cover?: EntitiesCover; avatar?: Avatar };
 
-/** Display names of kinds, attributes, roles and values by identifier; a missing one shows the identifier humanized. */
-export type Labels = Readonly<Record<string, string>>;
+/** Display names of kinds, attributes, roles and values by identifier; a missing one shows the identifier humanized. A kind may name one and many apart. */
+export type Labels = Readonly<Record<string, string | { one: string; other: string }>>;
 
-export const labelOf = (labels: Labels | undefined, id: string) => labels?.[id] ?? humanize(id);
+/** A label in its plural form unless one is asked for. */
+export const labelOf = (labels: Labels | undefined, id: string, form: "one" | "other" = "other") => {
+  const label = labels?.[id];
+  return label === undefined ? humanize(id) : typeof label === "string" ? label : label[form];
+};
 
 
 export interface EntityCoverProps {
