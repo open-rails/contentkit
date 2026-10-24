@@ -18,6 +18,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertest"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -281,7 +284,7 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 	f.journal = journal
 	f.q = &queue{Queue: processing, t: t, pool: env.Pool()}
 	locker := s3test.Locker(t, env.Store)
-	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Journal: journal, Processes: f.q, Pool: env.Pool()}); err != nil {
+	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Journal: journal, Processes: f.q}); err != nil {
 		t.Fatal(err)
 	}
 	f.ms = f.jobs.Manifests()
@@ -393,10 +396,19 @@ func (f *fixture) commit(ref contentref.ContentRef, ops ...media.Op) *media.Mani
 	return f.place(ref)
 }
 
+func (f *fixture) workerContext(ctx context.Context) context.Context {
+	f.t.Helper()
+	client, err := river.NewClient(riverpgxv5.New(f.env.Pool()), &river.Config{Schema: f.q.Schema()})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return rivertest.WorkContext(ctx, client)
+}
+
 // place stands in for the worker's place job.
 func (f *fixture) place(ref contentref.ContentRef) *media.Manifest {
 	f.t.Helper()
-	ctx := context.Background()
+	ctx := f.workerContext(context.Background())
 	if _, err := f.ms.Place(ctx, ref); err != nil {
 		f.t.Fatalf("place %s: %v", ref, err)
 	}
@@ -413,7 +425,7 @@ func (f *fixture) place(ref contentref.ContentRef) *media.Manifest {
 // pending.
 func (f *fixture) produce(ref contentref.ContentRef) {
 	f.t.Helper()
-	ctx := context.Background()
+	ctx := f.workerContext(context.Background())
 	item, _ := f.reg.Item(ref)
 	k := item.Kind()
 	m, _, err := f.ms.Get(ctx, ref)

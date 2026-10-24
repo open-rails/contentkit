@@ -45,7 +45,7 @@ type PGJournal struct {
 }
 
 // NewPGJournal uses the migrated ContentKit schema and a processing queue in
-// the same database. A nil queue supports manifest edits without queue effects.
+// the same database. A nil queue supports reads and owner-driven erasure only.
 // Quota policy is resolved by the uploader before preparing a transaction;
 // recovery uses the recorded owner and charge, never a host policy callback.
 func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQueue) (*PGJournal, error) {
@@ -526,7 +526,11 @@ func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, 
 				if found.Effects.CleanupDelete {
 					operations = []uuid.UUID{found.ID}
 				}
-				if err := j.scheduleCleanupTx(ctx, tx, found.Ref, found.Folder, found.Effects.CleanupAt, operations, false); err != nil {
+				due := found.Effects.CleanupAt
+				if len(found.Effects.Public)+len(found.Effects.Private) > 0 {
+					due = time.Now()
+				}
+				if err := j.scheduleCleanupTx(ctx, tx, found.Ref, found.Folder, due, operations, false); err != nil {
 					return err
 				}
 			}

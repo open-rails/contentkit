@@ -85,13 +85,7 @@ func (m *Manifests) NewBlobs(ctx context.Context, ref contentref.ContentRef, are
 }
 
 func (m *Manifests) allocate(ctx context.Context, item Item, keys []string) error {
-	if _, _, err := m.Get(ctx, item.Ref()); errors.Is(err, ErrNotFound) {
-		// Establish the S3 incarnation before issuing a write capability.
-		// Edit refuses a tombstone; only explicit reset can clear it.
-		if _, err := m.Edit(ctx, item.Ref(), func(*Manifest) error { return nil }); err != nil {
-			return err
-		}
-	} else if err != nil {
+	if _, err := m.ensureIncarnation(ctx, item); err != nil {
 		return err
 	}
 	return m.cleanup(ctx, item, false, func(cur *Manifest, exists bool) (journalEffects, error) {

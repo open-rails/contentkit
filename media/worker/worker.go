@@ -355,7 +355,8 @@ func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.Ingest
 		if err := w.manifests.CompleteCommit(ctx, a.Ref, a.Commit); err != nil {
 			return err
 		}
-	} else if err := w.manifests.Recover(ctx, a.Ref); err != nil {
+	}
+	if err := w.manifests.Recover(ctx, a.Ref); err != nil {
 		return err
 	}
 	if _, err := w.manifests.Place(ctx, a.Ref); err != nil {

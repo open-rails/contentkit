@@ -111,7 +111,7 @@ func (j *Jobs) RetireItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) 
 		if err != nil {
 			return err
 		}
-		m, err := j.manifests.deletionIncarnation(ctx, item)
+		m, err := j.manifests.ensureIncarnation(ctx, item)
 		if err != nil {
 			return err
 		}
@@ -119,39 +119,49 @@ func (j *Jobs) RetireItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) 
 		if j.cfg.Limiter != nil {
 			owner = d.Owner
 		}
-		effects, err := json.Marshal(journalEffects{FolderDelete: &folderDeletion{Owner: owner, Incarnation: m.Incarnation}})
-		if err != nil {
+		if err := j.cfg.Journal.retireItemTx(ctx, tx, item, owner, m.Incarnation, j.cfg.Now()); err != nil {
 			return err
 		}
-		operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("folder-retirement:"+item.Prefix()+m.Incarnation))
-		fingerprint := sha256.Sum256(effects)
-		jr := j.cfg.Journal.forTenant(d.Ref.TenantID)
-		if err := jr.lockAdmission(ctx, tx, item.Prefix()); err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO `+jr.table+`
+	}
+	return nil
+}
+
+func (j *PGJournal) retireItemTx(ctx context.Context, tx pgx.Tx, item Item, owner, incarnation string, due time.Time) error {
+	if id, err := uuid.Parse(incarnation); err != nil || id == uuid.Nil {
+		return ErrCommitIdentity
+	}
+	effects, err := json.Marshal(journalEffects{FolderDelete: &folderDeletion{Owner: owner, Incarnation: incarnation}})
+	if err != nil {
+		return err
+	}
+	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("folder-retirement:"+item.Prefix()+incarnation))
+	fingerprint := sha256.Sum256(effects)
+	jr := j.forTenant(item.Ref().TenantID)
+	if err := jr.lockAdmission(ctx, tx, item.Prefix()); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO `+jr.table+`
 (tenant_id,operation_id,content_kind,content_id,content_version_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects)
 VALUES($1,$2,$3,$4,$5,$6,'',$7,$8,'applied',$9) ON CONFLICT(tenant_id,operation_id) DO NOTHING`,
-			d.Ref.TenantID, operation, d.Ref.ContentKind, d.Ref.ContentID, d.Ref.ContentVersionID, item.Prefix(), fingerprint[:], uuid.New(), effects)
-		if err != nil {
-			return err
-		}
-		c, err := jr.load(ctx, tx, d.Ref.TenantID, operation)
-		if err != nil {
-			return err
-		}
-		if !c.Ref.Equal(d.Ref) || c.Fingerprint != fingerprint || c.Effects.FolderDelete == nil {
-			return ErrCommitIdentity
-		}
-		if !c.Effects.FolderDelete.Completed {
-			// Initial erasure must not wait behind an older late-write deadline.
-			_, err = tx.Exec(ctx, `INSERT INTO `+jr.cleanup+` AS c (tenant_id,folder_prefix,content_kind,due_at,deletion_operations)
+		item.Ref().TenantID, operation, item.Ref().ContentKind, item.Ref().ContentID, item.Ref().ContentVersionID, item.Prefix(), fingerprint[:], uuid.New(), effects)
+	if err != nil {
+		return err
+	}
+	c, err := jr.load(ctx, tx, item.Ref().TenantID, operation)
+	if err != nil {
+		return err
+	}
+	if !c.Ref.Equal(item.Ref()) || c.Fingerprint != fingerprint || c.Effects.FolderDelete == nil {
+		return ErrCommitIdentity
+	}
+	if !c.Effects.FolderDelete.Completed {
+		// Initial erasure must not wait behind an older late-write deadline.
+		_, err = tx.Exec(ctx, `INSERT INTO `+jr.cleanup+` AS c (tenant_id,folder_prefix,content_kind,due_at,deletion_operations)
 VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,folder_prefix) DO UPDATE SET due_at=least(c.due_at,EXCLUDED.due_at),
 deletion_operations=ARRAY(SELECT DISTINCT op FROM unnest(c.deletion_operations || EXCLUDED.deletion_operations) op),revision=gen_random_uuid()`,
-				d.Ref.TenantID, item.Prefix(), d.Ref.ContentKind, j.cfg.Now(), []uuid.UUID{operation})
-			if err != nil {
-				return err
-			}
+			item.Ref().TenantID, item.Prefix(), item.Ref().ContentKind, due, []uuid.UUID{operation})
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -186,7 +196,7 @@ FROM `+jr.table+` WHERE tenant_id=$1 AND folder_prefix=$2 AND effects ? 'folder_
 
 // Purge clears and resets an item to a fresh incarnation. It needs a caller-
 // stable OperationID, even without quota; retry a failed reset with that ID.
-// Hosts deleting content use DeleteItemsTx.
+// Hosts deleting content commit RetireItemsTx and let content purge execute it.
 func (j *Jobs) Purge(ctx context.Context, d Deletion) error {
 	item, err := j.cfg.Registry.Item(d.Ref)
 	if err != nil {
@@ -197,6 +207,9 @@ func (j *Jobs) Purge(ctx context.Context, d Deletion) error {
 	}
 	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("purge:"+item.Prefix()+d.OperationID))
 	if err := j.deleteItem(ctx, item, d.Owner, operation, "", time.Time{}, false); err != nil {
+		return err
+	}
+	if err := j.repeatDeletion(ctx, item, operation); err != nil {
 		return err
 	}
 	return j.resetItem(ctx, item, operation)

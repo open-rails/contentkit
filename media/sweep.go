@@ -34,8 +34,8 @@ func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResul
 	return j.sweep(ctx, item.Prefix())
 }
 
-// SweepAll sweeps every item folder of the registry's kinds: the periodic
-// backstop for missed schedules and abandoned uploads.
+// SweepAll is an explicit repair command over the registry's item folders.
+// Ordinary cleanup is owned by the content-deletion sweep.
 func (j *Jobs) SweepAll(ctx context.Context) error {
 	var errs []error
 	for _, k := range j.cfg.Registry.all {

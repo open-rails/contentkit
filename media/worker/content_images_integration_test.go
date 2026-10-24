@@ -124,11 +124,11 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	if err := riverhelpers.ApplyMigrations(ctx, pool, hostRiver); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: reg, Locker: s3test.Locker(t, env.Store), Journal: journal, Pool: pool, Processes: queue})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: reg, Locker: s3test.Locker(t, env.Store), Journal: journal, Processes: queue})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := riverhelpers.New(ctx, pool, &river.Config{Schema: hostRiver, FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond}, jobs.RiverJobs(), svc.RiverJobs())
+	client, err := riverhelpers.New(ctx, pool, &river.Config{Schema: hostRiver, FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond}, svc.RiverJobs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,16 +328,11 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/unpublish", nil, nil)
 	must(http.StatusNotFound, anon, "GET", "/v1/contents/"+id, nil, nil)
-	eventually(t, "the unpublished item's references", time.Minute, func() bool {
-		var hidden catalog.Content
-		must(http.StatusOK, staff, "GET", "/v1/contents/"+id, nil, &hidden)
-		for _, u := range hidden.Images {
-			if strings.Contains(u, "/public/") {
-				return false
-			}
-		}
-		return hidden.Text["en"].Body == body && hidden.Cover != nil && hidden.Cover.URL == nil
-	})
+	var unpublished catalog.Content
+	must(http.StatusOK, staff, "GET", "/v1/contents/"+id, nil, &unpublished)
+	if unpublished.Text["en"].Body != body || unpublished.Cover == nil || unpublished.Cover.URL == nil || !exists(*regenerated.Cover.URL) {
+		t.Fatalf("unpublication changed retained public images: %+v", unpublished)
+	}
 	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/publish", nil, nil)
 	resolved("the images shown again", regenerated)
 

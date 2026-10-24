@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/sync/errgroup"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
 )
@@ -356,12 +356,16 @@ func retiredPublicKeys(item Item, previous *Manifest, kept []string) ([]string, 
 // scheduleRetirement preserves exact permanent keys after an in-flight write
 // could land. Temporary objects have their own absolute bucket expiry.
 func (m *Manifests) scheduleRetirement(item Item, effects *journalEffects) {
-	permanent := len(effects.Public) > 0 || slices.ContainsFunc(effects.Private, func(key string) bool { return !strings.HasPrefix(key, item.TempPrefix()) })
-	if permanent {
-		effects.CleanupDelete = true
-		if effects.CleanupAt.IsZero() {
-			effects.CleanupAt = time.Now().Add(m.lateUploadWindow)
-		}
+	if len(effects.Public)+len(effects.Private) == 0 {
+		return
+	}
+	effects.CleanupDelete = true
+	if !effects.CleanupAt.IsZero() {
+		return
+	}
+	effects.CleanupAt = time.Now()
+	if len(effects.Public) > 0 || slices.ContainsFunc(effects.Private, func(key string) bool { return !strings.HasPrefix(key, item.TempPrefix()) }) {
+		effects.CleanupAt = effects.CleanupAt.Add(m.lateUploadWindow)
 	}
 }
 
@@ -741,11 +745,9 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 	return nil, false, ErrManifestConflict
 }
 
-// finishCommit repeats only the recorded cleanup targets, never a fresh list
-// that might include another producer's outputs. Database effects settle only
-// after cleanup succeeds; the pending receipt remains discoverable on failure.
-// current, the manifest now in S3 (nil: unknown or unchanged), is projected
-// with the outcome.
+// finishCommit settles the admitted mutation and records exact retired keys.
+// Physical deletion belongs to content purge, which retains those keys through
+// its bounded late-write window. Projection and quota follow this manifest.
 func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifestCommit, applied bool, current *Manifest) error {
 	proj := projectionOf(item, current)
 	if applied {
@@ -779,19 +781,7 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 				return fmt.Errorf("media: commit mirror: %w", err)
 			}
 		}
-		g, deleteCtx := errgroup.WithContext(ctx)
-		g.SetLimit(8)
-		for _, key := range append(slices.Clone(commit.Effects.Public), commit.Effects.Private...) {
-			g.Go(func() error {
-				if err := m.store.Delete(deleteCtx, key); err != nil && !errors.Is(err, ErrNotFound) {
-					return err
-				}
-				return nil
-			})
-		}
-		if err := g.Wait(); err != nil {
-			return fmt.Errorf("media: commit cleanup: %w", err)
-		}
+
 	}
 	return m.journal.finish(ctx, commit, applied, proj)
 }
@@ -824,6 +814,19 @@ func (m *Manifests) CompleteCommit(ctx context.Context, ref contentref.ContentRe
 	_, _, err = m.recoverAttemptLocked(ctx, item, &id)
 	unlock()
 	if err != nil {
+		return err
+	}
+	jr := m.journal.forTenant(ref.TenantID)
+	if err := pgx.BeginFunc(ctx, jr.pool, func(tx pgx.Tx) error {
+		c, err := jr.load(ctx, tx, ref.TenantID, id)
+		if err != nil {
+			return err
+		}
+		if !c.Ref.Equal(ref) || c.Folder != item.Prefix() || c.State != "applied" {
+			return ErrCommitIdentity
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	return m.notifyCommit(ctx, manifestCommit{ID: id, Ref: ref})
