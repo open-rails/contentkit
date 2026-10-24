@@ -162,8 +162,9 @@ type opRun struct {
 	copies map[int][]File
 	// exempt is an exempt grant: its takedown of a path already gone is a
 	// retry, not an error.
-	exempt  bool
-	trusted bool // in-process system commits may update reserved provenance
+	exempt    bool
+	trusted   bool                             // in-process system commits may update reserved provenance
+	admission func() (*SourceAdmission, error) // verified source policy, only resolved when admitting a ZIP
 	// authorizePath rechecks a collision allocation against host path policy.
 	authorizePath func(string) error
 }
@@ -402,6 +403,9 @@ func (o *opRun) put(op Op) error {
 		}
 		f.Edit = e
 	}
+	if err := o.admitSource(&f, i); err != nil {
+		return err
+	}
 	if i >= 0 {
 		old := stripPending(m.Files[i])
 		old.CreateID = f.CreateID
@@ -443,6 +447,9 @@ func stripPending(f File) File {
 // From when the extension changed), or inserted at index. A video it
 // replaces has its frames grabbed again.
 func (o *opRun) place(g, i int, f File, index *int) error {
+	if err := o.admitSource(&f, i); err != nil {
+		return err
+	}
 	m := o.m
 	if i < 0 {
 		o.insert(g, f, index, !f.Unattached)

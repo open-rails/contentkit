@@ -508,6 +508,22 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		}
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt, trusted: trusted}
+		var sourceAdmission *SourceAdmission
+		o.admission = func() (*SourceAdmission, error) {
+			if sourceAdmission != nil {
+				return sourceAdmission, nil
+			}
+			sourceAdmission = &SourceAdmission{Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt}
+			if sourceAdmission.Enforce {
+				quota, err := u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
+				if err != nil {
+					sourceAdmission = nil
+					return nil, err
+				}
+				sourceAdmission.Quota = quota
+			}
+			return sourceAdmission, nil
+		}
 		o.authorizePath = func(path string) error {
 			stem, _ := splitExt(path)
 			allocated, err := u.authorize(editCtx, actor, UploadTarget{Ref: ref, Path: stem})

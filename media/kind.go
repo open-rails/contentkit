@@ -482,6 +482,9 @@ func (k *Kind) validate() error {
 		k.patterns[i] = p
 	}
 	for _, u := range k.Uploads {
+		if err := validateArchiveDestination(k, u); err != nil {
+			return err
+		}
 		if err := u.Video.validate(u.Types); err != nil {
 			return fmt.Errorf("upload %q: %w", u.Path, err)
 		}
