@@ -494,7 +494,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	}
 	if editor {
 		out.State, out.Full, out.Uploads = k.Readiness(g.Manifest).State, g.Manifest.Full, k.UploadRules()
-		if out.State == StateReady && slices.ContainsFunc(g.Manifest.Files, func(f File) bool { return importPending(k, f) }) {
+		if out.State == StateReady && slices.ContainsFunc(g.Manifest.Files, func(f File) bool { return !f.Unattached && statusArchivePending(k, f) }) {
 			out.State = StateProcessing
 		}
 	}

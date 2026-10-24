@@ -61,25 +61,32 @@ func TestEditorReadPendingArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	k.Publish = &media.Publish{Import: "import/{name}"}
+	k.Publish = &media.Publish{Import: "import/{name}", Pages: "originals/{name}"}
 	blob := f.fileBlob(ref, "import/book.zip")
 	digest, _ := layout.BlobDigest(blob)
 	for _, tc := range []struct {
-		name, completed, state           string
-		unattached, failed, unconfigured bool
-		pending                          bool
+		name, completed, state                    string
+		unattached, failed, unconfigured, generic bool
+		pending                                   bool
 	}{
 		{name: "waiting for extraction", state: media.StateProcessing, pending: true},
 		{name: "completed", completed: fmt.Sprintf("%x", digest), state: media.StateReady},
 		{name: "changed archive", completed: strings.Repeat("0", 64), state: media.StateProcessing, pending: true},
-		{name: "unattached", unattached: true, state: media.StateReady},
+		{name: "unattached", unattached: true, state: media.StateReady, pending: true},
 		{name: "failed", failed: true, state: media.StateFailed},
 		{name: "ordinary ZIP upload", unconfigured: true, state: media.StateReady},
+		{name: "generic archive destination", generic: true, state: media.StateProcessing, pending: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			k.Publish = &media.Publish{Import: "import/{name}"}
-			if tc.unconfigured {
+			k.Publish = &media.Publish{Import: "import/{name}", Pages: "originals/{name}"}
+			if tc.unconfigured || tc.generic {
 				k.Publish = nil
+			}
+			for i := range k.Uploads {
+				k.Uploads[i].ArchiveTo = ""
+				if tc.generic && k.Uploads[i].Path == "import/{name}" {
+					k.Uploads[i].ArchiveTo = "originals/{name}"
+				}
 			}
 			m, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
 				u := &m.Files[m.Find("import/book.zip")]
@@ -94,7 +101,7 @@ func TestEditorReadPendingArchive(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.pending && k.Readiness(m).State != media.StateReady {
-				t.Fatal("editor extraction progress blocked the worker's ItemReady callback")
+				t.Fatal("archive progress changed attached-rendition readiness")
 			}
 			r, err := f.rd.Read(t.Context(), ref, f.editor, media.ReadOptions{Editor: true})
 			if err != nil {
@@ -102,6 +109,13 @@ func TestEditorReadPendingArchive(t *testing.T) {
 			}
 			if r.State != tc.state {
 				t.Fatalf("state %q, want %q", r.State, tc.state)
+			}
+			wantStatus := tc.state
+			if tc.pending {
+				wantStatus = media.StateProcessing
+			}
+			if r.Status == nil || r.Status.State != wantStatus {
+				t.Fatalf("editor processing status %+v, want %s", r.Status, wantStatus)
 			}
 			filtered, err := f.rd.Read(t.Context(), ref, f.editor, media.ReadOptions{Editor: true, Prefix: "originals/"})
 			if err != nil || filtered.State != tc.state {
