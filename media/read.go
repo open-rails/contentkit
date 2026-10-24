@@ -210,7 +210,7 @@ func (g *Grant) Editor() bool { return g.Resolution.Editor }
 
 // Allowed reports whether a read gives this viewer f's URL: with access,
 // every listed file with a blob. Uploads are listed only with
-// ServeOriginals; HostOnly presets, files in download/ (Kind.Downloads),
+// ServeOriginals or declared audio assets; HostOnly presets, files in download/ (Kind.Downloads),
 // unattached files and frames not grabbed yet never.
 func (g *Grant) Allowed(f File) bool {
 	if g.files != nil {
@@ -221,7 +221,7 @@ func (g *Grant) Allowed(f File) bool {
 
 func (g *Grant) restrictedFile(f File) bool {
 	if f.IsUpload() {
-		return false // originals require the separate download authorization
+		return g.Item.Kind().AudioUpload(f) && g.listed(f)
 	}
 	if p := g.Item.Kind().private(f.Preset); p != nil && p.Zip != "" {
 		return false
@@ -551,7 +551,7 @@ func (g *Grant) listed(f File) bool {
 		return false
 	}
 	if f.IsUpload() {
-		return !f.Unattached && g.Item.Kind().ServeOriginals && f.Blob != "" && !f.Gone
+		return !f.Unattached && (g.Item.Kind().ServeOriginals || g.Item.Kind().AudioUpload(f)) && f.Blob != "" && !f.Gone
 	}
 	if p := g.Item.Kind().private(f.Preset); p != nil && p.HostOnly {
 		return false

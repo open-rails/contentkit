@@ -222,6 +222,16 @@ func (k *Kind) NameOf(path string) string {
 	return name
 }
 
+// AudioUpload is an attached audio asset declared by this kind. It may be
+// played with an ordinary media grant without exposing other original uploads.
+func (k *Kind) AudioUpload(f File) bool {
+	if !f.IsUpload() || f.Unattached || f.Gone || f.Blob == "" || !isAudioType(f.Type) {
+		return false
+	}
+	i, _, _, _, ok := k.upload(f.Path)
+	return ok && slices.Contains(k.Uploads[i].Types, f.Type)
+}
+
 // OutputPath is p's output path (a file, or a directory ending in "/") for
 // the upload at path.
 func (k *Kind) OutputPath(p *Private, uploadPath string) string {
