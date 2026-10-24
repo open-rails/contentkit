@@ -239,8 +239,6 @@ export const social = {
     loadFailed: "Comments couldn't be loaded.",
     stale: "It was edited since it was listed; review it again.",
     loadMore: "Show more",
-    queueComments: "Comments",
-    queueContent: "Content",
     noAccess: "You don't have permission to moderate comments.",
     author: "Author",
     authorPlaceholder: "Filter by user id",

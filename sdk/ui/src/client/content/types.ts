@@ -28,7 +28,7 @@ export type Sort = "newest" | "likes" | "best";
 export type BanScope = CommentStanding["ban_scopes"][number];
 
 /** What the review queue holds: comments and content items. */
-export type HeldKind = "comment" | "content";
+export type HeldKind = "comment";
 
 /** The moderation rules: banned words or IP bans. */
 export type RuleSet = "words" | "ips";

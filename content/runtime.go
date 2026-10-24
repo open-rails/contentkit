@@ -141,7 +141,6 @@ type Runtime struct {
 	polls       *polls
 	comments    *comments
 	favorites   *favorites
-	held        map[string]HeldSource
 }
 
 // New constructs a Runtime over a schema the ContentKit baseline was applied to and wires the module services.
@@ -202,7 +201,6 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		log:            log,
 		cfg:            opts.Kinds,
 		limiters:       limiters,
-		held:           map[string]HeldSource{},
 	}
 	notices, err := notification.New(notification.Options{Pool: opts.Pool, Schema: opts.Schema, Tenant: opts.Tenant, Logger: log, Shared: opts.Notifications, AppID: opts.NotificationAppID, AccountExists: opts.AccountExists, AccountExistsTx: opts.AccountExistsTx})
 	if err != nil {

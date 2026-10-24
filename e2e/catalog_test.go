@@ -245,8 +245,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 
 	// Moderation.
 	f.want(http.StatusOK, staff, "GET", "/moderation/held?kind=comment", nil, nil)
-	f.want(http.StatusOK, staff, "GET", "/moderation/held?kind=content", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/moderation/held?kind=gallery", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/moderation/held?kind=content", nil, nil)
 	f.want(http.StatusNotFound, staff, "POST", "/moderation/comment/"+uuid.NewString()+"/resolve", content.ResolveInput{Decision: content.DecisionApprove, Revision: 1}, nil)
 	f.want(http.StatusForbidden, user, "GET", "/moderation/held?kind=comment", nil, nil)
 
@@ -443,26 +442,21 @@ func (holdTagged) Screen(_ context.Context, in content.ModerationInput) (content
 
 func (holdTagged) StatelessPolicy() {}
 
-// The runtime's moderator screens catalog text too: a held item stays off
-// until a reviewer approves it from the shared queue.
-func TestRuntimeModeratesCatalogIntegration(t *testing.T) {
+// The runtime's moderator screens comments only: catalog text it would hold
+// publishes without it.
+func TestRuntimeModeratorSkipsCatalogIntegration(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	f := serve(t, w.engine(func(_ *contentkit.Config, d *contentkit.Deps) { d.Moderator = holdTagged{} }))
 	var post catalog.Content
 	f.want(http.StatusCreated, staff, "POST", "/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Hi", Body: "[hold]"}}}, &post)
-	f.want(http.StatusAccepted, staff, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, &post)
-	if post.Moderation != content.ModerationHeld {
-		t.Fatalf("publish %+v", post)
-	}
-	f.want(http.StatusNotFound, "", "GET", "/contents/"+post.ID, nil, nil)
-	var held content.HeldPage
-	f.want(http.StatusOK, staff, "GET", "/moderation/held?kind=content", nil, &held)
-	if len(held.Items) != 1 || held.Items[0].ID != post.ID {
-		t.Fatalf("held %+v", held)
-	}
-	f.want(http.StatusOK, staff, "POST", "/moderation/content/"+post.ID+"/resolve", content.ResolveInput{Decision: content.DecisionApprove, Revision: held.Items[0].Revision}, nil)
+	f.want(http.StatusOK, staff, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)
 	f.want(http.StatusOK, "", "GET", "/contents/"+post.ID, nil, nil)
+	f.want(http.StatusOK, staff, "PUT", "/contents/"+post.ID+"/text/en", catalog.Text{Title: "Hi again", Body: "[hold] edit"}, nil)
+	f.want(http.StatusOK, "", "GET", "/contents/"+post.ID, nil, &post)
+	if post.Title != "Hi again" {
+		t.Fatalf("edit %+v", post)
+	}
 }
 
 // discoveryScenario reaches discovery's routes over the catalog's content;

@@ -20,8 +20,7 @@ import (
 	"github.com/open-rails/contentkit/internal/versionid"
 )
 
-// Moderation states stored in content_comments.moderation and
-// content_items.moderation.
+// Moderation states stored in content_comments.moderation.
 const (
 	ModerationApproved = "approved"
 	ModerationHeld     = "held"
@@ -45,24 +44,6 @@ type screening struct {
 	state  string // ModerationApproved | ModerationHeld
 	reason *string
 	meta   []byte // jsonb or nil
-}
-
-// Screening is what a write stores after the moderator ran: State approved or
-// held, with the Reason shown to the author and the Verdict kept for the
-// reviewer (moderation_verdict jsonb, nil without a moderator).
-type Screening struct {
-	State   string
-	Reason  *string
-	Verdict []byte
-}
-
-// Screen runs the moderator over another module's text write (the catalog's)
-// as it does over comments: a reject verdict is a RejectedError (store
-// nothing), a failure or an unknown decision holds, no moderator approves.
-// An erased subject is refused (ErrSubjectErased).
-func (rt *Runtime) Screen(ctx context.Context, in ModerationInput) (Screening, error) {
-	sc, err := rt.screen(ctx, in)
-	return Screening{State: sc.state, Reason: sc.reason, Verdict: sc.meta}, err
 }
 
 // screen runs the moderator over one write. A reject verdict is returned as
@@ -126,9 +107,9 @@ func visiblePred(n int) string {
 
 // --- review queue ---
 
-// HeldItem is one comment or content item awaiting review.
+// HeldItem is one comment awaiting review.
 type HeldItem struct {
-	Kind     string `json:"kind"`     // KindComment, or a HeldSource's kind
+	Kind     string `json:"kind"`     // KindComment
 	Revision int64  `json:"revision"` // required when resolving this exact screened text
 	ID       string `json:"id"`
 	// Ref is the commented content, or the held item's own reference.
@@ -170,44 +151,11 @@ func (it *HeldItem) SetVerdict(meta []byte) {
 	}
 }
 
-// HeldSource is another module's held items in the review queue: the
-// catalog's content items, under catalog.HeldKind.
-type HeldSource interface {
-	// Held pages held items oldest first, after (after, afterID).
-	Held(ctx context.Context, after time.Time, afterID string, limit int) ([]HeldItem, error)
-	// ResolveHeld applies a reviewer's decision at the listed revision;
-	// ErrNotFound when the item is not held at it.
-	ResolveHeld(ctx context.Context, id string, d ReviewDecision) error
-}
-
-// AddHeldSource puts src's held items in the review queue under kind. Call it
-// before serving.
-func (rt *Runtime) AddHeldSource(kind string, src HeldSource) error {
-	if kind == "" || kind == KindComment || src == nil {
-		return fmt.Errorf("content: held source %q is reserved or nil", kind)
-	}
-	if _, dup := rt.held[kind]; dup {
-		return fmt.Errorf("content: held source %q added twice", kind)
-	}
-	rt.held[kind] = src
-	return nil
-}
-
-func (rt *Runtime) heldKinds() string {
-	out := KindComment
-	for k := range rt.held {
-		out += ", " + k
-	}
-	return out
-}
-
-// ListHeld pages this tenant's held comments, or a held source's items,
-// oldest first; cursor is the previous page's Next ("" = start). limit is
+// ListHeld pages this tenant's held comments oldest first; cursor is the previous page's Next ("" = start). limit is
 // clamped to [1, 100].
 func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int) (HeldPage, error) {
-	src, ok := rt.held[kind]
-	if kind != KindComment && !ok {
-		return HeldPage{}, badRequest("kind must be one of %s", rt.heldKinds())
+	if kind != KindComment {
+		return HeldPage{}, badRequest("kind must be %s", KindComment)
 	}
 	if limit <= 0 {
 		limit = 20
@@ -219,13 +167,7 @@ func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int)
 		return HeldPage{}, err
 	}
 	page := HeldPage{Items: []HeldItem{}}
-	if ok {
-		items, err := src.Held(ctx, after, afterID, limit+1)
-		if err != nil {
-			return HeldPage{}, err
-		}
-		page.Items = append(page.Items, items...)
-	} else if err := rt.heldComments(ctx, &page, after, afterID, limit+1, nil); err != nil {
+	if err := rt.heldComments(ctx, &page, after, afterID, limit+1, nil); err != nil {
 		return HeldPage{}, err
 	}
 	page.trim(limit)
@@ -293,7 +235,7 @@ func parseHeldCursor(cursor string) (time.Time, string, error) {
 }
 
 // Resolve writes a reviewer's final decision on a held item. Approve publishes
-// it (counts follow, and a held source's own effects); reject keeps it
+// it (counts follow); reject keeps it
 // author-visible with the reason. A missing, foreign-tenant or not-held item
 // is ErrNotFound.
 func (rt *Runtime) Resolve(ctx context.Context, kind, id string, d ReviewDecision) error {
@@ -310,13 +252,10 @@ func (rt *Runtime) Resolve(ctx context.Context, kind, id string, d ReviewDecisio
 	if d.Decision == DecisionReject {
 		state = ModerationRejected
 	}
-	if kind == KindComment {
-		return rt.comments.resolve(ctx, id, state, d)
+	if kind != KindComment {
+		return badRequest("kind must be %s", KindComment)
 	}
-	if src, ok := rt.held[kind]; ok {
-		return src.ResolveHeld(ctx, id, d)
-	}
-	return badRequest("kind must be one of %s", rt.heldKinds())
+	return rt.comments.resolve(ctx, id, state, d)
 }
 
 // resolve moves a held comment to its final state; approving publishes it
@@ -393,13 +332,13 @@ func (c *comments) count(ctx context.Context, tx pgx.Tx, replyTo *string, k cont
 
 var moderationRoutes = []httpapi.Route[*Runtime]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/moderation/held", Resource: "moderation", Auth: httpapi.Staff, Perm: string(access.ModerationReview),
-		Doc: "Held comments or content items awaiting review, oldest first.",
-		Query: []httpapi.Param{httpapi.Text("kind", "comment or content"), httpapi.Text("cursor", "the previous page's next"),
+		Doc: "Held comments awaiting review, oldest first.",
+		Query: []httpapi.Param{httpapi.Text("kind", "comment"), httpapi.Text("cursor", "the previous page's next"),
 			httpapi.Int("limit", "page size: 20 by default, at most 100")},
 		Responses: []httpapi.Reply{httpapi.OK(HeldPage{})}},
 		Serve: httpapi.H((*Runtime).handleListHeld)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/moderation/{kind}/{id}/resolve", Resource: "moderation", Auth: httpapi.Staff, Perm: string(access.ModerationReview),
-		Doc:       "Approves (publishes) or rejects a held comment or content item, at the revision the queue listed.",
+		Doc:       "Approves (publishes) or rejects a held comment, at the revision the queue listed.",
 		Request:   ResolveInput{},
 		Responses: []httpapi.Reply{httpapi.OK(ReviewOutcome{})}, Errors: []string{CodeConflict, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleResolve)},

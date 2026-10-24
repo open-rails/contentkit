@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -15,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/codes"
@@ -629,9 +627,7 @@ func (s *Store) putCodes(ctx context.Context, q entities.Querier, ids []string) 
 	return err
 }
 
-// PutText sets or removes text per language. Text of a published item is
-// screened first: a rejection writes nothing (content.RejectedError), a hold
-// keeps the item's last approved text public until a reviewer decides.
+// PutText sets or removes text per language.
 func (s *Store) PutText(ctx context.Context, actor access.Actor, in []TextPut) error {
 	byID := map[string][]TextPut{}
 	var ids []string
@@ -651,23 +647,12 @@ func (s *Store) PutText(ctx context.Context, actor access.Actor, in []TextPut) e
 		}
 		byID[p.ContentID] = append(byID[p.ContentID], in[i])
 	}
-	screens, err := s.screenTexts(ctx, actor, byID, false)
-	if err != nil {
-		return err
-	}
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
 		fx := effects{codes: true, expose: true}
 		for _, id := range ids {
 			o := got[id]
 			if o.state == StateDeleted {
 				return fx, ErrNotFound
-			}
-			if err := s.checkScreened(ctx, tx, id, screens[id]); err != nil {
-				return fx, err
-			}
-			// The snapshot of the approved text is taken before the write.
-			if err := s.applyScreening(ctx, tx, id, screens[id]); err != nil {
-				return fx, err
 			}
 			set := map[string]Text{}
 			var drop []string
@@ -720,9 +705,7 @@ func (s *Store) syncHiddenVersion(ctx context.Context, tx pgx.Tx, id, kind strin
 }
 
 // Publish publishes content items now, or schedules those with a future At.
-// A published item is screened (all its text); a hold leaves it unpublished
-// until a reviewer approves it. Rescheduling a scheduled item moves its time;
-// a live item is left as it is.
+// Rescheduling a scheduled item moves its time; a live item is left as it is.
 func (s *Store) Publish(ctx context.Context, actor access.Actor, in []Publish) error {
 	return s.PublishChecked(ctx, actor, in, nil)
 }
@@ -732,14 +715,8 @@ func (s *Store) Publish(ctx context.Context, actor access.Actor, in []Publish) e
 // mutation. It must use tx for database reads and must not open transactions.
 func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Publish, check func(context.Context, pgx.Tx) error) error {
 	ids := make([]string, len(in))
-	byID := map[string][]TextPut{}
 	for i, p := range in {
 		ids[i] = p.ContentID
-		byID[p.ContentID] = nil
-	}
-	screens, err := s.screenTexts(ctx, actor, byID, true)
-	if err != nil {
-		return err
 	}
 	now := s.now()
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
@@ -788,19 +765,13 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 			if !titled || !versioned {
 				return fx, invalid("content %s needs a title and a version to publish", p.ContentID)
 			}
-			if err := s.checkScreened(ctx, tx, p.ContentID, screens[p.ContentID]); err != nil {
-				return fx, err
-			}
 			at := now
 			if p.At != nil && p.At.After(now) {
 				at = *p.At
 			}
-			if err := s.applyScreening(ctx, tx, p.ContentID, screens[p.ContentID]); err != nil {
-				return fx, err
-			}
 			var live bool
 			if err := tx.QueryRow(ctx, `UPDATE `+s.t.items+` SET state = 'published', publish_at = $3::timestamptz,
- published_at = CASE WHEN $3::timestamptz <= $4::timestamptz AND moderation = 'approved' THEN $4::timestamptz END
+ published_at = CASE WHEN $3::timestamptz <= $4::timestamptz THEN $4::timestamptz END
  WHERE tenant_id = $1 AND id = $2 RETURNING published_at IS NOT NULL`, s.tenant, p.ContentID, at, now).Scan(&live); err != nil {
 				return fx, err
 			}
@@ -1416,99 +1387,4 @@ func (s *Store) OrderVersions(ctx context.Context, actor access.Actor, contentID
 		fx.events = append(fx.events, Event{Type: EventContentUpdated, Kind: got[contentID].kind, ContentID: contentID})
 		return fx, nil
 	})
-}
-
-// screening is one item's moderation outcome for a write.
-type screening struct {
-	revision int64
-	result   content.Screening
-	ran      bool
-}
-
-// screenTexts screens the text each item will publish, outside any
-// transaction: published items always, drafts only when publishing.
-// pending is the text about to be written; all screens every language.
-func (s *Store) screenTexts(ctx context.Context, actor access.Actor, pending map[string][]TextPut, all bool) (map[string]screening, error) {
-	out := map[string]screening{}
-	if s.moderator == nil {
-		return out, nil
-	}
-	for id, puts := range pending {
-		var kind, state string
-		var revision int64
-		err := s.pool.QueryRow(ctx, `SELECT kind, state, moderation_revision FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.tenant, id).Scan(&kind, &state, &revision)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		if err != nil {
-			return nil, err
-		}
-		if !all && state != StatePublished {
-			continue
-		}
-		texts, err := s.readTexts(ctx, s.pool, []string{id})
-		if err != nil {
-			return nil, err
-		}
-		merged := texts[id]
-		if merged == nil {
-			merged = map[string]Text{}
-		}
-		for _, p := range puts {
-			if p.Text == nil {
-				delete(merged, p.Language)
-			} else {
-				merged[p.Language] = *p.Text
-			}
-		}
-		var title, body strings.Builder
-		for _, l := range slices.Sorted(maps.Keys(merged)) {
-			t := merged[l]
-			title.WriteString(t.Title + "\n")
-			body.WriteString(strings.TrimSpace(t.Description+"\n"+t.Body) + "\n")
-		}
-		res, err := s.moderator.Screen(ctx, content.ModerationInput{Actor: actor, Ref: s.Ref(kind, id), Kind: HeldKind, ItemID: id,
-			Title: strings.TrimSpace(title.String()), Text: strings.TrimSpace(body.String())})
-		if err != nil {
-			return nil, err
-		}
-		out[id] = screening{revision: revision, result: res, ran: true}
-	}
-	return out, nil
-}
-
-// checkScreened refuses a write whose screened text changed meanwhile.
-func (s *Store) checkScreened(ctx context.Context, tx pgx.Tx, id string, sc screening) error {
-	if !sc.ran {
-		return nil
-	}
-	var revision int64
-	if err := tx.QueryRow(ctx, `SELECT moderation_revision FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.tenant, id).Scan(&revision); err != nil {
-		return err
-	}
-	if revision != sc.revision {
-		return errors.Join(ErrConflict, errors.New("content changed while being screened; retry"))
-	}
-	return nil
-}
-
-// applyScreening stores a screening: approval clears any hold; a hold keeps
-// the last approved text of a live item as its published snapshot.
-func (s *Store) applyScreening(ctx context.Context, tx pgx.Tx, id string, sc screening) error {
-	if !sc.ran {
-		return nil
-	}
-	r := sc.result
-	if r.State == content.ModerationApproved {
-		_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET moderation = 'approved', moderation_reason = NULL, moderation_verdict = $3, published_snapshot = NULL,
- moderated_by = NULL, moderated_at = NULL, moderation_revision = moderation_revision + 1 WHERE tenant_id = $1 AND id = $2`, s.tenant, id, r.Verdict)
-		return err
-	}
-	_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` c SET moderation = $3, moderation_reason = $4, moderation_verdict = $5,
- moderated_by = NULL, moderated_at = NULL, moderation_revision = moderation_revision + 1,
- published_snapshot = CASE WHEN c.published_snapshot IS NOT NULL OR c.moderation <> 'approved' OR c.published_at IS NULL THEN c.published_snapshot
-  ELSE (SELECT coalesce(jsonb_object_agg(t.language, jsonb_build_object('title', t.title, 'slug', t.slug, 'description', t.description,
-   'body', t.body, 'sort_key', t.sort_key, 'aliases', to_jsonb(t.aliases))), '{}') FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id) END
- WHERE c.tenant_id = $1 AND c.id = $2`, s.tenant, id, r.State, r.Reason, r.Verdict)
-	return err
 }

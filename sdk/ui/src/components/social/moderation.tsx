@@ -1,7 +1,7 @@
 import { cn } from "cn";
 import { useEffect, useId, useMemo, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
-import type { Decision, HeldKind } from "../../client/content/types.js";
+import type { Decision } from "../../client/content/types.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import type { AdminComment, HeldItem, PublicUser } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
@@ -108,7 +108,7 @@ function Moderation({ sections, basePath, navigation, ...p }: Rest & { sections:
         )}
         <TabsContent value={section} className="pt-3">
           {section === "comments" && <AllComments {...p} loc={loc} view={view} />}
-          {section === "queue" && <Queue {...p} loc={loc} view={view} />}
+          {section === "queue" && <Queue {...p} />}
           {section === "bans" && (
             <CommentBans
               scope="global"
@@ -266,20 +266,12 @@ function AllComments({ loc, view, client, ...p }: SectionProps) {
   );
 }
 
-function Queue({ loc, view, ...p }: SectionProps) {
+function Queue(p: Rest) {
   const m = useMessages();
   const { t } = m;
-  const kind: HeldKind = loc.query.get("kind") === "content" ? "content" : "comment";
-  const queue = useModerationQueue({ kind, pageSize: p.pageSize, client: p.client });
+  const queue = useModerationQueue({ kind: "comment", pageSize: p.pageSize, client: p.client });
   return (
     <div className="grid gap-3">
-      <div className="flex gap-2" role="group" aria-label={t("moderation.queue")}>
-        {(["comment", "content"] as const).map((k) => (
-          <Button key={k} size="sm" variant={kind === k ? "default" : "outline"} aria-pressed={kind === k} onClick={() => loc.go(view, { kind: k === "comment" ? undefined : k })}>
-            {t(k === "content" ? "moderation.queueContent" : "moderation.queueComments")}
-          </Button>
-        ))}
-      </div>
       <Listing loading={queue.loading || queue.loadingMore} error={queue.error} empty={t("moderation.queueEmpty")} count={queue.items.length} reload={queue.items.length && queue.hasMore ? () => void queue.loadMore() : queue.reload}>
         {queue.items.map((it) => (
           <HeldRow key={it.id} item={it} itemHref={p.itemHref} userHref={p.userHref} onResolve={queue.resolve} reload={queue.reload} onError={p.onError} />

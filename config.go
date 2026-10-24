@@ -351,7 +351,7 @@ type Deps struct {
 	// marks none.
 	Downloads versions.DownloadPolicy
 
-	// Moderator screens comments and content text; nil publishes everything.
+	// Moderator screens comments; nil publishes every comment.
 	Moderator content.ContentModerator
 	// Classifier entities free-text poll answers; nil refuses free-text polls.
 	Classifier content.AnswerClassifier

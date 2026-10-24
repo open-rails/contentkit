@@ -1,21 +1,16 @@
 package catalog
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/testauth"
 )
 
@@ -222,146 +217,6 @@ func (f *fixture) doWith(actor, method, target string, headers map[string]string
 	rec := httptest.NewRecorder()
 	f.handler().ServeHTTP(rec, req)
 	return rec
-}
-
-// moderator holds text containing "iffy", rejects "spam", and pauses on
-// "paused" until released.
-type moderator struct {
-	mu      sync.Mutex
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (*moderator) StatelessPolicy() {}
-
-func (m *moderator) Screen(_ context.Context, in content.ModerationInput) (content.Verdict, error) {
-	switch {
-	case strings.Contains(in.Text, "spam"):
-		return content.Verdict{Decision: content.DecisionReject, Reason: "no spam"}, nil
-	case strings.Contains(in.Text, "iffy"):
-		return content.Verdict{Decision: content.DecisionReview, Reason: "needs a look", Model: "fake"}, nil
-	case strings.Contains(in.Text, "paused"):
-		close(m.entered)
-		<-m.release
-	}
-	return content.Verdict{Decision: content.DecisionApprove}, nil
-}
-
-// Text is screened by content's moderator through the shared hold flow: a
-// rejection writes nothing, a hold keeps a live item's approved text public
-// while the edit waits in the review queue, and the reviewer's decision
-// publishes it. A screen in flight never overwrites a newer edit.
-func TestModerationHoldIntegration(t *testing.T) {
-	mod := &moderator{entered: make(chan struct{}), release: make(chan struct{})}
-	var rt *content.Runtime
-	late := &lateResolver{}
-	f := newFixture(t, func(o *Options) {
-		var err error
-		rt, err = content.New(t.Context(), content.Options{Pool: o.Pool, Schema: o.Schema, Tenant: tenant, Auth: o.Auth,
-			Resolver: late, Kinds: o.Kinds, Moderator: mod, Limits: content.Limits{Disabled: true}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		o.Moderation = rt
-	})
-	late.s = f.s
-	if err := rt.AddHeldSource(HeldKind, f.s); err != nil {
-		t.Fatal(err)
-	}
-	in := ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: "Post", Body: "first draft is iffy"}}}
-	id := f.create("staff", in)
-	// A draft is never screened; publishing screens every language.
-	f.want(http.StatusAccepted, "staff", "POST", "/v1/contents/"+id+"/publish", nil, nil)
-	if got := f.read(anon, "main.test", id)[0]; got != nil {
-		t.Fatal("a held, never approved item is public")
-	}
-	page, err := rt.ListHeld(f.ctx, HeldKind, "", 10)
-	if err != nil || len(page.Items) != 1 || page.Items[0].ID != id || page.Items[0].Reason != "needs a look" || page.Items[0].Model != "fake" || page.Items[0].Title != "Post" {
-		t.Fatalf("held queue %+v %v", page, err)
-	}
-	if err := rt.Resolve(f.ctx, HeldKind, id, content.ReviewDecision{Revision: page.Items[0].Revision, Decision: content.DecisionApprove, Reviewer: "staff"}); err != nil {
-		t.Fatal(err)
-	}
-	live := f.read(anon, "main.test", id)[0]
-	if live == nil || !live.Live || live.Body != "first draft is iffy" {
-		t.Fatalf("approved %+v", live)
-	}
-	published := func(id string) (n int) {
-		if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.table("content_events")+` WHERE entity_id = $1 AND type = $2`, id, EventContentPublished).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		return n
-	}
-	if n := published(id); n != 1 {
-		t.Fatalf("approving a due held item emitted %d published events, want 1", n)
-	}
-
-	// A rejected edit writes nothing; a held edit keeps the approved text public.
-	f.want(http.StatusUnprocessableEntity, "staff", "PUT", "/v1/contents/"+id+"/text/en", Text{Title: "Post", Body: "buy spam"}, nil)
-	f.want(http.StatusAccepted, "staff", "PUT", "/v1/contents/"+id+"/text/en", Text{Title: "Post v2", Body: "iffy again"}, nil)
-	if got := f.read(anon, "main.test", id)[0]; got == nil || got.Title != "Post" || got.Body != "first draft is iffy" {
-		t.Fatalf("the public sees %+v", got)
-	}
-	if got := f.read("staff", "main.test", id)[0]; got.Title != "Post v2" || got.Moderation != content.ModerationHeld || got.ModerationReason != "needs a look" {
-		t.Fatalf("the editor sees %+v", got)
-	}
-	page, _ = rt.ListHeld(f.ctx, HeldKind, "", 10)
-	if err := rt.Resolve(f.ctx, HeldKind, id, content.ReviewDecision{Revision: page.Items[0].Revision, Decision: content.DecisionReject, Reviewer: "staff", Reason: "no"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := f.read(anon, "main.test", id)[0]; got == nil || got.Title != "Post" {
-		t.Fatalf("after a rejected edit the public sees %+v", got)
-	}
-	if got := f.read("staff", "main.test", id)[0]; got.Moderation != content.ModerationRejected || got.ModerationReason != "no" {
-		t.Fatalf("the editor sees the rejection %+v", got)
-	}
-	if err := rt.Resolve(f.ctx, HeldKind, id, content.ReviewDecision{Revision: page.Items[0].Revision, Decision: content.DecisionApprove, Reviewer: "staff"}); err == nil {
-		t.Fatal("a decided item was resolved again")
-	}
-
-	// A paused screen loses to a newer edit.
-	done := make(chan int, 1)
-	go func() {
-		done <- f.do("staff", "PUT", "/v1/contents/"+id+"/text/en", Text{Title: "Post", Body: "paused edit"}).Code
-	}()
-	<-mod.entered
-	f.want(http.StatusOK, "staff", "PUT", "/v1/contents/"+id+"/text/en", Text{Title: "Post v3", Body: "clean"}, nil)
-	close(mod.release)
-	if code := <-done; code != http.StatusConflict {
-		t.Fatalf("the paused edit answered %d, want 409", code)
-	}
-	if got := f.read(anon, "main.test", id)[0]; got.Title != "Post v3" || got.Body != "clean" {
-		t.Fatalf("after the race %+v", got)
-	}
-
-	// Deciding on a held item that never went live publishes nothing: a
-	// rejection, and an approval of one scheduled for later.
-	at := f.now().Add(time.Hour).UTC().Truncate(time.Second)
-	for name, c := range map[string]struct {
-		publish  PublishInput
-		decision content.Decision
-	}{"rejected": {decision: content.DecisionReject}, "approved for later": {publish: PublishInput{PublishAt: &at}, decision: content.DecisionApprove}} {
-		id := f.create("staff", ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: name, Body: "iffy"}}})
-		f.want(http.StatusAccepted, "staff", "POST", "/v1/contents/"+id+"/publish", c.publish, nil)
-		page, err := rt.ListHeld(f.ctx, HeldKind, "", 10)
-		if err != nil || len(page.Items) != 1 || page.Items[0].ID != id {
-			t.Fatalf("%s: held queue %+v %v", name, page, err)
-		}
-		if err := rt.Resolve(f.ctx, HeldKind, id, content.ReviewDecision{Revision: page.Items[0].Revision, Decision: c.decision, Reviewer: "staff"}); err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if got := f.read(anon, "main.test", id)[0]; got != nil || published(id) != 0 {
-			t.Fatalf("%s: public %+v, %d published events", name, got, published(id))
-		}
-	}
-}
-
-// lateResolver resolves content refs through the catalog, built after the
-// content runtime it serves.
-type lateResolver struct{ s *Store }
-
-func (l *lateResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]resolve.Resolution, error) {
-	return l.s.Resolver().Resolve(ctx, refs, a)
 }
 
 // Manage filters by access rule and counts what a numbered list pages through.

@@ -116,7 +116,7 @@ func (s *Store) recordBeforeEdit(ctx context.Context, q Querier, ids []string, o
 		return nil
 	}
 	rows, err := tx.Query(ctx, `UPDATE `+s.t.items+` SET published_at=publish_at
- WHERE tenant_id=$1 AND id=ANY($2) AND state='published' AND moderation='approved' AND published_at IS NULL AND publish_at<=$3 RETURNING id,kind,published_at`, s.tenant, ids, s.now())
+ WHERE tenant_id=$1 AND id=ANY($2) AND state='published' AND published_at IS NULL AND publish_at<=$3 RETURNING id,kind,published_at`, s.tenant, ids, s.now())
 	if err != nil {
 		return err
 	}
@@ -139,7 +139,7 @@ func (s *Store) recordBeforeEdit(ctx context.Context, q Querier, ids []string, o
 	}
 	rows, err = tx.Query(ctx, `UPDATE `+s.t.versions+` v SET published_at=greatest(v.publish_at,coalesce(c.published_at,c.publish_at)) FROM `+s.t.items+` c
  WHERE c.tenant_id=v.tenant_id AND c.id=v.content_id AND v.tenant_id=$1 AND v.content_id=ANY($2)
- AND c.state='published' AND c.moderation='approved' AND coalesce(c.published_at,c.publish_at)<=$3
+ AND c.state='published' AND coalesce(c.published_at,c.publish_at)<=$3
  AND v.state='published' AND v.published_at IS NULL AND v.publish_at<=$3 RETURNING v.content_id,v.id,c.kind,v.published_at`, s.tenant, ids, s.now())
 	if err != nil {
 		return err

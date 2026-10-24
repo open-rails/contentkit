@@ -43,9 +43,8 @@ func managementFixture(t *testing.T) (*fixture, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Public documents keep approved text; operator names reflect the current edit.
+	// Operator names reflect the current edit.
 	f.exec(`UPDATE {s}.content_text SET title='Azure Revision' WHERE tenant_id=$1 AND content_id=$2 AND language='en'`, tenant, f.cid(1))
-	f.exec(`UPDATE {s}.content_items SET moderation='held',published_snapshot='{"en":{"title":"Alpha"}}'::jsonb WHERE tenant_id=$1 AND id=$2`, tenant, f.cid(1))
 	f.entity("series", "bleach")
 	f.entity("tag", "azure-marker")
 	internal := true
