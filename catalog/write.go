@@ -956,6 +956,9 @@ func (s *Store) Restore(ctx context.Context, actor access.Actor, ids []string) e
 // restoreRows brings deleted items back as they were: published (or
 // scheduled) when they had been, else drafts.
 func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error {
+	if err := s.checkRestorableTx(ctx, tx, contentTargets(ids)); err != nil {
+		return err
+	}
 	// A fixed comment policy is applied only when explicitly restoring a
 	// deleted item. Retained tombstones are not rewritten on configuration load.
 	for kind, spec := range s.cfg.Kinds {
@@ -1088,6 +1091,9 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 				}
 				if !automatic {
 					return fx, ErrNotFound
+				}
+				if err := s.checkRestorableTx(ctx, tx, contentTargets([]string{p.ContentID})); err != nil {
+					return fx, err
 				}
 			}
 			if k.Versions.Hidden && (p.VersionID == "" || !hiddenVersionEdit(p.VersionInput)) {
@@ -1353,6 +1359,11 @@ func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 		return err
 	}
 	was := cur.state
+	if was == StateDeleted && v.State != "" && v.State != StateDeleted {
+		if err := s.checkRestorableTx(ctx, tx, []versions.Target{{Content: contentID, Version: id}}); err != nil {
+			return err
+		}
+	}
 	r, err := s.versionRow(k, kind, v, &cur)
 	if err != nil {
 		return err

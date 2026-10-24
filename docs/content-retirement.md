@@ -16,10 +16,10 @@ purge operation also owns any recorded repeat needed for an upload already
 in flight. It does not hand that responsibility to another River job or a
 separate media reaper.
 
-Restoration and purge must serialize before either takes catalog row locks.
-No database transaction is held while object storage is being erased.
-Expired versions cannot be restored into media that purge has already
-started retiring.
+Purge records a permanent erasure intent under the same catalog locks that
+restoration uses. Only then does it write storage fences or delete objects,
+outside the database transaction. Restoration refuses an already-claimed
+version even when a storage request has an ambiguous outcome.
 
 Billing products remain archived and purchase records remain intact after
 the physical content disappears.
