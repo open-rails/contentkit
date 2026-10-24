@@ -27,7 +27,7 @@ var site = kinds.Config{Languages: []string{"en"},
 	Kinds: map[string]kinds.Kind{"post": {Route: "p", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true},
 		Entities: []string{"channel", "tag"}}},
 	EntityKinds: map[string]kinds.EntityKind{
-		"channel": {Route: "c", Owner: "user", AuthScope: true, Sellable: true, MaxPerOwner: 2},
+		"channel": {Route: "c", Owner: "user", AuthScope: true, Entitled: true, MaxPerOwner: 2},
 		"tag":     {Route: "tags"},
 	}}
 
