@@ -291,6 +291,13 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := e.preflightCatalogEventMigration(ctx); err != nil {
 		return err
 	}
+	retiredTenants := []string{e.cfg.Tenant}
+	if e.scope != nil && e.scope.AppID.String() != e.cfg.Tenant {
+		retiredTenants = append(retiredTenants, e.scope.AppID.String())
+	}
+	if err := preflightOfferJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
+		return err
+	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
@@ -319,6 +326,11 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return err
 	}
 	if err := e.avatarPlacement(ctx, options.explicit); err != nil {
+		return err
+	}
+	// The guarded schema migration succeeded: obsolete waiting jobs can now
+	// be cancelled without discarding an unsynchronized billing write.
+	if err := retireOfferJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
 		return err
 	}
 	if options.SkipQueues {
