@@ -695,7 +695,7 @@ func (e *Engine) mount(deps Deps) error {
 		return err
 	}
 	router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{Routes: c.Routes(), Languages: c.Languages, Logger: e.log,
-		Visibility: e.catalog.Visibility})
+		Visibility: e.codeVisibility})
 	if err != nil {
 		return err
 	}
