@@ -381,6 +381,7 @@ export const admin: typeof en = {
     removeTrack: "Spur {n} entfernen",
     matched: "{count} Audiodateien Seiten oder Ankern zugeordnet.",
     matchedNone: "Kein Audiodateiname passt zu einer Seite oder einem Anker; nichts geändert.",
+    replacedCues: "Ersetzte frühere Cues: {count}.",
     pagesWithoutAudio: "Seiten ohne Audio: {names}",
     audioWithoutPlace: "Audio ohne passende Seite oder Anker: {names}",
     at_anchors: "Anker {n}",

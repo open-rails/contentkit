@@ -380,6 +380,7 @@ export const admin = {
     removeTrack: "Remove track {n}",
     matched: "Matched {count} audio files to pages or anchors.",
     matchedNone: "No audio file name matches a page or an anchor; nothing changed.",
+    replacedCues: "Earlier cues replaced: {count}.",
     pagesWithoutAudio: "Pages without audio: {names}",
     audioWithoutPlace: "Audio matching no page or anchor: {names}",
     at_anchors: "Anchor {n}",
