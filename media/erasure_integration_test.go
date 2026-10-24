@@ -63,7 +63,7 @@ func TestAccountErasureWaitsForVerifiedStorageCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	riverHost(t, jobs, f.env.Pool())
+	hostSchema(t, jobs, f.env.Pool())
 	deletion := media.Deletion{Ref: ref, Owner: ref.ContentID, OperationID: "account-erasure"}
 	if err = jobs.Erase(t.Context(), deletion); err == nil {
 		t.Fatal("failed deletion reported complete")

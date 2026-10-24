@@ -151,7 +151,7 @@ Media never adopts leftovers:
 - A folder's first manifest edit (a commit) is refused the same way over a
   previous item's blobs.
 - `Jobs.Purge(ctx, media.Deletion{Ref, Owner})` deletes a folder now, the
-  explicit reset for deliberate reuse. Deleting content stays `DeleteItemsTx`.
+  explicit reset for deliberate reuse. Content owners commit `RetireItemsTx`; their existing purge executes it.
 - `Jobs.SweepOrphans(ctx, media.OrphanSweep{Tenant, Kind, Exists, Grace, Delete})`
   lists a kind's folders and reports (or deletes) those the host's `Exists`
   check omits and whose newest object is older than `Grace`. Folders whose id
@@ -1183,12 +1183,12 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
 
 ### File retirement, deletion and erasure
 
-- Manifest edits retire their exact removed keys after the conditional
-  manifest write commits. Recovery retries the recorded operation, not a
-  new storage listing. A file shared by retained entries stays live;
+- Manifest edits admit their exact next manifest and ingest job in PostgreSQL
+  before the conditional S3 write. Ingest retries that admitted operation.
+  Removed keys remain durable intents for the existing content purge. A file shared by retained entries stays live;
   reordering entries does not delete or rename it.
-- A daily bounded pass handles database-recorded allocation and deletion
-  deadlines. It does not search the bucket for unreferenced files. Unfinished
+- The existing content-deletion sweep calls `jobs.PurgeRetired(ctx, limit)`
+  for database-recorded allocation and deletion deadlines. It does not search the bucket for unreferenced files. Unfinished
   private allocations retain `JobsConfig.Grace` (24 h by default); temporary
   uploads and caches expire after seven days and must then be uploaded again.
   Known retired keys receive a bounded retry to catch already-issued writes.
@@ -1199,11 +1199,13 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   permanent storage clear it. `Store.Configure` preserves unrelated lifecycle
   rules, expires temp objects and aborts multipart uploads after seven days.
   Use equivalent server settings where multipart lifecycle is unsupported.
-- `jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref, Owner})` deletes items from
-  the host's delete transaction (a second pass catches late uploads); a host
-  deletes every version item of a work, and account erasure deletes
-  `accounts/user/{id}/` once. `Jobs.Purge` deletes now; `SweepOrphans` is an
-  explicit repair operation, never a scheduled discovery job.
+- `jobs.RetireItemsTx(ctx, tx, media.Deletion{Ref, Owner})` records an
+  incarnation-bound deletion with the owning tombstone. `RetirementStartedTx`
+  prevents restoration after the claim; `RetirementComplete` permits the owner
+  to mark completion only after physical deletion succeeds. The content purge
+  retains exact late-write targets after the owning row is finalized.
+  `Jobs.Erase` is synchronous permanent erasure; `Jobs.Purge` is an explicit
+  reset with a stable operation ID. Neither needs a media host queue.
 - Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
   their referenced blobs. Normal processing rebuilds declared public presets.
 

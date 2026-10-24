@@ -82,6 +82,9 @@ func (w *videoWorker) Timeout(*river.Job[workqueue.VideoArgs]) time.Duration { r
 
 func (w *videoWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoArgs]) error {
 	defer w.c.clearProgress(ctx, job.ID)
+	if err := w.c.Encoder.ms.Recover(ctx, job.Args.Ref); err != nil {
+		return err
+	}
 	return w.c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return w.c.convert(ctx, job) })
 }
 

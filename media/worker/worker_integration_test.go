@@ -173,22 +173,9 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	if err := riverhelpers.ApplyMigrations(ctx, pool, h.schema); err != nil {
 		t.Fatal(err)
 	}
-	if h.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: h.reg, Locker: s3test.Locker(t, env.Store), Journal: journal, Pool: pool, Processes: h.queue}); err != nil {
+	if h.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: h.reg, Locker: s3test.Locker(t, env.Store), Journal: journal, Processes: h.queue}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := riverhelpers.New(ctx, pool, &river.Config{Schema: h.schema, FetchPollInterval: 100 * time.Millisecond,
-		FetchCooldown: 50 * time.Millisecond}, h.jobs.RiverJobs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = client.StopAndCancel(ctx)
-	})
 	h.ms = h.jobs.Manifests()
 	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: h.ms}); err != nil {
 		t.Fatal(err)

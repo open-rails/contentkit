@@ -136,8 +136,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 		if err != nil {
 			return err
 		}
-		mutation.effects = journalEffects{Deletion: true, Private: keys, Cancel: j.cfg.Journal.queue != nil,
-			Notify: j.cfg.Registry.cfg.Hooks.ItemCommitted != nil}
+		mutation.effects = journalEffects{Deletion: true, Private: keys, Cancel: j.cfg.Journal.queue != nil}
 		for obj, err := range j.cfg.Store.List(ctx, item.Prefix()) {
 			if err != nil {
 				return err

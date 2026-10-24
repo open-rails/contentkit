@@ -9,8 +9,7 @@ import (
 	"github.com/open-rails/contentkit/internal/pgtest"
 )
 
-// An attempt that never reached S3 may restart, but that restart must not
-// make a permanent version erasure discoverable by the generic media reaper.
+// A retry keeps permanent-erasure ownership in the existing content purge.
 func TestVersionErasureRetryKeepsPurgeOwnership(t *testing.T) {
 	pool := pgtest.Pool(t, nil)
 	schema := pgtest.Schema(t, t.Context(), pool)
@@ -40,16 +39,9 @@ func TestVersionErasureRetryKeepsPurgeOwnership(t *testing.T) {
 		if !retry.Effects.Erasure {
 			t.Fatal("retry lost its permanent erasure classification")
 		}
-		pending, err := journal.pending(t.Context(), "site", []string{"gallery"}, 10, false)
-		if err != nil {
-			t.Fatal(err)
+		if retry.Effects.Ingest {
+			t.Fatal("purge retry acquired an ingest owner")
 		}
-		found := false
-		for _, item := range pending {
-			found = found || item.ID == retry.ID
-		}
-		if found == versioned {
-			t.Fatalf("generic recovery ownership versioned=%v found=%v", versioned, found)
-		}
+
 	}
 }

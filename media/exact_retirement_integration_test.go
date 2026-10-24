@@ -307,7 +307,7 @@ func TestExactRetirementLateReplayDoesNotRestoreOldMirror(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.later().CleanupDue(t.Context(), 100); err != nil {
+	if _, err := f.later().PurgeRetired(t.Context(), 100); err != nil {
 		t.Fatal(err)
 	}
 	after, err := f.env.Store.Head(t.Context(), key)
@@ -337,7 +337,7 @@ func TestPublicOnlyRetirementRecoversLateWriteWithoutDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := jobs.CleanupDue(t.Context(), 100); err != nil || n == 0 {
+	if n, err := jobs.PurgeRetired(t.Context(), 100); err != nil || n == 0 {
 		t.Fatalf("late public cleanup: %d %v", n, err)
 	}
 	if f.exists(old) || !f.exists(current) || store.lists.Load() != 0 {
@@ -439,7 +439,7 @@ func TestUnknownAliasRetirementReclaimsLateWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.object(alias, "late historical alias")
-	if n, err := jobs.CleanupDue(t.Context(), 100); err != nil || n == 0 {
+	if n, err := jobs.PurgeRetired(t.Context(), 100); err != nil || n == 0 {
 		t.Fatalf("late alias cleanup: %d %v", n, err)
 	}
 	if f.exists(alias) || store.lists.Load() != 0 {

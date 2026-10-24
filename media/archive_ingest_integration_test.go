@@ -30,7 +30,7 @@ func TestGenericArchiveIngestionReplaysAndPreservesServerMetadata(t *testing.T) 
 	if initial.Admission == nil || initial.Admission.Owner != "owner" || initial.Admission.Target != "inline/{name}" {
 		t.Fatalf("verified admission=%+v", initial.Admission)
 	}
-	if err := f.ms.IngestArchives(ctx, ref, ""); err != nil {
+	if err := f.ms.IngestArchives(f.workerContext(ctx), ref, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err := f.ms.Get(ctx, ref)
@@ -66,7 +66,7 @@ func TestGenericArchiveIngestionReplaysAndPreservesServerMetadata(t *testing.T) 
 	}
 	// An ordinary same-source metadata edit preserves server completion state.
 	f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: first.Blob, Meta: map[string]any{"caption": "changed", "archive_pages_total": 1000}})
-	if err = f.ms.IngestArchives(ctx, ref, ""); err != nil {
+	if err = f.ms.IngestArchives(f.workerContext(ctx), ref, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err = f.ms.Get(ctx, ref)
@@ -81,7 +81,7 @@ func TestGenericArchiveIngestionReplaysAndPreservesServerMetadata(t *testing.T) 
 	// receipt, without duplicating pages or charging decoded originals again.
 	second := "zip/second.zip"
 	f.commit(ref, media.Op{Op: media.OpPut, Path: second, Blob: first.Blob})
-	if err = f.ms.IngestArchives(ctx, ref, ""); err != nil {
+	if err = f.ms.IngestArchives(f.workerContext(ctx), ref, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err = f.ms.Get(ctx, ref)
@@ -122,7 +122,7 @@ func TestArchiveQuotaRefusesBeforeAnyDecodedBlobWrite(t *testing.T) {
 		return n
 	}
 	before := count()
-	if err := f.ms.IngestArchives(ctx, ref, ""); err != nil {
+	if err := f.ms.IngestArchives(f.workerContext(ctx), ref, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err := f.ms.Get(ctx, ref)
@@ -165,7 +165,7 @@ func TestStagedArchiveProcessesBeforeSaveAndAttachesAsOneBatch(t *testing.T) {
 			f.visible(4)
 			p, blob := f.upload(ref, "zip/staged", "application/zip", archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 7), "2.png": archivePNG(t, 8)}))
 			f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
-			if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+			if err := f.ms.IngestArchives(f.workerContext(t.Context()), ref, ""); err != nil {
 				t.Fatal(err)
 			}
 			m, _, err := f.ms.Get(t.Context(), ref)
@@ -209,7 +209,7 @@ func TestCancellingStagedArchivePreservesAttachedPagesAndOtherAliases(t *testing
 	source := archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 9), "2.png": archivePNG(t, 10)})
 	p, blob := f.upload(ref, "zip/staged", "application/zip", source)
 	f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
-	if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+	if err := f.ms.IngestArchives(f.workerContext(t.Context()), ref, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err := f.ms.Get(t.Context(), ref)
@@ -241,7 +241,7 @@ func TestReplacingStagedArchiveRetiresItsUnusedPages(t *testing.T) {
 	f.visible(6)
 	p, blob := f.upload(ref, "zip/staged", "application/zip", archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 11), "2.png": archivePNG(t, 12)}))
 	f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
-	if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+	if err := f.ms.IngestArchives(f.workerContext(t.Context()), ref, ""); err != nil {
 		t.Fatal(err)
 	}
 	p, blob = f.upload(ref, "zip/staged", "application/zip", archiveBytes(t, map[string][]byte{"new.png": archivePNG(t, 13)}))
@@ -249,7 +249,7 @@ func TestReplacingStagedArchiveRetiresItsUnusedPages(t *testing.T) {
 	if len(m.Files) != 1 || m.Files[0].Path != p {
 		t.Fatalf("replacing staged archive retained stale pages: %+v", m.Files)
 	}
-	if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+	if err := f.ms.IngestArchives(f.workerContext(t.Context()), ref, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err := f.ms.Get(t.Context(), ref)
@@ -293,7 +293,7 @@ func TestCopiedArchiveUsesDestinationPermissionAndQuota(t *testing.T) {
 			if _, err := f.up.Commit(t.Context(), f.editor, to, id, []media.Op{operation}); err != nil {
 				t.Fatalf("exact copy retry: %v", err)
 			}
-			if err := f.ms.IngestArchives(t.Context(), to, ""); err != nil {
+			if err := f.ms.IngestArchives(f.workerContext(t.Context()), to, ""); err != nil {
 				t.Fatal(err)
 			}
 			result, _, err := f.ms.Get(t.Context(), to)
@@ -320,7 +320,7 @@ func TestRemovedArchiveCanBeReaddedFromRetainedAlias(t *testing.T) {
 	f.visible(9)
 	p, blob := f.upload(ref, "zip/book", "application/zip", archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 16)}))
 	f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob})
-	if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+	if err := f.ms.IngestArchives(f.workerContext(t.Context()), ref, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err := f.ms.Get(t.Context(), ref)
@@ -335,7 +335,7 @@ func TestRemovedArchiveCanBeReaddedFromRetainedAlias(t *testing.T) {
 		t.Fatal("re-adding retained bytes reused a retired source admission")
 	}
 	for range 2 {
-		if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+		if err := f.ms.IngestArchives(f.workerContext(t.Context()), ref, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -356,7 +356,7 @@ func TestCopyReplacesStagedArchiveWithoutKeepingUnusedPages(t *testing.T) {
 	f.visible(11)
 	p, blob := f.upload(to, "zip/staged", "application/zip", archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 17), "2.png": archivePNG(t, 18)}))
 	f.commit(to, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
-	if err := f.ms.IngestArchives(t.Context(), to, ""); err != nil {
+	if err := f.ms.IngestArchives(f.workerContext(t.Context()), to, ""); err != nil {
 		t.Fatal(err)
 	}
 	f.put(from, "zip/new", "application/zip", archiveBytes(t, map[string][]byte{"new.png": archivePNG(t, 19)}))
@@ -364,7 +364,7 @@ func TestCopyReplacesStagedArchiveWithoutKeepingUnusedPages(t *testing.T) {
 	if len(m.Files) != 1 || m.Files[0].Path != p {
 		t.Fatalf("copy replacement retained old staged pages: %+v", m.Files)
 	}
-	if err := f.ms.IngestArchives(t.Context(), to, ""); err != nil {
+	if err := f.ms.IngestArchives(f.workerContext(t.Context()), to, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err := f.ms.Get(t.Context(), to)

@@ -41,7 +41,7 @@ durable originals. To restore to time T:
    renditions and public copies the restored manifests list lose their delete
    markers (every other object is hash-named and never rewritten). `RestoreReport.Missing` lists references whose
    versions have expired.
-3. Re-apply media erasures made after T (`EraseUserTx`/`DeleteItemsTx`) from
+3. Re-apply media erasures made after T (`Erase`/`RetireItemsTx`) from
    the host's deletion ledger.
 
 The RGW→R2 mirror must keep deleted objects at the destination for at least

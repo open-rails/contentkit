@@ -12,6 +12,7 @@ import (
 // the worker first places the item's staged uploads (Manifests.Place).
 type ProcessJob struct {
 	Ref    contentref.ContentRef `json:"ref"`
+	Commit string                `json:"commit,omitempty"` // admitted manifest operation completed by ingest
 	Place  bool                  `json:"place,omitempty"`
 	Preset string                `json:"preset,omitempty"` // only this preset; "" for all
 	Force  bool                  `json:"force,omitempty"`  // redo current outputs too

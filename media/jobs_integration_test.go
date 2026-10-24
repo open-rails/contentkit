@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
-	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -464,137 +463,91 @@ func TestPurgeRegenerateOrphans(t *testing.T) {
 	}
 }
 
-// riverHost composes media's jobs into a host River client on a fresh
-// schema and starts it.
-func riverHost(t *testing.T, jobs *media.Jobs, pool *pgxpool.Pool) string {
+// hostSchema provides an empty host queue schema. Media registers no host workers.
+func hostSchema(t *testing.T, jobs *media.Jobs, pool *pgxpool.Pool) string {
 	t.Helper()
-	ctx := context.Background()
-	schema := pgtest.EmptySchema(t, ctx, pool)
-	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
+	schema := pgtest.EmptySchema(t, t.Context(), pool)
+	if err := riverhelpers.ApplyMigrations(t.Context(), pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &river.Config{Schema: schema, FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond}
-	client, err := riverhelpers.New(ctx, pool, cfg, jobs.RiverJobs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = client.StopAndCancel(ctx)
-	})
 	return schema
 }
 
-// Both a delayed first pass and the exact-key late-upload pass must leave
-// an explicitly reset item alone. Exercise the first-pass River worker and
-// the database-backed final cleanup.
-func TestQueuedDeletionCannotEraseResetItem(t *testing.T) {
-	for _, final := range []bool{false, true} {
-		t.Run(fmt.Sprintf("final=%t", final), func(t *testing.T) {
+// Both first-pass intent and exact late-write receipt preserve a new incarnation.
+func TestPurgeRetirementCannotEraseResetItem(t *testing.T) {
+	for _, first := range []bool{false, true} {
+		t.Run(fmt.Sprint(first), func(t *testing.T) {
 			f := newFixture(t)
 			f.visible(1)
 			ref := f.gallery(1, 1)
 			item, _ := f.reg.Item(ref)
 			oldKey, _ := item.Blob(f.fileBlob(ref, "originals/000.png"))
-			pool := f.env.Pool()
-			schema := riverHost(t, f.jobs, pool)
-			table := pgx.Identifier{schema, "river_job"}.Sanitize()
-			var target int64
-			if err := pgx.BeginFunc(t.Context(), pool, func(tx pgx.Tx) error {
-				if err := f.jobs.DeleteItemsTx(t.Context(), tx, media.Deletion{Ref: ref}); err != nil {
-					return err
-				}
-				if !final {
-					return tx.QueryRow(t.Context(), "UPDATE "+table+" SET state='scheduled', scheduled_at=now()+interval '1 day' WHERE kind='contentkit_media_delete_folder' RETURNING id").Scan(&target)
-				}
-				return nil
-			}); err != nil {
+			if err := pgx.BeginFunc(t.Context(), f.env.Pool(), func(tx pgx.Tx) error { return f.jobs.RetireItemsTx(t.Context(), tx, media.Deletion{Ref: ref}) }); err != nil {
 				t.Fatal(err)
 			}
-			if final {
-				waitFor(t, "deletion's durable final pass", func() bool {
-					var count int
-					err := pool.QueryRow(t.Context(), "SELECT cardinality(deletion_operations) FROM "+cleanupTable(f)+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&count)
-					if errors.Is(err, pgx.ErrNoRows) {
-						return false
-					}
-					if err != nil {
-						t.Fatal(err)
-					}
-					return count > 0
-				})
+			if first {
+				if _, err := f.jobs.PurgeRetired(t.Context(), 100); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if err := f.jobs.Purge(t.Context(), media.Deletion{Ref: ref, OperationID: "reset-after-enqueue"}); err != nil {
+			if err := f.jobs.Purge(t.Context(), media.Deletion{Ref: ref, OperationID: "reset-after-retirement"}); err != nil {
 				t.Fatal(err)
 			}
 			f.put(ref, "originals/new.png", "image/png", png(1))
 			newKey, _ := item.Blob(f.fileBlob(ref, "originals/new.png"))
-			f.object(oldKey, string(png(1))) // an old presigned PUT lands after reset
-			if final {
-				if _, err := f.later().CleanupDue(t.Context(), 100); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				if _, err := pool.Exec(t.Context(), "UPDATE "+table+" SET state='available', scheduled_at=now() WHERE id=$1", target); err != nil {
-					t.Fatal(err)
-				}
-				waitFor(t, "delayed deletion completion", func() bool {
-					var state string
-					if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE id=$1", target).Scan(&state); err != nil {
-						t.Fatal(err)
-					}
-					return state == "completed"
-				})
+			f.object(oldKey, string(png(1)))
+			if _, err := f.later().PurgeRetired(t.Context(), 100); err != nil {
+				t.Fatal(err)
 			}
 			if !f.exists(newKey) || f.fileBlob(ref, "originals/new.png") == "" {
-				t.Fatal("delayed deletion erased the recreated item")
+				t.Fatal("old retirement erased the new lifetime")
 			}
-			if final && f.exists(oldKey) {
-				t.Fatal("final pass lost its original late-upload target")
+			if f.exists(oldKey) {
+				t.Fatal("late retired write survived content purge")
 			}
 		})
 	}
 }
 
-// The host's periodic job must discover a landed write even when its caller
-// disappeared before settlement and no sweep was scheduled.
-func TestHostRecoversInterruptedManifestOnStartup(t *testing.T) {
-	env := s3test.Open(t)
-	pool := pgtest.Pool(t, nil)
-	reg := miniRegistry(t, env.Tenant)
-	ref, _ := reg.Ref("post", cid(7))
-	item, _ := reg.Item(ref)
-	store := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey(), uncertain: true, applied: true}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: media.PGLocker(pool), Journal: env.Journal()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := jobs.Manifests().Edit(t.Context(), ref, func(m *media.Manifest) error {
-		m.Meta = map[string]any{"title": "landed"}
-		return nil
-	}); !errors.Is(err, media.ErrUnavailable) {
-		t.Fatalf("lost response: %v", err)
-	}
-	riverHost(t, jobs, pool)
-	table := pgx.Identifier{env.ContentSchema(), "content_media_commits"}.Sanitize()
-	waitFor(t, "abandoned manifest recovery", func() bool {
-		var state string
-		if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&state); err != nil {
-			t.Fatal(err)
-		}
-		return state == "applied"
-	})
-	man, _, err := jobs.Manifests().Get(t.Context(), ref)
-	if err != nil || man.Meta["title"] != "landed" {
-		t.Fatalf("recovered manifest: %+v %v", man, err)
-	}
-	var scheduled int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{env.ContentSchema(), "content_media_cleanup"}.Sanitize()+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&scheduled); err != nil || scheduled != 0 {
-		t.Fatalf("metadata-only recovery scheduled unnecessary media cleanup: %d %v", scheduled, err)
+// The accepted exact mutation and ingest admission precede the S3 PUT.
+func TestIngestOwnsInterruptedManifest(t *testing.T) {
+	for _, landed := range []bool{false, true} {
+		t.Run(fmt.Sprint(landed), func(t *testing.T) {
+			f := newFixture(t)
+			f.visible(1)
+			ref := f.ref("gallery", 1)
+			item, _ := f.reg.Item(ref)
+			store := &uncertainManifestStore{Store: f.env.Store, key: item.ManifestKey(), uncertain: true, applied: landed}
+			ms := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.journal})
+			if _, err := ms.Edit(t.Context(), ref, func(m *media.Manifest) error { m.Meta = map[string]any{"title": "admitted"}; return nil }); !errors.Is(err, media.ErrUnavailable) {
+				t.Fatalf("lost response: %v", err)
+			}
+			var operation string
+			var jobs int
+			commits := pgx.Identifier{f.env.ContentSchema(), "content_media_commits"}.Sanitize()
+			if err := f.env.Pool().QueryRow(t.Context(), `SELECT operation_id::text FROM `+commits+` WHERE tenant_id=$1 AND folder_prefix=$2 AND state='prepared'`, ref.TenantID, item.Prefix()).Scan(&operation); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.env.Pool().QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{f.q.Schema(), "river_job"}.Sanitize()+` WHERE kind='contentkit_media_ingest' AND args->>'commit'=$1 AND state='available'`, operation).Scan(&jobs); err != nil || jobs != 1 {
+				t.Fatalf("mutation has %d runnable owners: %v", jobs, err)
+			}
+			status, err := f.rd.Status(t.Context(), ref, f.editor)
+			if err != nil || status.State != media.StateProcessing {
+				t.Fatalf("admitted status: %+v %v", status, err)
+			}
+			for range 2 {
+				if err := ms.CompleteCommit(t.Context(), ref, operation); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m, _, err := ms.Get(t.Context(), ref)
+			if err != nil || m.Meta["title"] != "admitted" {
+				t.Fatalf("retry lost exact mutation: %+v %v", m, err)
+			}
+			if _, err := f.env.Store.Put(t.Context(), item.ManifestKey(), strings.NewReader(string(store.body)), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
+				t.Fatalf("late original write was not fenced: %v", err)
+			}
+		})
 	}
 }
 
@@ -618,11 +571,11 @@ func TestProcessorCompletionTransaction(t *testing.T) {
 			return nil
 		}
 	})
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: s3test.Locker(t, env.Store), Journal: env.Journal(), Pool: pool, Processes: f.q})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: s3test.Locker(t, env.Store), Journal: env.Journal(), Processes: f.q})
 	if err != nil {
 		t.Fatal(err)
 	}
-	riverHost(t, jobs, pool)
+	hostSchema(t, jobs, pool)
 	complete := func(ctx context.Context, ref contentref.ContentRef) error {
 		return media.CompleteProcessing(ctx, f.ms, ref, func(ctx context.Context, tx pgx.Tx, r media.Readiness) error {
 			hooks := f.reg.Config().Hooks
@@ -653,7 +606,10 @@ func TestProcessorCompletionTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "ItemReady", func() bool { mu.Lock(); defer mu.Unlock(); return len(ready) == 1 && ready[0].Ready() })
-	if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error { return jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: g}) }); err != nil {
+	if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error { return jobs.RetireItemsTx(ctx, tx, media.Deletion{Ref: g}) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jobs.PurgeRetired(ctx, 100); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "folder deletion", func() bool {
@@ -751,11 +707,11 @@ func TestProcessorPlayableProgress(t *testing.T) {
 			return nil
 		}
 	})
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: s3test.Locker(t, env.Store), Journal: env.Journal(), Pool: pool, Processes: f.q})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: s3test.Locker(t, env.Store), Journal: env.Journal(), Processes: f.q})
 	if err != nil {
 		t.Fatal(err)
 	}
-	riverHost(t, jobs, pool)
+	hostSchema(t, jobs, pool)
 	complete := func(ctx context.Context, ref contentref.ContentRef) error {
 		return media.CompleteProcessing(ctx, f.ms, ref, func(ctx context.Context, tx pgx.Tx, r media.Readiness) error {
 			hooks := f.reg.Config().Hooks
