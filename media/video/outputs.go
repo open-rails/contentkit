@@ -42,8 +42,6 @@ func (e *Encoder) fp(p *media.Private, f media.File) string {
 		return e.hlsFP(f, p.HLS)
 	case p.MP4 != nil:
 		return mp4FP(f, p.MP4)
-	case p.Audio != nil:
-		return audioFP(f, p.Audio)
 	case p.Subtitles != nil:
 		return subtitleFP(f, p.Subtitles)
 	}

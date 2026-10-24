@@ -184,10 +184,6 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 	if e.content, err = content.New(ctx, e.contentOptions(deps)); err != nil {
 		return nil, err
 	}
-	if err := e.content.AddHeldSource(catalog.HeldKind, e.catalog); err != nil {
-		return nil, err
-	}
-	e.catalog.BindModeration(e.content)
 	e.notices = e.content.Notifications
 	if err := e.mount(deps); err != nil {
 		return nil, err
@@ -362,6 +358,13 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if err != nil {
 			return err
 		}
+		ingest, err := workqueue.New(e.pool, reg, m.WorkerSchema)
+		if err != nil {
+			return err
+		}
+		if err = ingest.AdoptVersionImports(ctx, e.riverSchema, e.schema, e.cfg.Tenant); err != nil {
+			return fmt.Errorf("contentkit: ZIP import handoff: %w", err)
+		}
 		ttl, window := m.Delivery.TTL, m.Delivery.Window
 		if ttl <= 0 {
 			ttl = time.Hour
@@ -427,7 +430,7 @@ func (e *Engine) playableKinds() ([]string, error) {
 	var out []string
 	for _, k := range mc.Kinds {
 		if e.cfg.Content.Kinds[k.Name].Presentation == "player" &&
-			slices.ContainsFunc(k.Private, func(p media.Private) bool { return p.HLS != nil || p.Audio != nil }) {
+			slices.ContainsFunc(k.Private, func(p media.Private) bool { return p.HLS != nil }) {
 			out = append(out, k.Name)
 		}
 	}

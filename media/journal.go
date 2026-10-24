@@ -65,6 +65,7 @@ type journalEffects struct {
 	CleanupAt          time.Time                 `json:"cleanup_at,omitempty"`
 	CleanupDelete      bool                      `json:"cleanup_delete,omitempty"` // repeat this operation's exact retired targets
 	Deletion           bool                      `json:"deletion,omitempty"`       // explicit purge may fence an unreadable root without decoding it
+	Erasure            bool                      `json:"erasure,omitempty"`        // permanent lifecycle; a version's catalog purge owns retries
 	Cleanup            bool                      `json:"cleanup,omitempty"`        // allocation retirement, no manifest PUT
 	Allocate           []string                  `json:"allocate,omitempty"`       // physical names owned before a producer sends bytes
 	Adopt              []string                  `json:"adopt,omitempty"`          // a legacy item's existing objects, owned by the upgrade's incarnation
@@ -136,6 +137,30 @@ type manifestCommit struct {
 	Charged     int64
 }
 
+// claimErasureTx is a completed intent, not an unfinished manifest write. It
+// makes restoration refuse the version before the first S3 request is issued.
+func (j *PGJournal) claimErasureTx(ctx context.Context, tx pgx.Tx, item Item) error {
+	j = j.forTenant(item.Ref().TenantID)
+	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("erasure-claim:"+item.Prefix()))
+	fingerprint := sha256.Sum256([]byte("permanent-version-erasure"))
+	_, err := tx.Exec(ctx, `INSERT INTO `+j.table+`
+(tenant_id,operation_id,content_kind,content_id,content_version_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects)
+VALUES($1,$2,$3,$4,$5,$6,'',$7,$8,'applied','{"erasure":true}')
+ON CONFLICT(tenant_id,operation_id) DO NOTHING`, item.Ref().TenantID, operation, item.Ref().ContentKind,
+		item.Ref().ContentID, item.Ref().ContentVersionID, item.Prefix(), fingerprint[:], uuid.New())
+	if err != nil {
+		return err
+	}
+	c, err := j.load(ctx, tx, item.Ref().TenantID, operation)
+	if err != nil {
+		return err
+	}
+	if !c.Ref.Equal(item.Ref()) || c.Folder != item.Prefix() || c.State != "applied" || !c.Effects.Erasure || c.Fingerprint != fingerprint {
+		return ErrCommitIdentity
+	}
+	return nil
+}
+
 func (c manifestCommit) terminal() bool { return c.State == "applied" || c.State == "absent" }
 
 func (j *PGJournal) begin(ctx context.Context, c manifestCommit) (manifestCommit, error) {
@@ -176,13 +201,13 @@ VALUES ($1, $2, $3, $4, $10, $5, $6, $7, $8, $9) ON CONFLICT (tenant_id, operati
 			// Recovery fenced the old attempt and refunded its claim. A new
 			// authorized request may retry these same inputs with a new lease.
 			_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'open', lease_id = $3,
-attempt_id = NULL, expected_etag = '', effects = '{}', charged_bytes = 0, updated_at = now()
-WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, lease)
+attempt_id = NULL, expected_etag = '', effects = $4, charged_bytes = 0, updated_at = now()
+WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, lease, effects)
 			if err != nil {
 				return err
 			}
 			found.Lease, found.State, found.Attempt = lease, "open", uuid.Nil
-			found.ETag, found.Effects, found.Charged = "", journalEffects{}, 0
+			found.ETag, found.Effects, found.Charged = "", c.Effects, 0
 		}
 		c = found
 		return nil
@@ -443,7 +468,8 @@ WHERE tenant_id = $1 AND operation_id = $2`, found.Ref.TenantID, found.ID, state
 // receipt history.
 func (j *PGJournal) pending(ctx context.Context, tenant string, kinds []string, limit int, notifications bool) ([]manifestCommit, error) {
 	j = j.forTenant(tenant)
-	out, err := j.pendingIn(ctx, `state IN ('open', 'prepared', 'frozen')`, tenant, kinds, limit, nil)
+	out, err := j.pendingIn(ctx, `state IN ('open', 'prepared', 'frozen')
+ AND NOT(content_version_id IS NOT NULL AND coalesce(effects->>'erasure','false')='true')`, tenant, kinds, limit, nil)
 	if err != nil || !notifications || len(out) == limit {
 		return out, err
 	}

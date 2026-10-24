@@ -30,7 +30,7 @@ SELECT queue, state::text, priority, count(*), count(*) FILTER (WHERE attempt >=
   coalesce(greatest(0, extract(epoch FROM now() - min(scheduled_at)
     FILTER (WHERE state = 'available' AND scheduled_at <= now()))), 0)::float8
 FROM `+jobs(schema)+`
-WHERE queue IN ('media_image', 'media_video', 'media_audio')
+WHERE queue IN ('media_ingest', 'media_image', 'media_video')
   AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 GROUP BY queue, state, priority`,
 	)

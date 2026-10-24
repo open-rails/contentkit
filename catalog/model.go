@@ -233,15 +233,12 @@ type Content struct {
 	// it; each version carries its own.
 	Viewer *ViewerState `json:"viewer,omitempty"`
 	// Editor: the viewer may edit it; the fields below are theirs.
-	Editor           bool            `json:"editor"`
-	Text             map[string]Text `json:"text,omitempty"`
-	Moderation       string          `json:"moderation,omitempty"`
-	ModerationReason string          `json:"moderation_reason,omitempty"`
-
-	Revision  int64      `json:"revision"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	Editor    bool            `json:"editor"`
+	Text      map[string]Text `json:"text,omitempty"`
+	Revision  int64           `json:"revision"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	DeletedAt *time.Time      `json:"deleted_at,omitempty"`
 }
 
 // DefaultVersion is the version a reader of language opens by default, the

@@ -15,9 +15,9 @@ import (
 )
 
 // readyHook asks the host to report an item's readiness (Hooks.ItemReady,
-// through its media queue) after each place, image or video job that leaves
+// through its media queue) after each ingest, image or video job that leaves
 // the item settled, and its progress (Hooks.ItemProgressed) after each that
-// published renditions and leaves it playable but still processing.
+// changes reader files or leaves a video playable while still processing.
 type readyHook struct {
 	river.HookDefaults
 	manifests *media.Manifests
@@ -28,7 +28,7 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 	workErr := err
 	var snooze *river.JobSnoozeError
 	checkpoint := job.Kind == (workqueue.VideoArgs{}).Kind() && errors.As(err, &snooze) && snooze.Duration == 0 && ctx.Err() == nil
-	if err != nil && !checkpoint || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
+	if err != nil && !checkpoint || job.Kind != (workqueue.IngestArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
 	}
 	// Output can become visible before this final manifest read. An outage
@@ -50,9 +50,9 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 	if err != nil {
 		return err
 	}
-	// Video and audio jobs publish renditions, so only they can make
-	// a processing item playable.
-	if k.Readiness(m).State == media.StateProcessing && (!publishes(job.Kind) || !k.Playable(m)) {
+	// Reader snapshots can become ready before unrelated media finishes.
+	// Player-only items still report partial progress only once playable.
+	if k.Readiness(m).State == media.StateProcessing && k.Publish == nil && (!publishes(job.Kind) || !k.Playable(m)) {
 		return workErr
 	}
 	// A video job yields after each bounded range. Only a new manifest
@@ -81,5 +81,5 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 }
 
 func publishes(kind string) bool {
-	return kind == (workqueue.VideoArgs{}).Kind() || kind == (workqueue.AudioArgs{}).Kind()
+	return kind == (workqueue.VideoArgs{}).Kind()
 }

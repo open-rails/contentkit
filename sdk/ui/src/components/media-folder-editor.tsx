@@ -707,7 +707,7 @@ function UploadRow({
   const name = nameIn(group, f.path);
   const busy = isProcessing(f);
   const thumb = useMemo(() => thumbnailOf(folder.read.read, f), [folder.read.read, f]);
-  // Audio plays its converted M4A once there is one, else the upload.
+  // Retained legacy M4As remain playable; new audio attachments use the upload.
   const playback = useMemo(() => (kind === "audio" ? folder.read.read?.files.find((x) => x.from === f.path && x.url && x.path.endsWith("/audio.m4a")) : undefined), [kind, folder.read.read, f.path]);
   const known = f.dur || playback?.dur;
   const [loaded, setLoaded] = useState<number>();

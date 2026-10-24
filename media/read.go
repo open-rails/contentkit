@@ -210,7 +210,7 @@ func (g *Grant) Editor() bool { return g.Resolution.Editor }
 
 // Allowed reports whether a read gives this viewer f's URL: with access,
 // every listed file with a blob. Uploads are listed only with
-// ServeOriginals; HostOnly presets, files in download/ (Kind.Downloads),
+// ServeOriginals or declared audio assets; HostOnly presets, files in download/ (Kind.Downloads),
 // unattached files and frames not grabbed yet never.
 func (g *Grant) Allowed(f File) bool {
 	if g.files != nil {
@@ -221,7 +221,7 @@ func (g *Grant) Allowed(f File) bool {
 
 func (g *Grant) restrictedFile(f File) bool {
 	if f.IsUpload() {
-		return false // originals require the separate download authorization
+		return g.Item.Kind().AudioUpload(f) && g.listed(f)
 	}
 	if p := g.Item.Kind().private(f.Preset); p != nil && p.Zip != "" {
 		return false
@@ -494,7 +494,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	}
 	if editor {
 		out.State, out.Full, out.Uploads = k.Readiness(g.Manifest).State, g.Manifest.Full, k.UploadRules()
-		if out.State == StateReady && slices.ContainsFunc(g.Manifest.Files, func(f File) bool { return importPending(k, f) }) {
+		if out.State == StateReady && slices.ContainsFunc(g.Manifest.Files, func(f File) bool { return !f.Unattached && statusArchivePending(k, f) }) {
 			out.State = StateProcessing
 		}
 	}
@@ -563,7 +563,7 @@ func (g *Grant) listed(f File) bool {
 		return false
 	}
 	if f.IsUpload() {
-		return !f.Unattached && g.Item.Kind().ServeOriginals && f.Blob != "" && !f.Gone
+		return !f.Unattached && (g.Item.Kind().ServeOriginals || g.Item.Kind().AudioUpload(f)) && f.Blob != "" && !f.Gone
 	}
 	if p := g.Item.Kind().private(f.Preset); p != nil && p.HostOnly {
 		return false
@@ -608,7 +608,7 @@ func (e *editorViews) url(ctx context.Context, f File) (string, error) {
 func (r *Reader) addProgress(files []FileInfo, st EncodeStatus) {
 	for i := range files {
 		f := &files[i]
-		if !f.Upload || len(f.Pending) == 0 || !(isVideoType(f.Type) || isAudioType(f.Type)) {
+		if !f.Upload || len(f.Pending) == 0 || !isVideoType(f.Type) {
 			continue
 		}
 		if p, ok := st.Files[f.Path]; ok {

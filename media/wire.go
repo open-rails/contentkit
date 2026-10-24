@@ -233,7 +233,7 @@ type UploadRule struct {
 	// Aspect and MinWidth bound an image's edit: its first public preset's.
 	Aspect   Aspect `json:"aspect,omitzero"`
 	MinWidth int    `json:"min_width,omitempty"`
-	// Video is a video or audio upload's limits in effect; MinAspect and
+	// Video is a video upload's limits in effect; MinAspect and
 	// MaxAspect the display aspects (width/height) its HLS presets accept.
 	Video     *VideoLimits `json:"video,omitempty"`
 	MinAspect float64      `json:"min_aspect,omitempty"`

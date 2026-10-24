@@ -2,7 +2,7 @@
 // and runs every producer, from the host's worker River schema
 // (Config.Schema) in its database: staged uploads hashed and placed at their
 // blobs (media.Manifests.Place), images, zips, public presets and editor
-// views (media/image, libvips), and HLS, MP4, audio, subtitles and frames
+// views (media/image, libvips), and HLS, MP4, subtitles and frames
 // (media/video, ffmpeg).
 // The host only presigns, commits, exposes and reads. After each job the
 // worker asks the host, through its media queue, to report the item's
@@ -69,7 +69,6 @@ type Config struct {
 	// (defaults 1 and 2; ImageWorkers also bounds place jobs); ImageSources
 	// bounds sources decoded at once per image job (default 2).
 	VideoWorkers int
-	AudioWorkers int // default 2
 	ImageWorkers int
 	ImageSources int
 	// MaxPixels, MaxFrames and MaxAnimationSeconds bound decoded images
@@ -77,10 +76,7 @@ type Config struct {
 	MaxPixels           int
 	MaxFrames           int
 	MaxAnimationSeconds float64
-	// VideoTimeout bounds audio-only encoding (default 48 h); a resumable
-	// video attempt has a one-hour timeout. ImageTimeout bounds
-	// one image job (default 1 h).
-	VideoTimeout time.Duration
+	// ImageTimeout bounds one image job (default 1 h).
 	ImageTimeout time.Duration
 	// ShutdownGrace is how long running jobs get to finish on shutdown
 	// before they are cancelled and retried elsewhere; default 30 s.
@@ -106,9 +102,6 @@ func (c *Config) defaults() error {
 	}
 	if c.ImageWorkers <= 0 {
 		c.ImageWorkers = 2
-	}
-	if c.VideoTimeout <= 0 {
-		c.VideoTimeout = 48 * time.Hour
 	}
 	if c.ImageTimeout <= 0 {
 		c.ImageTimeout = time.Hour
@@ -211,8 +204,8 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Timeout: c.VideoTimeout,
-		MaxWorkers: c.VideoWorkers, AudioWorkers: c.AudioWorkers, Logger: c.Logger})
+	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema,
+		MaxWorkers: c.VideoWorkers, Logger: c.Logger})
 	if err != nil {
 		return nil, err
 	}
@@ -229,14 +222,14 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return nil, err
 		}
 		imageJobs := riverhelpers.NewContribution("contentkit-media-image", func(_ context.Context, cfg *river.Config) error {
-			for _, q := range []string{workqueue.PlaceQueue, workqueue.ImageQueue} {
+			for _, q := range []string{workqueue.IngestQueue, workqueue.ImageQueue} {
 				if _, ok := cfg.Queues[q]; ok {
 					return fmt.Errorf("media/worker: queue %q already registered", q)
 				}
 			}
-			cfg.Queues[workqueue.PlaceQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
+			cfg.Queues[workqueue.IngestQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
 			cfg.Queues[workqueue.ImageQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
-			if err := river.AddWorkerSafely(cfg.Workers, &placeWorker{c: c, manifests: manifests, queue: queue}); err != nil {
+			if err := river.AddWorkerSafely(cfg.Workers, &ingestWorker{c: c, manifests: manifests, queue: queue}); err != nil {
 				return err
 			}
 			return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images, manifests: manifests})
@@ -335,21 +328,24 @@ func stopJobs(client *river.Client[pgx.Tx], grace, hardLimit time.Duration) erro
 	return nil
 }
 
-type placeWorker struct {
-	river.WorkerDefaults[workqueue.PlaceArgs]
+type ingestWorker struct {
+	river.WorkerDefaults[workqueue.IngestArgs]
 	c         Config
 	manifests *media.Manifests
 	queue     *workqueue.Queue
 }
 
-func (w *placeWorker) Timeout(*river.Job[workqueue.PlaceArgs]) time.Duration { return w.c.ImageTimeout }
+func (w *ingestWorker) Timeout(*river.Job[workqueue.IngestArgs]) time.Duration {
+	return w.c.ImageTimeout
+}
 
 // Work places an item's staged uploads, after any equal job it follows, then
 // enqueues its processing.
-func (w *placeWorker) Work(ctx context.Context, job *river.Job[workqueue.PlaceArgs]) (err error) {
+func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.IngestArgs]) (err error) {
 	defer func() { err = media.SnoozeUnavailable(ctx, w.c.Store, job.JobRow, err) }()
 	a := job.Args
-	if _, err := w.c.Kinds.Item(a.Ref); err != nil {
+	item, err := w.c.Kinds.Item(a.Ref)
+	if err != nil {
 		return river.JobCancel(err)
 	}
 	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), a.After); err != nil {
@@ -357,6 +353,18 @@ func (w *placeWorker) Work(ctx context.Context, job *river.Job[workqueue.PlaceAr
 	}
 	if _, err := w.manifests.Place(ctx, a.Ref); err != nil {
 		return full(ctx, w.manifests, a.Ref, err)
+	}
+	if err := w.manifests.IngestArchives(ctx, a.Ref, w.c.TempDir); err != nil {
+		return full(ctx, w.manifests, a.Ref, err)
+	}
+	if !a.Force && a.Preset == "" {
+		m, _, err := w.manifests.Get(ctx, a.Ref)
+		if err != nil {
+			return err
+		}
+		if !item.Kind().NeedsProcessing(m) {
+			return nil // Placed audio needs no image/video job; staged images still do.
+		}
 	}
 	return w.queue.Enqueue(ctx, media.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force})
 }

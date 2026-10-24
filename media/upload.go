@@ -405,7 +405,7 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 }
 
 // Commit applies ops to ref's manifest in one conditional write. operationID
-// is a caller-stable UUID for the complete ordered batch: reuse it after an
+// is a caller-stable UUIDv4 or UUIDv7 for the complete ordered batch: reuse it after an
 // uncertain response, but never for different inputs. Replays authorize again
 // and return the current manifest without repeating the original edit. Every op
 // is authorized against what it writes (Hooks.CanUpload). A put names a
@@ -436,6 +436,11 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		return nil, uploadErr(CodeInvalid, "operation_id must be a canonical nonzero UUID")
 	}
 	trusted := actor.Kind == "contentkit:system" && actor.ID == "contentkit" && !actor.Anonymous
+	// Deterministic internal IDs share this journal. Untrusted callers must
+	// not reserve a lifecycle receipt belonging to another media item.
+	if !trusted && (id.Variant() != uuid.RFC4122 || id.Version() != 4 && id.Version() != 7) {
+		return nil, uploadErr(CodeInvalid, "operation_id must be a UUIDv4 or UUIDv7")
+	}
 	limit := 1000
 	if trusted {
 		limit = 2*MaxUploads + 1 // one metadata put and move per source, plus regeneration
@@ -508,6 +513,37 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		}
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt, trusted: trusted}
+		o.archiveAllowed = func(source, destination string) error {
+			stem, _ := splitExt(source)
+			delegated, err := u.authorize(editCtx, actor, UploadTarget{Ref: ref, Path: stem})
+			if err != nil {
+				return err
+			}
+			if delegated.ArchiveTo != destination || delegated.Owner != grant.Owner || delegated.Exempt != grant.Exempt {
+				return uploadErr(CodeForbidden, "ZIP expansion requires an explicitly approved destination with the same owner and quota policy")
+			}
+			return nil
+		}
+		admissions := map[string]*SourceAdmission{}
+		o.admission = func(source, destination string) (*SourceAdmission, error) {
+			key := source + "\x00" + destination
+			if prior := admissions[key]; prior != nil {
+				return prior, nil
+			}
+			if err := o.archiveAllowed(source, destination); err != nil {
+				return nil, err
+			}
+			admission := &SourceAdmission{Generation: id.String(), Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Target: destination, Accounting: u.o.Limiter != nil}
+			if admission.Enforce {
+				quota, err := u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
+				if err != nil {
+					return nil, err
+				}
+				admission.Quota = quota
+			}
+			admissions[key] = admission
+			return admission, nil
+		}
 		o.authorizePath = func(path string) error {
 			stem, _ := splitExt(path)
 			allocated, err := u.authorize(editCtx, actor, UploadTarget{Ref: ref, Path: stem})
@@ -581,7 +617,7 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		}
 		mutation.effects.Cancel = removesPending(prior, ops)
 		mutation.effects.Notify = u.reg.cfg.Hooks.ItemCommitted != nil
-		job := ProcessJob{Ref: ref, Place: len(m.StagedNames()) > 0}
+		job := ProcessJob{Ref: ref, Place: len(m.StagedNames()) > 0 || item.Kind().pendingArchives(m)}
 		for _, op := range ops {
 			if op.Op == OpRegenerate {
 				job.Preset, job.Force = op.Preset, op.Force
@@ -664,23 +700,26 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 		ref  contentref.ContentKey
 		path string
 	}
-	seen := map[target]bool{}
+	seen := map[target]UploadGrant{}
 	var grant *UploadGrant
-	check := func(t UploadTarget) error {
-		if seen[target{t.Ref.Key(), t.Path}] {
-			return nil
+	check := func(t UploadTarget) (UploadGrant, error) {
+		key := target{t.Ref.Key(), t.Path}
+		if known, ok := seen[key]; ok {
+			return known, nil
 		}
-		seen[target{t.Ref.Key(), t.Path}] = true
 		g, err := u.authorize(ctx, actor, t)
 		if err != nil {
-			return err
+			return UploadGrant{}, err
 		}
-		if grant == nil {
-			grant = &g
-		} else if t.Ref.Equal(item.Ref()) && (g.Owner != grant.Owner || g.Exempt != grant.Exempt) {
-			return uploadErr(CodeForbidden, "the commit's paths have different owners")
+		if t.Ref.Equal(item.Ref()) {
+			if grant == nil {
+				grant = &g
+			} else if g.Owner != grant.Owner || g.Exempt != grant.Exempt {
+				return UploadGrant{}, uploadErr(CodeForbidden, "the commit's paths have different owners")
+			}
 		}
-		return nil
+		seen[key] = g
+		return g, nil
 	}
 	for _, op := range ops {
 		t := UploadTarget{Ref: item.Ref()}
@@ -693,13 +732,17 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 				return UploadGrant{}, uploadErr(CodeInvalid, "copy from %q: not a media item of this kind", op.From.ID)
 			}
 			stem, _ := splitExt(op.From.Path)
-			if err := check(UploadTarget{Ref: src, Path: stem}); err != nil {
+			if _, err := check(UploadTarget{Ref: src, Path: stem}); err != nil {
 				return UploadGrant{}, err
 			}
 			t.Path, _ = splitExt(cmpOr(op.To, op.From.Path))
 		}
-		if err := check(t); err != nil {
+		destination, err := check(t)
+		if err != nil {
 			return UploadGrant{}, err
+		}
+		if expected := item.Kind().ArchiveDestination(t.Path); op.Op == OpCopy && expected != "" && destination.ArchiveTo != expected {
+			return UploadGrant{}, uploadErr(CodeForbidden, "ZIP copy requires an explicitly approved destination")
 		}
 	}
 	return *grant, nil

@@ -384,7 +384,7 @@ Ports (in `content` unless qualified):
 | `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); the engine fills it from `Deps.Users` |
 | `Media` | no | poll images and avatars in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment bodies (default strips tags) |
-| `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment or catalog text publishes; absent = publish (see Moderation) |
+| `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment publishes; absent = publish (see Moderation) |
 | `AnswerClassifier` | no | `Classify(Answer) → GroupAssignment` when a free-text answer revision is stored; results are source-owned; absent = free-text polls are refused (see Free-text polls) |
 
 **Authors.** Comments, replies, the latest-comments feed, held items and
@@ -447,22 +447,20 @@ unpublished item's images through an editor read (the SDK's `useContent`).
 
 There is no `Recorder` and no `Moderation` port: reactions and favorites feed
 the signal plane through ContentKit's own preference outbox, and the
-`ContentModerator` decides comment and catalog text publication.
+`ContentModerator` decides comment publication.
 
 The tenant is pinned at construction and stamped on every row; a `ContentRef`
 of another tenant passed to any read is `content.ErrTenant`, never remapped.
 The host imports existing data with explicit tenant and content references
 after initializing fresh stores ([docs/migration.md](docs/migration.md)).
 
-## Moderation (comments and content)
+## Moderation (comments)
 
-Every comment create/edit and every text write of live or publishing content
-is screened
-through `Options.Moderator` after sanitizing; the moderator sees the tenant,
-the opaque actor, the content reference, the kind, the item id on an edit,
-and the text (title, description and body for content; a held edit of a
-live item keeps serving its approved text). The verdict sets the item's
-`moderation` state:
+Every comment create/edit is screened through `Options.Moderator` after
+sanitizing; the moderator sees the tenant, the opaque actor, the commented
+content's reference, the kind, the comment id on an edit, and the text.
+Content items are not moderated: their editors are authorized staff and
+owners. The verdict sets the comment's `moderation` state:
 
 - `approve` publishes (`201`/`200`).
 - `reject` stores nothing and answers `422 {"error": reason}`
@@ -477,13 +475,13 @@ live item keeps serving its approved text). The verdict sets the item's
   ever published unscreened and no submission is lost.
 - No moderator: everything publishes.
 
-Review queue: `GET /v1/moderation/held?kind=comment|content&cursor=&limit=` pages
-held comments or content oldest-first (each carries the body, the content
+Review queue: `GET /v1/moderation/held?kind=comment&cursor=&limit=` pages
+held comments oldest-first (each carries the body, the content
 reference, the reason, model, prompt version, confidence, any moderator error
 and `revision`); `POST /v1/moderation/{kind}/{id}/resolve
 {"revision","decision","reason"}` (the actor id is the reviewer) writes the
 final state: `approve` publishes (counts and the keyword index follow),
-`reject` keeps the item author-visible as `rejected` with the reason. Both
+`reject` keeps the comment author-visible as `rejected` with the reason. Both
 need `root:moderation:review`.
 `GET /comments/admin` shows every state with real bodies and authors, by content kind or `author`.
 
@@ -697,8 +695,8 @@ favorites of fenced subjects never export.
 ## Search documents
 
 ContentKit builds its documents: one per content item and language from the
-catalog (title, aliases, its entities' names as keywords; a held edit indexes
-the approved text) and one per entity and language. Writes mark them dirty in
+catalog (title, aliases, its entities' names as keywords) and one per entity
+and language. Writes mark them dirty in
 their own transaction; discovery's search applies the catalog's visibility
 rule (`catalog.Viewer`) inside every retrieval route, before any limit.
 

@@ -49,8 +49,14 @@ type VersionMedia interface {
 	ExposeTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
 	// RepublishTx follows a change of a version's effective rule or segments.
 	RepublishTx(ctx context.Context, tx pgx.Tx, versions []versions.Target) error
-	// DeleteTx deletes media before the rows go.
+	// DeleteTx claims irreversible erasure under the eligibility row locks.
 	DeleteTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
+	// Delete verifies physical deletion after that claim has committed.
+	Delete(ctx context.Context, targets []versions.Target) error
+	// ResumeDeletes completes late-write cleanup owned by content purge.
+	ResumeDeletes(ctx context.Context, limit int) (int, error)
+	// CheckRestorableTx refuses restoration once irreversible erasure started.
+	CheckRestorableTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
 	// ForkTx fills new versions' media from siblings.
 	ForkTx(ctx context.Context, tx pgx.Tx, forks []versions.Fork) error
 	// PendingTx reports versions whose media is not ready to go live.
@@ -58,6 +64,17 @@ type VersionMedia interface {
 }
 
 var errMediaNotConfigured = errors.New("catalog: media is not bound")
+
+func (s *Store) checkRestorableTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error {
+	if s.media == nil {
+		return nil
+	}
+	err := s.media.Versions.CheckRestorableTx(ctx, tx, targets)
+	if errors.Is(err, media.ErrNotFound) {
+		return errors.Join(ErrConflict, errors.New("version media is being permanently erased"))
+	}
+	return err
+}
 
 type chapterStartValidator interface {
 	ValidateChapterStartsTx(context.Context, pgx.Tx, versions.Target, []string) error

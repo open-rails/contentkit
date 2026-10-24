@@ -162,8 +162,10 @@ type opRun struct {
 	copies map[int][]File
 	// exempt is an exempt grant: its takedown of a path already gone is a
 	// retry, not an error.
-	exempt  bool
-	trusted bool // in-process system commits may update reserved provenance
+	exempt         bool
+	trusted        bool // in-process system commits may update reserved provenance
+	admission      func(string, string) (*SourceAdmission, error)
+	archiveAllowed func(string, string) error // verified source policy, only resolved when admitting a ZIP
 	// authorizePath rechecks a collision allocation against host path policy.
 	authorizePath func(string) error
 }
@@ -240,6 +242,12 @@ func (o *opRun) apply(n int, op Op) error {
 		if !f.Unattached {
 			return nil // attached already: a retry
 		}
+		if k.ArchiveDestination(f.Path) != "" {
+			if err := o.attachArchiveBatch(f); err != nil {
+				return err
+			}
+			i = m.Find(f.Path)
+		}
 		f.Unattached = false
 		if len(op.Meta) > 0 {
 			f.Meta = maps.Clone(f.Meta)
@@ -255,7 +263,7 @@ func (o *opRun) apply(n int, op Op) error {
 		m.Files = slices.Delete(m.Files, i, i+1)
 		o.insert(g, f, op.Index, true)
 	case OpRemove:
-		gone := []string{f.Path}
+		gone := append([]string{f.Path}, o.cancelledArchivePages(f)...)
 		if op.Takedown {
 			// The frames grabbed from it show it too.
 			stem, _ := splitExt(f.Path)
@@ -268,14 +276,22 @@ func (o *opRun) apply(n int, op Op) error {
 				o.dropZips(p)
 			}
 		}
-		m.Files = slices.DeleteFunc(m.Files, func(x File) bool {
-			return slices.Contains(gone, x.Path) || !x.IsUpload() && slices.Contains(gone, x.From)
-		})
+		o.dropUploads(gone)
 	case OpRename:
 		return o.rename(f, op.To)
 	}
 	m.index = nil
 	return nil
+}
+
+func (o *opRun) dropUploads(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	o.m.Files = slices.DeleteFunc(o.m.Files, func(file File) bool {
+		return slices.Contains(paths, file.Path) || !file.IsUpload() && slices.Contains(paths, file.From)
+	})
+	o.m.index = nil
 }
 
 // dropZips removes zips bundling the upload at path or its outputs; the
@@ -366,7 +382,7 @@ func (o *opRun) put(op Op) error {
 		if f.Meta == nil {
 			f.Meta = old.Meta
 		}
-		if k.IsPageUpload(f) && !o.trusted {
+		if !o.trusted {
 			f.Meta = preservePageMeta(f.Meta, old.Meta)
 		}
 		if o.trusted && op.CreateID == "" && old.Source() == f.Source() {
@@ -374,6 +390,16 @@ func (o *opRun) put(op Op) error {
 		}
 		if old.Source() != f.Source() {
 			f.Meta = clearArchiveState(f.Meta)
+		} else if k.ArchiveDestination(f.Path) != "" {
+			f.Meta = maps.Clone(f.Meta)
+			if f.Meta == nil {
+				f.Meta = map[string]any{}
+			}
+			for _, key := range archiveStateKeys {
+				if value, ok := old.Meta[key]; ok {
+					f.Meta[key] = value
+				}
+			}
 		}
 		f.Unattached = old.Unattached && op.Unattached
 	} else if u.Max > 0 && o.count(g) >= u.Max {
@@ -402,7 +428,14 @@ func (o *opRun) put(op Op) error {
 		}
 		f.Edit = e
 	}
+	if err := o.admitSource(&f, i); err != nil {
+		return err
+	}
+	var cancelled []string
 	if i >= 0 {
+		if m.Files[i].Source() != f.Source() {
+			cancelled = o.cancelledArchivePages(m.Files[i])
+		}
 		old := stripPending(m.Files[i])
 		old.CreateID = f.CreateID
 		if old.Key() == f.Key() {
@@ -417,7 +450,14 @@ func (o *opRun) put(op Op) error {
 		delete(m.Meta, "fork_failed") // versions: an editor's own upload settles a fork that gave up
 	}
 	f.Pending = k.Presets(f.Path, m.Hidden)
-	return o.place(g, i, f, op.Index)
+	if err := o.place(g, i, f, op.Index); err != nil {
+		return err
+	}
+	o.dropUploads(cancelled)
+	if !f.Unattached && k.ArchiveDestination(f.Path) != "" {
+		return o.attachArchiveBatch(f)
+	}
+	return nil
 }
 
 // fitEdit checks e against the upload's bounds and stores what the editor
@@ -443,6 +483,9 @@ func stripPending(f File) File {
 // From when the extension changed), or inserted at index. A video it
 // replaces has its frames grabbed again.
 func (o *opRun) place(g, i int, f File, index *int) error {
+	if err := o.admitSource(&f, i); err != nil {
+		return err
+	}
 	m := o.m
 	if i < 0 {
 		o.insert(g, f, index, !f.Unattached)
@@ -459,6 +502,12 @@ func (o *opRun) place(g, i int, f File, index *int) error {
 	m.index = nil
 	if old.Source() != f.Source() {
 		o.regrab(old.Path)
+		// Retired producers cannot refresh retained legacy outputs. Keep them
+		// only while the original source bytes stay unchanged.
+		m.Files = slices.DeleteFunc(m.Files, func(out File) bool {
+			return !out.IsUpload() && out.From == f.Path && o.k.private(out.Preset) == nil
+		})
+		m.index = nil
 	}
 	return nil
 }
@@ -540,7 +589,8 @@ func (o *opRun) copy(op Op, src []File) error {
 		return uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 	}
 	f := src[0]
-	f.Public = nil // copied originals never transfer another item's allocation
+	f.Public = nil    // copied originals never transfer another item's allocation
+	f.Admission = nil // copied ZIPs must be admitted by their destination owner
 	if op.Meta != nil {
 		f.Meta = maps.Clone(op.Meta)
 	} else if f.Meta[MetaAutoCover] != nil {
@@ -577,7 +627,7 @@ func (o *opRun) copy(op Op, src []File) error {
 	}
 	from := f.Path
 	f.Path, f.Unattached, f.CreateID = stem+"."+ext, false, ""
-	if k.IsPageUpload(f) {
+	if k.IsPageUpload(f) || f.Meta["page"] != nil {
 		// A copied page is a new source entry, not the old page's manual
 		// choice or logical identity. Its bytes remain traceable by digest.
 		f.Meta = maps.Clone(f.Meta)
@@ -586,6 +636,9 @@ func (o *opRun) copy(op Op, src []File) error {
 		f.Meta = withPageSource(f.Meta, k.NameOf(f.Path), original)
 	}
 	f.Meta = clearArchiveState(f.Meta)
+	if err := o.admitSource(&f, -1); err != nil {
+		return err
+	}
 	if metaBytes(f.Meta) > MaxMetaBytes {
 		return uploadErr(CodeTooLarge, "page source metadata exceeds %d bytes", MaxMetaBytes)
 	}
@@ -609,6 +662,10 @@ func (o *opRun) copy(op Op, src []File) error {
 		src = src[:1]
 	}
 	i := o.stem(stem)
+	var cancelled []string
+	if i >= 0 && m.Files[i].Source() != f.Source() {
+		cancelled = o.cancelledArchivePages(m.Files[i])
+	}
 	if i >= 0 && op.Meta[MetaAutoCover] == true && m.Files[i].Meta[MetaAutoCover] != true {
 		return uploadErr(CodeConflict, "an editor owns cover %q", m.Files[i].Path)
 	}
@@ -629,6 +686,7 @@ func (o *opRun) copy(op Op, src []File) error {
 	if err := o.place(g, i, f, nil); err != nil {
 		return err
 	}
+	o.dropUploads(cancelled)
 	for _, out := range src[1:] {
 		out.From = f.Path
 		if p := k.private(out.Preset); p != nil {

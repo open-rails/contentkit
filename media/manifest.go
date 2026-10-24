@@ -63,17 +63,18 @@ type File struct {
 	Dur  float64 `json:"dur,omitempty"`
 
 	// Uploads:
-	Staged     string         `json:"staged,omitempty"`     // "u-{uuid}" in temp/ until the worker hashes and places it at Blob
-	CreateID   string         `json:"create_id,omitempty"`  // create-only put receipt; retained through placement and processing
-	Edit       *Edit          `json:"edit,omitempty"`       // crop and rotate in source pixels
-	Frame      *Frame         `json:"frame,omitempty"`      // grabbed from the Upload.Frames video
-	Meta       map[string]any `json:"meta,omitempty"`       // lang, label, …
-	Unattached bool           `json:"unattached,omitempty"` // processed on upload, not yet part of the item
-	Gone       bool           `json:"gone,omitempty"`       // blob dropped (KeepOriginals false); the hash stays for provenance
-	Pending    []string       `json:"pending,omitempty"`    // presets still producing from this upload
-	Failed     *Failure       `json:"failed,omitempty"`     // this blob and edit cannot be processed
-	Public     []Publication  `json:"public,omitempty"`     // reserved or published public generations
-	Editor     *EditorImage   `json:"editor,omitempty"`     // selected immutable editor view, never listed to ordinary readers
+	Admission  *SourceAdmission `json:"admission,omitempty"`  // verified ZIP source quota policy, never client-supplied
+	Staged     string           `json:"staged,omitempty"`     // "u-{uuid}" in temp/ until the worker hashes and places it at Blob
+	CreateID   string           `json:"create_id,omitempty"`  // create-only put receipt; retained through placement and processing
+	Edit       *Edit            `json:"edit,omitempty"`       // crop and rotate in source pixels
+	Frame      *Frame           `json:"frame,omitempty"`      // grabbed from the Upload.Frames video
+	Meta       map[string]any   `json:"meta,omitempty"`       // lang, label, …
+	Unattached bool             `json:"unattached,omitempty"` // processed on upload, not yet part of the item
+	Gone       bool             `json:"gone,omitempty"`       // blob dropped (KeepOriginals false); the hash stays for provenance
+	Pending    []string         `json:"pending,omitempty"`    // presets still producing from this upload
+	Failed     *Failure         `json:"failed,omitempty"`     // this blob and edit cannot be processed
+	Public     []Publication    `json:"public,omitempty"`     // reserved or published public generations
+	Editor     *EditorImage     `json:"editor,omitempty"`     // selected immutable editor view, never listed to ordinary readers
 
 	// Derived files:
 	From     string `json:"from,omitempty"`     // the upload's path, or a zip's prefix
@@ -440,6 +441,10 @@ func (m *Manifest) Clone() *Manifest {
 	out.Files = make([]File, len(m.Files))
 	for i, f := range m.Files {
 		f.Meta, f.Pending = cloneMap(f.Meta), slices.Clone(f.Pending)
+		if f.Admission != nil {
+			admission := *f.Admission
+			f.Admission = &admission
+		}
 		if f.Editor != nil {
 			editor := *f.Editor
 			f.Editor = &editor

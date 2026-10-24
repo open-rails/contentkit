@@ -240,8 +240,6 @@ export const social: typeof en = {
     loadFailed: "无法加载评论。",
     stale: "列出后内容已被编辑，请重新审核。",
     loadMore: "显示更多",
-    queueComments: "评论",
-    queueContent: "文章",
     noAccess: "你没有审核评论的权限。",
     author: "作者",
     authorPlaceholder: "按用户 ID 筛选",

@@ -30,16 +30,6 @@ type publishArgs struct {
 func (publishArgs) Kind() string                      { return "contentkit_version_publish" }
 func (a publishArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-// importArgs expands a version's page archives.
-type importArgs struct {
-	Content string `json:"content"`
-	Version string `json:"version"`
-	After   int64  `json:"after,omitempty"`
-}
-
-func (importArgs) Kind() string                      { return "contentkit_version_import" }
-func (a importArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
-
 // forkArgs fills a version from a sibling (Fork).
 type forkArgs struct {
 	Content  string `json:"content"`
@@ -57,7 +47,6 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-versions", func(_ context.Context, cfg *river.Config) error {
 		for _, add := range []func(*river.Workers) error{
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &publishWorker{s: s}) },
-			func(w *river.Workers) error { return river.AddWorkerSafely(w, &importWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &forkWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &bodyCopyWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &playableWorker{s: s}) },
@@ -133,7 +122,13 @@ func (w *publishWorker) Work(ctx context.Context, job *river.Job[publishArgs]) e
 	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
 		return err
 	}
-	return outcome(w.s.publish(ctx, Target{Content: job.Args.Content, Version: job.Args.Version}))
+	err := w.s.publish(ctx, Target{Content: job.Args.Content, Version: job.Args.Version})
+	if errors.Is(err, ErrNotReady) {
+		// Commits and durable media progress/ready relays enqueue the next
+		// snapshot attempt, including a follow-up if this job is still running.
+		return nil
+	}
+	return outcome(err)
 }
 
 // publish records ready-file snapshots and the independent cover teaser.
@@ -181,20 +176,6 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 		return ErrNotReady
 	}
 	return nil
-}
-
-type importWorker struct {
-	river.WorkerDefaults[importArgs]
-	s *Service
-}
-
-func (w *importWorker) Timeout(*river.Job[importArgs]) time.Duration { return time.Hour }
-
-func (w *importWorker) Work(ctx context.Context, job *river.Job[importArgs]) error {
-	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
-		return err
-	}
-	return outcome(w.s.expand(ctx, Target{Content: job.Args.Content, Version: job.Args.Version}))
 }
 
 type forkWorker struct {

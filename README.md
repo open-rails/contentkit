@@ -61,7 +61,7 @@ another tenant is an error, never remapped.
 | `media/token` | media access tokens, shared by hosts and the media gateway |
 | `media/layout` | object keys and the media gateway's host and default rules, dependency-free |
 | `media/gateway` | the media gateway's handler (`cmd/media-gateway`) |
-| `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, audio, subtitles, frame grabs; `Frames` for the frame picker |
+| `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, subtitles, frame grabs; `Frames` for the frame picker |
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
@@ -428,7 +428,7 @@ reading only `*/private/*`, `*/download/*` and `*/public/*`, `MEDIA_GATEWAY_TOKE
 **The media worker** (`media/worker`) runs every producer from the host's
 worker River schema (`media/workqueue`, `MEDIA_WORKER_SCHEMA`, per host:
 hosts sharing a database never share one): images, zips, public presets and
-editor views (`media/image`, libvips) and HLS, MP4, audio, subtitles and
+editor views (`media/image`, libvips) and HLS, MP4, subtitles and
 frames (`media/video`, ffmpeg). The host presigns, commits, exposes and reads,
 and links only `media/workqueue`. The worker hands readiness
 (`Hooks.ItemReady`) back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), so the stock build
@@ -567,10 +567,17 @@ byte-range fMP4 blob whose segment table is its own index blob; stages are
 published rung by rung (the upload stays pending until the last), a
 compliant top rung is stream-copied, and sources outside the aspect bounds
 fail with `video_aspect_unsupported`. An `MP4` preset muxes H.264 at one rung with the default audio;
-`Audio` gives an HLS track and an M4A (optional EBU R128 loudness);
 `Subtitles` converts SRT and SSA/ASS to clean WebVTT. Playlists are built per
 request by the read API. Encode progress comes from
 `workqueue.NewProgressSource` (`ReaderOptions.Progress`).
+
+Audio attachments are played as uploaded after verified placement, with no
+conversion job. A reader kind's `Publish.Playback` names its audio upload
+pattern, such as `audio/{name}`; page cues keep the same track names. Media
+grants explicitly allow those declared audio assets without enabling other
+original downloads. The browser reads their duration when metadata loads.
+Existing generated M4A files remain readable for older uploads. Audio tracks
+inside a movie still belong to its video conversion.
 
 **Cleanup**: a manifest edit records the exact source, rendition, staging and
 public keys it removes in its durable journal. After the conditional manifest

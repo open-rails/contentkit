@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -61,7 +62,7 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if after == "" {
 		rows, err = tx.Query(ctx, `UPDATE `+s.t.items+` SET published_at = publish_at, updated_at = clock_timestamp(), revision = revision + 1
  WHERE id IN (SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL AND publish_at <= $2
-  AND moderation = 'approved' ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND tenant_id = $1 RETURNING id, kind, published_at`, s.tenant, now)
+  ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND tenant_id = $1 RETURNING id, kind, published_at`, s.tenant, now)
 		if err != nil {
 			return 0, "", err
 		}
@@ -99,7 +100,7 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
  FROM `+s.t.items+` c WHERE v.id IN (SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL
   AND content_id = ANY($3) AND publish_at <= $2 ORDER BY publish_at, id LIMIT 500 FOR UPDATE SKIP LOCKED)
  AND v.tenant_id = $1 AND c.tenant_id = v.tenant_id AND c.id = v.content_id
- AND c.state='published' AND c.moderation='approved' AND c.published_at IS NOT NULL AND coalesce(c.published_at,c.publish_at)<=$2
+ AND c.state='published' AND c.published_at IS NOT NULL AND coalesce(c.published_at,c.publish_at)<=$2
  RETURNING v.content_id, v.id, c.kind,v.published_at`, s.tenant, now, parents)
 	if err != nil {
 		return 0, "", err
@@ -188,8 +189,8 @@ func (s *Store) reconcileFacets(ctx context.Context, after string) ([]string, er
 }
 
 // purgeBatch bounds one erasing transaction; purgeBudget bounds a purge run
-// and skip-only version scans, under River's default one-minute timeout, so
-// backlogs drain run by run.
+// and skip-only version scans. Storage erasure has its own worker timeout;
+// backlogs still drain in bounded batches.
 const (
 	purgeBatch  = 200
 	purgeBudget = 45 * time.Second
@@ -199,45 +200,97 @@ const (
 // ago, including purchased content. Billing products and purchase history stay;
 // holders lose access to the erased media. It returns the number erased.
 func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
+	var cleanupErr error
+	if s.media != nil {
+		_, cleanupErr = s.media.Versions.ResumeDeletes(ctx, purgeBatch)
+	}
 	if _, err := s.PruneEvents(ctx); err != nil {
-		return 0, err
+		return 0, errors.Join(cleanupErr, err)
 	}
 	cutoff := s.now().Add(-s.retention)
-	items, err := s.drain(ctx, func(ctx context.Context) (int, error) {
-		return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND deleted_at < $2
- ORDER BY id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, cutoff)
+	items, err := s.scanPurge(ctx, func(ctx context.Context, after string) (int, string, error) {
+		return s.erase(ctx, cutoff, after)
 	})
-	if err != nil {
-		return items, err
+	parentErr := err
+	var storage *purgeStorageError
+	if err != nil && (!errors.As(err, &storage) || ctx.Err() != nil) {
+		return items, errors.Join(cleanupErr, err)
 	}
-	erased, err := s.drain(ctx, func(ctx context.Context) (int, error) { return s.eraseVersions(ctx, cutoff) })
-	return items + erased, err
+	erased, err := s.scanPurge(ctx, func(ctx context.Context, after string) (int, string, error) {
+		return s.eraseVersionBatch(ctx, cutoff, after)
+	})
+	return items + erased, errors.Join(cleanupErr, parentErr, err)
 }
 
-// drain repeats batch until one comes back short or the run's budget is spent.
-func (s *Store) drain(ctx context.Context, batch func(context.Context) (int, error)) (int, error) {
+// Only folder-specific erasure failures permit the independent version scan.
+// Catalog transaction/SQL failures retain their ordinary abort behavior.
+type purgeStorageError struct{ err error }
+
+func (e *purgeStorageError) Error() string { return e.err.Error() }
+func (e *purgeStorageError) Unwrap() error { return e.err }
+
+// scanPurge advances past captured candidates, including failed and locked
+// rows, so each ID is attempted at most once in this bounded scan. Failed
+// storage remains eligible for a later invocation; SQL/context errors abort.
+func (s *Store) scanPurge(ctx context.Context, batch func(context.Context, string) (int, string, error)) (int, error) {
 	deadline := time.Now().Add(purgeBudget)
 	total := 0
-	for {
-		n, err := batch(ctx)
-		total += n
-		if err != nil || n < purgeBatch || time.Now().After(deadline) || ctx.Err() != nil {
-			return total, err
+	var failures error
+	finish := func(err error) (int, error) {
+		if err != nil {
+			return total, errors.Join(failures, err)
 		}
+		if failures != nil {
+			return total, &purgeStorageError{failures}
+		}
+		return total, nil
+	}
+	for after := ""; ; {
+		if err := ctx.Err(); err != nil {
+			return finish(err)
+		}
+		n, next, err := batch(ctx, after)
+		total += n
+		if err != nil {
+			var storage *purgeStorageError
+			if !errors.As(err, &storage) {
+				return finish(err)
+			}
+			failures = errors.Join(failures, storage.err)
+		}
+		if err := ctx.Err(); err != nil {
+			return finish(err)
+		}
+		if next == "" || time.Now().After(deadline) {
+			return finish(nil)
+		}
+		if next <= after {
+			return finish(errors.New("catalog: purge cursor did not advance"))
+		}
+		after = next
 	}
 }
 
-// erase deletes the content items query selects (id, kind), locked, with
-// their media folders, documents and interactions.
-func (s *Store) erase(ctx context.Context, query string, args ...any) (int, error) {
+// erase claims expired content under row locks, erases its exact version media
+// outside the transaction, then removes the still-eligible database records.
+func (s *Store) erase(ctx context.Context, cutoff time.Time, after string) (count int, next string, resultErr error) {
+	var storageErr error
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, storageErr)
+		} else if storageErr != nil {
+			resultErr = &purgeStorageError{storageErr}
+		}
+	}()
 	tx, err := s.begin(ctx)
 	if err != nil {
-		return 0, err
+		return 0, next, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, query, args...)
+	rows, err := tx.Query(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND deleted_at < $2 AND id > $3
+ ORDER BY id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, cutoff, after)
 	if err != nil {
-		return 0, err
+		return 0, next, err
 	}
 	var ids, kinds []string
 	var events []Event
@@ -245,91 +298,180 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 		var id, kind string
 		if err := rows.Scan(&id, &kind); err != nil {
 			rows.Close()
-			return 0, err
+			return 0, next, err
 		}
 		ids, kinds = append(ids, id), append(kinds, kind)
 		events = append(events, Event{Type: EventContentPurged, Kind: kind, ContentID: id})
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil || len(ids) == 0 {
-		return 0, err
+		return 0, next, err
+	}
+	if len(ids) == purgeBatch {
+		next = ids[len(ids)-1]
 	}
 	if s.media != nil {
-		if err := s.media.Versions.DeleteTx(ctx, tx, contentTargets(ids)); err != nil {
-			return 0, err
+		rows, err := tx.Query(ctx, `SELECT content_id,id FROM `+s.t.versions+`
+ WHERE tenant_id=$1 AND content_id=ANY($2) ORDER BY id FOR UPDATE`, s.tenant, ids)
+		if err != nil {
+			return 0, next, err
+		}
+		targets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (versions.Target, error) {
+			var target versions.Target
+			err := row.Scan(&target.Content, &target.Version)
+			return target, err
+		})
+		if err != nil {
+			return 0, next, err
+		}
+		if err := s.media.Versions.DeleteTx(ctx, tx, targets); err != nil {
+			return 0, next, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return 0, next, err
+		}
+		byParent := make(map[string][]versions.Target, len(ids))
+		for _, target := range targets {
+			byParent[target.Content] = append(byParent[target.Content], target)
+		}
+		succeeded := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return 0, next, err
+			}
+			if err := s.media.Versions.Delete(ctx, byParent[id]); err != nil {
+				storageErr = errors.Join(storageErr, fmt.Errorf("purge content %s: %w", id, err))
+				continue
+			}
+			succeeded = append(succeeded, id)
+		}
+		ids = succeeded
+		if len(ids) == 0 {
+			return 0, next, nil
+		}
+		tx, err = s.begin(ctx)
+		if err != nil {
+			return 0, next, err
+		}
+		defer tx.Rollback(ctx)
+		// Never substitute another batch after releasing the claim locks.
+		rows, err = tx.Query(ctx, `SELECT id,kind FROM `+s.t.items+`
+ WHERE tenant_id=$1 AND id=ANY($3) AND state='deleted' AND deleted_at<$2 ORDER BY id FOR UPDATE SKIP LOCKED`, s.tenant, cutoff, ids)
+		if err != nil {
+			return 0, next, err
+		}
+		ids, kinds, events = nil, nil, nil
+		for rows.Next() {
+			var id, kind string
+			if err := rows.Scan(&id, &kind); err != nil {
+				rows.Close()
+				return 0, next, err
+			}
+			ids, kinds = append(ids, id), append(kinds, kind)
+			events = append(events, Event{Type: EventContentPurged, Kind: kind, ContentID: id})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil || len(ids) == 0 {
+			return 0, next, err
 		}
 	}
 	// Their documents go with them.
 	if err := s.markDocuments(ctx, tx, ids); err != nil {
-		return 0, err
+		return 0, next, err
 	}
 	if err := s.eraseInteractions(ctx, tx, kinds, ids, nil); err != nil {
-		return 0, err
+		return 0, next, err
 	}
 	// Codes stay: a purged item's URL keeps answering 410.
 	if s.references != nil {
 		rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id=$1 AND content_id=ANY($2) ORDER BY id`, s.tenant, ids)
 		if err != nil {
-			return 0, err
+			return 0, next, err
 		}
 		versions, err := pgx.CollectRows(rows, pgx.RowTo[string])
 		if err != nil {
-			return 0, err
+			return 0, next, err
 		}
 		if len(versions) > 0 {
 			if err := s.references.PurgeVersions(ctx, tx, s.tenant, versions); err != nil {
-				return 0, err
+				return 0, next, err
 			}
 		}
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids); err != nil {
-		return 0, err
+		return 0, next, err
 	}
 	if err := s.purgeTx(ctx, tx, events); err != nil {
-		return 0, err
+		return 0, next, err
 	}
 	if err := s.emit(ctx, tx, events...); err != nil {
-		return 0, err
+		return 0, next, err
 	}
-	return len(ids), tx.Commit(ctx)
+	return len(ids), next, tx.Commit(ctx)
 }
 
-// eraseVersions deletes one batch of versions deleted before cutoff whose
-// item lives on, with their media folders and interactions.
-func (s *Store) eraseVersions(ctx context.Context, cutoff time.Time) (int, error) {
-	deadline := time.Now().Add(purgeBudget)
-	for after := ""; ; {
-		n, next, err := s.eraseVersionBatch(ctx, cutoff, after)
-		if err != nil || next == "" || time.Now().After(deadline) {
-			return n, err
+// eraseVersionBatch captures a bounded version-ID page before taking the
+// same parent-before-version locks as catalog edits. Rechecks after those locks
+// and after storage erasure remain restricted to the captured IDs.
+func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after string) (count int, next string, resultErr error) {
+	var storageErr error
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, storageErr)
+		} else if storageErr != nil {
+			resultErr = &purgeStorageError{storageErr}
 		}
-		after = next
-	}
-}
-
-func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after string) (int, string, error) {
+	}()
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, "", err
 	}
 	defer tx.Rollback(ctx)
-	// Use the same parent-before-version lock order as catalog edits.
-	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c
- WHERE c.tenant_id = $1 AND c.id > $3 AND c.state <> 'deleted'
- AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id
-  AND v.state = 'deleted' AND v.deleted_at < $2)
- ORDER BY c.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF c SKIP LOCKED`, s.tenant, cutoff, after)
+	// Candidate reads take no row locks. The version keyset also advances
+	// within one parent with more than purgeBatch failed or locked versions.
+	rows, err := tx.Query(ctx, `SELECT v.id,v.content_id FROM `+s.t.versions+` v
+ JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+ WHERE v.tenant_id=$1 AND v.id>$3 AND v.state='deleted' AND v.deleted_at<$2
+ AND (c.state<>'deleted' OR c.deleted_at IS NULL OR c.deleted_at>=$2)
+ ORDER BY v.id LIMIT `+strconv.Itoa(purgeBatch), s.tenant, cutoff, after)
+	if err != nil {
+		return 0, "", err
+	}
+	var candidates, parentIDs []string
+	for rows.Next() {
+		var id, parent string
+		if err := rows.Scan(&id, &parent); err != nil {
+			rows.Close()
+			return 0, "", err
+		}
+		candidates, parentIDs = append(candidates, id), append(parentIDs, parent)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(candidates) == 0 {
+		return 0, "", err
+	}
+	if len(candidates) == purgeBatch {
+		next = candidates[len(candidates)-1]
+	}
+	parentIDs = slices.Compact(slices.Sorted(slices.Values(parentIDs)))
+	rows, err = tx.Query(ctx, `SELECT id FROM `+s.t.items+`
+ WHERE tenant_id=$1 AND id=ANY($3) AND (state<>'deleted' OR deleted_at IS NULL OR deleted_at>=$2)
+ ORDER BY id FOR UPDATE SKIP LOCKED`, s.tenant, cutoff, parentIDs)
 	if err != nil {
 		return 0, "", err
 	}
 	parents, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(parents) == 0 {
+	if err != nil {
 		return 0, "", err
 	}
-	rows, err = tx.Query(ctx, `SELECT v.id, v.content_id, c.kind FROM `+s.t.versions+` v
- JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
- WHERE v.tenant_id = $1 AND v.content_id = ANY($3) AND v.state = 'deleted' AND v.deleted_at < $2
- ORDER BY v.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF v SKIP LOCKED`, s.tenant, cutoff, parents)
+	if len(parents) == 0 {
+		return 0, next, tx.Commit(ctx)
+	}
+	rows, err = tx.Query(ctx, `SELECT v.id,v.content_id,c.kind FROM `+s.t.versions+` v
+ JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+ WHERE v.tenant_id=$1 AND v.id=ANY($3) AND v.content_id=ANY($4)
+ AND v.state='deleted' AND v.deleted_at<$2
+ ORDER BY v.id FOR UPDATE OF v SKIP LOCKED`, s.tenant, cutoff, candidates, parents)
 	if err != nil {
 		return 0, "", err
 	}
@@ -351,17 +493,57 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		return 0, "", err
 	}
 	if len(vids) == 0 {
-		next := ""
-		if len(parents) == purgeBatch {
-			next = parents[len(parents)-1]
-		}
-		// Release this bounded set before scanning beyond parents whose only
-		// eligible versions are locked. They can be retried by the next run.
 		return 0, next, tx.Commit(ctx)
 	}
 	if s.media != nil {
 		if err := s.media.Versions.DeleteTx(ctx, tx, targets); err != nil {
 			return 0, "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return 0, "", err
+		}
+		succeeded := make([]string, 0, len(vids))
+		for _, target := range targets {
+			if err := ctx.Err(); err != nil {
+				return 0, "", err
+			}
+			if err := s.media.Versions.Delete(ctx, []versions.Target{target}); err != nil {
+				storageErr = errors.Join(storageErr, fmt.Errorf("purge version %s: %w", target.Version, err))
+				continue
+			}
+			succeeded = append(succeeded, target.Version)
+		}
+		vids = succeeded
+		if len(vids) == 0 {
+			return 0, next, nil
+		}
+		tx, err = s.begin(ctx)
+		if err != nil {
+			return 0, "", err
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `SELECT FROM `+s.t.items+` WHERE tenant_id=$1 AND id=ANY($2) ORDER BY id FOR UPDATE`, s.tenant, parents); err != nil {
+			return 0, "", err
+		}
+		rows, err = tx.Query(ctx, `SELECT v.id,v.content_id,c.kind FROM `+s.t.versions+` v
+ JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+ WHERE v.tenant_id=$1 AND v.id=ANY($3) AND v.state='deleted' AND v.deleted_at<$2 ORDER BY v.id FOR UPDATE OF v SKIP LOCKED`, s.tenant, cutoff, vids)
+		if err != nil {
+			return 0, "", err
+		}
+		vids, contents, kinds, events = nil, nil, nil, nil
+		for rows.Next() {
+			var vid, content, kind string
+			if err := rows.Scan(&vid, &content, &kind); err != nil {
+				rows.Close()
+				return 0, "", err
+			}
+			vids, contents, kinds = append(vids, vid), append(contents, content), append(kinds, kind)
+			events = append(events, Event{Type: EventVersionPurged, Kind: kind, ContentID: content, VersionID: vid})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil || len(vids) == 0 {
+			return 0, next, err
 		}
 	}
 	if err := s.markDocuments(ctx, tx, contents); err != nil {
@@ -384,7 +566,7 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 	if err := s.emit(ctx, tx, events...); err != nil {
 		return 0, "", err
 	}
-	return len(vids), "", tx.Commit(ctx)
+	return len(vids), next, tx.Commit(ctx)
 }
 
 // eraseInteractions deletes purged content's comments (with their reactions
@@ -436,8 +618,11 @@ func (purgeDeletedArgs) KindAliases() []string { return []string{"contentkit_cat
 
 type jobWorker[T river.JobArgs] struct {
 	river.WorkerDefaults[T]
-	run func(context.Context) (int, error)
+	run     func(context.Context) (int, error)
+	timeout time.Duration
 }
+
+func (w *jobWorker[T]) Timeout(*river.Job[T]) time.Duration { return w.timeout }
 
 func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 	_, err := w.run(ctx)
@@ -463,7 +648,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &jobWorker[publishDueArgs]{run: s.PublishDue}) },
 			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted})
+				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted, timeout: 15 * time.Minute})
 			},
 		} {
 			if err := add(); err != nil {

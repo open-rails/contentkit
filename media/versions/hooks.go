@@ -197,15 +197,19 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 	case err != nil || t.Ref.TenantID != k.NS():
 		return media.UploadGrant{}, nil
 	case isSystem(actor) && k.Versions:
-		return media.UploadGrant{Allowed: true, Exempt: true}, nil
+		return media.UploadGrant{Allowed: true, Exempt: true, ArchiveTo: k.ArchiveDestination(t.Path)}, nil
 	case k.Versions:
-		return s.canEdit(ctx, actor, k, t)
+		g, err := s.canEdit(ctx, actor, k, t)
+		g.ArchiveTo = k.ArchiveDestination(t.Path)
+		return g, err
 	case s.isEntityKind(k.Name):
-		return s.canEditEntity(ctx, actor, t)
+		g, err := s.canEditEntity(ctx, actor, t)
+		g.ArchiveTo = k.ArchiveDestination(t.Path)
+		return g, err
 	case k.Name == s.reg.Config().Avatars.Kind:
 		writer, err := s.avatarEditor(ctx, actor, t.Ref.ContentID)
 		self := actor.Member() && actor.AccountID() == t.Ref.ContentID
-		return media.UploadGrant{Allowed: writer, Owner: t.Ref.ContentID, Exempt: writer && !self}, err
+		return media.UploadGrant{Allowed: writer, Owner: t.Ref.ContentID, Exempt: writer && !self, ArchiveTo: k.ArchiveDestination(t.Path)}, err
 	case s.o.Others != nil:
 		return s.o.Others.CanUpload(ctx, actor, t)
 	}
@@ -248,7 +252,7 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.Kind
 }
 
 // itemReady records a settled version's facts and moves its media on: an
-// archive import, else publication.
+// ready-file metadata publication.
 func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
 	k, err := s.reg.Kind(ref.ContentKind)
 	if err != nil || !k.Versions || ref.Version() == "" {
@@ -269,18 +273,15 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
 		return err
 	}
-	p := k.Publish
-	switch {
-	case p == nil:
+	if k.Publish == nil {
 		return nil
-	case p.Import != "" && len(imports(k, m)) > 0:
-		return s.enqueueTx(ctx, tx, importArgs{Content: v.Content, Version: v.Version})
 	}
 	return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
+
 }
 
-// itemProgressed records the facts of a version still processing once it
-// plays, so listings show it before its last rendition is out.
+// itemProgressed records partial media facts and wakes reader snapshots before
+// unrelated processing finishes. The wakeup commits with those facts.
 func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error {
 	k, err := s.reg.Kind(ref.ContentKind)
 	if err != nil || !k.Versions || ref.Version() == "" {
@@ -297,7 +298,13 @@ func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.
 	} else if err != nil {
 		return err
 	}
-	return s.recordFacts(ctx, tx, k, v, m)
+	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
+		return err
+	}
+	if k.Publish != nil {
+		return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
+	}
+	return nil
 }
 
 // beforeRetire serializes snapshot invalidation with publishers. A publisher

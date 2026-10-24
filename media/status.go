@@ -24,7 +24,7 @@ type ProcessingCount struct {
 }
 
 // ArchiveStatus counts source ZIPs and, once validation has determined the
-// expected entries, the pages actually committed by the existing import worker.
+// expected entries, the pages actually committed by the ingest worker.
 // Page counts are persisted progress, not a claim that a worker is running.
 type ArchiveStatus struct {
 	ProcessingCount
@@ -45,9 +45,11 @@ type ProcessingFailure struct {
 	Message string `json:"message"`
 }
 
-// MediaStatus is a read-only snapshot of attached uploads in the whole manifest.
-// Public presets count only while visible, as in Kind.Readiness. An archive
-// may have finished placement while still waiting for extraction. Encoding is
+// MediaStatus is a read-only editor snapshot of all uploads, including staging.
+// Unattached sources count placement and private processing; their public presets
+// wait until attachment. This state is separate from publication readiness.
+// Public presets count only while visible. An archive may have finished
+// placement while still waiting for extraction. Encoding is
 // the existing worker checkpoint, when available, never a new job or operation.
 type MediaStatus struct {
 	State        string              `json:"state"`
@@ -83,7 +85,7 @@ func (r *Reader) Status(ctx context.Context, ref contentref.ContentRef, actor ac
 
 func (r *Reader) statusProgress(ctx context.Context, ref contentref.ContentRef, m *Manifest) EncodeStatus {
 	if r.o.Progress != nil && slices.ContainsFunc(m.Files, func(f File) bool {
-		return f.IsUpload() && len(f.Pending) > 0 && (isVideoType(f.Type) || isAudioType(f.Type))
+		return f.IsUpload() && len(f.Pending) > 0 && isVideoType(f.Type)
 	}) {
 		if progress, err := r.o.Progress.EncodeProgress(ctx, ref); err == nil {
 			return progress
@@ -95,37 +97,50 @@ func (r *Reader) statusProgress(ctx context.Context, ref contentref.ContentRef, 
 func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 	out := &MediaStatus{State: k.Readiness(m).State, Presets: []PresetStatus{}, Failures: []ProcessingFailure{}}
 	if slices.ContainsFunc(m.Files, func(f File) bool {
-		return f.IsUpload() && !f.Unattached && len(f.Pending) > 0 && (isVideoType(f.Type) || isAudioType(f.Type))
+		return f.IsUpload() && statusHasPending(k, m, f) && isVideoType(f.Type)
 	}) {
 		out.Encoding = progress.Current()
 	}
 	readyOutputs := map[[2]string]bool{}
-	imported := map[string]map[string]struct{}{}
+	imported := map[[2]string]map[string]struct{}{}
 	for _, f := range m.Files {
 		if f.Preset != "" && f.Blob != "" {
 			readyOutputs[[2]string{f.From, f.Preset}] = true
 		}
-		if f.IsUpload() && k.IsPageUpload(f) {
-			if page, err := pageMetadata(f.Meta); err == nil {
+		if f.IsUpload() {
+			i, _, _, _, known := k.upload(f.Path)
+			page, err := pageMetadata(f.Meta)
+			if known && err == nil {
 				if sum, ok := page["archive_sha256"].(string); ok {
-					if imported[sum] == nil {
-						imported[sum] = map[string]struct{}{}
+					key := [2]string{sum, k.Uploads[i].Path}
+					if imported[key] == nil {
+						imported[key] = map[string]struct{}{}
 					}
 					identity := f.Path
 					if index := statusCount(page["source_index"]); index > 0 {
 						identity = "index:" + strconv.Itoa(index)
 					}
-					imported[sum][identity] = struct{}{}
+					imported[key][identity] = struct{}{}
 				}
 			}
 		}
 	}
 	presets := map[string]*ProcessingCount{}
+	processing := out.State == StateProcessing || out.State == StateFull
+	failures := out.State == StateFailed
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached {
+		if !f.IsUpload() {
 			continue
 		}
 		failed := f.Fail()
+		if k.audioOriginal(f) {
+			failed = nil // An obsolete conversion failure does not block original playback.
+		}
+		if failed != nil {
+			failures = true
+		} else if f.Blob == "" || statusHasPending(k, m, f) {
+			processing = true
+		}
 		out.Uploads.Total++
 		if failed != nil {
 			out.Uploads.Failed++
@@ -147,7 +162,7 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 				if len(digest) == 0 {
 					sum, _ = f.Meta["sha256"].(string)
 				}
-				done := min(total, len(imported[sum]))
+				done := min(total, len(imported[[2]string{sum, k.ArchiveDestination(f.Path)}]))
 				// A completed extraction cannot regress when QA excludes or
 				// removes pages later; completion is bound to this exact ZIP.
 				if completed, _ := f.Meta["archive_completed_sha256"].(string); sum != "" && completed == sum {
@@ -162,15 +177,13 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 			switch {
 			case failed != nil:
 				out.Archives.Failed++
-			case importPending(k, f):
-				if out.State == StateReady {
-					out.State = StateProcessing
-				}
+			case statusArchivePending(k, f):
+				processing = true
 			default:
 				out.Archives.Completed++
 			}
 		}
-		for _, name := range k.Presets(f.Path, m.Hidden) {
+		for _, name := range k.Presets(f.Path, m.Hidden || f.Unattached) {
 			count := presets[name]
 			if count == nil {
 				count = &ProcessingCount{}
@@ -199,20 +212,42 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 		out.Presets = append(out.Presets, PresetStatus{Name: name, ProcessingCount: *count})
 	}
 	slices.SortFunc(out.Presets, func(a, b PresetStatus) int { return strings.Compare(a.Name, b.Name) })
+	switch {
+	case processing && m.Full:
+		out.State = StateFull
+	case processing:
+		out.State = StateProcessing
+	case failures:
+		out.State = StateFailed
+	default:
+		out.State = StateReady
+	}
 	return out
 }
 
+func statusHasPending(k *Kind, m *Manifest, f File) bool {
+	return slices.ContainsFunc(f.Pending, func(name string) bool {
+		return k.private(name) != nil || !m.Hidden && !f.Unattached && k.public(name) != nil
+	})
+}
+
 func isArchiveUpload(k *Kind, f File) bool {
-	if k.Publish == nil || k.Publish.Import == "" {
+	return f.IsUpload() && k.ArchiveDestination(f.Path) != ""
+}
+
+func statusArchivePending(k *Kind, f File) bool {
+	if !isArchiveUpload(k, f) || f.Gone || f.Fail() != nil {
 		return false
 	}
-	pattern, ok := parsePattern(k.Publish.Import)
-	if !ok {
-		return false
+	digest, valid := layout.BlobDigest(f.Blob)
+	var sum string
+	if valid {
+		sum = hex.EncodeToString(digest)
+	} else {
+		sum, _ = f.Meta["sha256"].(string)
 	}
-	stem, _ := splitExt(f.Path)
-	_, matches := pattern.match(stem)
-	return matches
+	completed, _ := f.Meta["archive_completed_sha256"].(string)
+	return sum == "" || completed != sum
 }
 
 func statusFailure(path, code string) ProcessingFailure {

@@ -34,10 +34,9 @@ import (
 // sharing a database must not share one, or one host's worker takes the
 // other's jobs. Queue names are fixed within a schema.
 const (
-	PlaceQueue  = "media_place" // staged uploads hashed and placed at their blobs
-	ImageQueue  = "media_image" // image variants, slots and inline images
-	VideoQueue  = "media_video" // resumable video conversion
-	AudioQueue  = "media_audio" // audio-only files
+	IngestQueue = "media_ingest" // staged placement and ZIP expansion before renditions
+	ImageQueue  = "media_image"  // image variants, slots and inline images
+	VideoQueue  = "media_video"  // resumable video conversion
 	MaxAttempts = 5
 	// River counts a rescued hard kill before Work can restore the attempt.
 	// Video jobs enforce MaxAttempts on actual failures inside Work instead.
@@ -88,18 +87,18 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 // jobs is the schema's river_job table.
 func jobs(schema string) string { return pgx.Identifier{schema, "river_job"}.Sanitize() }
 
-// PlaceArgs places an item's staged uploads (media.Manifests.Place), then
+// IngestArgs places an item's staged uploads (media.Manifests.Place), then
 // enqueues its processing: media.ProcessJob's fields.
-type PlaceArgs struct {
+type IngestArgs struct {
 	Ref    contentref.ContentRef `json:"ref"`
 	Preset string                `json:"preset,omitempty"`
 	Force  bool                  `json:"force,omitempty"`
 	After  int64                 `json:"after,omitempty"` // the running job this one follows
 }
 
-func (PlaceArgs) Kind() string { return "contentkit_media_place" }
+func (IngestArgs) Kind() string { return "contentkit_media_ingest" }
 
-func (a PlaceArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
+func (a IngestArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
 // ImageArgs runs an item's image producers (Image and Zip presets, public
 // presets, editor views): media.ProcessJob's fields.
@@ -126,17 +125,7 @@ type VideoArgs struct {
 
 func (VideoArgs) Kind() string { return "contentkit_media_video" }
 
-// AudioArgs runs an item's Audio presets.
-type AudioArgs struct {
-	Ref    contentref.ContentRef `json:"ref"`
-	Preset string                `json:"preset,omitempty"`
-	Force  bool                  `json:"force,omitempty"`
-}
-
-func (AudioArgs) Kind() string { return "contentkit_media_audio" }
-
-// EncodeKinds are the job kinds that report encode progress.
-var EncodeKinds = []string{VideoArgs{}.Kind(), AudioArgs{}.Kind()}
+var EncodeKinds = []string{VideoArgs{}.Kind()}
 
 // Queue is the host's insert-only client for the worker's jobs; it is the
 // uploads' media.ProcessQueue.
@@ -186,7 +175,7 @@ func (q *Queue) EnqueueTx(ctx context.Context, tx pgx.Tx, job media.ProcessJob) 
 }
 
 // Families are the producer families a kind's presets (or one preset) use.
-type Families struct{ Image, Video, Audio bool }
+type Families struct{ Image, Video bool }
 
 // FamiliesOf maps k's presets (only preset, when set) to producer families.
 func FamiliesOf(k *media.Kind, preset string) Families {
@@ -197,7 +186,6 @@ func FamiliesOf(k *media.Kind, preset string) Families {
 		}
 		f.Image = f.Image || p.Image != nil || p.Zip != ""
 		f.Video = f.Video || p.HLS != nil || p.MP4 != nil || p.Subtitles != nil
-		f.Audio = f.Audio || p.Audio != nil
 	}
 	for _, p := range k.Public {
 		f.Image = f.Image || preset == "" || p.Name == preset
@@ -217,8 +205,8 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 		return err
 	}
 	if job.Place {
-		return media.InsertOnce(ctx, insert, PlaceArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force},
-			river.InsertOpts{Queue: PlaceQueue, MaxAttempts: MaxAttempts})
+		return media.InsertOnce(ctx, insert, IngestArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force},
+			river.InsertOpts{Queue: IngestQueue, MaxAttempts: MaxAttempts})
 	}
 	f := FamiliesOf(item.Kind(), job.Preset)
 	if f.Image || job.Editor {
@@ -235,17 +223,8 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 			return err
 		}
 	}
-	if f.Audio {
-		if _, err := insert(ctx, AudioArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force}, AudioInsertOpts()); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
-// AudioInsertOpts are an audio job's insert options.
-func AudioInsertOpts() *river.InsertOpts {
-	return &river.InsertOpts{Queue: AudioQueue, MaxAttempts: MaxAttempts}
+	return nil
 }
 
 // VideoInsertOpts are a video plan's insert options.
@@ -301,7 +280,7 @@ FROM targets WHERE r.id = targets.id`, refJSON); err != nil {
 	rows, err := tx.Query(ctx, `SELECT id FROM `+jobs(q.schema)+`
 WHERE kind = ANY($1) AND args @> $2 AND args->'ref' = $2::jsonb->'ref' AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 ORDER BY id`,
-		append([]string{ImageArgs{}.Kind()}, EncodeKinds...), match)
+		append([]string{IngestArgs{}.Kind(), ImageArgs{}.Kind()}, EncodeKinds...), match)
 	if err != nil {
 		return 0, err
 	}
@@ -406,7 +385,7 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 			return st, err
 		}
 		if state == "running" {
-			// The item's video and audio jobs may both be running; each
+			// Duplicate video jobs may be running; each
 			// reports its own files.
 			var files map[string]media.EncodeProgress
 			if len(raw) > 0 && json.Unmarshal(raw, &files) == nil {
