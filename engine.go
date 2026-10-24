@@ -177,7 +177,7 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		if e.avatars, err = e.newAvatars(deps); err != nil {
 			return nil, err
 		}
-		if err := e.catalog.BindMedia(catalog.Media{Registry: e.media.reg, Reader: e.media.reader, Versions: e.media.versions}); err != nil {
+		if err := e.catalog.BindMedia(catalog.Media{Registry: e.media.reg, Reader: e.media.reader, Versions: catalogMedia{Service: e.media.versions, engine: e}}); err != nil {
 			return nil, err
 		}
 	}
@@ -507,7 +507,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		limiter = media.RouteLimiter(limiter, accountLimiter, e.accountMediaPartition())
 	}
 	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal,
-		Processes: m.queue, Pool: e.pool, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
+		Processes: m.queue, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
 		return nil, err
 	}
 	d := mc.Delivery

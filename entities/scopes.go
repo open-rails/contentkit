@@ -49,9 +49,13 @@ type Scope struct {
 	Owner string
 }
 
-// Folders permanently deletes entity media in the catalog purge transaction.
+// Folders records durable retirement and reports its actual storage outcome.
+// PurgeRetired is invoked only by the existing content-deletion sweep.
 type Folders interface {
-	DeleteTx(ctx context.Context, tx pgx.Tx, entities []Ref) error
+	RetireTx(context.Context, pgx.Tx, []Ref) error
+	RetirementStartedTx(context.Context, pgx.Tx, Ref) (bool, error)
+	RetirementComplete(context.Context, Ref) (bool, error)
+	PurgeRetired(context.Context, int) (int, error)
 }
 
 // Ref names one entity with its kind.
@@ -247,54 +251,89 @@ func (s *Store) userKinds() []string {
 	return out
 }
 
-// PurgeFolders deletes the media folders of user-owned entities deleted for
-// longer than the retention (Options.DeletedRetention), once: a restore
-// after it finds them empty. It returns how many it purged.
-func (s *Store) PurgeFolders(ctx context.Context) (int, error) {
+// PurgeFolders claims expired entity media, runs the shared retirement pass,
+// and marks only physically completed folders. Domain rows remain retryable
+// after a storage failure. The catalog deletion sweep is its sole scheduler.
+func (s *Store) PurgeFolders(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, errors.New("entities: purge limit must be positive")
+	}
 	if s.folders == nil {
 		return 0, nil
 	}
 	total := 0
+	remaining := limit
+	var failures error
+	after := ""
+	deadline := time.Now().Add(45 * time.Second)
 	for {
-		n := 0
+		batchLimit := min(syncBatch, remaining)
+		var refs []Ref
 		err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-			rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT id, kind FROM %s WHERE tenant_id = $1 AND state = 'deleted' AND media_purged_at IS NULL
- AND deleted_at < $2 AND kind = ANY($3::text[]) ORDER BY id LIMIT %d FOR UPDATE SKIP LOCKED`, s.table("content_entities"), syncBatch),
-				s.tenant, time.Now().Add(-s.keep), s.userKinds())
+			rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT id,kind FROM %s WHERE tenant_id=$1 AND state='deleted' AND media_purged_at IS NULL
+AND deleted_at<$2 AND kind=ANY($3::text[]) AND id>$4 ORDER BY id LIMIT %d FOR UPDATE SKIP LOCKED`, s.table("content_entities"), batchLimit), s.tenant, time.Now().Add(-s.keep), s.userKinds(), after)
 			if err != nil {
 				return err
 			}
-			var refs []Ref
-			var ids []string
-			for rows.Next() {
-				var r Ref
-				if err := rows.Scan(&r.ID, &r.Kind); err != nil {
-					rows.Close()
-					return err
-				}
-				refs, ids = append(refs, r), append(ids, string(r.ID))
-			}
-			rows.Close()
-			if err := rows.Err(); err != nil || len(refs) == 0 {
+			refs, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (Ref, error) { var r Ref; err := row.Scan(&r.ID, &r.Kind); return r, err })
+			if err != nil || len(refs) == 0 {
 				return err
 			}
-			if err := s.folders.DeleteTx(ctx, tx, refs); err != nil {
-				return err
-			}
-			n = len(refs)
-			_, err = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET media_purged_at = now() WHERE tenant_id = $1 AND id = ANY($2::text[])`,
-				s.table("content_entities")), s.tenant, ids)
-			return err
+			return s.folders.RetireTx(ctx, tx, refs)
 		})
-		if total += n; err != nil || n == 0 {
-			return total, err
+		if err != nil {
+			return total, errors.Join(failures, err)
 		}
+		// Also drain poll/account/ordinary media obligations when no entity is due.
+		processed, purgeErr := s.folders.PurgeRetired(ctx, remaining)
+		remaining -= processed
+		err = purgeErr
+		failures = errors.Join(failures, err)
+		if ctx.Err() != nil {
+			return total, errors.Join(failures, ctx.Err())
+		}
+		var complete []string
+		for _, ref := range refs {
+			done, err := s.folders.RetirementComplete(ctx, ref)
+			if err != nil {
+				failures = errors.Join(failures, err)
+				continue
+			}
+			if done {
+				complete = append(complete, string(ref.ID))
+			}
+		}
+		if len(complete) > 0 {
+			result, err := s.pool.Exec(ctx, fmt.Sprintf(`UPDATE %s SET media_purged_at=now() WHERE tenant_id=$1 AND id=ANY($2::text[]) AND state='deleted' AND media_purged_at IS NULL`, s.table("content_entities")), s.tenant, complete)
+			if err != nil {
+				return total, errors.Join(failures, err)
+			}
+			total += int(result.RowsAffected())
+		}
+		if remaining <= 0 || processed == 0 || len(refs) < batchLimit || time.Now().After(deadline) {
+			return total, failures
+		}
+		after = string(refs[len(refs)-1].ID)
 	}
 }
 
+func (s *Store) checkMediaRestorable(ctx context.Context, tx pgx.Tx, ref Ref) error {
+	if s.folders == nil {
+		return nil
+	}
+	started, err := s.folders.RetirementStartedTx(ctx, tx, ref)
+	if err != nil {
+		return err
+	}
+	if started {
+		return fmt.Errorf("%w: entity %s media retirement is irreversible", ErrConflict, ref.ID)
+	}
+	return nil
+}
+
 // Reconcile syncs every entity what follows from its state does not match
-// yet: those whose job was lost, or whose sync keeps failing. It purges the
-// media of entities deleted past the retention too (PurgeFolders).
+// yet: those whose job was lost, or whose sync keeps failing. Media retirement
+// belongs to the existing catalog deletion sweep.
 func (s *Store) Reconcile(ctx context.Context) error {
 	var errs []error
 	if s.scopes != nil {
@@ -325,8 +364,7 @@ func (s *Store) Reconcile(ctx context.Context) error {
 			after = string(ids[len(ids)-1])
 		}
 	}
-	_, err := s.PurgeFolders(ctx)
-	return errors.Join(append(errs, s.followOwned(ctx, nil), err)...)
+	return errors.Join(append(errs, s.followOwned(ctx, nil))...)
 }
 
 // heldScopes is, per live scope of user-owned auth_scope kinds (of kind,

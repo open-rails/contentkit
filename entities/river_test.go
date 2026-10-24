@@ -12,7 +12,7 @@ import (
 	"github.com/riverqueue/river"
 )
 
-func TestEntityJobsReadPreviouslyQueuedEnvelopes(t *testing.T) {
+func TestEntityJobsUseCanonicalKinds(t *testing.T) {
 	var args syncArgs
 	if err := json.Unmarshal([]byte(`{"tenant":"site","groups":["existing-entity"]}`), &args); err != nil {
 		t.Fatal(err)
@@ -20,11 +20,11 @@ func TestEntityJobsReadPreviouslyQueuedEnvelopes(t *testing.T) {
 	if args.Tenant != "site" || !slices.Equal(args.Entities, []string{"existing-entity"}) {
 		t.Fatalf("queued entity IDs lost: %+v", args)
 	}
-	if args.Kind() != "contentkit_entity_sync" || !slices.Contains(args.KindAliases(), "contentkit_group_sync") {
-		t.Fatal("old sync jobs cannot dispatch to the renamed worker")
+	if args.Kind() != "contentkit_entity_sync" {
+		t.Fatal("wrong canonical entity sync kind")
 	}
-	if (reconcileArgs{}).Kind() != "contentkit_entity_reconcile" || !slices.Contains((reconcileArgs{}).KindAliases(), "contentkit_group_reconcile") {
-		t.Fatal("old reconcile jobs cannot dispatch to the renamed worker")
+	if (reconcileArgs{}).Kind() != "contentkit_entity_reconcile" {
+		t.Fatal("wrong canonical entity reconcile kind")
 	}
 }
 
@@ -50,7 +50,7 @@ func TestLifecycleSchedulesRequireConfiguredKinds(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer pool.Close()
-			s := &Store{tenant: "site", queue: "contentkit_groups", river: &riverBinding{}, owned: idleOwned{}, scopes: scopeCandidates{}, cfg: kinds.Config{EntityKinds: map[string]kinds.EntityKind{"entity": tc.kind}}}
+			s := &Store{tenant: "site", queue: DefaultQueue, river: &riverBinding{}, owned: idleOwned{}, scopes: scopeCandidates{}, cfg: kinds.Config{EntityKinds: map[string]kinds.EntityKind{"entity": tc.kind}}}
 			observed := -1
 			inspect := riverhelpers.NewContribution("inspect", func(_ context.Context, cfg *river.Config) error { observed = len(cfg.PeriodicJobs); return nil }, nil, nil)
 			if _, err := riverhelpers.New(t.Context(), pool, &river.Config{}, s.RiverJobs(), inspect); err != nil {

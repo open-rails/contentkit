@@ -3,6 +3,7 @@ package entities
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -569,6 +570,13 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 					changed = append(changed, string(g.ID))
 				}
 				if *u.State == StateActive {
+					tx, ok := q.(pgx.Tx)
+					if !ok {
+						return errors.New("entities: restore requires a transaction")
+					}
+					if err := s.checkMediaRestorable(ctx, tx, Ref{Kind: g.Kind, ID: g.ID}); err != nil {
+						return err
+					}
 					restored = append(restored, row.entityRow)
 				}
 			}

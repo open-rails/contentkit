@@ -13,9 +13,12 @@ import (
 )
 
 // ReconcileInterval is how often the engine syncs every entity whose scope or
-// owned content does not match its state yet, and purges deleted entities'
-// media past the retention.
+// owned content does not match its state yet. Media retirement is scheduled
+// only by the existing catalog content-deletion sweep.
 const ReconcileInterval = time.Minute
+
+// DefaultQueue holds the current entity state work.
+const DefaultQueue = "contentkit_entities"
 
 type syncArgs struct {
 	Tenant   string   `json:"tenant"`
@@ -24,16 +27,11 @@ type syncArgs struct {
 
 func (syncArgs) Kind() string { return "contentkit_entity_sync" }
 
-// KindAliases drain jobs queued before entity terminology changed.
-func (syncArgs) KindAliases() []string { return []string{"contentkit_group_sync"} }
-
 type reconcileArgs struct {
 	Tenant string `json:"tenant"`
 }
 
 func (reconcileArgs) Kind() string { return "contentkit_entity_reconcile" }
-
-func (reconcileArgs) KindAliases() []string { return []string{"contentkit_group_reconcile"} }
 
 type syncWorker struct {
 	river.WorkerDefaults[syncArgs]

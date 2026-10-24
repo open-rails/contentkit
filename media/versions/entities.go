@@ -283,8 +283,8 @@ func (s *Service) EntityFolders() entities.Folders { return entityFolders{s} }
 
 type entityFolders struct{ s *Service }
 
-// DeleteTx queues the deletion of each entity's media item in tx.
-func (g entityFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
+// RetireTx commits each entity media item's retirement intent in tx.
+func (g entityFolders) RetireTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
 	del := make([]media.Deletion, 0, len(refs))
 	for _, r := range refs {
 		ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
@@ -296,5 +296,23 @@ func (g entityFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []entities.
 	if len(del) == 0 || g.s.m.Jobs == nil {
 		return nil
 	}
-	return g.s.m.Jobs.DeleteItemsTx(ctx, tx, del...)
+	return g.s.m.Jobs.RetireItemsTx(ctx, tx, del...)
+}
+
+func (g entityFolders) RetirementStartedTx(ctx context.Context, tx pgx.Tx, r entities.Ref) (bool, error) {
+	ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
+	if err != nil {
+		return false, err
+	}
+	return g.s.m.Jobs.RetirementStartedTx(ctx, tx, ref)
+}
+func (g entityFolders) RetirementComplete(ctx context.Context, r entities.Ref) (bool, error) {
+	ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
+	if err != nil {
+		return false, err
+	}
+	return g.s.m.Jobs.RetirementComplete(ctx, ref)
+}
+func (g entityFolders) PurgeRetired(ctx context.Context, limit int) (int, error) {
+	return g.s.m.Jobs.PurgeRetired(ctx, limit)
 }

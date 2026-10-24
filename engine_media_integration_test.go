@@ -407,16 +407,16 @@ WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.P
 	if jobs("contentkit_media_expose", string(ch)) != 0 || jobs("contentkit_media_delete_folder", string(ch)) != 0 {
 		t.Fatal("deleting the channel queued exposure or deletion")
 	}
-	if n, err := e.entities.PurgeFolders(ctx); err != nil || n != 0 {
+	if n, err := e.entities.PurgeFolders(ctx, 100); err != nil || n != 0 {
 		t.Fatalf("purged %d (%v) within the retention", n, err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE `+table("content_entities")+` SET deleted_at = now() - interval '31 days' WHERE id = $1`, ch); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := e.entities.PurgeFolders(ctx); err != nil || n != 1 || jobs("contentkit_media_delete_folder", string(ch)) != 1 {
+	if n, err := e.entities.PurgeFolders(ctx, 100); err != nil || n != 1 || jobs("contentkit_media_delete_folder", string(ch)) != 1 {
 		t.Fatalf("purged %d (%v) past the retention", n, err)
 	}
-	if n, err := e.entities.PurgeFolders(ctx); err != nil || n != 0 {
+	if n, err := e.entities.PurgeFolders(ctx, 100); err != nil || n != 0 {
 		t.Fatalf("purged again %d (%v)", n, err)
 	}
 	active := entities.StateActive

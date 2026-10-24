@@ -304,7 +304,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 	}
 	s.workers, s.host = workers, host
 	if s.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: s.reg, Locker: media.PGLocker(s.pool), Journal: journal,
-		Pool: s.pool, Processes: queue}); err != nil {
+		Processes: queue}); err != nil {
 		t.Fatal(err)
 	}
 	s.ms = s.jobs.Manifests()
@@ -323,7 +323,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 		t.Fatal(err)
 	}
 	client, err := riverhelpers.New(ctx, s.pool, &river.Config{Schema: host, FetchPollInterval: 100 * time.Millisecond,
-		FetchCooldown: 50 * time.Millisecond, Hooks: o.hostHooks}, s.jobs.RiverJobs(), s.svc.RiverJobs())
+		FetchCooldown: 50 * time.Millisecond, Hooks: o.hostHooks}, s.svc.RiverJobs())
 	if err != nil {
 		t.Fatal(err)
 	}
