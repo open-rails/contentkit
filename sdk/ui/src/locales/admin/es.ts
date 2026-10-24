@@ -381,6 +381,7 @@ export const admin: typeof en = {
     removeTrack: "Quitar pista {n}",
     matched: "{count} archivos de audio emparejados con páginas o anclas.",
     matchedNone: "Ningún nombre de audio coincide con una página o un ancla; no cambió nada.",
+    replacedCues: "Señales anteriores reemplazadas: {count}.",
     pagesWithoutAudio: "Páginas sin audio: {names}",
     audioWithoutPlace: "Audio sin página ni ancla: {names}",
     at_anchors: "Ancla {n}",

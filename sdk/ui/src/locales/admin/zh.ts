@@ -381,6 +381,7 @@ export const admin: typeof en = {
     removeTrack: "删除音轨 {n}",
     matched: "已将 {count} 个音频匹配到页面或锚点。",
     matchedNone: "没有音频文件名与页面或锚点匹配；未作更改。",
+    replacedCues: "已替换的原有提示：{count}。",
     pagesWithoutAudio: "没有音频的页面：{names}",
     audioWithoutPlace: "没有匹配页面或锚点的音频：{names}",
     at_anchors: "锚点 {n}",
