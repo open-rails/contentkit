@@ -19,7 +19,6 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -119,9 +118,6 @@ type CardAccess struct {
 	Requires string           `json:"requires,omitempty"`
 	Preview  *access.Preview  `json:"preview,omitempty"`
 	Releases []access.Release `json:"releases,omitempty"`
-	// Offers are the purchasable offers of Sell's keys; tiers are the host's
-	// to label.
-	Offers []offers.Sale `json:"offers,omitempty"`
 }
 
 // ContentPage is one page of cards.
@@ -292,7 +288,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 	if err != nil {
 		return nil, err
 	}
-	if err := s.decide(ctx, q, got); err != nil {
+	if err := s.settle(ctx, q, got); err != nil {
 		return nil, err
 	}
 	// Hide mode needs the exact verdict after an
@@ -332,34 +328,6 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 		out = append(out, c.Card)
 	}
 	return out, nil
-}
-
-// decide settles every card's access, then asks for the offers its paywalls
-// sell in one more call.
-func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
-	if err := s.settle(ctx, q, rows); err != nil {
-		return err
-	}
-	var keys []string
-	for _, c := range rows {
-		keys = append(keys, c.Access.Sell...)
-	}
-	if s.o.Sales == nil || len(keys) == 0 {
-		return nil
-	}
-	sales, err := s.o.Sales.Sales(ctx, keys)
-	if err != nil {
-		return err
-	}
-	for i := range rows {
-		a := &rows[i].Access
-		for _, k := range a.Sell {
-			if sale, ok := sales[k]; ok {
-				a.Offers = append(a.Offers, sale)
-			}
-		}
-	}
-	return nil
 }
 
 // settle asks the Gate for every card's version in one call. Editors open

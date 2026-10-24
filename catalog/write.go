@@ -22,7 +22,6 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // ContentInput creates a content item, a draft until published.
@@ -132,9 +131,6 @@ type effects struct {
 	events []Event
 	codes  bool // slugs may have changed
 	expose bool // anonymous visibility may have changed
-	// resync are offer targets whose product's name or required entitlements
-	// may have changed.
-	resync []offers.Target
 	// republish are versions whose effective rule or segments changed.
 	republish []versions.Target
 	forks     []versions.Fork
@@ -169,9 +165,6 @@ func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn
 }
 
 func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) error {
-	if err := s.retireOffers(ctx, tx, fx.events); err != nil {
-		return err
-	}
 	if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET revision = revision + 1, updated_at = clock_timestamp() WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids); err != nil {
 		return err
 	}
@@ -201,11 +194,6 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 	}
 	if s.media != nil && len(fx.bodies) > 0 {
 		if err := s.media.Versions.CopyBodiesTx(ctx, tx, fx.bodies); err != nil {
-			return err
-		}
-	}
-	if len(fx.resync) > 0 && s.offers != nil {
-		if err := s.offers.Resync(ctx, tx, fx.resync); err != nil {
 			return err
 		}
 	}
@@ -522,10 +510,6 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 					return fx, err
 				}
 				fx.republish = append(fx.republish, inheriting...)
-				fx.resync = append(fx.resync, offers.Target{Kind: offers.ContentTarget, ID: u.ID})
-				for _, v := range inheriting {
-					fx.resync = append(fx.resync, offers.Target{Kind: offers.VersionTarget, ID: v.Version, Content: u.ID})
-				}
 			}
 			fx.events = append(fx.events, Event{Type: EventContentUpdated, Kind: o.kind, ContentID: u.ID})
 		}
@@ -694,11 +678,6 @@ func (s *Store) PutText(ctx context.Context, actor access.Actor, in []TextPut) e
 					set[p.Language] = *p.Text
 				}
 			}
-			retitled, err := s.retitled(ctx, tx, id, set, drop)
-			if err != nil {
-				return fx, err
-			}
-			fx.resync = append(fx.resync, retitled...)
 			if err := s.writeTexts(ctx, tx, id, set, drop); err != nil {
 				return fx, err
 			}
@@ -709,51 +688,6 @@ func (s *Store) PutText(ctx context.Context, actor access.Actor, in []TextPut) e
 		}
 		return fx, nil
 	})
-}
-
-// retitled is the offer targets of content id and its versions when the
-// write changes a title.
-func (s *Store) retitled(ctx context.Context, tx pgx.Tx, id string, set map[string]Text, drop []string) ([]offers.Target, error) {
-	rows, err := tx.Query(ctx, `SELECT language, title FROM `+s.t.text+` WHERE tenant_id = $1 AND content_id = $2`, s.tenant, id)
-	if err != nil {
-		return nil, err
-	}
-	titles := map[string]string{}
-	for rows.Next() {
-		var l, t string
-		if err := rows.Scan(&l, &t); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		titles[l] = t
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	changed := slices.ContainsFunc(drop, func(l string) bool { _, ok := titles[l]; return ok })
-	for l, t := range set {
-		if old, ok := titles[l]; !ok || old != t.Title {
-			changed = true
-		}
-	}
-	if !changed {
-		return nil, nil
-	}
-	out := []offers.Target{{Kind: offers.ContentTarget, ID: id}}
-	vrows, err := tx.Query(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 ORDER BY id`, s.tenant, id)
-	if err != nil {
-		return nil, err
-	}
-	defer vrows.Close()
-	for vrows.Next() {
-		var vid string
-		if err := vrows.Scan(&vid); err != nil {
-			return nil, err
-		}
-		out = append(out, offers.Target{Kind: offers.VersionTarget, ID: vid, Content: id})
-	}
-	return out, vrows.Err()
 }
 
 // syncHiddenVersion keeps a hidden version serving its content's languages.
@@ -1140,9 +1074,6 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			}
 			if err := s.updateVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionID, p.VersionInput); err != nil {
 				return fx, err
-			}
-			if p.Label != nil || p.Access != nil || p.ClearAccess {
-				fx.resync = append(fx.resync, offers.Target{Kind: offers.VersionTarget, ID: p.VersionID, Content: p.ContentID})
 			}
 			if p.Access != nil || p.ClearAccess || p.Segments != nil {
 				fx.republish = append(fx.republish, versions.Target{Content: p.ContentID, Version: p.VersionID})

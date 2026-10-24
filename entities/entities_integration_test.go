@@ -940,9 +940,8 @@ func TestMerge(t *testing.T) {
 	}
 	tag := f.create(EntityInput{Kind: "tag", Slug: "t"})[0]
 	chans := f.create(EntityInput{Kind: "channel", Slug: "c1", OwnerUserID: "u"}, EntityInput{Kind: "channel", Slug: "c2", OwnerUserID: "u"})
-	f.exec(`UPDATE {s}.content_entities SET ever_sold = true WHERE id = $1`, string(other.ID))
 	for name, m := range map[string]Merge{"merged": {From: b.ID, Into: a.ID}, "other kind": {From: tag.ID, Into: a.ID},
-		"user-owned": {From: chans[0].ID, Into: chans[1].ID}, "sold": {From: other.ID, Into: a.ID}} {
+		"user-owned": {From: chans[0].ID, Into: chans[1].ID}} {
 		if _, err := f.s.Merge(f.ctx, []Merge{m}); !errors.Is(err, ErrConflict) {
 			t.Errorf("%s: %v", name, err)
 		}

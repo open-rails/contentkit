@@ -254,9 +254,6 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 	if err := rows.Err(); err != nil || len(ids) == 0 {
 		return 0, err
 	}
-	if err := s.retireOffers(ctx, tx, events); err != nil {
-		return 0, err
-	}
 	if s.media != nil {
 		if err := s.media.Versions.DeleteTx(ctx, tx, contentTargets(ids)); err != nil {
 			return 0, err
@@ -316,7 +313,7 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		return 0, "", err
 	}
 	defer tx.Rollback(ctx)
-	// Use the same parent-before-version lock order as catalog edits and offers.
+	// Use the same parent-before-version lock order as catalog edits.
 	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c
  WHERE c.tenant_id = $1 AND c.id > $3 AND c.state <> 'deleted'
  AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id
@@ -361,9 +358,6 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		// Release this bounded set before scanning beyond parents whose only
 		// eligible versions are locked. They can be retried by the next run.
 		return 0, next, tx.Commit(ctx)
-	}
-	if err := s.retireOffers(ctx, tx, events); err != nil {
-		return 0, "", err
 	}
 	if s.media != nil {
 		if err := s.media.Versions.DeleteTx(ctx, tx, targets); err != nil {

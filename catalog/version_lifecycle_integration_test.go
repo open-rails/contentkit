@@ -166,9 +166,6 @@ func TestEmptyParentRetentionAlsoPurgesPurchasedContent(t *testing.T) {
 	f := newFixture(t, nil)
 	plain := f.create("staff", gallery("Never sold", "en"))
 	sold := f.create("staff", gallery("Purchased", "en"))
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_items")+` SET ever_sold=true WHERE tenant_id=$1 AND id=$2`, tenant, sold); err != nil {
-		t.Fatal(err)
-	}
 	for _, id := range []string{plain, sold} {
 		version := f.read("staff", "main.test", id)[0].Versions[0].ID
 		if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: version}}); err != nil {

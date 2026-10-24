@@ -52,7 +52,6 @@ import (
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/publishing"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -84,7 +83,6 @@ type Engine struct {
 	notificationJobs *billingNotificationJobs
 	entities         *entities.Store
 	catalog          *catalog.Store
-	offers           *offers.Service
 	discover         *discovery.Service
 	importer         *importer.Service
 	publishing       *publishing.Store
@@ -366,9 +364,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	return nil
 }
 
-// newCatalog builds the stores media is built over: entities, offers (with
-// Deps.Billing) and the catalog, which refreshes facets on entities' changes
-// and renames offers' products after titles.
+// newCatalog builds the stores media is built over: entities and the catalog, which refreshes facets when entities change.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
 	opts := entities.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.EntityReferences,
@@ -384,13 +380,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		opts.Covers, opts.Folders = entityCovers{e}, entityFolders{e}
 	}
 	var err error
-	if deps.Billing != nil {
-		if e.offers, err = offers.New(offers.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Config: e.cfg.Offers,
-			Billing: deps.Billing, Gate: e.gate, Logger: e.log}); err != nil {
-			return err
-		}
-		opts.Sales = e.offers
-	}
+	opts.Gate = e.gate
 	if e.entities, err = entities.New(opts); err != nil {
 		return err
 	}
@@ -402,9 +392,6 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences, PlayableKinds: playable,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
-	if e.offers != nil {
-		co.Offers = e.offers
-	}
 	if e.catalog, err = catalog.New(ctx, co); err != nil {
 		return err
 	}
@@ -684,16 +671,11 @@ func (e *Engine) mount(deps Deps) error {
 		return err
 	}
 	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities,
-		Content: e.content, Offers: e.offers, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
+		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
 	}
 	if e.modules[httpapi.Import], err = e.importer.Handler(e.auth); err != nil {
 		return err
-	}
-	if e.offers != nil {
-		if e.modules[httpapi.Offers], err = e.offers.Handler(e.auth); err != nil {
-			return err
-		}
 	}
 	urls, err := contenturl.New(contenturl.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant})
 	if err != nil {
@@ -724,9 +706,6 @@ func (e *Engine) mountDiscovery(deps Deps) error {
 		if o.ActivitySigner == nil {
 			o.ActivitySigner = e.media.reader
 		}
-	}
-	if e.offers != nil {
-		o.Sales = e.offers
 	}
 	var err error
 	if e.discover, err = discovery.New(o); err != nil {

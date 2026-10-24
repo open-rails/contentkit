@@ -38,7 +38,7 @@ import (
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/workqueue"
-	"github.com/open-rails/contentkit/offers"
+
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -55,7 +55,7 @@ func TestBatchRecordCount(t *testing.T) {
 		{"groups", importer.Batch{Entities: make([]importer.EntityRecord, 2)}, 2},
 		{"contents and versions", importer.Batch{Contents: []importer.ContentRecord{{}, {Versions: make([]importer.VersionRecord, 3)}}}, 5},
 		{"memberships", importer.Batch{Memberships: make([]importer.MembershipSet, 2)}, 2},
-		{"offers", importer.Batch{Offers: make([]importer.OfferRecord, 2)}, 2},
+
 		{"aliases", importer.Batch{Aliases: make([]importer.AliasRecord, 2)}, 2},
 		{"comments", importer.Batch{Comments: make([]importer.CommentRecord, 2)}, 2},
 		{"reactions", importer.Batch{Reactions: make([]importer.ReactionRecord, 2)}, 2},
@@ -158,7 +158,7 @@ func newEngineWith(t *testing.T, mutate func(*contentkit.Config, *contentkit.Dep
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = e.Close(context.Background()) })
-	routes, err := e.Routes(contentkit.Routes{Prefix: "/api", Groups: e.RouteGroups() &^ (contentkit.UploadRoutes | contentkit.MediaRoutes | contentkit.OfferRoutes)})
+	routes, err := e.Routes(contentkit.Routes{Prefix: "/api", Groups: e.RouteGroups() &^ (contentkit.UploadRoutes | contentkit.MediaRoutes)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func catalogBatch() importer.Batch {
 			{Content: gallery1, Kinds: []string{"character"}, Memberships: []importer.MembershipRecord{{Entity: importer.Ref{ExternalID: "char:1"}}}},
 			{Content: importer.Ref{ExternalID: "post:1"}, Kinds: []string{"tag"}, Memberships: []importer.MembershipRecord{{Entity: tag(1)}}},
 		},
-		Offers:  []importer.OfferRecord{{Target: importer.TargetRef{Content: &gallery1}, Terms: offers.Terms{Amount: 4_990_000}}},
+
 		Aliases: []importer.AliasRecord{{Kind: "folder", Key: "12345", Target: importer.TargetRef{Content: &gallery1}}, {Kind: "tag-name", Key: "Big", Target: importer.TargetRef{Entity: ptr(tag(1))}}},
 		Comments: []importer.CommentRecord{
 			{ExternalID: "comment:1", ID: id("comment", 1), Target: importer.TargetRef{Content: &gallery1}, Language: "en", UserID: "u-1", Body: "Great", CreatedAt: &t0},
@@ -308,8 +308,8 @@ func TestImportConverges(t *testing.T) {
 			t.Errorf("written %s = %d, want %d (%v)", s, res.Written[s], n, res.Written)
 		}
 	}
-	if res.Skipped["offers"] != 1 || res.Skipped["signals"] != 2 || res.Skipped["legacy_reading"] != 2 {
-		t.Errorf("skipped %v: offers need billing, clicks and legacy bookmarks a signal plane", res.Skipped)
+	if res.Skipped["signals"] != 2 || res.Skipped["legacy_reading"] != 2 {
+		t.Errorf("skipped %v: clicks and legacy bookmarks need a signal plane", res.Skipped)
 	}
 	if res.IDs["content"]["gallery:1"] != id("gallery", 1) || res.IDs["version"]["version:2"] != id("version", 2) || res.IDs["group"]["tag:1"] != id("tag", 1) ||
 		res.IDs["version"]["version:3"] == "" || res.IDs["group"]["tag:2"] == "" || res.IDs["poll_option"]["answer:2"] == "" {
@@ -953,7 +953,7 @@ func TestImportReadingBookmarksAndExplicitClicks(t *testing.T) {
 		_, _ = f.pool.Exec(context.Background(), "DELETE FROM public.migrations WHERE app = 'contentkit_signal' AND database LIKE '%' || $1", chDB)
 	})
 	b := catalogBatch()
-	b.Offers = nil
+
 	for range 2 {
 		res := f.importBatch(t, b)
 		if len(res.Failed) > 0 || res.Written["signals"] != 2 || res.Written["legacy_reading"] != 2 || res.Skipped["signals"] != 0 || res.Skipped["legacy_reading"] != 0 {

@@ -25,7 +25,6 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -66,8 +65,6 @@ type Config struct {
 	// ActivityCohorts defines application-owned daily readership buckets. First
 	// match wins; nil reports totals without audience-specific categories.
 	ActivityCohorts []signal.ActivityCohort `yaml:"activity_cohorts,omitempty" json:"activity_cohorts,omitempty"`
-	// Offers prices what creators and staff put on sale (needs Deps.Billing).
-	Offers offers.Config `yaml:"offers" json:"offers"`
 	// Accounts declares one shared account space for inboxes and avatars.
 	// It does not combine this site's content catalog with any other site's.
 	Accounts *AccountsConfig `json:"accounts,omitempty" yaml:"accounts,omitempty"`
@@ -330,7 +327,7 @@ type Deps struct {
 	// lookup uses the domain transaction, never another pool connection.
 	Users userinfo.Lookup
 	// Billing is the site's OpenRails merchant (adapters/openrails.Billing
-	// over an embedded engine or the remote client): held keys, offers' products
+	// over an embedded engine or the remote client): held entitlement keys
 	// and prices, free grants. Nil holds no keys and sells nothing.
 	Billing access.Billing
 	// ActivitySigner optionally signs event-time audience receipts for apps

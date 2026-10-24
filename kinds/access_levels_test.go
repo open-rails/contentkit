@@ -14,10 +14,6 @@ func TestKindAccessLevels(t *testing.T) {
 		if err := c.Validate(); err != nil {
 			t.Fatalf("valid policy %v: %v", levels, err)
 		}
-		wantSale := len(levels) == 0 || levels[0] == "ppv" || levels[0] == "group_ppv"
-		if k.Sellable() != wantSale {
-			t.Fatalf("policy %v sellable=%v", levels, k.Sellable())
-		}
 	}
 	for _, levels := range [][]string{{"unknown"}, {"public", "public"}} {
 		c := doujins()

@@ -11,7 +11,6 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // Errors; match with errors.Is.
@@ -100,9 +99,6 @@ type Decision struct {
 	// Preview is what a locked viewer still reads; Releases describe additional audiences.
 	Preview  *access.Preview  `json:"preview,omitempty"`
 	Releases []access.Release `json:"releases,omitempty"`
-	// Offers are the purchasable offers of Sell's keys; tiers are the host's
-	// to label.
-	Offers []offers.Sale `json:"offers,omitempty"`
 }
 
 // Version is what a viewer opens.
@@ -142,8 +138,6 @@ type Version struct {
 	Decision Decision  `json:"decision"`
 	// Text is every language's override, for editors.
 	Text map[string]VersionText `json:"text,omitempty"`
-	// Offer is the version's current offer, for its offer editors.
-	Offer *offers.Offer `json:"offer,omitempty"`
 	// Viewer is the signed-in reader's standing with the version.
 	Viewer *ViewerState `json:"viewer,omitempty"`
 }
@@ -243,13 +237,11 @@ type Content struct {
 	Text             map[string]Text `json:"text,omitempty"`
 	Moderation       string          `json:"moderation,omitempty"`
 	ModerationReason string          `json:"moderation_reason,omitempty"`
-	EverSold         bool            `json:"ever_sold,omitempty"`
-	// Offer is the item's current offer, for its offer editors.
-	Offer     *offers.Offer `json:"offer,omitempty"`
-	Revision  int64         `json:"revision"`
-	CreatedAt time.Time     `json:"created_at"`
-	UpdatedAt time.Time     `json:"updated_at"`
-	DeletedAt *time.Time    `json:"deleted_at,omitempty"`
+
+	Revision  int64      `json:"revision"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 // DefaultVersion is the version a reader of language opens by default, the

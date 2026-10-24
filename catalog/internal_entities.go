@@ -5,7 +5,6 @@ import (
 	"slices"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // redactInternalEntities removes operator-only classification and offer keys
@@ -71,11 +70,10 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 		d.Releases = slices.DeleteFunc(slices.Clone(d.Releases), func(r access.Release) bool { return internal[r.Entity] })
 		if privateKey(d.Requires) {
 			// No offered purchase may skip this required membership.
-			d.Sell, d.Requires, d.Offers = nil, "", nil
+			d.Sell, d.Requires = nil, ""
 			return
 		}
 		d.Sell = slices.DeleteFunc(slices.Clone(d.Sell), privateKey)
-		d.Offers = slices.DeleteFunc(slices.Clone(d.Offers), func(sale offers.Sale) bool { return sale.Key.Kind() == access.KeyEntity && internal[sale.Key.Entity()] })
 	}
 	rule := func(r *access.Rule) {
 		if r == nil {

@@ -21,7 +21,7 @@ func init() { httpapi.Register(httpapi.Import, routes) }
 
 var routes = []httpapi.Route[*Service]{
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/import", Resource: "import", Auth: httpapi.Staff, Perm: string(access.ImportWrite),
-		Doc: "Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by " +
+		Doc: "Imports a batch of groups, content items, memberships, aliases, comments, reactions, favorites, polls and signals, idempotently by " +
 			"external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.",
 		Request: Batch{}, Responses: []httpapi.Reply{httpapi.OK(Result{})}},
 		Serve: httpapi.H((*Service).handleImport)},

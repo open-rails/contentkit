@@ -244,10 +244,10 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	var list []string
-	var renamed []Ref
+
 	for i, id := range ids {
 		if changed[id] {
-			list, renamed = append(list, id), append(renamed, Ref{Kind: rows[i].Kind, ID: EntityID(id)})
+			list = append(list, id)
 		}
 		if g, ok := stored[id]; ok && g.Slug != rows[i].Slug {
 			relabeled = append(relabeled, id)
@@ -255,9 +255,6 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 	}
 	if len(list) == 0 {
 		return nil
-	}
-	if err := s.resyncSold(ctx, q, renamed); err != nil {
-		return err
 	}
 	if err := s.syncCodes(ctx, q, list); err != nil {
 		return err
