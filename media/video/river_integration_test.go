@@ -136,7 +136,7 @@ func TestShortVideoOvertakesLongVideo(t *testing.T) {
 	}
 }
 
-// Cancel cancels an item's queued image, video and audio jobs.
+// Cancel cancels an item's queued image and video work, preserving other items.
 func TestCancelJobs(t *testing.T) {
 	e := newEnv(t, opts{})
 	other := e.refOf("video", 99)
@@ -145,8 +145,8 @@ func TestCancelJobs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Each enqueue queues a video and an audio job, and one pending image job.
-	if n, err := e.queue.Cancel(e.ctx, e.ref); err != nil || n != 5 {
+	// Each enqueue queues a video job and coalesces the pending image job.
+	if n, err := e.queue.Cancel(e.ctx, e.ref); err != nil || n != 3 {
 		t.Fatalf("cancelled %d: %v", n, err)
 	}
 	rows, err := e.pool.Query(e.ctx, "SELECT state FROM "+e.schema+".river_job ORDER BY id")
@@ -161,7 +161,7 @@ func TestCancelJobs(t *testing.T) {
 		}
 		states = append(states, s)
 	}
-	if want := []string{"cancelled", "cancelled", "cancelled", "cancelled", "cancelled", "available", "available", "available"}; !slices.Equal(states, want) {
+	if want := []string{"cancelled", "cancelled", "cancelled", "available", "available"}; !slices.Equal(states, want) {
 		t.Fatalf("states %v", states)
 	}
 }

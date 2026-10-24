@@ -10,7 +10,8 @@ import (
 
 // Uploads past their Upload.Video limits fail before any encode run exists:
 // the audit's sparse 4K file (H4: 2 real frames every 15 s under a declared
-// 60 fps), a video and an audio file longer than MaxSeconds.
+// 60 fps) and a video longer than MaxSeconds. Original audio is not a video
+// conversion and remains playable without an encode run or video duration limit.
 func TestVideoLimits(t *testing.T) {
 	e := newEnv(t, opts{limits: &media.VideoLimits{MaxSeconds: 5}})
 	e.start()
@@ -30,17 +31,25 @@ func TestVideoLimits(t *testing.T) {
 	}{
 		{"source", "video/x-matroska", sparse, "source.mkv", media.CodeVideoOverBudget},
 		{"source", "video/x-matroska", fixture{w: 640, h: 360, secs: 9}.make(t), "source.mkv", media.CodeVideoTooLong},
-		{"audio/tone.wav", "audio/wav", tone, "audio/tone.wav", media.CodeVideoTooLong},
+		{"audio/tone.wav", "audio/wav", tone, "audio/tone.wav", ""},
 	}
 	for i, c := range cases {
 		e.ref = e.refOf("video", 30+i)
 		e.put(c.path, c.typ, c.file, nil)
 	}
 	e.wait()
+	wantFailures := 0
 	for i, c := range cases {
 		e.ref = e.refOf("video", 30+i)
 		m := e.manifest()
 		f := e.file(m, c.upload)
+		if c.code == "" {
+			if f.Fail() != nil || f.Blob == "" || f.Type != c.typ || len(f.Pending) != 0 || len(m.Files) != 1 {
+				t.Fatalf("original audio: %+v", f)
+			}
+			continue
+		}
+		wantFailures++
 		if fail := f.Fail(); fail == nil || fail.Code != c.code || len(f.Pending) != 0 || len(m.Files) != 1 {
 			t.Fatalf("%s: %+v failure %+v", c.file, f, f.Failed)
 		}
@@ -52,7 +61,7 @@ func TestVideoLimits(t *testing.T) {
 	if err := e.pool.QueryRow(e.ctx, "SELECT count(*) FROM "+e.schema+".encode_run").Scan(&runs); err != nil || runs != 0 {
 		t.Fatalf("%d encode runs (%v)", runs, err)
 	}
-	if f := e.failed(); len(f) != len(cases) {
+	if f := e.failed(); len(f) != wantFailures {
 		t.Fatalf("failures %+v", f)
 	}
 }
