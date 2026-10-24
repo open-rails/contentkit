@@ -44,7 +44,7 @@ var routes = []httpapi.Route[*Store]{
 		Responses: []httpapi.Reply{httpapi.OK(Totals{})}, Errors: []string{httpapi.CodeUnavailable}},
 		Serve: httpapi.H((*Store).handleTotals)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
-		Doc:   "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state.",
+		Doc:   "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version and every language.",
 		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleGet)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
@@ -94,18 +94,18 @@ var routes = []httpapi.Route[*Store]{
 		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleRestore)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/publish", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Refused (not_ready) while a published version's media is still processing or being published." + editorsDoc,
-		Request: PublishInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{}), httpapi.Accepted(Content{})},
-		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, "moderation_rejected", "not_ready"}},
+		Doc:     "Publishes a content item now, or schedules it for publish_at. Refused (not_ready) while a published version's media is still processing or being published." + editorsDoc,
+		Request: PublishInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})},
+		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, "not_ready"}},
 		Serve: httpapi.H((*Store).handlePublish)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/unpublish", Resource: "contents", Auth: httpapi.Public,
 		Doc:       "Returns a published or scheduled content item to a draft." + editorsDoc,
 		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleUnpublish)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/text/{language}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public)." + editorsDoc,
-		Request: Text{}, Responses: []httpapi.Reply{httpapi.OK(Content{}), httpapi.Accepted(Content{})},
-		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound, "moderation_rejected"}},
+		Doc:     "Sets a content item's text in one language." + editorsDoc,
+		Request: Text{}, Responses: []httpapi.Reply{httpapi.OK(Content{})},
+		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handlePutText)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/text/{language}", Resource: "contents", Auth: httpapi.Public,
 		Doc:       "Removes a content item's text in one language." + editorsDoc,
@@ -228,7 +228,6 @@ func writeErr(w http.ResponseWriter, err error) {
 
 func classify(err error) (int, string, string) {
 	var ae *AuthError
-	var rej content.RejectedError
 	var notReady *NotReadyError
 	switch {
 	case errors.As(err, &ae):
@@ -250,8 +249,6 @@ func classify(err error) (int, string, string) {
 		return http.StatusForbidden, httpapi.CodeForbidden, "forbidden"
 	case errors.Is(err, ErrConflict):
 		return http.StatusConflict, httpapi.CodeConflict, httpapi.Message(httpapi.CodeConflict)
-	case errors.As(err, &rej):
-		return http.StatusUnprocessableEntity, "moderation_rejected", rej.Reason
 	case errors.As(err, &notReady):
 		return http.StatusConflict, "not_ready", notReady.Error()
 	case errors.Is(err, errMediaNotConfigured):
@@ -317,9 +314,6 @@ func (s *Store) respond(w http.ResponseWriter, r *http.Request, status int, id s
 	if got[0] == nil {
 		writeErr(w, ErrNotFound)
 		return
-	}
-	if status == http.StatusOK && got[0].Moderation == content.ModerationHeld && r.Method != http.MethodGet {
-		status = http.StatusAccepted
 	}
 	if r.Method == http.MethodGet {
 		if err := s.fillStanding(r.Context(), v.actor, got); err != nil {

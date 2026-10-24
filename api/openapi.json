@@ -3440,12 +3440,12 @@
         "tags": [
           "moderation"
         ],
-        "summary": "Held comments or content items awaiting review, oldest first.",
+        "summary": "Held comments awaiting review, oldest first.",
         "parameters": [
           {
             "name": "kind",
             "in": "query",
-            "description": "comment or content",
+            "description": "comment",
             "schema": {
               "type": "string"
             }
@@ -3503,7 +3503,7 @@
         "tags": [
           "moderation"
         ],
-        "summary": "Approves (publishes) or rejects a held comment or content item, at the revision the queue listed.",
+        "summary": "Approves (publishes) or rejects a held comment, at the revision the queue listed.",
         "parameters": [
           {
             "name": "kind",
@@ -3979,7 +3979,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state.",
+        "summary": "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version and every language.",
         "parameters": [
           {
             "name": "id",
@@ -5147,7 +5147,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Publishes a content item now, or schedules it for publish_at; 202 when the moderator holds it for review. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Publishes a content item now, or schedules it for publish_at. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -5179,16 +5179,6 @@
               }
             }
           },
-          "202": {
-            "description": "Accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Content"
-                }
-              }
-            }
-          },
           "default": {
             "$ref": "#/components/responses/Error"
           }
@@ -5205,7 +5195,6 @@
           "conflict",
           "forbidden",
           "not_found",
-          "moderation_rejected",
           "not_ready"
         ],
         "x-contentkit-error-sets": [
@@ -5271,7 +5260,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Sets a content item's text in one language; 202 when the moderator holds a live item's edit (its last approved text stays public). Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Sets a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -5311,16 +5300,6 @@
               }
             }
           },
-          "202": {
-            "description": "Accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Content"
-                }
-              }
-            }
-          },
           "default": {
             "$ref": "#/components/responses/Error"
           }
@@ -5336,8 +5315,7 @@
         "x-contentkit-errors": [
           "conflict",
           "forbidden",
-          "not_found",
-          "moderation_rejected"
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -13357,12 +13335,6 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/CatalogText"
             }
-          },
-          "moderation": {
-            "$ref": "#/components/schemas/ModerationState"
-          },
-          "moderation_reason": {
-            "type": "string"
           },
           "revision": {
             "type": "integer"

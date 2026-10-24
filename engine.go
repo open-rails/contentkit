@@ -184,10 +184,6 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 	if e.content, err = content.New(ctx, e.contentOptions(deps)); err != nil {
 		return nil, err
 	}
-	if err := e.content.AddHeldSource(catalog.HeldKind, e.catalog); err != nil {
-		return nil, err
-	}
-	e.catalog.BindModeration(e.content)
 	e.notices = e.content.Notifications
 	if err := e.mount(deps); err != nil {
 		return nil, err

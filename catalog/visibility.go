@@ -314,8 +314,6 @@ type facetRow struct {
 	liveFrom                   *time.Time
 	// deleted is the version's own deletion; contentDeleted its content's.
 	deleted, contentDeleted bool
-	// held: the content's latest edit awaits moderation.
-	held                    bool
 	languages               []string
 	rule                    access.Rule
 	restrictions, entityIDs []string
@@ -349,7 +347,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT f.content_id, f.version_id, f.kind, f.live_from, c.state = 'deleted', ver.state = 'deleted', c.moderation <> 'approved',
+	rows, err := s.pool.Query(ctx, `SELECT f.content_id, f.version_id, f.kind, f.live_from, c.state = 'deleted', ver.state = 'deleted',
  f.languages, c.access, ver.access, f.restrictions, f.entity_ids, coalesce(f.owner_entity_id, ''), f.position,
  EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = f.tenant_id AND cc.content_id = f.content_id AND cc.user_id = $3 AND $3 <> '')
  FROM `+s.t.currentFacets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
@@ -364,7 +362,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		var r facetRow
 		var isCreator bool
 		var crule, vrule []byte
-		if err := rows.Scan(&r.contentID, &r.versionID, &r.kind, &r.liveFrom, &r.contentDeleted, &r.deleted, &r.held, &r.languages,
+		if err := rows.Scan(&r.contentID, &r.versionID, &r.kind, &r.liveFrom, &r.contentDeleted, &r.deleted, &r.languages,
 			&crule, &vrule, &r.restrictions, &r.entityIDs, &r.ownerEntity, &r.position, &isCreator); err != nil {
 			rows.Close()
 			return nil, err
@@ -433,7 +431,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		if g == "" || known(id) || slices.Contains(entities, g) {
 			continue
 		}
-		if every || locked[id] || len(shown[id]) == 0 || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
+		if every || locked[id] || len(shown[id]) == 0 || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted }) {
 			entities = append(entities, g)
 		}
 	}

@@ -16,10 +16,8 @@ import (
 
 // Contents reads content items as v sees them (spec §4): an item the viewer
 // may not see, or that does not exist, is nil. Text is in the viewer's
-// language, else the site's first language, else the first it has; an item
-// whose edit awaits review shows its last approved text to everyone but its
-// editors. Editors also get every language's text, every version and the
-// moderation state.
+// language, else the site's first language, else the first it has. Editors
+// also get every language's text and every version.
 func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Content, error) {
 	return s.contents(ctx, v, ids, "")
 }
@@ -102,12 +100,8 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			Entities: []EntitySummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
 			UpdatedAt: it.updatedAt, DeletedAt: it.deletedAt}
 		c.Live = v.itemLive(iv)
-		shown := texts[id]
-		if !iv.editor && it.moderation != "approved" && it.snapshot != nil {
-			shown = it.snapshot
-		}
-		lang := s.pickLanguage(v.language, shown)
-		t := shown[lang]
+		lang := s.pickLanguage(v.language, texts[id])
+		t := texts[id][lang]
 		c.Language, c.Title, c.Slug = lang, t.Title, t.Slug
 		if c.Decision = bundle(iv); c.Decision.Allowed {
 			c.Body = t.Body
@@ -121,10 +115,6 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 		}
 		if iv.editor {
 			c.Text = texts[id]
-			if it.moderation != "approved" {
-				c.Moderation, c.ModerationReason = it.moderation, it.moderationReason
-			}
-
 		}
 		if l, ok := links[id]; ok {
 			page := contenturl.Prefix(s.cfg.Languages, v.language)
@@ -391,19 +381,17 @@ type itemRow struct {
 	kind, state, ownerEntity          string
 	originalTitle, originalLanguage   string
 	comments                          string
-	moderation, moderationReason      string
 	access                            access.Rule
 	restrictions                      []string
 	attributes                        map[string]any
-	snapshot                          map[string]Text
 	publishAt, publishedAt, deletedAt *time.Time
 	createdAt, updatedAt              time.Time
 	revision                          int64
 }
 
 func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.original_title, ''), coalesce(c.original_language, ''), coalesce(c.owner_entity_id, ''), c.moderation, coalesce(c.moderation_reason, ''),
- c.access, c.restrictions, c.attributes, c.published_snapshot, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.original_title, ''), coalesce(c.original_language, ''), coalesce(c.owner_entity_id, ''),
+ c.access, c.restrictions, c.attributes, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
  c.revision, c.comments
  FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
@@ -414,9 +402,9 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 	for rows.Next() {
 		var id string
 		var r itemRow
-		var access, attrs, snapshot []byte
-		if err := rows.Scan(&id, &r.kind, &r.state, &r.originalTitle, &r.originalLanguage, &r.ownerEntity, &r.moderation, &r.moderationReason, &access, &r.restrictions,
-			&attrs, &snapshot, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments); err != nil {
+		var access, attrs []byte
+		if err := rows.Scan(&id, &r.kind, &r.state, &r.originalTitle, &r.originalLanguage, &r.ownerEntity, &access, &r.restrictions,
+			&attrs, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(access, &r.access); err != nil {
@@ -424,11 +412,6 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 		}
 		if err := json.Unmarshal(attrs, &r.attributes); err != nil {
 			return nil, err
-		}
-		if snapshot != nil {
-			if err := json.Unmarshal(snapshot, &r.snapshot); err != nil {
-				return nil, err
-			}
 		}
 		out[id] = &r
 	}

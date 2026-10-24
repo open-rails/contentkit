@@ -14,7 +14,6 @@ import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } fr
 import { useContent } from "../../react/contents.js";
 import { useKinds } from "../../react/entities.js";
 import { keyOf, useContentScope, usePaged, useResource } from "../../react/use-resource.js";
-import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Button, buttonVariants } from "#ckui/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
 import { Input } from "#ckui/ui/input";
@@ -75,12 +74,10 @@ export function useContentManagerAccess(o: FlowClientOptions = {}): StaffAccess<
   return useStaffAccess(["contents"] as const, o);
 }
 
-export type ContentStatus = "draft" | "scheduled" | "published" | "held" | "rejected";
+export type ContentStatus = "draft" | "scheduled" | "published";
 
 /** An item's status as the manager names it. */
 export function contentStatus(c: Content): ContentStatus {
-  if (c.moderation === "rejected") return "rejected";
-  if (c.moderation === "held") return "held";
   if (c.state === "draft") return "draft";
   if (!c.live) return "scheduled";
   return "published";
@@ -698,7 +695,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   );
 }
 
-const dot: Record<ContentStatus, string> = { published: "bg-success", scheduled: "bg-sky-500", draft: "bg-muted-foreground/50", held: "bg-warning", rejected: "bg-destructive" };
+const dot: Record<ContentStatus, string> = { published: "bg-success", scheduled: "bg-sky-500", draft: "bg-muted-foreground/50" };
 
 /** A status as a coloured dot and its name. */
 function StatusDot({ status }: { status: ContentStatus }) {
@@ -1166,16 +1163,6 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                 </div>
               )}
             </header>
-
-            {item?.moderation && (
-              <Alert variant={item.moderation === "rejected" ? "destructive" : "default"}>
-                <AlertDescription>
-                  {item.moderation_reason
-                    ? t(`contentManager.${item.moderation === "rejected" ? "rejectedBecause" : "heldBecause"}`, { reason: item.moderation_reason })
-                    : t(`contentManager.${item.moderation === "rejected" ? "rejectedNote" : "heldNote"}`)}
-                </AlertDescription>
-              </Alert>
-            )}
 
             {/* Title and description */}
             <div className="rounded-lg border border-border bg-card p-4 grid gap-4">

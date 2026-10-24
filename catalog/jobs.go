@@ -61,7 +61,7 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
 	if after == "" {
 		rows, err = tx.Query(ctx, `UPDATE `+s.t.items+` SET published_at = publish_at, updated_at = clock_timestamp(), revision = revision + 1
  WHERE id IN (SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL AND publish_at <= $2
-  AND moderation = 'approved' ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND tenant_id = $1 RETURNING id, kind, published_at`, s.tenant, now)
+  ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND tenant_id = $1 RETURNING id, kind, published_at`, s.tenant, now)
 		if err != nil {
 			return 0, "", err
 		}
@@ -99,7 +99,7 @@ func (s *Store) publishDue(ctx context.Context, after string) (int, string, erro
  FROM `+s.t.items+` c WHERE v.id IN (SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL
   AND content_id = ANY($3) AND publish_at <= $2 ORDER BY publish_at, id LIMIT 500 FOR UPDATE SKIP LOCKED)
  AND v.tenant_id = $1 AND c.tenant_id = v.tenant_id AND c.id = v.content_id
- AND c.state='published' AND c.moderation='approved' AND c.published_at IS NOT NULL AND coalesce(c.published_at,c.publish_at)<=$2
+ AND c.state='published' AND c.published_at IS NOT NULL AND coalesce(c.published_at,c.publish_at)<=$2
  RETURNING v.content_id, v.id, c.kind,v.published_at`, s.tenant, now, parents)
 	if err != nil {
 		return 0, "", err

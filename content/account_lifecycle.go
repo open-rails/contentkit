@@ -72,7 +72,6 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 			`UPDATE ` + s.t.bannedWords + ` SET created_by='' WHERE tenant_id=$1 AND created_by=$2`,
 			`DELETE FROM ` + pgx.Identifier{rt.schema, "content_creators"}.Sanitize() + ` WHERE tenant_id=$1 AND user_id=$2`,
 			`UPDATE ` + s.t.items + ` SET created_by=NULL WHERE tenant_id=$1 AND created_by=$2`,
-			`UPDATE ` + s.t.items + ` SET moderated_by=NULL WHERE tenant_id=$1 AND moderated_by=$2`,
 			`UPDATE ` + s.t.entities + ` SET owner_user_id=NULL WHERE tenant_id=$1 AND owner_user_id=$2`,
 			`DELETE FROM ` + pgx.Identifier{rt.schema, "content_filter_prefs"}.Sanitize() + ` WHERE tenant_id=$1 AND user_id=$2`,
 		} {

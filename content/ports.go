@@ -53,12 +53,10 @@ type ModerationInput struct {
 	SubjectID string // opaque content author; may differ from editing moderator
 	Tenant    string
 	Actor     access.Actor
-	// Ref is the content the item belongs to: the commented content for a
-	// comment, the item's own reference for catalog text.
+	// Ref is the commented content.
 	Ref    contentref.ContentRef
-	Kind   string // KindComment, or a HeldSource's kind (catalog.HeldKind)
+	Kind   string // KindComment
 	ItemID string // the existing item on an edit; empty on create
-	Title  string // catalog text only
 	Text   string
 }
 

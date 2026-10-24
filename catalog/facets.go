@@ -87,7 +87,6 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
  SELECT c.tenant_id, c.id, v.id, c.kind,
   CASE WHEN (c.state = 'published' OR (c.state = 'deleted' AND c.published_at IS NOT NULL))
    AND (v.state = 'published' OR (v.state = 'deleted' AND v.published_at IS NOT NULL))
-   AND (c.moderation = 'approved' OR c.published_snapshot IS NOT NULL)
    THEN greatest(coalesce(c.published_at, c.publish_at), coalesce(v.published_at, v.publish_at)) END,
   c.state = 'deleted' OR v.state = 'deleted', c.kind = ANY($4::text[]) AND v.playable IS FALSE, v.languages,
   a.level, a.tiers, a.entity_id, coalesce(a.releases, '[]'::jsonb), c.restrictions, a.entities, v.traits, c.owner_entity_id, v.position, coalesce(c.published_at, c.publish_at),

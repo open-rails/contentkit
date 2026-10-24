@@ -161,10 +161,6 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.AddHeldSource(catalog.HeldKind, cat); err != nil {
-		t.Fatal(err)
-	}
-	cat.BindModeration(rt)
 	polls.content = rt
 	mux := http.NewServeMux()
 	mux.Handle("/", rt.Handler())
