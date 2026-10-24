@@ -52,7 +52,6 @@ import (
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/contentkit/publishing"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -85,7 +84,6 @@ type Engine struct {
 	catalog          *catalog.Store
 	discover         *discovery.Service
 	importer         *importer.Service
-	publishing       *publishing.Store
 	media            *engineMedia
 	avatars          *engineAvatars
 	modules          map[httpapi.Module]http.Handler
@@ -298,6 +296,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := preflightOfferJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
 		return err
 	}
+	if err := preflightPublishingJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
+		return err
+	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
@@ -331,6 +332,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	// The guarded schema migration succeeded: obsolete waiting jobs can now
 	// be cancelled without discarding an unsynchronized billing write.
 	if err := retireOfferJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
+		return err
+	}
+	if err := retirePublishingJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
 		return err
 	}
 	if options.SkipQueues {
@@ -660,12 +664,6 @@ func (e *Engine) mount(deps Deps) error {
 		if e.modules[httpapi.Versions], err = m.versions.Handler(e.auth, e.log); err != nil {
 			return err
 		}
-		if e.publishing, err = publishing.New(publishing.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
-			Catalog: e.catalog, Entities: e.entities, Registry: m.reg, Uploads: m.uploads, Manifests: m.jobs.Manifests(),
-			Versions: m.versions, Auth: e.auth, Authority: publishingAuthority{e}, Logger: e.log, Clock: deps.Clock}); err != nil {
-			return err
-		}
-		e.modules[httpapi.Publishing] = e.publishing.Handler()
 	}
 	c := e.cfg.Content
 	if e.modules[httpapi.Entities], err = e.entities.Handler(e.auth); err != nil {

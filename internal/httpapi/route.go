@@ -52,12 +52,10 @@ const (
 	Discovery Module = "discovery"
 	// Import is the bulk import.
 	Import Module = "import"
-	// Publishing accepts a complete archive submission and follows its durable lifecycle.
-	Publishing Module = "publishing"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Entities, Notifications, Versions, Discovery, Import, Publishing}
+var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Entities, Notifications, Versions, Discovery, Import}
 
 // Prefix is the module's sub-path under the host's prefix: Version, then
 // content, groups, versions and kinds at its root and the others beneath their own
@@ -80,7 +78,7 @@ func (m Module) Prefix() string {
 // kind with one of these names would be unreachable under the host's prefix.
 func Reserved() []string {
 	return []string{"media", "codes", "entities", "contents", "kinds", "me", "catalog", "events", "notifications",
-		"search", "typeahead", "recommendations", "release-dates", "releases", "signals", "exposures", "import", "sitemap", "stats", "publishing-operations", "content-filters"}
+		"search", "typeahead", "recommendations", "release-dates", "releases", "signals", "exposures", "import", "sitemap", "stats", "content-filters"}
 }
 
 // Tier is what a route requires of its caller before its handler acts. The
