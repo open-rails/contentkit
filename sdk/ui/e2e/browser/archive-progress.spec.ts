@@ -59,14 +59,18 @@ test("ZIP drop shows transfer bytes, real processing previews, and reopens a dur
     await page.reload(); // no upload queue or component memory survives
     const editor = page.locator('[data-ckui="reader-content-editor"]');
     await expect(editor.locator('[data-stage="archive-pages"]')).toContainText("8/25", { timeout: 30_000 });
-    await expect(editor.locator('[data-ckui="thumb"] img').first()).toBeVisible({ timeout: 30_000 });
+    await expect(editor.locator('[data-ckui="page-tile"] img').first()).toBeVisible({ timeout: 30_000 });
     await h.clearFaults(version);
     await expect(editor.locator('[data-stage="archive-pages"]')).toHaveCount(0, { timeout: 90_000 });
+    const finishedImages = editor.locator('[data-ckui="page-tile"] img');
+    await expect(finishedImages).toHaveCount(25, { timeout: 30_000 });
+    await finishedImages.last().scrollIntoViewIfNeeded();
+    await expect.poll(() => finishedImages.evaluateAll((images) => images.filter((image) => (image as HTMLImageElement).naturalWidth > 0).length), { timeout: 30_000 }).toBe(25);
     const finished = await client.media.read({ kind: "comic", id, version }, { status: true });
     expect(finished.status?.archives.pages).toMatchObject({ completed: 25, total: 25 });
     expect(finished.status?.presets.find((preset) => preset.name === "thumb")).toMatchObject({ completed: 25, total: 25 });
     expect((await client.contents.get(id)).state).toBe("draft");
-    await page.screenshot({ path: info.outputPath("zip-draft-ready.png"), fullPage: true });
+    await editor.locator('[data-ckui="folder-group"][data-path="originals/{name}"]').screenshot({ path: info.outputPath("zip-draft-ready.png") });
   } finally {
     if (version) await h.clearFaults(version);
     await cdp.detach();
