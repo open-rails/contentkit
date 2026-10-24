@@ -134,30 +134,13 @@ func TestEngineInteractions(t *testing.T) {
 	s.call(http.StatusOK, staff, "DELETE", v+"/entities/"+rainy, nil, nil)
 	s.call(http.StatusNotFound, u2, "POST", v+"/entities/"+rainy+"/like", nil, nil)
 
-	// The reader's reactions and favorites, as cards.
+	// The reader's favorites, as cards.
 	var page discovery.InteractionPage
 	mine := func(a access.Actor, path string) {
 		t.Helper()
 		page = discovery.InteractionPage{}
 		s.call(http.StatusOK, a, "GET", v+path, nil, &page)
 	}
-	mine(u1, "/me/reactions?target=entities&kind=tag")
-	if len(page.Items) != 1 || page.Items[0].Entity == nil || page.Items[0].Entity.Name != "Moonlit" || page.Items[0].Value != 1 {
-		t.Fatalf("tag reactions %+v", page)
-	}
-	mine(u2, "/me/reactions?target=entities&value=like")
-	if len(page.Items) != 1 || string(page.Items[0].Entity.ID) != moon {
-		t.Fatalf("u2's tag likes %+v", page)
-	}
-	mine(u1, "/me/reactions?value=like")
-	if len(page.Items) != 1 || page.Items[0].Content == nil || page.Items[0].Content.ID != harbor.ID {
-		t.Fatalf("u1's content likes %+v", page)
-	}
-	mine(u2, "/me/reactions?value=dislike")
-	if len(page.Items) != 1 || page.Items[0].Value != -1 || page.Items[0].Content.Title != "Harbor" {
-		t.Fatalf("u2's dislikes %+v", page)
-	}
-	s.call(http.StatusBadRequest, u1, "GET", v+"/me/reactions?value=meh", nil, nil)
 	s.call(http.StatusUnauthorized, anon, "GET", v+"/me/favorites", nil, nil)
 	mine(u1, "/me/favorites?limit=1")
 	if len(page.Items) != 1 || page.Items[0].Content.ID != third.ID || page.NextCursor == "" {
@@ -273,9 +256,9 @@ func TestEngineInteractions(t *testing.T) {
 	if rows("u1") != 0 || rows(session) != 0 {
 		t.Fatalf("searches after erasure: u1 %d, session %d", rows("u1"), rows(session))
 	}
-	mine(u1, "/me/reactions")
-	if len(page.Items) != 0 {
-		t.Fatalf("an erased reader's reactions %+v", page)
+	var reactions int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema, "content_reactions"}.Sanitize()+` WHERE user_id = 'u1'`).Scan(&reactions); err != nil || reactions != 0 {
+		t.Fatalf("an erased reader's reactions: %d %v", reactions, err)
 	}
 }
 

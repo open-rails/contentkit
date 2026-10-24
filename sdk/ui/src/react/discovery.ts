@@ -282,16 +282,6 @@ export function useMyFavorites(q: MineQuery = {}, o: { client?: ContentKitClient
   return { ...list, summary: list.metadata };
 }
 
-/** What the signed-in reader liked (or, with value, disliked), most recent first. */
-export function useMyReactions(q: MineQuery & { value?: "like" | "dislike" } = {}, o: { client?: ContentKitClient } = {}): UseInteractions {
-  const { client, store, scope, viewer } = useContentScope(o.client);
-  const query = useDisplay(q)!;
-  const list = useList(store, viewer === null ? null : keyOf("reactions", scope, query), { type: "reactions" }, async (cursor, signal) =>
-    interactions(await client.reactions.mine({ ...query, cursor: cursor as string | undefined, summary: cursor ? undefined : query.summary }, signal)),
-  );
-  return { ...list, summary: list.metadata };
-}
-
 export interface UseContentFilters {
   filters: ContentFilters | null;
   loading: boolean;

@@ -93,7 +93,6 @@ export {
   useHistory,
   useLockedCount,
   useMyFavorites,
-  useMyReactions,
   useRecentSearches,
   useRecommendations,
   useReleaseDates,

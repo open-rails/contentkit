@@ -52,7 +52,6 @@ it("discovery query types take exactly their routes' parameters (checked by tsc)
   expectTypeOf<Gap<KnownCardsQuery, "GET", "/content-cards">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<RecentSearchesQuery, "GET", "/me/searches">>().toEqualTypeOf<never>();
   expectTypeOf<Gap<MineQuery, "GET", "/me/favorites">>().toEqualTypeOf<never>();
-  expectTypeOf<Gap<MineQuery & { value?: string }, "GET", "/me/reactions">>().toEqualTypeOf<never>();
 });
 
 it("sends selection summary and bounded public card hydration IDs as ordinary query fields", async () => {

@@ -21,16 +21,13 @@ const (
 	TargetEntities = "entities"
 )
 
-// MineOptions select one page of the signed-in reader's favorites or
-// reactions.
+// MineOptions select one page of the signed-in reader's favorites.
 type MineOptions struct {
 	Reader
 	// Target is contents (the default) or entities.
 	Target string
 	// Kind is one content kind or entity kind; every kind by default.
-	Kind string
-	// Value narrows reactions: like or dislike; both by default.
-	Value        string
+	Kind         string
 	CardEntities []string
 	Cursor       string
 	// Limit defaults to 24 and is capped at 100.
@@ -44,13 +41,13 @@ type MineOptions struct {
 type Interaction struct {
 	Content *Card                `json:"content,omitempty"`
 	Entity  *entities.EntityCard `json:"entity,omitempty"`
-	// Value is the reaction: 1 like, -1 dislike; 1 for a favorite.
+	// Value is 1 for a favorite.
 	Value int16 `json:"value"`
 	// At is when the reader favorited or last reacted.
 	At time.Time `json:"at"`
 }
 
-// InteractionPage is one page of the reader's favorites or reactions, most
+// InteractionPage is one page of the reader's favorites, most
 // recent first.
 type InteractionPage struct {
 	Items []Interaction `json:"items"`
@@ -66,27 +63,11 @@ func (s *Service) Favorites(ctx context.Context, o MineOptions) (InteractionPage
 	return s.mine(ctx, o, s.t.favorites, "x.value = 1", "x.created_at")
 }
 
-// Reactions pages what the signed-in reader liked or disliked, most recently
-// changed first, as Favorites does: tag affinities and preferences read it.
-func (s *Service) Reactions(ctx context.Context, o MineOptions) (InteractionPage, error) {
-	value := "x.value <> 0"
-	switch o.Value {
-	case "":
-	case "like":
-		value = "x.value = 1"
-	case "dislike":
-		value = "x.value = -1"
-	default:
-		return InteractionPage{}, fmt.Errorf("%w: value %q is like or dislike", ErrInvalid, o.Value)
-	}
-	return s.mine(ctx, o, s.t.reactions, value, "x.updated_at")
-}
-
 func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at string) (InteractionPage, error) {
 	ctx = access.WithMemo(ctx)
 	out := InteractionPage{Items: []Interaction{}}
 	if !o.Actor.Member() {
-		return out, fmt.Errorf("%w: favorites and reactions belong to a signed-in reader", ErrInvalid)
+		return out, fmt.Errorf("%w: favorites belong to a signed-in reader", ErrInvalid)
 	}
 	var kinds []string
 	switch o.Target {
@@ -244,11 +225,6 @@ var mineRoutes = []httpapi.Route[handler]{
 		Doc:   "The content items (as their listing shows them) or groups the reader favorited, most recent first.",
 		Query: params(mineParams, readerParams), Responses: []httpapi.Reply{httpapi.OK(InteractionPage{})}},
 		Serve: httpapi.H(handler.favorites)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/reactions", Resource: "discovery", Auth: httpapi.User,
-		Doc:       "The content items or groups the reader liked or disliked, most recent first: tag affinities and preferences.",
-		Query:     params([]httpapi.Param{httpapi.Text("value", "like or dislike; both by default")}, mineParams, readerParams),
-		Responses: []httpapi.Reply{httpapi.OK(InteractionPage{})}},
-		Serve: httpapi.H(handler.reactions)},
 }
 
 func (h handler) mineOptions(r *http.Request) (MineOptions, error) {
@@ -258,29 +234,16 @@ func (h handler) mineOptions(r *http.Request) (MineOptions, error) {
 		err = flagErr
 	}
 	q := r.URL.Query()
-	return MineOptions{Reader: readerOf(r), Target: q.Get("target"), Kind: q.Get("kind"), Value: q.Get("value"),
+	return MineOptions{Reader: readerOf(r), Target: q.Get("target"), Kind: q.Get("kind"),
 		CardEntities: list(q.Get("card_entities")), Cursor: q.Get("cursor"), Limit: limit, Summary: summary}, err
 }
 
 func (h handler) favorites(w http.ResponseWriter, r *http.Request) {
 	o, err := h.mineOptions(r)
-	if err == nil && o.Value != "" {
-		err = fmt.Errorf("%w: favorites take no value", ErrInvalid)
-	}
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	page, err := h.s.Favorites(r.Context(), o)
-	h.reply(w, r, page, err)
-}
-
-func (h handler) reactions(w http.ResponseWriter, r *http.Request) {
-	o, err := h.mineOptions(r)
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	page, err := h.s.Reactions(r.Context(), o)
 	h.reply(w, r, page, err)
 }

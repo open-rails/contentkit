@@ -372,10 +372,8 @@ a viewer can't open (or a version-level comment's version) and doesn't edit
 follow its kind's locked view (Locked content below): unless it shows
 `comments`, lists, replies and the latest feed withhold them, the standing
 (`GET .../can-comment`) says `locked`, and posting, replying, editing and
-reacting answer `403 comments_locked`; moderation queues keep them. The reader's favorites
-and reactions, as cards, are `GET /v1/me/favorites` and `GET
-/v1/me/reactions?target=contents|entities&kind=&value=like|dislike` (tag
-preferences); their counts reach `content_facets` (`likes`, `dislikes`,
+reacting answer `403 comments_locked`; moderation queues keep them. The reader's favorites,
+as cards, are `GET /v1/me/favorites`; reaction and favorite counts reach `content_facets` (`likes`, `dislikes`,
 `favorites`, `rating`) through the catalog's counts job.
 
 Ports (in `content` unless qualified):
@@ -779,8 +777,8 @@ that fits the reader (`display_language` first, then position).
   Account language remains the host's existing profile preference.
 - `GET|DELETE /me/history`, `POST /signals` (explicit clicks; signed out,
   `session` names the browser), `POST /exposures`.
-- `GET /me/favorites`, `GET /me/reactions`: what the reader favorited or
-  liked and disliked, contents as cards or entities, most recent first.
+- `GET /me/favorites`: what the reader favorited, contents as cards or
+  entities, most recent first.
 - `GET /sitemap/contents?kind=`, `GET /sitemap/entities?kind=` (open): the
   request site's live, listed pages by id (`cursor`, up to 10000 a page),
   each with `lastmod` and its path per language it serves. Content filters
