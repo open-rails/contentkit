@@ -46,7 +46,7 @@ func TestStatusCountsWholeManifestAndArchiveEntries(t *testing.T) {
 	m.Files[1].Public[0].Source = first.Key()
 	m.Files[1].Public[0].Names = k.PublicNames(m, &k.Public[0], first.Path)
 	got := statusOf(k, m, EncodeStatus{})
-	if got.State != StateProcessing || got.Uploads != (ProcessingCount{Completed: 3, Total: 4, Failed: 1}) {
+	if got.State != StateProcessing || got.Uploads != (ProcessingCount{Completed: 3, Total: 5, Failed: 1}) {
 		t.Fatalf("uploads: %+v", got)
 	}
 	if got.Archives.Total != 1 || got.Archives.Completed != 0 || got.Archives.Pages == nil || *got.Archives.Pages != (ProcessingCount{Completed: 3, Total: 4}) {
@@ -56,7 +56,11 @@ func TestStatusCountsWholeManifestAndArchiveEntries(t *testing.T) {
 		t.Fatalf("presets: %+v", got.Presets)
 	}
 	for _, preset := range got.Presets {
-		if preset.ProcessingCount != (ProcessingCount{Completed: 1, Total: 3, Failed: 1}) {
+		total := 3
+		if preset.Name == "read" {
+			total = 4
+		}
+		if preset.ProcessingCount != (ProcessingCount{Completed: 1, Total: total, Failed: 1}) {
 			t.Fatalf("preset counts: %+v", preset)
 		}
 	}
@@ -136,5 +140,91 @@ func TestStatusRejectsUnownedPublicGenerationAndPendingPrivateOutput(t *testing.
 		if preset.Completed != 0 {
 			t.Fatalf("stale/pending output counted ready: %+v", preset)
 		}
+	}
+}
+
+func TestStatusTracksGenericUnattachedArchiveAndPrivateRenditions(t *testing.T) {
+	k := &Kind{Uploads: []Upload{{Path: "zip/{name}", ArchiveTo: "body/{name}"}, {Path: "body/{name}"}}, Private: []Private{{Name: "read", From: "body/{name}"}}, Public: []Public{{Name: "thumb", From: "body/{name}"}}}
+	compileStatusKind(t, k)
+	archive := File{Path: "zip/book.zip", Type: "application/zip", Blob: statusBlob("generic ZIP"), Unattached: true, Meta: map[string]any{"archive_pages_total": 2}}
+	raw, _ := layout.BlobDigest(archive.Blob)
+	sum := hex.EncodeToString(raw)
+	page := func(name string, index int) File {
+		return File{Path: "body/" + name + ".png", Type: "image/png", Blob: statusBlob(name), Unattached: true, Pending: []string{"read", "thumb"}, Meta: map[string]any{"page": map[string]any{"archive_sha256": sum, "source_index": index}}}
+	}
+	m := &Manifest{Files: []File{archive, page("one", 1)}}
+	got := statusOf(k, m, EncodeStatus{})
+	if k.Readiness(m).State != StateReady || got.State != StateProcessing || got.Archives.Total != 1 || got.Archives.Completed != 0 || got.Archives.Pages == nil || got.Archives.Pages.Completed != 1 || got.Archives.Pages.Total != 2 {
+		t.Fatalf("generic staged archive work lost: %+v", got)
+	}
+	m.Files = append(m.Files, page("two", 2))
+	m.Files[0].Meta["archive_completed_sha256"] = sum
+	got = statusOf(k, m, EncodeStatus{})
+	if got.Archives.Completed != 1 || got.Archives.Pages.Completed != 2 || got.State != StateProcessing || len(got.Presets) != 1 || got.Presets[0].Name != "read" || got.Presets[0].Total != 2 || got.Presets[0].Completed != 0 {
+		t.Fatalf("private work vs deferred public presets: %+v", got)
+	}
+	for i := 1; i <= 2; i++ {
+		m.Files[i].Pending = []string{"thumb"}
+		m.Files = append(m.Files, File{Path: "read/" + m.Files[i].Path, From: m.Files[i].Path, Preset: "read", Blob: statusBlob("output" + m.Files[i].Path)})
+	}
+	got = statusOf(k, m, EncodeStatus{})
+	if k.Readiness(m).State != StateReady || got.State != StateReady || len(got.Presets) != 1 || got.Presets[0].Completed != 2 {
+		t.Fatalf("unattached public presets incorrectly keep staging pending: %+v", got)
+	}
+	// Attachment makes public rendering relevant, independently of ZIP/source work.
+	m.Files[1].Unattached = false
+	got = statusOf(k, m, EncodeStatus{})
+	if k.Readiness(m).State != StateProcessing || got.State != StateProcessing || len(got.Presets) != 2 || got.Presets[1].Name != "thumb" || got.Presets[1].Total != 1 || got.Presets[1].Completed != 0 {
+		t.Fatalf("attached public work missing: %+v", got)
+	}
+}
+
+func TestStatusCountsUnattachedPlacementAndFailureWithoutChangingReadiness(t *testing.T) {
+	k := &Kind{Uploads: []Upload{{Path: "body/{name}"}}}
+	compileStatusKind(t, k)
+	m := &Manifest{Files: []File{{Path: "body/new.png", Type: "image/png", Unattached: true, Staged: "pending"}}}
+	got := statusOf(k, m, EncodeStatus{})
+	if k.Readiness(m).State != StateReady || got.State != StateProcessing || got.Uploads.Total != 1 || got.Uploads.Completed != 0 {
+		t.Fatalf("staged placement lost: %+v", got)
+	}
+	m.Files[0].Failed = NewFailure(m.Files[0], &ImageError{Code: CodeImageUnreadable, Message: "worker internals"})
+	got = statusOf(k, m, EncodeStatus{})
+	if k.Readiness(m).State != StateReady || got.State != StateFailed || got.Uploads.Failed != 1 || got.FailureCount != 1 {
+		t.Fatalf("staged failure lost: %+v", got)
+	}
+}
+
+func TestStatusCountsArchivePagesOnlyInConfiguredDestination(t *testing.T) {
+	k := &Kind{Uploads: []Upload{{Path: "zip/{name}", ArchiveTo: "body/{name}"}, {Path: "body/{name}"}, {Path: "other/{name}"}}}
+	compileStatusKind(t, k)
+	archive := File{Path: "zip/book.zip", Blob: statusBlob("shared ZIP"), Meta: map[string]any{"archive_pages_total": 2}}
+	raw, _ := layout.BlobDigest(archive.Blob)
+	sum := hex.EncodeToString(raw)
+	page := func(path string, index int) File {
+		return File{Path: path, Blob: statusBlob(path), Unattached: true, Meta: map[string]any{"page": map[string]any{"archive_sha256": sum, "source_index": index}}}
+	}
+	m := &Manifest{Files: []File{archive, page("body/one.png", 1), page("other/two.png", 2)}}
+	got := statusOf(k, m, EncodeStatus{})
+	if got.Archives.Pages == nil || got.Archives.Pages.Completed != 1 || got.Archives.Pages.Total != 2 {
+		t.Fatalf("unrelated destination inflated archive progress: %+v", got.Archives)
+	}
+}
+
+func TestStatusDefersUnattachedPublicEncoding(t *testing.T) {
+	k := &Kind{Uploads: []Upload{{Path: "video"}}, Private: []Private{{Name: "stream", From: "video"}}, Public: []Public{{Name: "preview", From: "video"}}}
+	compileStatusKind(t, k)
+	video := File{Path: "video.mp4", Type: "video/mp4", Blob: statusBlob("staged video"), Unattached: true, Pending: []string{"stream", "preview"}}
+	m := &Manifest{Files: []File{video}}
+	checkpoint := EncodeProgress{Phase: PhaseEncoding, SegmentsDone: 7, SegmentsTotal: 30, Percent: 23}
+	progress := EncodeStatus{Files: map[string]EncodeProgress{video.Path: checkpoint}}
+	got := statusOf(k, m, progress)
+	if k.Readiness(m).State != StateReady || got.State != StateProcessing || got.Encoding == nil || *got.Encoding != checkpoint {
+		t.Fatalf("staged encoding checkpoint missing: %+v", got)
+	}
+	m.Files[0].Pending = []string{"preview"}
+	m.Files = append(m.Files, File{Path: "stream/video.m3u8", From: video.Path, Preset: "stream", Blob: statusBlob("stream")})
+	got = statusOf(k, m, progress)
+	if got.State != StateReady || got.Encoding != nil || len(got.Presets) != 1 || got.Presets[0].Completed != 1 {
+		t.Fatalf("deferred public work kept a stale encoding checkpoint: %+v", got)
 	}
 }
