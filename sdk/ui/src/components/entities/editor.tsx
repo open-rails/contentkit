@@ -728,7 +728,7 @@ function Edges({ entity, g, kinds, labels, onError, client, management }: { mana
   };
   const valid = RELATION.test(relation.trim());
   return (
-    <Section title={t("entityEditor.edges")} ckui="entity-edges" note={t("entityEditor.savesNow")}>
+    <Section title={t("entityEditor.edges")} ckui="entity-edges">
       {out.length + incoming.length ? (
         <ul className="grid gap-1.5">
           {out.map((e) => (
