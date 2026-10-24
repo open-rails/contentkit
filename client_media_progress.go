@@ -113,11 +113,14 @@ func (c *Client) WatchMedia(ctx context.Context, ref media.RefBody, after string
 // first headers arrive immediately and the same cancellation/backpressure
 // contract applies without collecting an indefinite response in memory.
 func streamInProcess(handler http.Handler, req *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
 	body, writer := io.Pipe()
 	ready, done := make(chan struct{}), make(chan struct{})
 	record := &streamRecorder{header: make(http.Header), writer: writer, ready: ready}
 	go func() {
 		defer close(done)
+		defer cancel()
 		defer writer.Close()
 		handler.ServeHTTP(record, req)
 		record.WriteHeader(http.StatusOK)
@@ -134,7 +137,7 @@ func streamInProcess(handler http.Handler, req *http.Request) (*http.Response, e
 		_ = body.Close()
 		return nil, req.Context().Err()
 	case <-ready:
-		return &http.Response{StatusCode: record.status, Header: record.header.Clone(), Body: body, Request: req}, nil
+		return &http.Response{StatusCode: record.status, Header: record.header.Clone(), Body: &streamBody{ReadCloser: body, cancel: cancel}, Request: req}, nil
 	}
 }
 
@@ -155,3 +158,10 @@ func (w *streamRecorder) Write(data []byte) (int, error) {
 	return w.writer.Write(data)
 }
 func (w *streamRecorder) Flush() { w.WriteHeader(200) }
+
+type streamBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *streamBody) Close() error { b.cancel(); return b.ReadCloser.Close() }

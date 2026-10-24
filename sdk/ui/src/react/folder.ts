@@ -27,8 +27,6 @@ export interface MediaFolderOptions {
   name?: (file: File) => string;
   /** Files uploading at once. Default 2. */
   concurrency?: number;
-  /** Poll interval (ms) while uploads process. Default 2500. */
-  poll?: number | false;
   /** Every failure (uploads, commits, updates, processing); default the provider's. */
   onError?: ContentKitErrorHandler;
   /** Overrides the provider's client. */
@@ -51,7 +49,7 @@ export interface UseMediaFolder {
   ref: RefBody | null;
   /** The options the folder was opened with. */
   options: MediaFolderOptions;
-  /** The editor read of the item (every window, polled while processing). */
+  /** The editor read of the item (every window, observed through SSE while processing). */
   read: UseMediaRead;
   groups: FolderGroup[];
   /** Every group's uploads. */
@@ -147,7 +145,7 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   const key = keyOf(item);
   const target = item ?? NO_ITEM;
   // Without an item there is nothing to read: a supplied null read never fetches.
-  const read = useMediaRead(target, { editor: true, window: ALL, poll: o.poll, client, read: item ? undefined : null });
+  const read = useMediaRead(target, { editor: true, window: ALL, client, read: item ? undefined : null });
   const rules = uploadRules(read.read);
   const pathsKey = o.paths?.join("\n");
   const groupPaths = useMemo(

@@ -27,8 +27,6 @@ export interface MediaReadOptions extends Omit<ReadOptions, "offset" | "limit"> 
   window?: ReadWindow;
   offset?: number;
   limit?: number;
-  /** Poll at this interval (ms) while uploads process. Explicit opt-in; editor reads otherwise observe SSE. */
-  poll?: number | false;
   /** Read again shortly before the URLs expire. Default true. */
   refresh?: boolean;
   /** A read the host already has: shown until reload() or set(). */
@@ -81,7 +79,6 @@ export function useMediaGrantExpired(expires?: number): boolean {
  */
 export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRead {
   const { read: given, client: own, prefix, paths, offset, limit, download, editor, status, window, refresh: refreshing = true } = o;
-  const poll = o.poll;
   const client = useOptionalContentKitClient(own);
   const scope = useReadScope();
   const store = client ? storeFor(client) : null;
@@ -121,12 +118,12 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   const subscribe = useCallback(
     (l: () => void) => {
       if (!store || !fetching) return () => {};
-      const offs = keys.map((key, i) => store.subscribe(key, itemRef(ref), { prefix, download, editor, status, ...windows[i] }, l, { poll, refresh: refreshing }, scope));
+      const offs = keys.map((key, i) => store.subscribe(key, itemRef(ref), { prefix, download, editor, status, ...windows[i] }, l, { refresh: refreshing }, scope));
       return () => offs.forEach((off) => off());
     },
     // ref and options are in keys.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [store, fetching, keys, poll, refreshing],
+    [store, fetching, keys, refreshing],
   );
   const last = useRef<readonly ReadEntry[]>(NONE);
   const snapshot = useCallback(() => {

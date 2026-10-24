@@ -225,7 +225,7 @@ export class Http {
             body,
             signal,
             blob,
-      stream,
+            stream,
             keepalive,
             guestPreferences,
             retryGuestPreferences: false,

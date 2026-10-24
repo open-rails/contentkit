@@ -1,7 +1,6 @@
 package media
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -120,23 +119,27 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 	// Boundary before snapshot: an event committed during the status read will
 	// still be visited, so reconnect cannot miss a concurrent completion.
 	if err := authorize(ctx); err != nil {
-		writeJSON(w, 403, ErrorReply{Code: "forbidden", Error: "forbidden"})
+		status, failure := progressFailure(err)
+		writeJSON(w, status, failure)
 		return err
 	}
 	initial, err := snapshot(ctx)
 	if err != nil {
-		writeJSON(w, 404, ErrorReply{Code: "not_found", Error: "not found"})
+		status, failure := progressFailure(err)
+		writeJSON(w, status, failure)
 		return err
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
-	w.Header().Add("Vary", "Accept")
 	rc := http.NewResponseController(w)
 	write := func(name, id string, data any) error {
 		body, err := json.Marshal(data)
 		if err != nil {
 			return err
+		}
+		if len(body) > 1<<20 {
+			return errors.New("media: progress snapshot exceeds limit")
 		}
 		if err = rc.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
 			return err
@@ -149,7 +152,6 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 		}
 		return rc.Flush()
 	}
-	last, _ := json.Marshal(initial)
 	query.After = page.NextCursor
 	if err := write(name, query.After, initial); err != nil {
 		return err
@@ -166,7 +168,8 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 				return ctx.Err()
 			case <-heartbeat.C:
 				if err := authorize(ctx); err != nil {
-					_ = write("error", query.After, ErrorReply{Code: "forbidden", Error: "Media observation is no longer authorized."})
+					_, failure := progressFailure(err)
+					_ = write("error", query.After, failure)
 					return err
 				}
 				if err := write("heartbeat", query.After, struct{}{}); err != nil {
@@ -177,7 +180,8 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 			}
 		}
 		if err := authorize(ctx); err != nil {
-			_ = write("error", query.After, ErrorReply{Code: "forbidden", Error: "Media observation is no longer authorized."})
+			_, failure := progressFailure(err)
+			_ = write("error", query.After, failure)
 			return err
 		}
 		page, err = reader.ListEvents(ctx, query)
@@ -202,23 +206,31 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 		if changed {
 			value, err := snapshot(ctx)
 			if err != nil {
-				_ = write("error", query.After, ErrorReply{Code: "not_found", Error: "Media status is no longer available."})
+				_, failure := progressFailure(err)
+				_ = write("error", query.After, failure)
 				return err
 			}
-			data, err := json.Marshal(value)
-			if err != nil {
+			// A meaningful producer fact may replace an output without changing counts.
+			if err := write(name, query.After, value); err != nil {
 				return err
-			}
-			if name == "resync" || !bytes.Equal(data, last) {
-				if err := write(name, query.After, value); err != nil {
-					return err
-				}
-				last = data
 			}
 		}
 		more = page.HasMore
 		if !more {
 			timer.Reset(interval)
 		}
+	}
+}
+
+func progressFailure(err error) (int, ErrorReply) {
+	switch {
+	case errors.Is(err, auth.ErrUnauthenticated), errors.Is(err, auth.ErrExpired), errors.Is(err, auth.ErrRevoked):
+		return 401, ErrorReply{Code: "unauthorized", Error: "Authentication required."}
+	case errors.Is(err, auth.ErrForbidden):
+		return 403, ErrorReply{Code: "forbidden", Error: "Media observation is no longer authorized."}
+	case errors.Is(err, ErrNotVisible), errors.Is(err, ErrNotAllowed):
+		return 404, ErrorReply{Code: "not_found", Error: "Media status is no longer available."}
+	default:
+		return 503, ErrorReply{Code: "unavailable", Error: "Media progress is unavailable; reconnect."}
 	}
 }

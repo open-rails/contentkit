@@ -74,12 +74,13 @@ type readHandler struct {
 }
 
 func (h readHandler) read(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Add("Vary", "Accept")
 	if acceptsProgress(req) {
 		h.progress(w, req)
 		return
 	}
 	start := time.Now()
-	w.Header().Set("Cache-Control", "private, no-store")
 	res, g, err := h.r.serveRead(req, h.o)
 	if err != nil {
 		fail(w, req, h.log, err)

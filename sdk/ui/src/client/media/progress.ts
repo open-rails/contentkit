@@ -9,17 +9,22 @@ export interface MediaProgress {
 
 /** Bounded SSE parser. Reader and callbacks are sequential to apply backpressure. */
 export async function readProgress(response: Response, receive: (update: MediaProgress) => void | Promise<void>, signal: AbortSignal): Promise<void> {
-  if (!response.headers.get("content-type")?.startsWith("text/event-stream") || !response.body)
+  if (!response.headers.get("content-type")?.startsWith("text/event-stream") || !response.body) {
+    await response.body?.cancel();
     throw new ContentKitError("invalid_request", "Expected a media progress stream.");
+  }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let pending = "", data = "", event = "", cursor = "";
   const cancel = () => { void reader.cancel(); };
+  let heartbeat: ReturnType<typeof setTimeout> | undefined;
   signal.addEventListener("abort", cancel, { once: true });
   try {
     for (;;) {
       if (signal.aborted) throw aborted(signal);
+      heartbeat = setTimeout(cancel, 30_000);
       const chunk = await reader.read();
+      clearTimeout(heartbeat);
       if (signal.aborted) throw aborted(signal);
       if (chunk.done) throw new ContentKitError("network", "Media progress disconnected.");
       pending += decoder.decode(chunk.value, { stream: true });
@@ -53,6 +58,7 @@ export async function readProgress(response: Response, receive: (update: MediaPr
       if (pending.length > 1024 * 1024) throw new ContentKitError("invalid_request", "Media progress line exceeds its limit.");
     }
   } finally {
+    clearTimeout(heartbeat);
     signal.removeEventListener("abort", cancel);
     await reader.cancel().catch(() => {});
     reader.releaseLock();

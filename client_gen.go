@@ -1421,8 +1421,10 @@ type GetMediaQuery struct {
 	Download bool
 	// editors: uploads with edits, failures, progress and editor views
 	Editor bool
-	// editors: whole-item processing counts only, without URLs, media grants or editor-view work
+	// editors: whole-item processing counts only, without URLs, media grants or editor-view work; Accept: text/event-stream observes retained progress
 	Status bool
+	// SSE reconnect cursor; Last-Event-ID is also accepted. Retention expiry sends a resync snapshot
+	After string
 }
 
 func (q GetMediaQuery) values() url.Values {
@@ -1447,6 +1449,9 @@ func (q GetMediaQuery) values() url.Values {
 	}
 	if q.Status {
 		v.Set("status", "")
+	}
+	if q.After != "" {
+		v.Set("after", q.After)
 	}
 	return v
 }
@@ -1496,8 +1501,10 @@ type GetMediaVersionQuery struct {
 	Download bool
 	// editors: uploads with edits, failures, progress and editor views
 	Editor bool
-	// editors: whole-item processing counts only, without URLs, media grants or editor-view work
+	// editors: whole-item processing counts only, without URLs, media grants or editor-view work; Accept: text/event-stream observes retained progress
 	Status bool
+	// SSE reconnect cursor; Last-Event-ID is also accepted. Retention expiry sends a resync snapshot
+	After string
 }
 
 func (q GetMediaVersionQuery) values() url.Values {
@@ -1522,6 +1529,9 @@ func (q GetMediaVersionQuery) values() url.Values {
 	}
 	if q.Status {
 		v.Set("status", "")
+	}
+	if q.After != "" {
+		v.Set("after", q.After)
 	}
 	return v
 }

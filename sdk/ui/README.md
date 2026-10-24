@@ -198,8 +198,8 @@ const { read, loading, error, processing, reload, refresh, set } =
 ```
 
 One read per item and options, shared by every hook showing it. It reads
-again shortly before the URLs expire, waits out `rate_limited`, polls while
-uploads process (editor reads, every 2.5 s; `poll`), and reloads after any
+again shortly before the URLs expire, waits out `rate_limited`, observes SSE
+while uploads process (one authenticated stream per item and account), and reloads after any
 commit through the same client. `window` splits a long item into reads of
 `chunk` files (default 50) merged into one result. Only the requested windows
 stay active and refresh. Leaving a window releases its subscription, timer and
@@ -1236,9 +1236,18 @@ is scoped to the API mount and the provider's explicit viewer ID; without a
 known viewer, retries remain in memory only. Switching accounts aborts and
 clears the visible queue, without resuming the other account's work.
 
-`MediaReadinessNotice` uses the existing shared `useMediaRead` poller with an
+`MediaReadinessNotice` uses shared `useMediaRead` SSE observation with an
 editor-only status read, without signing image URLs. It shows ZIP extraction,
-per-preset completion counts, encoding progress and failures. Polling stops
+per-preset completion counts, encoding progress and failures. Observation stops
 when the item is ready or storage capacity blocks progress. Reopening the
 editor reads current server state; browser upload records are not processing
-state.
+state. Account or item changes and unmount cancel the stream. A disconnect
+reconnects up to three times with its cursor; retention expiry explicitly sends
+a fresh `resync` snapshot. Exhausted reconnects show a retry action. There is no
+processing poll option; signed URL expiry refresh remains independent.
+
+`client.media.watch(ref, receive, signal, after?)` uses the client's normal
+fetch, headers, token and credentials. It delivers `snapshot`, `progress`,
+`resync` and `heartbeat` events; the latter carries only a cursor. It makes one
+connection, leaving reconnect ownership with its caller. Upload `waitFor` and
+`editorView` also use these updates, with their existing timeout and retry limits.
