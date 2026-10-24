@@ -161,6 +161,8 @@ type ReadResult struct {
 	HLS []string `json:"hls,omitempty"`
 	// State is the item's readiness (editors).
 	State string `json:"state,omitempty"`
+	// Status is a whole-manifest processing snapshot for editors only.
+	Status *MediaStatus `json:"status,omitempty"`
 	// Full (editors): the item's manifest cannot hold more outputs, so
 	// processing stopped; remove uploads (any commit that shrinks it) to
 	// resume. Uploads left unprocessed stay pending.
