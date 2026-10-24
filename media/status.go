@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/open-rails/contentkit/access"
@@ -99,15 +100,22 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 		out.Encoding = progress.Current()
 	}
 	readyOutputs := map[[2]string]bool{}
-	imported := map[string]int{}
+	imported := map[string]map[string]struct{}{}
 	for _, f := range m.Files {
 		if f.Preset != "" && f.Blob != "" {
 			readyOutputs[[2]string{f.From, f.Preset}] = true
 		}
-		if f.IsUpload() && !f.Unattached && k.IsPageUpload(f) {
+		if f.IsUpload() && k.IsPageUpload(f) {
 			if page, err := pageMetadata(f.Meta); err == nil {
 				if sum, ok := page["archive_sha256"].(string); ok {
-					imported[sum]++
+					if imported[sum] == nil {
+						imported[sum] = map[string]struct{}{}
+					}
+					identity := f.Path
+					if index := statusCount(page["source_index"]); index > 0 {
+						identity = "index:" + strconv.Itoa(index)
+					}
+					imported[sum][identity] = struct{}{}
 				}
 			}
 		}
@@ -139,7 +147,12 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 				if len(digest) == 0 {
 					sum, _ = f.Meta["sha256"].(string)
 				}
-				done := min(total, imported[sum])
+				done := min(total, len(imported[sum]))
+				// A completed extraction cannot regress when QA excludes or
+				// removes pages later; completion is bound to this exact ZIP.
+				if completed, _ := f.Meta["archive_completed_sha256"].(string); sum != "" && completed == sum {
+					done = total
+				}
 				out.Archives.Pages.Total += total
 				out.Archives.Pages.Completed += done
 				if failed != nil {
@@ -171,8 +184,8 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 			if f.Blob == "" || slices.Contains(f.Pending, name) {
 				continue
 			}
-			if k.public(name) != nil {
-				publication, ok := f.Current(name)
+			if public := k.public(name); public != nil {
+				publication, ok := k.Current(m, f, public)
 				if !ok || !publication.Ready() {
 					continue
 				}
