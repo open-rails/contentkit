@@ -45,7 +45,7 @@ func config() kinds.Config {
 		},
 		EntityKinds: map[string]kinds.EntityKind{
 			"tag":     {Route: "tags", VersionLevel: true, Parent: "tag"},
-			"channel": {Owner: "user", Sellable: true, AuthScope: true},
+			"channel": {Owner: "user", Entitled: true, AuthScope: true},
 			"series":  {Route: "series"},
 		},
 	}
@@ -170,16 +170,6 @@ func (f *fixture) entity(kind, slug string) string {
 		f.t.Fatal(err)
 	}
 	return string(got[0].ID)
-}
-
-// sell puts an active offer on an entity, as the offers module stores one:
-// it sells a membership.
-func (f *fixture) sell(entity string) {
-	f.t.Helper()
-	if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+pgx.Identifier{f.schema, "content_offers"}.Sanitize()+` (tenant_id, id, target_kind, target_id, terms)
- VALUES ($1, $2, 'group', $3, '{"amount": 1000000, "currency": "USD"}')`, tenant, contentref.NewID(), entity); err != nil {
-		f.t.Fatal(err)
-	}
 }
 
 // join adds content (or one version) to an entity through the entities module,

@@ -119,9 +119,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 	if e.media != nil {
 		parts = append(parts, e.media.jobs.RiverJobs(), e.media.versions.RiverJobs())
 	}
-	if e.offers != nil {
-		parts = append(parts, e.offers.RiverJobs())
-	}
 	if e.publishing != nil {
 		parts = append(parts, e.publishing.RiverJobs())
 	}

@@ -176,9 +176,8 @@ type Options struct {
 	References References
 	// Covers fills covers' and avatars' renditions on reads. Optional.
 	Covers CoverResolver
-	// Sales fills sellable entities' offers and the viewer's standing on
-	// reads: offers.Service. Optional.
-	Sales Sales
+	// Gate reads the viewer's entitlement-backed entity membership.
+	Gate *access.Gate
 	// Scopes provisions and retires the AuthKit scopes of auth_scope kinds,
 	// and lists a person's. Optional: without it auth_scope is whatever staff
 	// set.
@@ -230,7 +229,7 @@ type Store struct {
 	documents  func(ctx context.Context, q Querier) error
 	references References
 	covers     CoverResolver
-	sales      Sales
+	gate       *access.Gate
 	scopes     Scopes
 	folders    Folders
 	keep       time.Duration
@@ -270,7 +269,7 @@ func New(opts Options) (*Store, error) {
 		keep = DefaultDeletedRetention
 	}
 	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, renamed: opts.NamesChanged, documents: opts.DocumentsChanged, references: opts.References,
-		covers: opts.Covers, sales: opts.Sales, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, queue: queue, log: log,
+		covers: opts.Covers, gate: opts.Gate, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, queue: queue, log: log,
 		river: &riverBinding{}}, nil
 }
 

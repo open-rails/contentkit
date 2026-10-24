@@ -168,11 +168,6 @@ func (k Kind) AllowsComments(mode string) bool {
 	return len(k.CommentModes) == 0 || slices.Contains(k.CommentModes, mode)
 }
 
-// Sellable reports whether content and versions of this kind may be sold.
-func (k Kind) Sellable() bool {
-	return k.AllowsAccess("ppv") || k.AllowsAccess("group_ppv")
-}
-
 // Download is what a kind's version download serves. Whether a viewer may
 // download, and which pages are marked, is the host's DownloadPolicy.
 type Download struct {
@@ -344,8 +339,8 @@ type EntityKind struct {
 	// Uploads limit what editors other than staff upload to a user-owned
 	// entity's media.
 	Uploads UploadLimits `json:"uploads,omitzero" yaml:"uploads"`
-	// Sellable entities carry offers; their key unlocks every member.
-	Sellable bool `json:"sellable,omitempty" yaml:"sellable"`
+	// Entitled entities expose membership backed by their stable entitlement key.
+	Entitled bool `json:"entitled,omitempty" yaml:"entitled"`
 	// AuthScope entities name an AuthKit group whose permissions govern their
 	// content (OnlyDemo channels).
 	AuthScope bool `json:"auth_scope,omitempty" yaml:"auth_scope"`

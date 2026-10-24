@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contenturl"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // Sort orders an entity listing; every order is made total by id.
@@ -80,10 +79,10 @@ type EntityCard struct {
 	Avatar     *Avatar        `json:"avatar,omitempty"`
 	Count      int            `json:"count"`
 	Attributes map[string]any `json:"attributes"`
-	// Access is a sellable entity's sale: its key, active offer and the
+	// Access is an entitlement-backed entity's key and the
 	// viewer's standing.
-	Access    *offers.EntityAccess `json:"access,omitempty"`
-	CreatedAt time.Time            `json:"created_at"`
+	Access    *EntityAccess `json:"access,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
 }
 
 // EntityPage is one page of a listing.
@@ -109,11 +108,9 @@ type EntityDetail struct {
 	Children     []EntityCard `json:"children"`
 	Edges        []Edge       `json:"edges"`
 	Counts       []Count      `json:"counts"`
-	// Access is a sellable entity's sale: its key, active offer and the
+	// Access is an entitlement-backed entity's key and the
 	// viewer's standing.
-	Access *offers.EntityAccess `json:"access,omitempty"`
-	// Offer is a sellable entity's current offer, for its offer editors.
-	Offer *offers.Offer `json:"offer,omitempty"`
+	Access *EntityAccess `json:"access,omitempty"`
 }
 
 type listCursor struct {
@@ -576,7 +573,6 @@ func (s *Store) detail(ctx context.Context, id EntityID, language string, includ
 	if err := s.fill(ctx, shows, language); err != nil {
 		return d, err
 	}
-	d.Offer = s.currentOffer(ctx, d.Entity)
 	return d, nil
 }
 

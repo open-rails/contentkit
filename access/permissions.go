@@ -27,9 +27,6 @@ const (
 	// EntitiesWrite: create, edit, merge and delete entities, and set content's
 	// memberships.
 	EntitiesWrite Permission = "root:entities:write"
-	// OffersWrite: put and withdraw offers on any content, version or entity;
-	// creators and entity owners need it for nobody else's.
-	OffersWrite Permission = "root:offers:write"
 	// NotificationsPublish: publish notices to users' inboxes (a host service).
 	NotificationsPublish Permission = "root:notifications:publish"
 	// ImportWrite: bulk-import content, entities, interactions and signals (a
@@ -43,7 +40,7 @@ const (
 
 // Permissions is every staff permission.
 func Permissions() []Permission {
-	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, OffersWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
+	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
 }
 
 func (p Permission) String() string { return string(p) }
@@ -67,11 +64,8 @@ func Names(ps ...Permission) []string {
 func EntityContentWrite(kind string) string { return kind + ":content:write" }
 
 // EntitySettingsManage: edit the entity itself, delete or restore it, and
-// put or withdraw its offers and its content's.
+// manage its settings.
 func EntitySettingsManage(kind string) string { return kind + ":settings:manage" }
-
-// EntityOffersWrite: put and withdraw the entity's offers and its content's.
-func EntityOffersWrite(kind string) string { return kind + ":offers:write" }
 
 // EntityMediaWrite: upload and edit the entity's media.
 func EntityMediaWrite(kind string) string { return kind + ":media:write" }
@@ -83,5 +77,5 @@ func EntityCommentsModerate(kind string) string { return kind + ":comments:moder
 // EntityPermissions is every permission ContentKit checks in an entity kind's
 // AuthKit scopes.
 func EntityPermissions(kind string) []string {
-	return []string{EntityContentWrite(kind), EntitySettingsManage(kind), EntityOffersWrite(kind), EntityMediaWrite(kind), EntityCommentsModerate(kind)}
+	return []string{EntityContentWrite(kind), EntitySettingsManage(kind), EntityMediaWrite(kind), EntityCommentsModerate(kind)}
 }

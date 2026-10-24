@@ -15,7 +15,7 @@ import (
 func TestInternalAccessEntityIsNotPublicPurchaseMetadata(t *testing.T) {
 	f := newFixture(t, nil)
 	entity := f.entity("channel", "private-channel")
-	f.sell(entity)
+
 	hidden := true
 	if _, err := f.entities.UpdateEntities(f.ctx, []entities.EntityUpdate{{ID: entities.EntityID(entity), Internal: &hidden}}); err != nil {
 		t.Fatal(err)

@@ -34,7 +34,7 @@ func config() kinds.Config {
 			"character":   {Route: "characters", ScopedBy: "series", Attributes: map[string]kinds.Attribute{"external_link": {Type: "string"}}},
 			"voice_actor": {Route: "voice-actors", VersionLevel: true, Avatar: true},
 			"rail":        {Ordered: true, Windows: true},
-			"channel":     {Route: "c", Owner: "user", AuthScope: true, Sellable: true},
+			"channel":     {Route: "c", Owner: "user", AuthScope: true, Entitled: true},
 		},
 	}
 }

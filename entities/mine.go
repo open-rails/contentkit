@@ -34,7 +34,7 @@ type MyEntityPage struct {
 
 // Mine pages the active entities the store's viewer (As) owns, edits or
 // writes content of through its AuthKit scope (Options.Scopes) or holds the
-// key of (Options.Sales), filtered, ordered and paged as List.
+// key of (Options.Gate), filtered, ordered and paged as List.
 func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyEntityPage, error) {
 	out := MyEntityPage{Entities: []MyEntity{}}
 	if err := s.requireInternalRead(ctx, opts.IncludeInternal); err != nil {
@@ -49,10 +49,12 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyEntityPage, error
 		return out, err
 	}
 	var joined []string
-	if s.sales != nil {
-		if joined, err = s.sales.Joined(ctx, v); err != nil {
+	if s.gate != nil {
+		filter, err := s.gate.Filter(ctx, v)
+		if err != nil {
 			return out, err
 		}
+		joined = filter.Entities()
 	}
 	type mine struct{ owner, editor, writer, moderator, member bool }
 	rel := map[EntityID]mine{}

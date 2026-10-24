@@ -1,4 +1,4 @@
-package offers
+package discovery
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/domainpolicy"
+	"github.com/open-rails/contentkit/internal/gate"
 )
 
 // LibraryQuery pages a viewer's library.
@@ -50,7 +51,7 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 		q.Limit = 20
 	}
 	q.Limit = min(q.Limit, 100)
-	f, err := s.gate.Filter(ctx, actor)
+	f, err := s.o.Gate.Filter(ctx, actor)
 	if err != nil {
 		return LibraryPage{}, err
 	}
@@ -86,12 +87,12 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 		}
 	}
 	scope, args := hard.SQL("f", "library_domain")
-	args["tenant"], args["ids"], args["language"], args["languages"], args["cursor"], args["limit"] = s.tenant, ids, q.Language, s.languages(), q.Cursor, q.Limit+1
+	args["tenant"], args["ids"], args["language"], args["languages"], args["cursor"], args["limit"] = s.o.Tenant, ids, q.Language, s.o.Kinds.Languages, q.Cursor, q.Limit+1
 	domainClause := "true"
 	if len(hard) > 0 {
 		domainClause = `(NOT (c.kind=ANY(@library_domain_kinds::text[])) OR EXISTS(SELECT 1 FROM ` + s.t.facets + ` f WHERE f.tenant_id=c.tenant_id AND f.content_id=c.id AND ` + scope + `))`
 	}
-	rows, err := s.pool.Query(ctx, `SELECT c.id,c.kind,c.state='deleted' OR c.deleted_at IS NOT NULL,coalesce(t.title,''),coalesce(t.language,'')
+	rows, err := s.o.Pool.Query(ctx, `SELECT c.id,c.kind,c.state='deleted' OR c.deleted_at IS NOT NULL,coalesce(t.title,''),coalesce(t.language,'')
  FROM `+s.t.items+` c LEFT JOIN LATERAL(SELECT title,language FROM `+s.t.text+` x WHERE x.tenant_id=c.tenant_id AND x.content_id=c.id ORDER BY x.language=@language DESC,array_position(@languages::text[],x.language),x.language LIMIT 1)t ON true
  WHERE c.tenant_id=@tenant AND c.id=ANY(@ids::text[]) AND (@cursor='' OR c.id<@cursor) AND `+domainClause+` ORDER BY c.id DESC LIMIT @limit`, args)
 	if err != nil {
@@ -117,4 +118,10 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 	}
 	page.Items = items
 	return page, nil
+}
+
+// libraryDomain resolves hard content boundaries for the current request.
+func (s *Service) libraryDomain(ctx context.Context) (domainpolicy.Policies, error) {
+	d, _ := s.o.Kinds.DomainFor(gate.Domain(ctx))
+	return domainpolicy.Resolve(ctx, s.o.Pool, s.t.entities, s.o.Tenant, d, s.o.Kinds.ContentFilters.AppliesTo)
 }

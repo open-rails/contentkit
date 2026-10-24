@@ -20,7 +20,6 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // ImportContent is a content item as the bulk import writes it: its id,
@@ -167,7 +166,7 @@ type importBatch struct {
 // Import writes content items in tx: new ones are inserted, stored ones
 // updated where the import changes them. Then what depends on them follows,
 // as after every write: codes, facets, search documents, events, media
-// exposure and publications, and offers' product names. A version of another
+// exposure and publications. A version of another
 // content item or a kind change is ErrInvalid.
 func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error {
 	if len(in) == 0 {
@@ -230,7 +229,7 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	if _, err := s.recordReleases(ctx, tx, ids); err != nil {
 		return err
 	}
-	changed, retitled, err := s.writeImport(ctx, tx, b)
+	changed, _, err := s.writeImport(ctx, tx, b)
 	if err != nil {
 		return err
 	}
@@ -293,7 +292,7 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 			return err
 		}
 	}
-	return s.resyncSold(ctx, tx, retitled)
+	return nil
 }
 
 // importRows turns the checked items into rows, with the rules and owner
@@ -913,39 +912,6 @@ func (s *Store) republishImported(ctx context.Context, tx pgx.Tx, stored map[str
 		out = append(out, t)
 	}
 	return out, rows.Err()
-}
-
-// resyncSold re-syncs the active offers of content items whose text changed
-// and of their versions, whose products are named after their titles.
-func (s *Store) resyncSold(ctx context.Context, tx pgx.Tx, retitled map[string]bool) error {
-	if s.offers == nil || len(retitled) == 0 {
-		return nil
-	}
-	ids := make([]string, 0, len(retitled))
-	for id := range retitled {
-		ids = append(ids, id)
-	}
-	rows, err := tx.Query(ctx, `SELECT o.target_kind, o.target_id, coalesce(v.content_id, '') FROM `+s.qs+`.content_offers o
- LEFT JOIN `+s.t.versions+` v ON o.target_kind = 'version' AND v.tenant_id = o.tenant_id AND v.id = o.target_id
- WHERE o.tenant_id = $1 AND o.state = 'active' AND ((o.target_kind = 'content' AND o.target_id = ANY($2)) OR v.content_id = ANY($2))
- ORDER BY o.target_kind, o.target_id`, s.tenant, ids)
-	if err != nil {
-		return err
-	}
-	var targets []offers.Target
-	for rows.Next() {
-		var t offers.Target
-		if err := rows.Scan(&t.Kind, &t.ID, &t.Content); err != nil {
-			rows.Close()
-			return err
-		}
-		targets = append(targets, t)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil || len(targets) == 0 {
-		return err
-	}
-	return s.offers.Resync(ctx, tx, targets)
 }
 
 // ImportDeletes preserves the source's independent content tombstones and

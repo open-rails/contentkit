@@ -229,7 +229,7 @@ func (s *Store) checkRuleEntities(ctx context.Context, q Querier, rules ...*acce
 		if !ok {
 			return invalid("access group %s does not exist", id)
 		}
-		if !s.cfg.EntityKinds[kind].Sellable {
+		if !s.cfg.EntityKinds[kind].Entitled {
 			return invalid("access group %s is a %s, which is not sellable", id, kind)
 		}
 	}

@@ -28,7 +28,6 @@ import (
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // HeldKind is the review queue's kind for held content (content.Runtime's
@@ -59,15 +58,6 @@ type Moderation interface {
 	Screen(ctx context.Context, in content.ModerationInput) (content.Screening, error)
 }
 
-// Offers is *offers.Service: Resync re-syncs the targets' products in the
-// writing transaction; Sales and Current fill reads' paywalls and editors'
-// offers.
-type Offers interface {
-	Resync(ctx context.Context, tx pgx.Tx, targets []offers.Target) error
-	Sales(ctx context.Context, keys []string) (map[string]offers.Sale, error)
-	Current(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []offers.Target) ([]*offers.Offer, error)
-}
-
 // Standing reads a signed-in person's standing with content items and
 // versions, per ref in order: *discovery.Service.
 type Standing interface {
@@ -89,9 +79,6 @@ type Options struct {
 	// Gate answers viewers' entitlements; nil builds one without billing
 	// (only free rules and claimed tiers open).
 	Gate *access.Gate
-	// Offers renames the products of content whose title changes and answers
-	// paywalls' offers; nil when nothing is sold.
-	Offers Offers
 	// Entities answers effective entity ids for content_facets; nil: none. Wire
 	// its Options.ContentChanged to Store.ContentChanged and its
 	// Options.NamesChanged to Store.EntitiesRenamed.
@@ -130,7 +117,6 @@ type Store struct {
 	t              tables
 	guard          *gate.Gate
 	accessG        *access.Gate
-	offers         Offers
 	entities       Entities
 	moderator      Moderation
 	body           Sanitizer
@@ -150,7 +136,7 @@ type Store struct {
 type tables struct {
 	items, text, creators, versions, versionText, segments, facets, events string
 	currentFacets                                                          string
-	entities, entityNames, memberships, prefs, counts, docs, offers        string
+	entities, entityNames, memberships, prefs, counts, docs                string
 	reactions, favorites, comments, accessHistory                          string
 }
 
@@ -174,9 +160,9 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 		t: tables{items: q("content_items"), text: q("content_text"), creators: q("content_creators"), versions: q("content_versions"),
 			versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), currentFacets: q("content_current_facets"), events: q("content_events"),
 			entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
-			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"), offers: q("content_offers"),
+			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),
 			reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")},
-		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, offers: opts.Offers, entities: opts.Entities, moderator: opts.Moderation,
+		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities, moderator: opts.Moderation,
 		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, documents: opts.DocumentsChanged, references: opts.References,
 		playable: slices.Sorted(slices.Values(opts.PlayableKinds)), now: opts.Now, log: opts.Logger,
 	}

@@ -46,9 +46,6 @@ const (
 	// Versions is content versions' reader plan, reader metadata, forks and
 	// downloads.
 	Versions Module = "versions"
-	// Offers is offers on content, versions and groups, free group joins and
-	// the viewer's library.
-	Offers Module = "offers"
 	// Discovery is lists, search, typeahead, similar and recommended
 	// contents, release dates, the reader's content filters and history, and
 	// signals and exposures.
@@ -60,10 +57,10 @@ const (
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Entities, Notifications, Versions, Offers, Discovery, Import, Publishing}
+var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Entities, Notifications, Versions, Discovery, Import, Publishing}
 
 // Prefix is the module's sub-path under the host's prefix: Version, then
-// content, groups, versions, offers and kinds at its root and the others beneath their own
+// content, groups, versions and kinds at its root and the others beneath their own
 // first segment. Modules sharing a prefix share one router.
 func (m Module) Prefix() string {
 	switch m {
@@ -82,7 +79,7 @@ func (m Module) Prefix() string {
 // Reserved is the first path segments the non-content modules take: a content
 // kind with one of these names would be unreachable under the host's prefix.
 func Reserved() []string {
-	return []string{"media", "codes", "entities", "contents", "kinds", "offers", "me", "catalog", "events", "notifications",
+	return []string{"media", "codes", "entities", "contents", "kinds", "me", "catalog", "events", "notifications",
 		"search", "typeahead", "recommendations", "release-dates", "releases", "signals", "exposures", "import", "sitemap", "stats", "publishing-operations", "content-filters"}
 }
 
@@ -356,7 +353,7 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal}
 	case "module:versions":
 		return []string{CodeInternal, CodeNotFound, CodeUnavailable}
-	case "module:offers", "module:discovery", "module:import":
+	case "module:discovery", "module:import":
 		return []string{CodeInternal, CodeUnavailable}
 	}
 	return nil
