@@ -780,9 +780,9 @@ func TestCommitVerifiesBlobs(t *testing.T) {
 	}
 }
 
-// A Named upload is named by the server; a new item starts hidden when
+// A Named upload is named by the server; declared public presets render even when
 // anonymous viewers cannot see it, so its public presets are not pending.
-func TestNamedAndHiddenNewItem(t *testing.T) {
+func TestNamedDraftPublicPresets(t *testing.T) {
 	f := newFixture(t)
 	f.res.set(cid(1), resolve.Resolution{Visible: false})
 	post := f.ref("post", 1)
@@ -791,7 +791,7 @@ func TestNamedAndHiddenNewItem(t *testing.T) {
 		t.Fatalf("named path %q", p)
 	}
 	m := f.commit(post, media.Op{Op: media.OpPut, Path: p, Blob: blob})
-	if u, _ := m.Get(p); !m.Hidden || u.Pending != nil {
+	if u, _ := m.Get(p); m.Hidden || !slices.Equal(u.Pending, []string{"inline"}) {
 		t.Fatalf("hidden new item: hidden %v pending %v", m.Hidden, u.Pending)
 	}
 	if _, err := f.up.Commit(context.Background(), f.editor, post, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "inline/mine.png", Blob: f.fileBlob(post, p)}}); code(err) != media.CodeInvalid {

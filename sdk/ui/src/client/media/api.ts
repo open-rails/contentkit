@@ -1,3 +1,4 @@
+import { readProgress, type MediaProgress } from "./progress.js";
 import type { Http } from "../http.js";
 import type {
   CommitBody,
@@ -76,6 +77,14 @@ export class MediaApi {
     if (o.editor) q.set("editor", "1");
     const s = q.toString();
     return this.http.request<ReadResult>(this.itemURL(ref) + (s ? "?" + s : ""), { signal });
+  }
+
+  /** Observe canonical status using authenticated fetch, including reconnect cursors. */
+  async watch(ref: RefBody, receive: (update: MediaProgress) => void | Promise<void>, signal: AbortSignal, after = "") {
+    const query = new URLSearchParams({ status: "1" });
+    if (after) query.set("after", after);
+    const response = await this.http.request<Response>(`${this.itemURL(ref)}?${query}`, { signal, stream: true, guestPreferences: false });
+    await readProgress(response, receive, signal);
   }
 
   /** Every kind's public presets (the same for every viewer). */

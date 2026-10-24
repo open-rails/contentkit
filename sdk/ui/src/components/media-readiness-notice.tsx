@@ -16,7 +16,7 @@ import { Progress as ProgressBar } from "#ckui/ui/progress";
 import { EncodeProgress } from "./encode-progress.js";
 
 export interface MediaReadinessNoticeProps {
-  /** The item; its editor read is polled while it processes. */
+  /** The item; its editor read observes processing through SSE. */
   item: RefBody;
   /** An editor read the host already has; otherwise fetched. */
   read?: ReadResult | null;

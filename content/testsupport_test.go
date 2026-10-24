@@ -339,20 +339,11 @@ func (m *testMedia) lookupCount() int {
 	return m.lookups
 }
 
-func (m *testMedia) DeleteItemsTx(_ context.Context, tx pgx.Tx, items ...media.Deletion) error {
+func (m *testMedia) RetireItemsTx(_ context.Context, tx pgx.Tx, items ...media.Deletion) error {
 	for _, d := range items {
 		m.mu.Lock()
 		m.deleted = append(m.deleted, d.Ref.String())
 		m.mu.Unlock()
-	}
-	return nil
-}
-
-func (m *testMedia) ExposeTx(_ context.Context, _ pgx.Tx, refs ...contentref.ContentRef) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, ref := range refs {
-		m.exposed = append(m.exposed, ref.String())
 	}
 	return nil
 }

@@ -210,24 +210,7 @@ deletion_operations=EXCLUDED.deletion_operations,revision=gen_random_uuid()`, so
 		}
 		for _, timer := range timers {
 			if timer.Kind == "contentkit_media_delete_folder" {
-				var args struct {
-					deleteFolderArgs
-					Final bool
-				}
-				if err := json.Unmarshal(timer.Args, &args); err != nil {
-					return err
-				}
-				if !args.Final {
-					if _, err := uuid.Parse(args.Incarnation); err != nil {
-						return ErrCommitIdentity
-					}
-					args.Prefix = target.Prefix()
-					if _, err := client.InsertTx(ctx, tx, args.deleteFolderArgs, &river.InsertOpts{
-						Queue: timer.Queue, ScheduledAt: timer.Due, MaxAttempts: timer.MaxAttempts,
-					}); err != nil {
-						return err
-					}
-				}
+				return errors.New("media: finish legacy folder deletion before moving version storage")
 			}
 			if _, err := client.JobCancelTx(ctx, tx, timer.ID); err != nil {
 				return err

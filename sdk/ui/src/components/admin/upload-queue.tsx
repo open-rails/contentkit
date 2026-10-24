@@ -11,7 +11,7 @@ import { ContentKitContext, useErrorReporter, useGuarded } from "../../react/con
 import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
 import { ErrorLine } from "../social/parts.js";
-import { MediaReadinessNotice } from "../media-readiness-notice.js";
+import { MediaProcessingPanel } from "../media-processing-panel.js";
 import { AdminRoot, type AdminFlowProps } from "./shell.js";
 
 export interface UploadQueueProps extends AdminFlowProps {
@@ -332,12 +332,18 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
                   <Badge variant={e.status === "failed" ? "destructive" : e.status === "done" ? "outline" : "secondary"}>{t(`uploadQueue.${e.status}`)}</Badge>
                 </div>
                 {e.status === "uploading" && (
-                  <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={e.file.name} aria-valuenow={percent(e)} aria-valuemin={0} aria-valuemax={100}>
-                    <div className="h-full bg-primary transition-[width]" style={{ width: `${percent(e)}%` }} />
+                  <div className="grid gap-1" data-ckui="upload-transfer" data-phase={e.progress?.phase} data-loaded={e.progress?.loaded ?? 0} data-total={e.progress?.total ?? e.file.size}>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={e.file.name} aria-valuenow={percent(e)} aria-valuemin={0} aria-valuemax={100} aria-valuetext={e.progress?.phase === "uploading" ? `${megabytes(e.progress.loaded)} / ${megabytes(e.progress.total)}` : undefined}>
+                      <div className="h-full bg-primary transition-[width]" style={{ width: `${percent(e)}%` }} />
+                    </div>
+                    <p className="text-xs text-muted-foreground tabular-nums" role="status">
+                      {t(`mediaPanel.phase_${e.progress?.phase ?? "hashing"}`)}
+                      {e.progress?.phase === "uploading" && <> · {megabytes(e.progress.loaded)} / {megabytes(e.progress.total)}</>}
+                    </p>
                   </div>
                 )}
                 {e.error && <ErrorLine>{m.error(e.error)}</ErrorLine>}
-                {e.status === "done" && e.ref && <MediaReadinessNotice item={e.ref} client={client} />}
+                {e.status === "done" && e.ref && <MediaProcessingPanel item={e.ref} client={client} />}
                 <div className="flex flex-wrap gap-2">
                   {(ACTIVE.includes(e.status) || e.status === "queued") && (
                     <Button size="xs" variant="ghost" onClick={() => pause(e.id)}>

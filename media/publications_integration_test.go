@@ -256,7 +256,7 @@ func TestRecoveryKeepsProjection(t *testing.T) {
 		}
 	}
 	// The pending recovery job finds nothing left, and the projection holds.
-	if err := f.ms.RecoverPending(ctx, 10); err != nil {
+	if err := f.ms.Recover(ctx, ref); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := f.ms.PresetImages(ctx, "cover", ref); !reflect.DeepEqual(got[0], after) {
@@ -418,7 +418,7 @@ func TestLegacyItemRequiresPriorReleaseMigration(t *testing.T) {
 		"sweep":   func() error { _, err := f.later().Sweep(ctx, l.ref); return err },
 		"drop":    func() error { return f.ms.DropUnreferenced(ctx, l.ref, media.Unreferenced{All: true}) },
 		"pass":    func() error { return f.later().SweepAll(ctx) },
-		"recover": func() error { return f.ms.RecoverPending(ctx, 10) },
+		"recover": func() error { return f.ms.Recover(ctx, l.ref) },
 	} {
 		if err := run(); err != nil && !errors.Is(err, media.ErrUpgradeRequired) {
 			t.Fatalf("%s: %v", name, err)

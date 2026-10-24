@@ -151,7 +151,7 @@ it.each([false, true])("scopes processed media when access changed: %s", async (
     },
   });
   const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} accessRevision={accessRevision}>{children}</ContentKitProvider>;
-  const { result, rerender } = renderHook(() => useMediaRead(ref, { editor: true, poll: false }), { wrapper });
+  const { result, rerender } = renderHook(() => useMediaRead(ref, { editor: true }), { wrapper });
   await waitFor(() => expect(result.current.loading).toBe(false));
   const pending = client.media.waitFor(ref, "cover.jpg");
   await waitFor(() => expect(processing).toHaveLength(1));

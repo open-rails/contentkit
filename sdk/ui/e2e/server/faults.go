@@ -37,19 +37,20 @@ type rule struct {
 	//	api         ContentKit's API answers Status with an error reply (Code, Error, RetryAfter)
 	Fault string `json:"fault"`
 	// Path (a substring of the request path) and Method narrow api rules.
-	Path       string `json:"path,omitempty"`
-	Method     string `json:"method,omitempty"`
-	Status     int    `json:"status,omitempty"`
-	Code       string `json:"code,omitempty"`
-	Error      string `json:"error,omitempty"`
-	RetryAfter int    `json:"retry_after,omitempty"`
-	Part       int    `json:"part,omitempty"`  // drop: only this multipart part (0: any PUT)
-	From       string `json:"from,omitempty"`  // hold: "browser" holds the browser's PUTs instead of the worker
-	After      int64  `json:"after,omitempty"` // drop: body bytes forwarded first
-	Skip       int    `json:"skip,omitempty"`  // matching requests let through first
-	Times      int    `json:"times,omitempty"` // matching requests to fault; 0 is every one
-	Hits       int    `json:"hits"`
-	seen       int
+	Path        string `json:"path,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Method      string `json:"method,omitempty"`
+	Status      int    `json:"status,omitempty"`
+	Code        string `json:"code,omitempty"`
+	Error       string `json:"error,omitempty"`
+	RetryAfter  int    `json:"retry_after,omitempty"`
+	Part        int    `json:"part,omitempty"`  // drop: only this multipart part (0: any PUT)
+	From        string `json:"from,omitempty"`  // hold: "browser" holds the browser's PUTs instead of the worker
+	After       int64  `json:"after,omitempty"` // drop: body bytes forwarded first
+	Skip        int    `json:"skip,omitempty"`  // matching requests let through first
+	Times       int    `json:"times,omitempty"` // matching requests to fault; 0 is every one
+	Hits        int    `json:"hits"`
+	seen        int
 }
 
 var faultKinds = map[string]bool{"no-cors": true, "rate-limit": true, "expired": true, "missing": true, "drop": true, "hold": true, "api": true}
@@ -125,6 +126,12 @@ func (f *faults) matchBody(r *http.Request, body string, part int, kinds ...stri
 			continue
 		}
 		if x.Dest != "" && r.Header.Get("Sec-Fetch-Dest") != x.Dest {
+			continue
+		}
+		if x.ContentType != "" && r.Header.Get("Content-Type") != x.ContentType {
+			continue
+		}
+		if x.Fault == "hold" && x.From != "browser" && x.Method == "" && r.Method != http.MethodGet {
 			continue
 		}
 		if x.Path != "" && !strings.Contains(r.URL.Path, x.Path) || x.Method != "" && !strings.EqualFold(x.Method, r.Method) {
@@ -254,10 +261,11 @@ func (f *faults) bucket(endpoint *url.URL) http.Handler {
 			drop = f.match(r, part, "drop")
 		}
 		// The worker's reads of an item's private files (its sources) wait;
-		// its manifest reads do not, since it reads those under the item's
+		// Explicit PUT rules may hold source-body writes for progress tests.
+		// Its manifest reads do not, since it reads those under the item's
 		// lock and would block the host's commits.
 		worker := strings.Contains(r.UserAgent(), "aws-sdk")
-		if !worker || r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/private/") {
+		if !worker || (r.Method == http.MethodGet || r.Method == http.MethodPut) && strings.Contains(r.URL.Path, "/private/") {
 			if x := f.match(r, part, "hold"); x != nil {
 				f.wait(r, x.ID)
 			}

@@ -154,7 +154,7 @@ func TestVersionStorageMigrationResumesAndRetiresOnlyOldAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jobs.CleanupDue(t.Context(), 100); err != nil {
+	if _, err := jobs.PurgeRetired(t.Context(), 100); err != nil {
 		t.Fatal(err)
 	}
 	if !f.exists(newKey) {

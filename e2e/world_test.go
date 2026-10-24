@@ -289,7 +289,7 @@ func (w *world) engine(edit func(*contentkit.Config, *contentkit.Deps)) *content
 		}
 	}
 	if w.jobs, err = media.NewJobs(media.JobsConfig{Store: w.env.Store, Registry: w.reg, Locker: media.PGLocker(w.pool), Journal: journal,
-		Processes: w.queue, Pool: w.pool}); err != nil {
+		Processes: w.queue}); err != nil {
 		w.t.Fatal(err)
 	}
 	return e

@@ -279,7 +279,6 @@ func TestUploadRights(t *testing.T) {
 		"anonymous": func() error {
 			return s.upload(access.Actor{Anonymous: true, IP: "203.0.113.9"}, ref, "originals/x", "image/png", page)
 		},
-		"preview copy":    func() error { return s.upload(s.creator, ref, "previews/1", "image/webp", page) },
 		"another content": func() error { return s.upload(s.creator, s.ref("gallery", other), "originals/x", "image/png", page) },
 		"a stray version": func() error {
 			return s.upload(s.creator, s.ref("gallery", versions.Target{Content: c, Version: other.Version}), "originals/x", "image/png", page)

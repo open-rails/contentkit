@@ -90,11 +90,6 @@ func public(k *media.Kind, name string) *media.Public {
 	return nil
 }
 
-// previewDir is the directory of the Previews preset's uploads.
-func previewDir(k *media.Kind) string {
-	return strings.TrimSuffix(public(k, k.Publish.Previews).From, "{name}")
-}
-
 // imports are the attached archives Publish.Import has yet to expand.
 func imports(k *media.Kind, m *media.Manifest) []media.File {
 	var out []media.File

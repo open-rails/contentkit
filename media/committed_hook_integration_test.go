@@ -3,13 +3,11 @@ package media_test
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -101,7 +99,8 @@ func TestItemCommittedRefusalFailsTheCommit(t *testing.T) {
 	g := f.ref("gallery", 1)
 
 	p, blob := f.upload(g, "originals/1.png", "image/png", png(44))
-	_, err := f.up.Commit(context.Background(), f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: blob}})
+	operation := uuid.NewString()
+	_, err := f.up.Commit(context.Background(), f.editor, g, operation, []media.Op{{Op: media.OpPut, Path: p, Blob: blob}})
 	if err == nil {
 		t.Fatal("a refused ItemCommitted let the commit report success")
 	}
@@ -117,72 +116,11 @@ func TestItemCommittedRefusalFailsTheCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarted := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{Journal: journal})
-	for range 2 {
-		if err := restarted.RecoverPending(t.Context(), 100); err != nil {
-			t.Fatal(err)
-		}
+	if err := restarted.CompleteCommit(t.Context(), g, operation); err != nil {
+		t.Fatal(err)
 	}
 	if len(c.seen()) != 1 || len(f.q.take()) != 0 {
-		t.Fatalf("notification was lost or replayed after acknowledgement: %v", c.seen())
-	}
-}
-
-func TestRecoveryOrdersUnfinishedThenRotatedNotifications(t *testing.T) {
-	c := &committed{}
-	f := fixtureWithCommitted(t, c)
-	ctx := t.Context()
-	refused := errors.New("host unavailable")
-	var refs [3]contentref.ContentRef
-	for i := range refs {
-		f.visible(i + 1)
-		refs[i] = f.ref("gallery", i+1)
-	}
-	// Two refused commits leave two pending notifications, the first older.
-	for i, ref := range refs[:2] {
-		c.fail = refused
-		p, blob := f.upload(ref, "originals/1.png", "image/png", png(60+i))
-		if _, err := f.up.Commit(ctx, f.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: blob}}); !errors.Is(err, refused) {
-			t.Fatalf("refused commit: %v", err)
-		}
-	}
-	// A newer unfinished commit is still recovered before either notification.
-	item, err := f.reg.Item(refs[2])
-	if err != nil {
-		t.Fatal(err)
-	}
-	table := pgx.Identifier{f.env.ContentSchema(), "content_media_commits"}.Sanitize()
-	if _, err := f.env.Pool().Exec(ctx, `INSERT INTO `+table+`
-(tenant_id, operation_id, content_kind, content_id, folder_prefix, actor_id, fingerprint, lease_id)
-VALUES ($1, gen_random_uuid(), $2, $3, $4, '', decode(repeat('00', 32), 'hex'), gen_random_uuid())`,
-		refs[2].TenantID, refs[2].ContentKind, refs[2].ContentID, item.Prefix()); err != nil {
-		t.Fatal(err)
-	}
-	recoverOne := func() error { return f.ms.RecoverPending(ctx, 1) }
-	if err := recoverOne(); err != nil {
-		t.Fatal(err)
-	}
-	var state string
-	if err := f.env.Pool().QueryRow(ctx, `SELECT state FROM `+table+` WHERE tenant_id = $1 AND folder_prefix = $2`,
-		refs[2].TenantID, item.Prefix()).Scan(&state); err != nil || state != "absent" {
-		t.Fatalf("unfinished commit is %q, want absent: %v", state, err)
-	}
-	if seen := c.seen(); len(seen) != 0 {
-		t.Fatalf("notifications %v were delivered before the unfinished commit", seen)
-	}
-
-	// A failed delivery rotates behind the other pending notification.
-	c.fail = refused
-	if err := recoverOne(); !errors.Is(err, refused) {
-		t.Fatalf("oldest notification was not attempted first: %v", err)
-	}
-	for range 2 {
-		if err := recoverOne(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	name := func(r contentref.ContentRef) string { return r.ContentKind + "/" + r.ContentID }
-	if seen := c.seen(); !slices.Equal(seen, []string{name(refs[1]), name(refs[0])}) {
-		t.Fatalf("notifications delivered as %v, want the refused one last", seen)
+		t.Fatalf("ingest did not retry the direct callback: %v", c.seen())
 	}
 }
 

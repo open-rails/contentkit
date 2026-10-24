@@ -95,31 +95,3 @@ it("keeps every explicitly requested window and discards placeholders when the c
     expect(result.current.read?.files[124]?.url).toBeTruthy();
   }
 });
-
-it("shares status-only polling while processing and stops once ready without loading files", async () => {
-  const requests: URL[] = [];
-  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async (input) => {
-    requests.push(new URL(String(input)));
-    return Response.json({ access: "full", expires: 0, total: 0, offset: 0, limit: 0, files: [], status: {
-      state: requests.length === 1 ? "processing" : "ready", failure_count: 0,
-      uploads: { completed: requests.length === 1 ? 0 : 1, total: 1, failed: 0 },
-      archives: { completed: 0, total: 0, failed: 0 }, presets: [], failures: [],
-    } });
-  } });
-  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer="alice">{children}</ContentKitProvider>;
-  const { result } = renderHook(() => [
-    useMediaRead(ref, { editor: true, status: true, poll: 1000, refresh: false }),
-    useMediaRead(ref, { editor: true, status: true, poll: 1000, refresh: false }),
-  ], { wrapper });
-  await flush();
-  expect(requests).toHaveLength(1);
-  expect(requests[0]!.searchParams.get("status")).toBe("1");
-  expect(result.current[0]?.processing).toBe(true);
-  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-  await flush();
-  expect(result.current[0]?.read?.files).toEqual([]);
-  expect(result.current[0]?.processing).toBe(false);
-  expect(requests).toHaveLength(2);
-  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-  expect(requests).toHaveLength(2);
-});

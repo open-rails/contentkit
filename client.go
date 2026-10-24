@@ -116,6 +116,10 @@ func (c *Client) raw(ctx context.Context, method, path string, query url.Values,
 
 // do sends one request; a status of 300 or more is an *Error.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, in any) (*http.Response, error) {
+	return c.doHeaders(ctx, method, path, query, in, nil)
+}
+
+func (c *Client) doHeaders(ctx context.Context, method, path string, query url.Values, in any, headers http.Header) (*http.Response, error) {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -131,6 +135,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return nil, err
+	}
+	for key, values := range headers {
+		req.Header[key] = values
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -206,6 +213,9 @@ func (t inprocess) RoundTrip(req *http.Request) (*http.Response, error) {
 	r.RequestURI, r.RemoteAddr = r.URL.RequestURI(), "127.0.0.1:0"
 	if r.Body == nil {
 		r.Body = http.NoBody
+	}
+	if req.Header.Get("Accept") == "text/event-stream" {
+		return streamInProcess(t.h, r)
 	}
 	w := &recorder{header: http.Header{}, status: http.StatusOK}
 	t.h.ServeHTTP(w, r)
