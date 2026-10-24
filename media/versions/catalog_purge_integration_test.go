@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/auth"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -71,6 +72,7 @@ type purgeFixture struct {
 	versions     *versions.Service
 	jobs         *media.Jobs
 	manifests    *media.Manifests
+	uploads      *media.Uploads
 	registry     *media.Registry
 	actor        access.Actor
 	schema, host string
@@ -130,6 +132,7 @@ func newPurgeFixture(t *testing.T) *purgeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.uploads = uploads
 	if err = f.versions.Bind(versions.Media{Manifests: f.manifests, Uploads: uploads, Jobs: f.jobs}); err != nil {
 		t.Fatal(err)
 	}
@@ -660,4 +663,124 @@ func TestCatalogPurgeStillBlocksExplicitParentRestoreOfClaimedVersions(t *testin
 		t.Fatalf("parent purge: %+v", result)
 	}
 	f.assertStorage(key, false)
+}
+
+func TestUploadOperationCannotReserveAnotherVersionsPurgeIDs(t *testing.T) {
+	for _, operation := range []string{"claim", "erase"} {
+		t.Run(operation, func(t *testing.T) {
+			f := newPurgeFixture(t)
+			own, victim := f.create(1)[0], f.create(1)[0]
+			victimKey := f.page(victim)
+			attacker := testauth.Actor(access.Actor{ID: contentref.NewID()}, &grants{})
+			if _, err := f.env.Pool().Exec(t.Context(), `UPDATE `+f.table("content_creators")+` SET user_id=$3 WHERE tenant_id=$1 AND content_id=$2`, f.env.Tenant, own.Content, attacker.ID); err != nil {
+				t.Fatal(err)
+			}
+			ownRef, _ := f.registry.VersionRef("gallery", own.Content, own.Version)
+			victimRef, _ := f.registry.VersionRef("gallery", victim.Content, victim.Version)
+			ops := []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "owned upload"}}}
+			if _, err := f.uploads.Commit(t.Context(), attacker, ownRef, uuid.NewString(), ops); err != nil {
+				t.Fatalf("uploader cannot edit its own item: %v", err)
+			}
+			if _, err := f.uploads.Commit(t.Context(), attacker, victimRef, uuid.NewString(), ops); err == nil {
+				t.Fatal("fixture uploader unexpectedly controls the victim")
+			}
+			item, _ := f.registry.Item(victimRef)
+			name := "erasure-claim:" + item.Prefix()
+			if operation == "erase" {
+				name = "erase:" + item.Prefix() + "content-purge:" + victim.Version
+			}
+			reserved := uuid.NewSHA1(uuid.NameSpaceURL, []byte(name)).String()
+			_, err := f.uploads.Commit(t.Context(), attacker, ownRef, reserved, ops)
+			invalid, ok := media.AsUploadError(err)
+			if !ok || invalid.Code != media.CodeInvalid {
+				t.Errorf("client reserved an internal purge UUID: %v", err)
+			}
+			var receipts int
+			if err := f.env.Pool().QueryRow(t.Context(), `SELECT count(*) FROM `+f.table("content_media_commits")+` WHERE tenant_id=$1 AND operation_id=$2::uuid`, f.env.Tenant, reserved).Scan(&receipts); err != nil {
+				t.Fatal(err)
+			}
+			if receipts != 0 {
+				t.Errorf("rejected client ID inserted %d journal receipts", receipts)
+			}
+			f.remove(victim)
+			f.advance(catalogpkg.DefaultDeletedRetention + time.Hour)
+			if n, err := f.purge(); err != nil || n != 1 {
+				t.Errorf("another item's client ID blocked victim purge: count=%d error=%v identity_collision=%v", n, err, errors.Is(err, media.ErrCommitIdentity))
+				return
+			}
+			if f.exists(victim) || !f.exists(own) {
+				t.Fatal("purge affected the wrong item")
+			}
+			f.assertStorage(victimKey, false)
+		})
+	}
+}
+
+func TestUploadClientOperationUUIDVersionsPreserveExactReplay(t *testing.T) {
+	for _, version := range []int{4, 7} {
+		t.Run(string(rune('0'+version)), func(t *testing.T) {
+			f := newPurgeFixture(t)
+			target := f.create(1)[0]
+			ref, _ := f.registry.VersionRef("gallery", target.Content, target.Version)
+			id := uuid.New()
+			if version == 7 {
+				id = uuid.Must(uuid.NewV7())
+			}
+			original := []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "first"}}}
+			later := []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "later"}}}
+			if _, err := f.uploads.Commit(t.Context(), f.actor, ref, id.String(), original); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.uploads.Commit(t.Context(), f.actor, ref, uuid.NewString(), later); err != nil {
+				t.Fatal(err)
+			}
+			_, before, err := f.manifests.Get(t.Context(), ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			replayed, err := f.uploads.CommitChecked(t.Context(), f.actor, ref, id.String(), original, func(*media.Manifest) error { return errors.New("obsolete precondition must not run on exact replay") })
+			if err != nil || replayed.Meta["title"] != "later" {
+				t.Fatalf("exact replay repeated or rejected the edit: %+v %v", replayed, err)
+			}
+			_, after, err := f.manifests.Get(t.Context(), ref)
+			if err != nil || before != after {
+				t.Fatalf("exact replay changed storage: %v", err)
+			}
+			_, err = f.uploads.Commit(t.Context(), f.actor, ref, id.String(), later)
+			conflict, ok := media.AsUploadError(err)
+			if !ok || conflict.Code != media.CodeConflict {
+				t.Fatalf("same ID accepted different inputs: %v", err)
+			}
+		})
+	}
+}
+
+func TestUploadDeterministicOperationsRequireExactTrustedSystemActor(t *testing.T) {
+	f := newPurgeFixture(t)
+	target := f.create(1)[0]
+	ref, _ := f.registry.VersionRef("gallery", target.Content, target.Version)
+	ops := []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "internal"}}}
+	for i, actor := range []access.Actor{{ID: "contentkit", Kind: "user"}, {ID: "another", Kind: "contentkit:system"}, {ID: "contentkit", Kind: "contentkit:system", Anonymous: true}} {
+		id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("untrusted-system-match-"+string(rune('0'+i))))
+		_, err := f.uploads.Commit(t.Context(), actor, ref, id.String(), ops)
+		invalid, ok := media.AsUploadError(err)
+		if !ok || invalid.Code != media.CodeInvalid {
+			t.Fatalf("nonmatching actor reserved deterministic ID: %+v %v", actor, err)
+		}
+	}
+	malformed := uuid.New()
+	malformed[8] &= 0x3f
+	_, err := f.uploads.Commit(t.Context(), f.actor, ref, malformed.String(), ops)
+	invalid, ok := media.AsUploadError(err)
+	if !ok || invalid.Code != media.CodeInvalid {
+		t.Fatalf("non-RFC UUID variant was accepted: %v", err)
+	}
+	trusted := access.Actor{ID: "contentkit", Kind: "contentkit:system"}
+	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("trusted-system-commit"))
+	for range 2 {
+		got, err := f.uploads.Commit(t.Context(), trusted, ref, id.String(), ops)
+		if err != nil || got.Meta["title"] != "internal" {
+			t.Fatalf("trusted canonical deterministic operation failed: %v", err)
+		}
+	}
 }
