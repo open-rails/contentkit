@@ -101,11 +101,6 @@ func (s *Store) recordDueReleases(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if n > 0 {
-		if err = s.exposeTx(ctx, tx, ids); err != nil {
-			return 0, err
-		}
-	}
 	return n, tx.Commit(ctx)
 }
 

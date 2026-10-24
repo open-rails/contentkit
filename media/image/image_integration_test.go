@@ -178,7 +178,7 @@ func TestPublicPreset(t *testing.T) {
 		}
 	}
 	e.process(t, media.ProcessJob{Ref: g})
-	// A hidden item renders nothing public.
+	// Historical visibility flags do not suppress declared public presets.
 	h := e.ref(t, "gallery", 2)
 	e.put(t, h, "cover.png", "image/png", quadrants(t))
 	if _, err := e.ms.EditExisting(context.Background(), h, func(m *media.Manifest) error {
@@ -189,8 +189,8 @@ func TestPublicPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.process(t, media.ProcessJob{Ref: h})
-	if _, _, ok := e.public(t, h, "cover-150.webp"); ok {
-		t.Fatal("a hidden item rendered its cover")
+	if _, _, ok := e.public(t, h, "cover-150.webp"); !ok {
+		t.Fatal("a legacy hidden item did not render its public cover")
 	}
 }
 

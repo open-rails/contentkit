@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/resolve"
@@ -48,7 +50,7 @@ type ProcessingFailure struct {
 // MediaStatus is a read-only editor snapshot of all uploads, including staging.
 // Unattached sources count placement and private processing; their public presets
 // wait until attachment. This state is separate from publication readiness.
-// Public presets count only while visible. An archive may have finished
+// Public presets count after attachment. An archive may have finished
 // placement while still waiting for extraction. Encoding is
 // the existing worker checkpoint, when available, never a new job or operation.
 type MediaStatus struct {
@@ -74,13 +76,45 @@ func (r *Reader) Status(ctx context.Context, ref contentref.ContentRef, actor ac
 	if !res.Visible || !res.Editor {
 		return nil, ErrNotVisible
 	}
-	m, _, err := r.o.Manifests.Get(ctx, ref)
-	if errors.Is(err, ErrNotFound) {
-		m = &Manifest{V: ManifestVersion}
-	} else if err != nil {
+	m, admitted, err := r.o.Manifests.admittedManifest(ctx, item)
+	if err != nil {
 		return nil, err
 	}
-	return statusOf(item.Kind(), m, r.statusProgress(ctx, ref, m)), nil
+	if !admitted {
+		m, _, err = r.o.Manifests.Get(ctx, ref)
+		if errors.Is(err, ErrNotFound) {
+			m = &Manifest{V: ManifestVersion}
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	status := statusOf(item.Kind(), m, r.statusProgress(ctx, ref, m))
+	if admitted {
+		status.State = StateProcessing
+	}
+	return status, nil
+}
+
+// admittedManifest observes accepted work before its S3 PUT. Only editor
+// status uses this image: ordinary readers never resolve uncommitted objects.
+func (m *Manifests) admittedManifest(ctx context.Context, item Item) (*Manifest, bool, error) {
+	jr := m.journal.forTenant(item.Ref().TenantID)
+	var body []byte
+	err := jr.pool.QueryRow(ctx, `SELECT effects FROM `+jr.table+` WHERE tenant_id=$1 AND folder_prefix=$2
+AND content_kind=$3 AND content_id=$4 AND content_version_id IS NOT DISTINCT FROM $5::text
+AND state IN ('prepared','frozen') AND effects->>'ingest'='true'`, item.Ref().TenantID, item.Prefix(), item.Ref().ContentKind, item.Ref().ContentID, item.Ref().ContentVersionID).Scan(&body)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var effects journalEffects
+	if err := json.Unmarshal(body, &effects); err != nil {
+		return nil, false, err
+	}
+	manifest, err := decodeManifest(effects.Manifest)
+	return manifest, true, err
 }
 
 func (r *Reader) statusProgress(ctx context.Context, ref contentref.ContentRef, m *Manifest) EncodeStatus {
@@ -183,7 +217,7 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 				out.Archives.Completed++
 			}
 		}
-		for _, name := range k.Presets(f.Path, m.Hidden || f.Unattached) {
+		for _, name := range k.Presets(f.Path, f.Unattached) {
 			count := presets[name]
 			if count == nil {
 				count = &ProcessingCount{}
@@ -227,7 +261,7 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 
 func statusHasPending(k *Kind, m *Manifest, f File) bool {
 	return slices.ContainsFunc(f.Pending, func(name string) bool {
-		return k.private(name) != nil || !m.Hidden && !f.Unattached && k.public(name) != nil
+		return k.private(name) != nil || !f.Unattached && k.public(name) != nil
 	})
 }
 

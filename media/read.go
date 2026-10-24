@@ -550,6 +550,12 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	if editor {
 		progress := r.statusProgress(ctx, ref, g.Manifest)
 		out.Status = statusOf(k, g.Manifest, progress)
+		if pending, admitted, err := r.o.Manifests.admittedManifest(ctx, g.Item); err != nil {
+			return nil, nil, err
+		} else if admitted {
+			out.Status = statusOf(k, pending, EncodeStatus{})
+			out.Status.State, out.State = StateProcessing, StateProcessing
+		}
 		r.addProgress(out.Files, progress)
 	}
 	return out, g, nil

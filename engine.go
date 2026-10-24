@@ -177,7 +177,7 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		if e.avatars, err = e.newAvatars(deps); err != nil {
 			return nil, err
 		}
-		if err := e.catalog.BindMedia(catalog.Media{Registry: e.media.reg, Reader: e.media.reader, Versions: e.media.versions}); err != nil {
+		if err := e.catalog.BindMedia(catalog.Media{Registry: e.media.reg, Reader: e.media.reader, Versions: catalogMedia{Service: e.media.versions, engine: e}}); err != nil {
 			return nil, err
 		}
 	}
@@ -358,7 +358,11 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if err != nil {
 			return err
 		}
-		ingest, err := workqueue.New(e.pool, reg, m.WorkerSchema)
+		accountWorkerSchema := ""
+		if account, ok := e.accountMediaStorage(); ok {
+			accountWorkerSchema = account.WorkerSchema
+		}
+		ingest, err := workqueue.NewWithAccounts(e.pool, reg, m.WorkerSchema, accountWorkerSchema)
 		if err != nil {
 			return err
 		}
@@ -375,6 +379,13 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		retention := max(24*time.Hour, ttl+window+time.Second)
 		if err := media.MigrateCleanup(ctx, e.pool, reg, journal, e.riverSchema, retention); err != nil {
 			return fmt.Errorf("contentkit: media cleanup migration: %w", err)
+		}
+		publish, err := versions.ProcessingPublisher(e.pool, e.riverSchema, reg)
+		if err != nil {
+			return err
+		}
+		if err := media.MigrateProcessing(ctx, e.pool, reg, journal, e.riverSchema, ingest, publish); err != nil {
+			return fmt.Errorf("contentkit: media processing handoff: %w", err)
 		}
 		if err := versions.MigrateReaderSnapshots(ctx, e.pool, e.schema, e.cfg.Tenant, e.riverSchema, reg); err != nil {
 			return fmt.Errorf("contentkit: reader snapshot migration: %w", err)
@@ -496,7 +507,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		limiter = media.RouteLimiter(limiter, accountLimiter, e.accountMediaPartition())
 	}
 	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal,
-		Processes: m.queue, Pool: e.pool, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
+		Processes: m.queue, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
 		return nil, err
 	}
 	d := mc.Delivery

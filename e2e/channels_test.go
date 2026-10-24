@@ -212,8 +212,8 @@ func TestChannels(t *testing.T) {
 		t.Fatalf("the media folder's deletion was queued %d times on delete", n)
 	}
 	hides := jobs("contentkit_media_expose")
-	if hides == 0 {
-		t.Fatal("deleting queued no hiding of the channel's media")
+	if hides != 0 {
+		t.Fatal("deleting queued media exposure")
 	}
 
 	// Restoring brings back the scope, the media and the post its deletion
@@ -229,8 +229,8 @@ func TestChannels(t *testing.T) {
 	if state, _ := stateOf(earlier.ID); state != "deleted" {
 		t.Fatalf("the post deleted before the channel: %q after restore", state)
 	}
-	if n := jobs("contentkit_media_expose"); n <= hides {
-		t.Fatalf("restoring queued no showing of the channel's media (%d exposes)", n)
+	if n := jobs("contentkit_media_expose"); n != hides {
+		t.Fatalf("restoring queued media exposure (%d exposes)", n)
 	}
 	var restored catalog.Content
 	f.want(http.StatusOK, creatorToken, "GET", "/contents/"+made2.ID, nil, &restored)

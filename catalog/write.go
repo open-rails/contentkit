@@ -128,7 +128,6 @@ type VersionKey struct{ ContentID, VersionID string }
 type effects struct {
 	events []Event
 	codes  bool // slugs may have changed
-	expose bool // anonymous visibility may have changed
 	// republish are versions whose effective rule or segments changed.
 	republish []versions.Target
 	forks     []versions.Fork
@@ -194,9 +193,6 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 		if err := s.media.Versions.CopyBodiesTx(ctx, tx, fx.bodies); err != nil {
 			return err
 		}
-	}
-	if fx.expose {
-		return s.exposeTx(ctx, tx, ids)
 	}
 	return nil
 }
@@ -439,7 +435,7 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 		}
 	}
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{expose: true}
+		fx := effects{}
 		for _, u := range in {
 			o := got[u.ID]
 			if u.Comments != nil {
@@ -648,7 +644,7 @@ func (s *Store) PutText(ctx context.Context, actor access.Actor, in []TextPut) e
 		byID[p.ContentID] = append(byID[p.ContentID], in[i])
 	}
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{codes: true, expose: true}
+		fx := effects{codes: true}
 		for _, id := range ids {
 			o := got[id]
 			if o.state == StateDeleted {
@@ -720,7 +716,7 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 	}
 	now := s.now()
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{expose: true}
+		fx := effects{}
 		if check != nil {
 			if err := check(ctx, tx); err != nil {
 				return fx, err
@@ -788,7 +784,7 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 // Unpublish returns published or scheduled content items to drafts.
 func (s *Store) Unpublish(ctx context.Context, actor access.Actor, ids []string) error {
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{expose: true}
+		fx := effects{}
 		for _, id := range ids {
 			o := got[id]
 			if o.state != StatePublished {
@@ -808,7 +804,7 @@ func (s *Store) Unpublish(ctx context.Context, actor access.Actor, ids []string)
 // public delete route. Deleted content follows the configured retention.
 func (s *Store) DeleteForModeration(ctx context.Context, actor access.Actor, ids []string) error {
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{expose: true}
+		fx := effects{}
 		for _, id := range ids {
 			o := got[id]
 			if o.state == StateDeleted {
@@ -836,7 +832,7 @@ func (s *Store) DeleteForModeration(ctx context.Context, actor access.Actor, ids
 // scheduled) when they had been, else drafts.
 func (s *Store) Restore(ctx context.Context, actor access.Actor, ids []string) error {
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{expose: true}
+		fx := effects{}
 		for _, id := range ids {
 			o := got[id]
 			if o.state != StateDeleted {
@@ -964,7 +960,7 @@ func (s *Store) followOwned(ctx context.Context, query string, entities []string
 		}()
 		if err == nil && len(ids) > 0 {
 			if err = write(ctx, tx, ids, causes); err == nil {
-				if err = s.apply(ctx, tx, ids, effects{events: events, expose: true}); err == nil {
+				if err = s.apply(ctx, tx, ids, effects{events: events}); err == nil {
 					err = tx.Commit(ctx)
 				}
 			}
@@ -998,7 +994,7 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 	}
 	out := make([]string, len(in))
 	err = s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{expose: true}
+		fx := effects{}
 		for i, p := range in {
 			o := got[p.ContentID]
 			k := s.cfg.Kinds[o.kind]
@@ -1355,7 +1351,7 @@ func (s *Store) DeleteVersions(ctx context.Context, actor access.Actor, keys []V
 		}
 	}
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{expose: true}
+		fx := effects{}
 		for _, k := range keys {
 			o := got[k.ContentID]
 			tag, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET state = 'deleted', deleted_at = clock_timestamp(), updated_at = clock_timestamp(), revision = revision + 1

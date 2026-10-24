@@ -16,7 +16,7 @@ import (
 )
 
 const legacyCleanupWhere = `state NOT IN ('completed', 'cancelled', 'discarded') AND (
-kind IN ('contentkit_media_sweep', 'contentkit_media_sweep_pass', 'contentkit_media_orphan_sweep') OR
+kind IN ('contentkit_media_sweep', 'contentkit_media_sweep_pass', 'contentkit_media_orphan_sweep', 'contentkit_media_cleanup_due', 'contentkit_media_recover') OR
 kind = 'contentkit_media_delete_folder')`
 
 type legacyCleanup struct {
@@ -28,6 +28,7 @@ type legacyCleanup struct {
 	prefix      string
 	operation   uuid.UUID
 	incarnation string
+	owner       string
 }
 
 func legacyCleanupTable(schema string) string {
@@ -38,30 +39,27 @@ func legacyCleanupTable(schema string) string {
 }
 
 func (job *legacyCleanup) owned(ctx context.Context, q folderQuerier, reg *Registry, journal *PGJournal) (bool, error) {
-	if job.kind == "contentkit_media_sweep_pass" || job.kind == "contentkit_media_orphan_sweep" {
+	if job.kind == "contentkit_media_sweep_pass" || job.kind == "contentkit_media_orphan_sweep" || job.kind == "contentkit_media_cleanup_due" || job.kind == "contentkit_media_recover" {
 		return true, nil
 	}
 	var args struct {
-		Prefix, Operation, Incarnation string
-		Final                          bool
+		Prefix, Operation, Incarnation, Owner string
+		Final                                 bool
 	}
 	if err := json.Unmarshal(job.args, &args); err != nil {
 		return false, err
 	}
-	item, retired, err := journal.resolveFolder(ctx, q, reg, args.Prefix)
+	item, _, err := journal.resolveFolder(ctx, q, reg, args.Prefix)
 	if err != nil {
 		return false, nil // another registry using this River schema
 	}
 	job.prefix = item.Prefix()
 	if job.kind == "contentkit_media_delete_folder" {
 		if !args.Final {
-			if !retired {
-				return false, nil
-			} // current first-pass I/O remains queued
 			if _, err := uuid.Parse(args.Incarnation); err != nil {
 				return false, ErrCommitIdentity
 			}
-			job.incarnation = args.Incarnation
+			job.incarnation, job.owner = args.Incarnation, args.Owner
 			return true, nil
 		}
 		job.operation, err = uuid.Parse(args.Operation)
@@ -89,9 +87,15 @@ func MigrateCleanup(ctx context.Context, pool *pgxpool.Pool, reg *Registry, jour
 		grace = 24 * time.Hour
 	}
 	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `LOCK TABLE `+legacyCleanupTable(riverSchema)+` IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+			return err
+		}
 		for _, tenant := range reg.Namespaces() {
 			kinds := reg.cleanupKinds(tenant)
 			jr := journal.forTenant(tenant)
+			if err := jr.validateAdmittedWrites(ctx, tx, tenant, kinds); err != nil {
+				return err
+			}
 			if _, err := tx.Exec(ctx, `WITH initialized AS (
  UPDATE `+jr.table+` SET effects=jsonb_set(effects,'{legacy_publication,initialized}','true')
  WHERE tenant_id=$1 AND effects->'legacy_publication'->>'initialized'='false'
@@ -139,6 +143,15 @@ ORDER BY id LIMIT 100 FOR UPDATE`, after)
 					item, retired, err := journal.resolveFolder(ctx, tx, reg, job.prefix)
 					if err != nil {
 						return err
+					}
+					if !retired && job.incarnation != "" {
+						if err := journal.retireItemTx(ctx, tx, item, job.owner, job.incarnation, time.Now()); err != nil {
+							return err
+						}
+						if _, err := client.JobCancelTx(ctx, tx, job.id); err != nil {
+							return err
+						}
+						continue
 					}
 					var operations []uuid.UUID
 					due := job.due
@@ -201,6 +214,9 @@ func ValidateCleanupMigration(ctx context.Context, pool *pgxpool.Pool, reg *Regi
 	}
 	for _, tenant := range reg.Namespaces() {
 		kinds := reg.cleanupKinds(tenant)
+		if err := journal.forTenant(tenant).validateAdmittedWrites(ctx, pool, tenant, kinds); err != nil {
+			return err
+		}
 		var uninitialized bool
 		if err := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM "+journal.forTenant(tenant).cleanup+" WHERE tenant_id=$1 AND content_kind=ANY($2) AND due_at='infinity'::timestamptz)", tenant, kinds).Scan(&uninitialized); err != nil {
 			return err
@@ -208,6 +224,23 @@ func ValidateCleanupMigration(ctx context.Context, pool *pgxpool.Pool, reg *Regi
 		if uninitialized {
 			return errors.New("media: cleanup bootstrap requires MigrateCleanup before startup")
 		}
+	}
+	return nil
+}
+
+// A hard cut does not guess the input of an older uncertain CAS. Its previous
+// owner must settle it before upgrade; retained receipts and quota stay intact.
+func (j *PGJournal) validateAdmittedWrites(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, tenant string, kinds []string) error {
+	var pending bool
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+j.table+` WHERE tenant_id=$1 AND content_kind=ANY($2)
+AND state IN ('prepared','frozen') AND attempt_id IS NOT NULL AND NOT(effects ? 'manifest') AND coalesce(effects->>'cleanup','false')<>'true')`, tenant, kinds).Scan(&pending)
+	if err != nil {
+		return err
+	}
+	if pending {
+		return errors.New("media: settle unfinished manifest writes with the previous release before the ownership hard cut")
 	}
 	return nil
 }

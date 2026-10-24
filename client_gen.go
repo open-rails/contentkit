@@ -1848,7 +1848,7 @@ func (c *Client) PatchEntity(ctx context.Context, id string, body entities.Entit
 	return out, err
 }
 
-// DeleteEntity is DELETE /v1/entities/{id} (editor). Marks a entity deleted, retires its AuthKit scope and hides its media; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back, and its media within the retention. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
+// DeleteEntity is DELETE /v1/entities/{id} (editor). Marks an entity deleted and retires its AuthKit scope; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back within retention. Declared public media remains public until permanent purge. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
 func (c *Client) DeleteEntity(ctx context.Context, id string) (entities.Entity, error) {
 	var out entities.Entity
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)

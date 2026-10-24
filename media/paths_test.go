@@ -182,7 +182,7 @@ func TestPreviews(t *testing.T) {
 	hidden := m.Clone()
 	hidden.Hidden = true
 	k.syncPreviews(nil, hidden)
-	if got := pending(hidden) + strings.Join(k.previewNames(hidden), ""); got != "" {
+	if got := pending(hidden); got != pending(m) {
 		t.Fatalf("a hidden item's previews: %q", got)
 	}
 	for name, pub := range map[string]Public{

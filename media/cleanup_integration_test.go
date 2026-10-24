@@ -72,7 +72,7 @@ func TestCleanupDueRetainsYoungTempAndAllocations(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanupDueNow(t, f, ref)
-	if n, err := f.jobs.CleanupDue(t.Context(), 10); err != nil || n != 1 {
+	if n, err := f.jobs.PurgeRetired(t.Context(), 10); err != nil || n != 1 {
 		t.Fatalf("first due pass: %d %v", n, err)
 	}
 	if !f.exists(temp) || cleanupCount(t, f, ref) != 1 {
@@ -85,13 +85,13 @@ func TestCleanupDueRetainsYoungTempAndAllocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := jobs.CleanupDue(t.Context(), 10); err != nil || n != 1 {
+	if n, err := jobs.PurgeRetired(t.Context(), 10); err != nil || n != 1 {
 		t.Fatalf("temp still young: %d %v", n, err)
 	}
 	if !f.exists(temp) || cleanupCount(t, f, ref) != 1 {
 		t.Fatal("TempTTL deadline was lost after private grace elapsed")
 	}
-	if n, err := f.later().CleanupDue(t.Context(), 10); err != nil || n != 1 {
+	if n, err := f.later().PurgeRetired(t.Context(), 10); err != nil || n != 1 {
 		t.Fatalf("final due pass: %d %v", n, err)
 	}
 	if f.exists(temp) || cleanupCount(t, f, ref) != 1 {
@@ -102,7 +102,7 @@ func TestCleanupDueRetainsYoungTempAndAllocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := last.CleanupDue(t.Context(), 10); err != nil || n != 1 || cleanupCount(t, f, ref) != 0 {
+	if n, err := last.PurgeRetired(t.Context(), 10); err != nil || n != 1 || cleanupCount(t, f, ref) != 0 {
 		t.Fatalf("bounded late-upload pass did not finish: %d %v", n, err)
 	}
 }
@@ -121,7 +121,7 @@ func TestCleanupDueIsBoundedAndIdleDoesNotListStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := jobs.CleanupDue(t.Context(), 1); err != nil || n != 0 || listed {
+	if n, err := jobs.PurgeRetired(t.Context(), 1); err != nil || n != 0 || listed {
 		t.Fatalf("idle cleanup touched storage: %d %v listed=%v", n, err, listed)
 	}
 	refs := []contentref.ContentRef{f.ref("gallery", 1), f.ref("gallery", 2)}
@@ -139,7 +139,7 @@ func TestCleanupDueIsBoundedAndIdleDoesNotListStorage(t *testing.T) {
 		}
 	}
 	cleanupDueNow(t, f, refs...)
-	if n, err := jobs.CleanupDue(t.Context(), 1); err != nil || n != 1 {
+	if n, err := jobs.PurgeRetired(t.Context(), 1); err != nil || n != 1 {
 		t.Fatalf("bounded cleanup: %d %v", n, err)
 	}
 	if got := cleanupCount(t, f, refs[0]) + cleanupCount(t, f, refs[1]); got != 1 {
@@ -198,15 +198,15 @@ func TestCleanupDueKeepsConcurrentRequestAndIsolatesFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanupDueNow(t, f, one, two)
-	if n, err := jobs.CleanupDue(t.Context(), 10); n != 2 || err == nil || !strings.Contains(err.Error(), "injected folder read failure") {
+	if n, err := jobs.PurgeRetired(t.Context(), 10); n != 2 || err == nil || !strings.Contains(err.Error(), "injected folder read failure") {
 		t.Fatalf("isolated pass: %d %v", n, err)
 	}
 	if cleanupCount(t, f, one) != 1 || cleanupCount(t, f, two) != 1 {
 		t.Fatal("failed folder or concurrent request lost its obligation")
 	}
 	cleanupDueNow(t, f, two)
-	if n, err := f.jobs.CleanupDue(t.Context(), 10); n != 1 || err != nil {
-		t.Fatalf("unaffected folder did not progress: %d %v", n, err)
+	if n, err := f.jobs.PurgeRetired(t.Context(), 10); n != 2 || err != nil {
+		t.Fatalf("same sweep did not retry both due folders: %d %v", n, err)
 	}
 	if cleanupCount(t, f, two) != 0 {
 		t.Fatal("unchanged completed request was not acknowledged")
@@ -249,7 +249,7 @@ func TestCleanupAcknowledgmentCannotEraseRecreatedRow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := jobs.CleanupDue(ctx, 1); done <- err }()
+	go func() { _, err := jobs.PurgeRetired(ctx, 1); done <- err }()
 	select {
 	case <-gate.entered:
 	case <-ctx.Done():
@@ -257,7 +257,7 @@ func TestCleanupAcknowledgmentCannotEraseRecreatedRow(t *testing.T) {
 	}
 	// The second cleaner has read the old token. Complete and delete that row,
 	// then create a new obligation before allowing its stale ACK to proceed.
-	if _, err := f.jobs.CleanupDue(ctx, 1); err != nil || cleanupCount(t, f, ref) != 0 {
+	if _, err := f.jobs.PurgeRetired(ctx, 1); err != nil || cleanupCount(t, f, ref) != 0 {
 		t.Fatalf("first cleaner did not finish: %v", err)
 	}
 	if _, err := f.ms.Edit(ctx, ref, func(m *media.Manifest) error { m.Meta["title"] = "new request"; return nil }); err != nil {
@@ -289,7 +289,7 @@ func TestCleanupRetiresAbsentAllocationAndCatchesLateUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := jobs.CleanupDue(t.Context(), 10); n != 1 || err != nil {
+	if n, err := jobs.PurgeRetired(t.Context(), 10); n != 1 || err != nil {
 		t.Fatalf("absent allocation retirement: %d %v", n, err)
 	}
 	var retired bool
@@ -300,7 +300,7 @@ func TestCleanupRetiresAbsentAllocationAndCatchesLateUpload(t *testing.T) {
 		t.Fatal("retirement lost its late-upload cleanup obligation")
 	}
 	f.object(key, "late bytes")
-	if n, err := f.later().CleanupDue(t.Context(), 10); n != 1 || err != nil {
+	if n, err := f.later().PurgeRetired(t.Context(), 10); n != 1 || err != nil {
 		t.Fatalf("late upload cleanup: %d %v", n, err)
 	}
 	if f.exists(key) || cleanupCount(t, f, ref) != 0 {
@@ -450,11 +450,11 @@ func TestCleanupBootstrapPreservesConfiguredAllocationGrace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := jobs.CleanupDue(t.Context(), 10); n != 0 || err != nil || !f.exists(public) {
+	if n, err := jobs.PurgeRetired(t.Context(), 10); n != 0 || err != nil || !f.exists(public) {
 		t.Fatalf("bootstrap shortened custom allocation grace: %d %v", n, err)
 	}
 	clock = time.Now().Add(49 * time.Hour)
-	if n, err := jobs.CleanupDue(t.Context(), 10); n != 1 || err != nil || f.exists(public) {
+	if n, err := jobs.PurgeRetired(t.Context(), 10); n != 1 || err != nil || f.exists(public) {
 		t.Fatalf("bootstrap never collected expired allocated output: %d %v", n, err)
 	}
 }
@@ -504,10 +504,10 @@ func TestCleanupUsesAccountJournalRoute(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), "UPDATE "+accountTable+" SET due_at=now()-interval '1 minute' WHERE tenant_id=$1", ref.TenantID); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := f.jobs.CleanupDue(t.Context(), 10); err != nil || n != 0 {
+	if n, err := f.jobs.PurgeRetired(t.Context(), 10); err != nil || n != 0 {
 		t.Fatalf("app journal processed shared cleanup without route: %d %v", n, err)
 	}
-	if n, err := jobs.CleanupDue(t.Context(), 10); err != nil || n != 1 {
+	if n, err := jobs.PurgeRetired(t.Context(), 10); err != nil || n != 1 {
 		t.Fatalf("routed shared cleanup: %d %v", n, err)
 	}
 }

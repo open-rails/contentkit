@@ -87,16 +87,21 @@ func (g entityCovers) Covers(ctx context.Context, covers []entities.CoverOf) ([]
 	return g.e.media.versions.EntityCovers().Covers(ctx, covers)
 }
 
-// groupFolders hides, shows and deletes entity media folders through media,
-// built after entities.
+// entityFolders binds durable retirement to the configured media owner.
 type entityFolders struct{ e *Engine }
 
-func (g entityFolders) ExposeTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
-	return g.e.media.versions.EntityFolders().ExposeTx(ctx, tx, refs)
+func (g entityFolders) RetireTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
+	return g.e.media.versions.EntityFolders().RetireTx(ctx, tx, refs)
 }
 
-func (g entityFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
-	return g.e.media.versions.EntityFolders().DeleteTx(ctx, tx, refs)
+func (g entityFolders) RetirementStartedTx(ctx context.Context, tx pgx.Tx, r entities.Ref) (bool, error) {
+	return g.e.media.versions.EntityFolders().RetirementStartedTx(ctx, tx, r)
+}
+func (g entityFolders) RetirementComplete(ctx context.Context, r entities.Ref) (bool, error) {
+	return g.e.media.versions.EntityFolders().RetirementComplete(ctx, r)
+}
+func (g entityFolders) PurgeRetired(ctx context.Context, limit int) (int, error) {
+	return g.e.media.jobs.PurgeRetired(ctx, limit)
 }
 
 // ownedContent deletes and restores user-owned entities' content through the
