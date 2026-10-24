@@ -129,7 +129,7 @@ type Kind struct {
 	TitlePolicy TitlePolicy `json:"title_policy,omitempty" yaml:"title_policy"`
 
 	// AccessLevels limits content and version rules. Empty permits every level.
-	// Omitting ppv and group_ppv also disables individual sales for this kind.
+	// Omitting ppv and group_ppv removes individual-purchase access modes.
 	AccessLevels []string `json:"access_levels,omitempty" yaml:"access_levels"`
 	// AccessScope defaults to content; version presents a direct edition rule.
 	AccessScope AccessScope `json:"access_scope,omitempty" yaml:"access_scope"`

@@ -254,6 +254,9 @@ func New(opts Options) (*Store, error) {
 	if tenant == "" {
 		return nil, fmt.Errorf("%w: Tenant is required", ErrInvalid)
 	}
+	if opts.Gate != nil && opts.Gate.Tenant() != tenant {
+		return nil, fmt.Errorf("%w: Gate tenant differs from entity tenant", ErrInvalid)
+	}
 	if err := opts.Kinds.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}

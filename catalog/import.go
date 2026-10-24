@@ -229,7 +229,7 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	if _, err := s.recordReleases(ctx, tx, ids); err != nil {
 		return err
 	}
-	changed, _, err := s.writeImport(ctx, tx, b)
+	changed, err := s.writeImport(ctx, tx, b)
 	if err != nil {
 		return err
 	}
@@ -405,21 +405,21 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 
 // writeImport upserts the rows, changing only what differs, and answers the
 // content items it changed and those whose text changed.
-func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (changed, retitled map[string]bool, err error) {
-	changed, retitled = map[string]bool{}, map[string]bool{}
-	run := func(into map[string]bool, sql string, args ...any) error {
+func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (changed map[string]bool, err error) {
+	changed = map[string]bool{}
+	run := func(sql string, args ...any) error {
 		rows, err := tx.Query(ctx, sql, args...)
 		if err != nil {
 			return err
 		}
 		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
 		for _, id := range got {
-			into[id], changed[id] = true, true
+			changed[id] = true
 		}
 		return err
 	}
 	data := func(v any) string { b, _ := json.Marshal(v); return string(b) }
-	if err := run(changed, `INSERT INTO `+s.t.items+` AS c (tenant_id, id, kind, state, publish_at, published_at, deleted_at, original_title, original_language, comments,
+	if err := run(`INSERT INTO `+s.t.items+` AS c (tenant_id, id, kind, state, publish_at, published_at, deleted_at, original_title, original_language, comments,
  access, restrictions, attributes, owner_entity_id, created_at, updated_at)
  SELECT $1, r.id, r.kind, r.state, r.publish_at, r.published_at, r.deleted_at, r.original_title, r.original_language, r.comments, r.access, r.restrictions,
   r.attributes, r.owner_entity_id, r.created_at, r.updated_at
@@ -436,15 +436,15 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
   IS DISTINCT FROM (EXCLUDED.state, EXCLUDED.publish_at, EXCLUDED.published_at, EXCLUDED.deleted_at, coalesce(EXCLUDED.original_title,c.original_title),
   coalesce(EXCLUDED.original_language,c.original_language), EXCLUDED.comments, EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_entity_id, EXCLUDED.created_at) OR c.deleted_without_versions
  RETURNING c.id`, s.tenant, data(b.items)); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if len(b.textIDs) > 0 {
-		if err := run(retitled, `DELETE FROM `+s.t.text+` t WHERE t.tenant_id = $1 AND t.content_id = ANY($2) AND NOT EXISTS (
+		if err := run(`DELETE FROM `+s.t.text+` t WHERE t.tenant_id = $1 AND t.content_id = ANY($2) AND NOT EXISTS (
  SELECT 1 FROM jsonb_to_recordset($3::jsonb) AS r(content_id text, language text) WHERE r.content_id = t.content_id AND r.language = t.language)
  RETURNING t.content_id`, s.tenant, b.textIDs, data(b.texts)); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		if err := run(retitled, `INSERT INTO `+s.t.text+` AS t (tenant_id, content_id, language, title, slug, description, body, sort_key, aliases)
+		if err := run(`INSERT INTO `+s.t.text+` AS t (tenant_id, content_id, language, title, slug, description, body, sort_key, aliases)
  SELECT $1, r.content_id, r.language, r.title, coalesce(r.slug, ''), coalesce(r.description, ''), coalesce(r.body, ''), coalesce(r.sort_key, ''),
   coalesce(r.aliases, '{}')
  FROM jsonb_to_recordset($2::jsonb) AS r(content_id text, language text, title text, slug text, description text, body text, sort_key text, aliases text[])
@@ -453,23 +453,23 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
  WHERE (t.title, t.slug, t.description, t.body, t.sort_key, t.aliases) IS DISTINCT FROM
   (EXCLUDED.title, EXCLUDED.slug, EXCLUDED.description, EXCLUDED.body, EXCLUDED.sort_key, EXCLUDED.aliases)
  RETURNING t.content_id`, s.tenant, data(b.texts)); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	if len(b.creatorID) > 0 {
-		if err := run(changed, `DELETE FROM `+s.t.creators+` c WHERE c.tenant_id = $1 AND c.content_id = ANY($2) AND NOT EXISTS (
+		if err := run(`DELETE FROM `+s.t.creators+` c WHERE c.tenant_id = $1 AND c.content_id = ANY($2) AND NOT EXISTS (
  SELECT 1 FROM jsonb_to_recordset($3::jsonb) AS r(content_id text, user_id text, role text)
  WHERE r.content_id = c.content_id AND r.user_id = c.user_id AND r.role = c.role) RETURNING c.content_id`, s.tenant, b.creatorID, data(b.creators)); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		if err := run(changed, `INSERT INTO `+s.t.creators+` AS c (tenant_id, content_id, user_id, role, position)
+		if err := run(`INSERT INTO `+s.t.creators+` AS c (tenant_id, content_id, user_id, role, position)
  SELECT $1, r.content_id, r.user_id, r.role, r.position FROM jsonb_to_recordset($2::jsonb) AS r(content_id text, user_id text, role text, position int)
  ON CONFLICT (tenant_id, content_id, user_id, role) DO UPDATE SET position = EXCLUDED.position WHERE c.position <> EXCLUDED.position
  RETURNING c.content_id`, s.tenant, data(b.creators)); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	if err := run(changed, `INSERT INTO `+s.t.versions+` AS v (tenant_id, id, content_id, code, position, languages, traits, label, state, publish_at,
+	if err := run(`INSERT INTO `+s.t.versions+` AS v (tenant_id, id, content_id, code, position, languages, traits, label, state, publish_at,
  published_at, deleted_at, access, attributes, ordinal, cover, created_at, updated_at, playable)
  SELECT $1, r.id, r.content_id, r.code, r.position, r.languages, r.traits, r.label, r.state, r.publish_at, r.published_at, r.deleted_at,
   r.access, r.attributes, r.ordinal, r.cover, r.created_at, r.updated_at, r.playable
@@ -485,42 +485,42 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
   IS DISTINCT FROM (EXCLUDED.position, coalesce(EXCLUDED.languages, v.languages), EXCLUDED.traits, EXCLUDED.label, EXCLUDED.state, EXCLUDED.publish_at,
   EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.access, EXCLUDED.attributes, EXCLUDED.ordinal, coalesce(EXCLUDED.cover, v.cover), EXCLUDED.created_at)
  RETURNING v.content_id`, s.tenant, data(b.versions)); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// Version rows answer their content item.
 	content := func(sql string) string {
 		return `WITH x AS (` + sql + ` RETURNING version_id) SELECT v.content_id FROM x JOIN ` + s.t.versions + ` v ON v.tenant_id = $1 AND v.id = x.version_id`
 	}
 	if len(b.vtextIDs) > 0 {
-		if err := run(changed, content(`DELETE FROM `+s.t.versionText+` t WHERE t.tenant_id = $1 AND t.version_id = ANY($2) AND NOT EXISTS (
+		if err := run(content(`DELETE FROM `+s.t.versionText+` t WHERE t.tenant_id = $1 AND t.version_id = ANY($2) AND NOT EXISTS (
  SELECT 1 FROM jsonb_to_recordset($3::jsonb) AS r(version_id text, language text) WHERE r.version_id = t.version_id AND r.language = t.language)`),
 			s.tenant, b.vtextIDs, data(b.vtexts)); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		if err := run(changed, content(`INSERT INTO `+s.t.versionText+` AS t (tenant_id, version_id, language, title, description)
+		if err := run(content(`INSERT INTO `+s.t.versionText+` AS t (tenant_id, version_id, language, title, description)
  SELECT $1, r.version_id, r.language, coalesce(r.title, ''), coalesce(r.description, '') FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, language text, title text, description text)
  ON CONFLICT (tenant_id, version_id, language) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description
  WHERE (t.title, t.description) IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.description)`), s.tenant, data(b.vtexts)); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	if len(b.segIDs) > 0 {
-		if err := run(changed, content(`DELETE FROM `+s.t.segments+` g WHERE g.tenant_id = $1 AND g.version_id = ANY($2) AND NOT EXISTS (
+		if err := run(content(`DELETE FROM `+s.t.segments+` g WHERE g.tenant_id = $1 AND g.version_id = ANY($2) AND NOT EXISTS (
  SELECT 1 FROM jsonb_to_recordset($3::jsonb) AS r(version_id text, position int) WHERE r.version_id = g.version_id AND r.position = g.position)`),
 			s.tenant, b.segIDs, data(b.segments)); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		if err := run(changed, content(`INSERT INTO `+s.t.segments+` AS g (tenant_id, version_id, position, title, start_index, end_index, release_at, start_page)
+		if err := run(content(`INSERT INTO `+s.t.segments+` AS g (tenant_id, version_id, position, title, start_index, end_index, release_at, start_page)
  SELECT $1, r.version_id, r.position, coalesce(r.title, ''), r.start_index, r.end_index, r.release_at, r.start_page
  FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, position int, title text, start_index int, end_index int, release_at timestamptz, start_page text)
  ON CONFLICT (tenant_id, version_id, position) DO UPDATE SET title = EXCLUDED.title, start_index = EXCLUDED.start_index, end_index = EXCLUDED.end_index,
   release_at = EXCLUDED.release_at, start_page = EXCLUDED.start_page
  WHERE (g.title, g.start_index, g.end_index, g.release_at, g.start_page) IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.start_index, EXCLUDED.end_index, EXCLUDED.release_at, EXCLUDED.start_page)`),
 			s.tenant, data(b.segments)); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	return changed, retitled, nil
+	return changed, nil
 }
 
 // checkVersionCodes refuses codes the import can't keep: one a stored version
