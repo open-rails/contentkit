@@ -45,6 +45,16 @@ func exactManifests(t *testing.T, f *fixture) (*media.Manifests, *noDiscoverySto
 	return m, store
 }
 
+func purgeExact(t *testing.T, f *fixture, store media.Store) error {
+	t.Helper()
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.journal})
+	if err != nil {
+		return err
+	}
+	_, err = jobs.PurgeRetired(t.Context(), 1000)
+	return err
+}
+
 func TestExactRetirementPreservesSharedSourcesAndNeedsNoList(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
@@ -74,6 +84,9 @@ func TestExactRetirementPreservesSharedSourcesAndNeedsNoList(t *testing.T) {
 	if _, err := m.EditExisting(t.Context(), ref, func(m *media.Manifest) error { m.Files = nil; return nil }); err != nil {
 		t.Fatal(err)
 	}
+	if err := purgeExact(t, f, store); err != nil {
+		t.Fatal(err)
+	}
 	if f.exists(key) {
 		t.Fatal("last reference did not delete allocation")
 	}
@@ -91,14 +104,17 @@ func TestExactRetirementDeleteFailureReplaysRecordedKeys(t *testing.T) {
 	key, _ := item.Blob(f.fileBlob(ref, "originals/001.png"))
 	m, store := exactManifests(t, f)
 	store.failDelete.Store(true)
-	if _, err := m.EditExisting(t.Context(), ref, func(m *media.Manifest) error { m.Files = nil; return nil }); err == nil {
-		t.Fatal("expected DELETE failure")
+	if _, err := m.EditExisting(t.Context(), ref, func(m *media.Manifest) error { m.Files = nil; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := purgeExact(t, f, store); err == nil {
+		t.Fatal("expected content purge DELETE failure")
 	}
 	if !f.exists(key) {
 		t.Fatal("source disappeared despite failed DELETE")
 	}
 	store.failDelete.Store(false)
-	if err := m.Recover(t.Context(), ref); err != nil {
+	if err := purgeExact(t, f, store); err != nil {
 		t.Fatal(err)
 	}
 	if f.exists(key) {
@@ -140,6 +156,7 @@ func TestExactRetirementBarrierFailureKeepsBytesUntilRecovery(t *testing.T) {
 			if err := f.ms.Recover(t.Context(), ref); err != nil {
 				t.Fatal(err)
 			}
+			f.purge()
 			if f.exists(key) {
 				t.Fatal("barrier retry did not complete deletion")
 			}
@@ -230,8 +247,12 @@ func TestExactRetirementLostManifestResponse(t *testing.T) {
 			if err := m.Recover(t.Context(), ref); err != nil {
 				t.Fatal(err)
 			}
-			if f.exists(key) == land {
-				t.Fatalf("land=%v source-present=%v", land, f.exists(key))
+			if !f.exists(key) {
+				t.Fatal("ingest performed physical deletion")
+			}
+			f.purge()
+			if f.exists(key) {
+				t.Fatalf("land=%v retired source survived content purge", land)
 			}
 		})
 	}
@@ -328,6 +349,7 @@ func TestPublicOnlyRetirementRecoversLateWriteWithoutDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, _ := item.Public(f.publicName(ref, "cover-230.webp"))
+	f.purge()
 	if old == current || f.exists(old) {
 		t.Fatal("public generation was not retired inline")
 	}
