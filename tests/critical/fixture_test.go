@@ -21,6 +21,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -43,17 +44,20 @@ func (c *clock) set(at time.Time) { c.mu.Lock(); defer c.mu.Unlock(); c.at = at 
 // world contains real public runtimes. The only controlled dependency is time;
 // AuthKit's Outbox is an external mail/SMS transport, not an identity mock.
 type world struct {
-	pool           *pgxpool.Pool
-	auth           *authkit.Client
-	roles          *authkit.Roles
-	writer         iam.Role
-	moderator      iam.Role
-	globalReviewer iam.Role
-	tenant         [2]*authkit.Client
-	apps           []*application
-	clock          *clock
-	schema         string
-	signer         keys.Signer
+	pool             *pgxpool.Pool
+	auth             *authkit.Client
+	roles            *authkit.Roles
+	writer           iam.Role
+	viewer           iam.Role
+	moderator        iam.Role
+	globalReviewer   iam.Role
+	channelWriter    iam.Role
+	channelModerator iam.Role
+	tenant           [2]*authkit.Client
+	apps             []*application
+	clock            *clock
+	schema           string
+	signer           keys.Signer
 }
 
 type application struct {
@@ -84,8 +88,16 @@ func newWorld(t *testing.T) *world {
 	write := permissions[access.ContentWrite]
 	moderate := permissions[access.CommentsModerate]
 	w.writer = appPersona.Role("writer", write)
+	w.viewer = appPersona.Role("auditor", permissions[access.ContentViewRestricted])
 	w.moderator = appPersona.Role("moderator", moderate)
 	w.globalReviewer = w.roles.Root.Role("reviewer", moderate)
+	channel := w.roles.Persona("channel")
+	channelPermissions := map[string]iam.Perm{}
+	for _, permission := range access.EntityPermissions("channel") {
+		channelPermissions[permission] = channel.Declare(permission)[0]
+	}
+	w.channelWriter = channel.Role("writer", channelPermissions["channel:content:write"])
+	w.channelModerator = channel.Role("moderator", channelPermissions["channel:comments:moderate"])
 	w.auth, _ = authtest.New(t,
 		authtest.WithConfig(func(c *authkit.Config) { c.Roles = w.roles; c.DefaultTenantID = iam.TenantID{} }),
 		authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = pool; w.signer = d.KeySource.ActiveSigner() }))
@@ -130,12 +142,14 @@ func (w *world) newApplication(t *testing.T, tenant *authkit.Client, tid iam.Ten
 	// All apps share tables so missing tenant/app predicates cannot hide
 	// behind separately provisioned databases or schemas.
 	cfg := ck.Config{Scope: &scope, Database: ck.DatabaseConfig{Schema: w.schema},
-		Content: kinds.Config{Languages: []string{"en", "de"}, Tiers: []string{"gold"}, Kinds: map[string]kinds.Kind{
+		Content: kinds.Config{Languages: []string{"en", "de"}, Tiers: []string{"gold"}, EntityKinds: map[string]kinds.EntityKind{"channel": {Route: "channels", Owner: "user", AuthScope: true, MaxPerOwner: 1}}, Kinds: map[string]kinds.Kind{
 			"article": {Route: "articles", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			"gallery": {Route: "galleries", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Segments: true},
 		}},
 	}
 	deps := ck.Deps{Postgres: w.pool, Auth: w.auth.Authenticator(), Authorization: policy, Users: tenant.UserInfo(), Clock: w.clock.now}
+	deps.Scopes, err = ckauth.AppScopes(w.auth, scope)
+	must(t, err)
 	engine, err := ck.New(ctx, cfg, deps)
 	must(t, err)
 	a := &application{engine: engine, cfg: cfg, deps: deps, group: group, tenant: tenant}
@@ -186,4 +200,18 @@ func must(t testing.TB, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func publishedArticle(t *testing.T, a *application, title string) catalog.Content {
+	t.Helper()
+	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: title, Body: "Published body: " + title}}})
+	must(t, err)
+	item, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+	must(t, err)
+	got, err := a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+	must(t, err)
+	if got.ID != item.ID || got.Body != "Published body: "+title || !got.Decision.Allowed {
+		t.Fatalf("fixture was not publicly readable: %+v", got)
+	}
+	return item
 }
