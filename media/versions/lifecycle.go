@@ -104,12 +104,16 @@ func (s *Service) Delete(ctx context.Context, targets []Target) error {
 	}); err != nil {
 		return err
 	}
+	var failures error
 	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(failures, err)
+		}
 		if err := s.m.Jobs.Erase(ctx, media.Deletion{Ref: ref, OperationID: "content-purge:" + ref.Version()}); err != nil {
-			return err
+			failures = errors.Join(failures, err)
 		}
 	}
-	return nil
+	return failures
 }
 
 // CheckRestorableTx refuses a version after its permanent erasure claim,

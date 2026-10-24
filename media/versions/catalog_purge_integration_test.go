@@ -512,3 +512,152 @@ func TestCatalogPurgeLateFailureDoesNotStarveOtherExpiredItems(t *testing.T) {
 	}
 	f.assertStorage(oldKey, false)
 }
+
+func (f *purgeFixture) recentDeletion(target versions.Target) {
+	f.t.Helper()
+	recent := time.Unix(0, f.clock.Load()).Add(-24 * time.Hour)
+	for _, entry := range []struct{ table, id string }{{"content_items", target.Content}, {"content_versions", target.Version}} {
+		if _, err := f.env.Pool().Exec(f.t.Context(), `UPDATE `+f.table(entry.table)+` SET deleted_at=$3 WHERE tenant_id=$1 AND id=$2`, f.env.Tenant, entry.id, recent); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+}
+
+func TestCatalogPurgeClaimDoesNotBlockRetainedSiblingRestore(t *testing.T) {
+	f := newPurgeFixture(t)
+	targets := f.create(2)
+	old, retained := targets[0], targets[1]
+	oldKey, retainedKey := f.page(old), f.page(retained)
+	f.remove(old)
+	f.advance(catalogpkg.DefaultDeletedRetention + time.Hour)
+	f.store.failPrefix = oldKey
+	f.store.failDelete.Store(true)
+	if _, err := f.purge(); err == nil {
+		t.Fatal("expected old version's storage failure")
+	}
+	f.remove(retained)
+	f.recentDeletion(retained)
+	if _, err := f.catalog.PutVersions(t.Context(), f.actor, []catalogpkg.VersionPut{{ContentID: retained.Content, VersionID: retained.Version, VersionInput: catalogpkg.VersionInput{State: catalogpkg.StateDraft}}}); err != nil {
+		t.Fatalf("retained sibling could not restore its automatically deleted parent: %v", err)
+	}
+	f.assertStorage(retainedKey, true)
+	if _, err := f.catalog.PutVersions(t.Context(), f.actor, []catalogpkg.VersionPut{{ContentID: old.Content, VersionID: old.Version, VersionInput: catalogpkg.VersionInput{State: catalogpkg.StateDraft}}}); !errors.Is(err, catalogpkg.ErrConflict) {
+		t.Fatalf("claimed old version became restorable: %v", err)
+	}
+	f.store.failDelete.Store(false)
+	if n, err := f.purge(); err != nil || n != 1 {
+		t.Fatalf("old version retry: %d %v", n, err)
+	}
+	if !f.exists(retained) || f.exists(old) {
+		t.Fatal("retry damaged the restored sibling")
+	}
+	f.assertStorage(oldKey, false)
+	f.assertStorage(retainedKey, true)
+}
+
+func TestCatalogPurgeRetriesOldVersionUnderRecentlyDeletedParent(t *testing.T) {
+	f := newPurgeFixture(t)
+	targets := f.create(2)
+	old, retained := targets[0], targets[1]
+	oldKey, retainedKey := f.page(old), f.page(retained)
+	f.remove(old)
+	f.advance(catalogpkg.DefaultDeletedRetention + time.Hour)
+	f.store.failPrefix = oldKey
+	f.store.failDelete.Store(true)
+	if _, err := f.purge(); err == nil {
+		t.Fatal("expected old version's storage failure")
+	}
+	f.remove(retained)
+	f.recentDeletion(retained)
+	f.store.failDelete.Store(false)
+	if n, err := f.purge(); err != nil || n != 1 {
+		t.Fatalf("recent parent postponed expired version retry: %d %v", n, err)
+	}
+	if f.exists(old) || !f.exists(retained) {
+		t.Fatal("individual retention deadlines were not preserved")
+	}
+	f.assertStorage(oldKey, false)
+	f.assertStorage(retainedKey, true)
+}
+
+func TestCatalogPurgeInitialFailureDoesNotStarveOtherTargets(t *testing.T) {
+	for _, mode := range []string{"parents", "siblings", "cross-phase"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newPurgeFixture(t)
+			var bad, good versions.Target
+			switch mode {
+			case "parents":
+				bad = f.create(1)[0]
+				good = f.create(1)[0]
+			case "siblings":
+				targets := f.create(3)
+				bad, good = targets[0], targets[1]
+			case "cross-phase":
+				bad = f.create(1)[0]
+				good = f.create(2)[0]
+			}
+			badKey, goodKey := f.page(bad), f.page(good)
+			f.remove(bad, good)
+			f.advance(catalogpkg.DefaultDeletedRetention + time.Hour)
+			f.store.failPrefix = badKey
+			f.store.failDelete.Store(true)
+			if n, err := f.purge(); err == nil || n != 1 {
+				t.Fatalf("healthy target was starved or failure was hidden: count=%d err=%v", n, err)
+			}
+			if !f.exists(bad) || f.exists(good) {
+				t.Fatal("failed and successful catalog records were not isolated")
+			}
+			f.assertStorage(badKey, true)
+			f.assertStorage(goodKey, false)
+			f.store.failDelete.Store(false)
+			if n, err := f.purge(); err != nil || n != 1 {
+				t.Fatalf("failed target retry: count=%d err=%v", n, err)
+			}
+			f.assertStorage(badKey, false)
+			f.assertNoFolderDeletionJob()
+		})
+	}
+}
+
+func TestCatalogPurgeDoesNotDeleteNewVersionRevivingItsParent(t *testing.T) {
+	f := newPurgeFixture(t)
+	old := f.create(1)[0]
+	oldKey := f.page(old)
+	f.remove(old)
+	f.advance(catalogpkg.DefaultDeletedRetention + time.Hour)
+	release, done := f.blockedPurge()
+	ids, err := f.catalog.PutVersions(t.Context(), f.actor, []catalogpkg.VersionPut{{ContentID: old.Content, VersionInput: catalogpkg.VersionInput{Languages: []string{"en"}}}})
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("new version could not revive its parent independently: %v", err)
+	}
+	fresh := versions.Target{Content: old.Content, Version: ids[0]}
+	freshKey := f.page(fresh)
+	release()
+	if result := <-done; result.err != nil || result.count != 1 {
+		t.Fatalf("purge after new sibling: %+v", result)
+	}
+	if !f.exists(fresh) || f.exists(old) {
+		t.Fatal("captured parent purge removed the newly created version")
+	}
+	f.assertStorage(oldKey, false)
+	f.assertStorage(freshKey, true)
+}
+
+func TestCatalogPurgeStillBlocksExplicitParentRestoreOfClaimedVersions(t *testing.T) {
+	f := newPurgeFixture(t)
+	target := f.create(1)[0]
+	key := f.page(target)
+	if err := f.catalog.DeleteForModeration(t.Context(), f.actor, []string{target.Content}); err != nil {
+		t.Fatal(err)
+	}
+	f.advance(catalogpkg.DefaultDeletedRetention + time.Hour)
+	release, done := f.blockedPurge()
+	if err := f.catalog.Restore(t.Context(), f.actor, []string{target.Content}); !errors.Is(err, catalogpkg.ErrConflict) {
+		t.Fatalf("parent restoration exposed its claimed version: %v", err)
+	}
+	release()
+	if result := <-done; result.err != nil || result.count != 1 {
+		t.Fatalf("parent purge: %+v", result)
+	}
+	f.assertStorage(key, false)
+}

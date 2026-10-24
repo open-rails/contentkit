@@ -890,7 +890,22 @@ func (s *Store) Restore(ctx context.Context, actor access.Actor, ids []string) e
 // restoreRows brings deleted items back as they were: published (or
 // scheduled) when they had been, else drafts.
 func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error {
-	if err := s.checkRestorableTx(ctx, tx, contentTargets(ids)); err != nil {
+	// Restoring a parent exposes its non-deleted versions; deleted siblings
+	// stay deleted and must not prevent a different version's restoration.
+	rows, err := tx.Query(ctx, `SELECT content_id,id FROM `+s.t.versions+`
+ WHERE tenant_id=$1 AND content_id=ANY($2) AND state<>'deleted' ORDER BY id`, s.tenant, ids)
+	if err != nil {
+		return err
+	}
+	targets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (versions.Target, error) {
+		var target versions.Target
+		err := row.Scan(&target.Content, &target.Version)
+		return target, err
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.checkRestorableTx(ctx, tx, targets); err != nil {
 		return err
 	}
 	// A fixed comment policy is applied only when explicitly restoring a
@@ -905,7 +920,7 @@ func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error 
 	if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_entity = NULL,deleted_without_versions=false,
+	_, err = tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_entity = NULL,deleted_without_versions=false,
  state = CASE WHEN published_at IS NOT NULL OR publish_at IS NOT NULL THEN 'published' ELSE 'draft' END WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
 	return err
 }
@@ -1025,9 +1040,6 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 				}
 				if !automatic {
 					return fx, ErrNotFound
-				}
-				if err := s.checkRestorableTx(ctx, tx, contentTargets([]string{p.ContentID})); err != nil {
-					return fx, err
 				}
 			}
 			if k.Versions.Hidden && (p.VersionID == "" || !hiddenVersionEdit(p.VersionInput)) {

@@ -211,12 +211,21 @@ func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
 	items, err := s.drain(ctx, func(ctx context.Context) (int, error) {
 		return s.erase(ctx, cutoff)
 	})
-	if err != nil {
+	parentErr := err
+	var storage *purgeStorageError
+	if err != nil && (!errors.As(err, &storage) || ctx.Err() != nil) {
 		return items, errors.Join(cleanupErr, err)
 	}
 	erased, err := s.drain(ctx, func(ctx context.Context) (int, error) { return s.eraseVersions(ctx, cutoff) })
-	return items + erased, errors.Join(cleanupErr, err)
+	return items + erased, errors.Join(cleanupErr, parentErr, err)
 }
+
+// Only folder-specific erasure failures permit the independent version scan.
+// Catalog transaction/SQL failures retain their ordinary abort behavior.
+type purgeStorageError struct{ err error }
+
+func (e *purgeStorageError) Error() string { return e.err.Error() }
+func (e *purgeStorageError) Unwrap() error { return e.err }
 
 // drain repeats batch until one comes back short or the run's budget is spent.
 func (s *Store) drain(ctx context.Context, batch func(context.Context) (int, error)) (int, error) {
@@ -233,7 +242,15 @@ func (s *Store) drain(ctx context.Context, batch func(context.Context) (int, err
 
 // erase claims expired content under row locks, erases its exact version media
 // outside the transaction, then removes the still-eligible database records.
-func (s *Store) erase(ctx context.Context, cutoff time.Time) (int, error) {
+func (s *Store) erase(ctx context.Context, cutoff time.Time) (count int, resultErr error) {
+	var storageErr error
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, storageErr)
+		} else if storageErr != nil {
+			resultErr = &purgeStorageError{storageErr}
+		}
+	}()
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, err
@@ -279,8 +296,24 @@ func (s *Store) erase(ctx context.Context, cutoff time.Time) (int, error) {
 		if err := tx.Commit(ctx); err != nil {
 			return 0, err
 		}
-		if err := s.media.Versions.Delete(ctx, targets); err != nil {
-			return 0, err
+		byParent := make(map[string][]versions.Target, len(ids))
+		for _, target := range targets {
+			byParent[target.Content] = append(byParent[target.Content], target)
+		}
+		succeeded := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			if err := s.media.Versions.Delete(ctx, byParent[id]); err != nil {
+				storageErr = errors.Join(storageErr, fmt.Errorf("purge content %s: %w", id, err))
+				continue
+			}
+			succeeded = append(succeeded, id)
+		}
+		ids = succeeded
+		if len(ids) == 0 {
+			return 0, nil
 		}
 		tx, err = s.begin(ctx)
 		if err != nil {
@@ -343,8 +376,9 @@ func (s *Store) erase(ctx context.Context, cutoff time.Time) (int, error) {
 	return len(ids), tx.Commit(ctx)
 }
 
-// eraseVersions deletes one batch of versions deleted before cutoff whose
-// item lives on, with their media folders and interactions.
+// eraseVersions deletes expired versions whose parent is not itself eligible
+// for whole-content purge. A recently deleted parent preserves each sibling's
+// own retention deadline while older failed erasures keep retrying.
 func (s *Store) eraseVersions(ctx context.Context, cutoff time.Time) (int, error) {
 	deadline := time.Now().Add(purgeBudget)
 	for after := ""; ; {
@@ -356,7 +390,15 @@ func (s *Store) eraseVersions(ctx context.Context, cutoff time.Time) (int, error
 	}
 }
 
-func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after string) (int, string, error) {
+func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after string) (count int, next string, resultErr error) {
+	var storageErr error
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, storageErr)
+		} else if storageErr != nil {
+			resultErr = &purgeStorageError{storageErr}
+		}
+	}()
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, "", err
@@ -364,7 +406,8 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 	defer tx.Rollback(ctx)
 	// Use the same parent-before-version lock order as catalog edits.
 	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c
- WHERE c.tenant_id = $1 AND c.id > $3 AND c.state <> 'deleted'
+ WHERE c.tenant_id = $1 AND c.id > $3
+ AND (c.state <> 'deleted' OR c.deleted_at IS NULL OR c.deleted_at >= $2)
  AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id
   AND v.state = 'deleted' AND v.deleted_at < $2)
  ORDER BY c.id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE OF c SKIP LOCKED`, s.tenant, cutoff, after)
@@ -415,8 +458,20 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		if err := tx.Commit(ctx); err != nil {
 			return 0, "", err
 		}
-		if err := s.media.Versions.Delete(ctx, targets); err != nil {
-			return 0, "", err
+		succeeded := make([]string, 0, len(vids))
+		for _, target := range targets {
+			if err := ctx.Err(); err != nil {
+				return 0, "", err
+			}
+			if err := s.media.Versions.Delete(ctx, []versions.Target{target}); err != nil {
+				storageErr = errors.Join(storageErr, fmt.Errorf("purge version %s: %w", target.Version, err))
+				continue
+			}
+			succeeded = append(succeeded, target.Version)
+		}
+		vids = succeeded
+		if len(vids) == 0 {
+			return 0, "", nil
 		}
 		tx, err = s.begin(ctx)
 		if err != nil {
