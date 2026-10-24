@@ -89,6 +89,8 @@ export interface EntityBannerProps {
   href?: (entity: EntityLike) => string | undefined;
   /** Beside the membership box: the host's actions (follow, share, edit). */
   children?: ReactNode;
+  /** Show the cover across the top when the entity has one; false keeps the compact header. Default true. */
+  cover?: boolean;
   client?: ContentKitClient;
   className?: string;
   appearance?: ContentKitUiAppearance;
@@ -102,11 +104,11 @@ export function EntityBanner(p: EntityBannerProps) {
   if (!g) return read.error ? <ErrorLine>{contentError(m, read.error)}</ErrorLine> : <Skeleton className="h-48 w-full" />;
   const text = g.text.find((x) => x.language === (p.language ?? g.name_language)) ?? g.text.find((x) => x.description);
   const count = g.counts.filter((c) => c.language === (p.language ?? "")).reduce((n, c) => n + c.count, 0);
-  const cover = !!g.cover?.renditions?.length;
+  const cover = p.cover !== false && !!g.cover?.renditions?.length;
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="entity-banner" data-kind={g.kind}>
-      {/* Without a cover image, a compact header rather than an empty 3:1 tile. */}
-      {cover && <EntityCover entity={g} className="aspect-[3/1] w-full" />}
+      {/* Without a cover image, a compact header rather than an empty 3:1 tile. Capped so the entity's contents start on the first screen. */}
+      {cover && <EntityCover entity={g} className="aspect-[3/1] max-h-56 w-full" />}
       <div className={cn("flex flex-wrap gap-4 px-2 sm:px-4", cover ? "items-end" : "items-center")}>
         <EntityAvatar entity={g} className={cover ? "-mt-12 size-20 border-4 border-background sm:-mt-16 sm:size-28" : "size-16 sm:size-20"} />
         <div className="grid min-w-0 flex-1 gap-1">
