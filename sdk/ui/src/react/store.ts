@@ -69,6 +69,58 @@ export function withUpload(read: ReadResult | null, path: string, file: FileInfo
  */
 export class ReadStore {
   private readonly slots = new Map<string, Slot>();
+  private readonly observers = new Map<string, AbortController>();
+
+  private observe(s: Slot): void {
+    if (!s.options.editor || !s.entry.read || !processing(s.entry.read) || !s.listeners.size) return;
+    if ([...s.listeners.values()].every((p) => p.poll !== undefined)) return;
+    const key = s.scope + readKey(s.ref);
+    if (this.observers.has(key)) return;
+    const controller = new AbortController();
+    this.observers.set(key, controller);
+    const matching = () => [...this.slots.values()].filter((slot) => slot.scope === s.scope && sameItem(slot.ref, s.ref) && slot.options.editor && slot.listeners.size);
+    const run = async () => {
+      let cursor = "";
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await this.client.media.watch(s.ref, (update) => {
+            if (controller.signal.aborted) return;
+            cursor = update.cursor;
+            if (!update.read) return;
+            for (const slot of matching()) {
+              const before = slot.entry.read;
+              const read = slot.options.status ? update.read : before ? { ...before, status: update.read.status, state: update.read.state } : null;
+              if (read) this.update(slot, { read, error: undefined });
+              if (!slot.options.status && update.event !== "snapshot") this.load(slot.key, "refresh");
+              if (read && finished(before, read)) this.reloadViewers(slot.ref);
+            }
+            if (!processing(update.read)) controller.abort();
+          }, controller.signal, cursor);
+          return;
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          const failure = toContentKitError(error);
+          if (!failure.transient || attempt >= 3) {
+            for (const slot of matching()) this.update(slot, { read: null, error: failure, loading: false });
+            return;
+          }
+          await sleep(Math.min(8000, 1000 * 2 ** attempt), controller.signal);
+        }
+      }
+    };
+    void run().catch(() => {}).finally(() => {
+      if (this.observers.get(key) === controller) this.observers.delete(key);
+    });
+  }
+
+  private stopUnusedObservers(): void {
+    for (const [key, controller] of this.observers) {
+      if (![...this.slots.values()].some((slot) => slot.scope + readKey(slot.ref) === key && slot.options.editor && slot.listeners.size)) {
+        controller.abort();
+        this.observers.delete(key);
+      }
+    }
+  }
 
   constructor(private readonly client: ContentKitClient) {
     client.subscribe((c, scope) => this.apply(c, scope));
@@ -89,6 +141,7 @@ export class ReadStore {
         slot.ctl?.abort();
         clearTimeout(slot.timer);
         this.slots.delete(key);
+        this.stopUnusedObservers();
       });
     };
   }
@@ -150,6 +203,7 @@ export class ReadStore {
   private schedule(s: Slot): void {
     clearTimeout(s.timer);
     s.timer = undefined;
+    this.observe(s);
     const read = s.entry.read;
     if (!read || s.ctl || !s.listeners.size) return;
     let delay: number | null = null;

@@ -1,3 +1,4 @@
+import type { MediaProgress } from "./progress.js";
 import { ContentKitError, aborted, failureError, throwIfAborted, toContentKitError } from "../errors.js";
 import type { CommitBody, Edit, FileInfo, InlineImage, Op, PresetRule, PresignReply, ReadResult, RefBody, RequestReply } from "../generated/wire.js";
 import type { HlsLoader, Http } from "../http.js";
@@ -307,6 +308,11 @@ export class MediaClient {
   async read(ref: RefBody, o: ReadOptions & { signal?: AbortSignal } = {}): Promise<ReadResult> {
     this.api.itemURL(ref); // a bad ref fails at once
     return this.retry(() => this.api.read(ref, o, o.signal), o.signal);
+  }
+
+  /** One authenticated stream; callers own bounded reconnect and cancellation. */
+  watch(ref: RefBody, receive: (update: MediaProgress) => void | Promise<void>, signal: AbortSignal, after = ""): Promise<void> {
+    return this.api.watch(ref, receive, signal, after);
   }
 
   /**

@@ -27,7 +27,7 @@ export interface MediaReadOptions extends Omit<ReadOptions, "offset" | "limit"> 
   window?: ReadWindow;
   offset?: number;
   limit?: number;
-  /** Poll at this interval (ms) while uploads process. Default 2500 for editor reads, else off. */
+  /** Poll at this interval (ms) while uploads process. Explicit opt-in; editor reads otherwise observe SSE. */
   poll?: number | false;
   /** Read again shortly before the URLs expire. Default true. */
   refresh?: boolean;
@@ -52,7 +52,6 @@ export interface UseMediaRead {
   set: (r: ReadResult) => void;
 }
 
-const POLL = 2500;
 const NONE: readonly ReadEntry[] = [];
 const MAX_DELAY = 2 ** 31 - 1;
 
@@ -76,13 +75,13 @@ export function useMediaGrantExpired(expires?: number): boolean {
 /**
  * A read of the item, shared with every hook reading the same item and
  * options: refreshed before its URLs expire, retried after a read rate limit,
- * polled while uploads process, reloaded after a commit through the client.
+ * updated by SSE while uploads process, reloaded after a commit through the client.
  * A window splits it into merged reads. Without a client (none passed, no
  * provider) it only shows a supplied read.
  */
 export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRead {
   const { read: given, client: own, prefix, paths, offset, limit, download, editor, status, window, refresh: refreshing = true } = o;
-  const poll = o.poll ?? (editor ? POLL : false);
+  const poll = o.poll;
   const client = useOptionalContentKitClient(own);
   const scope = useReadScope();
   const store = client ? storeFor(client) : null;

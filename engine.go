@@ -670,7 +670,7 @@ func (e *Engine) mount(deps Deps) error {
 	e.modules[httpapi.Notifications] = nh
 	if m := e.media; m != nil {
 		e.modules[httpapi.Upload] = media.UploadHandler(m.uploads, media.UploadHandlerOptions{Auth: e.auth, Logger: e.log})
-		e.modules[httpapi.Media] = m.reader.Handler(media.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit})
+		e.modules[httpapi.Media] = m.reader.Handler(media.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit, Events: e.mediaEvents})
 		if a := e.avatars; a != nil && a.forward != nil {
 			e.modules[httpapi.Upload] = a.forward.wrap(httpapi.Upload, e.modules[httpapi.Upload])
 			e.modules[httpapi.Media] = a.forward.wrap(httpapi.Media, e.modules[httpapi.Media])
