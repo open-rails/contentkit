@@ -20365,7 +20365,7 @@
     },
     "upgrade_required": {
       "status": 503,
-      "meaning": "The media item was stored before v0.68 and is served once the host's media upgrade (contentkit_media_upgrade) has converted it."
+      "meaning": "The media item was stored before v0.68 and must be migrated using ContentKit v0.119.1 before this release can read it."
     },
     "video_aspect_unsupported": {
       "status": 422,

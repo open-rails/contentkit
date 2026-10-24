@@ -87,6 +87,8 @@ func Open(t testing.TB) *Env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Cleanup must retain a client even if the capability probe fails.
+	env.Store = store
 	if env.Created {
 		if _, err := store.Client().CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &cfg.Bucket}); err != nil {
 			t.Fatalf("create bucket: %v", err)

@@ -90,7 +90,7 @@ func TestReplacementRetiresImmediately(t *testing.T) {
 
 // A takedown leaves nothing of the upload to fetch: the blobs the commit
 // dropped (its own, its outputs', the zip that bundled it), its editor view
-// and its public names go at once (purged). It touches nothing else: another
+// and its public names go at once . It touches nothing else: another
 // upload's editor view, an output a job has not recorded yet, an earlier
 // version and a blob another file still names all stay. Only an exempt
 // grant sweeps the whole item.
@@ -149,17 +149,11 @@ func TestTakedown(t *testing.T) {
 			t.Fatalf("took referenced %s", key)
 		}
 	}
-	for len(f.purged) > 0 {
-		<-f.purged
-	}
 	f.commit(g, media.Op{Op: media.OpRemove, Path: "cover.png", Takedown: true})
 	for _, w := range []int{230, 460} {
 		if key, _ := item.Public(fmt.Sprintf("cover-%d.webp", w)); f.exists(key) {
 			t.Fatalf("taken-down cover %d kept", w)
 		}
-	}
-	if urls := f.purges(); len(urls) != 2 {
-		t.Fatalf("purged %v", urls)
 	}
 	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "originals/002.png", Takedown: true}}); code(err) != media.CodeInvalid {
 		t.Fatalf("takedown on an edit: %v", err)
@@ -359,16 +353,10 @@ func TestPreviewNamesGoWithTheCommit(t *testing.T) {
 	if got := have(); got != "1,2" {
 		t.Fatalf("previews rendered: %q", got)
 	}
-	for len(f.purged) > 0 {
-		<-f.purged
-	}
 	// The third page moves first: positions 1 and 2 hold other pages' images.
 	f.commit(g, media.Op{Op: media.OpMove, Path: "originals/002.png", Index: new(int)})
 	if got := have(); got != "" {
 		t.Fatalf("after a move the old images are still public at %q", got)
-	}
-	if urls := f.purges(); len(urls) != 2 {
-		t.Fatalf("purged %v", urls)
 	}
 	f.produce(g)
 	// A crop of the page at position 2 (page 0 now): only its image goes.
@@ -391,7 +379,7 @@ func TestPreviewNamesGoWithTheCommit(t *testing.T) {
 	}
 }
 
-// Expose hides an item (public/ deleted and purged at once, nothing public
+// Expose hides an item (public/ deleted at once, nothing public
 // pending) and unhides it (public presets pending, the worker asked).
 func TestExpose(t *testing.T) {
 	f := newFixture(t)
@@ -414,9 +402,6 @@ func TestExpose(t *testing.T) {
 	m, _, _ := f.ms.Get(ctx, g)
 	if !m.Hidden || f.exists(cover) {
 		t.Fatalf("hidden %v, cover kept %v", m.Hidden, f.exists(cover))
-	}
-	if urls := f.purges(); len(urls) != 2 {
-		t.Fatalf("purged %v", urls)
 	}
 	f.q.take()
 	f.visible(1)
@@ -505,7 +490,6 @@ func TestPurgeRegenerateOrphans(t *testing.T) {
 	if _, _, err := f.ms.Get(ctx, b); !errors.Is(err, media.ErrNotFound) {
 		t.Fatalf("orphan kept: %v", err)
 	}
-	f.purges() // the orphan's public cover
 	if err := f.jobs.Purge(ctx, media.Deletion{Ref: a, OperationID: "purge-a"}); err != nil {
 		t.Fatal(err)
 	}
@@ -514,9 +498,6 @@ func TestPurgeRegenerateOrphans(t *testing.T) {
 		if err != nil || o.Key != item.ManifestKey() {
 			t.Fatalf("purge kept %s %v", o.Key, err)
 		}
-	}
-	if urls := f.purges(); len(urls) != 2 {
-		t.Fatalf("purged %v", urls)
 	}
 }
 
@@ -655,8 +636,8 @@ func TestHostRecoversInterruptedManifestOnStartup(t *testing.T) {
 }
 
 // The worker's relays reach the host's hooks through its media queue:
-// ItemReady in a host transaction once the item settles, PurgePublic with
-// URLs; the host deletes items from its own transaction.
+// ItemReady in a host transaction once the item settles; the host deletes
+// items from its own transaction.
 func TestHostRelays(t *testing.T) {
 	env := s3test.Open(t)
 	pool := pgtest.Pool(t, nil)
@@ -701,14 +682,6 @@ func TestHostRelays(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "ItemReady", func() bool { mu.Lock(); defer mu.Unlock(); return len(ready) == 1 && ready[0].Ready() })
-	item, _ := f.reg.Item(g)
-	key, _ := item.Public("cover-460.webp")
-	if err := host.Purge(ctx, []string{key}); err != nil {
-		t.Fatal(err)
-	}
-	if urls := f.purges(); len(urls) != 1 || urls[0] != f.reg.PublicURL(g, "cover-460.webp") {
-		t.Fatalf("purge relay %v", urls)
-	}
 	if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error { return jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: g}) }); err != nil {
 		t.Fatal(err)
 	}

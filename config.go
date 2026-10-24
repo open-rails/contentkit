@@ -2,7 +2,6 @@ package contentkit
 
 import (
 	"cmp"
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -349,9 +348,6 @@ type Deps struct {
 
 	// Store is the media bucket; required with Config.Media.
 	Store media.Store
-	// PurgePublic hears of public media URLs overwritten or deleted, for a
-	// CDN purge.
-	PurgePublic func(ctx context.Context, urls []string)
 	// Downloads is the host's download policy: whether a viewer may
 	// download a version now, and the pages of a page download it marks.
 	// Nil allows every download the access gate and quotas let through and
