@@ -93,7 +93,7 @@ func (s *Service) refreshMediaFacts(ctx context.Context, kind string, v Target) 
 			if err != nil {
 				return err
 			}
-			m, _, err := s.m.Manifests.Get(ctx, ref)
+			m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
 			if err == nil {
 				return s.recordFacts(ctx, tx, k, v, m)
 			} else if !errors.Is(err, media.ErrNotFound) {
