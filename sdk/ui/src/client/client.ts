@@ -11,7 +11,6 @@ import { ReactionsClient } from "./content/reactions.js";
 import type { Batch, Config, ContentModel, RefBody, Result } from "./generated/wire.js";
 import { DiscoveryClient } from "./discovery.js";
 import { EntitiesClient } from "./entities.js";
-import { OffersClient } from "./offers.js";
 import { StatsClient } from "./stats.js";
 import { VersionsClient } from "./versions.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
@@ -52,12 +51,10 @@ export interface ContentKitClient {
   readonly moderation: ModerationClient;
   /** Entities: listings, pages, staff writes and memberships. */
   readonly entities: EntitiesClient;
-  /** Lists, search, typeahead, rails, release dates, content filters, history, signals and exposures. */
+  /** Lists, search, typeahead, rails, release dates, content filters, purchase library, history, signals and exposures. */
   readonly discovery: DiscoveryClient;
   /** Content versions: reader plans, reader metadata, forks and downloads. */
   readonly versions: VersionsClient;
-  /** Offers on contents, versions and groups; group joins; the reader's library. */
-  readonly offers: OffersClient;
   /** Content-code lookup. */
   readonly codes: CodesClient;
   /** Staff activity and rankings; the signed-in reader's own statistics. */
@@ -73,7 +70,7 @@ export interface ContentKitClient {
   config(signal?: AbortSignal): Promise<Config>;
   /** The site's content model: languages, tiers, kinds, group kinds and content filters. */
   kinds(signal?: AbortSignal): Promise<ContentModel>;
-  /** Staff bulk import (root:import:write): groups, contents, memberships, offers and aliases, idempotent per source. */
+  /** Staff bulk import (root:import:write): groups, contents, memberships and aliases, idempotent per source. */
   import(batch: Batch): Promise<Result>;
   /** A module's base URL as configured (no trailing slash). */
   url(module: ContentKitModule, ref?: RefBody): string;
@@ -100,7 +97,6 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     entities: new EntitiesClient(h, media),
     discovery: new DiscoveryClient(h),
     versions: new VersionsClient(h),
-    offers: new OffersClient(h),
     codes: new CodesClient(h),
     stats: new StatsClient(h),
     notifications: new NotificationsClient(h),

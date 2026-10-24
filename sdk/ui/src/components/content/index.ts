@@ -10,9 +10,8 @@ export { ContentFilterDialog, type ContentFilterDialogProps } from "./filter-dia
 export { ContentFilterSettings, ReleaseDateIndex, type ContentFilterSettingsProps, type ContentFilterCount, type ReleaseDateIndexProps } from "./filters.js";
 export { ContentListing, SortMenu, sortLabel, type ContentListingProps, type SortMenuProps } from "./listing.js";
 export { Pagination, pageWindow, type PaginationProps } from "./pagination.js";
-export { LanguageFallbackNotice, Paywall, VersionPicker, priceLabel, useVersionMenuItems, type LanguageFallbackNoticeProps, type PaywallProps, type VersionMenuOptions, type VersionPickerProps } from "./paywall.js";
+export { LanguageFallbackNotice, Paywall, VersionPicker, useVersionMenuItems, type LanguageFallbackNoticeProps, type PaywallProps, type VersionMenuOptions, type VersionPickerProps } from "./paywall.js";
 export { AccessEditor, ContentDetailsEditor, ContentSections, SegmentsEditor, VersionCover, VersionEditor, VersionsEditor, versionLabel, type VersionEditorProps } from "./editors.js";
-export { OfferFields } from "./offer-fields.js";
 export { ReaderStats, type ReaderStatsProps } from "./reader-stats.js";
 export { VersionDownloadButton, type VersionDownloadButtonProps } from "./download-button.js";
 export { ContentFavorites } from "./favorites.js";

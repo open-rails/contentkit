@@ -1199,3 +1199,15 @@ exit delivery remains best effort.
 The staff dashboard and SDK statistics queries use measured people and active
 time, with comments ranking retained. See [statistics semantics](docs/statistics.md)
 for daily distinctness, qualification and active-time units.
+
+## Billing boundary
+
+ContentKit stores content and the entitlement keys required to access it.
+OpenRails owns products, prices, purchases and entitlement grants. The access
+and version editors change content rules; they do not edit a second billing
+catalog. Use OpenRails or billing-ui directly for product and price management.
+
+`Paywall` and `MembershipBox` call the host's `onCheckout({ key })` with an
+entitlement key. The host resolves it through OpenRails and opens its billing
+flow. These components never create free grants or infer a price. The purchased
+content library remains available as `client.discovery.library()`.

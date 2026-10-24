@@ -10,7 +10,6 @@ import {DraftHistoryProvider,useDraftHistory} from '../../react/draft-history.js
 import {ReaderManifestEditor} from '../admin/reader-manifest.js';
 import {EditorSaveContext,useEditorSaveCoordinator} from './editor-save.js';
 import {SegmentsEditor} from './editors.js';
-import {OfferFields} from './offer-fields.js';
 
 const hash='a'.repeat(64);
 const edition:Version={id:'v1',code:'EDITION1',position:1,languages:['en'],traits:[],state:'draft',live:false,has_audio:false,entities:[],attributes:{},segments:[],decision:{allowed:true}};
@@ -99,32 +98,4 @@ it('coordinated reader audio cues an unpublished edition\'s current files throug
  await user.click(screen.getByRole('button',{name:'Save all'}));
  await waitFor(()=>expect(s.writes).toHaveLength(1));
  expect(s.writes[0]).toEqual({path:'/contents/c1/versions/v1/reader',body:{schema_version:1,anchors:[],background:[],foreground:[{file:'01',page:hash}]}});
-});
-
-it.each([false,true])('coordinated offer edits defer selling/repricing to the parent (active=%s)',async active=>{
- const sell=vi.fn().mockResolvedValue({saved:true}),withdraw=vi.fn(),user=userEvent.setup();
- render(<Coordinated><OfferFields pending={false} offer={active?{terms:{amount:'4.99',currency:'USD'}}:undefined} onSell={sell} onWithdraw={withdraw}/></Coordinated>);
- const price=screen.getByLabelText('Price');fireEvent.change(price,{target:{value:'8.50'}});
- const own=screen.queryByRole('button',{name:active?'Change price':'Put on sale'});if(own)await user.click(own);
- expect(sell).not.toHaveBeenCalled();expect(own).toBeNull();
- await user.click(screen.getByRole('button',{name:'Undo'}));expect(price).toHaveValue(active?'4.99':'');
- await user.click(screen.getByRole('button',{name:'Redo'}));expect(price).toHaveValue('8.50');
- await user.click(screen.getByRole('button',{name:'Save all'}));
- await waitFor(()=>expect(sell).toHaveBeenCalledExactlyOnceWith({amount:'8.50',currency:'USD'}));
- expect(withdraw).not.toHaveBeenCalled();
-});
-
-it('keeps coordinated offer withdrawal as an explicit lifecycle action',async()=>{
- const sell=vi.fn(),withdraw=vi.fn(),user=userEvent.setup();
- render(<Coordinated><OfferFields pending={false} offer={{terms:{amount:'4.99',currency:'USD'}}} onSell={sell} onWithdraw={withdraw}/></Coordinated>);
- await user.click(screen.getByRole('button',{name:'Take off sale'}));
- expect(withdraw).toHaveBeenCalledOnce();expect(sell).not.toHaveBeenCalled();
-});
-
-it('keeps the standalone offer save action available',async()=>{
- const sell=vi.fn().mockResolvedValue({saved:true}),user=userEvent.setup();
- render(<OfferFields pending={false} onSell={sell} onWithdraw={vi.fn()}/>);
- fireEvent.change(screen.getByLabelText('Price'),{target:{value:'4.99'}});
- await user.click(screen.getByRole('button',{name:'Put on sale'}));
- await waitFor(()=>expect(sell).toHaveBeenCalledExactlyOnceWith({amount:'4.99',currency:'USD'}));
 });

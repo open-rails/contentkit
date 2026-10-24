@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { useContext, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { Edit, EntityAccess, EntityDetail, Sale } from "../../client/generated/wire.js";
+import type { Edit, EntityAccess, EntityDetail } from "../../client/generated/wire.js";
 import type { EntityImageSlot } from "../../client/entities.js";
 import { decodeImage, type CropSource } from "../../client/image.js";
 import { useMessages } from "../../i18n/context.js";
@@ -14,14 +14,13 @@ import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { ImageCropDialog } from "../image-crop-dialog.js";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
-import { priceLabel } from "../content/paywall.js";
 import { EntityAvatar, EntityCover, EntityLink, type EntityLike, type Labels } from "./parts.js";
 import { ScopedEntities } from "./scoped.js";
 
 export interface MembershipBoxProps {
   entity: Pick<EntityDetail, "id" | "kind" | "name"> & { access?: EntityAccess };
-  /** Buys a sold membership: the host creates the order through billing-ui. */
-  onCheckout?: (o: { key: string; offer: Sale }) => void;
+  /** Opens the host billing flow for the entity entitlement. */
+  onCheckout?: (o: { key: string }) => void;
   /** Asks a signed-out visitor to sign in; default the provider's. */
   onSignIn?: () => void;
   client?: ContentKitClient;
@@ -30,49 +29,30 @@ export interface MembershipBoxProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** A entity's membership for the reader: member, join free, or join for its price; nothing to join while it sells no membership. */
-export function MembershipBox({ entity, onCheckout, onSignIn, client: own, onError, className, appearance }: MembershipBoxProps) {
-  const m = useMessages();
-  const { t } = m;
-  const client = useContentKitClient(own);
+/** Shows entity access; acquiring it is delegated to the host's billing flow. */
+export function MembershipBox({ entity, onCheckout, onSignIn, className, appearance }: MembershipBoxProps) {
+  const { t } = useMessages();
   const ctx = useContext(ContentKitContext);
-  const join = useAction("membership.join", onError);
   const a = entity.access;
-  if (!a || a.editor || (!a.offer && !a.member && !a.unknown)) return null;
-  const signedOut = ctx?.viewer === null;
+  if (!a || a.editor || (!a.member && !a.unknown && !onCheckout)) return null;
   const signIn = onSignIn ?? ctx?.onSignIn;
-  const offer: Sale | undefined = a.offer && Number(a.offer.terms.amount) > 0 ? a.offer : undefined;
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-2 rounded-lg border border-border p-3 text-sm", className)} data-ckui="membership-box" data-member={a.member}>
       {a.unknown ? (
         <p className="text-muted-foreground">{t("membership.unknown")}</p>
       ) : a.member ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge>{t("membership.member")}</Badge>
-          {!offer && (
-            <Button size="sm" variant="ghost" disabled={join.pending} onClick={() => void join.run(() => client.offers.join(entity.id, false))}>
-              {t("membership.leave")}
-            </Button>
-          )}
-        </div>
+        <Badge>{t("membership.member")}</Badge>
       ) : (
         <div className="grid gap-2">
-          <p className="text-muted-foreground">{t(offer ? "membership.paidPitch" : "membership.freePitch")}</p>
-          <Button
-            size="sm"
-            className="justify-self-start"
-            disabled={join.pending || (!!offer && !onCheckout)}
-            onClick={() => {
-              if (signedOut && signIn) return signIn();
-              if (offer) return onCheckout?.({ key: a.key, offer });
-              void join.run(() => client.offers.join(entity.id));
-            }}
-          >
-            {offer ? t("membership.joinFor", { price: priceLabel(m, offer.terms) }) : t("membership.join")}
+          <p className="text-muted-foreground">{t("membership.accessPitch")}</p>
+          <Button size="sm" className="justify-self-start" onClick={() => {
+            if (ctx?.viewer === null && signIn) return signIn();
+            onCheckout?.({ key: a.key });
+          }}>
+            {t("membership.getAccess")}
           </Button>
         </div>
       )}
-      {join.error && <ErrorLine>{contentError(m, join.error)}</ErrorLine>}
     </ContentKitUiRoot>
   );
 }

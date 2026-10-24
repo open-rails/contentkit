@@ -24,8 +24,6 @@ export const discovery = {
     showMore: "Show more",
     unknownAccess: "Unavailable right now",
     members: "Members",
-    joinFree: "Free to join",
-    forSale: "For sale",
     locked: "Locked",
     updated: "Updated",
     deleted: "Deleted",

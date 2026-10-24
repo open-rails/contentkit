@@ -29,8 +29,7 @@ import { labelOf } from "../entities/parts.js";
 import { ImageCropDialog } from "../image-crop-dialog.js";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
-import { RuleFields, cleanRule, complete, VersionEditor, SegmentsEditor, AddVersion, versionLabel, allowsIndividualSales, defaultAccessRule } from "../content/editors.js";
-import { OfferFields } from "../content/offer-fields.js";
+import { RuleFields, cleanRule, complete, VersionEditor, SegmentsEditor, AddVersion, versionLabel, defaultAccessRule } from "../content/editors.js";
 import { ErrorLine, contentError, formatDate, useAction } from "../social/parts.js";
 import { localInput } from "../social/bans.js";
 import { EditorSaveContext, readerMediaReady, useEditorSaveCoordinator } from "../content/editor-save.js";
@@ -269,7 +268,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   };
   const ref = useMemo(() => (item && version ? { kind: p.kind, id: item.id, version: version.id } : null), [p.kind, item, version]);
   const cover = useAction("content.save", p.onError);
-  const offer = useAction("offer.save", p.onError);
   const addVersion = useAction("content.save", p.onError);
   const fork = useAction("content.save", p.onError);
   // A version added from a sibling, followed until its copy (a job) ends, also
@@ -380,8 +378,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     mediaFailed ||
     !!folder.read.error ||
     selectedPages === 0 ||
-    coordinator.pending ||
-    offer.pending;
+    coordinator.pending;
   const add = (input: Iterable<File>) => {
     const added = [...input];
     if (!added.length) return;
@@ -817,7 +814,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 {renderEntities(versionKinds, versionAssociations, version?.id)}
               </Panel>
             )}
-            {spec.access_scope !== "version" && <Panel title={t(allowsIndividualSales(model, p.kind) ? "contentEditor.accessTitle" : "contentEditor.accessOnlyTitle")}>
+            {spec.access_scope !== "version" && <Panel title={t("contentEditor.accessOnlyTitle")}>
               <RuleFields
                 value={details.value.access}
                 onChange={(access) => changeDetails({ access })}
@@ -827,15 +824,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 labels={p.labels}
                 client={client}
               />
-              {item && allowsIndividualSales(model, p.kind) && (details.value.access.level === "ppv" || details.value.access.level === "group_ppv" || item.offer) && (
-                <OfferFields
-                  offer={item.offer}
-                  pending={offer.pending}
-                  onSell={(terms) => offer.run(() => client.offers.sell({ content: item.id }, terms))}
-                  onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: item.id }))}
-                />
-              )}
-              <ErrorLine error={offer.error} />
             </Panel>}
             <Panel title={t("readerEditor.publication")}>
               {item && version && (

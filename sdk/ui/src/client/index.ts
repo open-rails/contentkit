@@ -50,7 +50,6 @@ export {
 } from "./discovery.js";
 export { VersionsClient, isPending } from "./versions.js";
 export { emptyReaderMeta, matchAudio, readerMetaProblems, readerNames, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "./reader-meta.js";
-export { OffersClient } from "./offers.js";
 export { StatsClient, type ActivityQuery } from "./stats.js";
 export { Beacons, eventId, readerSession, type Attribution, type BeaconOptions } from "./beacons.js";
 export { LETTERS, attributeInput, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./entity-fields.js";

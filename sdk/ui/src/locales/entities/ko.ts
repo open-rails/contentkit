@@ -28,7 +28,6 @@ export const entities: typeof en = {
     uploadAvatar: "아바타 업로드",
     removeAvatar: "아바타 삭제",
     images: "이미지",
-    membershipPrice: "멤버십 가격",
     loadFailed: "엔터티을 불러오지 못했습니다.",
     newTitle: "새로 만들기: {kind}",
     nameIn: "이름({language})",
@@ -122,11 +121,8 @@ export const entities: typeof en = {
   membership: {
     unknown: "지금은 멤버십을 확인할 수 없습니다.",
     member: "멤버",
-    leave: "탈퇴",
-    paidPitch: "멤버는 모든 콘텐츠를 열 수 있습니다.",
-    freePitch: "가입하면 팔로우하고 멤버 콘텐츠를 열 수 있습니다.",
-    joinFor: "{price}에 가입",
-    join: "가입",
+    getAccess: "이용 권한 받기",
+    accessPitch: "회원은 이 섹션의 콘텐츠를 이용할 수 있습니다.",
   },
   entityManager: {
     noAccess: "엔터티을 관리할 권한이 없습니다.",
