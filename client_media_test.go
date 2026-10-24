@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -127,5 +130,113 @@ func TestIngestMediaRejectsInvalidSignatureSetsBeforeUploading(t *testing.T) {
 				t.Fatalf("invalid signatures: error=%v, uploads=%d", err, puts)
 			}
 		})
+	}
+}
+
+func TestIngestMediaOnlyUploadsAndCommitsWithIsolatedStorageCredentials(t *testing.T) {
+	data := []byte("archive bytes")
+	ref := media.RefBody{Kind: "gallery", ID: "content", Version: "edition"}
+	const commitID = "550e8400-e29b-41d4-a716-446655440020"
+	var stored []byte
+	var mu sync.Mutex
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method != http.MethodPut || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
+			t.Errorf("storage received API credentials or wrong method: %s %v", r.Method, r.Header)
+		}
+		if r.Header.Get("X-Signed-Upload") != "expected" {
+			t.Error("storage request lost signed headers")
+		}
+		stored, _ = io.ReadAll(r.Body)
+	}))
+	defer storage.Close()
+	jar, _ := cookiejar.New(nil)
+	storageURL, _ := url.Parse(storage.URL)
+	jar.SetCookies(storageURL, []*http.Cookie{{Name: "session", Value: "must-not-reach-storage"}})
+	var paths []string
+	var commit media.CommitBody
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if r.Header.Get("Authorization") != "Bearer private-contentkit-key" {
+			t.Error("API request lost authentication")
+		}
+		switch r.URL.Path {
+		case "/v1/media/upload/presign":
+			mediaJSON(t, w, media.PresignReply{Path: "import/archive.zip", Blob: "staged-archive", Put: &media.RequestReply{
+				Method: http.MethodPut, URL: storage.URL + "/upload", Headers: map[string]string{"X-Signed-Upload": "expected"},
+			}})
+		case "/v1/media/upload/commit":
+			if err := json.NewDecoder(r.Body).Decode(&commit); err != nil {
+				t.Error(err)
+			}
+			mediaJSON(t, w, media.CommitReply{Files: []media.FileInfo{
+				{Path: "import/archive.zip", Type: "application/zip", Upload: true, Pending: []string{"import"}},
+			}})
+		default:
+			t.Errorf("unexpected metadata, publication or status request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+	client := ck.NewClient(api.URL, &http.Client{Transport: mediaTransport(func(r *http.Request) (*http.Response, error) {
+		r = r.Clone(r.Context())
+		r.Header.Set("Authorization", "Bearer private-contentkit-key")
+		return http.DefaultTransport.RoundTrip(r)
+	})})
+	out, err := client.IngestMedia(t.Context(), &http.Client{Jar: jar}, ref, commitID,
+		[]ck.MediaFile{{Path: "import/archive.zip", Type: "application/zip", Body: bytes.NewReader(data)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !bytes.Equal(stored, data) || len(out.Files) != 1 || len(out.Files[0].Pending) != 1 {
+		t.Fatalf("upload or attached pages lost: stored=%q reply=%+v", stored, out)
+	}
+	if len(paths) != 2 || paths[0] != "POST /v1/media/upload/presign" || paths[1] != "POST /v1/media/upload/commit" {
+		t.Fatalf("API flow = %v", paths)
+	}
+	if commit.Ref != ref || commit.OperationID != commitID || len(commit.Ops) != 1 || commit.Ops[0].Blob != "staged-archive" {
+		t.Fatalf("commit changed explicit input: %+v", commit)
+	}
+	if len(jar.Cookies(storageURL)) != 1 {
+		t.Fatal("storage isolation mutated the caller's cookie jar")
+	}
+}
+
+func TestIngestMediaDoesNotFollowPresignedStorageRedirect(t *testing.T) {
+	followed := false
+	var mu sync.Mutex
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		followed = true
+		mu.Unlock()
+	}))
+	defer target.Close()
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer storage.Close()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/media/upload/presign" {
+			t.Errorf("commit sent after failed storage upload: %s", r.URL.Path)
+		}
+		mediaJSON(t, w, media.PresignReply{Path: "import/archive.zip", Put: &media.RequestReply{Method: http.MethodPut, URL: storage.URL}})
+	}))
+	defer api.Close()
+	customRedirect := false
+	storageClient := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { customRedirect = true; return nil }}
+	_, err := ck.NewClient(api.URL, nil).IngestMedia(t.Context(), storageClient,
+		media.RefBody{Kind: "gallery", ID: "content", Version: "edition"}, "550e8400-e29b-41d4-a716-446655440021",
+		[]ck.MediaFile{{Path: "import/archive.zip", Type: "application/zip", Body: bytes.NewReader([]byte("archive"))}})
+	var failure *ck.Error
+	mu.Lock()
+	defer mu.Unlock()
+	if !errors.As(err, &failure) || failure.Status != http.StatusTemporaryRedirect || followed || customRedirect {
+		t.Fatalf("presigned redirect escaped its target: err=%v target=%v redirectHook=%v", err, followed, customRedirect)
 	}
 }

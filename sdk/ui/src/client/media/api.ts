@@ -16,6 +16,8 @@ import { checkRef } from "./ref.js";
 
 /** What a read returns (Reader.Read's ReadOptions). */
 export interface ReadOptions {
+  /** Editor-only processing summary, without files or signed media URLs. */
+  status?: boolean;
   /** Only files under this path prefix, e.g. "low-res/". */
   prefix?: string;
   /** Sign these file paths (at most 64), without granting access to other files. Do not combine with offset/limit. */
@@ -65,6 +67,7 @@ export class MediaApi {
 
   async read(ref: RefBody, o: ReadOptions = {}, signal?: AbortSignal) {
     const q = new URLSearchParams();
+    if (o.status) q.set("status", "1");
     if (o.prefix) q.set("prefix", o.prefix);
     for (const path of o.paths ?? []) q.append("path", path);
     if (o.offset) q.set("offset", String(o.offset));

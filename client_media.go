@@ -39,9 +39,9 @@ const ingestPartSize = 32 << 20
 // twice. Files with From are copied server-side, in one request. It is how
 // an importer fills an imported version's folder. This helper does not retain
 // upload plans: retry an uncertain commit with its exact CommitBody, not a
-// fresh invocation under the same operationID. A ZIP is validated and expanded
-// by Commit; the call returns its attached files, without changing content
-// metadata or publication. Create the item/version before uploading, and edit
+// fresh invocation under the same operationID. The call returns its attached
+// uploads and pending processing; ZIP extraction and renditions run through
+// the normal media workers. It changes no content metadata or publication. Create the item/version before uploading, and edit
 // or publish it explicitly afterward. The storage client must not inject API
 // credentials; its cookies and redirect handler are never used.
 func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media.RefBody, operationID string, files []MediaFile) (media.CommitReply, error) {
