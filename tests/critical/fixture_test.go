@@ -104,7 +104,7 @@ func newWorld(t *testing.T) *world {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		for _, suffix := range []string{"_river", ""} {
+		for _, suffix := range []string{"_media_worker", "_river", ""} {
 			_, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{w.schema + suffix}.Sanitize()+" CASCADE")
 			if err != nil {
 				t.Errorf("drop owned fixture schema: %v", err)

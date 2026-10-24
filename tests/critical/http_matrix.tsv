@@ -1,0 +1,167 @@
+id	method	path	auth	permission	day1_status
+CK-API-001	GET	/v1/kinds	open		included-critical functionality and security
+CK-API-002	GET	/v1/config	open		included-critical functionality and security
+CK-API-003	GET	/v1/contents/{id}/comments	public		partial-security-only; positive/full functionality deferred P1
+CK-API-004	POST	/v1/contents/{id}/comments	public		partial-security-only; positive/full functionality deferred P1
+CK-API-005	GET	/v1/entities/{id}/comments	public		partial-security-only; positive/full functionality deferred P1
+CK-API-006	POST	/v1/entities/{id}/comments	public		partial-security-only; positive/full functionality deferred P1
+CK-API-007	GET	/v1/comments/latest	public		partial-security-only; positive/full functionality deferred P1
+CK-API-008	GET	/v1/comments/admin	staff	root:comments:moderate	partial-security-only; positive/full functionality deferred P1
+CK-API-009	POST	/v1/comments/{cid}/restore	staff	root:comments:moderate	partial-security-only; positive/full functionality deferred P1
+CK-API-010	GET	/v1/comments/{cid}/replies	public		partial-security-only; positive/full functionality deferred P1
+CK-API-011	PATCH	/v1/comments/{cid}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-012	DELETE	/v1/comments/{cid}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-013	POST	/v1/comments/{cid}/like	public		partial-security-only; positive/full functionality deferred P1
+CK-API-014	POST	/v1/comments/{cid}/dislike	public		partial-security-only; positive/full functionality deferred P1
+CK-API-015	DELETE	/v1/comments/{cid}/reaction	public		partial-security-only; positive/full functionality deferred P1
+CK-API-016	POST	/v1/comments/{cid}/hold	person		included-critical functionality and security
+CK-API-017	POST	/v1/comments/{cid}/release	person		included-critical functionality and security
+CK-API-018	POST	/v1/contents/{id}/like	public		partial-security-only; positive/full functionality deferred P1
+CK-API-019	POST	/v1/contents/{id}/dislike	public		partial-security-only; positive/full functionality deferred P1
+CK-API-020	DELETE	/v1/contents/{id}/reaction	public		partial-security-only; positive/full functionality deferred P1
+CK-API-021	GET	/v1/contents/{id}/reaction	public		partial-security-only; positive/full functionality deferred P1
+CK-API-022	POST	/v1/entities/{id}/like	public		partial-security-only; positive/full functionality deferred P1
+CK-API-023	POST	/v1/entities/{id}/dislike	public		partial-security-only; positive/full functionality deferred P1
+CK-API-024	DELETE	/v1/entities/{id}/reaction	public		partial-security-only; positive/full functionality deferred P1
+CK-API-025	GET	/v1/entities/{id}/reaction	public		partial-security-only; positive/full functionality deferred P1
+CK-API-026	POST	/v1/contents/{id}/favorite	user		partial-security-only; positive/full functionality deferred P1
+CK-API-027	DELETE	/v1/contents/{id}/favorite	user		partial-security-only; positive/full functionality deferred P1
+CK-API-028	GET	/v1/contents/{id}/favorite	public		partial-security-only; positive/full functionality deferred P1
+CK-API-029	POST	/v1/entities/{id}/favorite	user		partial-security-only; positive/full functionality deferred P1
+CK-API-030	DELETE	/v1/entities/{id}/favorite	user		partial-security-only; positive/full functionality deferred P1
+CK-API-031	GET	/v1/entities/{id}/favorite	public		partial-security-only; positive/full functionality deferred P1
+CK-API-032	GET	/v1/polls	public		partial-security-only; positive/full functionality deferred P1
+CK-API-033	POST	/v1/polls	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
+CK-API-034	GET	/v1/polls/admin	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
+CK-API-035	GET	/v1/polls/{id}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-036	PATCH	/v1/polls/{id}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
+CK-API-037	DELETE	/v1/polls/{id}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
+CK-API-038	POST	/v1/polls/{id}/vote	public		partial-security-only; positive/full functionality deferred P1
+CK-API-039	POST	/v1/polls/{id}/answer	user		partial-security-only; positive/full functionality deferred P1
+CK-API-040	PUT	/v1/polls/{id}/image	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
+CK-API-041	POST	/v1/polls/{id}/options	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
+CK-API-042	PATCH	/v1/polls/{id}/options/{oid}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
+CK-API-043	DELETE	/v1/polls/{id}/options/{oid}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
+CK-API-044	PUT	/v1/polls/{id}/options/{oid}/image	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
+CK-API-045	GET	/v1/comment-bans	user		included-critical functionality and security
+CK-API-046	PUT	/v1/comment-bans/{user}	user		included-critical functionality and security
+CK-API-047	DELETE	/v1/comment-bans/{user}	user		included-critical functionality and security
+CK-API-048	GET	/v1/global-comment-bans	staff	root:comments:ban	included-critical functionality and security
+CK-API-049	GET	/v1/global-comment-bans/{user}	staff	root:comments:ban	included-critical functionality and security
+CK-API-050	PUT	/v1/global-comment-bans/{user}	staff	root:comments:ban	included-critical functionality and security
+CK-API-051	DELETE	/v1/global-comment-bans/{user}	staff	root:comments:ban	included-critical functionality and security
+CK-API-052	GET	/v1/entities/{id}/held-comments	person		included-critical functionality and security
+CK-API-053	GET	/v1/entities/{id}/comment-bans	person		included-critical functionality and security
+CK-API-054	PUT	/v1/entities/{id}/comment-bans/{user}	person		included-critical functionality and security
+CK-API-055	DELETE	/v1/entities/{id}/comment-bans/{user}	person		included-critical functionality and security
+CK-API-056	GET	/v1/contents/{id}/can-comment	public		included-critical functionality and security
+CK-API-057	GET	/v1/entities/{id}/can-comment	public		included-critical functionality and security
+CK-API-058	GET	/v1/moderation/held	staff	root:moderation:review	included-critical functionality and security
+CK-API-059	POST	/v1/moderation/{kind}/{id}/resolve	staff	root:moderation:review	included-critical functionality and security
+CK-API-060	GET	/v1/moderation/banned-words	staff	root:comments:moderate	included-critical functionality and security
+CK-API-061	POST	/v1/moderation/banned-words	staff	root:comments:moderate	included-critical functionality and security
+CK-API-062	DELETE	/v1/moderation/banned-words	staff	root:comments:moderate	included-critical functionality and security
+CK-API-063	GET	/v1/moderation/ip-bans	staff	root:comments:moderate	included-critical functionality and security
+CK-API-064	POST	/v1/moderation/ip-bans	staff	root:comments:moderate	included-critical functionality and security
+CK-API-065	DELETE	/v1/moderation/ip-bans	staff	root:comments:moderate	included-critical functionality and security
+CK-API-066	GET	/v1/events	staff	root:content:view-restricted	included-critical functionality and security
+CK-API-067	GET	/v1/catalog/totals	open		included-critical functionality and security
+CK-API-068	GET	/v1/contents/{id}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-069	PATCH	/v1/contents/{id}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-070	GET	/v1/versions/{vid}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-071	GET	/v1/contents/{id}/versions/{vid}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-072	PATCH	/v1/contents/{id}/versions/{vid}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-073	DELETE	/v1/contents/{id}/versions/{vid}	public		included-critical functionality and security
+CK-API-074	GET	/v1/manage	public		partial-security-only; positive/full functionality deferred P1
+CK-API-075	GET	/v1/manage/{kind}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-076	GET	/v1/manage/{kind}/count	public		partial-security-only; positive/full functionality deferred P1
+CK-API-077	POST	/v1/contents	public		partial-security-only; positive/full functionality deferred P1
+CK-API-078	GET	/v1/contents	public		included-critical functionality and security
+CK-API-079	POST	/v1/contents/{id}/restore	public		included-critical functionality and security
+CK-API-080	POST	/v1/contents/{id}/publish	public		included-critical functionality and security
+CK-API-081	POST	/v1/contents/{id}/unpublish	public		included-critical functionality and security
+CK-API-082	PUT	/v1/contents/{id}/text/{language}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-083	DELETE	/v1/contents/{id}/text/{language}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-084	PUT	/v1/contents/{id}/creators	public		partial-security-only; positive/full functionality deferred P1
+CK-API-085	POST	/v1/contents/{id}/images	public		partial-security-only; positive/full functionality deferred P1
+CK-API-086	POST	/v1/contents/{id}/versions	public		partial-security-only; positive/full functionality deferred P1
+CK-API-087	PUT	/v1/contents/{id}/versions/order	public		partial-security-only; positive/full functionality deferred P1
+CK-API-088	PUT	/v1/contents/{id}/versions/{vid}/segments	public		partial-security-only; positive/full functionality deferred P1
+CK-API-089	POST	/v1/media/upload/presign	editor	root:content:write	included-critical functionality and security
+CK-API-090	POST	/v1/media/upload/copy	staff	root:import:write	partial-security-only; positive/full functionality deferred P1
+CK-API-091	POST	/v1/media/upload/parts	editor	root:content:write	included-critical functionality and security
+CK-API-092	POST	/v1/media/upload/parts/list	editor	root:content:write	included-critical functionality and security
+CK-API-093	POST	/v1/media/upload/complete	editor	root:content:write	included-critical functionality and security
+CK-API-094	POST	/v1/media/upload/abort	editor	root:content:write	included-critical functionality and security
+CK-API-095	POST	/v1/media/upload/commit	editor	root:content:write	included-critical functionality and security
+CK-API-096	GET	/v1/media/upload/frame	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
+CK-API-097	GET	/v1/media/presets	open		included-critical functionality and security
+CK-API-098	GET	/v1/media/{kind}/{id}	public		included-critical functionality and security
+CK-API-099	GET	/v1/media/{kind}/{id}/hls/{path}	public		included-critical functionality and security
+CK-API-100	GET	/v1/media/{kind}/{id}/versions/{version}	public		included-critical functionality and security
+CK-API-101	GET	/v1/media/{kind}/{id}/versions/{version}/hls/{path}	public		included-critical functionality and security
+CK-API-102	GET	/v1/codes/{code}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-103	POST	/v1/codes/aliases	open		partial-security-only; positive/full functionality deferred P1
+CK-API-104	GET	/v1/entities	public		partial-security-only; positive/full functionality deferred P1
+CK-API-105	POST	/v1/entities	editor	root:entities:write	included-critical functionality and security
+CK-API-106	GET	/v1/entities/{id}	public		partial-security-only; positive/full functionality deferred P1
+CK-API-107	PATCH	/v1/entities/{id}	editor	root:entities:write	included-critical functionality and security
+CK-API-108	DELETE	/v1/entities/{id}	editor	root:entities:write	included-critical functionality and security
+CK-API-109	GET	/v1/manage/entities	staff	root:entities:write	included-critical functionality and security
+CK-API-110	GET	/v1/manage/entities/{id}	staff	root:entities:write	included-critical functionality and security
+CK-API-111	GET	/v1/me/entities	user		included-critical functionality and security
+CK-API-112	PUT	/v1/entities/{id}/names	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-113	POST	/v1/entities/{id}/names	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-114	DELETE	/v1/entities/{id}/names	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-115	POST	/v1/entities/{id}/edges	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-116	DELETE	/v1/entities/{id}/edges	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-117	POST	/v1/entities/{id}/merge	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-118	GET	/v1/entities/{id}/members	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-119	POST	/v1/entities/{id}/members	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-120	DELETE	/v1/entities/{id}/members	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-121	PUT	/v1/entities/{id}/members/order	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-122	GET	/v1/contents/{id}/entities	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-123	PUT	/v1/contents/{id}/entities	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-124	PUT	/v1/contents/{id}/entities/shared	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-125	PUT	/v1/contents/{id}/versions/{vid}/entities	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
+CK-API-126	GET	/v1/notifications/inbox	user		included-critical functionality and security
+CK-API-127	PUT	/v1/notifications/{id}/read	user		included-critical functionality and security
+CK-API-128	DELETE	/v1/notifications/{id}/read	user		included-critical functionality and security
+CK-API-129	PUT	/v1/notifications/{id}/dismiss	user		included-critical functionality and security
+CK-API-130	DELETE	/v1/notifications/{id}/dismiss	user		included-critical functionality and security
+CK-API-131	POST	/v1/notifications/publish	staff	root:notifications:publish	included-critical functionality and security
+CK-API-132	GET	/v1/contents/{id}/versions/{version}/page-notices	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
+CK-API-133	POST	/v1/contents/{id}/versions/{version}/page-notices/{notice}/dismiss	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
+CK-API-134	POST	/v1/contents/{id}/versions/{version}/page-notices/{notice}/restore	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
+CK-API-135	GET	/v1/contents/{id}/versions/{version}/reader	public		partial-security-only; positive/full functionality deferred P1
+CK-API-136	PUT	/v1/contents/{id}/versions/{version}/reader	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
+CK-API-137	POST	/v1/contents/{id}/versions/{version}/fork	user		partial-security-only; positive/full functionality deferred P1
+CK-API-138	GET	/v1/contents/{id}/versions/{version}/download	public		included-critical functionality and security
+CK-API-139	GET	/v1/contents/{id}/versions/{version}/archive	public		included-critical functionality and security
+CK-API-140	GET	/v1/me/library	user		included-critical functionality and security
+CK-API-141	POST	/v1/engagement	public		partial-security-only; positive/full functionality deferred P1
+CK-API-142	POST	/v1/activity-contexts	public		partial-security-only; positive/full functionality deferred P1
+CK-API-143	GET	/v1/releases	public		included-critical functionality and security
+CK-API-144	GET	/v1/content-cards	public		included-critical functionality and security
+CK-API-145	GET	/v1/search	public		included-critical functionality and security
+CK-API-146	GET	/v1/typeahead	public		included-critical functionality and security
+CK-API-147	GET	/v1/contents/{id}/similar	public		included-critical functionality and security
+CK-API-148	GET	/v1/recommendations	user		included-critical functionality and security
+CK-API-149	GET	/v1/release-dates	public		included-critical functionality and security
+CK-API-150	GET	/v1/content-filters	public		partial-security-only; positive/full functionality deferred P1
+CK-API-151	PATCH	/v1/me/content-filters	user		partial-security-only; positive/full functionality deferred P1
+CK-API-152	POST	/v1/me/content-filters/initialize	user		partial-security-only; positive/full functionality deferred P1
+CK-API-153	GET	/v1/me/history	user		partial-security-only; positive/full functionality deferred P1
+CK-API-154	DELETE	/v1/me/history	user		partial-security-only; positive/full functionality deferred P1
+CK-API-155	POST	/v1/signals	public		partial-security-only; positive/full functionality deferred P1
+CK-API-156	POST	/v1/exposures	public		partial-security-only; positive/full functionality deferred P1
+CK-API-157	GET	/v1/me/favorites	user		partial-security-only; positive/full functionality deferred P1
+CK-API-159	GET	/v1/me/searches	public		partial-security-only; positive/full functionality deferred P1
+CK-API-160	DELETE	/v1/me/searches	public		partial-security-only; positive/full functionality deferred P1
+CK-API-161	GET	/v1/sitemap/contents	open		included-critical functionality and security
+CK-API-162	GET	/v1/sitemap/entities	open		included-critical functionality and security
+CK-API-163	GET	/v1/stats/activity	staff	root:content:view-restricted	partial-security-only; positive/full functionality deferred P1
+CK-API-164	GET	/v1/me/stats	user		partial-security-only; positive/full functionality deferred P1
+CK-API-165	GET	/v1/manage/search-suggestions	public		included-critical functionality and security
+CK-API-166	POST	/v1/import	staff	root:import:write	partial-security-only; positive/full functionality deferred P1
+CK-API-167	POST	/v1/import/external-ids	staff	root:import:write	partial-security-only; positive/full functionality deferred P1

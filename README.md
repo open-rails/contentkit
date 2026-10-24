@@ -746,31 +746,27 @@ routes (signals, exposures, history, popular, similar, recommend) land with
 
 ## Testing
 
+The replacement public-contract suite is in [tests/critical](tests/critical/README.md).
+It uses real AuthKit, OpenRails, PostgreSQL, ClickHouse, S3, media workers and
+the built browser SDK. Configure owned disposable services as documented there.
+
 ```sh
-CONTENTKIT_TEST_URL=postgres://...  CONTENTKIT_PROFILE_URL=postgres://... \
-CONTENTKIT_TEST_CH_ADDR=localhost:9000 CONTENTKIT_TEST_CH_USER=... CONTENTKIT_TEST_CH_PASSWORD=... CONTENTKIT_TEST_CH_CLUSTER=... \
-go test ./... -race -count=1 -p 2
+python3 tests/critical/run.py --race
 ```
 
-Media tests also need an S3 backend (`CONTENTKIT_TEST_S3_ENDPOINT`,
-`_ACCESS_KEY`, `_SECRET_KEY`, optional `_REGION`, `_BUCKET` and `_REQUIRE`; see
-`media/internal/s3test`). CI runs them on MinIO; `media/image` runs in its
-own CI job with libvips, and the other jobs exclude it. To record a Ceph RGW
-release's capabilities, point the same variables at an RGW bucket and run
-`go test ./media/... -v -count=1`; the log prints the probed capabilities.
-Manifest edits run under `PGLocker`, so the tests also need
-`CONTENTKIT_TEST_URL` (they skip without it).
-`media/video` tests also need `ffmpeg` and `ffprobe` on `PATH` (they skip
-without them unless `CONTENTKIT_TEST_FFMPEG=1`).
+The runner fails on missing fixtures, skipped or missing selected cases, zero
+executions, or incomplete scenario/operation review. This draft replacement is
+still incomplete; focused development runs are explicitly partial evidence.
+CI runs on ready PRs into `master` or `release/**`, or by explicit dispatch,
+and retains the source/base freshness gate, build, type, security and artifact
+checks. Ordinary source pushes do not run the suite.
+
+Previously observed backend capabilities (not replacement-suite qualification):
 
 | Backend | Conditional PUT | SHA-256 enforced | Notes |
 |---|---|---|---|
 | MinIO RELEASE.2025-09-07 | yes | yes | drops `AbortIncompleteMultipartUpload` (expires uploads itself) |
 | Ceph 19.2 / 20.2 standalone `dbstore` RGW | no | no | wrong Range bytes; not representative of RADOS-backed RGW |
 | production Ceph RGW (RADOS, 2026-09-24) | no (`If-Match` yes, `If-None-Match: *` ignored) | no | Range, `response-content-disposition`, versioning, lifecycle (incl. `AbortIncompleteMultipartUpload`) and multipart work; hosts wire `PGLocker` |
-
-Tests run against real PGroonga Postgres and ClickHouse+Keeper and skip
-without the variables; `CONTENTKIT_PROFILE_URL` needs `CREATEDB`. Regenerate the eval baseline with
-`CONTENTKIT_EVAL_UPDATE=1`.
 
 User inboxes, native comment events and OpenRails imports use the shared notification library. See [notifications](docs/notifications.md) for APIs, identity mapping, retained-history semantics and erasure.

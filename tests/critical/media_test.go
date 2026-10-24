@@ -32,13 +32,15 @@ import (
 )
 
 type mediaWorld struct {
-	store      *medias3.Store
-	bucket     string
-	gateway    *httptest.Server
-	key        token.Key
-	worker     *worker.Worker
-	cancel     context.CancelFunc
-	workerDone chan error
+	store         *medias3.Store
+	bucket        string
+	gateway       *httptest.Server
+	key           token.Key
+	worker        *worker.Worker
+	cancel        context.CancelFunc
+	workerDone    chan error
+	management    *awss3.Client
+	gatewayConfig gateway.Config
 }
 
 func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
@@ -53,6 +55,7 @@ func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
 	}
 	m := &mediaWorld{bucket: "ck-critical-" + uuid.NewString()}
 	management := awss3.New(awss3.Options{Region: "us-east-1", BaseEndpoint: aws.String(endpoint), UsePathStyle: true, Credentials: credentials.NewStaticCredentialsProvider(user, password, ""), RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired})
+	m.management = management
 	_, err := management.CreateBucket(t.Context(), &awss3.CreateBucketInput{Bucket: &m.bucket})
 	must(t, err)
 	m.store, err = medias3.New(medias3.Config{Bucket: m.bucket, Endpoint: endpoint, AccessKeyID: user, SecretAccessKey: password, UsePathStyle: true})
@@ -65,14 +68,15 @@ func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
 	must(t, err)
 	ring, err := token.NewRing(m.key, nil)
 	must(t, err)
-	handler, err := gateway.New(gateway.Config{Endpoint: endpoint, AccessKeyID: user, SecretAccessKey: password, Ring: ring,
-		Routes: []gateway.Route{{Host: "127.0.0.1", Scope: layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}, Bucket: m.bucket, Origins: []string{"https://critical.invalid"}}}})
+	m.gatewayConfig = gateway.Config{Endpoint: endpoint, AccessKeyID: user, SecretAccessKey: password, Ring: ring,
+		Routes: []gateway.Route{{Host: "127.0.0.1", Scope: layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}, Bucket: m.bucket, Origins: []string{"https://critical.invalid"}}}}
+	handler, err := gateway.New(m.gatewayConfig)
 	must(t, err)
 	m.gateway = httptest.NewServer(handler)
 	a.server.Close()
 	must(t, a.engine.Close(t.Context()))
 	a.cfg.Media = &ck.MediaConfig{Config: media.Config{BaseURL: m.gateway.URL, Kinds: []media.Kind{{Name: "gallery", KeepOriginals: true,
-		Uploads: []media.Upload{{Path: "pages/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Max: 4}, {Path: "cover", Types: []string{"image/png"}, MaxBytes: 1 << 20}},
+		Uploads: []media.Upload{{Path: "pages/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Max: 4}, {Path: "cover", Types: []string{"image/png"}, MaxBytes: 1 << 20}, {Path: "attachments/{name}", Types: []string{"text/plain"}, MaxBytes: 80 << 20, Max: 2}},
 		Private: []media.Private{{Name: "reader", From: "pages/{name}", To: "reader/{name}.webp", Image: &media.Image{Width: 48, Height: 48}}},
 		Public:  []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{16, 32}, Image: media.Image{Aspect: media.Square}}},
 	}}}, WorkerSchema: w.schema + "_media_worker", Delivery: ck.DeliveryConfig{Mode: string(media.DeliverURL), SigningKey: signing, TTL: time.Minute, Window: time.Second}}
@@ -101,6 +105,11 @@ func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
 	must(t, a.engine.Start(run))
 	t.Cleanup(func() {
 		a.server.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := a.engine.Close(ctx); err != nil {
+			t.Errorf("drain media engine: %v", err)
+		}
 		m.cancel()
 		select {
 		case err := <-m.workerDone:
@@ -109,11 +118,6 @@ func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
 			}
 		case <-time.After(15 * time.Second):
 			t.Error("owned media worker failed to stop")
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if err := a.engine.Close(ctx); err != nil {
-			t.Errorf("close media engine: %v", err)
 		}
 		m.gateway.Close()
 		for {
@@ -182,6 +186,27 @@ func TestRealMediaIngest(t *testing.T) {
 		})
 		_, err = a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
+		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+		must(t, err)
+		waitFor(t, func() bool {
+			ready, err = admin.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
+			must(t, err)
+			return len(ready.Public) == 1 && len(ready.Public[0].Renditions) == 2 && ready.State == media.StateReady
+		})
+		if len(ready.Public) != 1 || len(ready.Public[0].Renditions) != 2 {
+			t.Fatalf("cover renditions incomplete: %+v", ready.Public)
+		}
+		seen := map[int]bool{}
+		for _, rendition := range ready.Public[0].Renditions {
+			assertImage(t, rendition.URL, rendition.W, rendition.H)
+			if rendition.W != rendition.H || (rendition.W != 16 && rendition.W != 32) {
+				t.Fatalf("unexpected cover dimensions: %+v", rendition)
+			}
+			seen[rendition.W] = true
+		}
+		if !seen[16] || !seen[32] {
+			t.Fatal("cover widths missing")
+		}
 		for _, file := range ready.Files {
 			if file.Path != "reader/one.webp" {
 				continue

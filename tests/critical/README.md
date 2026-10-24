@@ -21,9 +21,7 @@ CONTENTKIT_CRITICAL_PG='postgres://user:password@127.0.0.1:port/disposable?sslmo
   GOWORK=off go test -count=1 -run '^TestPublicationWithoutWorkers$' ./...
 ```
 
-Missing PostgreSQL fails the suite; it never skips. The broader selected-case
-runner, real object-store/ClickHouse/commercial-grant fixtures and browser cases
-are being implemented. `coverage.json` records obligations rather than turning
+Missing PostgreSQL fails the suite; it never skips. The strict selected-case runner, real object-store/commercial fixtures and built-package browser cases are present. ClickHouse recovery checks and the full public-operation mapping remain in progress. `coverage.json` records obligations rather than turning
 scenario titles or counts into tests. Existing pure fixtures may be reused;
 legacy tests are not retained under new names.
 
@@ -36,3 +34,41 @@ queries used Deps.Clock while access decisions used time.Now. The separate
 clock-wiring fix keeps ordinary nil-clock behavior and is covered by real HTTP
 release-boundary and wall-clock controls. It is not a claim that deployed
 wall-clock publication was broken.
+
+
+The full runner is `python3 tests/critical/run.py --race` from the repository
+root. It deliberately fails until the ledger has reviewed executable cases and
+the selected public-operation mapping. For local development only:
+
+```sh
+python3 tests/critical/run.py --focus '^TestMultipartUpload$'
+```
+
+This prints `LOCAL PARTIAL EXECUTION; NOT QUALIFICATION`. It rejects selected
+skips and zero completed tests; focused execution is prohibited in CI.
+`results/go.jsonl` records every Go test action. Full qualification also checks
+every exact reviewed scenario/operation case name actually passed.
+
+Additional required owned-fixture settings:
+
+- `CONTENTKIT_CRITICAL_S3_ENDPOINT`, `CONTENTKIT_CRITICAL_S3_USER`,
+  `CONTENTKIT_CRITICAL_S3_PASSWORD`: a real S3-compatible service with signed
+  checksums, multipart and conditional writes. Browser uploads also need CORS.
+- `CONTENTKIT_CRITICAL_CH_ADDR`, `CONTENTKIT_CRITICAL_CH_USER`,
+  `CONTENTKIT_CRITICAL_CH_PASSWORD`, optionally `CONTENTKIT_CRITICAL_CH_CLUSTER`:
+  ClickHouse with Keeper and replica macros. Each fixture owns a fresh database.
+- Native libvips, ffmpeg, Node, pnpm and Playwright Chromium. Build the package
+  and harness with `pnpm --dir sdk/ui build` followed by
+  `pnpm --dir sdk/ui exec vite build --config ../../tests/critical/browser/vite.config.mjs`.
+
+Current additions exercise actual image output dimensions and published cover
+URLs, draft reopen/status reads, rejected uploads, immutable edits, uncertain
+commit replay, real multipart resume/abort, gateway capabilities and real React
+identity changes. Their scenario IDs are still obligations under semantic
+review; for example file-count coverage does not establish owner quota coverage,
+foreign multipart tickets do not establish expiry coverage, and HTTP range
+coverage does not establish HLS/archive authorization.
+
+The TypeScript `ContentKitError` contract exposes status/code, retryAfter,
+details, blobs, ban, action, reason, availableAt and unknownCode. RequestID is a
+Go error field; adding it to TypeScript is outside the current public contract.
