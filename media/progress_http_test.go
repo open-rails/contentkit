@@ -152,3 +152,40 @@ func TestProgressHTTPInvalidCursorDoesNotReadSnapshot(t *testing.T) {
 		t.Fatalf("invalid cursor: status=%d error=%v", recorder.Code, err)
 	}
 }
+
+func TestProgressHTTPRechecksCredentialAfterReadingEvents(t *testing.T) {
+	var pages, snapshots atomic.Int32
+	var valid atomic.Bool
+	valid.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		reader := eventlog.ReaderFunc(func(context.Context, eventlog.Query) (eventlog.Page, error) {
+			if pages.Add(1) > 1 {
+				valid.Store(false)
+			}
+			return eventlog.Page{NextCursor: "next", Events: []eventlog.Event{{Data: json.RawMessage(`{"kind":"gallery","content_id":"mine"}`)}}}, nil
+		})
+		_ = serveProgress(w, request, contentref.ContentRef{ContentKind: "gallery", ContentID: "mine"}, reader, "", func(context.Context) error {
+			if !valid.Load() {
+				return auth.ErrExpired
+			}
+			return nil
+		}, func(context.Context) (*ReadResult, error) {
+			snapshots.Add(1)
+			return &ReadResult{Files: []FileInfo{}}, nil
+		}, time.Millisecond)
+	}))
+	defer server.Close()
+	response, err := http.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	var frames strings.Builder
+	for scanner.Scan() {
+		frames.WriteString(scanner.Text() + "\n")
+	}
+	if snapshots.Load() != 1 || !strings.Contains(frames.String(), `"code":"unauthorized"`) {
+		t.Fatalf("expired credential received another snapshot: count=%d frames=%s", snapshots.Load(), frames.String())
+	}
+}

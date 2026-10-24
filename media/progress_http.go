@@ -204,6 +204,11 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 		}
 		query.After = page.NextCursor
 		if changed {
+			if err := authorize(ctx); err != nil {
+				_, failure := progressFailure(err)
+				_ = write("error", query.After, failure)
+				return err
+			}
 			value, err := snapshot(ctx)
 			if err != nil {
 				_, failure := progressFailure(err)
