@@ -1,6 +1,8 @@
 import { cn } from "cn";
 import { createPortal } from "react-dom";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { Add01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { ratio } from "../../client/aspect.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/entity-fields.js";
@@ -530,7 +532,10 @@ export function VersionsEditor({ content, media = true, activeVersion, ...p }: C
     <div className="grid gap-2 rounded-md border border-border px-3 py-2" data-ckui="version-row" data-version={v.id}>
       <div className="flex flex-wrap items-center gap-2">
         {activeVersions.length > 1 && handle}
-        <span className="min-w-0 flex-1 font-medium break-words">{versionLabel(v, languageName, p.labels)}</span>
+        <span className="min-w-0 flex-1 break-words">
+          <span className="font-medium">{versionLabel(v, languageName, p.labels)}</span>
+          <span className="ms-2 font-mono text-xs text-muted-foreground">{v.code}</span>
+        </span>
         <VersionStatus version={v} />
         {v.access && <span className="text-sm text-muted-foreground">{t(`contentEditor.level_${v.access.level}`)}</span>}
         {v.pages ? <span className="text-xs text-muted-foreground">{t("contentEditor.pageCount", { count: v.pages })}</span> : null}
@@ -538,7 +543,7 @@ export function VersionsEditor({ content, media = true, activeVersion, ...p }: C
           {t(open === v.id ? "contentEditor.close" : "contentEditor.edit")}
         </Button>
       </div>
-      {opened.includes(v.id) && <div hidden={open !== v.id}><VersionForm content={content} version={v} model={model} media={media} {...p} /></div>}
+      {opened.includes(v.id) && <div hidden={open !== v.id} className="-mx-3 mt-1 border-t border-border px-3 pt-2"><VersionForm content={content} version={v} model={model} media={media} {...p} /></div>}
     </div>
   );
   return (
@@ -561,6 +566,7 @@ export function VersionsEditor({ content, media = true, activeVersion, ...p }: C
       </SortableList>
       <ErrorLine error={order.error} />
       <AddVersion
+        collapsible
         languages={languages}
         many={spec?.versions.languages === "many"}
         pending={add.pending}
@@ -617,7 +623,7 @@ export interface VersionSource {
   chapters: boolean;
 }
 
-export function AddVersion({ languages, many, pending, sources, onAdd, heading = true }: {
+export function AddVersion({ languages, many, pending, sources, onAdd, heading = true, collapsible = false }: {
   languages: readonly string[];
   many: boolean;
   pending: boolean;
@@ -625,17 +631,29 @@ export function AddVersion({ languages, many, pending, sources, onAdd, heading =
   sources?: readonly VersionSource[];
   onAdd: (v: { languages: string[] }, from?: { from: string; playback: boolean; segments: boolean }) => void;
   heading?: boolean;
+  collapsible?: boolean;
 }) {
   const { t } = useMessages();
   const id = useId();
+  const [shown, setShown] = useState(!collapsible);
   const [langs, setLangs] = useState<string[]>([]);
   const [from, setFrom] = useState(NONE);
   const [audio, setAudio] = useState(true);
   const [chapters, setChapters] = useState(false);
   const source = sources?.find((s) => s.id === from);
+  // In its own card section it gets a divider; inside a dialog (heading off) the dialog frames it.
+  const frame = cn("grid gap-3", heading && "border-t border-border pt-4");
+  if (!shown)
+    return (
+      <div className={frame} data-ckui="add-version">
+        <Button type="button" size="sm" variant="outline" className="justify-self-start" onClick={() => setShown(true)}>
+          <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+          {t("contentEditor.addVersion")}
+        </Button>
+      </div>
+    );
   return (
-    // In its own card section it gets a divider; inside a dialog (heading off) the dialog frames it.
-    <div className={cn("grid gap-3", heading && "border-t border-border pt-4")} data-ckui="add-version">
+    <div className={frame} data-ckui="add-version">
       {heading && (
         <div className="grid gap-0.5">
           <p className="text-sm font-medium">{t("contentEditor.addVersion")}</p>
@@ -678,19 +696,26 @@ export function AddVersion({ languages, many, pending, sources, onAdd, heading =
           )}
         </div>
       )}
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="justify-self-start"
-        disabled={pending || !langs.length}
-        onClick={() => {
-          onAdd({ languages: langs }, source && { from: source.id, playback: source.audio && audio, segments: source.chapters && chapters });
-          setLangs([]);
-        }}
-      >
-        {t("contentEditor.addVersion")}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pending || !langs.length}
+          onClick={() => {
+            onAdd({ languages: langs }, source && { from: source.id, playback: source.audio && audio, segments: source.chapters && chapters });
+            setLangs([]);
+            if (collapsible) setShown(false);
+          }}
+        >
+          {t("contentEditor.addVersion")}
+        </Button>
+        {collapsible && (
+          <Button type="button" size="sm" variant="ghost" onClick={() => { setLangs([]); setShown(false); }}>
+            {t("common.cancel")}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -788,43 +813,70 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
     </div>;
     return restoreTarget === undefined ? restore : restoreTarget && createPortal(restore, restoreTarget);
   }
+  // A player version reads as one task, top to bottom: its video, then chapters, then its
+  // settings and the Save/Publish that applies to them. Reader works keep settings alone.
+  const segments = chapters && !!spec?.segments;
   return (
     <div className="grid gap-4 pt-2">
-      <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();if (coordinated) event.stopPropagation();else void submit();}}>
-        <LanguageFields languages={model?.languages ?? []} value={langs} many={spec?.versions.languages === "many"} onChange={(langs)=>edit({langs})} />
-        {showTraits && !!spec?.versions.traits?.length && (
-          <fieldset className="grid gap-1.5">
-            <legend className="mb-1.5 text-sm font-medium">{t("contentEditor.traits")}</legend>
-            <div className="flex flex-wrap gap-3">
-              {spec.versions.traits.map((x) => (
-                <label key={x} className="flex items-center gap-1.5">
-                  <Switch size="sm" checked={traits.includes(x)} onCheckedChange={(on) => edit({traits:on ? [...traits, x] : traits.filter((y) => y !== x)})} aria-label={labelOf(p.labels, x)} />
-                  {labelOf(p.labels, x)}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        )}
-        {scheduleTarget === undefined ? schedule : scheduleTarget && createPortal(schedule, scheduleTarget)}
-        {!directAccess && <label className="flex items-center gap-2">
-          <Switch size="sm" checked={own} onCheckedChange={(own)=>edit({own})} />
-          {t("contentEditor.ownAccess")}
-        </label>}
-        {(directAccess || own) && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
-        <ErrorLine error={save.error} />
-        <div className="flex flex-wrap items-center gap-3">
-          {!coordinated && <>
-            <Button type="submit" size="sm" disabled={save.pending || !langs.length}>
-              {save.pending ? t("common.saving") : t("common.save")}
-            </Button>
-            <Button type="button" size="sm" variant="outline" disabled={save.pending || !valid} onClick={() => void submit(v.state === "draft" ? "published" : "draft")}>
-              {t(v.state === "draft" ? "contentManager.publish" : "contentManager.unpublish")}
-            </Button>
-            <Saved show={saved} />
-          </>}
-          {actionsTarget === undefined ? destructive : actionsTarget && createPortal(destructive, actionsTarget)}
+      {media && <VersionMedia content={content} version={v} model={model} {...p} />}
+      {media && (
+        <div className="border-t border-border pt-4">
+          <VersionCover content={content} version={v} {...p} />
         </div>
-      </form>
+      )}
+      {media && spec?.presentation === "reader" && (
+        <div className="border-t border-border pt-4">
+          <ReaderManifestEditor kind={content.kind} content={content.id} version={v.id} client={p.client} onError={p.onError} />
+        </div>
+      )}
+      {segments && (
+        <div className={cn(media && "border-t border-border pt-4")}>
+          <SegmentsEditor content={content} version={v} {...p} />
+        </div>
+      )}
+      <div className={cn("grid gap-3", (media || segments) && "border-t border-border pt-4")} data-ckui="version-settings">
+        {media && (
+          <div className="grid gap-0.5">
+            <h4 className="text-sm font-medium">{t("contentEditor.versionSettings")}</h4>
+            <p className="text-xs text-muted-foreground">{t("contentEditor.versionSettingsHint")}</p>
+          </div>
+        )}
+        <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();if (coordinated) event.stopPropagation();else void submit();}}>
+          <LanguageFields languages={model?.languages ?? []} value={langs} many={spec?.versions.languages === "many"} onChange={(langs)=>edit({langs})} />
+          {showTraits && !!spec?.versions.traits?.length && (
+            <fieldset className="grid gap-1.5">
+              <legend className="mb-1.5 text-sm font-medium">{t("contentEditor.traits")}</legend>
+              <div className="flex flex-wrap gap-3">
+                {spec.versions.traits.map((x) => (
+                  <label key={x} className="flex items-center gap-1.5">
+                    <Switch size="sm" checked={traits.includes(x)} onCheckedChange={(on) => edit({traits:on ? [...traits, x] : traits.filter((y) => y !== x)})} aria-label={labelOf(p.labels, x)} />
+                    {labelOf(p.labels, x)}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {scheduleTarget === undefined ? schedule : scheduleTarget && createPortal(schedule, scheduleTarget)}
+          {!directAccess && <label className="flex items-center gap-2">
+            <Switch size="sm" checked={own} onCheckedChange={(own)=>edit({own})} />
+            {t("contentEditor.ownAccess")}
+          </label>}
+          {(directAccess || own) && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
+          <ErrorLine error={save.error} />
+          <div className="flex flex-wrap items-center gap-3">
+            {!coordinated && <>
+              <Button type="submit" size="sm" disabled={save.pending || !langs.length}>
+                {save.pending ? t("common.saving") : t("common.save")}
+              </Button>
+              <Button type="button" size="sm" variant="outline" disabled={save.pending || !valid} onClick={() => void submit(v.state === "draft" ? "published" : "draft")}>
+                {t(v.state === "draft" ? "contentManager.publish" : "contentManager.unpublish")}
+              </Button>
+              <Saved show={saved} />
+            </>}
+            {actionsTarget === undefined ? destructive : actionsTarget && createPortal(destructive, actionsTarget)}
+          </div>
+        </form>
+      </div>
       {readerToolsTarget && readingLayout && createPortal(readingLayout, readerToolsTarget)}
       {allowsIndividualSales(model, content.kind) && (
         <div className="border-t border-border pt-4">
@@ -837,26 +889,6 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
         </div>
       )}
       <ErrorLine error={offer.error} />
-      {chapters && spec?.segments && (
-        <div className="border-t border-border pt-4">
-          <SegmentsEditor content={content} version={v} {...p} />
-        </div>
-      )}
-      {media && (
-        <div className="border-t border-border pt-4">
-          <VersionCover content={content} version={v} {...p} />
-        </div>
-      )}
-      {media && (
-        <div className="border-t border-border pt-4">
-          <VersionMedia content={content} version={v} model={model} {...p} />
-        </div>
-      )}
-      {media && spec?.presentation === "reader" && (
-        <div className="border-t border-border pt-4">
-          <ReaderManifestEditor kind={content.kind} content={content.id} version={v.id} client={p.client} onError={p.onError} />
-        </div>
-      )}
     </div>
   );
 }

@@ -107,12 +107,16 @@ export function VideoMediaEditor({ item, client: own, source: givenSource, subti
     <div className="grid gap-4" data-ckui="video-media">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-base font-semibold">{t("mediaPanel.title")}</h2>
-        <Badge variant={state === "failed" ? "destructive" : state === "ready" ? "outline" : "secondary"} data-ckui="media-state" data-state={state}>
-          {t(`mediaPanel.${state}`)}
-        </Badge>
-        <Button size="sm" variant="outline" className="ms-auto" disabled={regen.pending || !uploads.length} onClick={() => void regen.run(() => client.media.commit(item, [{ op: "regenerate" }]))}>
-          {t("mediaPanel.regenerate")}
-        </Button>
+        {state !== "empty" && (
+          <Badge variant={state === "failed" ? "destructive" : state === "ready" ? "outline" : "secondary"} data-ckui="media-state" data-state={state}>
+            {t(`mediaPanel.${state}`)}
+          </Badge>
+        )}
+        {uploads.length > 0 && (
+          <Button size="sm" variant="outline" className="ms-auto" disabled={regen.pending} onClick={() => void regen.run(() => client.media.commit(item, [{ op: "regenerate" }]))}>
+            {t("mediaPanel.regenerate")}
+          </Button>
+        )}
       </div>
       <ErrorLine error={regen.error} />
       {failed.map((f) => (
