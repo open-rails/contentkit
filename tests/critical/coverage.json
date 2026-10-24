@@ -1,0 +1,855 @@
+{
+  "source_plan": "open-rails/tracker#1290",
+  "candidate_base": "c61cbd1e56c9a5cac6b6e826e8b3ea1618e30de8",
+  "status": "IN_PROGRESS_NOT_QUALIFIED",
+  "note": "Names are coverage obligations, not assertions. A required scenario remains pending until its actual behavior and relevant operation cases are implemented and executed. Future media-owner cases are intentionally not selected.",
+  "required": [
+    {
+      "id": "CK-J01-S01",
+      "journey": "CK-J01",
+      "behavior": "Empty database migration then server readiness",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J01-S02",
+      "journey": "CK-J01",
+      "behavior": "Previous released schema migration preserves public identities and reads",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J01-S03",
+      "journey": "CK-J01",
+      "behavior": "SkipMigrations checks prepared schema without DDL",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J01-S04",
+      "journey": "CK-J01",
+      "behavior": "Invalid tenant/app/dependency configuration refuses startup",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J01-S05",
+      "journey": "CK-J01",
+      "behavior": "Selected route groups mount and omitted groups return404",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J01-S06",
+      "journey": "CK-J01",
+      "behavior": "Embedded and standalone startup expose equivalent supported operations",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J01-S07",
+      "journey": "CK-J01",
+      "behavior": "Drain rejects new readiness while in-flight requests complete",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J01-S08",
+      "journey": "CK-J01",
+      "behavior": "Restart and Close preserve borrowed stores and pending jobs",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J02-S01",
+      "journey": "CK-J02",
+      "behavior": "Anonymous outcomes match open/public/protected tiers",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J02-S02",
+      "journey": "CK-J02",
+      "behavior": "Malformed credentials refuse without anonymous fallback",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J02-S03",
+      "journey": "CK-J02",
+      "behavior": "Expired credentials refuse with stable challenge",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J02-S04",
+      "journey": "CK-J02",
+      "behavior": "Revoked credentials refuse on the next request",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J02-S05",
+      "journey": "CK-J02",
+      "behavior": "Wrong issuer or app-bound credential refuses",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J02-S06",
+      "journey": "CK-J02",
+      "behavior": "Tenant member and cross-tenant operator remain different principals",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J02-S07",
+      "journey": "CK-J02",
+      "behavior": "Application cannot use human/member-only routes",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J02-S08",
+      "journey": "CK-J02",
+      "behavior": "Host identity cannot be forged through wire headers or subject strings",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J02-S09",
+      "journey": "CK-J02",
+      "behavior": "Authentication/directory outage is unavailable without a successful side effect",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J03-S01",
+      "journey": "CK-J03",
+      "behavior": "Creator writes own content but not another creator\u2019s",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J03-S02",
+      "journey": "CK-J03",
+      "behavior": "Entity editor writes only within its entity/app",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J03-S03",
+      "journey": "CK-J03",
+      "behavior": "Scoped moderator may moderate but cannot author beyond its role",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J03-S04",
+      "journey": "CK-J03",
+      "behavior": "Root/tenant/app permissions retain credential ceilings",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J03-S05",
+      "journey": "CK-J03",
+      "behavior": "Revocation takes effect for an existing client/session",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J03-S06",
+      "journey": "CK-J03",
+      "behavior": "Deleted or foreign-owned recreated scope does not preserve stale authority",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J03-S07",
+      "journey": "CK-J03",
+      "behavior": "Owner transfer preserves actor audit and does not fabricate target membership",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J05-S01",
+      "journey": "CK-J05",
+      "behavior": "Immediate publication becomes visible and records once",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J05-S02",
+      "journey": "CK-J05",
+      "behavior": "Scheduled content is unavailable before and available at boundary with recorder stopped",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J05-S03",
+      "journey": "CK-J05",
+      "behavior": "Version cannot become visible before its parent or moderation approval",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J05-S04",
+      "journey": "CK-J05",
+      "behavior": "Segment and audience releases use their own exact boundaries",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J05-S05",
+      "journey": "CK-J05",
+      "behavior": "Unpublish/reschedule removes availability without deleting purchase rights",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J05-S06",
+      "journey": "CK-J05",
+      "behavior": "Repeated/concurrent due-recording catches up facts without duplicate releases",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J06-S01",
+      "journey": "CK-J06",
+      "behavior": "Content/version/entity/tier grants expose only their intended resource",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J06-S02",
+      "journey": "CK-J06",
+      "behavior": "Future entitlement does not grant early access",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J06-S03",
+      "journey": "CK-J06",
+      "behavior": "Paid-through cancelled entitlement remains valid until expiry",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J06-S04",
+      "journey": "CK-J06",
+      "behavior": "Revoked/expired entitlement blocks fresh content/media/download grants",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J06-S05",
+      "journey": "CK-J06",
+      "behavior": "Entitlement service outage refuses protected access",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J06-S06",
+      "journey": "CK-J06",
+      "behavior": "Purchased library stays inside app/domain boundaries",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J06-S07",
+      "journey": "CK-J06",
+      "behavior": "Changing product price leaves ContentKit requirement/grant identities unchanged",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J07-S01",
+      "journey": "CK-J07",
+      "behavior": "Locked detail hides body/media and restricted counts",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J07-S02",
+      "journey": "CK-J07",
+      "behavior": "Known-ID hydration follows the same visibility rules as discovery",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J07-S03",
+      "journey": "CK-J07",
+      "behavior": "Search/typeahead cannot expose internal entity names or restricted content",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J07-S04",
+      "journey": "CK-J07",
+      "behavior": "Sitemap/calendar/totals honor public-domain scope",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J07-S05",
+      "journey": "CK-J07",
+      "behavior": "Reader filters cannot defeat a hard domain requirement",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J07-S06",
+      "journey": "CK-J07",
+      "behavior": "Version-ID/code aliases cannot fall back to an accessible sibling",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J07-S07",
+      "journey": "CK-J07",
+      "behavior": "Public versus administrative entity views separate internal metadata",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J07-S08",
+      "journey": "CK-J07",
+      "behavior": "Pagination/similar/recommendations never reintroduce excluded content",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J08-S01",
+      "journey": "CK-J08",
+      "behavior": "Deleting one version preserves siblings and parent",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J08-S02",
+      "journey": "CK-J08",
+      "behavior": "Deleting final version derives parent tombstone atomically",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J08-S03",
+      "journey": "CK-J08",
+      "behavior": "Restore reopens the permitted edition/derived parent only",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J08-S04",
+      "journey": "CK-J08",
+      "behavior": "Retention-boundary purge removes content/media while billing history remains",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J09-S01",
+      "journey": "CK-J09",
+      "behavior": "Real image upload/commit produces expected thumbnail and low-resolution output",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J09-S02",
+      "journey": "CK-J09",
+      "behavior": "Upload acceptance remains a draft and progress survives reopening",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J09-S03",
+      "journey": "CK-J09",
+      "behavior": "Foreign owner/app/version allocation cannot be committed",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J09-S04",
+      "journey": "CK-J09",
+      "behavior": "Checksum/type/path/size rejection has no visible accepted upload",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J09-S05",
+      "journey": "CK-J09",
+      "behavior": "Quota and file-count limits reject before excess adoption",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J09-S06",
+      "journey": "CK-J09",
+      "behavior": "Named/inline image edit preserves published access and immutable source bytes",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J10-S01",
+      "journey": "CK-J10",
+      "behavior": "Multipart parts resume after reopening with a partial upload",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J10-S02",
+      "journey": "CK-J10",
+      "behavior": "Part checksum mismatch refuses completion",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J10-S03",
+      "journey": "CK-J10",
+      "behavior": "Incomplete multipart cannot become a committed file",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J10-S04",
+      "journey": "CK-J10",
+      "behavior": "Foreign or expired multipart ticket is refused",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J10-S05",
+      "journey": "CK-J10",
+      "behavior": "Completion replay does not duplicate reservation or object adoption",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J10-S06",
+      "journey": "CK-J10",
+      "behavior": "Abort/cancel plus a late part cannot publish stale bytes",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J11-S01",
+      "journey": "CK-J11",
+      "behavior": "Lost commit response replays the same accepted operation",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J11-S02",
+      "journey": "CK-J11",
+      "behavior": "Same operation ID with changed payload conflicts",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J11-S03",
+      "journey": "CK-J11",
+      "behavior": "Concurrent revision edit cannot overwrite the winner",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J11-S04",
+      "journey": "CK-J11",
+      "behavior": "Worker crash before checkpoint retries without visible duplicate",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J11-S05",
+      "journey": "CK-J11",
+      "behavior": "Worker crash after checkpoint resumes rather than repeating accepted publication",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J11-S06",
+      "journey": "CK-J11",
+      "behavior": "Storage/database settlement failure remains observable and recoverable",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J11-S07",
+      "journey": "CK-J11",
+      "behavior": "Browser queue pause/retry/remove and Go ingest resume preserve one operation identity",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J13-S01",
+      "journey": "CK-J13",
+      "behavior": "Private exact-file grant refuses a sibling file or another item",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J13-S02",
+      "journey": "CK-J13",
+      "behavior": "Item token cannot authorize the download area",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J13-S03",
+      "journey": "CK-J13",
+      "behavior": "Expired token refuses and key rotation honors only overlap policy",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J13-S04",
+      "journey": "CK-J13",
+      "behavior": "Host/tenant/app mismatch and encoded traversal cannot fetch an object",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J13-S05",
+      "journey": "CK-J13",
+      "behavior": "Manifest/temp/reserved and erased objects cannot be served",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J13-S06",
+      "journey": "CK-J13",
+      "behavior": "GET/HEAD/range/conditional request preserves bytes and authorization",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J13-S07",
+      "journey": "CK-J13",
+      "behavior": "HLS child playlists and archive download cannot bypass parent/segment access",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J13-S08",
+      "journey": "CK-J13",
+      "behavior": "CORS/cache/download headers preserve private versus public policy",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J16-S01",
+      "journey": "CK-J16",
+      "behavior": "Owned entity creates only the expected tenant/app authorization scope",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J16-S02",
+      "journey": "CK-J16",
+      "behavior": "Creation limit prevents exceeding max-per-owner atomically",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J16-S03",
+      "journey": "CK-J16",
+      "behavior": "Foreign/stale entity scope never grants editor authority",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J16-S04",
+      "journey": "CK-J16",
+      "behavior": "Deleting entity retires authority and owned content visibility",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J16-S05",
+      "journey": "CK-J16",
+      "behavior": "Restoring entity follows original ownership without wider grants",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J20-S01",
+      "journey": "CK-J20",
+      "behavior": "Owner ban affects only the owner\u2019s eligible content",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J20-S02",
+      "journey": "CK-J20",
+      "behavior": "Entity moderator ban/hold/release cannot reach another entity",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J20-S03",
+      "journey": "CK-J20",
+      "behavior": "Global ban applies only inside the target tenant/app policy",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J20-S04",
+      "journey": "CK-J20",
+      "behavior": "Ban expiry and lift restore eligibility at the documented boundary",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J20-S05",
+      "journey": "CK-J20",
+      "behavior": "Banned words and normalized IP/CIDR input cannot bypass restrictions",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J20-S06",
+      "journey": "CK-J20",
+      "behavior": "Unauthorized moderation/rule change leaves public and held state unchanged",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J23-S01",
+      "journey": "CK-J23",
+      "behavior": "Erasure fences reads before physical cleanup finishes",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J23-S02",
+      "journey": "CK-J23",
+      "behavior": "Paused pre-erasure writer cannot resurrect visible data",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J23-S03",
+      "journey": "CK-J23",
+      "behavior": "CH outage leaves incomplete erasure and succeeds on retry",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J23-S04",
+      "journey": "CK-J23",
+      "behavior": "Restored old app data refuses normal serving until replay completes",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J23-S05",
+      "journey": "CK-J23",
+      "behavior": "Recovery-only engine cannot mount routes/start jobs/use privileged client",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J23-S06",
+      "journey": "CK-J23",
+      "behavior": "App-only replay preserves shared inbox/avatar and sibling app data",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J23-S07",
+      "journey": "CK-J23",
+      "behavior": "Projection rebuild/reclassification and delayed writes remain fenced",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J24-S01",
+      "journey": "CK-J24",
+      "behavior": "Soft deletion hides attribution while keeping comments/interactions",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J24-S02",
+      "journey": "CK-J24",
+      "behavior": "Restoration before permanent purge restores account attribution",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J24-S03",
+      "journey": "CK-J24",
+      "behavior": "Permanent anonymization keeps contributions but removes account linkage/private resources",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J24-S04",
+      "journey": "CK-J24",
+      "behavior": "Duplicate lifecycle event is idempotent",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J24-S05",
+      "journey": "CK-J24",
+      "behavior": "Failure and restart across PG/CH/S3 keeps cleanup pending until complete",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J24-S06",
+      "journey": "CK-J24",
+      "behavior": "Late writes/notifications/avatars cannot reattach a purged account",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J25-S01",
+      "journey": "CK-J25",
+      "behavior": "Same origin plus recipient yields one receipt",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J25-S02",
+      "journey": "CK-J25",
+      "behavior": "Another user/app cannot read or mutate a private receipt",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J25-S03",
+      "journey": "CK-J25",
+      "behavior": "Read/unread and archive/restore change receipt state only",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J25-S04",
+      "journey": "CK-J25",
+      "behavior": "Publishing to nonmember/foreign tenant recipient refuses",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J25-S05",
+      "journey": "CK-J25",
+      "behavior": "Erased recipient rejects delayed or replayed publication",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J25-S06",
+      "journey": "CK-J25",
+      "behavior": "Billing log replay commits receipt and consumer cursor together",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J25-S07",
+      "journey": "CK-J25",
+      "behavior": "Consumer crash before/after commit cannot skip or duplicate source event effect",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J26-S01",
+      "journey": "CK-J26",
+      "behavior": "Only committed mutations appear in source order",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J26-S02",
+      "journey": "CK-J26",
+      "behavior": "Earlier blocked transaction cannot be skipped by later reader cursor",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J26-S03",
+      "journey": "CK-J26",
+      "behavior": "Filtered pagination preserves progress without omissions or duplicates",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J26-S04",
+      "journey": "CK-J26",
+      "behavior": "Reader restart replays from its own saved cursor",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J26-S05",
+      "journey": "CK-J26",
+      "behavior": "Reads neither ACK nor delete nor mutate source events",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J26-S06",
+      "journey": "CK-J26",
+      "behavior": "Expired/reset/foreign/malformed cursor has explicit stable refusal",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J26-S07",
+      "journey": "CK-J26",
+      "behavior": "Repeated due publisher and rolled-back mutation cannot duplicate or invent events",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J29-S01",
+      "journey": "CK-J29",
+      "behavior": "Go remote and embedded clients preserve equivalent-principal results",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J29-S02",
+      "journey": "CK-J29",
+      "behavior": "Shipped TS method encodes the intended route/body/query and stable error",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J29-S03",
+      "journey": "CK-J29",
+      "behavior": "Account/scope switch during delayed read never exposes old result",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J29-S04",
+      "journey": "CK-J29",
+      "behavior": "Old-scope mutation result cannot emit a new-scope successful change",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J29-S05",
+      "journey": "CK-J29",
+      "behavior": "Cancellation versus accepted request remains distinguishable",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J29-S06",
+      "journey": "CK-J29",
+      "behavior": "Transient/error parsing preserves code/details/retry-after/request ID",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "CK-J29-S07",
+      "journey": "CK-J29",
+      "behavior": "URL mounts and credential transport cannot redirect authority across app/host",
+      "status": "pending",
+      "evidence": []
+    }
+  ]
+}
