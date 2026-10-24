@@ -85,4 +85,9 @@ it("EntityBanner: a cover tile only for a group with a cover image", () => {
   const covered = { ...base, cover: { renditions: [{ url: "https://cdn.test/romance.webp", w: 900, h: 300 }] } };
   const next = render(<EntityBanner entity={covered as unknown as EntityDetail} />, { wrapper: wrap(s.client) });
   expect(next.container.querySelector("[data-ckui=entity-cover]")).not.toBeNull();
+  next.unmount();
+  // A host can keep the compact header even when the entity has a cover.
+  const compact = render(<EntityBanner entity={covered as unknown as EntityDetail} cover={false} />, { wrapper: wrap(s.client) });
+  expect(compact.container.querySelector("[data-ckui=entity-cover]")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Romance" })).toBeVisible();
 });
