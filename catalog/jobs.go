@@ -199,13 +199,17 @@ const (
 // ago, including purchased content. Billing products and purchase history stay;
 // holders lose access to the erased media. It returns the number erased.
 func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
+	if s.media != nil {
+		if _, err := s.media.Versions.ResumeDeletes(ctx, purgeBatch); err != nil {
+			return 0, err
+		}
+	}
 	if _, err := s.PruneEvents(ctx); err != nil {
 		return 0, err
 	}
 	cutoff := s.now().Add(-s.retention)
 	items, err := s.drain(ctx, func(ctx context.Context) (int, error) {
-		return s.erase(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND deleted_at < $2
- ORDER BY id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, cutoff)
+		return s.erase(ctx, cutoff)
 	})
 	if err != nil {
 		return items, err
@@ -227,15 +231,16 @@ func (s *Store) drain(ctx context.Context, batch func(context.Context) (int, err
 	}
 }
 
-// erase deletes the content items query selects (id, kind), locked, with
-// their media folders, documents and interactions.
-func (s *Store) erase(ctx context.Context, query string, args ...any) (int, error) {
+// erase claims expired content under row locks, erases its exact version media
+// outside the transaction, then removes the still-eligible database records.
+func (s *Store) erase(ctx context.Context, cutoff time.Time) (int, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, query, args...)
+	rows, err := tx.Query(ctx, `SELECT id, kind FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'deleted' AND deleted_at < $2
+ ORDER BY id LIMIT `+strconv.Itoa(purgeBatch)+` FOR UPDATE SKIP LOCKED`, s.tenant, cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -255,9 +260,56 @@ func (s *Store) erase(ctx context.Context, query string, args ...any) (int, erro
 		return 0, err
 	}
 	if s.media != nil {
-		if err := s.media.Versions.DeleteTx(ctx, tx, contentTargets(ids)); err != nil {
+		rows, err := tx.Query(ctx, `SELECT content_id,id FROM `+s.t.versions+`
+ WHERE tenant_id=$1 AND content_id=ANY($2) ORDER BY id FOR UPDATE`, s.tenant, ids)
+		if err != nil {
 			return 0, err
 		}
+		targets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (versions.Target, error) {
+			var target versions.Target
+			err := row.Scan(&target.Content, &target.Version)
+			return target, err
+		})
+		if err != nil {
+			return 0, err
+		}
+		if err := s.media.Versions.DeleteTx(ctx, tx, targets); err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return 0, err
+		}
+		if err := s.media.Versions.Delete(ctx, targets); err != nil {
+			return 0, err
+		}
+		tx, err = s.begin(ctx)
+		if err != nil {
+			return 0, err
+		}
+		defer tx.Rollback(ctx)
+		// Never substitute another batch after releasing the claim locks.
+		rows, err = tx.Query(ctx, `SELECT id,kind FROM `+s.t.items+`
+ WHERE tenant_id=$1 AND id=ANY($3) AND state='deleted' AND deleted_at<$2 ORDER BY id FOR UPDATE SKIP LOCKED`, s.tenant, cutoff, ids)
+		if err != nil {
+			return 0, err
+		}
+		ids, kinds, events = nil, nil, nil
+		for rows.Next() {
+			var id, kind string
+			if err := rows.Scan(&id, &kind); err != nil {
+				rows.Close()
+				return 0, err
+			}
+			ids, kinds = append(ids, id), append(kinds, kind)
+			events = append(events, Event{Type: EventContentPurged, Kind: kind, ContentID: id})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil || len(ids) == 0 {
+			return 0, err
+		}
+	}
+	if err := s.retireOffers(ctx, tx, events); err != nil {
+		return 0, err
 	}
 	// Their documents go with them.
 	if err := s.markDocuments(ctx, tx, ids); err != nil {
@@ -363,6 +415,43 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		if err := s.media.Versions.DeleteTx(ctx, tx, targets); err != nil {
 			return 0, "", err
 		}
+		if err := tx.Commit(ctx); err != nil {
+			return 0, "", err
+		}
+		if err := s.media.Versions.Delete(ctx, targets); err != nil {
+			return 0, "", err
+		}
+		tx, err = s.begin(ctx)
+		if err != nil {
+			return 0, "", err
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `SELECT FROM `+s.t.items+` WHERE tenant_id=$1 AND id=ANY($2) ORDER BY id FOR UPDATE`, s.tenant, parents); err != nil {
+			return 0, "", err
+		}
+		rows, err = tx.Query(ctx, `SELECT v.id,v.content_id,c.kind FROM `+s.t.versions+` v
+ JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+ WHERE v.tenant_id=$1 AND v.id=ANY($3) AND v.state='deleted' AND v.deleted_at<$2 ORDER BY v.id FOR UPDATE OF v SKIP LOCKED`, s.tenant, cutoff, vids)
+		if err != nil {
+			return 0, "", err
+		}
+		vids, contents, kinds, events = nil, nil, nil, nil
+		for rows.Next() {
+			var vid, content, kind string
+			if err := rows.Scan(&vid, &content, &kind); err != nil {
+				rows.Close()
+				return 0, "", err
+			}
+			vids, contents, kinds = append(vids, vid), append(contents, content), append(kinds, kind)
+			events = append(events, Event{Type: EventVersionPurged, Kind: kind, ContentID: content, VersionID: vid})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil || len(vids) == 0 {
+			return 0, "", err
+		}
+	}
+	if err := s.retireOffers(ctx, tx, events); err != nil {
+		return 0, "", err
 	}
 	if err := s.markDocuments(ctx, tx, contents); err != nil {
 		return 0, "", err
@@ -436,8 +525,11 @@ func (purgeDeletedArgs) KindAliases() []string { return []string{"contentkit_cat
 
 type jobWorker[T river.JobArgs] struct {
 	river.WorkerDefaults[T]
-	run func(context.Context) (int, error)
+	run     func(context.Context) (int, error)
+	timeout time.Duration
 }
+
+func (w *jobWorker[T]) Timeout(*river.Job[T]) time.Duration { return w.timeout }
 
 func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 	_, err := w.run(ctx)
@@ -463,7 +555,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &jobWorker[publishDueArgs]{run: s.PublishDue}) },
 			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted})
+				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted, timeout: 15 * time.Minute})
 			},
 		} {
 			if err := add(); err != nil {

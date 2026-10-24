@@ -2,6 +2,7 @@ package versions
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 
@@ -29,8 +30,9 @@ func (s *Service) RepublishTx(context.Context, pgx.Tx, []Target) error {
 	return nil
 }
 
-// DeleteTx queues the deletion of targets' media, their publications'
-// included, before their rows go.
+// DeleteTx permanently fences targets while their catalog rows are locked.
+// The caller commits this claim before Delete erases storage, so retirement
+// hooks never wait on catalog locks held by the erasing transaction.
 func (s *Service) DeleteTx(ctx context.Context, tx pgx.Tx, targets []Target) error {
 	// A publisher locks and retires publications while it holds their
 	// version: lock the versions before them, after their contents as
@@ -50,12 +52,10 @@ ON v.content_id = t.content AND (t.version = '' OR v.id = t.version) WHERE v.ten
 	if err != nil {
 		return err
 	}
-	del := make([]media.Deletion, len(refs))
-	for i, ref := range refs {
-		del[i] = media.Deletion{Ref: ref}
-	}
-	if err := s.m.Jobs.DeleteItemsTx(ctx, tx, del...); err != nil {
-		return err
+	for _, ref := range refs {
+		if err := s.m.Jobs.ClaimErasureTx(ctx, tx, ref); err != nil {
+			return err
+		}
 	}
 	for kind, versions := range kinds {
 		k, err := s.reg.Kind(kind)
@@ -75,6 +75,51 @@ ON v.content_id = t.content AND (t.version = '' OR v.id = t.version) WHERE v.ten
 		}
 	}
 	return nil
+}
+
+// Delete erases the already-fenced exact versions. A stable operation ID
+// preserves the original cleanup targets when a purge retries after failure.
+func (s *Service) Delete(ctx context.Context, targets []Target) error {
+	for _, target := range targets {
+		if target.Version == "" {
+			return errors.New("versions: storage erasure requires exact versions")
+		}
+	}
+	refs, _, err := s.itemRefs(ctx, s.o.Pool, targets)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if err := s.m.Jobs.Erase(ctx, media.Deletion{Ref: ref, OperationID: "content-purge:" + ref.Version()}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CheckRestorableTx refuses a version after its permanent erasure claim,
+// including a claim whose storage response or catalog transaction failed.
+// Callers hold the same parent/version locks as DeleteTx.
+func (s *Service) CheckRestorableTx(ctx context.Context, tx pgx.Tx, targets []Target) error {
+	refs, _, err := s.itemRefs(ctx, tx, targets)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		started, err := s.m.Jobs.ErasureStartedTx(ctx, tx, ref)
+		if err != nil {
+			return err
+		}
+		if started {
+			return media.ErrNotFound
+		}
+	}
+	return nil
+}
+
+// ResumeDeletes keeps late-write cleanup in the content purge operation.
+func (s *Service) ResumeDeletes(ctx context.Context, limit int) (int, error) {
+	return s.m.Jobs.CleanupPurgedVersions(ctx, limit)
 }
 
 // itemRefs are targets' versions' media items, and their versions by kind.
