@@ -701,7 +701,10 @@ future `publish_at` becomes visible when that time arrives; the periodic job
 records publication and runs its side effects. A deleted item
 stays readable to holders of its own keys; its media is erased after
 `DeletedRetention`. OpenRails retains product and purchase identity after
-content and media are gone; deleting content does not delete billing history.
+content and media are gone; deleting content does not delete billing history. A
+product can grant multiple entitlements, so content deletion does not implicitly
+archive products or cancel subscriptions. Hosts explicitly retire affected
+products in OpenRails before deleting their last purchasable target.
 
 The `Viewer` is the one visibility rule: published content whose release time
 has arrived, the domain's scope and the viewer's content filters. Every

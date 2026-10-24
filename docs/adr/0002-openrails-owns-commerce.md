@@ -18,3 +18,9 @@ unsettled legacy writes and never delete or recreate OpenRails products,
 prices, subscriptions, purchases or granted entitlements. Content deletion
 stops ContentKit serving that content; it does not delete billing history or
 silently cancel unrelated subscriptions.
+
+A product may grant several unrelated entitlements. ContentKit therefore cannot
+infer that deleting one content item should archive that product or cancel its
+subscriptions. Authoring applications explicitly archive a product in OpenRails
+before deleting its last purchasable target; selling and retiring products
+remain billing operations, independent of content retention.
