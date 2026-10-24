@@ -1,30 +1,5 @@
 name: media-image
 'on':
-  pull_request:
-    branches: [master]
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-    - 'media/**'
-    - 'migrations/**'
-    - '!**.md'
-    - 'go.mod'
-    - 'go.sum'
-    - 'cmd/media-worker/**'
-    - '!cmd/*/Dockerfile'
-    - '.github/workflows/media-image.yaml'
-  # master and integration branches: PRs merge without waiting, so each push runs
-  # the suite once (master's health) and a newer push to the same ref cancels it.
-  push:
-    branches: [master, 'next/**']
-    paths:
-    - 'media/**'
-    - 'migrations/**'
-    - '!**.md'
-    - 'go.mod'
-    - 'go.sum'
-    - 'cmd/media-worker/**'
-    - '!cmd/*/Dockerfile'
-    - '.github/workflows/media-image.yaml'
   workflow_call: {}
   workflow_dispatch: {}
 permissions:
@@ -58,6 +33,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.sha }}
         persist-credentials: false
     - name: Start MinIO
       run: |

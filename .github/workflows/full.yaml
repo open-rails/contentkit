@@ -1,17 +1,10 @@
 name: full
-# Manual full suite, ignoring path filters. Run on master to also warm the Go/pnpm caches that PRs restore.
+# Explicit full qualification uses the same coordinator and required gate.
 'on':
   workflow_dispatch: {}
 permissions:
   contents: read
+  packages: write
 jobs:
-  scan:
-    uses: ./.github/workflows/scan.yaml
-  go:
-    uses: ./.github/workflows/go.yaml
-  media-image:
-    uses: ./.github/workflows/media-image.yaml
-  media-video:
-    uses: ./.github/workflows/media-video.yaml
-  sdk-ui:
-    uses: ./.github/workflows/sdk-ui.yaml
+  full:
+    uses: ./.github/workflows/ci.yaml
