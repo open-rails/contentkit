@@ -38,6 +38,7 @@ export const entities: typeof en = {
     details: "Detalles",
     saved: "Guardado.",
     none: "Ninguno",
+    choose: "Elegir…",
     change: "Cambiar",
     clearField: "Quitar {field}",
     names: "Nombres y alias",
