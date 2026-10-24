@@ -116,8 +116,9 @@ operation. This does not change the operation's result or its authentication.
   `polls.uploadOptionImage` do both steps. Reads resolve references: a
   content's `body` shows its images' signed URLs (the opened version's
   private files) and `images` maps each name to its URL. `folders` renames
-  the poll media kind. Public image files exist only while the item is live;
-  `useContent` shows an unpublished item's images to its editors (below).
+  the poll media kind. Declared-public covers and previews stay public regardless
+  of release visibility; private body images require signed access. `useContent`
+  shows an unpublished item's private images to its editors (below).
 - **`client.config()`** says what the content module allows: which
   interactions signed-out visitors may make (`content.Options.Anonymous`,
   none by default) and the longest comment (`CommentMaxLength`, 2,200 by
