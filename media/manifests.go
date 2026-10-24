@@ -3,7 +3,6 @@ package media
 import (
 	"bytes"
 	"cmp"
-	"compress/gzip"
 	"container/list"
 	"context"
 	"crypto/sha256"
@@ -602,17 +601,16 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	if mutation.effects.Process != nil && next.Full && !publicPending(item.Kind(), next) {
 		mutation.effects.Process = nil
 	}
-	if err := m.journal.prepare(ctx, &mutation.commit, mutation.effects, mutation.quota); err != nil {
-		return nil, false, err
-	}
+	mutation.commit.Attempt = uuid.New()
 	next.Receipt = mutation.commit.receipt()
 	body, err = encodeManifest(next)
 	if err == nil {
 		err = b.check(cur, next)
 	}
 	if err != nil {
-		// Prepared but never sent: recovery still fences before releasing
-		// the row, so a caller cannot mistake this for a sent attempt.
+		return nil, false, err
+	}
+	if err := m.journal.prepare(ctx, &mutation.commit, mutation.effects, mutation.quota, body, next.Incarnation, mutation.lifecycle && next.Deleted); err != nil {
 		return nil, false, err
 	}
 	// The charged quota rides on the object, so releasing it never needs
@@ -657,9 +655,8 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	return next, true, nil
 }
 
-// Recover settles ref's unfinished attempt without replaying the edit. It
-// freezes the database attempt before advancing S3's ETag, so a late PUT using
-// the old ETag cannot land after an absent outcome has been refunded.
+// Recover resumes the exact admitted mutation inside its existing processing
+// or purge owner. It never replays an edit callback against newer input.
 func (m *Manifests) Recover(ctx context.Context, ref contentref.ContentRef) error {
 	item, err := m.reg.Item(ref)
 	if err != nil {
@@ -680,8 +677,6 @@ func (m *Manifests) recoverLocked(ctx context.Context, item Item) (*Manifest, bo
 
 func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operation *uuid.UUID) (*Manifest, bool, error) {
 	if item.Ref().Version() != "" {
-		// Recovery runs before begin, so the owner check there is too late:
-		// a different parent must not freeze or settle this version's work.
 		if err := m.journal.checkFolderOwner(ctx, m.journal.pool, item, false); err != nil {
 			return nil, false, err
 		}
@@ -699,43 +694,40 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 	if commit.Effects.Cleanup {
 		return nil, true, m.finishCommit(ctx, item, *commit, true, nil)
 	}
+	if commit.Attempt == uuid.Nil {
+		// No prepared bytes were ever admitted. Freezing prevents the vanished
+		// request from preparing later; there is no S3 attempt to fence.
+		return nil, false, m.finishCommit(ctx, item, *commit, false, nil)
+	}
+	next, err := decodeManifest(commit.Effects.Manifest)
+	if err != nil || !commit.matches(next.Receipt) {
+		return nil, false, ErrCommitIdentity
+	}
 	for range m.retries {
 		cur, etag, err := m.get(ctx, item.ManifestKey())
 		if errors.Is(err, ErrNotFound) {
-			cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Files: []File{}}, ""
-			if commit.Actor == "migration:layout" {
-				cur.Incarnation = layoutRecoveryIncarnation(commit.ID)
-			}
+			cur, etag = &Manifest{}, ""
 		} else if errors.Is(err, ErrManifestUnreadable) && commit.Effects.Deletion {
-			if err := m.fenceUnreadable(ctx, item); errors.Is(err, ErrPreconditionFailed) {
-				continue
-			} else if err != nil {
-				return nil, false, err
-			}
-			return nil, false, m.finishCommit(ctx, item, *commit, false, nil)
+			cur = &Manifest{} // the admitted deletion replaces this exact unreadable root
 		} else if err != nil {
 			return nil, false, err
 		}
-		applied := commit.matches(cur.Receipt)
-		if !applied {
-			if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
-				return nil, false, err
-			}
+		if commit.matches(cur.Receipt) {
+			return cur, true, m.finishCommit(ctx, item, *commit, true, cur)
 		}
-		// Do not take the semantic no-op shortcut: this write is the fence.
-		next := cur.Clone()
-		body, err := encodeManifest(next)
-		if err != nil {
+		if etag != commit.ETag {
+			return nil, false, ErrManifestConflict
+		}
+		if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
 			return nil, false, err
 		}
-		opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store",
-			Metadata: map[string]string{uploadBytesMeta: strconv.FormatInt(next.uploadBytes(), 10)}}
+		opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store", Metadata: map[string]string{uploadBytesMeta: strconv.FormatInt(next.uploadBytes(), 10)}}
 		if etag == "" {
 			opts.IfNoneMatch = "*"
 		} else {
 			opts.IfMatch = etag
 		}
-		obj, err := m.store.Put(ctx, item.ManifestKey(), bytes.NewReader(body), int64(len(body)), opts)
+		obj, err := m.store.Put(ctx, item.ManifestKey(), bytes.NewReader(commit.Effects.Manifest), int64(len(commit.Effects.Manifest)), opts)
 		if errors.Is(err, ErrPreconditionFailed) {
 			m.cache.remove(item.ManifestKey())
 			continue
@@ -744,60 +736,9 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 			return nil, false, err
 		}
 		m.cache.put(item.ManifestKey(), obj.ETag, next)
-		if err := m.finishCommit(ctx, item, *commit, applied, next); err != nil {
-			return nil, false, err
-		}
-		return next, applied, nil
+		return next, true, m.finishCommit(ctx, item, *commit, true, next)
 	}
 	return nil, false, ErrManifestConflict
-}
-
-// A deletion's attempted replacement is always readable. If the root is
-// still unreadable, preserve its bytes and fence the absent attempt with an
-// empty gzip member carrying a fresh nonce. Never erase an unknown root just
-// to settle quota. Oversized compressed objects remain refused.
-func (m *Manifests) fenceUnreadable(ctx context.Context, item Item) error {
-	rc, obj, err := m.store.Get(ctx, item.ManifestKey(), GetOptions{})
-	if err != nil {
-		return err
-	}
-	defer rc.Close()
-	body, err := io.ReadAll(io.LimitReader(rc, MaxManifestBytes+1))
-	if err != nil {
-		return err
-	}
-	if len(body) > MaxManifestBytes {
-		return ErrManifestUnreadable
-	}
-	if _, err := decodeManifest(body); err == nil {
-		// A readable replacement landed between the failed read and this
-		// GET. Recovery must inspect its receipt instead of declaring absence.
-		return ErrPreconditionFailed
-	}
-	var suffix bytes.Buffer
-	zw := gzip.NewWriter(&suffix)
-	nonce := uuid.New()
-	const fenceMarker = "ck-recovery-fence:"
-	zw.Extra = append([]byte(fenceMarker), nonce[:]...)
-	if err := zw.Close(); err != nil {
-		return err
-	}
-	// Replace our prior empty member rather than growing the unreadable
-	// root on every ambiguous fence retry. Only the UUID bytes may differ.
-	const nonceOffset = 12 + len(fenceMarker) // gzip header and extra length
-	start := len(body) - suffix.Len()
-	if start >= 0 && bytes.Equal(body[start:start+nonceOffset], suffix.Bytes()[:nonceOffset]) &&
-		bytes.Equal(body[start+nonceOffset+len(nonce):], suffix.Bytes()[nonceOffset+len(nonce):]) {
-		body = body[:start]
-	}
-	if len(body)+suffix.Len() > MaxManifestBytes {
-		return ErrManifestUnreadable
-	}
-	body = append(body, suffix.Bytes()...)
-	_, err = m.store.Put(ctx, item.ManifestKey(), bytes.NewReader(body), int64(len(body)), PutOptions{
-		IfMatch: obj.ETag, ContentType: "application/gzip", CacheControl: "no-store", Metadata: obj.Metadata})
-	m.cache.remove(item.ManifestKey())
-	return err
 }
 
 // finishCommit repeats only the recorded cleanup targets, never a fresh list
@@ -865,57 +806,38 @@ func beforeRetire(ctx context.Context, hook func(context.Context, contentref.Con
 	return hook(ctx, ref, current)
 }
 
-// RecoverPending scans the journal, including writes that never created an S3
-// folder. It is bounded so the host's periodic maintenance can resume it.
-func (m *Manifests) RecoverPending(ctx context.Context, limit int) error {
-	if limit <= 0 {
-		return errors.New("media: pending recovery requires a positive limit")
+// CompleteCommit finishes the exact mutation admitted with an ingest job.
+// Its operation ID survives retries; no unrelated-folder recovery scan is used.
+func (m *Manifests) CompleteCommit(ctx context.Context, ref contentref.ContentRef, operation string) error {
+	id, err := uuid.Parse(operation)
+	if err != nil || id == uuid.Nil {
+		return ErrCommitIdentity
 	}
-	var errs []error
-	for _, tenant := range m.reg.Namespaces() {
-		var kinds []string
-		for _, kind := range m.reg.all {
-			if kind.ns == tenant {
-				kinds = append(kinds, kind.Name)
-			}
-		}
-		pending, err := m.journal.pending(ctx, tenant, kinds, limit, m.reg.cfg.Hooks.ItemCommitted != nil)
-		if err != nil {
-			return err
-		}
-		for _, commit := range pending {
-			item, err := m.reg.Item(commit.Ref)
-			if err != nil || item.Prefix() != commit.Folder {
-				continue // another registry sharing this schema owns this item
-			}
-			if err := m.Recover(ctx, commit.Ref); err != nil {
-				errs = append(errs, err)
-				continue
-			}
-			if err := m.notifyCommit(ctx, commit); err != nil {
-				errs = append(errs, err)
-			}
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// notifyCommit runs outside the folder lock: host callbacks may read or edit
-// media themselves. A crash between delivery and acknowledgement repeats the
-// already-idempotent hook; it never removes an undelivered notification.
-func (m *Manifests) notifyCommit(ctx context.Context, commit manifestCommit) error {
-	hook := m.reg.cfg.Hooks.ItemCommitted
-	if hook == nil {
-		return nil // only the host owning the callback may acknowledge it
-	}
-	pending, err := m.journal.notification(ctx, commit)
-	if err != nil || !pending {
+	item, err := m.reg.Item(ref)
+	if err != nil {
 		return err
 	}
-	if err := hook(ctx, commit.Ref); err != nil {
-		return fmt.Errorf("media: ItemCommitted: %w", err)
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
 	}
-	return m.journal.acknowledgeNotification(ctx, commit)
+	_, _, err = m.recoverAttemptLocked(ctx, item, &id)
+	unlock()
+	if err != nil {
+		return err
+	}
+	return m.notifyCommit(ctx, manifestCommit{ID: id, Ref: ref})
+}
+
+// notifyCommit is a direct, idempotent callback owned by the request or ingest
+// attempt. Stock workers publish metadata as part of processing completion.
+func (m *Manifests) notifyCommit(ctx context.Context, commit manifestCommit) error {
+	if hook := m.reg.cfg.Hooks.ItemCommitted; hook != nil {
+		if err := hook(ctx, commit.Ref); err != nil {
+			return fmt.Errorf("media: ItemCommitted: %w", err)
+		}
+	}
+	return nil
 }
 
 // get reads and decodes a manifest through the ETag-revalidated cache.
