@@ -387,7 +387,7 @@ function Chip({ url, name, variant = "chips" }: { url?: string; name: string; va
   );
 }
 
-export interface PostCardProps extends Omit<ContentCardProps, "shape" | "aspectRatio" | "titlePosition" | "chips" | "entityKinds" | "filterEntity" | "entityStyle" | "entityLayout" | "metadata"> {
+export interface PostCardProps extends Omit<ContentCardProps, "shape" | "aspectRatio" | "titlePosition" | "chips" | "entityKinds" | "filterEntity" | "entityStyle" | "entityLayout" | "metadata" | "cardTitle"> {
   /** Above the title: the post's channel or author; default its owner group's chip. */
   byline?: ReactNode;
 }
