@@ -240,3 +240,57 @@ func TestIngestMediaDoesNotFollowPresignedStorageRedirect(t *testing.T) {
 		t.Fatalf("presigned redirect escaped its target: err=%v target=%v redirectHook=%v", err, followed, customRedirect)
 	}
 }
+
+func TestIngestMediaRetainsExactCommitAfterLostResponse(t *testing.T) {
+	const id = "550e8400-e29b-41d4-a716-446655440022"
+	meta := map[string]any{"page": map[string]any{"title": "original", "number": int64(1<<54 + 3)}}
+	var sent []byte
+	var commits, presigns int
+	client := ck.NewClient("https://catalog.test", &http.Client{Transport: mediaTransport(func(r *http.Request) (*http.Response, error) {
+		var body []byte
+		switch r.URL.Path {
+		case "/v1/media/upload/presign":
+			presigns++
+			body, _ = json.Marshal(media.PresignReply{Path: "import/archive.zip", Blob: "existing-archive", Exists: true})
+		case "/v1/media/upload/commit":
+			commits++
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if commits == 1 {
+				sent = append([]byte{}, raw...)
+				// A caller editing its own metadata after the request was encoded
+				// must not silently change the receipt used for a later retry.
+				meta["page"].(map[string]any)["title"] = "edited after request"
+				return nil, io.ErrUnexpectedEOF
+			}
+			if !bytes.Equal(raw, sent) {
+				t.Fatalf("retry changed committed input: %s != %s", raw, sent)
+			}
+			body, _ = json.Marshal(media.CommitReply{Files: []media.FileInfo{{Path: "import/archive.zip", Pending: []string{"import"}}}})
+		default:
+			t.Fatalf("unexpected creation, transfer or publication request: %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(body))}, nil
+	})})
+	_, err := client.IngestMedia(t.Context(), nil, media.RefBody{Kind: "gallery", ID: "content", Version: "edition"}, id,
+		[]ck.MediaFile{{Path: "import/archive.zip", Type: "application/zip", Body: bytes.NewReader([]byte("archive")), Meta: meta}})
+	var uncertain *ck.MediaCommitError
+	if !errors.As(err, &uncertain) || !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("lost response did not retain a retryable batch/cause: %v", err)
+	}
+	frozen, err := json.Marshal(uncertain.Commit)
+	if err != nil || !bytes.Equal(frozen, sent) {
+		t.Fatalf("receipt differs from actual request: %s != %s (%v)", frozen, sent, err)
+	}
+	if !bytes.Contains(frozen, []byte(`"number":18014398509481987`)) || bytes.Contains(frozen, []byte("edited after request")) {
+		t.Fatalf("metadata snapshot lost precision or retained caller references: %s", frozen)
+	}
+	if _, err := client.PostMediaUploadCommit(t.Context(), uncertain.Commit); err != nil {
+		t.Fatal(err)
+	}
+	if presigns != 1 || commits != 2 || uncertain.Commit.OperationID != id {
+		t.Fatalf("unexpected retry flow: presigns=%d commits=%d batch=%+v", presigns, commits, uncertain.Commit)
+	}
+}
