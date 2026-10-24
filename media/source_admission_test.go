@@ -6,7 +6,7 @@ import (
 )
 
 func TestArchiveAdmissionCannotComeFromClientMetadata(t *testing.T) {
-	kind := &Kind{Name: "post", Uploads: []Upload{{Path: "zip/{name}", ArchiveTo: "body/{name}"}, {Path: "body/{name}"}}}
+	kind := admissionTestKind(t)
 	file := File{Path: "zip/book.zip", Blob: "blob", Meta: map[string]any{"admission": map[string]any{"owner": "victim", "quota": 999999}}}
 	runner := &opRun{k: kind, m: &Manifest{}}
 	if err := runner.admitSource(&file, -1); err == nil {
@@ -29,7 +29,7 @@ func TestArchiveAdmissionCannotComeFromClientMetadata(t *testing.T) {
 }
 
 func TestArchiveDestinationIsConfiguredWithoutCatalog(t *testing.T) {
-	k := &Kind{Uploads: []Upload{{Path: "zip/{name}", ArchiveTo: "body/{name}"}, {Path: "body/{name}", Types: []string{"image/png"}, Named: true}}}
+	k := admissionTestKind(t)
 	if got := k.archiveTo("zip/book.zip"); got != "body/{name}" {
 		t.Fatalf("generic archive destination=%q", got)
 	}
@@ -40,4 +40,17 @@ func TestArchiveDestinationIsConfiguredWithoutCatalog(t *testing.T) {
 	if err := validateArchiveDestination(k, k.Uploads[0]); err == nil {
 		t.Fatal("missing destination accepted")
 	}
+}
+
+func admissionTestKind(t *testing.T) *Kind {
+	t.Helper()
+	reg, err := NewRegistry(Config{Namespace: "site", Kinds: []Kind{{Name: "post", Uploads: []Upload{{Path: "zip/{name}", ArchiveTo: "body/{name}", Types: []string{"application/zip"}, MaxBytes: 1 << 20}, {Path: "body/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, err := reg.Kind("post")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kind
 }
