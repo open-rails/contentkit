@@ -169,6 +169,9 @@ func (f barrierFixture) assertInvisible(t *testing.T, st *Store, phase string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(pop) != len(refs) {
+		t.Fatalf("%s: Popular lost the keeper's works: %+v", phase, pop)
+	}
 	for _, h := range pop {
 		if h.Readers != 1 {
 			t.Fatalf("%s: Popular counts the erased subject: %+v", phase, h)
@@ -189,6 +192,9 @@ func (f barrierFixture) assertInvisible(t *testing.T, st *Store, phase string) {
 	inv, err := st.Inventory(ctx, f.tenant)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(inv) == 0 {
+		t.Fatalf("%s: Inventory lost the keeper's signals", phase)
 	}
 	for _, r := range inv {
 		if r.Subjects != 1 || r.SignalType == "reaction" {
@@ -475,6 +481,15 @@ func TestIntegrationErasureBarrierEnforcesOldErasuresAndRestores(t *testing.T) {
 	ctx := context.Background()
 	f := newBarrierFixture("barrier")
 	f.seed(t, st)
+	negative := f.view(f.gone, f.e2, "gone-negative")
+	negative.Type, negative.Value = "reaction", -1
+	if err := recordFixtureSignals(st, ctx, f.tenant, []readingFixture{negative}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := st.NegativeIDs(ctx, f.tenant, f.gone, nil)
+	if _, present := ids[f.e2.Key()]; err != nil || len(ids) != 1 || !present {
+		t.Fatalf("fixture must expose the removed reader's negative feedback: %+v %v", ids, err)
+	}
 	erase(t, st, f.tenant, f.gone)
 	if r, err := st.EnforceErasures(ctx, f.tenant); err != nil || !r.Complete() {
 		t.Fatalf("first enforcement: %+v %v", r, err)
@@ -654,48 +669,6 @@ func TestErasureFenceRequiresEveryReplica(t *testing.T) {
 		if strings.HasPrefix(c.query, "ALTER TABLE") && !strings.Contains(c.query, "mutations_sync = 2") {
 			t.Fatalf("deletes must wait for every replica:\n%s", c.query)
 		}
-	}
-}
-
-// Every statement that reads or writes subject rows carries the barrier; one
-// without it is exactly the mutation the integration tests above catch.
-func TestEveryReadCarriesTheErasureBarrier(t *testing.T) {
-	fc := &fakeConn{}
-	st, _ := NewStore(fc, "hub")
-	ctx := context.Background()
-	sub := Subject{UserID: "u"}
-	ref := gallery("t", cid(1))
-	_, _ = st.States(ctx, "t", sub, []ContentRef{ref})
-	_, _ = st.History(ctx, "t", sub, HistoryOptions{})
-	_, _ = st.HistoryCount(ctx, "t", sub, HistoryOptions{})
-	_, _ = st.SeenIDs(ctx, "t", sub, "gallery")
-	_, _ = st.NegativeIDs(ctx, "t", sub, nil)
-	_, _ = st.TopStates(ctx, "t", sub, TopStatesOptions{})
-	_, _ = st.Metrics(ctx, "t", []ContentRef{ref}, AllTime())
-	_, _ = st.Popular(ctx, "t", "gallery", PopularOptions{})
-	_, _ = st.CoEngaged(ctx, "t", ref, CoEngagedOptions{SkipRollup: true})
-	_, _ = st.Inventory(ctx, "t")
-	_, _ = st.RepairProjections(ctx, "t", RepairOptions{})
-	_ = st.RefreshCoEngagement(ctx, "t", RefreshCoEngagementOptions{})
-	_ = recordFixtureSignals(st, ctx, "t", []readingFixture{{ContentRef: ref, Subject: sub, Type: TypeView, EventID: "e", OccurredAt: time.Now(), Progress: 1}})
-	rows := ", tenant) NOT IN (SELECT subject_hash, tenant FROM hub.erasures)"
-	single := "(SELECT count() FROM hub.erasures WHERE tenant = ? AND subject_hash = sipHash128(?)) = 0"
-	n := 0
-	for _, c := range append(fc.queries, fc.execs...) {
-		q := c.query
-		if strings.Contains(q, "WHERE sipHash128(concat(t.1") || strings.HasPrefix(q, "DELETE FROM hub.engagement_pairs") {
-			continue // the writer's pre-insert fence check
-		}
-		if !strings.Contains(q, "hub.subject_content_state") && !strings.Contains(q, "hub.subject_content_daily") && !strings.Contains(q, "hub.signals") && !strings.Contains(q, "hub.engagement_") && !strings.Contains(q, "hub.legacy_reading_state") {
-			continue
-		}
-		if !strings.Contains(q, rows) && !strings.Contains(q, single) {
-			t.Fatalf("read without the erasure barrier:\n%s", q)
-		}
-		n++
-	}
-	if n < 15 {
-		t.Fatalf("expected at least 15 barrier-carrying statements, saw %d", n)
 	}
 }
 
