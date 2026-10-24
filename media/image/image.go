@@ -132,18 +132,30 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		} else {
 			forceZips = false
 		}
-		for start := 0; start < max(1, len(todo)); start += 8 {
-			batch := todo[start:min(start+8, len(todo))]
-			if err := p.pass(ctx, item, m, batch, zips); err != nil {
-				if errors.Is(err, media.ErrManifestTooLarge) {
-					return p.c.Manifests.SetFull(ctx, item.Ref(), err)
-				}
-				return err
+		if len(todo) > 0 {
+			// Each source commits and reports when it is ready. Keep the existing
+			// source concurrency; no whole-gallery completion barrier hides progress.
+			g, workCtx := errgroup.WithContext(ctx)
+			g.SetLimit(p.c.Workers)
+			for _, source := range todo {
+				g.Go(func() error {
+					if err := p.pass(workCtx, item, m, []work{source}, nil); err != nil {
+						return err
+					}
+					return media.CompleteProcessing(workCtx, p.c.Manifests, item.Ref(), nil)
+				})
 			}
-			if err := media.CompleteProcessing(ctx, p.c.Manifests, item.Ref(), nil); err != nil {
-				return err
-			}
+			err = g.Wait()
+		} else {
+			err = p.pass(ctx, item, m, nil, zips)
 		}
+		if err != nil {
+			if errors.Is(err, media.ErrManifestTooLarge) {
+				return p.c.Manifests.SetFull(ctx, item.Ref(), err)
+			}
+			return err
+		}
+
 		if m.Full {
 			// One pass: a public render that failed has no record to stop
 			// the next (none fits), so it is not tried again in this job.
