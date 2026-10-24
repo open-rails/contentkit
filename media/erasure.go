@@ -32,9 +32,6 @@ func (j *Jobs) ClaimErasureTx(ctx context.Context, tx pgx.Tx, ref contentref.Con
 	if err := j.cfg.Journal.checkFolderOwner(ctx, tx, item, false); err != nil {
 		return err
 	}
-	if err := RequireConditionalPut(ctx, j.cfg.Store); err != nil {
-		return err
-	}
 	return j.cfg.Journal.claimErasureTx(ctx, tx, item)
 }
 

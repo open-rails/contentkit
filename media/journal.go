@@ -201,13 +201,13 @@ VALUES ($1, $2, $3, $4, $10, $5, $6, $7, $8, $9) ON CONFLICT (tenant_id, operati
 			// Recovery fenced the old attempt and refunded its claim. A new
 			// authorized request may retry these same inputs with a new lease.
 			_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'open', lease_id = $3,
-attempt_id = NULL, expected_etag = '', effects = '{}', charged_bytes = 0, updated_at = now()
-WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, lease)
+attempt_id = NULL, expected_etag = '', effects = $4, charged_bytes = 0, updated_at = now()
+WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, lease, effects)
 			if err != nil {
 				return err
 			}
 			found.Lease, found.State, found.Attempt = lease, "open", uuid.Nil
-			found.ETag, found.Effects, found.Charged = "", journalEffects{}, 0
+			found.ETag, found.Effects, found.Charged = "", c.Effects, 0
 		}
 		c = found
 		return nil

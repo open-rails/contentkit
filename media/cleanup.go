@@ -116,8 +116,8 @@ WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.p
 			}
 			if wait > 0 {
 				_, err = journal.pool.Exec(ctx, `UPDATE `+journal.cleanup+`
-SET due_at = $4, deletion_operations = '{}', revision = gen_random_uuid()
-WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision, j.cfg.Now().Add(wait))
+SET due_at = $4, deletion_operations = CASE WHEN $5 THEN deletion_operations ELSE '{}'::uuid[] END, revision = gen_random_uuid()
+WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision, j.cfg.Now().Add(wait), purgedVersions)
 			} else {
 				_, err = journal.pool.Exec(ctx, `DELETE FROM `+journal.cleanup+`
 WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision)

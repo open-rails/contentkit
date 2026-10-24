@@ -188,8 +188,8 @@ func (s *Store) reconcileFacets(ctx context.Context, after string) ([]string, er
 }
 
 // purgeBatch bounds one erasing transaction; purgeBudget bounds a purge run
-// and skip-only version scans, under River's default one-minute timeout, so
-// backlogs drain run by run.
+// and skip-only version scans. Storage erasure has its own worker timeout;
+// backlogs still drain in bounded batches.
 const (
 	purgeBatch  = 200
 	purgeBudget = 45 * time.Second
@@ -307,9 +307,6 @@ func (s *Store) erase(ctx context.Context, cutoff time.Time) (int, error) {
 		if err := rows.Err(); err != nil || len(ids) == 0 {
 			return 0, err
 		}
-	}
-	if err := s.retireOffers(ctx, tx, events); err != nil {
-		return 0, err
 	}
 	// Their documents go with them.
 	if err := s.markDocuments(ctx, tx, ids); err != nil {
@@ -449,9 +446,6 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 		if err := rows.Err(); err != nil || len(vids) == 0 {
 			return 0, "", err
 		}
-	}
-	if err := s.retireOffers(ctx, tx, events); err != nil {
-		return 0, "", err
 	}
 	if err := s.markDocuments(ctx, tx, contents); err != nil {
 		return 0, "", err
