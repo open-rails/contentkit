@@ -147,6 +147,9 @@ func TestVersionFolders(t *testing.T) {
 		if err := tx.Commit(s.ctx); err != nil {
 			t.Fatal(err)
 		}
+		if err := s.svc.Delete(s.ctx, targets); err != nil {
+			t.Fatal(err)
+		}
 	}
 	gone := func(ref contentref.ContentRef) func() bool {
 		return func() bool {
@@ -159,7 +162,7 @@ func TestVersionFolders(t *testing.T) {
 	if m := s.manifest(r1); m.Deleted || len(m.Files) == 0 {
 		t.Fatal("deleting a version took its sibling")
 	}
-	del(versions.Target{Content: c})
+	del(v1, v2)
 	eventually(t, "content deleted", time.Minute, gone(r1))
 }
 

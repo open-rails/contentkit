@@ -55,7 +55,7 @@ func (m *Manifests) deletionIncarnation(ctx context.Context, item Item) (*Manife
 // has not arrived. expected distinguishes a queued deletion from a reset.
 var errOrphanChanged = errors.New("media: orphan folder changed during deletion")
 
-func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operation uuid.UUID, expected string, before time.Time) error {
+func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operation uuid.UUID, expected string, before time.Time, erasure bool) error {
 	input, err := json.Marshal(struct {
 		Owner, Incarnation string
 		Before             time.Time
@@ -64,7 +64,7 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 		return err
 	}
 	mutation := &manifestMutation{lifecycle: true, commit: manifestCommit{ID: operation,
-		Fingerprint: sha256.Sum256(input)}}
+		Fingerprint: sha256.Sum256(input), Effects: journalEffects{Erasure: erasure}}}
 	_, err = j.manifests.editOperation(ctx, item.Ref(), false, bound{}, mutation, func(cur *Manifest) error {
 		if expected != "" && cur.Incarnation != expected {
 			if !before.IsZero() {
@@ -73,6 +73,7 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 			return nil
 		}
 		mutation.effects.Deletion = true
+		mutation.effects.Erasure = erasure
 		mutation.effects.CleanupAt = j.cfg.Now().Add(j.cfg.LateUploadWindow)
 		mutation.effects.CleanupDelete = true
 		keys, err := j.manifests.allocationKeys(ctx, item)

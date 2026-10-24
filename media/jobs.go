@@ -274,7 +274,7 @@ func (j *Jobs) Purge(ctx context.Context, d Deletion) error {
 		return errors.New("media: purge needs an operation id")
 	}
 	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("purge:"+item.Prefix()+d.OperationID))
-	if err := j.deleteItem(ctx, item, d.Owner, operation, "", time.Time{}); err != nil {
+	if err := j.deleteItem(ctx, item, d.Owner, operation, "", time.Time{}, false); err != nil {
 		return err
 	}
 	return j.resetItem(ctx, item, operation)
@@ -447,7 +447,7 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 		return river.JobCancel(errors.New("media: queued deletion needs an incarnation"))
 	}
 	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte(fmt.Sprintf("folder-delete:%s:%d", a.Prefix, job.JobRow.ID)))
-	if err := w.j.deleteItem(ctx, item, a.Owner, operation, a.Incarnation, time.Time{}); err != nil {
+	if err := w.j.deleteItem(ctx, item, a.Owner, operation, a.Incarnation, time.Time{}, false); err != nil {
 		return err
 	}
 	return nil

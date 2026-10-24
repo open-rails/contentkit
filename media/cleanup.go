@@ -46,6 +46,16 @@ type cleanupRecord struct {
 // No database transaction is held across storage
 // I/O, and a failure in one folder does not block other folders.
 func (j *Jobs) CleanupDue(ctx context.Context, limit int) (int, error) {
+	return j.cleanupDue(ctx, limit, false)
+}
+
+// CleanupPurgedVersions repeats exact late-write receipts for permanently
+// erased versions. The content purge operation calls this, not media's reaper.
+func (j *Jobs) CleanupPurgedVersions(ctx context.Context, limit int) (int, error) {
+	return j.cleanupDue(ctx, limit, true)
+}
+
+func (j *Jobs) cleanupDue(ctx context.Context, limit int, purgedVersions bool) (int, error) {
 	if limit <= 0 {
 		return 0, errors.New("media: cleanup limit must be positive")
 	}
@@ -57,9 +67,11 @@ func (j *Jobs) CleanupDue(ctx context.Context, limit int) (int, error) {
 		}
 		kinds := j.cfg.Registry.cleanupKinds(tenant)
 		journal := j.cfg.Journal.forTenant(tenant)
-		rows, err := journal.pool.Query(ctx, `SELECT folder_prefix, revision, deletion_operations
-FROM `+journal.cleanup+` WHERE tenant_id = $1 AND content_kind = ANY($2) AND due_at <= $3
-ORDER BY due_at, folder_prefix LIMIT $4`, tenant, kinds, j.cfg.Now(), limit-processed)
+		rows, err := journal.pool.Query(ctx, `SELECT c.folder_prefix,c.revision,c.deletion_operations
+FROM `+journal.cleanup+` c WHERE c.tenant_id=$1 AND c.content_kind=ANY($2) AND c.due_at<=$3
+AND EXISTS(SELECT 1 FROM `+journal.table+` m WHERE m.tenant_id=c.tenant_id
+ AND m.operation_id=ANY(c.deletion_operations) AND m.content_version_id IS NOT NULL AND m.effects->>'erasure'='true')=$5
+ORDER BY c.due_at,c.folder_prefix LIMIT $4`, tenant, kinds, j.cfg.Now(), limit-processed, purgedVersions)
 		if err != nil {
 			return processed, errors.Join(append(failures, err)...)
 		}
@@ -95,8 +107,14 @@ ORDER BY due_at, folder_prefix LIMIT $4`, tenant, kinds, j.cfg.Now(), limit-proc
 				if len(failures) < 10 {
 					failures = append(failures, fmt.Errorf("%s: %w", record.prefix, err))
 				}
+				retryAt := j.cfg.Now()
+				if !purgedVersions {
+					retryAt = retryAt.Add(j.cfg.CleanupInterval)
+				}
+				// Content purge owns its own retry/cadence. Do not impose
+				// the generic media cleanup interval on a version erasure.
 				_, updateErr := journal.pool.Exec(ctx, `UPDATE `+journal.cleanup+` SET due_at = $4
-WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision, j.cfg.Now().Add(j.cfg.CleanupInterval))
+WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision, retryAt)
 				if updateErr != nil {
 					return processed, errors.Join(append(failures, updateErr)...)
 				}
@@ -104,8 +122,8 @@ WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.p
 			}
 			if wait > 0 {
 				_, err = journal.pool.Exec(ctx, `UPDATE `+journal.cleanup+`
-SET due_at = $4, deletion_operations = '{}', revision = gen_random_uuid()
-WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision, j.cfg.Now().Add(wait))
+SET due_at = $4, deletion_operations = CASE WHEN $5 THEN deletion_operations ELSE '{}'::uuid[] END, revision = gen_random_uuid()
+WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision, j.cfg.Now().Add(wait), purgedVersions)
 			} else {
 				_, err = journal.pool.Exec(ctx, `DELETE FROM `+journal.cleanup+`
 WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision)

@@ -366,7 +366,7 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 					if err == nil {
 						incarnation = m.Incarnation
 					}
-					if err := j.deleteItem(ctx, item, "", uuid.New(), incarnation, cutoff); errors.Is(err, errOrphanChanged) {
+					if err := j.deleteItem(ctx, item, "", uuid.New(), incarnation, cutoff, false); errors.Is(err, errOrphanChanged) {
 						continue
 					} else if err != nil {
 						return rep, err
