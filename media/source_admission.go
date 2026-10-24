@@ -11,10 +11,11 @@ import (
 // A background importer uses the same owner and ceiling when attaching decoded
 // originals. Quota <= 0 is unlimited, as in PGLimits.Quota.
 type SourceAdmission struct {
-	Target  string `json:"target"`
-	Owner   string `json:"owner,omitempty"`
-	Enforce bool   `json:"enforce,omitempty"`
-	Quota   int64  `json:"quota,omitempty"`
+	Target     string `json:"target"`
+	Accounting bool   `json:"accounting,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	Enforce    bool   `json:"enforce,omitempty"`
+	Quota      int64  `json:"quota,omitempty"`
 }
 
 // ArchiveDestination returns this upload's configured image destination. The reader

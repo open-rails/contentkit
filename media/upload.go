@@ -522,7 +522,7 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 			if delegated.ArchiveTo != destination || delegated.Owner != grant.Owner || delegated.Exempt != grant.Exempt {
 				return nil, uploadErr(CodeForbidden, "ZIP expansion requires an explicitly approved destination with the same owner and quota policy")
 			}
-			admission := &SourceAdmission{Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Target: destination}
+			admission := &SourceAdmission{Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Target: destination, Accounting: u.o.Limiter != nil}
 			if admission.Enforce {
 				quota, err := u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
 				if err != nil {

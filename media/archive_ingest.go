@@ -85,12 +85,13 @@ func (m *Manifests) IngestArchives(ctx context.Context, ref contentref.ContentRe
 }
 
 type archivePageSource struct {
-	entry       *zip.File
-	name, typ   string
-	sum         []byte
-	size        int64
-	blob        string
-	uploadIndex int
+	entry                      *zip.File
+	name, typ                  string
+	sum                        []byte
+	size                       int64
+	blob                       string
+	uploadIndex                int
+	retainedPath, retainedBlob string
 }
 
 func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, tempDir string) (resultErr error) {
@@ -137,6 +138,9 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 	expected, valid := layout.BlobDigest(source.Blob)
 	if !valid || n != source.Size || obj.Size != source.Size || !bytes.Equal(rawHash.Sum(nil), expected) {
 		return uploadErr(CodeInvalid, "archive source checksum or size differs from its manifest")
+	}
+	if err := validateArchiveDirectory(zipFile.Name()); err != nil {
+		return err
 	}
 	zr, err := zip.OpenReader(zipFile.Name())
 	if err != nil {
@@ -193,6 +197,47 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		expanded += int64(len(body))
 	}
 	digest := hex.EncodeToString(expected)
+	// A second alias of the same archive reuses already attached originals.
+	// Their identities are checked again in the atomic edit before completion.
+	current, _, err := m.Get(ctx, item.Ref())
+	if err != nil {
+		return err
+	}
+	newBytes := expanded
+	for _, file := range current.Files {
+		if !file.IsUpload() {
+			continue
+		}
+		g, _, _, _, ok := k.upload(file.Path)
+		if !ok || g != target {
+			continue
+		}
+		pm, _ := pageMetadata(file.Meta)
+		if pm["archive_sha256"] != digest {
+			continue
+		}
+		index := 0
+		switch n := pm["source_index"].(type) {
+		case int:
+			index = n
+		case float64:
+			index = int(n)
+		}
+		if index < 1 || index > len(pages) {
+			continue
+		}
+		page := &pages[index-1]
+		if sourceDigest(file) != hex.EncodeToString(page.sum) || pm["source_entry"] != page.entry.Name {
+			return uploadErr(CodeConflict, "previous imported archive page changed")
+		}
+		page.retainedPath, page.retainedBlob = file.Path, file.Blob
+	}
+	for _, page := range pages {
+		if page.retainedPath != "" {
+			newBytes -= page.size
+		}
+	}
+
 	fingerprintInput, _ := json.Marshal(struct {
 		Source, Path, Target string
 		Admission            SourceAdmission
@@ -207,8 +252,8 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 	reservationKey := item.TempPrefix() + "archive-quota-" + operation.String()
 	quotaLedger := *m.journal.forTenant(item.Ref().TenantID).limiter
 	quotaLedger.limits.Quota = func(context.Context, string, string) (int64, error) { return admission.Quota, nil }
-	if admission.Enforce {
-		if err := quotaLedger.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Owner: admission.Owner, Uploader: "contentkit:archive-ingest", Key: reservationKey, Size: expanded}); err != nil {
+	if admission.Enforce && newBytes > 0 {
+		if err := quotaLedger.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Owner: admission.Owner, Uploader: "contentkit:archive-ingest", Key: reservationKey, Size: newBytes}); err != nil {
 			return err
 		}
 		defer func() {
@@ -231,6 +276,9 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 	// Allocations are recorded before PUT. The final edit adopts all or none;
 	// exact cleanup/recovery owns unused and uncertain writes, never a scan.
 	for i := range pages {
+		if pages[i].retainedPath != "" {
+			continue
+		}
 		blob, err := m.NewBlobs(ctx, item.Ref(), k.Area(destination, ""), [][]byte{pages[i].sum})
 		if err != nil {
 			return err
@@ -267,6 +315,12 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		before := cur.uploadBytes()
 		objects := map[string]Object{}
 		for _, page := range pages {
+			if page.retainedPath != "" {
+				if old, ok := cur.Get(page.retainedPath); !ok || old.Blob != page.retainedBlob {
+					return errArchiveChanged
+				}
+				continue
+			}
 			physical, _ := item.Blob(page.blob)
 			obj, err := m.store.Head(ctx, physical)
 			if err != nil {
@@ -308,6 +362,9 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 					return uploadErr(CodeConflict, "previous imported archive page changed")
 				}
 				continue
+			}
+			if page.blob == "" {
+				return errArchiveChanged
 			}
 			stem := UniquePageName(strings.TrimSuffix(page.name, path.Ext(page.name)), taken)
 			taken[stem] = true
@@ -353,7 +410,11 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		if cur.uploads() > MaxUploads {
 			return tooManyFiles(MaxUploads, "archive exceeds item upload limit")
 		}
-		mutation.effects.Settlement = Settlement{Tenant: item.Ref().TenantID, Owner: admission.Owner, Keys: []string{reservationKey}, Delta: cur.uploadBytes() - before, Enforce: admission.Enforce}
+		chargedOwner := admission.Owner
+		if !admission.Accounting {
+			chargedOwner = ""
+		}
+		mutation.effects.Settlement = Settlement{Tenant: item.Ref().TenantID, Owner: chargedOwner, Keys: []string{reservationKey}, Delta: cur.uploadBytes() - before, Enforce: admission.Enforce}
 		return nil
 	})
 	return err
