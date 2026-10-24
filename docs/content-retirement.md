@@ -18,7 +18,10 @@ Storage failure leaves the deleted records for the same purge operation to
 retry. Successful cleanup removes only the captured version IDs after a final
 eligibility check. Each captured parent/version is attempted independently:
 failed rows remain for retry while successful unrelated deletions commit, and
-errors are returned after that bounded progress. A recently deleted parent does
+errors are returned after that bounded progress. Each scan advances through a
+bounded content-ID or version-ID keyset, including captured failures and locked
+candidates. It never restarts at the same failed prefix within the run; the
+existing time/context budget still bounds work. A recently deleted parent does
 not postpone an older version's own purge deadline. Sibling media and newly
 eligible items are not substituted into the captured batch. The small empty manifest tombstone and permanent fence remain
 to reject late writers and old access tokens; source files and renditions are
