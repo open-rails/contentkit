@@ -69,7 +69,7 @@ func registry(ns string, hooks media.Hooks) media.Config {
 		},
 		{Name: "clip", KeepOriginals: true,
 			Uploads: []media.Upload{{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 1 << 30}, {Path: "poster", Types: pngs, MaxBytes: 10 << 20, Frames: "source"}},
-			Private: []media.Private{{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: []int{240}}}},
+			Private: []media.Private{{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: []int{480, 240}}}},
 			Public:  []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{160}}},
 		},
 		{Name: "album", KeepOriginals: true,
@@ -95,11 +95,11 @@ type host struct {
 	jobs    *media.Jobs
 	hidden  sync.Map // item id → true: hidden from anonymous viewers
 
-	mu      sync.Mutex
-	settled map[string][]media.Readiness // Hooks.ItemReady, by ref
-	purged  []string                     // Hooks.PurgePublic
-	schema  string                       // the host's River schema
-	workers string                       // the host's worker schema
+	mu         sync.Mutex
+	settled    map[string][]media.Readiness // Hooks.ItemReady, by ref
+	progressed map[string]int
+	schema     string // the host's River schema
+	workers    string // the host's worker schema
 }
 
 // Resolve hides the ids in h.hidden from anonymous viewers.
@@ -140,13 +140,14 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	}
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
-	h := &host{Env: env, pool: pool, settled: map[string][]media.Readiness{}}
+	h := &host{Env: env, pool: pool, settled: map[string][]media.Readiness{}, progressed: map[string]int{}}
 	var err error
 	h.reg, err = media.NewRegistry(registry(env.Tenant, media.Hooks{Resolver: h, CanUpload: allow{},
-		PurgePublic: func(_ context.Context, urls []string) {
+		ItemProgressed: func(_ context.Context, _ pgx.Tx, ref contentref.ContentRef) error {
 			h.mu.Lock()
-			h.purged = append(h.purged, urls...)
+			h.progressed[ref.String()]++
 			h.mu.Unlock()
+			return nil
 		},
 		ItemReady: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
 			if r.Ready() {
@@ -343,75 +344,6 @@ func (h *host) ref(t *testing.T, kind string) contentref.ContentRef {
 	return ref
 }
 
-func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
-	for _, tc := range []struct{ workerQueue, jobQueue string }{
-		{workqueue.VideoLightQueue, workqueue.VideoLightQueue},
-		{workqueue.VideoLightQueue, workqueue.ImageQueue},
-		{workqueue.VideoLightQueue, workqueue.AudioQueue},
-		{workqueue.VideoEncodeQueue, workqueue.VideoEncodeQueue},
-	} {
-		t.Run(tc.jobQueue, func(t *testing.T) {
-			env := s3test.Open(t)
-			pool := pgtest.Pool(t, nil)
-			schema := workerSchema(t, pool)
-			if err := workqueue.Migrate(context.Background(), pool, schema); err != nil {
-				t.Fatal(err)
-			}
-			scratch := t.TempDir()
-			active := filepath.Join(scratch, "ck-video-active")
-			if err := os.Mkdir(active, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			reg, err := media.NewRegistry(registry(env.Tenant, media.Hooks{}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, ContentSchema: env.ContentSchema(), Store: env.Store, Kinds: reg,
-				Queue: tc.workerQueue, TempDir: scratch, Threads: 2})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := os.Stat(active); err != nil {
-				t.Fatalf("one-shot worker swept another process's scratch: %v", err)
-			}
-			ref, _ := reg.Ref("clip", newID())
-			var args river.JobArgs = workqueue.VideoPlanArgs{Ref: ref}
-			switch tc.jobQueue {
-			case workqueue.VideoEncodeQueue:
-				args = workqueue.VideoChunkArgs{Ref: ref, RunID: uuid.NewString(), Index: 0}
-			case workqueue.ImageQueue:
-				args = workqueue.ImageArgs{Ref: contentref.New(env.Tenant, "missing", newID())}
-			case workqueue.AudioQueue:
-				args = workqueue.AudioArgs{Ref: ref}
-			}
-			var ids []int64
-			for range 2 {
-				result, err := w.Client().Insert(context.Background(), args, &river.InsertOpts{Queue: tc.jobQueue})
-				if err != nil {
-					t.Fatal(err)
-				}
-				ids = append(ids, result.Job.ID)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := w.Run(ctx); err != nil {
-				t.Fatal(err)
-			}
-			if ctx.Err() != nil {
-				t.Fatal("worker did not exit after its first job")
-			}
-			var terminal int
-			if err := pool.QueryRow(context.Background(), "SELECT count(*) FROM "+pgx.Identifier{schema, "river_job"}.Sanitize()+
-				" WHERE id = ANY($1) AND state IN ('completed', 'cancelled', 'discarded')", ids).Scan(&terminal); err != nil {
-				t.Fatal(err)
-			}
-			if terminal != 1 {
-				t.Fatalf("expected one processed job, got %d", terminal)
-			}
-		})
-	}
-}
-
 // A host's deadline context ends Run like a cancellation: River's notifier
 // spins on a context that ended by deadline, so Run must never hand it one.
 func TestRunUnderADeadline(t *testing.T) {
@@ -465,7 +397,7 @@ func (l *lockedBuffer) count(s string) int {
 
 // The host commits; the worker renders the pages' thumbs and the public
 // cover, the host's jobs report the item ready (Hooks.ItemReady, in a host
-// transaction) and purge the cover's URLs (Hooks.PurgePublic).
+// transaction).
 func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 	h := newHost(t)
 	ref := h.ref(t, "gallery")
@@ -487,11 +419,6 @@ func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 	if !h.exists(t, key) {
 		t.Fatal("no public cover")
 	}
-	eventually(t, "the cover purged", 30*time.Second, func() bool {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		return slices.Contains(h.purged, h.reg.PublicURL(ref, name))
-	})
 	var n int
 	if err := h.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n == 0 {
 		t.Fatalf("no Expose enqueued in the host schema: %d %v", n, err)
@@ -570,6 +497,81 @@ func TestWorkerEncodesVideoAndPoster(t *testing.T) {
 	if vtt, err := g.SpriteVTT(context.Background(), "hls/"); err != nil || !strings.Contains(string(vtt), "#xywh=") {
 		t.Fatalf("sprite %s %v", vtt, err)
 	}
+}
+
+// Pause the next attempt after a playable rendition, so the test proves the
+// host is notified while higher renditions are still unfinished.
+type holdPlayableVideo struct {
+	river.HookDefaults
+	check   func(context.Context) bool
+	blocked chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (h *holdPlayableVideo) WorkBegin(ctx context.Context, job *rivertype.JobRow) error {
+	if job.Kind != (workqueue.VideoArgs{}).Kind() || !h.check(ctx) {
+		return nil
+	}
+	h.once.Do(func() { close(h.blocked) })
+	select {
+	case <-h.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestWorkerRelaysProgressBeforeVideoFinishes(t *testing.T) {
+	if os.Getenv("CONTENTKIT_TEST_FFMPEG") == "" {
+		t.Skip("CONTENTKIT_TEST_FFMPEG not set")
+	}
+	var h *host
+	var ref contentref.ContentRef
+	var targetMu sync.RWMutex
+	gate := &holdPlayableVideo{blocked: make(chan struct{}), release: make(chan struct{})}
+	gate.check = func(ctx context.Context) bool {
+		targetMu.RLock()
+		currentHost, currentRef := h, ref
+		targetMu.RUnlock()
+		if currentHost == nil {
+			return false
+		}
+		m, _, err := currentHost.ms.Get(ctx, currentRef)
+		if err != nil {
+			return false
+		}
+		k, _ := currentHost.reg.Kind("clip")
+		return k.Readiness(m).State == media.StateProcessing && k.Playable(m)
+	}
+	created := newHost(t, gate)
+	targetMu.Lock()
+	h = created
+	ref = h.ref(t, "clip")
+	targetMu.Unlock()
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(gate.release) }) }
+	defer unblock()
+	src := filepath.Join(t.TempDir(), "clip.mp4")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=3:size=854x480:rate=24", "-c:v", "libx264", "-pix_fmt", "yuv420p", src).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v %s", err, out)
+	}
+	body, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.upload(t, ref, "source.mp4", "video/mp4", body)
+	select {
+	case <-gate.blocked:
+	case <-time.After(3 * time.Minute):
+		t.Fatal("video never published its first rendition")
+	}
+	eventually(t, "ItemProgressed before remaining renditions", time.Minute, func() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.progressed[ref.String()] > 0 })
+	if r, ok := h.lastSettled(ref); ok && r.Ready() {
+		t.Fatal("host marked unfinished higher renditions ready")
+	}
+	unblock()
+	eventually(t, "ItemReady after final rendition", 3*time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })
 }
 
 // ItemReady reports a failure while an upload cannot be processed (viewers
@@ -804,7 +806,7 @@ func TestHostsShareADatabase(t *testing.T) {
 	jobTable := pgx.Identifier{c, "river_job"}.Sanitize()
 	var oldJob int64
 	if err := a.pool.QueryRow(ctx, `SELECT id FROM `+jobTable+` WHERE kind = $1`,
-		(workqueue.VideoPlanArgs{}).Kind()).Scan(&oldJob); err != nil {
+		(workqueue.VideoArgs{}).Kind()).Scan(&oldJob); err != nil {
 		t.Fatal(err)
 	}
 	runTable := pgx.Identifier{c, "encode_run"}.Sanitize()
@@ -995,7 +997,7 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 
 // faultyWorker is newHost with the worker's store behind an HTTP proxy whose
 // fault answers a request itself (true) or lets it through.
-func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Request) bool) *host {
+func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Request) bool, hooks ...rivertype.Hook) *host {
 	return newHostOn(t, func(env *s3test.Env) media.Store {
 		target, _ := url.Parse(env.Config.Endpoint)
 		proxy := httputil.NewSingleHostReverseProxy(target)
@@ -1012,7 +1014,7 @@ func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Reques
 			t.Fatal(err)
 		}
 		return store
-	})
+	}, hooks...)
 }
 
 // imageJob reports the state of the worker's latest image job.

@@ -69,7 +69,7 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 		if _, ok := cfg.Queues[Queue]; !ok {
 			cfg.Queues[Queue] = river.QueueConfig{MaxWorkers: 2}
 		}
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(24*time.Hour),
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, 24*time.Hour,
 			func() (river.JobArgs, *river.InsertOpts) {
 				return playableArgs{}, &river.InsertOpts{Queue: Queue, UniqueOpts: media.PendingOnce}
 			}, &river.PeriodicJobOpts{ID: "contentkit_version_playable", RunOnStart: true}))

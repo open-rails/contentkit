@@ -89,7 +89,7 @@ operation. This does not change the operation's result or its authentication.
   `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`; `get("global", user)`),
   `moderation`, `entities`, `codes`. Lists take `limit`/`offset` (the review
   queue and entity listings a `cursor`); `contents.manage` lists what the caller
-  manages (`kind`, `state` incl. `deleted` for `contents.restore`, `q`); `catalog.totals({kinds, languages})`
+  manages (`kind`, `state` incl. `deleted`, `q`); `catalog.totals({kinds, languages})`
   counts what is open; staff lists are `polls.adminList` (`state`, `q`),
   `comments.adminList` (`contentKind`, `author`); `entities.members(id)` pages
   an entity's memberships, `entities.ofContent(id)` / `setOfContent` a content's,
@@ -99,6 +99,13 @@ operation. This does not change the operation's result or its authentication.
   `entities.uploadImage(entity, "cover", file)` its cover; `client.kinds()` the content model.
   `contents.manage({kind: "gallery"})` uses `/manage/gallery`; omitting `kind`
   lists manageable content across kinds at `/manage`.
+- **Content deletion is version deletion.** Call `contents.removeVersion(id, versionId)`;
+  deleting the last undeleted version also soft-deletes its parent atomically.
+  This includes hidden single-version kinds: use the ID in `content.versions`.
+  Restore that edition with `contents.updateVersion(id, versionId, {state: "published"})`;
+  its automatically deleted parent returns to its earlier draft or publication schedule.
+  `contents.restore(id)` is for an independently hidden parent, such as moderation.
+  Permanent purge follows the configured deletion retention (30 days by default).
 - **Images of content and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take
   (`contents.setCover(id, version, name)`: every file of a content lives in a

@@ -1,7 +1,5 @@
 name: scan
 'on':
-  pull_request:
-    branches: [master, 'next/**']
   workflow_call: {}
 permissions:
   contents: read

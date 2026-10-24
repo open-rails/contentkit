@@ -129,7 +129,7 @@ func New(o Options) (*Service, error) {
 }
 
 // Hooks are media's hooks over the content model; set them as
-// media.Config.Hooks (with the host's PurgePublic) before building the
+// media.Config.Hooks before building the
 // registry.
 func (s *Service) Hooks() media.Hooks {
 	return media.Hooks{Resolver: resolver{s}, CanUpload: uploads{s}, ItemReady: s.itemReady, ItemProgressed: s.itemProgressed, ItemCommitted: s.itemCommitted, BeforeRetire: s.beforeRetire, Failed: s.failed}

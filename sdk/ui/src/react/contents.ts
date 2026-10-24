@@ -41,7 +41,11 @@ export interface UseContent {
   /** Publishes now, or schedules for at. */
   publish: (at?: string) => Promise<Content>;
   unpublish: () => Promise<Content>;
-  remove: () => Promise<void>;
+  /** Deletes the selected edition; the last edition deletes its parent too. */
+  removeVersion: () => Promise<void>;
+  /** Restores the selected edition and its automatically deleted parent. */
+  restoreVersion: () => Promise<Version>;
+  /** Restores an independently hidden parent (such as moderation). */
   restore: () => Promise<Content>;
   /**
    * The version whose cover and body images the hook edits: the one asked
@@ -78,8 +82,8 @@ const uploadName = (path: string) => {
 
 /**
  * One content item of kind for its editors: read, create, text in language,
- * publish, delete, restore, a version's cover and the body's images. null
- * creates a new item.
+ * publish, version deletion and restoration, a version's cover and the body's
+ * images. null creates a new item.
  */
 export function useContent(
   id: string | null | undefined,
@@ -217,7 +221,8 @@ export function useContent(
   );
   const publish = useCallback((at?: string) => run(() => client.contents.publishWhenReady(need(), at)), [client, run, need]);
   const unpublish = useCallback(() => run(() => client.contents.unpublish(need())), [client, run, need]);
-  const remove = useCallback(() => run(() => client.contents.remove(need())), [client, run, need]);
+  const removeVersion = useCallback(() => run(() => client.contents.removeVersion(need(), needVersion())), [client, run, need, needVersion]);
+  const restoreVersion = useCallback(() => run(() => client.contents.updateVersion(need(), needVersion(), { state: "published" })), [client, run, need, needVersion]);
   const restore = useCallback(() => run(() => client.contents.restore(need())), [client, run, need]);
   const setCover = useCallback(
     (file: Blob | null) =>
@@ -256,7 +261,8 @@ export function useContent(
     putText,
     publish,
     unpublish,
-    remove,
+    removeVersion,
+    restoreVersion,
     restore,
     version,
     setCover,

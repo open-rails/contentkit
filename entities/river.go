@@ -96,7 +96,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			return err
 		}
 		if s.needsReconcile() {
-			cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(ReconcileInterval),
+			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, ReconcileInterval,
 				func() (river.JobArgs, *river.InsertOpts) {
 					return reconcileArgs{Tenant: s.tenant}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 3,
 						UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: ReconcileInterval}}

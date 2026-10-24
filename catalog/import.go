@@ -949,8 +949,8 @@ func (s *Store) resyncSold(ctx context.Context, tx pgx.Tx, retitled map[string]b
 }
 
 // ImportDeletes preserves the source's independent content tombstones and
-// follows version deletion with automatic empty-parent deletion. Purchased
-// content is still retained for its holders. Hidden versions go with their item.
+// follows version deletion, including hidden versions, with automatic
+// empty-parent deletion. All soft-deleted content follows the deletion retention.
 func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions []string) error {
 	var events []Event
 	touched := map[string]bool{}
@@ -997,14 +997,6 @@ func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions
 		}
 	}
 	if len(versions) > 0 {
-		var hidden string
-		if err := tx.QueryRow(ctx, `SELECT coalesce(min(v.id), '') FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
- WHERE v.tenant_id = $1 AND v.id = ANY($2) AND v.state <> 'deleted' AND c.state <> 'deleted' AND c.kind = ANY($3)`, s.tenant, versions, s.hiddenKinds()).Scan(&hidden); err != nil {
-			return err
-		}
-		if hidden != "" {
-			return invalid("version %s is its item's one hidden version: delete the item", hidden)
-		}
 		rows, err := tx.Query(ctx, `UPDATE `+s.t.versions+` v SET state = 'deleted', deleted_at = clock_timestamp(), updated_at = clock_timestamp(), revision = v.revision + 1
  FROM `+s.t.items+` c WHERE v.tenant_id = $1 AND v.id = ANY($2) AND v.state <> 'deleted' AND c.tenant_id = v.tenant_id AND c.id = v.content_id
  RETURNING v.content_id, v.id, c.kind`, s.tenant, versions)
@@ -1035,15 +1027,4 @@ func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions
 	}
 	events = append(events, deleted...)
 	return s.apply(ctx, tx, ids, effects{events: events, expose: true})
-}
-
-// hiddenKinds are the kinds whose one version is hidden.
-func (s *Store) hiddenKinds() []string {
-	out := []string{}
-	for name, k := range s.cfg.Kinds {
-		if k.Versions.Hidden {
-			out = append(out, name)
-		}
-	}
-	return out
 }

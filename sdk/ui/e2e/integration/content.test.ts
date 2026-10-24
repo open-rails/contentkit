@@ -62,8 +62,8 @@ describe("content modules against the real ContentKit", () => {
     expect(await ck("bob").reactions.set({ type: "contents", id: post.id }, -1)).toEqual({ likes: 1, dislikes: 1, mine: -1 });
     expect(await ck("alice").reactions.get({ type: "contents", id: post.id })).toEqual({ likes: 1, dislikes: 1, mine: 1 });
 
-    await editor.contents.remove(post.id);
-    expect(changes).toContainEqual({ type: "content.deleted", id: post.id });
+    await editor.contents.removeVersion(post.id, post.versions[0]!.id);
+    expect(changes).toContainEqual({ type: "content.changed", id: post.id });
     await expect(ck().contents.get(post.id)).rejects.toEqual(code("not_found"));
 
     // The manage search, the deleted list and restore.
@@ -72,11 +72,11 @@ describe("content modules against the real ContentKit", () => {
     expect((await editor.contents.manage({ q: word })).map((c) => c.id)).toEqual([found.id]);
     expect((await editor.contents.manage({ state: "deleted", limit: 100 })).find((c) => c.id === post.id)).toMatchObject({ deleted_at: expect.any(String) });
     expect((await editor.contents.manage({ limit: 100 })).map((c) => c.id)).not.toContain(post.id);
-    await expect(ck("alice").contents.restore(post.id)).rejects.toEqual(code("forbidden"));
-    const restored = await editor.contents.restore(post.id);
+    await expect(ck("alice").contents.updateVersion(post.id, post.versions[0]!.id, { state: "published" })).rejects.toEqual(code("forbidden"));
+    await editor.contents.updateVersion(post.id, post.versions[0]!.id, { state: "published" });
+    const restored = await editor.contents.get(post.id);
     expect(restored).toMatchObject({ id: post.id, state: "published", title: "Hello world" });
     expect(restored.deleted_at).toBeUndefined();
-    expect(changes).toContainEqual({ type: "content.saved", content: restored });
     expect((await ck().contents.get(post.id, "en")).body).toBe("edited");
     await expect(editor.contents.restore(post.id)).rejects.toEqual(code("not_found"));
   });

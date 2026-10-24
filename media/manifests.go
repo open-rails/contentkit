@@ -21,7 +21,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Locker serializes manifest edits across every process sharing the bucket.
@@ -60,7 +59,6 @@ type Manifests struct {
 	lateUploadWindow time.Duration
 	retries          int
 	cache            *manifestCache
-	publicPurge      func(context.Context, []string) error
 }
 
 var ErrManifestConflict = errors.New("media: manifest edit kept conflicting")
@@ -102,15 +100,6 @@ func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, er
 	}
 	return &Manifests{store: store, reg: reg, locker: o.Locker, journal: o.Journal, cleanupGrace: o.CleanupGrace, lateUploadWindow: o.LateUploadWindow, retries: o.MaxRetries,
 		cache: newManifestCache(o.CacheBytes)}, nil
-}
-
-// WithPublicPurge returns a writer that durably hands retired public keys to
-// a host relay. A failed relay keeps the exact commit pending for recovery.
-// The returned writer shares its thread-safe cache, journal and folder lock.
-func (m *Manifests) WithPublicPurge(purge func(context.Context, []string) error) *Manifests {
-	copy := *m
-	copy.publicPurge = purge
-	return &copy
 }
 
 // Registry is the registry the manifests are read under.
@@ -728,18 +717,6 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 				return nil, false, err
 			}
 			return nil, false, m.finishCommit(ctx, item, *commit, false, nil)
-		} else if errors.Is(err, ErrUpgradeRequired) {
-			// Only the upgrade prepares a write over a legacy root, under
-			// If-Match on it; a legacy root means that write did not land.
-			// Changing the root's ETag fences a delayed copy of it.
-			if commit.Attempt != uuid.Nil {
-				if err := m.fenceLegacy(ctx, item); errors.Is(err, ErrPreconditionFailed) {
-					continue
-				} else if err != nil {
-					return nil, false, err
-				}
-			}
-			return nil, false, m.finishCommit(ctx, item, *commit, false, nil)
 		} else if err != nil {
 			return nil, false, err
 		}
@@ -859,13 +836,11 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 		if err := m.retireAllocations(ctx, item, commit.Effects.Private); err != nil {
 			return err
 		}
-		purged := slices.Clone(commit.Effects.Public)
 		for _, c := range commit.Effects.Mirror {
 			// A source already retired had a successor, which mirrors itself.
 			if _, err := m.store.Copy(ctx, c.From, c.To, CopyOptions{}); err != nil && !errors.Is(err, ErrNotFound) {
 				return fmt.Errorf("media: commit mirror: %w", err)
 			}
-			purged = append(purged, c.To)
 		}
 		g, deleteCtx := errgroup.WithContext(ctx)
 		g.SetLimit(8)
@@ -879,17 +854,6 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 		}
 		if err := g.Wait(); err != nil {
 			return fmt.Errorf("media: commit cleanup: %w", err)
-		}
-		if m.publicPurge != nil && len(purged) > 0 {
-			if err := m.publicPurge(ctx, purged); err != nil {
-				return fmt.Errorf("media: public purge relay: %w", err)
-			}
-		} else if purge := m.reg.cfg.Hooks.PurgePublic; purge != nil && len(purged) > 0 {
-			urls := make([]string, len(purged))
-			for i, key := range purged {
-				urls[i] = strings.TrimRight(m.reg.cfg.BaseURL, "/") + layout.URLPrefix + key
-			}
-			purge(ctx, urls)
 		}
 	}
 	return m.journal.finish(ctx, commit, applied, proj)

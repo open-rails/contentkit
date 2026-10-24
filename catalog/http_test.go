@@ -122,10 +122,10 @@ func TestRoutesIntegration(t *testing.T) {
 	}
 	f.want(http.StatusNotFound, anon, "GET", "/v1/contents/"+id, nil, nil)
 	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+id+"/versions/"+v.ID, nil, nil)
-	f.want(http.StatusConflict, "staff", "DELETE", "/v1/contents/"+id, nil, nil)
+	f.want(http.StatusMethodNotAllowed, "staff", "DELETE", "/v1/contents/"+id, nil, nil)
 	f.want(http.StatusOK, "staff", "DELETE", "/v1/contents/"+id+"/text/ja", nil, nil)
 	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+id+"/versions/"+first, nil, nil)
-	f.want(http.StatusNotFound, "staff", "DELETE", "/v1/contents/"+id, nil, nil)
+	f.want(http.StatusMethodNotAllowed, "staff", "DELETE", "/v1/contents/"+id, nil, nil)
 	f.want(http.StatusConflict, "staff", "POST", "/v1/contents/"+id+"/restore", nil, nil)
 	f.want(http.StatusOK, "staff", "PATCH", "/v1/contents/"+id+"/versions/"+first, VersionInput{State: StatePublished}, nil)
 	f.want(http.StatusOK, "staff", "GET", "/v1/contents/"+id, nil, &c)
@@ -178,7 +178,7 @@ func TestRoutesIntegration(t *testing.T) {
 	if len(list) != 0 {
 		t.Fatalf("code outside the caller's rights %+v", list)
 	}
-	f.want(http.StatusConflict, "staff", "DELETE", "/v1/contents/"+c.ID, nil, nil)
+	f.want(http.StatusMethodNotAllowed, "staff", "DELETE", "/v1/contents/"+c.ID, nil, nil)
 	f.want(http.StatusNoContent, "staff", "DELETE", "/v1/contents/"+c.ID+"/versions/"+c.Versions[0].ID, nil, nil)
 	f.want(http.StatusOK, "staff", "GET", "/v1/manage?code="+c.Code, nil, &list)
 	if len(list) != 1 || list[0].ID != c.ID || list[0].State != StateDeleted {

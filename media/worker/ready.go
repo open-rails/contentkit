@@ -25,7 +25,10 @@ type readyHook struct {
 }
 
 func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err error) (result error) {
-	if err != nil || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
+	workErr := err
+	var snooze *river.JobSnoozeError
+	checkpoint := job.Kind == (workqueue.VideoArgs{}).Kind() && errors.As(err, &snooze) && snooze.Duration == 0 && ctx.Err() == nil
+	if err != nil && !checkpoint || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
 	}
 	// Output can become visible before this final manifest read. An outage
@@ -35,11 +38,11 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 		Ref contentref.ContentRef `json:"ref"`
 	}
 	if err := json.Unmarshal(job.EncodedArgs, &args); err != nil {
-		return nil // the job itself decoded them
+		return workErr // the job itself decoded them
 	}
-	m, _, err := h.manifests.Get(ctx, args.Ref)
+	m, etag, err := h.manifests.Get(ctx, args.Ref)
 	if errors.Is(err, media.ErrNotFound) {
-		return nil // deleted meanwhile
+		return workErr // deleted meanwhile
 	} else if err != nil {
 		return err
 	}
@@ -47,14 +50,36 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 	if err != nil {
 		return err
 	}
-	// Only assembly and audio jobs publish renditions, so only they can make
+	// Video and audio jobs publish renditions, so only they can make
 	// a processing item playable.
 	if k.Readiness(m).State == media.StateProcessing && (!publishes(job.Kind) || !k.Playable(m)) {
-		return nil
+		return workErr
 	}
-	return h.host.Ready(ctx, args.Ref)
+	// A video job yields after each bounded range. Only a new manifest
+	// publication needs a host relay; remember it only after enqueue succeeds.
+	var delivered struct {
+		ETag string `json:"contentkit_ready_etag"`
+	}
+	video := job.Kind == (workqueue.VideoArgs{}).Kind()
+	if video {
+		if err := json.Unmarshal(job.Metadata, &delivered); err != nil {
+			return err
+		}
+		if delivered.ETag == etag {
+			return workErr
+		}
+	}
+	if readyErr := h.host.Ready(ctx, args.Ref); readyErr != nil {
+		return readyErr
+	}
+	if video {
+		if err := river.MetadataSet(ctx, "contentkit_ready_etag", etag); err != nil {
+			return err
+		}
+	}
+	return workErr
 }
 
 func publishes(kind string) bool {
-	return kind == (workqueue.VideoAssembleArgs{}).Kind() || kind == (workqueue.AudioArgs{}).Kind()
+	return kind == (workqueue.VideoArgs{}).Kind() || kind == (workqueue.AudioArgs{}).Kind()
 }

@@ -36,8 +36,6 @@ type PGJournal struct {
 	table        string
 	allocations  string
 	publications string
-	upgrades     string
-	upgradeFails string
 	cleanup      string
 	limiter      *PGLimiter
 	queue        TransactionalProcessQueue
@@ -56,8 +54,6 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 	return &PGJournal{pool: pool, table: pgx.Identifier{schema, "content_media_commits"}.Sanitize(),
 		allocations:  pgx.Identifier{schema, "content_media_allocations"}.Sanitize(),
 		publications: pgx.Identifier{schema, "content_media_publications"}.Sanitize(),
-		upgrades:     pgx.Identifier{schema, "content_media_upgrades"}.Sanitize(),
-		upgradeFails: pgx.Identifier{schema, "content_media_upgrade_failures"}.Sanitize(),
 		cleanup:      pgx.Identifier{schema, "content_media_cleanup"}.Sanitize(),
 		limiter:      limiter, queue: queue}, nil
 }

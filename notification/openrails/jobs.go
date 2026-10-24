@@ -58,7 +58,7 @@ func (j *Jobs) Add(s *Source, destination Inbox, mapper RecipientMapper, namespa
 			cfg.Queues = map[string]river.QueueConfig{}
 		}
 		cfg.Queues[queue] = river.QueueConfig{MaxWorkers: 1}
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(30*time.Second), func() (river.JobArgs, *river.InsertOpts) {
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, 30*time.Second, func() (river.JobArgs, *river.InsertOpts) {
 			args := billingArgs{Key: key}
 			opts := args.InsertOpts()
 			opts.Queue = queue

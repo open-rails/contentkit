@@ -2,9 +2,12 @@ package video
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,19 +21,17 @@ import (
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
-// WorkerConfig configures the River side of video planning, bounded encoding,
-// assembly and audio jobs.
+// WorkerConfig configures resumable video conversion and audio jobs.
 type WorkerConfig struct {
 	Encoder *Encoder // its Manifests carry the host's registry
 	Pool    *pgxpool.Pool
 	Schema  string // the host's worker schema (workqueue.ValidSchema)
-	// Timeout bounds an audio job. Video chunks, planning and assembly
-	// each have a one-hour timeout; audio keeps its 48-hour default.
+	// Timeout bounds an audio job. A video attempt checkpoints one bounded
+	// range and has a one-hour timeout; audio keeps its 48-hour default.
 	Timeout      time.Duration
 	MaxWorkers   int           // concurrent video jobs per process; default 1 (ffmpeg uses every core)
 	AudioWorkers int           // concurrent audio jobs per process; default 2
 	ChunkTarget  time.Duration // estimated CPU work per chunk; default 5 minutes
-	Queue        string        // empty for all queues; light also handles audio, encode only chunks
 	Logger       *slog.Logger
 }
 
@@ -43,38 +44,19 @@ func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 	if err := workqueue.ValidSchema(c.Schema); err != nil {
 		return riverhelpers.Contribution{}, err
 	}
-	if c.Queue != "" && c.Queue != workqueue.VideoLightQueue && c.Queue != workqueue.VideoEncodeQueue {
-		return riverhelpers.Contribution{}, fmt.Errorf("media/video: unsupported queue %q", c.Queue)
-	}
 	c = c.defaults()
 	return riverhelpers.NewContribution("contentkit-media-video", func(_ context.Context, cfg *river.Config) error {
 		if cfg.Schema != c.Schema {
 			return fmt.Errorf("media/video: River schema must be %q, not %q", c.Schema, cfg.Schema)
 		}
-		for _, q := range []string{workqueue.VideoLightQueue, workqueue.VideoEncodeQueue, workqueue.AudioQueue} {
-			if c.Queue != "" && c.Queue != q && !(c.Queue == workqueue.VideoLightQueue && q == workqueue.AudioQueue) {
-				continue
-			}
+		for _, q := range []string{workqueue.VideoQueue, workqueue.AudioQueue} {
 			if _, ok := cfg.Queues[q]; ok {
 				return fmt.Errorf("media/video: queue %q already registered", q)
 			}
 		}
-		if c.Queue == "" || c.Queue == workqueue.VideoLightQueue {
-			cfg.Queues[workqueue.VideoLightQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
-		}
-		if c.Queue == "" || c.Queue == workqueue.VideoEncodeQueue {
-			cfg.Queues[workqueue.VideoEncodeQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
-		}
-		if c.Queue == "" || c.Queue == workqueue.VideoLightQueue {
-			cfg.Queues[workqueue.AudioQueue] = river.QueueConfig{MaxWorkers: c.AudioWorkers}
-		}
-		if err := river.AddWorkerSafely(cfg.Workers, &planWorker{c: c}); err != nil {
-			return err
-		}
-		if err := river.AddWorkerSafely(cfg.Workers, &chunkWorker{c: c}); err != nil {
-			return err
-		}
-		if err := river.AddWorkerSafely(cfg.Workers, &assembleWorker{c: c}); err != nil {
+		cfg.Queues[workqueue.VideoQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
+		cfg.Queues[workqueue.AudioQueue] = river.QueueConfig{MaxWorkers: c.AudioWorkers}
+		if err := river.AddWorkerSafely(cfg.Workers, &videoWorker{c: c}); err != nil {
 			return err
 		}
 		return river.AddWorkerSafely(cfg.Workers, &audioWorker{c: c})
@@ -107,41 +89,130 @@ func ClientConfig(c WorkerConfig) *river.Config {
 		RescueStuckJobsAfter: 2 * time.Hour, Logger: c.Logger}
 }
 
-type planWorker struct {
-	river.WorkerDefaults[workqueue.VideoPlanArgs]
+type videoWorker struct {
+	river.WorkerDefaults[workqueue.VideoArgs]
 	c WorkerConfig
 }
 
-func (w *planWorker) Timeout(*river.Job[workqueue.VideoPlanArgs]) time.Duration { return time.Hour }
+func (w *videoWorker) Timeout(*river.Job[workqueue.VideoArgs]) time.Duration { return time.Hour }
 
-func (w *planWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoPlanArgs]) error {
-	return w.c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return w.c.planVideo(ctx, job.Args) })
-}
-
-type chunkWorker struct {
-	river.WorkerDefaults[workqueue.VideoChunkArgs]
-	c WorkerConfig
-}
-
-func (w *chunkWorker) Timeout(*river.Job[workqueue.VideoChunkArgs]) time.Duration { return time.Hour }
-
-func (w *chunkWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoChunkArgs]) error {
+func (w *videoWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoArgs]) error {
 	defer w.c.clearProgress(ctx, job.ID)
-	return w.c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return w.c.encodeChunk(ctx, job) })
+	return w.c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return w.c.convert(ctx, job) })
 }
 
-type assembleWorker struct {
-	river.WorkerDefaults[workqueue.VideoAssembleArgs]
-	c WorkerConfig
-}
-
-func (w *assembleWorker) Timeout(*river.Job[workqueue.VideoAssembleArgs]) time.Duration {
-	return time.Hour
-}
-
-func (w *assembleWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoAssembleArgs]) error {
-	defer w.c.clearProgress(ctx, job.ID)
-	return w.c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return w.c.assemble(ctx, job.Args, job.ID) })
+// convert owns the whole conversion. Each attempt checkpoints at most one
+// bounded chunk and publishes a finished rung before yielding the same job.
+// The item lock prevents duplicate requests from encoding the same chunk.
+func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.VideoArgs]) error {
+	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:video:"+job.Args.Ref.String(), false)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return river.JobSnooze(lockedSnooze)
+	}
+	defer release()
+	var metadata struct {
+		Initialized bool `json:"contentkit_video_initialized"`
+	}
+	if err := json.Unmarshal(job.Metadata, &metadata); err != nil {
+		return err
+	}
+	if !metadata.Initialized {
+		if job.Args.Force {
+			item, err := c.Encoder.ms.Registry().Item(job.Args.Ref)
+			if err != nil {
+				return river.JobCancel(err)
+			}
+			if err := c.Encoder.force(ctx, item, job.Args.Preset, videoFamily); err != nil {
+				return err
+			}
+		}
+		// No outputs are produced until this is durable, so a crash before it
+		// cannot reset any successful work from this conversion.
+		if _, err := c.Pool.Exec(ctx, `UPDATE `+c.jobTable()+`
+   SET metadata = jsonb_set(metadata, '{contentkit_video_initialized}', 'true') WHERE id = $1`, job.ID); err != nil {
+			return err
+		}
+	}
+	if err := c.planVideo(ctx, job.Args); err != nil {
+		return err
+	}
+	if fair, err := c.overTenantShare(ctx, job.Args.Ref.TenantID); err != nil {
+		return err
+	} else if fair {
+		return river.JobSnooze(lockedSnooze)
+	}
+	ref, err := json.Marshal(job.Args.Ref)
+	if err != nil {
+		return err
+	}
+	rows, err := c.Pool.Query(ctx, `SELECT id::text FROM `+c.runTable()+`
+ WHERE ref = $1 AND state IN ('planned', 'encoding', 'assembling') ORDER BY created_at, file_name, rung`, ref)
+	if err != nil {
+		return err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		run, err := c.loadRun(ctx, id)
+		if err != nil {
+			return err
+		}
+		if job.Args.Preset != "" && !strings.HasPrefix(run.Spec, job.Args.Preset+"@") {
+			continue
+		}
+		if _, ok, err := c.current(ctx, run); err != nil {
+			return err
+		} else if !ok {
+			if err := c.cancelRun(ctx, id); err != nil {
+				return err
+			}
+			continue
+		}
+		chunk, pending, err := c.nextChunk(ctx, id)
+		if err != nil {
+			return err
+		}
+		if pending {
+			if _, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'encoding', updated_at = now() WHERE id = $1 AND state != 'cancelled'`, id); err != nil {
+				return err
+			}
+			if err := c.encodeChunk(ctx, run, chunk, job.ID); err != nil {
+				return err
+			}
+			if err := c.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.chunkTable()+` WHERE run_id = $1 AND state = 'planned')`, id).Scan(&pending); err != nil {
+				return err
+			}
+		}
+		if !pending {
+			if _, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'assembling', updated_at = now() WHERE id = $1 AND state != 'cancelled'`, id); err != nil {
+				return err
+			}
+			if err := c.assemble(ctx, run, job.ID); err != nil {
+				return err
+			}
+			// Initial playback has priority over improving a playable video's ladder.
+			if job.Priority == 1 {
+				finished, err := c.loadRun(ctx, id)
+				if err != nil {
+					return err
+				}
+				if finished.State == "complete" {
+					if _, err := c.Pool.Exec(ctx, `UPDATE `+c.jobTable()+` SET priority = 2 WHERE id = $1`, job.ID); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		// Yield even when this was the last rung: the next attempt confirms no
+		// work remains, and a newly queued short video can run between chunks.
+		return river.JobSnooze(0)
+	}
+	return nil
 }
 
 // store is the bucket the encoder writes, nil without an encoder.

@@ -1,52 +1,15 @@
 name: sdk-ui
+# The coordinator runs only the required package/browser suites.
 'on':
+  workflow_call:
+    inputs:
+      unit:
+        type: boolean
+        default: true
+      browser:
+        type: boolean
+        default: true
   workflow_dispatch: {}
-  pull_request:
-    branches: [master]
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-    - 'sdk/ui/**'
-    - 'contenturl/testdata/**'
-    - '*.go'
-    - 'media/**'
-    - 'content/**'
-    - 'contenturl/**'
-    - 'entities/**'
-    - 'kinds/**'
-    - 'migrations/**'
-    - 'internal/**'
-    - 'access/**'
-    - 'cmd/media-gateway/**'
-    - 'cmd/media-worker/**'
-    - '.dockerignore'
-    - '!**.md'
-    - 'go.mod'
-    - 'go.sum'
-    - '.github/workflows/sdk-ui.yaml'
-  # master and integration branches: PRs merge without waiting, so each push runs
-  # the suite once (master's health) and a newer push to the same ref cancels it.
-  push:
-    branches: [master, 'next/**']
-    paths:
-    - 'sdk/ui/**'
-    - 'contenturl/testdata/**'
-    - '*.go'
-    - 'media/**'
-    - 'content/**'
-    - 'contenturl/**'
-    - 'entities/**'
-    - 'kinds/**'
-    - 'migrations/**'
-    - 'internal/**'
-    - 'access/**'
-    - 'cmd/media-gateway/**'
-    - 'cmd/media-worker/**'
-    - '.dockerignore'
-    - '!**.md'
-    - 'go.mod'
-    - 'go.sum'
-    - '.github/workflows/sdk-ui.yaml'
-  workflow_call: {}
 permissions:
   contents: read
 concurrency:
@@ -55,7 +18,7 @@ concurrency:
 jobs:
   sdk-ui:
     name: UI package
-    if: '!github.event.pull_request.draft'
+    if: (github.event_name == 'workflow_dispatch' || inputs.unit) && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -64,6 +27,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.sha }}
         persist-credentials: false
     - uses: pnpm/action-setup@v4
       with:
@@ -86,8 +50,9 @@ jobs:
   # gateway built from this checkout (sdk/ui/e2e/compose.yaml).
   e2e:
     name: UI package e2e (real ContentKit)
-    if: '!github.event.pull_request.draft'
-    runs-on: ubuntu-latest
+    if: (github.event_name == 'workflow_dispatch' || inputs.browser) && !github.event.pull_request.draft
+    # Playwright 1.60 supports Ubuntu 24.04; ubuntu-latest has moved to 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
       run:
@@ -95,6 +60,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.sha }}
         persist-credentials: false
     - uses: docker/setup-buildx-action@v3
     - name: build media-gateway
@@ -150,3 +116,25 @@ jobs:
         for p in $(docker compose ls -a --format json | jq -r '.[].Name' | grep '^ckui-e2e-' || true); do
           docker compose -p "$p" -f e2e/compose.yaml --profile worker down -v --remove-orphans -t 2
         done
+
+  gate:
+    name: Selected UI suites
+    needs: [sdk-ui, e2e]
+    if: always() && !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    steps:
+    - env:
+        RESULTS: ${{ toJSON(needs) }}
+        UNIT: ${{ github.event_name == 'workflow_dispatch' || inputs.unit }}
+        BROWSER: ${{ github.event_name == 'workflow_dispatch' || inputs.browser }}
+      run: |
+        python3 - <<'PY'
+        import json, os
+        jobs = json.loads(os.environ['RESULTS'])
+        for name, flag in [('sdk-ui', 'UNIT'), ('e2e', 'BROWSER')]:
+            result = jobs[name]['result']
+            if os.environ[flag] == 'true' and result != 'success':
+                raise SystemExit(f'selected {name} did not pass: {result}')
+            if os.environ[flag] != 'true' and result not in ('success', 'skipped'):
+                raise SystemExit(f'{name} failed: {result}')
+        PY

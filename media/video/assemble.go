@@ -2,7 +2,6 @@ package video
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -12,32 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/riverqueue/river"
-
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
-	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // assemble joins a run's chunks and publishes its stage: an HLS rung (the
 // first stage also the source's audio and text tracks and the sprite, and
 // the MP4s at its rung remuxed from H.264), or an MP4. Then it grabs the
 // frames the new renditions serve and releases the next stage.
-func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssembleArgs, jobID int64) error {
+func (c WorkerConfig) assemble(ctx context.Context, run encodeRun, jobID int64) error {
 	e := c.Encoder
-	run, err := c.loadRun(ctx, args.RunID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return river.JobCancel(err)
-	} else if err != nil {
-		return err
-	}
-	if !run.Ref.Equal(args.Ref) || run.State == "cancelled" || run.State == "complete" {
-		return nil
-	}
-	if run.State != "assembling" {
-		return river.JobSnooze(30 * time.Second)
-	}
 	w, ok, err := c.current(ctx, run)
 	if err != nil {
 		return err
@@ -59,7 +42,7 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 		if len(chunks) == 0 {
 			return fmt.Errorf("media/video: run %s has no chunks", run.ID)
 		}
-		missing, err := c.restoreMissingChunks(ctx, run, chunks, e.codecs(w.p), k > 0)
+		missing, err := c.restoreMissingChunks(ctx, run, chunks, e.codecs(w.p))
 		if err != nil || missing {
 			return err
 		}
@@ -94,7 +77,7 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 			return err
 		}
 	}
-	return c.finishRun(ctx, run, w.stages, k)
+	return c.finishRun(ctx, run)
 }
 
 // clearSettled clears the run's preset pending mark when its outputs from
@@ -350,8 +333,8 @@ func (e *Encoder) sprite(ctx context.Context, item media.Item, dir, to string, p
 }
 
 // restoreMissingChunks reopens an assembling run if temporary work objects
-// expired before assembly. The replacement chunks will queue a new assemble.
-func (c WorkerConfig) restoreMissingChunks(ctx context.Context, run encodeRun, chunks []encodeChunk, codecs []media.Codec, laterRung bool) (bool, error) {
+// expired before assembly. The same conversion job regenerates only these ranges.
+func (c WorkerConfig) restoreMissingChunks(ctx context.Context, run encodeRun, chunks []encodeChunk, codecs []media.Codec) (bool, error) {
 	var missing []int
 	for _, ch := range chunks {
 		for _, codec := range codecs {
@@ -384,62 +367,21 @@ func (c WorkerConfig) restoreMissingChunks(ctx context.Context, run encodeRun, c
 		return true, nil
 	}
 	if _, err := tx.Exec(ctx, `UPDATE `+c.chunkTable()+`
-SET state = 'planned', job_id = NULL, output = NULL, finished_at = NULL
+SET state = 'planned', output = NULL, finished_at = NULL
 WHERE run_id = $1 AND ordinal = ANY($2)`, run.ID, missing); err != nil {
 		return false, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE `+c.runTable()+`
-SET state = 'encoding', completed = completed - $2, updated_at = now() WHERE id = $1`, run.ID, len(missing)); err != nil {
-		return false, err
-	}
-	priority := workqueue.VideoPlanInsertOpts(run.Class).Priority
-	if laterRung && priority == 1 {
-		priority = 2
-	}
-	if err := c.releaseWindow(ctx, tx, run.ID, run.Ref, priority); err != nil {
+SET state = 'encoding', updated_at = now() WHERE id = $1`, run.ID); err != nil {
 		return false, err
 	}
 	return true, tx.Commit(ctx)
 }
 
-func (c WorkerConfig) finishRun(ctx context.Context, run encodeRun, stages []rung, k int) error {
-	tx, err := c.Pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	var state string
-	if err := tx.QueryRow(ctx, `SELECT state FROM `+c.runTable()+` WHERE id = $1 FOR UPDATE`, run.ID).Scan(&state); err != nil {
-		return err
-	}
-	if state == "complete" || state == "cancelled" {
-		return nil
-	}
-	if _, err := tx.Exec(ctx, `UPDATE `+c.runTable()+`
-SET state = 'complete', updated_at = now() WHERE id = $1`, run.ID); err != nil {
-		return err
-	}
-	if k+1 < len(stages) {
-		refJSON, err := json.Marshal(run.Ref)
-		if err != nil {
-			return err
-		}
-		var nextID string
-		err = tx.QueryRow(ctx, `SELECT id::text FROM `+c.runTable()+`
-WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND source_etag = $4 AND spec = $5 AND rung = $6`,
-			refJSON, run.File, run.Source, run.SourceETag, run.Spec, stages[k+1].n).Scan(&nextID)
-		if err != nil {
-			return err
-		}
-		priority := workqueue.VideoPlanInsertOpts(run.Class).Priority
-		if priority == 1 {
-			priority = 2
-		}
-		if err := c.releaseWindow(ctx, tx, nextID, run.Ref, priority); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
+func (c WorkerConfig) finishRun(ctx context.Context, run encodeRun) error {
+	_, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'complete', updated_at = now()
+ WHERE id = $1 AND state != 'cancelled'`, run.ID)
+	return err
 }
 
 // assembleRendition joins rendition name's chunks into dir/name.mp4 and

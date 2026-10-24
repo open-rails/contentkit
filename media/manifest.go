@@ -586,12 +586,12 @@ var (
 	// before the bound; it does not decode.
 	ErrManifestUnreadable = errors.New("media: stored manifest over its size limit")
 	// ErrUpgradeRequired: a manifest stored before v0.68 (version 2), which
-	// only the media upgrade (Jobs.Upgrade) reads. Nothing else edits or
-	// cleans the item until then; HTTP answers 503 upgrade_required.
-	ErrUpgradeRequired = errors.New("media: item stored before v0.68 needs the media upgrade")
+	// must be migrated with ContentKit v0.119.1 before this release can read
+	// or edit it; HTTP answers 503 upgrade_required.
+	ErrUpgradeRequired = errors.New("media: item stored before v0.68 must be upgraded with ContentKit v0.119.1")
 )
 
-// legacyManifestVersion is the manifest format the upgrade converts.
+// legacyManifestVersion is refused until migrated by a previous release.
 const legacyManifestVersion = 2
 
 // encodeManifest writes m as gzip JSON (HTML characters unescaped: a name of

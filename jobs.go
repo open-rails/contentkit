@@ -83,21 +83,22 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 				return err
 			}
 		}
-		periodic := func(id string, every time.Duration, args river.JobArgs, onStart bool) {
-			cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(every),
+		// Startup checks the retained deadline; it does not rerun recent work.
+		periodic := func(id string, every time.Duration, args river.JobArgs) {
+			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, every,
 				func() (river.JobArgs, *river.InsertOpts) {
 					return args, &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3, UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: every}}
-				}, &river.PeriodicJobOpts{ID: id, RunOnStart: onStart}))
+				}, &river.PeriodicJobOpts{ID: id, RunOnStart: true}))
 		}
-		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{}, true)
-		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{}, false)
+		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{})
+		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{})
 		if e.classifier {
-			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{}, false)
+			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{})
 		}
 		if e.hub.SignalsConfigured() { // their runs skip while it is down
-			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{}, true)
-			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true}, false)
-			periodic("contentkit_projection_repair", repairEvery, repairArgs{}, true)
+			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{})
+			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true})
+			periodic("contentkit_projection_repair", repairEvery, repairArgs{})
 		}
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {

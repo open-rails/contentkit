@@ -41,7 +41,7 @@ func TestTenantShareIgnoresFutureJobs(t *testing.T) {
 		err := pool.QueryRow(ctx, `INSERT INTO `+w.jobTable()+`
   (kind, args, state, scheduled_at, max_attempts)
 VALUES ($1, jsonb_build_object('ref', jsonb_build_object('tenant_id', $2::text)), $3, now() + $4 * interval '1 second', 5)
-RETURNING id`, (workqueue.VideoChunkArgs{}).Kind(), tenant, state, delay.Seconds()).Scan(&id)
+RETURNING id`, (workqueue.VideoArgs{}).Kind(), tenant, state, delay.Seconds()).Scan(&id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -154,15 +154,15 @@ FROM `+c.runTable()+` r WHERE r.ref->>'content_id' = $1 AND r.rung = $2`, id, ru
 	adopted := replanArgs{Ref: contentref.New("tenant", "video", "adopted"), Done: 1}
 	plan(adopted, 1)
 	check("adopted", 240, run{state: "complete"})
-	check("adopted", 480, run{state: "encoding", chunks: 1, queued: 1, jobs: 1})
+	check("adopted", 480, run{state: "planned", chunks: 1})
 	// Once the upper rung is done, a forced regeneration replans every rung.
 	complete("adopted")
 	adopted.Done = 0
 	plan(adopted, 1)
-	check("adopted", 240, run{state: "encoding", chunks: 3, queued: 2, jobs: 2})
-	// A replay releases nothing more.
+	check("adopted", 240, run{state: "planned", chunks: 3})
+	// A replay creates no additional chunks or child jobs.
 	plan(adopted, 1)
-	check("adopted", 240, run{state: "encoding", chunks: 3, queued: 2, jobs: 2})
+	check("adopted", 240, run{state: "planned", chunks: 3})
 
 	// A cancelled run is retried with its own chunks, not ones planned anew.
 	if _, err := pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'cancelled' WHERE rung = 240`); err != nil {
@@ -173,7 +173,7 @@ FROM `+c.runTable()+` r WHERE r.ref->>'content_id' = $1 AND r.rung = $2`, id, ru
 	}
 	adopted.Rechunk = true
 	plan(adopted, 1)
-	check("adopted", 240, run{state: "encoding", chunks: 3, queued: 2, jobs: 2})
+	check("adopted", 240, run{state: "planned", chunks: 3})
 
 	// Competing planners reopening an adopted run plan its chunks once.
 	racing := replanArgs{Ref: contentref.New("tenant", "video", "racing"), Done: 1}
@@ -241,5 +241,5 @@ JOIN `+c.runTable()+` r ON r.id = ch.run_id WHERE r.ref->>'content_id' = 'racing
 	if !slices.Equal(got, bounds[0]) && !slices.Equal(got, rechunked[0]) {
 		t.Fatalf("competing planners mixed chunk bounds: %v", got)
 	}
-	check("racing", 240, run{state: "encoding", chunks: len(got), queued: 2, jobs: 2})
+	check("racing", 240, run{state: "planned", chunks: len(got)})
 }

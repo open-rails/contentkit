@@ -8,12 +8,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -246,19 +244,10 @@ func TestRecoveryKeepsProjection(t *testing.T) {
 	if got, err := f.ms.PresetImages(ctx, "cover", ref); err != nil || !reflect.DeepEqual(got[0], after) || reflect.DeepEqual(after, before) {
 		t.Fatalf("recovered projection %+v, manifest %+v, %v", got, after, err)
 	}
-	var purged []string
-	for draining := true; draining; {
-		select {
-		case urls := <-f.purged:
-			purged = append(purged, urls...)
-		default:
-			draining = false
-		}
-	}
 	for _, u := range urlsOf(before) {
 		key := strings.TrimPrefix(u, "https://"+mediaHost+layout.URLPrefix)
-		if !slices.Contains(purged, u) || f.exists(key) {
-			t.Fatalf("old generation %s not retired/purged: %v", key, purged)
+		if f.exists(key) {
+			t.Fatalf("old generation %s not retired", key)
 		}
 	}
 	for _, u := range urlsOf(after) {
@@ -384,18 +373,15 @@ func (f *fixture) snapshot() map[string]string {
 	return out
 }
 
-// Before the upgrade a v0.67 item answers a distinct error everywhere and
-// nothing deletes any of its files. The upgrade converts it in place: its
-// blobs stay, its template-named covers become its current publication, and
-// their URLs keep working through cleanup until a reprocess publishes a
-// generation.
-func TestLegacyItemUpgrade(t *testing.T) {
+// Old-format items require migration with the previous release. Current
+// reads and writes refuse them, and cleanup preserves their stored objects.
+func TestLegacyItemRequiresPriorReleaseMigration(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	f.visible(1)
 	f.visible(2)
 	l := f.legacyGallery(1, false)
-	hidden := f.legacyGallery(2, true)
+	f.legacyGallery(2, true)
 	post := f.ref("post", 3)
 	f.visible(3)
 	postItem, _ := f.reg.Item(post)
@@ -420,7 +406,8 @@ func TestLegacyItemUpgrade(t *testing.T) {
 	var reply media.ErrorReply
 	_ = json.NewDecoder(resp.Body).Decode(&reply)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable || reply.Code != "upgrade_required" {
+	if resp.StatusCode != http.StatusServiceUnavailable || reply.Code != "upgrade_required" ||
+		resp.Header.Get("Retry-After") != "" || !strings.Contains(reply.Error, "v0.119.1") {
 		t.Fatalf("read API before the upgrade: %d %+v", resp.StatusCode, reply)
 	}
 	if _, err := f.up.Commit(ctx, f.editor, l.ref, uuid.NewString(), []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "x"}}}); !errors.Is(err, media.ErrUpgradeRequired) {
@@ -441,135 +428,4 @@ func TestLegacyItemUpgrade(t *testing.T) {
 		t.Fatalf("cleanup touched a v2 item:\nbefore %v\nafter  %v", stored, now)
 	}
 
-	st, err := f.jobs.Upgrade(ctx, 1000)
-	if err != nil || !st.Done || len(st.Failures) != 0 {
-		t.Fatalf("upgrade: %+v %v", st, err)
-	}
-	for _, k := range st.Kinds {
-		want := map[string]int64{"gallery": 2, "post": 1}[k.Kind]
-		if k.Upgraded != want || k.Finished == nil {
-			t.Fatalf("kind %s: %+v", k.Kind, k)
-		}
-	}
-	m, etag, err := f.ms.Get(ctx, l.ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cover, _ := m.Get("cover.png")
-	pub, ok := cover.Current("cover")
-	if m.V != media.ManifestVersion || !ok || pub.Generation != "" || pub.FP != "v067-fp" || cover.Blob != legacyBlob(l.cover) ||
-		!reflect.DeepEqual(pub.Dims, []media.Dims{{W: 230, H: 325}, {W: 460, H: 650}}) {
-		t.Fatalf("upgraded cover %+v", cover)
-	}
-	want := media.PublicImage{From: "cover.png", Preset: "cover", Renditions: []media.PublicRendition{
-		{URL: f.reg.PublicURL(l.ref, "cover-230.webp"), W: 230, H: 325}, {URL: f.reg.PublicURL(l.ref, "cover-460.webp"), W: 460, H: 650}}}
-	covers, err := f.ms.PresetImages(ctx, "cover", l.ref, hidden.ref)
-	if err != nil || !reflect.DeepEqual(covers[0], want) || covers[1].From != "" {
-		t.Fatalf("projected covers %+v %v", covers, err)
-	}
-	if found, err := f.ms.Images(ctx, media.ImageQuery{Ref: post, Name: inline}); err != nil || len(found[0]) != 1 ||
-		found[0][0].Renditions[0] != (media.PublicRendition{URL: f.reg.PublicURL(post, inline+".webp"), W: 64, H: 48}) {
-		t.Fatalf("legacy inline image: %+v %v", found, err)
-	}
-	for _, key := range []string{l.item.PublicPrefix() + "cover-920.webp", hidden.item.PublicPrefix() + "cover-230.webp"} {
-		if f.exists(key) {
-			t.Fatalf("%s is not current and was kept", key)
-		}
-	}
-	for _, r := range want.Renditions {
-		if status, body, _ := f.fetch(r.URL); status != http.StatusOK || body != string(l.public[strings.TrimPrefix(r.URL, f.reg.PublicURL(l.ref, ""))]) {
-			t.Fatalf("legacy cover %s: %d", r.URL, status)
-		}
-	}
-	read, err := f.rd.Read(ctx, l.ref, f.editor, media.ReadOptions{})
-	if err != nil || !reflect.DeepEqual(read.Public, []media.PublicImage{want}) {
-		t.Fatalf("read API after the upgrade: %+v %v", read, err)
-	}
-	thumb := urls(read)["thumb/001.webp"]
-	if status, body, _ := f.fetch(thumb); status != http.StatusOK || body != string(l.thumb) {
-		t.Fatalf("a legacy private blob: %d", status)
-	}
-	if keys, err := f.ms.SyncPublic(ctx, l.ref); err != nil || len(keys) != 0 {
-		t.Fatalf("cleanup retired current legacy files: %v %v", keys, err)
-	}
-	if res, err := f.later().Sweep(ctx, l.ref); err != nil || slices.ContainsFunc(res.Deleted, func(k string) bool {
-		return strings.Contains(k, "/public/") || strings.HasSuffix(k, legacyBlob(l.cover)) || strings.HasSuffix(k, legacyBlob(l.thumb))
-	}) {
-		t.Fatalf("a sweep deleted current files: %+v %v", res, err)
-	}
-	if _, err := f.ms.Edit(ctx, l.ref, func(m *media.Manifest) error { m.Meta = map[string]any{"title": "kept"}; return nil }); err != nil {
-		t.Fatalf("an edit after the upgrade: %v", err)
-	}
-
-	// A fresh pass over upgraded items writes nothing and keeps the projection.
-	_, etag, _ = f.ms.Get(ctx, l.ref)
-	if _, err := f.env.Pool().Exec(ctx, "DELETE FROM "+pgx.Identifier{f.env.ContentSchema(), "content_media_upgrades"}.Sanitize()); err != nil {
-		t.Fatal(err)
-	}
-	if again, err := f.jobs.Upgrade(ctx, 1000); err != nil || !again.Done || again.Kinds[0].Upgraded != 0 || again.Kinds[0].Visited != 2 {
-		t.Fatalf("rerun: %+v %v", again, err)
-	}
-	if _, now, _ := f.ms.Get(ctx, l.ref); now != etag {
-		t.Fatal("a rerun rewrote an upgraded manifest")
-	}
-	if got, _ := f.ms.PresetImages(ctx, "cover", l.ref); !reflect.DeepEqual(got[0], want) {
-		t.Fatalf("projection after a rerun: %+v", got)
-	}
-
-	// A reprocess publishes a generation; only then do the legacy names go.
-	if _, err := f.republish(f.ms, l.ref, "cover.png", "cover"); err != nil {
-		t.Fatal(err)
-	}
-	next := f.current(l.ref, "cover.png", "cover")
-	if got, _ := f.ms.PresetImages(ctx, "cover", l.ref); !reflect.DeepEqual(got[0], next) {
-		t.Fatalf("projection after the reprocess: %+v", got)
-	}
-	if _, err := f.ms.SyncPublic(ctx, l.ref); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range want.Renditions {
-		if f.exists(strings.TrimPrefix(r.URL, "https://"+mediaHost+layout.URLPrefix)) {
-			t.Fatalf("superseded legacy file %s kept", r.URL)
-		}
-	}
-}
-
-// A crash at the upgrade's manifest write leaves the item version 2 or
-// version 3 with a pending receipt; the next run converges either way.
-func TestUpgradeConvergesAfterCrash(t *testing.T) {
-	for _, land := range []bool{false, true} {
-		t.Run(map[bool]string{false: "not landed", true: "response lost"}[land], func(t *testing.T) {
-			f := newFixture(t)
-			ctx := t.Context()
-			f.visible(1)
-			l := f.legacyGallery(1, false)
-			crash := fmt.Errorf("%w: crashed at the manifest write", media.ErrUnavailable)
-			s := &lossyStore{Store: f.env.Store, key: l.item.ManifestKey(), land: land, err: crash}
-			jobs, err := media.NewJobs(media.JobsConfig{Store: s, Registry: f.reg, Locker: s3test.Locker(t, s), Journal: f.journal})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := jobs.Upgrade(ctx, 1000); !errors.Is(err, crash) {
-				t.Fatalf("crashed upgrade: %v", err)
-			}
-			_, _, err = f.ms.Get(ctx, l.ref)
-			if land != (err == nil) || !land && !errors.Is(err, media.ErrUpgradeRequired) {
-				t.Fatalf("after the crash: %v", err)
-			}
-			if st, err := f.jobs.Upgrade(ctx, 1000); err != nil || !st.Done {
-				t.Fatalf("rerun: %+v %v", st, err)
-			}
-			covers, err := f.ms.PresetImages(ctx, "cover", l.ref)
-			if err != nil || covers[0].From != "cover.png" || covers[0].Renditions[0].URL != f.reg.PublicURL(l.ref, "cover-230.webp") {
-				t.Fatalf("projection after the rerun: %+v %v", covers, err)
-			}
-			// Its blobs are owned by the manifest's incarnation: edits validate them.
-			if _, err := f.ms.Edit(ctx, l.ref, func(m *media.Manifest) error { m.Meta = map[string]any{"title": "x"}; return nil }); err != nil {
-				t.Fatalf("an edit after convergence: %v", err)
-			}
-			if status, _, _ := f.fetch(covers[0].Renditions[1].URL); status != http.StatusOK {
-				t.Fatalf("legacy cover after convergence: %d", status)
-			}
-		})
-	}
 }

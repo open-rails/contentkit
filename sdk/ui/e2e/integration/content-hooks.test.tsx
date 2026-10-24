@@ -231,10 +231,10 @@ describe("content hooks against the real ContentKit", () => {
     expect(url).toMatch(/^blob:/); // the file itself until the item's image is served
     await act(async () => void (await result.current.item.setCover(png())));
     await waitFor(() => expect(result.current.item.version?.cover?.image).toMatch(/^i-/), wait);
-    await act(() => result.current.item.remove());
+    await act(() => result.current.item.removeVersion());
     await waitFor(() => expect(result.current.all.items).toEqual([]), wait);
     await waitFor(() => expect(result.current.trash.items.map((p) => p.title)).toEqual([`Draft, renamed ${word}`]), wait);
-    await act(async () => void (await result.current.item.restore()));
+    await act(async () => void (await result.current.item.restoreVersion()));
     await waitFor(() => expect(result.current.all.items.map((p) => p.title)).toEqual([`Draft, renamed ${word}`]), wait);
     await waitFor(() => expect(result.current.trash.items).toEqual([]), wait);
     await waitFor(() => expect(result.current.item.content?.title).toBe(`Draft, renamed ${word}`), wait);

@@ -4099,48 +4099,6 @@
           "auth",
           "request"
         ]
-      },
-      "delete": {
-        "tags": [
-          "contents"
-        ],
-        "summary": "Deletes a hidden-version item or an empty item. For content with visible versions, delete each version instead; the parent is deleted with its last version. Purchased content remains protected from purge. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "No Content"
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "contents",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "conflict",
-          "forbidden",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:contents",
-          "auth",
-          "request"
-        ]
       }
     },
     "/v1/versions/{vid}": {
@@ -4288,7 +4246,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover. Publishing it on a published item is refused (not_ready) while its media is still processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publishing it on a published item is refused (not_ready) while its media is still processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -4355,7 +4313,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Soft-deletes a version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -20407,7 +20365,7 @@
     },
     "upgrade_required": {
       "status": 503,
-      "meaning": "The media item was stored before v0.68 and is served once the host's media upgrade (contentkit_media_upgrade) has converted it."
+      "meaning": "The media item was stored before v0.68 and must be migrated using ContentKit v0.119.1 before this release can read it."
     },
     "video_aspect_unsupported": {
       "status": 422,

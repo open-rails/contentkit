@@ -284,7 +284,7 @@ export class ResourceStore {
         this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.content.id);
         break;
       case "content.changed":
-        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards" || t.type === "daily-releases");
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards" || t.type === "daily-releases" || t.type === "history");
         this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.id);
         break;
       case "content.deleted":

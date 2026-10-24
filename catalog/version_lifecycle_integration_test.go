@@ -16,9 +16,6 @@ func TestVersionDeletionOwnsParentLifecycle(t *testing.T) {
 	id := f.create("staff", gallery("Edition lifecycle", "en", "ja"))
 	f.publish("staff", id, nil)
 	versions := f.read("staff", "main.test", id)[0].Versions
-	if err := f.s.Delete(f.ctx, f.as("staff"), []string{id}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("nonempty parent deletion: %v", err)
-	}
 	remove := func(version string) {
 		t.Helper()
 		if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: version}}); err != nil {
@@ -63,6 +60,76 @@ func TestVersionDeletionOwnsParentLifecycle(t *testing.T) {
 		t.Fatalf("version change bypassed moderation deletion: %v", err)
 	}
 	assertParentCause(t, f, id, StateDeleted, false)
+}
+
+// Hidden is a presentation choice: its sole edition owns deletion as well.
+func TestHiddenVersionDeletionAndRestoration(t *testing.T) {
+	for _, state := range []string{"draft", "published", "scheduled"} {
+		t.Run(state, func(t *testing.T) {
+			f := newFixture(t, nil)
+			id := f.create("staff", ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: "Hidden edition"}}})
+			if state == "published" {
+				f.publish("staff", id, nil)
+			} else if state == "scheduled" {
+				at := f.now().Add(time.Hour)
+				f.publish("staff", id, &at)
+			}
+			before := f.read("staff", "main.test", id)[0]
+			if len(before.Versions) != 1 || before.Versions[0].ID == "" {
+				t.Fatalf("hidden edition missing from editor read: %+v", before)
+			}
+			key := VersionKey{ContentID: id, VersionID: before.Versions[0].ID}
+			if err := f.s.DeleteVersions(f.ctx, f.as("bob"), []VersionKey{key}); !errors.Is(err, ErrForbidden) {
+				t.Fatalf("unauthorized hidden deletion: %v", err)
+			}
+			if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{key}); err != nil {
+				t.Fatal(err)
+			}
+			assertParentCause(t, f, id, StateDeleted, true)
+			deleted := f.read("staff", "main.test", id)[0]
+			if len(deleted.Versions) != 1 || deleted.Versions[0].State != StateDeleted {
+				t.Fatalf("deleted hidden edition cannot be restored by its id: %+v", deleted)
+			}
+			if err := f.s.Restore(f.ctx, f.as("staff"), []string{id}); !errors.Is(err, ErrConflict) {
+				t.Fatalf("hidden parent restored independently: %v", err)
+			}
+			if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: key.VersionID, VersionInput: VersionInput{State: StatePublished}}}); err != nil {
+				t.Fatal(err)
+			}
+			assertParentCause(t, f, id, before.State, false)
+			after := f.read("staff", "main.test", id)[0]
+			if len(after.Versions) != 1 || after.Versions[0].State != StatePublished || after.Live != before.Live || !sameTime(after.PublishAt, before.PublishAt) {
+				t.Fatalf("restoring hidden edition changed its publication: before=%+v after=%+v", before, after)
+			}
+			var events []string
+			for _, event := range readEventLog(t, f) {
+				if event.Type == EventVersionDeleted || event.Type == EventContentDeleted || event.Type == EventContentRestored {
+					events = append(events, event.Type)
+				}
+			}
+			if !slices.Equal(events, []string{EventVersionDeleted, EventContentDeleted, EventContentRestored}) {
+				t.Fatalf("hidden lifecycle events: %v", events)
+			}
+		})
+	}
+}
+
+func TestVersionDeletionBatchRollsBackParentAndEvents(t *testing.T) {
+	f := newFixture(t, nil)
+	id := f.create("staff", ContentInput{Kind: "blog", Text: map[string]Text{"en": {Title: "Atomic hidden deletion"}}})
+	version := f.read("staff", "main.test", id)[0].Versions[0].ID
+	before := len(readEventLog(t, f))
+	if err := f.s.DeleteVersions(f.ctx, f.as("staff"), []VersionKey{{ContentID: id, VersionID: version}, {ContentID: id, VersionID: "missing"}}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("batch with missing edition: %v", err)
+	}
+	assertParentCause(t, f, id, StateDraft, false)
+	if got := f.read("staff", "main.test", id)[0].Versions[0]; got.State == StateDeleted || len(readEventLog(t, f)) != before {
+		t.Fatal("failed batch left deletion or retained events behind")
+	}
+}
+
+func sameTime(a, b *time.Time) bool {
+	return a == nil && b == nil || a != nil && b != nil && a.Equal(*b)
 }
 
 func TestConcurrentLastVersionDeletionsConverge(t *testing.T) {
@@ -122,15 +189,23 @@ func TestEmptyParentRetentionAlsoPurgesPurchasedContent(t *testing.T) {
 }
 
 func TestImportedLastVersionDeletionFollowsParent(t *testing.T) {
-	f := newFixture(t, nil)
-	id := f.create("staff", gallery("Imported deletion", "en"))
-	version := f.read("staff", "main.test", id)[0].Versions[0].ID
-	if err := pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error {
-		return f.s.ImportDeletes(f.ctx, tx, nil, []string{version})
-	}); err != nil {
-		t.Fatal(err)
+	for _, kind := range []string{"gallery", "blog"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFixture(t, nil)
+			in := gallery("Imported deletion", "en")
+			if kind == "blog" {
+				in = ContentInput{Kind: kind, Text: map[string]Text{"en": {Title: "Imported deletion"}}}
+			}
+			id := f.create("staff", in)
+			version := f.read("staff", "main.test", id)[0].Versions[0].ID
+			if err := pgx.BeginFunc(f.ctx, f.pool, func(tx pgx.Tx) error {
+				return f.s.ImportDeletes(f.ctx, tx, nil, []string{version})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			assertParentCause(t, f, id, StateDeleted, true)
+		})
 	}
-	assertParentCause(t, f, id, StateDeleted, true)
 }
 
 func TestImportedParentDeletionSupersedesEmptyCause(t *testing.T) {

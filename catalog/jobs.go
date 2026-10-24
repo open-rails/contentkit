@@ -452,7 +452,8 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 
 // RiverJobs contributes content's periodic jobs to the engine's River
 // client: publication and audience-release facts (every 5m), event
-// log retention and purging deleted content (1h).
+// log retention and permanent purging of deleted content (4h). Restarts only
+// catch up overdue work; reads enforce release times independently of this job.
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-content", func(_ context.Context, cfg *river.Config) error {
 		if q, ok := cfg.Queues[Queue]; ok && q.MaxWorkers < 1 {
@@ -461,7 +462,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			cfg.Queues[Queue] = river.QueueConfig{MaxWorkers: 2}
 		}
 		periodic := func(id string, every time.Duration, args river.JobArgs) *river.PeriodicJob {
-			return river.NewPeriodicJob(river.PeriodicInterval(every), func() (river.JobArgs, *river.InsertOpts) {
+			return riverhelpers.NewPeriodicJob(cfg, every, func() (river.JobArgs, *river.InsertOpts) {
 				return args, &river.InsertOpts{Queue: Queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
 			}, &river.PeriodicJobOpts{ID: id, RunOnStart: true})
 		}
@@ -477,7 +478,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,
 			periodic("contentkit_content_publish_due", 5*time.Minute, publishDueArgs{}),
-			periodic("contentkit_content_purge_deleted", time.Hour, purgeDeletedArgs{}))
+			periodic("contentkit_content_purge_deleted", 4*time.Hour, purgeDeletedArgs{}))
 		return nil
 	}, nil, nil)
 }

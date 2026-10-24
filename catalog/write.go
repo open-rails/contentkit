@@ -898,48 +898,27 @@ func (s *Store) Unpublish(ctx context.Context, actor access.Actor, ids []string)
 	})
 }
 
-// Delete deletes a hidden-version kind or an already empty content item.
-// Visible-version kinds are deleted by deleting their versions instead.
-func (s *Store) Delete(ctx context.Context, actor access.Actor, ids []string) error {
-	return s.deleteContent(ctx, actor, ids, false)
-}
-
 // DeleteForModeration hides content without changing its editions. This
-// embedded operation has no public delete route. Existing purchaser access
-// and retention protections still apply.
+// embedded operation is separate from ordinary version deletion and has no
+// public delete route. Deleted content follows the configured retention.
 func (s *Store) DeleteForModeration(ctx context.Context, actor access.Actor, ids []string) error {
-	return s.deleteContent(ctx, actor, ids, true)
-}
-
-func (s *Store) deleteContent(ctx context.Context, actor access.Actor, ids []string, moderation bool) error {
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
 		fx := effects{expose: true}
 		for _, id := range ids {
 			o := got[id]
 			if o.state == StateDeleted {
-				if moderation {
-					changed, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_without_versions=false WHERE tenant_id=$1 AND id=$2 AND deleted_without_versions`, s.tenant, id)
-					if err != nil {
-						return fx, err
-					}
-					if changed.RowsAffected() > 0 {
-						fx.events = append(fx.events, Event{Type: EventContentDeleted, Kind: o.kind, ContentID: id})
-						continue
-					}
+				changed, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_without_versions=false WHERE tenant_id=$1 AND id=$2 AND deleted_without_versions`, s.tenant, id)
+				if err != nil {
+					return fx, err
+				}
+				if changed.RowsAffected() > 0 {
+					fx.events = append(fx.events, Event{Type: EventContentDeleted, Kind: o.kind, ContentID: id})
+					continue
 				}
 				return fx, ErrNotFound
 			}
-			auto := !moderation && !s.cfg.Kinds[o.kind].Versions.Hidden
-			if auto {
-				var nonempty bool
-				if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.versions+` WHERE tenant_id=$1 AND content_id=$2 AND state<>'deleted')`, s.tenant, id).Scan(&nonempty); err != nil {
-					return fx, err
-				}
-				if nonempty {
-					return fx, errors.Join(ErrConflict, errors.New("delete the content's versions instead"))
-				}
-			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'deleted', deleted_at = clock_timestamp(),deleted_without_versions=$3 WHERE tenant_id = $1 AND id = $2`, s.tenant, id, auto); err != nil {
+
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'deleted', deleted_at = clock_timestamp(),deleted_without_versions=false WHERE tenant_id = $1 AND id = $2`, s.tenant, id); err != nil {
 				return fx, err
 			}
 			fx.events = append(fx.events, Event{Type: EventContentDeleted, Kind: o.kind, ContentID: id})
@@ -1111,8 +1090,8 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 					return fx, ErrNotFound
 				}
 			}
-			if k.Versions.Hidden && (p.VersionID == "" || !coverOnly(p.VersionInput)) {
-				return fx, invalid("kind %s has one hidden version: only its cover is edited", o.kind)
+			if k.Versions.Hidden && (p.VersionID == "" || !hiddenVersionEdit(p.VersionInput)) {
+				return fx, invalid("kind %s has one hidden version: only its cover or restoration is edited", o.kind)
 			}
 			if p.Fork != nil {
 				if err := s.checkFork(ctx, tx, p); err != nil {
@@ -1303,8 +1282,12 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	return id, nil
 }
 
-// coverOnly reports an edit of nothing but the cover.
-func coverOnly(v VersionInput) bool {
+// hiddenVersionEdit permits a cover edit or restoring the implicit edition.
+// Its languages, publication schedule and other settings follow the parent.
+func hiddenVersionEdit(v VersionInput) bool {
+	if v.State == StatePublished {
+		v.State = ""
+	}
 	v.Cover = nil
 	return reflect.DeepEqual(v, VersionInput{})
 }
@@ -1450,9 +1433,6 @@ func (s *Store) DeleteVersions(ctx context.Context, actor access.Actor, keys []V
 		fx := effects{expose: true}
 		for _, k := range keys {
 			o := got[k.ContentID]
-			if s.cfg.Kinds[o.kind].Versions.Hidden {
-				return fx, invalid("kind %s has one hidden version", o.kind)
-			}
 			tag, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET state = 'deleted', deleted_at = clock_timestamp(), updated_at = clock_timestamp(), revision = revision + 1
  WHERE tenant_id = $1 AND content_id = $2 AND id = $3 AND state <> 'deleted'`, s.tenant, k.ContentID, k.VersionID)
 			if err != nil {

@@ -2,7 +2,6 @@ package media_test
 
 import (
 	"net/http"
-	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -13,7 +12,7 @@ import (
 
 // A Stable preset keeps its current image at the logical names too, the
 // URL built from the item's id: the first image lands there, a
-// replacement takes its place once rendered (purged), and a removal or the
+// replacement takes its place once rendered , and a removal or the
 // item's erasure leaves nothing, where the gateway serves the default.
 func TestStablePresetKeepsTheCurrentImageAtItsLogicalNames(t *testing.T) {
 	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
@@ -44,9 +43,6 @@ func TestStablePresetKeepsTheCurrentImageAtItsLogicalNames(t *testing.T) {
 	shows(string(png(1)))
 	if _, gen, _ := f.fetch(f.reg.PublicURL(ref, f.publicName(ref, "avatar-64.webp"))); gen != string(png(1)) {
 		t.Fatalf("the current generation %q", gen)
-	}
-	if purged := f.purges(); !slices.Contains(purged, stable) {
-		t.Fatalf("the stable name was not purged: %v", purged)
 	}
 
 	f.put(ref, "avatar", "image/png", png(2))

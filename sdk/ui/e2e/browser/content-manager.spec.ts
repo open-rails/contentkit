@@ -73,13 +73,18 @@ for (const mode of ["alone", "router"] as const) {
       await page.goto(admin("/admin/posts", editor, { mode, theme, params: { q: tag } }));
       const row = flow.locator("[data-ckui=content-row]", { hasText: `Launch notes ${tag}` });
       await expect(row).toHaveAttribute("data-status", "published", { timeout: 30_000 });
+      const removed = page.waitForRequest((r) => r.method() === "DELETE" && new URL(r.url()).pathname.endsWith(`/contents/${id}/versions/${draft!.versions[0]!.id}`));
       await row.getByRole("button", { name: /^More actions for / }).click();
       await page.getByRole("menuitem", { name: "Delete" }).click();
       await page.getByRole("alertdialog").getByRole("button", { name: "Delete" }).click();
+      await removed;
       await expect(row).toHaveCount(0);
+      expect((await ck.contents.get(id)).state).toBe("deleted");
       await flow.getByRole("button", { name: "Deleted" }).click();
       await expect(page).toHaveURL(/deleted=1/);
+      const restored = page.waitForRequest((r) => r.method() === "PATCH" && new URL(r.url()).pathname.endsWith(`/contents/${id}/versions/${draft!.versions[0]!.id}`));
       await row.getByRole("button", { name: "Restore" }).click();
+      expect((await restored).postDataJSON()).toEqual({ state: "published" });
       await expect(row).toHaveCount(0);
       await flow.getByRole("button", { name: "Items", exact: true }).click();
       await expect(row).toHaveAttribute("data-status", "published");

@@ -45,7 +45,7 @@ ContentKit names its staff permissions, always the full
 
 | Constant | Permission | Holders may |
 |---|---|---|
-| `access.ContentWrite` | `root:content:write` | write, publish, delete and restore any content item and its images |
+| `access.ContentWrite` | `root:content:write` | write and publish content, delete and restore its versions, and manage its images |
 | `access.ContentViewRestricted` | `root:content:view-restricted` | see every content item in any state, listing, site or filter |
 | `access.PollsWrite` | `root:polls:write` | write and delete polls, options and images; see inactive ones |
 | `access.CommentsModerate` | `root:comments:moderate` | edit, delete and restore anyone's comments; list every comment |
@@ -111,6 +111,17 @@ A host mounting a module alone passes the same Auth: `content.Options.Auth`
 Hosts use the routes and `ck.Client()` (the same surface in process).
 Search, typeahead, signals and discovery run inside the engine; their routes
 land with #122.
+
+Ordinary content deletion always addresses versions: `Catalog.DeleteVersions` in
+embedded Go, `Client.DeleteContentVersion` remotely, or
+`DELETE /v1/contents/{id}/versions/{vid}`. Hidden single-version kinds expose their
+sole version in `Content.Versions` and use the same operation. Deleting the final
+undeleted version soft-deletes its parent in the same transaction. Restoring an
+edition with `PutVersions` / `PATCH .../versions/{vid}` and `state: "published"`
+restores only a parent automatically deleted for having no versions, preserving
+its earlier draft or publication schedule. Moderation and owner deletion remain
+separate embedded lifecycle operations and cannot be bypassed this way. There
+is no ordinary parent-content DELETE route or Go method.
 
 ## Content ids
 
@@ -889,7 +900,7 @@ var Video = media.Kind{Name: "video", KeepOriginals: true,
 reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
 	Kinds:   []media.Kind{Gallery, avatar.User()},
 	Avatars: media.Avatars{Kind: "user", Preset: "avatar"}, // people's avatars (Authors)
-	Hooks:   media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
+	Hooks:   media.Hooks{Resolver: resolver, CanUpload: authorizer, ItemReady: ready}})
 ```
 
 - **Site images.** A kind no content or entity kind owns (nor `Avatars`, nor
@@ -1045,7 +1056,7 @@ code calls `Uploads.Ingest`, from a stream (`Body`) or the same copy (`From`).
 | `edit {path, edit}` | Crops and rotates an image upload; nil clears. |
 | `move {path, index}` | Reorders an upload; its outputs follow. |
 | `rename {path, to}` | Renames an upload within its Upload, and its outputs. |
-| `remove {path, takedown?}` | Removes an upload and its outputs (cancelling its processing). With `takedown` it also removes the frames grabbed from the upload and the zips that bundled it, then deletes at once the blobs the commit dropped, the removed uploads' editor views and staged objects, and the item's unused public files (purged). With an exempt grant (`UploadGrant.Exempt`, staff) it instead deletes every private blob the item no longer references, earlier versions and all editor views included, which costs re-rendering them; sent again on the path already gone, it runs that sweep again. If a takedown's deletes fail it says so: staff complete it with the exempt takedown, otherwise the leftovers go at the grace sweep. For anyone else a takedown of a path already gone is `not_found`. |
+| `remove {path, takedown?}` | Removes an upload and its outputs (cancelling its processing). With `takedown` it also removes the frames grabbed from the upload and the zips that bundled it, then deletes at once the blobs the commit dropped, the removed uploads' editor views and staged objects, and the item's unused public files. With an exempt grant (`UploadGrant.Exempt`, staff) it instead deletes every private blob the item no longer references, earlier versions and all editor views included, which costs re-rendering them; sent again on the path already gone, it runs that sweep again. If a takedown's deletes fail it says so: staff complete it with the exempt takedown, otherwise the leftovers go at the grace sweep. For anyone else a takedown of a path already gone is `not_found`. |
 | `attach {path, index?, meta?}` | Makes an unattached upload part of the item. |
 | `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. Blobs copied from another item are reserved like uploads (rate limits, pending quota) before they move. |
 | `frame {path, t \| auto}` | Fills an upload from a frame of its `Frames` video; a new video grabs again. |
@@ -1122,16 +1133,12 @@ A republish keeps the current files published until their successor is
 ready, and cleanup retires a generation only after the projection names the
 next one. Browsers keep using a read's `public` or `usePublicImage`.
 
-### Public files, exposure and purge
+### Public files and exposure
 
 - Call `jobs.ExposeTx(ctx, tx, ref)` whenever anonymous visibility changes
-  (publish, unpublish, hold, soft delete, restore). Hiding deletes and purges
+  (publish, unpublish, hold, soft delete, restore). Hiding deletes
   `public/` at once; unhiding renders the public presets again from their
   kept sources. Paid items keep public covers; what they gate is `private/`.
-- `Hooks.PurgePublic(ctx, urls)` hears every overwrite, deletion and first
-  write of a public name (the CDN may hold the default). The worker's writes
-  reach it through the host's media queue. After a change, the SDK refetches
-  with `cache: "reload"`.
 - Render the defaults from the deploy step:
   `image.PublishDefaults(ctx, store, reg)` (it needs libvips) writes each
   `Public.Default` from its kind's `Defaults` to
@@ -1214,48 +1221,30 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
 - Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
   their referenced blobs; then `Expose` the restored items.
 
-## Upgrading from v0.67
+## Deploying the media job simplification
 
-Since v0.68 ContentKit reads no item stored by v0.67 or earlier until the
-media upgrade has converted it; v0.68.0 itself has no upgrade, so skip it.
-Reads answer 503 `upgrade_required` (`media.ErrUpgradeRequired`
-in Go), commits are refused, and cleanup, recovery and workers leave such an
-item untouched.
+Stop old enqueueing hosts and media workers before the final queue check.
+No nonterminal `contentkit_media_purge` or `contentkit_media_upgrade` job may
+remain when hosts without those handlers start. Finish required work with the
+previous release. A CDN relay with no configured callback, or an upgrade for
+already-finished current namespaces, can be cancelled explicitly while the
+old producers are stopped; retain its River history. Check current configured
+kinds and routed namespaces, rather than treating historical rows for retired
+namespaces as current migration failures.
 
-Code changes:
+## Migrating pre-v0.68 media
 
-- `media.JobsConfig.Journal` is required: `media.NewPGJournal(pool, contentSchema, queue)`.
-  `UploadOptions.Queue` is gone; the journal supplies the queue.
-- `worker.Config.ContentSchema` is required.
-- `POST /media/upload/commit` requires `operation_id` (a canonical UUID,
-  reused unchanged on retry); `Uploads.Commit` takes it.
-- `GatewayConfig(reg, defaults)` takes the defaults `image.PublishDefaults` returned.
-- `Registry.SrcSet` and `media.SrcSet` are removed: build public URLs with
-  the lookup ("Public image URLs"), never from a preset's template.
-- River jobs `contentkit_media_recover` (every minute) and
-  `contentkit_media_upgrade`.
+Media stored by v0.67 or earlier must be migrated using ContentKit v0.119.1
+before deploying this release. Stop the old worker, run that release's
+`Jobs.Upgrade` until `UpgradeStatus.Done` is true for every configured kind,
+and resolve any current-namespace failures. Finish pending commit recovery
+before moving the host, gateway and workers forward together. A finished
+folder scan or completed River job alone does not establish migration success.
 
-Order:
-
-1. Stop the v0.67 media worker.
-2. Deploy the host: its migrations run, and `contentkit_media_upgrade`
-   starts with its River client and queues batches until done. It converts
-   each version 2 manifest in place under the commit journal: private blobs
-   keep their names and become the item's allocations, and the
-   template-named public files become their uploads' current publications,
-   so nothing is copied or rendered again and existing URLs keep working
-   until a later reprocess publishes a generation. It also projects every
-   item's publications. It is idempotent: a crash leaves an item either
-   unconverted or converted and recovered, and a rerun converges. A one-off
-   command can run `jobs.Upgrade(ctx, limit)` in a loop instead.
-3. Wait until `jobs.UpgradeStatus(ctx)` reports `Done` (also in
-   `content_media_upgrades`). Items it cannot convert are listed in
-   `Failures` (`content_media_upgrade_failures`) with the reason and left as
-   they were (`upgrade_required`) while the pass goes on; only an unreachable
-   store or database fails the job. Failures are retried on host start and
-   daily, so a fixed release retries them when deployed.
-4. Deploy the media gateway and media worker images at the same version.
-   The gateway serves both the legacy and the current names.
+This release has no automatic legacy conversion job or conversion API. It
+refuses version 2 manifests with `media.ErrUpgradeRequired` (HTTP 503
+`upgrade_required`) and leaves their objects untouched. Historical upgrade
+progress and failure records remain in the database; they are not deleted.
 
 ## Upgrading from v0.69
 
@@ -1360,12 +1349,13 @@ the host's periodic jobs. The worker migrates its schema itself.
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
   key reads only `*/private/*`, `*/download/*` and `*/public/*` of each; only the hosts write.
-- **CDN**: may cache `public/` in a shared cache: names are fixed and
-  overwritten in place (`public, max-age=300, stale-while-revalidate=86400`,
-  revalidated by ETag), so wire `Hooks.PurgePublic` to purge every URL it is
-  given. Never cache `private/` in a shared cache: the token is not part of a
-  cache key the CDN checks, so a cached object would be served without one.
-  Private blobs are hash-named and `private, max-age=31536000, immutable`.
+- **CDN**: may cache `public/` in a shared cache. Current publication URLs
+  contain a generation; optional stable aliases follow the gateway's
+  `public, max-age=300, stale-while-revalidate=86400` policy and ETag
+  revalidation. ContentKit does not enqueue CDN invalidation jobs. Never
+  cache `private/` in a shared cache: the token is not part of a cache key
+  the CDN checks, so a cached object would be served without one. Private
+  blobs are hash-named and `private, max-age=31536000, immutable`.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided
