@@ -1,6 +1,6 @@
 # Media jobs
 
-Target design for ContentKit #242. Implementation and qualification are in progress.
+Media job model for ContentKit #242. Deployment requires the coordinated adoption described below.
 
 Media processing uses four worker job kinds: placement, image, audio and video. Host integration uses five job kinds: known-deadline cleanup, folder deletion, public exposure, readiness and interrupted-commit recovery. This reduces the current thirteen kinds to nine.
 
