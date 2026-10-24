@@ -378,7 +378,7 @@ func newSite(t *testing.T, o siteOptions) *site {
 func (s *site) placements() map[string]int {
 	s.t.Helper()
 	rows, err := s.pool.Query(s.ctx, `SELECT args->'ref'->>'content_kind', count(*) FROM `+pgx.Identifier{s.workers, "river_job"}.Sanitize()+`
-WHERE kind = 'contentkit_media_place' GROUP BY 1`)
+WHERE kind = 'contentkit_media_ingest' GROUP BY 1`)
 	if err != nil {
 		s.t.Fatal(err)
 	}

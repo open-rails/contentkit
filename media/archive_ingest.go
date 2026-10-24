@@ -300,6 +300,15 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 			targetPath := strings.TrimSuffix(destination, "{name}") + stem + strings.ToLower(path.Ext(page.name))
 			meta := withPageSource(nil, stem, page.entry.Name)
 			pm, _ := pageMetadata(meta)
+			if _, from, to, ok := CanonicalPageName(page.name); ok {
+				pm["span"] = map[string]int{"from": from, "to": to}
+				delete(pm, "flags")
+			}
+			if stem != CleanName(strings.TrimSuffix(page.name, path.Ext(page.name))) {
+				flags, _ := pm["flags"].([]string)
+				pm["flags"] = append(flags, "duplicate_source_name")
+			}
+
 			pm["archive_sha256"], pm["source_entry"], pm["source_sha256"] = digest, page.entry.Name, hex.EncodeToString(page.sum)
 			pm["source_index"], pm["upload_index"] = n+1, page.uploadIndex
 			if page.name != path.Base(page.entry.Name) {

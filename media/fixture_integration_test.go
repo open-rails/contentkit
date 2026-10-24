@@ -222,7 +222,7 @@ SELECT kind, args FROM taken ORDER BY id`)
 		if err := json.Unmarshal(args, &job); err != nil {
 			q.t.Fatal(err)
 		}
-		job.Place = kind == (workqueue.PlaceArgs{}).Kind()
+		job.Place = kind == (workqueue.IngestArgs{}).Kind()
 		out = append(out, job)
 	}
 	if err := rows.Err(); err != nil {

@@ -6,6 +6,8 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
+const digestMeta = "sha256"
+
 func pageDigest(f media.File) string {
 	if sum, ok := layout.BlobDigest(f.Blob); ok {
 		return hex.EncodeToString(sum)

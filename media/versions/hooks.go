@@ -248,7 +248,7 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.Kind
 }
 
 // itemReady records a settled version's facts and moves its media on: an
-// archive import, else publication.
+// ready-file metadata publication.
 func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
 	k, err := s.reg.Kind(ref.ContentKind)
 	if err != nil || !k.Versions || ref.Version() == "" {
@@ -269,14 +269,11 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
 		return err
 	}
-	p := k.Publish
-	switch {
-	case p == nil:
+	if k.Publish == nil {
 		return nil
-	case p.Import != "" && len(imports(k, m)) > 0:
-		return s.enqueueTx(ctx, tx, importArgs{Content: v.Content, Version: v.Version})
 	}
 	return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
+
 }
 
 // itemProgressed records the facts of a version still processing once it

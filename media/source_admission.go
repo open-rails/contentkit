@@ -2,6 +2,7 @@ package media
 
 import (
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -36,8 +37,18 @@ func (o *opRun) admitSource(f *File, previous int) error {
 		return nil
 	}
 	if previous >= 0 && o.m.Files[previous].Source() == f.Source() && o.m.Files[previous].Admission != nil {
-		// Stored ownership is not reassigned by a metadata edit or another editor.
-		f.Admission = o.m.Files[previous].Admission
+		prior := o.m.Files[previous].Admission
+		f.Admission = prior
+		if o.trusted || o.admission == nil {
+			return nil
+		}
+		fresh, err := o.admission()
+		if err != nil {
+			return err
+		}
+		if fresh.Owner == prior.Owner {
+			f.Admission = fresh
+		}
 		return nil
 	}
 	if o.admission == nil {
@@ -57,6 +68,9 @@ func (o *opRun) admitSource(f *File, previous int) error {
 func validateArchiveDestination(k *Kind, source Upload) error {
 	if source.ArchiveTo == "" {
 		return nil
+	}
+	if !slices.Equal(source.Types, []string{"application/zip"}) {
+		return errors.New("media: archive_to source accepts only application/zip")
 	}
 	target := k.uploadIndex(source.ArchiveTo)
 	if !strings.HasSuffix(source.ArchiveTo, "{name}") || target < 0 {

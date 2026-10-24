@@ -362,6 +362,13 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if err != nil {
 			return err
 		}
+		ingest, err := workqueue.New(e.pool, reg, m.WorkerSchema)
+		if err != nil {
+			return err
+		}
+		if err = ingest.AdoptVersionImports(ctx, e.riverSchema, e.schema, e.cfg.Tenant); err != nil {
+			return fmt.Errorf("contentkit: ZIP import handoff: %w", err)
+		}
 		ttl, window := m.Delivery.TTL, m.Delivery.Window
 		if ttl <= 0 {
 			ttl = time.Hour

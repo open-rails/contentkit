@@ -44,7 +44,7 @@ func TestArchiveDestinationIsConfiguredWithoutCatalog(t *testing.T) {
 
 func admissionTestKind(t *testing.T) *Kind {
 	t.Helper()
-	reg, err := NewRegistry(Config{Namespace: "site", Kinds: []Kind{{Name: "post", Uploads: []Upload{{Path: "zip/{name}", ArchiveTo: "body/{name}", Types: []string{"application/zip"}, MaxBytes: 1 << 20}, {Path: "body/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true}}}}})
+	reg, err := NewRegistry(Config{Namespace: "site", Kinds: []Kind{{Name: "post", Uploads: []Upload{{Path: "zip/{name}", ArchiveTo: "body/{name}", Types: []string{"application/zip"}, MaxBytes: 1 << 20}, {Path: "body/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Named: true, Max: 100}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,7 +28,7 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 	workErr := err
 	var snooze *river.JobSnoozeError
 	checkpoint := job.Kind == (workqueue.VideoArgs{}).Kind() && errors.As(err, &snooze) && snooze.Duration == 0 && ctx.Err() == nil
-	if err != nil && !checkpoint || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
+	if err != nil && !checkpoint || job.Kind != (workqueue.IngestArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
 	}
 	// Output can become visible before this final manifest read. An outage

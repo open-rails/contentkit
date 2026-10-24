@@ -1105,7 +1105,7 @@ func TestWorkerOutageSnoozesAreCapped(t *testing.T) {
 	proxy.Down()
 	h.upload(t, h.ref(t, "gallery"), "originals/001.png", "image/png", pngImage(t, 300, 450, 72))
 	eventually(t, "an attempt spent after the snooze cap", time.Minute, func() bool {
-		_, _, errs, snoozes := h.job(t, workqueue.PlaceArgs{}.Kind())
+		_, _, errs, snoozes := h.job(t, workqueue.IngestArgs{}.Kind())
 		return errs > 0 && snoozes >= 2
 	})
 }
