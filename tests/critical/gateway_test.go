@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -189,8 +190,24 @@ func TestGatewayCapabilities(t *testing.T) {
 		_, err = io.Copy(io.Discard, downloaded.Body)
 		downloaded.Body.Close()
 		must(t, err)
-		if downloaded.StatusCode != 200 || !strings.HasPrefix(downloaded.Header.Get("Content-Disposition"), "attachment;") || downloaded.Header.Get("X-Content-Type-Options") != "nosniff" {
+		if downloaded.StatusCode != 200 || downloaded.Header.Get("Content-Disposition") != "attachment" || downloaded.Header.Get("X-Content-Type-Options") != "nosniff" {
 			t.Fatalf("download policy: %d %v", downloaded.StatusCode, downloaded.Header)
+		}
+		pngBytes := imageBytes(t)
+		pngSum := sha256.Sum256(pngBytes)
+		pngKey := folder + "download/" + layout.BlobName(pngSum[:], uuid.NewString())
+		_, err = m.management.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: &m.bucket, Key: &pngKey, Body: bytes.NewReader(pngBytes), ContentType: aws.String("image/png")})
+		must(t, err)
+		address = m.gateway.URL + "/v1/" + pngKey + "?t=" + url.QueryEscape(ring.Sign(token.DownloadScope(pngKey), time.Now().Add(time.Minute))) + "&dl=report.png"
+		downloaded, err = http.Get(address)
+		must(t, err)
+		got, err := io.ReadAll(downloaded.Body)
+		downloaded.Body.Close()
+		must(t, err)
+		disposition, parameters, err := mime.ParseMediaType(downloaded.Header.Get("Content-Disposition"))
+		must(t, err)
+		if downloaded.StatusCode != 200 || disposition != "attachment" || parameters["filename"] != "report.png" || !bytes.Equal(got, pngBytes) {
+			t.Fatalf("typed download did not preserve allowed filename and bytes: %d %v", downloaded.StatusCode, downloaded.Header)
 		}
 		res, _ := request(t, m.gateway.URL, "GET", first, grant(first), "", map[string]string{"Origin": "https://critical.invalid"})
 		if res.Header.Get("Access-Control-Allow-Origin") != "https://critical.invalid" || res.Header.Get("Access-Control-Allow-Credentials") != "true" || !strings.HasPrefix(res.Header.Get("Cache-Control"), "private,") {

@@ -5,6 +5,7 @@
 contract: every reviewed scenario and operation binding must execute and pass.
 """
 import argparse
+import csv
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,22 @@ import sys
 HERE = Path(__file__).resolve().parent
 
 
+def check_inventory(ledger):
+    with (HERE / "http_matrix.tsv").open() as source:
+        rows = list(csv.DictReader(source, delimiter="\t"))
+    planned = {(row["method"].lower(), row["path"]) for row in rows}
+    api = json.loads((HERE.parents[1] / "api" / "openapi.json").read_text())
+    declared = {(method, path) for path, operations in api["paths"].items() for method in operations}
+    if planned != declared:
+        raise ValueError(f"HTTP inventory drift: unplanned={declared - planned}, retired={planned - declared}")
+    expected = {row["id"]: (row["method"], row["path"]) for row in rows}
+    actual = {row["id"]: (row["method"], row["path"]) for row in ledger.get("operation_contracts", [])}
+    if actual != expected or len(actual) != len(ledger.get("operation_contracts", [])):
+        raise ValueError("HTTP ledger omits, duplicates or changes a selected operation")
+
+
 def qualified_cases(ledger):
+    check_inventory(ledger)
     pending = [row["id"] for row in ledger["required"] if row["status"] != "verified"]
     if pending:
         raise ValueError("critical behavior review is incomplete: " + ", ".join(pending))
@@ -31,6 +47,13 @@ def qualified_cases(ledger):
     for row in operations:
         if row.get("status") != "verified" or not row.get("cases"):
             raise ValueError(f"unqualified public operation contract: {row.get('id')}")
+        expected.update(row["cases"])
+    bindings = ledger.get("binding_contracts", [])
+    if not bindings:
+        raise ValueError("selected public Go and TypeScript bindings have not been reviewed")
+    for row in bindings:
+        if row.get("status") != "verified" or not row.get("cases") or not row.get("evidence"):
+            raise ValueError(f"unqualified public binding: {row.get('id')}")
         expected.update(row["cases"])
     return expected
 

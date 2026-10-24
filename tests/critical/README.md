@@ -47,7 +47,9 @@ python3 tests/critical/run.py --focus '^TestMultipartUpload$'
 This prints `LOCAL PARTIAL EXECUTION; NOT QUALIFICATION`. It rejects selected
 skips and zero completed tests; focused execution is prohibited in CI.
 `results/go.jsonl` records every Go test action. Full qualification also checks
-every exact reviewed scenario/operation case name actually passed.
+every exact reviewed scenario, operation and public Go/TS binding case name actually passed.
+The HTTP ledger is also checked against the current declared route inventory,
+so missing, duplicate and changed operation records cannot qualify.
 
 Additional required owned-fixture settings:
 
