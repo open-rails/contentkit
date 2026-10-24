@@ -274,13 +274,40 @@ func TestDiscoveryVisibility(t *testing.T) {
 	t.Run("CK-J07-S07_public_entity_views_omit_internal_identity_and_associations", func(t *testing.T) {
 		_, err := public.GetEntity(t.Context(), string(internal.ID), ck.GetEntityQuery{})
 		requireError(t, err, 404, "not_found")
-		if internal.Code == "" {
-			t.Fatal("internal entity code positive fixture missing")
-		}
-		_, err = public.GetCode(t.Context(), internal.Code, ck.GetCodeQuery{})
-		requireError(t, err, 404, "not_found")
 		managed, err := admin.GetManageEntity(t.Context(), string(internal.ID), ck.GetManageEntityQuery{})
 		must(t, err)
+		if managed.Code == "" {
+			t.Fatal("internal entity code positive fixture missing")
+		}
+		for name, client := range map[string]*ck.Client{"anonymous": public, "person": viewer, "host": admin} {
+			t.Run(name+"_internal_code", func(t *testing.T) {
+				leaked, err := client.GetCode(t.Context(), managed.Code, ck.GetCodeQuery{})
+				if err == nil {
+					wire, _ := json.Marshal(leaked)
+					t.Fatalf("internal entity code disclosed public identity/path: %s", wire)
+				}
+				requireError(t, err, 404, "not_found")
+			})
+		}
+		publicEntity, err := admin.GetManageEntity(t.Context(), string(required.ID), ck.GetManageEntityQuery{})
+		must(t, err)
+		for name, client := range map[string]*ck.Client{"anonymous": public, "person": viewer, "host": admin} {
+			t.Run(name+"_public_code", func(t *testing.T) {
+				resolved, err := client.GetCode(t.Context(), publicEntity.Code, ck.GetCodeQuery{})
+				must(t, err)
+				if resolved.ContentID != string(required.ID) {
+					t.Fatalf("public entity code changed target: %+v", resolved)
+				}
+			})
+		}
+		_, ownerToken, owned := ownedEntity(t, w, a, "Code visibility owner")
+		ownedDetail, err := a.client(ownerToken).GetEntity(t.Context(), string(owned.ID), ck.GetEntityQuery{})
+		must(t, err)
+		ownerLink, err := a.client(ownerToken).GetCode(t.Context(), ownedDetail.Code, ck.GetCodeQuery{})
+		must(t, err)
+		if ownerLink.ContentID != string(owned.ID) {
+			t.Fatal("owned public entity code changed target")
+		}
 		encoded, err := json.Marshal(managed)
 		must(t, err)
 		if !strings.Contains(string(encoded), "HiddenClassificationNeedle") {
