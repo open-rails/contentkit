@@ -110,6 +110,14 @@ jobs:
         name: sdk-ui-e2e-results
         path: sdk/ui/test-results
         retention-days: 7
+    - name: retain ZIP upload journey screenshots
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: sdk-ui-zip-journey
+        path: sdk/ui/test-results/**/zip-*.png
+        if-no-files-found: ignore
+        retention-days: 7
     - name: tear down leftover stacks
       if: always()
       run: |

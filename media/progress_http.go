@@ -150,7 +150,15 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 		if _, err = fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", id, name, body); err != nil {
 			return err
 		}
-		return rc.Flush()
+		if err := rc.Flush(); err != nil {
+			return err
+		}
+		// Bound writes, not idle observation. A lingering deadline can terminate
+		// HTTP/2 at the heartbeat boundary, even with no blocked writer.
+		if err := rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return err
+		}
+		return nil
 	}
 	query.After = page.NextCursor
 	if err := write(name, query.After, initial); err != nil {
@@ -160,19 +168,33 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 	defer heartbeat.Stop()
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
+	beat := func() error {
+		if err := authorize(ctx); err != nil {
+			_, failure := progressFailure(err)
+			_ = write("error", query.After, failure)
+			return err
+		}
+		return write("heartbeat", query.After, struct{}{})
+	}
 	more := page.HasMore
 	for {
+		// Catch-up pages need not wait for the poll timer, but still service
+		// cancellation and heartbeat while unrelated retained facts are read.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-heartbeat.C:
+			if err := beat(); err != nil {
+				return err
+			}
+		default:
+		}
 		if !more {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-heartbeat.C:
-				if err := authorize(ctx); err != nil {
-					_, failure := progressFailure(err)
-					_ = write("error", query.After, failure)
-					return err
-				}
-				if err := write("heartbeat", query.After, struct{}{}); err != nil {
+				if err := beat(); err != nil {
 					return err
 				}
 				continue

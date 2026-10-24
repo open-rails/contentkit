@@ -111,3 +111,28 @@ func TestExpiredFaultPreservesOriginalGrantScope(t *testing.T) {
 		})
 	}
 }
+
+func TestSourceWriteCheckpointDoesNotHoldDerivedImages(t *testing.T) {
+	f := fixtureFaults()
+	_, err := f.add([]rule{{Item: faultVersion, Fault: "hold", From: "worker", Method: "PUT", Path: "/private/", ContentType: "image/png", Skip: 8}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(contentType string) *http.Request {
+		r := httptest.NewRequest(http.MethodPut, "/bucket/e2e/video/"+faultVersion+"/private/sha256-"+strings.Repeat("a", 64), nil)
+		r.Header.Set("User-Agent", "aws-sdk-go-v2")
+		r.Header.Set("Content-Type", contentType)
+		return r
+	}
+	for i := 0; i < 8; i++ {
+		if f.match(request("image/png"), 0, "hold") != nil {
+			t.Fatal("held source before committed batch")
+		}
+	}
+	if f.match(request("image/webp"), 0, "hold") != nil {
+		t.Fatal("held completed thumbnail")
+	}
+	if f.match(request("image/png"), 0, "hold") == nil {
+		t.Fatal("ninth source was not held")
+	}
+}

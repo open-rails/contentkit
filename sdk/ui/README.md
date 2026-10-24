@@ -1252,3 +1252,38 @@ fetch, headers, token and credentials. It delivers `snapshot`, `progress`,
 `resync` and `heartbeat` events; the latter carries only a cursor. It makes one
 connection, leaving reconnect ownership with its caller. Upload `waitFor` and
 `editorView` also use these updates, with their existing timeout and retry limits.
+
+### ZIP upload at an admin entrypoint
+
+`ContentUpload` is the same model-driven upload form used by the content
+manager's bulk uploader. A host supplies its content kind, labels, defaults and
+navigation; ContentKit creates drafts and chooses upload paths from that kind's
+rules. It does not publish on completion.
+
+```tsx
+<ContentUpload
+  client={contentkit}
+  kind={galleryKind}
+  labels={labels}
+  defaults={{ language: currentLanguage, format: preferredFormat }}
+  onOpen={(draft) => navigate(galleryEditorURL(draft))}
+/>
+```
+
+The transfer stage shows actual callback bytes, such as `5 MB / 30 MB`.
+After durable commit, retained processing snapshots supply ZIP extraction and
+separately labelled rendition counts; unrelated presets are never summed into
+an overall image count. Completed thumbnail derivatives appear while remaining
+sources show placeholders. A bounded preview requests URLs for at most twelve
+sources.
+
+`MediaProcessingPanel` can also be mounted for an existing content/version ref:
+
+```tsx
+<MediaProcessingPanel client={contentkit} item={versionRef} />
+```
+
+This panel and the reader/gallery editor recover their counts and thumbnails
+from the server after reopening. Browser storage is used only to resume an
+unfinished transfer or retry its exact commit, not as processing state. The
+host's regular editor retains the explicit Publish action.

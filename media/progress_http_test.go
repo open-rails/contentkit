@@ -189,3 +189,71 @@ func TestProgressHTTPRechecksCredentialAfterReadingEvents(t *testing.T) {
 		t.Fatalf("expired credential received another snapshot: count=%d frames=%s", snapshots.Load(), frames.String())
 	}
 }
+
+func TestProgressHTTPStreamsBeyondHostWriteTimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var pages atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reader := eventlog.ReaderFunc(func(context.Context, eventlog.Query) (eventlog.Page, error) {
+			pages.Add(1)
+			return eventlog.Page{NextCursor: "next", Events: []eventlog.Event{{Data: json.RawMessage(`{"kind":"gallery","content_id":"mine"}`)}}}, nil
+		})
+		_ = serveProgress(w, r, contentref.ContentRef{ContentKind: "gallery", ContentID: "mine"}, reader, "", func(context.Context) error { return nil }, func(context.Context) (*ReadResult, error) { return &ReadResult{Files: []FileInfo{}}, nil }, 750*time.Millisecond)
+	}))
+	server.Config.WriteTimeout = 500 * time.Millisecond
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL, nil)
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	count := 0
+	for scanner.Scan() {
+		if scanner.Text() == "" {
+			count++
+			if count == 2 {
+				break
+			}
+		}
+	}
+	if count != 2 || response.ProtoMajor != 2 {
+		t.Fatalf("stream did not survive host timeout: frames=%d protocol=%s error=%v", count, response.Proto, scanner.Err())
+	}
+	cancel()
+}
+
+func TestProgressHTTPCatchupKeepsHeartbeats(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reader := eventlog.ReaderFunc(func(ctx context.Context, _ eventlog.Query) (eventlog.Page, error) {
+			select {
+			case <-ctx.Done():
+				return eventlog.Page{}, ctx.Err()
+			case <-time.After(20 * time.Millisecond):
+			}
+			return eventlog.Page{NextCursor: "next", HasMore: true}, nil
+		})
+		_ = serveProgress(w, r, contentref.ContentRef{}, reader, "", func(context.Context) error { return nil }, func(context.Context) (*ReadResult, error) { return &ReadResult{Files: []FileInfo{}}, nil }, time.Second)
+	}))
+	defer server.Close()
+	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL, nil)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	for scanner.Scan() {
+		if scanner.Text() == "event: heartbeat" {
+			cancel()
+			return
+		}
+	}
+	t.Fatalf("retained catch-up starved heartbeat: %v", scanner.Err())
+}

@@ -89,7 +89,7 @@ export class ReadStore {
               const before = slot.entry.read;
               const read = slot.options.status ? update.read : before ? { ...before, status: update.read.status, state: update.read.state, full: update.read.status?.state === "full" } : null;
               if (read) this.update(slot, { read, error: undefined });
-              if (!slot.options.status && (update.event !== "snapshot" || !processing(update.read))) this.load(slot.key, "reload");
+              if (!slot.options.status) this.load(slot.key, "reload");
               if (read && finished(before, read)) completed = true;
             }
             if (completed) this.reloadViewers(s.ref);

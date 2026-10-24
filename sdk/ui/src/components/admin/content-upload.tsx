@@ -25,7 +25,7 @@ export interface ContentUploadProps extends AdminFlowProps {
   languages?: readonly Choice[];
   labels?: Labels;
   /** Initial host defaults, editable before dropping files. Nothing is published. */
-  defaults?: BulkDraftDefaults;
+  defaults?: Omit<BulkDraftDefaults, "artists">;
   /** Open the created draft in the host's gallery/content editor. */
   onOpen?: (content: Content) => void;
 }
@@ -52,7 +52,7 @@ interface ContentUploadBodyProps {
   model: ContentModel;
   languages?: readonly Choice[];
   labels?: Labels;
-  defaults?: BulkDraftDefaults;
+  defaults?: Omit<BulkDraftDefaults, "artists">;
   open?: (content: Content) => void;
   onError?: ContentKitErrorHandler;
 }

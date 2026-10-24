@@ -339,10 +339,16 @@ export class MediaClient {
     const timer = setTimeout(() => controller.abort(new ContentKitError("render_timeout", `${path} is still processing`)), o.timeout ?? 120_000);
     let result: T | undefined;
     let cursor = "";
-    const check = async () => {
+    const check = async (snapshot?: ReadResult) => {
       const read = await this.read(ref, { editor: true, prefix: stem(path), signal: controller.signal });
       const file = read.files.find((f) => f.upload && samePath(f.path, path));
-      if (!file) throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
+      if (!file) {
+        // Accepted ingest may not have applied its manifest yet. The canonical
+        // status includes that durable admission; an absent file is not final.
+        const current = snapshot ?? await this.read(ref, { status: true, signal: controller.signal });
+        if (current.status?.state === "processing") return;
+        throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
+      }
       if (file.failed) throw failureError(file.failed);
       result = inspect(read, file);
     };
@@ -351,7 +357,7 @@ export class MediaClient {
       if (result !== undefined) return result;
       await this.retry(() => this.watch(ref, async (update) => {
         if (update.event !== "heartbeat") {
-          await check();
+          await check(update.read);
           if (result !== undefined) controller.abort();
         }
         cursor = update.cursor;

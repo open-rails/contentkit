@@ -92,3 +92,21 @@ it("resumes a disconnected cursor, applies resync, and exposes exhausted reconne
   expect(result.current.error?.code).toBe("network");
   expect(result.current.read).toBeNull();
 });
+
+it("reloads stale file metadata from the initial processing snapshot without requiring a later event", async () => {
+  let loaded = false;
+  let source!: ReadableStreamDefaultController<Uint8Array>;
+  let reads = 0;
+  const client = createContentKitClient({ baseUrl: "https://content.test", fetch: async (_input, init) => {
+    if (new Headers(init?.headers).get("Accept") === "text/event-stream") return new Response(new ReadableStream<Uint8Array>({ start(controller) { source = controller; } }), { headers: { "Content-Type": "text/event-stream" } });
+    reads++;
+    return Response.json({ ...status(8), files: loaded ? [{ path: "thumb/1.webp", type: "image/webp", url: "https://media.test/1.webp" }] : [] });
+  } });
+  const { result } = renderHook(() => useMediaRead(ref, { editor: true, client }));
+  await waitFor(() => expect(source).toBeDefined());
+  expect(result.current.read?.files).toEqual([]);
+  loaded = true;
+  await act(async () => source.enqueue(new TextEncoder().encode(`id: latest\nevent: snapshot\ndata: ${JSON.stringify(status(8))}\n\n`)));
+  await waitFor(() => expect(result.current.read?.files[0]?.url).toBe("https://media.test/1.webp"));
+  expect(reads).toBe(2);
+});
