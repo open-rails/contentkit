@@ -21,6 +21,10 @@ func TestLibraryReadsOpenRailsEntitlements(t *testing.T) {
 	if err := s.pool.QueryRow(ctx, `SELECT id FROM `+s.table("content_versions")+` WHERE tenant_id=$1 AND content_id=$2`, tenant, oneVersion).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
+	var contentVersions []string
+	if err := s.pool.QueryRow(ctx, `SELECT array_agg(id::text ORDER BY id::text) FROM `+s.table("content_versions")+` WHERE tenant_id=$1 AND content_id=$2`, tenant, content).Scan(&contentVersions); err != nil {
+		t.Fatal(err)
+	}
 	s.holds(buyer, ck(content), vk(oneVersion, version))
 	var library discovery.LibraryPage
 	s.get(s.discoveryAPI, stranger, "/me/library", &library)
@@ -33,7 +37,7 @@ func TestLibraryReadsOpenRailsEntitlements(t *testing.T) {
 	}
 	for _, item := range library.Items {
 		if item.ContentID == content {
-			if !item.Whole || len(item.VersionIDs) != 0 {
+			if !item.Whole || !slices.Equal(item.VersionIDs, contentVersions) {
 				t.Fatalf("whole-content grant: %+v", item)
 			}
 		} else if item.ContentID == oneVersion {
