@@ -135,6 +135,14 @@ func TestPurchasedLibraryDoesNotRevealUnreleasedEditions(t *testing.T) {
 	if len(page.Items) != 1 || len(page.Items[0].VersionIDs) != 1 || page.Items[0].VersionIDs[0] != f.vid(1, 0) || page.Items[0].Title != "Released edition" {
 		t.Fatalf("unreleased edition leaked: %+v", page)
 	}
+	// A released edition remains discoverable to its purchaser during soft
+	// deletion; the same exception must not reveal its unreleased siblings.
+	if err := f.cat.DeleteVersions(f.ctx, testauth.Actor(access.Actor{ID: "staff"}, staffOnly{}), []catalog.VersionKey{{ContentID: f.cid(1), VersionID: f.vid(1, 0)}}); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := f.call(http.MethodGet, "main.test", "reader", "/me/library", nil, &page); status != http.StatusOK || len(page.Items) != 1 || len(page.Items[0].VersionIDs) != 1 || page.Items[0].VersionIDs[0] != f.vid(1, 0) {
+		t.Fatalf("released deleted purchase lost: %d %+v", status, page)
+	}
 	// A whole-content entitlement is not publication permission. Once the
 	// scheduled edition's own release time arrives it joins the library.
 	f.clock = f.now.Add(2 * time.Hour)
