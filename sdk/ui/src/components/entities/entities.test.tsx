@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient, type ContentKitClient } from "../../client/index.js";
-import type { ContentModel, EntityAccess, EntityDetail, Offer } from "../../client/generated/wire.js";
+import type { ContentModel, EntityAccess, EntityDetail } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/index.js";
 import { EntityManager } from "../admin/entity-manager.js";
 import { MembershipBox } from "./banner.js";
@@ -38,31 +38,31 @@ const wrap = (client: ContentKitClient) =>
   };
 
 const key = "t:group:g1";
-const entity = (access: EntityAccess) => ({ id: "g1", kind: "channel", name: "No Offer Club", access });
-const free = { key, target: { kind: "group" as const, id: "g1" }, terms: { amount: "0.00", currency: "USD" } };
+const entity = (access: EntityAccess) => ({ id: "g1", kind: "channel", name: "Studio", access });
+it("MembershipBox delegates access to the host and never calls a ContentKit join route", async () => {
+  const s = server({});
+  const onCheckout = vi.fn();
+  const user = userEvent.setup();
+  const { rerender } = render(<MembershipBox entity={entity({ key, member: false })} onCheckout={onCheckout} />, { wrapper: wrap(s.client) });
+  await user.click(screen.getByRole("button", { name: "Get access" }));
+  expect(onCheckout).toHaveBeenCalledExactlyOnceWith({ key });
+  expect(s.calls).toEqual([]);
+  rerender(<MembershipBox entity={entity({ key, member: true })} onCheckout={onCheckout} />);
+  expect(screen.getByText("Member")).toBeInTheDocument();
+  expect(screen.queryByRole("button")).toBeNull();
+});
 
-it("MembershipBox: no Join where the group sells no membership; members stay members", async () => {
+it("MembershipBox does not invent an access action when the host has none", () => {
   const s = server({});
   const { container, rerender } = render(<MembershipBox entity={entity({ key, member: false })} />, { wrapper: wrap(s.client) });
   expect(container.querySelector('[data-ckui="membership-box"]')).toBeNull();
-  expect(screen.queryByRole("button", { name: "Join" })).toBeNull();
-
-  rerender(<MembershipBox entity={entity({ key, member: true })} />);
-  expect(screen.getByText("Member")).toBeInTheDocument();
+  rerender(<MembershipBox entity={entity({ key, member: false, unknown: true })} onCheckout={vi.fn()} />);
+  expect(screen.getByText("We can't check your membership right now.")).toBeInTheDocument();
+  expect(screen.queryByRole("button")).toBeNull();
 });
 
-it("MembershipBox: a free group's Join refused as not joinable says so, not that something changed elsewhere", async () => {
-  const s = server({ "POST /entities/g1/join": () => Response.json({ error: "offers: not free to join", code: "not_joinable" }, { status: 409 }) });
-  const user = userEvent.setup();
-  render(<MembershipBox entity={entity({ key, member: false, offer: free })} />, { wrapper: wrap(s.client) });
-  await user.click(screen.getByRole("button", { name: "Join" }));
-  expect(await screen.findByText("This group isn't open to join right now.")).toBeInTheDocument();
-  expect(screen.queryByText(/changed elsewhere/)).toBeNull();
-});
-
-const model: ContentModel = { languages: ["en"], tiers: [], signals: false, kinds: {}, entity_kinds: { channel: { owner: "user", sellable: true, auth_scope: true } } };
+const model: ContentModel = { languages: ["en"], tiers: [], signals: false, kinds: {}, entity_kinds: { channel: { owner: "user", entitled: true, auth_scope: true } } };
 const at = "2026-10-13T00:00:00Z";
-const offer: Offer = { id: "o1", target: { kind: "group", id: "g1" }, key, terms: { amount: "4.99", currency: "USD", renew_hours: 720 }, state: "active", synced: true, revision: 2, updated_at: at };
 const detail: EntityDetail = {
   id: "g1",
   internal: false,
@@ -81,17 +81,14 @@ const detail: EntityDetail = {
   edges: [],
   counts: [],
   access: { key, member: false, editor: true },
-  offer,
 };
 
-it("EntityEditor: its editor sees the membership it sells, though no paywall offers it to them", async () => {
+it("EntityEditor contains no local membership price editor", async () => {
   const s = server({ "GET /kinds": () => model, "GET /entities/g1": () => detail });
   const { container } = render(<EntityEditor id="g1" kind="channel" />, { wrapper: wrap(s.client) });
-  await waitFor(() => expect(container.querySelector('[data-ckui="entity-offer"] [data-ckui="current-offer"]')).not.toBeNull());
-  const section = container.querySelector<HTMLElement>('[data-ckui="entity-offer"]')!;
-  expect(within(section).getByText("On sale")).toBeInTheDocument();
-  expect(within(section).getByText(/\$4\.99/)).toBeInTheDocument();
-  expect(within(section).queryByText("Not for sale.")).toBeNull();
+  await waitFor(() => expect(container.querySelector('[data-ckui="entity-text"]')).not.toBeNull());
+  expect(container.querySelector('[data-ckui="entity-offer"]')).toBeNull();
+  expect(screen.queryByLabelText("Price")).toBeNull();
 });
 
 it("EntityEditor keeps independent section state without duplicate sibling keys", async () => {

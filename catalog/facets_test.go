@@ -64,7 +64,7 @@ func (f *fixture) facets(id string) []facet {
 func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 	f := newFixture(t, nil)
 	studio, red, blue := f.entity("channel", "studio"), f.entity("tag", "red"), f.entity("tag", "blue")
-	f.sell(studio)
+
 	in := gallery("Facets", "en", "ja")
 	in.OwnerEntityID = studio
 	in.Attributes = map[string]any{"format": "doujin"}

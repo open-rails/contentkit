@@ -4,6 +4,7 @@ import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import type { RefBody } from "@openrails/contentkit-ui/client";
+import { ContentKitProvider } from "@openrails/contentkit-ui/react";
 import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
@@ -147,6 +148,7 @@ function UserPage() {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
+    <ContentKitProvider client={client} viewer={viewer} language={lang}>
     {router ? (
       <BrowserRouter>
         <Hosted />
@@ -154,5 +156,6 @@ createRoot(document.getElementById("root")!).render(
     ) : (
       <Alone />
     )}
+    </ContentKitProvider>
   </StrictMode>,
 );

@@ -21,9 +21,7 @@ import { Skeleton } from "#ckui/ui/skeleton";
 import { Textarea } from "#ckui/ui/textarea";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
 import { useConfirm } from "../admin/shell.js";
-import { OfferFields } from "../content/offer-fields.js";
 import { AttributeFields, formOf } from "./fields.js";
-import { useContentKitClient } from "../../react/context.js";
 import { EntityImageEditor } from "./banner.js";
 import { EntityPicker, labelOf, useEntityNames, type EntityLike, type Labels } from "./parts.js";
 
@@ -211,7 +209,6 @@ function EditForm({ entity, spec, languages, g, kinds, onLeaveGuard, ...p }: Ent
       <Names names={names} languages={languages} language={language} onLanguage={setLanguage} kind={nameKind} onKind={setNameKind} text={newName} onText={(newName) => draft.edit((f) => ({ ...f, newName }))} onChange={(names) => draft.edit((f) => ({ ...f, names }))} onAdd={() => draft.edit((f) => ({ ...f, names: pendingNames(), newName: "" }))} />
       <Texts form={text} languages={offered} onChange={(l, patch) => draft.edit((f) => ({ ...f, text: { ...f.text, [l]: { ...f.text[l]!, ...patch } } }))} />
       <Images management={p.management} entity={entity} spec={spec} onError={p.onError} client={p.client} />
-      {spec.sellable && <Membership entity={entity} onError={p.onError} client={p.client} />}
       <Edges management={p.management} entity={entity} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
       {p.children?.(entity)}
     </>
@@ -685,24 +682,6 @@ function Images({ entity, spec, onError, client, management }: { management?: bo
       </p>
       <EntityImageEditor management={management} entity={entity} slot="cover" client={client} onError={onError} />
       {avatar && <EntityImageEditor management={management} entity={entity} slot="avatar" client={client} onError={onError} />}
-    </Section>
-  );
-}
-
-function Membership({ entity, onError, client }: { entity: EntityDetail; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
-  const { t } = useMessages();
-  const ck = useContentKitClient(client);
-  const offer = useAction("offer.save", onError);
-  return (
-    <Section title={t("entityEditor.membershipPrice")} ckui="entity-offer">
-      <OfferFields
-        key={entity.offer?.revision}
-        offer={entity.offer}
-        pending={offer.pending}
-        onSell={(terms) => void offer.run(() => ck.offers.sellEntity(entity.id, terms))}
-        onWithdraw={() => void offer.run(() => ck.offers.withdrawEntity(entity.id))}
-      />
-      <ErrorLine error={offer.error} />
     </Section>
   );
 }

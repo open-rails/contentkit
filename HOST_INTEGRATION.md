@@ -56,7 +56,7 @@ ContentKit names its staff permissions, always the full
 A user-owned entity kind with `auth_scope` (channels) has its own
 permissions, held in each entity's AuthKit scope, whose persona declares
 `access.EntityPermissions(kind)`: `{kind}:content:write` (its content),
-`{kind}:settings:manage` (the entity), `{kind}:offers:write`,
+`{kind}:settings:manage` (the entity),
 `{kind}:media:write` and `{kind}:comments:moderate` (delete, hold, release
 and ban on the entity's content). The entity's owner holds them all.
 

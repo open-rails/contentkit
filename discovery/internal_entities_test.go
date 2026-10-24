@@ -13,7 +13,7 @@ import (
 
 func TestInternalEntityOffersDoNotLeakThroughCards(t *testing.T) {
 	cfg := siteConfig()
-	cfg.EntityKinds["channel"] = kinds.EntityKind{Route: "channels", Sellable: true}
+	cfg.EntityKinds["channel"] = kinds.EntityKind{Route: "channels", Entitled: true}
 	f := newFixtureConfig(t, nil, "", cfg)
 	f.entity("channel", "private")
 	hidden := true

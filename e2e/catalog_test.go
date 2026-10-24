@@ -27,7 +27,6 @@ import (
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // One mount serves every module at its sub-path, and every route answers
@@ -325,23 +324,9 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga+"/members", []entities.Membership{{ContentID: g2}}, nil)
 	f.want(http.StatusOK, staff, "POST", "/entities/"+colour+"/merge", entities.MergeInput{Into: entities.EntityID(color)}, nil)
 
-	// Offers on content, a version and a sellable group, over a real OpenRails merchant.
-	var offer offers.Offer
-	f.want(http.StatusForbidden, user, "PUT", "/contents/"+g1+"/offer", map[string]any{"amount": "4.99"}, nil)
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+g1+"/offer", map[string]any{"amount": "4.99"}, &offer)
-	if offer.Terms.Amount != 4_990_000 {
-		t.Fatalf("offer %+v", offer)
-	}
-	f.want(http.StatusOK, staff, "PUT", "/contents/"+g1+"/versions/"+g1v+"/offer", map[string]any{"amount": "1.50"}, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/contents/"+g1+"/versions/"+g1v+"/offer", nil, nil)
-	f.want(http.StatusOK, staff, "PUT", "/entities/"+saga+"/offer", map[string]any{"amount": "9.99"}, nil)
-	f.want(http.StatusConflict, user, "POST", "/entities/"+saga+"/join", nil, nil)
-	f.want(http.StatusOK, user, "DELETE", "/entities/"+saga+"/join", nil, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga+"/offer", nil, nil)
+	// Purchases are read through the same content library; retired offer and
+	// free-join endpoints are no longer part of the content API.
 	f.want(http.StatusOK, user, "GET", "/me/library", nil, nil)
-	f.want(http.StatusOK, staff, "GET", "/offers?state=active", nil, nil)
-	f.want(http.StatusForbidden, user, "GET", "/offers", nil, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/contents/"+g1+"/offer", nil, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga, nil, nil)
 
 	discoveryScenario(t, f, g1, u.ID, user, anon)

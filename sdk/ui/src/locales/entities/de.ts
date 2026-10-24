@@ -28,7 +28,6 @@ export const entities: typeof en = {
     uploadAvatar: "Avatar hochladen",
     removeAvatar: "Avatar entfernen",
     images: "Bilder",
-    membershipPrice: "Mitgliedspreis",
     loadFailed: "Die Entität konnte nicht geladen werden.",
     newTitle: "Neu: {kind}",
     nameIn: "Name ({language})",
@@ -126,11 +125,8 @@ export const entities: typeof en = {
   membership: {
     unknown: "Wir können deine Mitgliedschaft gerade nicht prüfen.",
     member: "Mitglied",
-    leave: "Austreten",
-    paidPitch: "Mitglieder öffnen alles darin.",
-    freePitch: "Tritt bei, um zu folgen und zu öffnen, was Mitglieder können.",
-    joinFor: "Beitreten für {price}",
-    join: "Beitreten",
+    getAccess: "Zugang erhalten",
+    accessPitch: "Mitglieder können auf die Inhalte in diesem Bereich zugreifen.",
   },
   entityManager: {
     noAccess: "Du darfst keine Entitäten verwalten.",

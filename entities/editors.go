@@ -23,7 +23,7 @@ type writer struct {
 }
 
 // As returns the store acting as actor, judged by a. Its reads show actor's
-// standing with sellable entities. Its writes: staff holding
+// standing with entitlement-backed entities. Its writes: staff holding
 // access.EntitiesWrite in a's root scope (and the engine's own client) write
 // anything; anyone else writes only user-owned entities, under the creator
 // rules of CreateEntities and UpdateEntities. Without As a store reads as an

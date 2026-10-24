@@ -81,7 +81,7 @@ export function useMediaGrantExpired(expires?: number): boolean {
  * provider) it only shows a supplied read.
  */
 export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRead {
-  const { read: given, client: own, prefix, paths, offset, limit, download, editor, window, refresh: refreshing = true } = o;
+  const { read: given, client: own, prefix, paths, offset, limit, download, editor, status, window, refresh: refreshing = true } = o;
   const poll = o.poll ?? (editor ? POLL : false);
   const client = useOptionalContentKitClient(own);
   const scope = useReadScope();
@@ -89,7 +89,7 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   const chunk = window?.chunk ?? READ_CHUNK;
   const selection = JSON.stringify([...new Set(paths ?? [])].sort());
   const retainPrevious = !!window || paths !== undefined;
-  const base = scope + readKey(ref, { prefix, download, editor }) + (paths !== undefined ? "#paths" : window ? `#${chunk}` : `#${offset ?? 0}:${limit ?? 0}`);
+  const base = scope + readKey(ref, { prefix, download, editor, status }) + (paths !== undefined ? "#paths" : window ? `#${chunk}` : `#${offset ?? 0}:${limit ?? 0}`);
 
   // Keep one placeholder, never subscriptions for the reader's visit history.
   const [previous, setPrevious] = useState<{ base: string; store: typeof store; read: ReadResult | null; n?: number }>({ base, store, read: null });
@@ -111,7 +111,7 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [offsets.join(","), window ? chunk : limit, selection, paths === undefined],
   );
-  const keys = useMemo(() => windows.map((w) => scope + readKey(ref, { prefix, download, editor, ...w })), [scope, windows, ref.kind, ref.id, ref.version, prefix, download, editor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const keys = useMemo(() => windows.map((w) => scope + readKey(ref, { prefix, download, editor, status, ...w })), [scope, windows, ref.kind, ref.id, ref.version, prefix, download, editor, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A supplied read is shown until reload() asks the server or set() replaces it.
   const [requested, setRequested] = useState<{ base: string; given?: ReadResult | null } | null>(null);
@@ -122,7 +122,7 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   const subscribe = useCallback(
     (l: () => void) => {
       if (!store || !fetching) return () => {};
-      const offs = keys.map((key, i) => store.subscribe(key, itemRef(ref), { prefix, download, editor, ...windows[i] }, l, { poll, refresh: refreshing }, scope));
+      const offs = keys.map((key, i) => store.subscribe(key, itemRef(ref), { prefix, download, editor, status, ...windows[i] }, l, { poll, refresh: refreshing }, scope));
       return () => offs.forEach((off) => off());
     },
     // ref and options are in keys.

@@ -129,7 +129,7 @@ type Kind struct {
 	TitlePolicy TitlePolicy `json:"title_policy,omitempty" yaml:"title_policy"`
 
 	// AccessLevels limits content and version rules. Empty permits every level.
-	// Omitting ppv and group_ppv also disables individual sales for this kind.
+	// Omitting ppv and group_ppv removes individual-purchase access modes.
 	AccessLevels []string `json:"access_levels,omitempty" yaml:"access_levels"`
 	// AccessScope defaults to content; version presents a direct edition rule.
 	AccessScope AccessScope `json:"access_scope,omitempty" yaml:"access_scope"`
@@ -166,11 +166,6 @@ func (k Kind) AllowsAccess(level string) bool {
 // AllowsComments reports whether this kind accepts a per-item comment mode.
 func (k Kind) AllowsComments(mode string) bool {
 	return len(k.CommentModes) == 0 || slices.Contains(k.CommentModes, mode)
-}
-
-// Sellable reports whether content and versions of this kind may be sold.
-func (k Kind) Sellable() bool {
-	return k.AllowsAccess("ppv") || k.AllowsAccess("group_ppv")
 }
 
 // Download is what a kind's version download serves. Whether a viewer may
@@ -344,8 +339,8 @@ type EntityKind struct {
 	// Uploads limit what editors other than staff upload to a user-owned
 	// entity's media.
 	Uploads UploadLimits `json:"uploads,omitzero" yaml:"uploads"`
-	// Sellable entities carry offers; their key unlocks every member.
-	Sellable bool `json:"sellable,omitempty" yaml:"sellable"`
+	// Entitled entities expose membership backed by their stable entitlement key.
+	Entitled bool `json:"entitled,omitempty" yaml:"entitled"`
 	// AuthScope entities name an AuthKit group whose permissions govern their
 	// content (OnlyDemo channels).
 	AuthScope bool `json:"auth_scope,omitempty" yaml:"auth_scope"`

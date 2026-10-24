@@ -32,7 +32,7 @@ type MergeReport struct {
 // (duplicates collapse, an accepted membership wins over a proposed one),
 // names become aliases of Into, edges, children and scoped entities re-point,
 // From becomes merged and its code redirects to Into's. Entities of a
-// user-owned kind and entities ever sold are never merged (ErrConflict).
+// user-owned or entitlement-backed kind are never merged (ErrConflict).
 func (s *Store) Merge(ctx context.Context, merges []Merge) ([]MergeReport, error) {
 	reports := make([]MergeReport, len(merges))
 	if len(merges) == 0 {
@@ -127,12 +127,8 @@ func (s *Store) mergeable(ctx context.Context, q Querier, src, dst Entity) error
 	if s.cfg.EntityKinds[src.Kind].Owner == "user" {
 		return fmt.Errorf("%w: %s groups are owned by users and never merged", ErrConflict, src.Kind)
 	}
-	var sold bool
-	if err := q.QueryRow(ctx, fmt.Sprintf(`SELECT ever_sold FROM %s WHERE tenant_id = $1 AND id = $2`, s.table("content_entities")), s.tenant, string(src.ID)).Scan(&sold); err != nil {
-		return err
-	}
-	if sold {
-		return fmt.Errorf("%w: group %s was sold; its buyers hold its key", ErrConflict, src.ID)
+	if s.cfg.EntityKinds[src.Kind].Entitled {
+		return fmt.Errorf("%w: entitlement-backed entities cannot be merged; their identity must remain stable", ErrConflict)
 	}
 	return nil
 }

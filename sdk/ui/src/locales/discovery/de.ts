@@ -25,8 +25,6 @@ export const discovery: typeof en = {
     showMore: "Mehr anzeigen",
     unknownAccess: "Gerade nicht verfügbar",
     members: "Mitglieder",
-    joinFree: "Kostenlos beitreten",
-    forSale: "Zu kaufen",
     locked: "Gesperrt",
     updated: "Aktualisiert",
     deleted: "Gelöscht",

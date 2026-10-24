@@ -12,7 +12,6 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/testauth"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // catalogStaff holds every catalog permission for the actor "staff".
@@ -24,13 +23,13 @@ func (catalogStaff) Can(_ context.Context, a access.Actor, _ string) (bool, erro
 
 // The catalog over a real embedded OpenRails: held group, content and
 // version keys open what the rules say in listings and reads, a deleted item
-// stays readable to holders of its own keys, and a title change renames the
-// item's product.
+// stays readable to holders of its own keys, and content edits leave the
+// billing catalog unchanged.
 func TestCatalogOverOpenRails(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
 	var cat *catalog.Store
-	grp, err := entities.New(entities.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds,
+	grp, err := entities.New(entities.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds, Gate: w.gate,
 		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return cat.ContentChanged(ctx, q, ids)
 		}})
@@ -38,7 +37,7 @@ func TestCatalogOverOpenRails(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cat, err = catalog.New(ctx, catalog.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds,
-		Auth: testauth.Auth{Authz: catalogStaff{}}, Gate: w.gate, Entities: grp, Offers: w.offers}); err != nil {
+		Auth: testauth.Auth{Authz: catalogStaff{}}, Gate: w.gate, Entities: grp}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(cat.Close)
@@ -49,9 +48,6 @@ func TestCatalogOverOpenRails(t *testing.T) {
 		t.Fatal(err)
 	}
 	studio := string(made[0].ID)
-	if _, err := w.offers.Put(ctx, []offers.Put{{Target: offers.Target{Kind: offers.EntityTarget, ID: studio}}}); err != nil { // members-only needs a membership
-		t.Fatal(err)
-	}
 	post := func(title string, rule access.Rule, languages ...string) string {
 		t.Helper()
 		in := catalog.ContentInput{Kind: "post", Access: &rule, Text: map[string]catalog.Text{"en": {Title: title}}}
@@ -158,29 +154,13 @@ func TestCatalogOverOpenRails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The product's name follows the title.
-	target := offers.Target{Kind: offers.ContentTarget, ID: ppv}
-	if _, err := w.offers.Put(ctx, []offers.Put{{Target: target, Terms: offers.Terms{Amount: 4_990_000}}}); err != nil {
-		t.Fatal(err)
-	}
-	sync := func() string {
-		t.Helper()
-		if err := w.offers.Sync(ctx, []offers.Target{target}); err != nil {
-			t.Fatal(err)
-		}
-		p, _ := w.product(ck(ppv))
-		return p.DisplayName
-	}
-	if name := sync(); name != "Night Train" {
-		t.Fatalf("product %q", name)
-	}
+	// Content edits do not mutate OpenRails products or prices.
+	product, price := w.sell(ck(ppv), "Billing-owned title", 4_990_000)
 	if err := cat.PutText(ctx, staff, []catalog.TextPut{{ContentID: ppv, Language: "en", Text: &catalog.Text{Title: "Night Train II"}}}); err != nil {
 		t.Fatal(err)
 	}
-	if o := w.offer(target); o.Synced {
-		t.Fatalf("a retitled offer is synced %+v", o)
-	}
-	if name := sync(); name != "Night Train II" {
-		t.Fatalf("renamed product %q", name)
+	after, prices := w.product(ck(ppv))
+	if after.ID != product.ID || after.DisplayName != product.DisplayName || len(prices) != 1 || prices[0].ID != price.ID || prices[0].UnitAmount != price.UnitAmount {
+		t.Fatalf("content edit changed billing: product=%+v prices=%+v", after, prices)
 	}
 }

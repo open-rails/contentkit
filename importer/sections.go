@@ -12,7 +12,6 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/codes"
-	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -40,7 +39,6 @@ func (run *batchRun) sections() []section {
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []entities.ContentEntities) error {
 				return s.o.Entities.ImportMemberships(ctx, tx, in)
 			})},
-		{name: SectionOffers, n: len(b.Offers), prepare: run.offer},
 		{name: SectionAliases, n: len(b.Aliases), prepare: run.alias,
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []codes.Alias) error {
 				return codes.PutAliases(ctx, codes.Pgx(tx), s.qs, s.o.Tenant, in)
@@ -61,11 +59,6 @@ func (run *batchRun) sections() []section {
 			})},
 		{name: SectionDeletes, n: len(b.Deletes), prepare: run.deletion, write: typed(s.deletes),
 			first: func(in any) bool { return in.(deletion).entity == RecordEntity }},
-	}
-	if s.o.Offers == nil {
-		out[3].skip = "no billing"
-	} else {
-		out[3].write = typed(s.o.Offers.PutTx)
 	}
 	if s.o.Signals == nil || !s.o.Signals.SignalPlane() {
 		for i := range out {
@@ -174,24 +167,6 @@ func (run *batchRun) memberships(r *resolver, i int) (any, string, error) {
 		out.Memberships = append(out.Memberships, gm)
 	}
 	return out, set.Content.ExternalID, nil
-}
-
-func (run *batchRun) offer(r *resolver, i int) (any, string, error) {
-	o := run.b.Offers[i]
-	t, err := r.target(o.Target, allowContent|allowVersion|allowEntity)
-	if err != nil {
-		return nil, "", err
-	}
-	var target offers.Target
-	switch {
-	case t.entity != "":
-		target = offers.Target{Kind: offers.EntityTarget, ID: t.entity}
-	case t.version != "":
-		target = offers.Target{Kind: offers.VersionTarget, ID: t.version, Content: t.content}
-	default:
-		target = offers.Target{Kind: offers.ContentTarget, ID: t.content}
-	}
-	return offers.Put{Target: target, Terms: o.Terms}, "", nil
 }
 
 func (run *batchRun) alias(r *resolver, i int) (any, string, error) {

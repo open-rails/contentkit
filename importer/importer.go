@@ -16,7 +16,6 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/entities"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // MaxRecords bounds the records of one batch, nested versions and options
@@ -41,7 +40,6 @@ type Batch struct {
 	Entities        []EntityRecord        `json:"entities,omitempty"`
 	Contents        []ContentRecord       `json:"contents,omitempty"`
 	Memberships     []MembershipSet       `json:"memberships,omitempty"`
-	Offers          []OfferRecord         `json:"offers,omitempty"`
 	Aliases         []AliasRecord         `json:"aliases,omitempty"`
 	Comments        []CommentRecord       `json:"comments,omitempty"`
 	Reactions       []ReactionRecord      `json:"reactions,omitempty"`
@@ -63,7 +61,7 @@ type Ref struct {
 	ExternalID string `json:"external_id,omitempty"`
 }
 
-// TargetRef is what an interaction, offer or alias is about: a content item,
+// TargetRef is what an interaction or alias is about: a content item,
 // one version (its content is implied), an entity or a comment, as the
 // section allows.
 type TargetRef struct {
@@ -200,13 +198,6 @@ type MembershipRecord struct {
 	ActiveUntil *time.Time `json:"active_until,omitempty"`
 	// State is active (the default) or proposed.
 	State string `json:"state,omitempty"`
-}
-
-// OfferRecord puts a content item, a version or a sellable entity on sale; the
-// offers job syncs it to the billing provider.
-type OfferRecord struct {
-	Target TargetRef    `json:"target"`
-	Terms  offers.Terms `json:"terms"`
 }
 
 // AliasRecord resolves another system's identifier (under the batch's source) to
@@ -347,7 +338,6 @@ const (
 	SectionEntities      = "entities"
 	SectionContents      = "contents"
 	SectionMemberships   = "memberships"
-	SectionOffers        = "offers"
 	SectionAliases       = "aliases"
 	SectionComments      = "comments"
 	SectionReactions     = "reactions"
@@ -375,7 +365,7 @@ const (
 type Result struct {
 	Written map[string]int `json:"written"`
 	// Skipped counts records an engine without the capability leaves out:
-	// signals without a signal plane, offers without billing.
+	// signals without a signal plane.
 	Skipped map[string]int  `json:"skipped,omitempty"`
 	Failed  []RecordFailure `json:"failed"`
 	// IDs maps each written record's external id to its id, by entity.

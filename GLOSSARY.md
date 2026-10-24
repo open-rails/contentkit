@@ -93,17 +93,36 @@ or group entitlements.
 The opening of published content to an additional audience at a stated time.
 Earlier audiences keep access. A release does not grant a billing entitlement.
 
-**Publishing operation**:
-One durable submission of content, its associations and an archive, tracked
-from acceptance through processing to a ready draft or publication.
+**Media upload**:
+Files attached to a content version or another media owner. Accepting an upload
+starts media processing; it does not publish the content.
+
+**Media processing**:
+Durable work that validates and extracts uploaded archives or generates image,
+audio and video renditions. Its progress belongs to the media owner.
 
 **Ownership**:
 An account's relationship to content it created or controls in a particular
 app. Ownership in one app does not confer authority in another.
 
 **Entitlement**:
-An authoritative right to access a paid feature or content. A product can
-grant rights in one app or several without merging their content.
+A right granted and tracked by OpenRails that ContentKit requires to access a
+feature or content. A product can grant rights in one app or several without
+merging their content.
+
+**Product**:
+An OpenRails catalog item that grants one or more entitlements when acquired.
+Products can grant access to specific content, a version, a channel or a site tier.
+_Avoid_: ContentKit offer
+
+**Price**:
+OpenRails terms for buying a product, including amount, currency and any
+recurring billing or access duration. ContentKit does not maintain a second
+copy of those terms.
+
+**Access requirement**:
+The entitlement or audience condition ContentKit evaluates before granting
+access to content. Changing a price does not change that requirement.
 
 **Merchant**:
 The OpenRails billing business linked to a ContentKit tenant. The merchant

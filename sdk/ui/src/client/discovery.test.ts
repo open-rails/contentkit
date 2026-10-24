@@ -65,3 +65,15 @@ it("sends selection summary and bounded public card hydration IDs as ordinary qu
   expect(requests[0]!.searchParams.get("summary")).toBe("true");
   expect(out.summary?.locked_count).toBe(2);
 });
+
+it("reads the purchased library through discovery without a separate offer client", async () => {
+  const requests: URL[] = [];
+  const client = createContentKitClient({ baseUrl: "https://catalog.test/app", fetch: async (input) => {
+    requests.push(new URL(String(input)));
+    return Response.json({ items: [], complete: true });
+  } });
+  expect(await client.discovery.library({ language: "en", limit: 20 })).toEqual({ items: [], complete: true });
+  expect(requests[0]!.pathname).toBe("/app/v1/me/library");
+  expect(Object.fromEntries(requests[0]!.searchParams)).toEqual({ language: "en", limit: "20" });
+  expect("offers" in client).toBe(false);
+});

@@ -89,7 +89,6 @@ func (s *Store) readEditors(ctx context.Context, actor access.Actor, entityIDs [
 type owned struct {
 	id, kind, state, ownerEntity string
 	publishedAt, publishAt       bool
-	everSold                     bool
 }
 
 // grants are the provider's answers a write needs, asked before its
@@ -130,7 +129,7 @@ func (s *Store) grantsFor(ctx context.Context, actor access.Actor, ids []string)
 // so refuses. A missing id is ErrNotFound.
 func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, ids []string, g grants) (map[string]owned, error) {
 	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
-	rows, err := q.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.owner_entity_id, ''), c.published_at IS NOT NULL, c.publish_at IS NOT NULL, c.ever_sold,
+	rows, err := q.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.owner_entity_id, ''), c.published_at IS NOT NULL, c.publish_at IS NOT NULL,
  EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $3 AND $3 <> '')
  FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2) ORDER BY c.id FOR UPDATE`, s.tenant, ids, viewerID(actor))
 	if err != nil {
@@ -141,7 +140,7 @@ func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, id
 	for rows.Next() {
 		var o owned
 		var isCreator bool
-		if err := rows.Scan(&o.id, &o.kind, &o.state, &o.ownerEntity, &o.publishedAt, &o.publishAt, &o.everSold, &isCreator); err != nil {
+		if err := rows.Scan(&o.id, &o.kind, &o.state, &o.ownerEntity, &o.publishedAt, &o.publishAt, &isCreator); err != nil {
 			rows.Close()
 			return nil, err
 		}

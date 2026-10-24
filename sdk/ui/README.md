@@ -859,11 +859,11 @@ The host still owns navigation outside the flow, including browser Back handling
   of bytes already uploaded. The header contains the cover selector and the
   selected edition's staged release time. `access_scope: version` presents a
   direct edition access rule instead of a parent rule/inheritance toggle.
-  The shared Save includes edition details, chapters, reader metadata and staged
-  offer prices. Embedded editors hide their own Save/Revert actions and do not
-  save when Enter submits a field. Undo/Redo remains shared across their drafts.
-  Unpublish and Delete affect the selected edition; withdrawing an offer remains
-  an explicit lifecycle action. Standalone `VersionEditor` exposes explicit Publish/Unpublish
+  The shared Save includes edition details, chapters and reader metadata.
+  Embedded editors hide their own Save/Revert actions and do not save when
+  Enter submits a field. Undo/Redo remains shared across their drafts.
+  Unpublish and Delete affect the selected edition. Product and price changes
+  belong to OpenRails. Standalone `VersionEditor` exposes explicit Publish/Unpublish
   actions that save staged edition fields with the state change in one write;
   the parent item's publication remains separate. Deleted editions are read-only
   and restore to Draft through an explicit Restore version action. The Trash
@@ -1205,3 +1205,41 @@ exit delivery remains best effort.
 The staff dashboard and SDK statistics queries use measured people and active
 time, with comments ranking retained. See [statistics semantics](docs/statistics.md)
 for daily distinctness, qualification and active-time units.
+
+## Billing boundary
+
+ContentKit stores content and the entitlement keys required to access it.
+OpenRails owns products, prices, purchases and entitlement grants. The access
+and version editors change content rules; they do not edit a second billing
+catalog. Use OpenRails or billing-ui directly for product and price management.
+
+`Paywall` and `MembershipBox` call the host's `onCheckout({ key })` with an
+entitlement key. The host resolves it through OpenRails and opens its billing
+flow. These components never create free grants or infer a price. The purchased
+content library remains available as `client.discovery.library()`.
+
+## Upload and publication
+
+Create the content and version first, then use the normal media upload API:
+`client.media.upload(file, { ref, path })` presigns and transfers bytes, and
+`client.media.commit(ref, ops)` attaches them and queues media processing.
+ZIP extraction, thumbnails and other renditions run in the normal media
+workers; their existing media progress remains available.
+
+Uploading never publishes the content. Edit its metadata and call
+`client.contents.publish(id, publishAt)` separately when it should go live.
+The bulk uploader creates private drafts and follows the same upload/commit
+flow. It has no publish-on-completion setting or publication status polling.
+
+The bulk upload queue retains the exact commit batch until the server confirms
+it. A retry reuses that batch ID and ordered operations. Browser persistence
+is scoped to the API mount and the provider's explicit viewer ID; without a
+known viewer, retries remain in memory only. Switching accounts aborts and
+clears the visible queue, without resuming the other account's work.
+
+`MediaReadinessNotice` uses the existing shared `useMediaRead` poller with an
+editor-only status read, without signing image URLs. It shows ZIP extraction,
+per-preset completion counts, encoding progress and failures. Polling stops
+when the item is ready or storage capacity blocks progress. Reopening the
+editor reads current server state; browser upload records are not processing
+state.

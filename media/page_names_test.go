@@ -220,7 +220,7 @@ func TestChangedSourceClearsArchiveCompletionAndChecksAllocatedPermission(t *tes
 }
 
 func TestClientMetadataCannotForgePageEvidence(t *testing.T) {
-	input := []Op{{Op: OpPut, Meta: map[string]any{"page": map[string]any{"mode": "include"}, "archive_complete": true, "publishing_archives": "forged", "caption": "kept"}}}
+	input := []Op{{Op: OpPut, Meta: map[string]any{"page": map[string]any{"mode": "include"}, "archive_complete": true, "archive_pages_total": 9999, "caption": "kept"}}}
 	clean := clientUploadOps(input)
 	if !reflect.DeepEqual(clean[0].Meta, map[string]any{"caption": "kept"}) {
 		t.Fatalf("reserved metadata accepted: %+v", clean)

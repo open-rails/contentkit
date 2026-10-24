@@ -95,7 +95,7 @@ type Decision struct {
 	Unknown bool
 	// Sell are the keys whose purchase opens it, the rule's own first (its
 	// tiers or entity), then the version's and the content's;
-	// offers says which are on sale.
+	// The host resolves these keys through its billing provider.
 	Sell []Key
 	// Requires is the key a buyer must hold first (EntityPPV), nil when held.
 	Requires *Key

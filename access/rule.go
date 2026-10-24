@@ -28,8 +28,7 @@ const (
 var ErrRule = errors.New("access: invalid rule")
 
 // Rule is the access rule stored as JSON on content (content_items.access), on
-// a version as its override (content_versions.access) and on a sellable
-// entity (content_entities.access). Whatever the level, a version also opens to
+// a version as its override (content_versions.access) and on an entity. Whatever the level, a version also opens to
 // holders of its version key, its content key and the key of any entity
 // holding it.
 type Rule struct {

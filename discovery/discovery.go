@@ -68,8 +68,6 @@ type Options struct {
 	Entities *entities.Store
 	// Media resolves cards' covers and ladders; nil leaves them out.
 	Media Media
-	// Sales fills cards' paywall offers; nil leaves them out.
-	Sales Sales
 	// Hub is the keyword search client and the signal plane. Without a
 	// signal plane, or while it is down, history, signals, exposures,
 	// view_status, similar, recommendations and popularity are unavailable.

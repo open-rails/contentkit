@@ -28,7 +28,7 @@ import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "..
 import { ReaderContentEditor } from "./reader-content-editor.js";
 import { applyDraftDefaults, createDraft, uploadTarget, type BulkDraftDefaults } from "./bulk-drafts.js";
 import { UploadQueueBody } from "./upload-queue.js";
-import { AccessEditor, ContentDetailsEditor, RuleFields, VersionsEditor, allowsIndividualSales, cleanRule, defaultAccessRule, offersAccessChoice, versionLabel } from "../content/editors.js";
+import { AccessEditor, ContentDetailsEditor, RuleFields, VersionsEditor, cleanRule, defaultAccessRule, offersAccessChoice, versionLabel } from "../content/editors.js";
 import { AttributeFields } from "../entities/fields.js";
 import { MembershipEditor } from "../entities/memberships.js";
 import { EntityPicker, labelOf, type Labels } from "../entities/parts.js";
@@ -483,7 +483,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                   {labelOf(labels, x)}
                 </SelectItem>
               ))}
-            {allowsIndividualSales(model, kind) && <SelectItem value="ppv">{t("contentManager.ppv")}</SelectItem>}
+            {(!spec?.access_levels?.length || spec.access_levels.includes("ppv")) && <SelectItem value="ppv">{t("contentManager.ppv")}</SelectItem>}
           </SelectContent>
         </Select>}
       </div>

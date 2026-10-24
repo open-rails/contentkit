@@ -221,9 +221,6 @@ func TestLifecycleIntegration(t *testing.T) {
 	// Purge applies the same retention to sold and never-sold content.
 	sold := f.create("staff", gallery("Sold", "en"))
 	f.publish("staff", sold, nil)
-	if _, err := f.pool.Exec(f.ctx, `UPDATE `+f.table("content_items")+` SET ever_sold = true WHERE id = $1`, sold); err != nil {
-		t.Fatal(err)
-	}
 	if err := f.s.DeleteForModeration(f.ctx, f.as("staff"), []string{id, sold}); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +362,7 @@ func TestWriteAuthorizesBeforeItsTransactionIntegration(t *testing.T) {
 func TestValidationIntegration(t *testing.T) {
 	f := newFixture(t, nil)
 	channel, unsold := f.entity("channel", "studio"), f.entity("channel", "quiet")
-	f.sell(channel)
+
 	tag := f.entity("tag", "red")
 	ok := gallery("Valid", "en")
 	ok.Attributes = map[string]any{"format": "manga", "volume": float64(3), "complete": true, "released": "2026-01-02T03:04:05Z", "note": "n"}
