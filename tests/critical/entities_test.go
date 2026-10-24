@@ -1,6 +1,7 @@
 package critical_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/open-rails/authkit/authtest"
@@ -22,6 +23,113 @@ func ownedEntity(t *testing.T, w *world, a *application, title string) (authtest
 		t.Fatalf("owned channel fixture has wrong authority: %+v", created)
 	}
 	return user, token, created[0]
+}
+
+func TestEntityConcurrentOwnershipAndStaleScopes(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	t.Run("CK-J16-S02_concurrent_creation_commits_one_owner_slot", func(t *testing.T) {
+		owner := authtest.NewUser(t, a.tenant)
+		owner.TOTP = authtest.EnrollTOTP(t, a.tenant, owner)
+		token := authtest.SignIn(t, a.tenant, owner).AccessToken
+		client := a.client(token)
+		type result struct {
+			entities []entities.Entity
+			err      error
+		}
+		results, start := make(chan result, 4), make(chan struct{})
+		for i := range 4 {
+			go func() {
+				<-start
+				rows, err := client.PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: fmt.Sprintf("raced-%s-%d", owner.ID, i), Names: []entities.Name{{Language: "en", Kind: "name", Name: "Concurrent owner slot"}}}})
+				results <- result{rows, err}
+			}()
+		}
+		close(start)
+		var winner entities.Entity
+		successes := 0
+		for range 4 {
+			r := <-results
+			if r.err != nil {
+				requireError(t, r.err, 409, "limit_reached")
+				continue
+			}
+			if len(r.entities) != 1 {
+				t.Fatalf("unexpected race result: %+v", r.entities)
+			}
+			successes++
+			winner = r.entities[0]
+		}
+		if successes != 1 {
+			t.Fatalf("concurrent max-per-owner admitted %d entities", successes)
+		}
+		mine, err := client.GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
+		must(t, err)
+		if len(mine.Entities) != 1 || mine.Entities[0].ID != winner.ID {
+			t.Fatalf("race left more than the winner: %+v", mine)
+		}
+		groupID, err := ckauth.EntityScopeID(*a.cfg.Scope, winner.AuthScope)
+		must(t, err)
+		memberships, err := w.auth.ListMemberships(t.Context(), iam.UserSubject(owner.ID), iam.PageRequest{Limit: 100})
+		must(t, err)
+		channelCount := 0
+		for _, membership := range memberships.Items {
+			if membership.Group.Persona.String() == "channel" {
+				channelCount++
+				if membership.Group.ID != groupID {
+					t.Fatalf("rejected creation provisioned an extra group: %+v", membership.Group)
+				}
+			}
+		}
+		if channelCount != 1 {
+			t.Fatalf("race provisioned %d channel memberships", channelCount)
+		}
+	})
+	t.Run("CK-J03-S06_CK-J16-S03_deleted_and_rebound_scope_refuses_existing_editor", func(t *testing.T) {
+		_, _, entity := ownedEntity(t, w, a, "Stale authority")
+		writer, token := w.person(t, 0)
+		id, err := ckauth.EntityScopeID(*a.cfg.Scope, entity.AuthScope)
+		must(t, err)
+		group := iam.GroupByID(id)
+		authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(writer.ID), w.channelWriter)
+		client := a.client(token)
+		input := catalog.ContentInput{Kind: "article", OwnerEntityID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Before scope retirement"}}}
+		created, err := client.PostContents(t.Context(), input)
+		must(t, err)
+		must(t, w.auth.DeleteGroup(t.Context(), group))
+		_, err = client.PostContents(t.Context(), input)
+		// Current catalog contract reports an unresolved bound scope as
+		// unavailable, while ordinary insufficient permissions are forbidden.
+		requireError(t, err, 503, "unavailable")
+		must(t, w.auth.PurgeGroup(t.Context(), group))
+		foreignOwner, _ := w.person(t, 1)
+		persona, err := w.auth.Persona("channel")
+		must(t, err)
+		foreign := iam.UserSubject(foreignOwner.ID)
+		foreignTenant, err := iam.ParseTenantID(w.apps[2].cfg.Scope.TenantID.String())
+		must(t, err)
+		_, err = w.auth.CreateGroup(t.Context(), iam.NewGroup{ID: id, Persona: persona, TenantID: foreignTenant, Owner: &foreign})
+		must(t, err)
+		_, err = client.PostContents(t.Context(), input)
+		requireError(t, err, 503, "unavailable")
+		// Even a real grant in the recreated foreign group is not authority
+		// over the app's content scope.
+		foreignToken := authtest.SignIn(t, w.tenant[1], foreignOwner).AccessToken
+		permission, err := w.auth.Permission("channel:content:write")
+		must(t, err)
+		allowed, err := w.auth.Can(t.Context(), authtest.Identity(t, w.tenant[1], foreignToken), group, permission)
+		must(t, err)
+		if !allowed {
+			t.Fatal("foreign group owner lacked the positive-control permission")
+		}
+		_, err = a.client(foreignToken).PostContents(t.Context(), input)
+		requireError(t, err, 503, "unavailable")
+		current, err := a.engine.Client().GetContent(t.Context(), created.ID, ck.GetContentQuery{})
+		must(t, err)
+		if current.OwnerEntityID != string(entity.ID) || current.Title != "Before scope retirement" {
+			t.Fatalf("refused stale writes changed content: %+v", current)
+		}
+	})
 }
 
 func TestOwnedEntityAuthority(t *testing.T) {

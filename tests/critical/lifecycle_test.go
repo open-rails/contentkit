@@ -2,11 +2,14 @@ package critical_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 )
@@ -28,7 +31,19 @@ func TestHostLifecycle(t *testing.T) {
 	t.Run("CK-J01-S03_prepared_schema_can_start_read_only", func(t *testing.T) {
 		cfg := a.cfg
 		cfg.Database.SkipMigrations = true
-		replica, err := ck.New(t.Context(), cfg, a.deps)
+		poolConfig := w.pool.Config().Copy()
+		poolConfig.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+		readOnly, err := pgxpool.NewWithConfig(t.Context(), poolConfig)
+		must(t, err)
+		defer readOnly.Close()
+		_, err = readOnly.Exec(t.Context(), "CREATE TABLE "+w.schema+".must_not_exist(id integer)")
+		var refused *pgconn.PgError
+		if !errors.As(err, &refused) || refused.Code != "25006" {
+			t.Fatalf("provider did not enforce read-only DDL: %v", err)
+		}
+		deps := a.deps
+		deps.Postgres = readOnly
+		replica, err := ck.New(t.Context(), cfg, deps)
 		must(t, err)
 		defer func() { must(t, replica.Close(context.Background())) }()
 		model, err := replica.Client().GetKinds(t.Context())
@@ -37,7 +52,7 @@ func TestHostLifecycle(t *testing.T) {
 			t.Fatalf("prepared schema changed the public model: %+v", model)
 		}
 		cfg.Database.Schema = "ckc_missing"
-		unprepared, err := ck.New(t.Context(), cfg, a.deps)
+		unprepared, err := ck.New(t.Context(), cfg, deps)
 		if err == nil || unprepared != nil {
 			t.Fatal("read-only startup accepted an unprepared schema")
 		}

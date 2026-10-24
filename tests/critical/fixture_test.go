@@ -50,6 +50,7 @@ type world struct {
 	writer           iam.Role
 	viewer           iam.Role
 	moderator        iam.Role
+	commentManager   iam.Role
 	globalReviewer   iam.Role
 	channelWriter    iam.Role
 	channelModerator iam.Role
@@ -58,6 +59,7 @@ type world struct {
 	clock            *clock
 	schema           string
 	signer           keys.Signer
+	configure        []func(*ck.Config)
 }
 
 type application struct {
@@ -69,7 +71,7 @@ type application struct {
 	tenant *authkit.Client
 }
 
-func newWorld(t *testing.T) *world {
+func newWorld(t *testing.T, configure ...func(*ck.Config)) *world {
 	t.Helper()
 	ctx := t.Context()
 	pool, err := pgxpool.New(ctx, os.Getenv("CONTENTKIT_CRITICAL_PG"))
@@ -78,7 +80,7 @@ func newWorld(t *testing.T) *world {
 	must(t, pool.Ping(ctx))
 	_, err = pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS pgroonga")
 	must(t, err)
-	w := &world{pool: pool, clock: &clock{at: time.Now().UTC().Truncate(time.Second)}, schema: "ckc_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:20]}
+	w := &world{pool: pool, clock: &clock{at: time.Now().UTC().Truncate(time.Second)}, schema: "ckc_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:20], configure: configure}
 	w.roles = authkit.NewRoles(authkit.APIKeys)
 	appPersona := w.roles.Persona("app", authkit.APIKeys)
 	permissions := map[access.Permission]iam.Perm{}
@@ -90,6 +92,7 @@ func newWorld(t *testing.T) *world {
 	w.writer = appPersona.Role("writer", write)
 	w.viewer = appPersona.Role("auditor", permissions[access.ContentViewRestricted])
 	w.moderator = appPersona.Role("moderator", moderate)
+	w.commentManager = appPersona.Role("comment-manager", moderate, permissions[access.CommentsBan], permissions[access.ModerationReview])
 	w.globalReviewer = w.roles.Root.Role("reviewer", moderate)
 	channel := w.roles.Persona("channel")
 	channelPermissions := map[string]iam.Perm{}
@@ -148,6 +151,9 @@ func (w *world) newApplication(t *testing.T, tenant *authkit.Client, tid iam.Ten
 		}},
 	}
 	deps := ck.Deps{Postgres: w.pool, Auth: w.auth.Authenticator(), Authorization: policy, Users: tenant.UserInfo(), Clock: w.clock.now}
+	for _, configure := range w.configure {
+		configure(&cfg)
+	}
 	deps.Scopes, err = ckauth.AppScopes(w.auth, scope)
 	must(t, err)
 	engine, err := ck.New(ctx, cfg, deps)
