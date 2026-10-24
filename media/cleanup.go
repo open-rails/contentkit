@@ -107,8 +107,14 @@ ORDER BY c.due_at,c.folder_prefix LIMIT $4`, tenant, kinds, j.cfg.Now(), limit-p
 				if len(failures) < 10 {
 					failures = append(failures, fmt.Errorf("%s: %w", record.prefix, err))
 				}
+				retryAt := j.cfg.Now()
+				if !purgedVersions {
+					retryAt = retryAt.Add(j.cfg.CleanupInterval)
+				}
+				// Content purge owns its own retry/cadence. Do not impose
+				// the generic media cleanup interval on a version erasure.
 				_, updateErr := journal.pool.Exec(ctx, `UPDATE `+journal.cleanup+` SET due_at = $4
-WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision, j.cfg.Now().Add(j.cfg.CleanupInterval))
+WHERE tenant_id = $1 AND folder_prefix = $2 AND revision = $3`, tenant, record.prefix, record.revision, retryAt)
 				if updateErr != nil {
 					return processed, errors.Join(append(failures, updateErr)...)
 				}

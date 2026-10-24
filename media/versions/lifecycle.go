@@ -89,6 +89,21 @@ func (s *Service) Delete(ctx context.Context, targets []Target) error {
 	if err != nil {
 		return err
 	}
+	// Refuse a mistaken direct call before erasing any member of the batch.
+	if err := pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+		for _, ref := range refs {
+			claimed, err := s.m.Jobs.ErasureStartedTx(ctx, tx, ref)
+			if err != nil {
+				return err
+			}
+			if !claimed {
+				return errors.New("versions: storage erasure requires a committed claim")
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 	for _, ref := range refs {
 		if err := s.m.Jobs.Erase(ctx, media.Deletion{Ref: ref, OperationID: "content-purge:" + ref.Version()}); err != nil {
 			return err

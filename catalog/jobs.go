@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -199,23 +200,22 @@ const (
 // ago, including purchased content. Billing products and purchase history stay;
 // holders lose access to the erased media. It returns the number erased.
 func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
+	var cleanupErr error
 	if s.media != nil {
-		if _, err := s.media.Versions.ResumeDeletes(ctx, purgeBatch); err != nil {
-			return 0, err
-		}
+		_, cleanupErr = s.media.Versions.ResumeDeletes(ctx, purgeBatch)
 	}
 	if _, err := s.PruneEvents(ctx); err != nil {
-		return 0, err
+		return 0, errors.Join(cleanupErr, err)
 	}
 	cutoff := s.now().Add(-s.retention)
 	items, err := s.drain(ctx, func(ctx context.Context) (int, error) {
 		return s.erase(ctx, cutoff)
 	})
 	if err != nil {
-		return items, err
+		return items, errors.Join(cleanupErr, err)
 	}
 	erased, err := s.drain(ctx, func(ctx context.Context) (int, error) { return s.eraseVersions(ctx, cutoff) })
-	return items + erased, err
+	return items + erased, errors.Join(cleanupErr, err)
 }
 
 // drain repeats batch until one comes back short or the run's budget is spent.
