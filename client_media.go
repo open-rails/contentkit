@@ -33,18 +33,19 @@ const ingestPartSize = 32 << 20
 
 // IngestMedia uploads files into one media item (a content item's, or one
 // version's) and commits them as one operation: the upload routes' presign,
-// a PUT or multipart parts to the bucket over bucket (http.DefaultClient when
-// nil), then commit. operationID is a UUID of this commit; sending the files
+// a PUT or multipart parts to the bucket over a separate storage client (a
+// fresh unauthenticated client when nil), then commit. operationID is a UUID of this commit; sending the files
 // again (a new operationID) finds bytes the folder holds and uploads nothing
 // twice. Files with From are copied server-side, in one request. It is how
 // an importer fills an imported version's folder. This helper does not retain
 // upload plans: retry an uncertain commit with its exact CommitBody, not a
-// fresh invocation under the same operationID. PublishArchive provides a
-// durable, restartable workflow for an archive and its catalog metadata.
+// fresh invocation under the same operationID. A ZIP is validated and expanded
+// by Commit; the call returns its attached files, without changing content
+// metadata or publication. Create the item/version before uploading, and edit
+// or publish it explicitly afterward. The storage client must not inject API
+// credentials; its cookies and redirect handler are never used.
 func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media.RefBody, operationID string, files []MediaFile) (media.CommitReply, error) {
-	if bucket == nil {
-		bucket = http.DefaultClient
-	}
+	bucket = mediaStorageClient(bucket)
 	ops := make([]media.Op, len(files))
 	var copies []media.CopyRequest
 	var copied []int
@@ -97,6 +98,18 @@ func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media
 		}
 	}
 	return c.PostMediaUploadCommit(ctx, media.CommitBody{Ref: ref, OperationID: operationID, Ops: ops})
+}
+
+// mediaStorageClient isolates presigned capabilities from API authentication
+// and browser sessions. A capability is valid only at its signed URL.
+func mediaStorageClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{}
+	}
+	copy := *client
+	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	copy.Jar = nil
+	return &copy
 }
 
 // multipart writes body in parts and answers the assembled upload's blob.

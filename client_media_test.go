@@ -16,6 +16,18 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
+type mediaTransport func(*http.Request) (*http.Response, error)
+
+func (f mediaTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func mediaJSON(t *testing.T, w http.ResponseWriter, value any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestIngestMediaBatchesSignaturesAndUsesPartNumbers(t *testing.T) {
 	// Tiny fixture limits exercise the >100-part contract without allocating
 	// gigabytes. The final part is shorter, making positional joins observable.
@@ -32,7 +44,7 @@ func TestIngestMediaBatchesSignaturesAndUsesPartNumbers(t *testing.T) {
 		defer mu.Unlock()
 		switch {
 		case r.URL.Path == "/v1/media/upload/presign":
-			publishingJSON(t, w, media.PresignReply{Path: "import/archive.zip", Blob: "staged", Multipart: &media.MultipartReply{
+			mediaJSON(t, w, media.PresignReply{Path: "import/archive.zip", Blob: "staged", Multipart: &media.MultipartReply{
 				Ticket: "ticket", MinPartSize: 4, MaxPartSize: 8, MaxParts: 200,
 			}})
 		case r.URL.Path == "/v1/media/upload/parts":
@@ -53,7 +65,7 @@ func TestIngestMediaBatchesSignaturesAndUsesPartNumbers(t *testing.T) {
 					Method: http.MethodPut, URL: server.URL + "/part/" + strconv.Itoa(int(p.Number)),
 				}})
 			}
-			publishingJSON(t, w, out)
+			mediaJSON(t, w, out)
 		case strings.HasPrefix(r.URL.Path, "/part/"):
 			n, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/part/"))
 			body, _ := io.ReadAll(r.Body)
@@ -63,9 +75,9 @@ func TestIngestMediaBatchesSignaturesAndUsesPartNumbers(t *testing.T) {
 			}
 			puts++
 		case r.URL.Path == "/v1/media/upload/complete":
-			publishingJSON(t, w, media.CompleteReply{Blob: "staged", Size: int64(len(data)), Type: "application/zip"})
+			mediaJSON(t, w, media.CompleteReply{Blob: "staged", Size: int64(len(data)), Type: "application/zip"})
 		case r.URL.Path == "/v1/media/upload/commit":
-			publishingJSON(t, w, media.CommitReply{})
+			mediaJSON(t, w, media.CommitReply{})
 		default:
 			t.Errorf("unexpected request %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -92,7 +104,7 @@ func TestIngestMediaRejectsInvalidSignatureSetsBeforeUploading(t *testing.T) {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/v1/media/upload/presign":
-					publishingJSON(t, w, media.PresignReply{Multipart: &media.MultipartReply{Ticket: "ticket", MinPartSize: 4, MaxPartSize: 8, MaxParts: 10}})
+					mediaJSON(t, w, media.PresignReply{Multipart: &media.MultipartReply{Ticket: "ticket", MinPartSize: 4, MaxPartSize: 8, MaxParts: 10}})
 				case "/v1/media/upload/parts":
 					parts := []media.PartReply{{Number: 1, Request: &media.RequestReply{Method: http.MethodPut, URL: server.URL + "/upload"}}}
 					if mode == "duplicate" {
@@ -101,7 +113,7 @@ func TestIngestMediaRejectsInvalidSignatureSetsBeforeUploading(t *testing.T) {
 					if mode == "unknown" {
 						parts = append(parts, media.PartReply{Number: 99, Request: parts[0].Request})
 					}
-					publishingJSON(t, w, media.PartsReply{Parts: parts})
+					mediaJSON(t, w, media.PartsReply{Parts: parts})
 				case "/upload":
 					puts++
 				default:

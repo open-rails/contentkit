@@ -1211,3 +1211,16 @@ catalog. Use OpenRails or billing-ui directly for product and price management.
 entitlement key. The host resolves it through OpenRails and opens its billing
 flow. These components never create free grants or infer a price. The purchased
 content library remains available as `client.discovery.library()`.
+
+## Upload and publication
+
+Create the content and version first, then use the normal media upload API:
+`client.media.upload(file, { ref, path })` presigns and transfers bytes, and
+`client.media.commit(ref, ops)` validates and attaches them. For a ZIP, Commit
+expands its pages before returning. Thumbnails and other renditions may still
+be processing; their existing media progress remains available.
+
+Uploading never publishes the content. Edit its metadata and call
+`client.contents.publish(id, publishAt)` separately when it should go live.
+The bulk uploader creates private drafts and follows the same upload/commit
+flow. It has no publish-on-completion setting or publication status polling.
