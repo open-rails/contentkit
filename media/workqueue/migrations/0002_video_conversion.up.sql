@@ -8,7 +8,8 @@ FROM (SELECT ref, min(CASE class WHEN 'backfill' THEN 4 WHEN 'reencode' THEN 3 E
       FROM encode_run WHERE state IN ('planned', 'encoding', 'assembling') GROUP BY ref) r
 WHERE NOT EXISTS (
     SELECT 1 FROM river_job j WHERE j.kind = 'contentkit_media_video'
-      AND j.args->'ref' = r.ref AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
+      AND j.args->'ref' = r.ref AND COALESCE(j.args->>'preset', '') = ''
+      AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 );
 
 UPDATE river_job SET queue = 'media_video'
