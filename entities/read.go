@@ -347,7 +347,7 @@ func (s *Store) path(kind, code, slug, language string) string {
 }
 
 // List pages active entities with their display name, code, path, cover,
-// avatar, count and, for an entitlement-backed kind, its sale to the store's viewer
+// avatar, count and, for an entitlement-backed kind, the store viewer's membership
 // (As).
 func (s *Store) List(ctx context.Context, opts ListOptions) (EntityPage, error) {
 	if err := s.requireInternalRead(ctx, opts.IncludeInternal); err != nil {
