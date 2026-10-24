@@ -24,5 +24,5 @@ func (h handler) library(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	h.write(w, r, out, nil)
+	h.reply(w, r, out, nil)
 }
