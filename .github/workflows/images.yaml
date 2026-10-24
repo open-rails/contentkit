@@ -11,14 +11,11 @@ name: images
     tags:
     - 'v*'
     - 'media-gateway/v*'
-  pull_request:
-    branches: [master]
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-    - 'cmd/*/Dockerfile'
-    - 'server/cmd/*/Dockerfile'
-    - '.dockerignore'
-    - '.github/workflows/images.yaml'
+  workflow_call:
+    inputs:
+      verify_only:
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       tag:
@@ -30,7 +27,7 @@ concurrency:
   group: images-${{ github.event.pull_request.number || inputs.tag || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
-  PUBLISH: ${{ github.event_name != 'pull_request' }}
+  PUBLISH: ${{ !inputs.verify_only && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
   TAG: ${{ inputs.tag || github.ref_name }}
 jobs:
   build:
@@ -45,7 +42,7 @@ jobs:
       fail-fast: false
       matrix:
         name: ${{ fromJSON(startsWith(inputs.tag || github.ref_name, 'media-gateway/') && '["media-gateway"]' || '["media-gateway","media-worker","server"]') }}
-        arch: ${{ fromJSON(github.event_name == 'pull_request' && '["amd64"]' || '["amd64","arm64"]') }}
+        arch: ${{ fromJSON((inputs.verify_only || github.event_name == 'pull_request') && '["amd64"]' || '["amd64","arm64"]') }}
     steps:
     - name: Image version
       if: env.PUBLISH == 'true'
@@ -55,8 +52,12 @@ jobs:
         echo "TAG=$TAG" >> "$GITHUB_ENV"
     - uses: actions/checkout@v4
       with:
-        ref: ${{ inputs.tag || github.ref }}
+        ref: ${{ inputs.tag || github.sha }}
         persist-credentials: false
+        fetch-depth: 0
+    - name: Verify release source belongs to master
+      if: env.PUBLISH == 'true'
+      run: git merge-base --is-ancestor HEAD origin/master
     - id: rev
       run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
     - uses: docker/setup-buildx-action@v3
@@ -99,7 +100,7 @@ jobs:
   publish:
     name: ${{ matrix.name }} (multi-arch)
     needs: build
-    if: github.event_name != 'pull_request'
+    if: ${{ !inputs.verify_only && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

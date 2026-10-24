@@ -1,5 +1,15 @@
 # CI execution
 
+## Suite selection and releases
+
+CI starts only for a ready pull request or an explicit branch request. The coordinator verifies the tested PR merge against its base/head, selects coherent suites and reports each decision. `CI Gate` aggregates all selected results; a draft's skipped job has a different name.
+
+Known isolated changes select their module and direct consumers: server; either adapter plus the real integration module; UI package plus real browser tests; test-only changes select the owning suite. Shared/root Go, media implementation, schema, dependencies and unknown changes select the broad source suites. Deletions, renames, empty/oversized diffs and CI changes are conservative full requests. Diff errors fail the gate. Known documentation can skip source tests. Image-definition changes add build-only image checks.
+
+Source tests run before merge and do not repeat automatically on master. Manual `CI` or `full` runs use the same coordinator with every suite selected. Existing media/SDK leaf workflows remain callable for explicit diagnosis, but have no independent automatic PR/master triggers.
+
+A release tag publishes artifacts from the tested source. npm builds and checks the packed exports/types/styles; it does not rerun the unchanged source unit suite. Image publication and its native builds remain artifact qualification. A release does not claim a downstream application's deployment.
+
 GitHub Actions minutes are paid for; CI is a final check, not the test runner. Test locally first and push once.
 
 - Pull requests to `master` only; no branch-push runs. Superseded runs are cancelled. Draft PRs run only the injection scan.

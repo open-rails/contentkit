@@ -1,46 +1,21 @@
 name: go
 # Core Go packages. media/image, media/video, media/worker, media/versions (its tests run the worker) and cmd/media-worker run in their own workflows.
+# Reusable Go suites; the CI coordinator selects modules before runners start.
 'on':
-  pull_request:
-    branches: [master]
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-    - '**'
-    - '!**.md'
-    - '!docs/**'
-    - '!sdk/**'
-    - '!media/image/**'
-    - '!media/video/**'
-    - '!media/worker/**'
-    - '!cmd/media-worker/**'
-    - '!cmd/*/Dockerfile'
-    - '!.github/**'
-    - '!LICENSE'
-    - '!.gitignore'
-    - '!.dockerignore'
-    - '.github/clickhouse/**'
-    - '.github/workflows/go.yaml'
-  # master and integration branches: PRs merge without waiting, so each push runs
-  # the suite once (master's health) and a newer push to the same ref cancels it.
-  push:
-    branches: [master, 'next/**']
-    paths:
-    - '**'
-    - '!**.md'
-    - '!docs/**'
-    - '!sdk/**'
-    - '!media/image/**'
-    - '!media/video/**'
-    - '!media/worker/**'
-    - '!cmd/media-worker/**'
-    - '!cmd/*/Dockerfile'
-    - '!.github/**'
-    - '!LICENSE'
-    - '!.gitignore'
-    - '!.dockerignore'
-    - '.github/clickhouse/**'
-    - '.github/workflows/go.yaml'
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      shards:
+        type: string
+        default: '["0","1","2","e2e"]'
+      server:
+        type: boolean
+        default: true
+      authkit_adapter:
+        type: boolean
+        default: true
+      openrails_adapter:
+        type: boolean
+        default: true
 permissions:
   contents: read
 concurrency:
@@ -49,13 +24,13 @@ concurrency:
 jobs:
   test:
     name: test (${{ matrix.shard }})
-    if: '!github.event.pull_request.draft'
+    if: inputs.shards != '[]' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: ['0', '1', '2', e2e]
+        shard: ${{ fromJSON(inputs.shards) }}
     services:
       postgres:
         image: groonga/pgroonga:4.1.0-debian-18
@@ -86,6 +61,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.sha }}
         persist-credentials: false
     - name: Start ClickHouse with Keeper, MinIO and Garnet
       run: |
@@ -133,7 +109,7 @@ jobs:
         go test ./... -count=1 -race
   server:
     # server/ is its own module: the standalone binary over a real Postgres and AuthKit.
-    if: '!github.event.pull_request.draft'
+    if: inputs.server && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -154,6 +130,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.sha }}
         persist-credentials: false
     - uses: actions/setup-go@v5
       with:
@@ -167,7 +144,7 @@ jobs:
         go test ./... -count=1 -race
   authkit-adapter:
     # adapters/authkit is its own module: group scopes over a real AuthKit.
-    if: '!github.event.pull_request.draft'
+    if: inputs.authkit_adapter && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -191,6 +168,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.sha }}
         persist-credentials: false
     - uses: actions/setup-go@v5
       with:
@@ -204,7 +182,7 @@ jobs:
         go test ./... -count=1 -race
   openrails-adapter:
     # adapters/openrails is its own module: access.Billing and offers over a real embedded OpenRails.
-    if: '!github.event.pull_request.draft'
+    if: inputs.openrails_adapter && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -226,6 +204,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.sha }}
         persist-credentials: false
     - uses: actions/setup-go@v5
       with:
