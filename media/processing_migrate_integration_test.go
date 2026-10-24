@@ -77,7 +77,7 @@ func TestProcessingMigrationRetiresOwnedJobsAndBackfillsOnce(t *testing.T) {
 	if state(waiting) != "cancelled" || state(running) != "cancelled" || state(foreign) != "available" || state(history) != "completed" {
 		t.Fatal("retirement changed the wrong lifecycle jobs")
 	}
-	if publications != 2 {
+	if publications != 3 {
 		t.Fatalf("real metadata wakeups=%d", publications)
 	}
 	if err := media.ValidateProcessingMigration(ctx, pool, f.reg, host); err != nil {

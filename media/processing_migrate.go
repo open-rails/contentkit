@@ -117,6 +117,11 @@ VALUES($1,$2,$3,$4,NULLIF($5,''),$6,'migration:public-presets-v1',$7,$8,'applied
 							return err
 						}
 						if receipt.RowsAffected() > 0 {
+							if publish != nil {
+								if err := publish(ctx, tx, ref); err != nil {
+									return err
+								}
+							}
 							if err := process.EnqueueTx(ctx, tx, ProcessJob{Ref: ref}); err != nil {
 								return err
 							}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -314,6 +315,7 @@ func TestEngineDraftAndEntityRetentionIntegration(t *testing.T) {
 	if err := e.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	assertRetiredWorkersAbsent(t, e)
 	table := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
 	jobs := func(kind, id string) int {
 		t.Helper()
@@ -413,19 +415,19 @@ WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.P
 	if _, err := pool.Exec(ctx, `UPDATE `+table("content_entities")+` SET deleted_at = now() - interval '31 days' WHERE id = $1`, ch); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := e.entities.PurgeFolders(ctx, 100); err != nil || n != 1 || jobs("contentkit_media_delete_folder", string(ch)) != 1 {
+	if n, err := e.entities.PurgeFolders(ctx, 100); err != nil || n != 1 || jobs("contentkit_media_delete_folder", string(ch)) != 0 {
 		t.Fatalf("purged %d (%v) past the retention", n, err)
 	}
 	if n, err := e.entities.PurgeFolders(ctx, 100); err != nil || n != 0 {
 		t.Fatalf("purged again %d (%v)", n, err)
 	}
 	active := entities.StateActive
-	if _, err := e.entities.UpdateEntities(ctx, []entities.EntityUpdate{{ID: ch, State: &active}}); err != nil {
-		t.Fatal(err)
+	if _, err := e.entities.UpdateEntities(ctx, []entities.EntityUpdate{{ID: ch, State: &active}}); !errors.Is(err, entities.ErrConflict) {
+		t.Fatalf("irreversible entity retirement was restored: %v", err)
 	}
 	var deletedAt, purgedAt *time.Time
 	if err := pool.QueryRow(ctx, `SELECT deleted_at, media_purged_at FROM `+table("content_entities")+` WHERE id = $1`, ch).Scan(&deletedAt, &purgedAt); err != nil ||
-		deletedAt != nil || purgedAt != nil {
-		t.Fatalf("restored: deleted_at %v, media_purged_at %v, %v", deletedAt, purgedAt, err)
+		deletedAt == nil || purgedAt == nil {
+		t.Fatalf("retired: deleted_at %v, media_purged_at %v, %v", deletedAt, purgedAt, err)
 	}
 }
