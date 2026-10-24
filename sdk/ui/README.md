@@ -853,11 +853,11 @@ The host still owns navigation outside the flow, including browser Back handling
   of bytes already uploaded. The header contains the cover selector and the
   selected edition's staged release time. `access_scope: version` presents a
   direct edition access rule instead of a parent rule/inheritance toggle.
-  The shared Save includes edition details, chapters, reader metadata and staged
-  offer prices. Embedded editors hide their own Save/Revert actions and do not
-  save when Enter submits a field. Undo/Redo remains shared across their drafts.
-  Unpublish and Delete affect the selected edition; withdrawing an offer remains
-  an explicit lifecycle action. Standalone `VersionEditor` exposes explicit Publish/Unpublish
+  The shared Save includes edition details, chapters and reader metadata.
+  Embedded editors hide their own Save/Revert actions and do not save when
+  Enter submits a field. Undo/Redo remains shared across their drafts.
+  Unpublish and Delete affect the selected edition. Product and price changes
+  belong to OpenRails. Standalone `VersionEditor` exposes explicit Publish/Unpublish
   actions that save staged edition fields with the state change in one write;
   the parent item's publication remains separate. Deleted editions are read-only
   and restore to Draft through an explicit Restore version action. The Trash
