@@ -1,12 +1,13 @@
 import { cn } from "cn";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Add01Icon, Search01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { LETTERS } from "../../client/entity-fields.js";
-import type { Content, ContentModel, Membership } from "../../client/generated/wire.js";
+import type { Content, ContentModel, EntityCard, Membership } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
 import { useEntities, useKinds, type EntitySort } from "../../react/entities.js";
-import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
 import { Input } from "#ckui/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
@@ -17,7 +18,7 @@ import { labelOf, type Labels } from "../entities/parts.js";
 import { ScopedEntities } from "../entities/scoped.js";
 import { RenditionImg } from "../rendition-img.js";
 import { contentError, useAction } from "../social/parts.js";
-import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
+import { AdminRoot, LoadFailed, NoAccess, Rows, Segmented, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 export interface EntityManagerProps extends AdminFlowProps, AdminRouteProps {
   /** The entity kinds managed, in tab order; default the content model's site-owned kinds. */
@@ -33,6 +34,8 @@ export interface EntityManagerProps extends AdminFlowProps, AdminRouteProps {
   /** Replaces a member's card body; default its cover and title. */
   renderContent?: (member: Membership, content?: Content) => ReactNode;
   pageSize?: number;
+  /** Tabs to switch kind (default true); off when the host's own navigation already lists the kinds. */
+  kindTabs?: boolean;
 }
 
 /** Whether the caller may manage entities (app:entities:write). */
@@ -90,7 +93,7 @@ function Manager({ basePath, navigation, ...p }: Inner) {
   const ctx: Ctx = { ...p, loc: { ...loc, go }, kind, kinds, onLeaveGuard: registerLeaveGuard, merged: (into) => loc.go(`${kind}/${into}`, undefined, { replace: true }) };
   return (
     <>
-      {list.length > 1 && (
+      {p.kindTabs !== false && list.length > 1 && (
         <Tabs value={kind} onValueChange={(v) => go(String(v))}>
           <TabsList className="flex-wrap group-data-horizontal/tabs:h-auto">
             {list.map((x) => (
@@ -147,31 +150,39 @@ function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize
   const entities = useEntities({ kind, letter, sort, language, contentKind, pageSize, query: query || undefined, deleted }, { client, management: true });
   const restore = useAction("entity.save", onError);
   const label = labelOf(labels, kind);
+  const items = entities.items;
+  // Tags have no pictures; artists, series and seasons do. Only show the column when one is there.
+  const pictured = items.some((g) => g.avatar?.renditions?.length || g.cover?.renditions?.length);
+  // From md up the rows line up as a table: picture, name, contents, action.
+  const columns = [pictured && "5rem", "minmax(0,1fr)", "6rem", "6rem"].filter(Boolean).join(" ");
   return (
-    <div className="grid gap-4" data-ckui="entity-list" data-kind={kind}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold">{label}</h2>
+    <div className="grid gap-5" data-ckui="entity-list" data-kind={kind}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold tracking-tight">{label}</h2>
         <Button size="sm" aria-label={t("entityManager.new", { kind: label })} onClick={() => loc.go(`${kind}/new`)}>
+          <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
           {t("entityManager.newShort")}
         </Button>
       </div>
-      <div className="flex gap-2" role="group" aria-label={label}>
-        <Button size="sm" variant={deleted ? "outline" : "default"} aria-pressed={!deleted} onClick={() => filter({ deleted: undefined })}>
-          {t("entityManager.active")}
-        </Button>
-        <Button size="sm" variant={deleted ? "default" : "outline"} aria-pressed={deleted} onClick={() => filter({ deleted: "1" })}>
-          {t("entityManager.deleted")}
-        </Button>
-      </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Input
-          type="search"
-          className="h-8 min-w-48 flex-1"
-          aria-label={t("entityManager.search")}
-          placeholder={t("entityManager.search")}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
+        <Segmented
+          label={label}
+          options={[
+            { key: "active", label: t("entityManager.active"), pressed: !deleted, onSelect: () => filter({ deleted: undefined }) },
+            { key: "deleted", label: t("entityManager.deleted"), pressed: deleted, onSelect: () => filter({ deleted: "1" }) },
+          ]}
         />
+        <div className="relative min-w-48 flex-1">
+          <HugeiconsIcon icon={Search01Icon} strokeWidth={2} aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            className="h-8 ps-8"
+            aria-label={t("entityManager.search")}
+            placeholder={t("entityManager.search")}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+        </div>
         <Select value={sort} onValueChange={(v) => filter({ sort: v === "name" ? undefined : (String(v) as EntitySort) })}>
           <SelectTrigger size="sm" aria-label={t("entityManager.sort")}>
             <SelectValue>{(v: string) => t(`entityManager.sort_${v as EntitySort}`)}</SelectValue>
@@ -199,50 +210,80 @@ function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize
           </Select>
         )}
       </div>
-      <nav aria-label={t("entities.byLetter")} className="flex flex-wrap gap-1" data-ckui="letters">
+      <nav aria-label={t("entities.byLetter")} className="flex flex-wrap gap-0.5" data-ckui="letters">
         {[undefined, ...LETTERS].map((l) => (
           <Button
             key={l ?? "all"}
             size="xs"
-            variant={letter === l ? "default" : "ghost"}
+            variant="ghost"
             aria-pressed={letter === l}
             aria-label={l === undefined ? undefined : l === "#" ? t("entities.otherLetters") : l.toUpperCase()}
-            className="min-w-7"
+            className={cn("min-w-7", letter === l ? "bg-muted text-foreground" : "text-muted-foreground")}
             onClick={() => filter({ letter: l })}
           >
             {l === undefined ? t("entities.all") : l.toUpperCase()}
           </Button>
         ))}
       </nav>
-      {entities.loading && !entities.items.length ? (
+      {entities.loading && !items.length ? (
         <Rows />
-      ) : entities.error && !entities.items.length ? (
+      ) : entities.error && !items.length ? (
         <LoadFailed error={entities.error} message={t("entityManager.loadFailed")} retry={entities.reload} />
-      ) : !entities.items.length ? (
-        <p className="text-muted-foreground">{t(deleted ? "entityManager.noDeleted" : query ? "entityManager.noMatches" : "entities.empty")}</p>
+      ) : !items.length ? (
+        <div className="grid justify-items-center gap-3 rounded-lg border border-dashed border-border px-6 py-12 text-center">
+          <p className="text-muted-foreground">{t(deleted ? "entityManager.noDeleted" : query ? "entityManager.noMatches" : "entities.empty")}</p>
+          {!deleted && !query && (
+            <Button size="sm" onClick={() => loc.go(`${kind}/new`)}>
+              <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+              {t("entityManager.newShort")}
+            </Button>
+          )}
+        </div>
       ) : (
-        <ul className="grid divide-y divide-border rounded-lg border border-border" aria-busy={entities.loading}>
-          {entities.items.map((g) => (
-            <li key={g.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="entity-row" data-slug={g.slug} data-state={deleted ? "deleted" : "active"}>
-              {(g.avatar?.renditions?.[0] ?? g.cover?.renditions?.[0]) && (
-                <RenditionImg outputs={g.avatar?.renditions?.length ? g.avatar.renditions : g.cover?.renditions} alt="" loading="lazy" className={cn("size-24 shrink-0 object-cover sm:size-28", g.avatar?.renditions?.[0] ? "rounded-full" : "rounded-md")} />
-              )}
-              <div className="grid min-w-0 flex-1 gap-0.5">
-                <button type="button" className="text-left font-medium break-words hover:underline" onClick={() => loc.go(`${kind}/${g.id}`)}>
-                  {g.name || g.slug}
-                </button>
-                <span className="text-xs text-muted-foreground">{g.slug}</span>
-                {g.internal && <Badge variant="secondary" className="justify-self-start">{t("entityEditor.internal")}</Badge>}
+        <ul className="overflow-hidden rounded-lg border border-border" style={{ "--ck-cols": columns } as CSSProperties} aria-busy={entities.loading}>
+          <li aria-hidden className="hidden min-h-10 items-center gap-4 border-b border-border bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground md:grid md:grid-cols-(--ck-cols)" data-ckui="list-head">
+            {pictured && <span />}
+            <span>{label}</span>
+            <span className="text-end">{t("entityManager.count")}</span>
+            <span />
+          </li>
+          {items.map((g) => (
+            <li
+              key={g.id}
+              className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-3 py-2.5 transition-colors last:border-b-0 hover:bg-muted/30 md:grid md:grid-cols-(--ck-cols) md:gap-4"
+              data-ckui="entity-row"
+              data-slug={g.slug}
+              data-state={deleted ? "deleted" : "active"}
+            >
+              {pictured && <EntityPicture card={g} />}
+              <div className="grid min-w-[min(100%,12rem)] flex-1 gap-0.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  {deleted ? (
+                    <span className="truncate font-medium text-muted-foreground line-through">{g.name || g.slug}</span>
+                  ) : (
+                    <button type="button" className="truncate text-start font-medium underline-offset-4 hover:underline" title={g.name || g.slug} onClick={() => loc.go(`${kind}/${g.id}`)}>
+                      {g.name || g.slug}
+                    </button>
+                  )}
+                  {g.internal && <span className="shrink-0 text-xs text-muted-foreground">{t("entityEditor.internal")}</span>}
+                </div>
+                <span className="truncate font-mono text-xs text-muted-foreground">{g.slug}</span>
               </div>
-              <span className="text-sm text-muted-foreground tabular-nums" title={t("entityManager.count")}>
+              <span className="text-sm text-muted-foreground tabular-nums md:text-end" title={t("entityManager.count")}>
                 {new Intl.NumberFormat(m.language).format(g.count)}
               </span>
-              {deleted && (
-                <Button size="sm" variant="outline" disabled={restore.pending}
-                  onClick={() => void restore.run(() => client.entities.update(g.id, { state: "active" })).then((d) => d !== undefined && entities.reload())}>
-                  {t("entityEditor.restore")}
-                </Button>
-              )}
+              <div className="ms-auto flex justify-end">
+                {deleted ? (
+                  <Button size="sm" variant="outline" disabled={restore.pending}
+                    onClick={() => void restore.run(() => client.entities.update(g.id, { state: "active" })).then((d) => d !== undefined && entities.reload())}>
+                    {t("entityEditor.restore")}
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" tabIndex={-1} aria-hidden onClick={() => loc.go(`${kind}/${g.id}`)}>
+                    {t("comments.edit")}
+                  </Button>
+                )}
+              </div>
             </li>
           ))}
         </ul>
@@ -256,6 +297,24 @@ function List({ loc, kind, kinds, client, contentKind, labels, onError, pageSize
         </div>
       )}
     </div>
+  );
+}
+
+/** An entity's picture in its own shape: a round avatar, or its cover as wide or tall as the image is. */
+function EntityPicture({ card }: { card: EntityCard }) {
+  const avatar = card.avatar?.renditions?.length ? card.avatar.renditions : undefined;
+  const outputs = avatar ?? (card.cover?.renditions?.length ? card.cover.renditions : undefined);
+  if (!outputs) return <span aria-hidden className="hidden md:block" />;
+  const first = outputs[0]!;
+  const shape = first.w > 0 && first.h > 0 ? first.w / first.h : 1;
+  return (
+    <RenditionImg
+      outputs={outputs}
+      alt=""
+      loading="lazy"
+      className={cn("shrink-0 bg-muted object-cover", avatar ? "size-10 rounded-full" : cn("rounded-md", shape >= 1 ? "w-20" : "w-12"))}
+      style={avatar ? undefined : { aspectRatio: String(shape) }}
+    />
   );
 }
 

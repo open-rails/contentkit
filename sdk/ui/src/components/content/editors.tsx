@@ -1,6 +1,9 @@
 import { cn } from "cn";
 import { createPortal } from "react-dom";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { Add01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { ratio } from "../../client/aspect.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/entity-fields.js";
 import type { Content, ContentModel, Rule, Segment, SegmentInput, Version, VersionState } from "../../client/generated/wire.js";
@@ -10,7 +13,6 @@ import { useKinds } from "../../react/entities.js";
 import { useMediaRead } from "../../react/read.js";
 import { usePresets } from "../../react/public.js";
 import { useContentScope } from "../../react/use-resource.js";
-import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
 import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
@@ -62,13 +64,54 @@ export function offersAccessChoice(spec: ContentModel["kinds"][string] | undefin
   return !!spec && (!spec.access_levels?.length || spec.access_levels.length > 1);
 }
 
-function Section({ title, ckui, children }: { title: ReactNode; ckui: string; children: ReactNode }) {
+export function Section({
+  title,
+  hint,
+  aside,
+  ckui,
+  className,
+  children,
+}: {
+  title: ReactNode;
+  hint?: ReactNode;
+  aside?: ReactNode;
+  ckui: string;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
-    <section className="grid gap-3 border-t border-border pt-4" data-ckui={ckui}>
-      <h3 className="font-medium">{title}</h3>
+    <section className={cn("rounded-lg border border-border bg-card p-4 grid gap-4", className)} data-ckui={ckui}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="grid gap-1">
+          <h3 className="text-sm font-medium">{title}</h3>
+          {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+        </div>
+        {aside}
+      </div>
       {children}
     </section>
   );
+}
+
+export function SaveState({ dirty, saved }: { dirty?: boolean; saved?: boolean }) {
+  const { t } = useMessages();
+  if (dirty) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span aria-hidden className="size-1.5 rounded-full bg-warning" />
+        {t("contentManager.unsaved")}
+      </span>
+    );
+  }
+  if (saved) {
+    return (
+      <span role="status" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span aria-hidden className="size-1.5 rounded-full bg-success" />
+        {t("contentEditor.saved")}
+      </span>
+    );
+  }
+  return null;
 }
 
 function Saved({ show }: { show: boolean }) {
@@ -137,8 +180,9 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
   const [invalid, setInvalid] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
+  const dirty = fields.dirty.length > 0 || attrs.dirty.length > 0;
   return (
-    <Section title={t("contentEditor.details")} ckui="content-details">
+    <Section title={t("contentEditor.details")} aside={<SaveState dirty={dirty} saved={saved} />} ckui="content-details">
       <form
         className="grid gap-3"
         onSubmit={(e) => {
@@ -180,21 +224,33 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
         <AttributeFields declared={declared} form={attrs.value} onChange={(n, v) => { attrs.edit((a) => ({ ...a, [n]: v })); setSaved(false); }} labels={p.labels} />
         {invalid && <ErrorLine>{invalid}</ErrorLine>}
         <ErrorLine error={save.error} />
-        <div className="flex items-center gap-3">
-          <Button type="submit" size="sm" disabled={save.pending}>
+        <div className="flex justify-end gap-2 border-t border-border pt-4">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={save.pending}
+            onClick={() => {
+              const settleFields = fields.checkpoint(), settleAttrs = attrs.checkpoint();
+              void save.run(reload).then((d) => {
+                if (!d) return;
+                settleFields({ comments: d.comments });
+                settleAttrs(formOf(declared, d.attributes));
+                setInvalid(null);
+                setSaved(false);
+              });
+            }}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="submit"
+            size="sm"
+            variant={dirty ? "default" : "outline"}
+            disabled={save.pending}
+          >
             {save.pending ? t("common.saving") : t("common.save")}
           </Button>
-          <Button type="button" variant="ghost" size="sm" disabled={save.pending} onClick={() => {
-            const settleFields = fields.checkpoint(), settleAttrs = attrs.checkpoint();
-            void save.run(reload).then((d) => {
-              if (!d) return;
-              settleFields({ comments: d.comments });
-              settleAttrs(formOf(declared, d.attributes));
-              setInvalid(null);
-              setSaved(false);
-            });
-          }}>{t("common.cancel")}</Button>
-          <Saved show={saved} />
         </div>
       </form>
     </Section>
@@ -367,8 +423,9 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
   const offer = useAction("offer.save", p.onError);
+  const dirty = rule.dirty.length > 0;
   return (
-    <Section title={t(allowsIndividualSales(model, content.kind) ? "contentEditor.accessTitle" : "contentEditor.accessOnlyTitle")} ckui="access-editor">
+    <Section title={t(allowsIndividualSales(model, content.kind) ? "contentEditor.accessTitle" : "contentEditor.accessOnlyTitle")} aside={<SaveState dirty={dirty} saved={saved} />} ckui="access-editor">
       <form
         className="grid gap-3"
         onSubmit={(e) => {
@@ -380,19 +437,31 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
       >
         <RuleFields value={rule.value} onChange={(r) => { rule.edit(r); setSaved(false); }} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />
         <ErrorLine error={save.error} />
-        <div className="flex items-center gap-3">
-          <Button type="submit" size="sm" disabled={save.pending || !complete(rule.value)}>
+        <div className="flex justify-end gap-2 border-t border-border pt-4">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={save.pending}
+            onClick={() => {
+              const settle = rule.checkpoint();
+              void save.run(reload).then((d) => {
+                if (!d) return;
+                settle(d.access);
+                setSaved(false);
+              });
+            }}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="submit"
+            size="sm"
+            variant={dirty && complete(rule.value) ? "default" : "outline"}
+            disabled={save.pending || !complete(rule.value)}
+          >
             {save.pending ? t("common.saving") : t("common.save")}
           </Button>
-          <Button type="button" variant="ghost" size="sm" disabled={save.pending} onClick={() => {
-            const settle = rule.checkpoint();
-            void save.run(reload).then((d) => {
-              if (!d) return;
-              settle(d.access);
-              setSaved(false);
-            });
-          }}>{t("common.cancel")}</Button>
-          <Saved show={saved} />
         </div>
       </form>
       {allowsIndividualSales(model, content.kind) && <OfferFields
@@ -408,7 +477,22 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
 
 /** A version's name in the editor: its label, else its languages and traits. */
 export function versionLabel(v: Version, languageName: (l: string) => string, labels?: Labels): string {
-  return v.label || [...v.languages.map(languageName), ...v.traits.map((x) => labelOf(labels, x))].join(" · ");
+  return v.label || [...(v.languages ?? []).map(languageName), ...(v.traits ?? []).map((x) => labelOf(labels, x))].join(" · ");
+}
+
+function VersionStatus({ version }: { version: Version }) {
+  const { t } = useMessages();
+  if (version.state === "deleted") {
+    return <span className="text-sm text-muted-foreground" data-ckui="version-status" data-state="deleted">{t("contentManager.deleted")}</span>;
+  }
+  const color = version.live ? "bg-success" : version.state === "draft" ? "bg-muted-foreground/50" : "bg-sky-500";
+  const label = version.live ? t("contentEditor.live") : version.state === "draft" ? t("contentManager.draft") : t("contentManager.scheduled");
+  return (
+    <span className="inline-flex items-center gap-1.5 text-sm text-foreground" data-ckui="version-status" data-state={version.live ? "live" : version.state}>
+      <span aria-hidden className={cn("size-2 shrink-0 rounded-full", color)} />
+      {label}
+    </span>
+  );
 }
 
 /**
@@ -445,18 +529,21 @@ export function VersionsEditor({ content, media = true, activeVersion, ...p }: C
   const activeVersions = versions.filter((version) => version.state !== "deleted");
   const deletedVersions = versions.filter((version) => version.state === "deleted");
   const versionRow = (v: Version, handle?: ReactNode) => (
-    <div className="grid gap-2 rounded-md border border-border p-2" data-ckui="version-row" data-version={v.id}>
+    <div className="grid gap-2 rounded-md border border-border px-3 py-2" data-ckui="version-row" data-version={v.id}>
       <div className="flex flex-wrap items-center gap-2">
         {activeVersions.length > 1 && handle}
-        <span className="min-w-0 flex-1 font-medium break-words">{versionLabel(v, languageName, p.labels)}</span>
-        <Badge variant={v.live ? "default" : "outline"}>{t(v.state === "deleted" ? "contentManager.deleted" : v.live ? "contentEditor.live" : v.state === "draft" ? "contentManager.draft" : "contentManager.scheduled")}</Badge>
-        {v.access && <Badge variant="secondary">{t(`contentEditor.level_${v.access.level}`)}</Badge>}
+        <span className="min-w-0 flex-1 break-words">
+          <span className="font-medium">{versionLabel(v, languageName, p.labels)}</span>
+          <span className="ms-2 font-mono text-xs text-muted-foreground">{v.code}</span>
+        </span>
+        <VersionStatus version={v} />
+        {v.access && <span className="text-sm text-muted-foreground">{t(`contentEditor.level_${v.access.level}`)}</span>}
         {v.pages ? <span className="text-xs text-muted-foreground">{t("contentEditor.pageCount", { count: v.pages })}</span> : null}
-        <Button type="button" size="xs" variant="ghost" aria-expanded={open === v.id} onClick={() => open === v.id ? setOpen(null) : reveal(v.id)}>
+        <Button type="button" size="sm" variant="outline" aria-expanded={open === v.id} onClick={() => open === v.id ? setOpen(null) : reveal(v.id)}>
           {t(open === v.id ? "contentEditor.close" : "contentEditor.edit")}
         </Button>
       </div>
-      {opened.includes(v.id) && <div hidden={open !== v.id}><VersionForm content={content} version={v} model={model} media={media} {...p} /></div>}
+      {opened.includes(v.id) && <div hidden={open !== v.id} className="-mx-3 mt-1 border-t border-border px-3 pt-2"><VersionForm content={content} version={v} model={model} media={media} {...p} /></div>}
     </div>
   );
   return (
@@ -479,6 +566,7 @@ export function VersionsEditor({ content, media = true, activeVersion, ...p }: C
       </SortableList>
       <ErrorLine error={order.error} />
       <AddVersion
+        collapsible
         languages={languages}
         many={spec?.versions.languages === "many"}
         pending={add.pending}
@@ -493,30 +581,36 @@ export function VersionsEditor({ content, media = true, activeVersion, ...p }: C
 function LanguageFields({ languages, value, many, onChange }: { languages: readonly string[]; value: readonly string[]; many: boolean; onChange: (v: string[]) => void }) {
   const { t } = useMessages();
   const languageName = useLanguageName();
+  // The visible label lives here, so callers don't add their own.
   if (!many)
     return (
-      <Select value={value[0] ?? NONE} onValueChange={(v) => onChange(v === NONE ? [] : [String(v)])}>
-        <SelectTrigger size="sm" aria-label={t("contentEditor.versionLanguage")}>
-          <SelectValue>{(v: string) => (v === NONE ? t("contentEditor.chooseLanguage") : languageName(v))}</SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {languages.map((l) => (
-            <SelectItem key={l} value={l}>
-              {languageName(l)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="grid gap-1.5">
+        <span aria-hidden className="text-sm font-medium">{t("contentEditor.versionLanguage")}</span>
+        <Select value={value[0] ?? NONE} onValueChange={(v) => onChange(v === NONE ? [] : [String(v)])}>
+          <SelectTrigger size="sm" className="w-fit" aria-label={t("contentEditor.versionLanguage")}>
+            <SelectValue>{(v: string) => (v === NONE ? t("contentEditor.chooseLanguage") : languageName(v))}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {languages.map((l) => (
+              <SelectItem key={l} value={l}>
+                {languageName(l)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
     );
   return (
-    <fieldset className="flex flex-wrap gap-3">
-      <legend className="sr-only">{t("contentEditor.versionLanguages")}</legend>
-      {languages.map((l) => (
-        <label key={l} className="flex items-center gap-1.5">
-          <Switch size="sm" checked={value.includes(l)} onCheckedChange={(on) => onChange(on ? [...value, l] : value.filter((x) => x !== l))} aria-label={languageName(l)} />
-          {languageName(l)}
-        </label>
-      ))}
+    <fieldset className="grid gap-1.5">
+      <legend className="mb-1.5 text-sm font-medium">{t("contentEditor.versionLanguages")}</legend>
+      <div className="flex flex-wrap gap-3">
+        {languages.map((l) => (
+          <label key={l} className="flex items-center gap-1.5">
+            <Switch size="sm" checked={value.includes(l)} onCheckedChange={(on) => onChange(on ? [...value, l] : value.filter((x) => x !== l))} aria-label={languageName(l)} />
+            {languageName(l)}
+          </label>
+        ))}
+      </div>
     </fieldset>
   );
 }
@@ -529,23 +623,43 @@ export interface VersionSource {
   chapters: boolean;
 }
 
-export function AddVersion({ languages, many, pending, sources, onAdd }: {
+export function AddVersion({ languages, many, pending, sources, onAdd, heading = true, collapsible = false }: {
   languages: readonly string[];
   many: boolean;
   pending: boolean;
   /** Offers "Start from" one of these: the new version copies its files, and its audio and chapters when ticked. */
   sources?: readonly VersionSource[];
   onAdd: (v: { languages: string[] }, from?: { from: string; playback: boolean; segments: boolean }) => void;
+  heading?: boolean;
+  collapsible?: boolean;
 }) {
   const { t } = useMessages();
   const id = useId();
+  const [shown, setShown] = useState(!collapsible);
   const [langs, setLangs] = useState<string[]>([]);
   const [from, setFrom] = useState(NONE);
   const [audio, setAudio] = useState(true);
   const [chapters, setChapters] = useState(false);
   const source = sources?.find((s) => s.id === from);
+  // In its own card section it gets a divider; inside a dialog (heading off) the dialog frames it.
+  const frame = cn("grid gap-3", heading && "border-t border-border pt-4");
+  if (!shown)
+    return (
+      <div className={frame} data-ckui="add-version">
+        <Button type="button" size="sm" variant="outline" className="justify-self-start" onClick={() => setShown(true)}>
+          <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+          {t("contentEditor.addVersion")}
+        </Button>
+      </div>
+    );
   return (
-    <div className="flex flex-wrap items-center gap-2" data-ckui="add-version">
+    <div className={frame} data-ckui="add-version">
+      {heading && (
+        <div className="grid gap-0.5">
+          <p className="text-sm font-medium">{t("contentEditor.addVersion")}</p>
+          <p className="text-xs text-muted-foreground">{t("contentEditor.addVersionHint")}</p>
+        </div>
+      )}
       <LanguageFields languages={languages} value={langs} many={many} onChange={setLangs} />
       {!!sources?.length && (
         <div className="grid w-full gap-2" data-ckui="add-version-source">
@@ -582,18 +696,26 @@ export function AddVersion({ languages, many, pending, sources, onAdd }: {
           )}
         </div>
       )}
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        disabled={pending || !langs.length}
-        onClick={() => {
-          onAdd({ languages: langs }, source && { from: source.id, playback: source.audio && audio, segments: source.chapters && chapters });
-          setLangs([]);
-        }}
-      >
-        {t("contentEditor.addVersion")}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={pending || !langs.length}
+          onClick={() => {
+            onAdd({ languages: langs }, source && { from: source.id, playback: source.audio && audio, segments: source.chapters && chapters });
+            setLangs([]);
+            if (collapsible) setShown(false);
+          }}
+        >
+          {t("contentEditor.addVersion")}
+        </Button>
+        {collapsible && (
+          <Button type="button" size="sm" variant="ghost" onClick={() => { setLangs([]); setShown(false); }}>
+            {t("common.cancel")}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -675,7 +797,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
     </Select>
   </div>;
   const destructive = <>
-    <Button type="button" size="sm" variant="destructive" disabled={remove.pending} onClick={() => void remove.run(async () => {
+    <Button type="button" size="sm" variant="ghost" className="ms-auto text-destructive hover:text-destructive" disabled={remove.pending} onClick={() => void remove.run(async () => {
       if (beforeDelete && !(await beforeDelete())) return false;
       await client.contents.removeVersion(content.id, v.id);
       return true;
@@ -691,53 +813,82 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
     </div>;
     return restoreTarget === undefined ? restore : restoreTarget && createPortal(restore, restoreTarget);
   }
+  // A player version reads as one task, top to bottom: its video, then chapters, then its
+  // settings and the Save/Publish that applies to them. Reader works keep settings alone.
+  const segments = chapters && !!spec?.segments;
   return (
     <div className="grid gap-4 pt-2">
-      <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();if (coordinated) event.stopPropagation();else void submit();}}>
-        <LanguageFields languages={model?.languages ?? []} value={langs} many={spec?.versions.languages === "many"} onChange={(langs)=>edit({langs})} />
-        {showTraits && !!spec?.versions.traits?.length && (
-          <fieldset className="flex flex-wrap gap-3">
-            <legend className="sr-only">{t("contentEditor.traits")}</legend>
-            {spec.versions.traits.map((x) => (
-              <label key={x} className="flex items-center gap-1.5">
-                <Switch size="sm" checked={traits.includes(x)} onCheckedChange={(on) => edit({traits:on ? [...traits, x] : traits.filter((y) => y !== x)})} aria-label={labelOf(p.labels, x)} />
-                {labelOf(p.labels, x)}
-              </label>
-            ))}
-          </fieldset>
-        )}
-        {scheduleTarget === undefined ? schedule : scheduleTarget && createPortal(schedule, scheduleTarget)}
-        {!directAccess && <label className="flex items-center gap-2">
-          <Switch size="sm" checked={own} onCheckedChange={(own)=>edit({own})} />
-          {t("contentEditor.ownAccess")}
-        </label>}
-        {(directAccess || own) && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
-        <ErrorLine error={save.error} />
-        <div className="flex flex-wrap items-center gap-3">
-          {!coordinated && <>
-            <Button type="submit" size="sm" disabled={save.pending || !langs.length}>
-              {save.pending ? t("common.saving") : t("common.save")}
-            </Button>
-            <Button type="button" size="sm" variant="outline" disabled={save.pending || !valid} onClick={() => void submit(v.state === "draft" ? "published" : "draft")}>
-              {t(v.state === "draft" ? "contentManager.publish" : "contentManager.unpublish")}
-            </Button>
-            <Saved show={saved} />
-          </>}
-          {actionsTarget === undefined ? destructive : actionsTarget && createPortal(destructive, actionsTarget)}
-        </div>
-      </form>
-      {readerToolsTarget && readingLayout && createPortal(readingLayout, readerToolsTarget)}
-      {allowsIndividualSales(model, content.kind) && <OfferFields
-        offer={v.offer}
-        pending={offer.pending}
-        onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id, version: v.id }, terms))}
-        onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id, version: v.id }))}
-      />}
-      <ErrorLine error={offer.error} />
-      {chapters && spec?.segments && <SegmentsEditor content={content} version={v} {...p} />}
-      {media && <VersionCover content={content} version={v} {...p} />}
       {media && <VersionMedia content={content} version={v} model={model} {...p} />}
-      {media && spec?.presentation === "reader" && <ReaderManifestEditor kind={content.kind} content={content.id} version={v.id} client={p.client} onError={p.onError} />}
+      {media && (
+        <div className="border-t border-border pt-4">
+          <VersionCover content={content} version={v} {...p} />
+        </div>
+      )}
+      {media && spec?.presentation === "reader" && (
+        <div className="border-t border-border pt-4">
+          <ReaderManifestEditor kind={content.kind} content={content.id} version={v.id} client={p.client} onError={p.onError} />
+        </div>
+      )}
+      {segments && (
+        <div className={cn(media && "border-t border-border pt-4")}>
+          <SegmentsEditor content={content} version={v} {...p} />
+        </div>
+      )}
+      <div className={cn("grid gap-3", (media || segments) && "border-t border-border pt-4")} data-ckui="version-settings">
+        {media && (
+          <div className="grid gap-0.5">
+            <h4 className="text-sm font-medium">{t("contentEditor.versionSettings")}</h4>
+            <p className="text-xs text-muted-foreground">{t("contentEditor.versionSettingsHint")}</p>
+          </div>
+        )}
+        <form className="grid gap-3" onSubmit={(event)=>{event.preventDefault();if (coordinated) event.stopPropagation();else void submit();}}>
+          <LanguageFields languages={model?.languages ?? []} value={langs} many={spec?.versions.languages === "many"} onChange={(langs)=>edit({langs})} />
+          {showTraits && !!spec?.versions.traits?.length && (
+            <fieldset className="grid gap-1.5">
+              <legend className="mb-1.5 text-sm font-medium">{t("contentEditor.traits")}</legend>
+              <div className="flex flex-wrap gap-3">
+                {spec.versions.traits.map((x) => (
+                  <label key={x} className="flex items-center gap-1.5">
+                    <Switch size="sm" checked={traits.includes(x)} onCheckedChange={(on) => edit({traits:on ? [...traits, x] : traits.filter((y) => y !== x)})} aria-label={labelOf(p.labels, x)} />
+                    {labelOf(p.labels, x)}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {scheduleTarget === undefined ? schedule : scheduleTarget && createPortal(schedule, scheduleTarget)}
+          {!directAccess && <label className="flex items-center gap-2">
+            <Switch size="sm" checked={own} onCheckedChange={(own)=>edit({own})} />
+            {t("contentEditor.ownAccess")}
+          </label>}
+          {(directAccess || own) && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
+          <ErrorLine error={save.error} />
+          <div className="flex flex-wrap items-center gap-3">
+            {!coordinated && <>
+              <Button type="submit" size="sm" disabled={save.pending || !langs.length}>
+                {save.pending ? t("common.saving") : t("common.save")}
+              </Button>
+              <Button type="button" size="sm" variant="outline" disabled={save.pending || !valid} onClick={() => void submit(v.state === "draft" ? "published" : "draft")}>
+                {t(v.state === "draft" ? "contentManager.publish" : "contentManager.unpublish")}
+              </Button>
+              <Saved show={saved} />
+            </>}
+            {actionsTarget === undefined ? destructive : actionsTarget && createPortal(destructive, actionsTarget)}
+          </div>
+        </form>
+      </div>
+      {readerToolsTarget && readingLayout && createPortal(readingLayout, readerToolsTarget)}
+      {allowsIndividualSales(model, content.kind) && (
+        <div className="border-t border-border pt-4">
+          <OfferFields
+            offer={v.offer}
+            pending={offer.pending}
+            onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id, version: v.id }, terms))}
+            onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id, version: v.id }))}
+          />
+        </div>
+      )}
+      <ErrorLine error={offer.error} />
     </div>
   );
 }
@@ -754,8 +905,12 @@ export function VersionCover({ content, version: v, ...p }: Common & { content: 
   const input = useRef<HTMLInputElement>(null);
   const [fresh, setFresh] = useState<string | null>(null);
   useEffect(() => () => void (fresh && URL.revokeObjectURL(fresh)), [fresh]);
-  if (!presets.some((r) => r.kind === content.kind && r.name === "cover")) return null;
+  const preset = presets.find((r) => r.kind === content.kind && r.name === "cover");
+  if (!preset) return null;
   const src = fresh ?? v.cover?.url;
+  // The kind's cover shape: wide for players, portrait for reader works.
+  const shape = ratio(preset.aspect) ?? 16 / 9;
+  const box = cn("shrink-0 rounded-md border border-border bg-muted", shape >= 1 ? "w-40" : "w-24");
   const pick = (file: File | null) =>
     void save.run(async () => {
       if (!file) {
@@ -772,7 +927,13 @@ export function VersionCover({ content, version: v, ...p }: Common & { content: 
     <div className="grid gap-1.5" data-ckui="version-cover">
       <span className="text-sm font-medium">{t("contentManager.cover")}</span>
       <div className="flex flex-wrap items-center gap-3">
-        {src ? <img src={src} alt="" className="h-20 w-36 rounded-md border border-border object-cover" /> : <span className="text-muted-foreground">{t("contentManager.noCover")}</span>}
+        {src ? (
+          <img src={src} alt="" className={cn(box, "object-cover")} style={{ aspectRatio: String(shape) }} />
+        ) : (
+          <span className={cn(box, "grid place-items-center text-xs text-muted-foreground")} style={{ aspectRatio: String(shape) }}>
+            {t("contentManager.noCover")}
+          </span>
+        )}
         <Button type="button" size="sm" variant="outline" disabled={save.pending} onClick={() => input.current?.click()}>
           {t(src ? "pollEditor.replaceImage" : "contentManager.addCover")}
         </Button>
@@ -895,7 +1056,7 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
         fields.edit((previous) => ({ rows: [...previous.rows, { title: "", startPage: pages[next]?.id ?? "", release: "" }] }));
       }}>{t("contentEditor.addSegment")}</Button>
       {!coordinated && <>
-        <Button type="button" size="sm" disabled={save.pending || !valid} onClick={() => void submit()}>{t("contentEditor.saveSegments")}</Button>
+        <Button type="button" size="sm" variant="outline" disabled={save.pending || !valid} onClick={() => void submit()}>{t("contentEditor.saveSegments")}</Button>
         <Saved show={saved} />
       </>}
     </div>
@@ -977,6 +1138,7 @@ function NumericSegmentsEditor({ content, version, heading = true, ...p }: Segme
         <Button
           type="button"
           size="sm"
+          variant="outline"
           disabled={save.pending || !valid}
           onClick={()=>void submit()}
         >
