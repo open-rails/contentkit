@@ -205,8 +205,8 @@ func TestCleanupDueKeepsConcurrentRequestAndIsolatesFailures(t *testing.T) {
 		t.Fatal("failed folder or concurrent request lost its obligation")
 	}
 	cleanupDueNow(t, f, two)
-	if n, err := f.jobs.PurgeRetired(t.Context(), 10); n != 1 || err != nil {
-		t.Fatalf("unaffected folder did not progress: %d %v", n, err)
+	if n, err := f.jobs.PurgeRetired(t.Context(), 10); n != 2 || err != nil {
+		t.Fatalf("same sweep did not retry both due folders: %d %v", n, err)
 	}
 	if cleanupCount(t, f, two) != 0 {
 		t.Fatal("unchanged completed request was not acknowledged")
