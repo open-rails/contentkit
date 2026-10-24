@@ -536,7 +536,7 @@ func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, 
 				}
 			}
 		}
-		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = $3, updated_at = now()
+		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = $3, effects = effects - 'manifest', updated_at = now()
 WHERE tenant_id = $1 AND operation_id = $2`, found.Ref.TenantID, found.ID, state)
 		return err
 	})
