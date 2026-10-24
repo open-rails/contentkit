@@ -8,72 +8,58 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/openrails"
 	"github.com/open-rails/openrails/billing"
+	billingcatalog "github.com/open-rails/openrails/catalog"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/offers"
 )
 
-// A group_ppv post's product sells only to its group's members: OpenRails
-// refuses anyone else's order (entitlement_required, missing the group key the
-// paywall requires) and takes a member's. Once the rule is plain PPV the
-// requirement goes.
+// Both services enforce their own boundary: ContentKit requires membership
+// for reading, and the host sets OpenRails' prerequisite for purchasing.
 func TestEntityPPVRequiresMembershipIntegration(t *testing.T) {
-	// Orders need provider writes; nothing here reaches a provider.
 	s := newShop(t, func(c *openrails.Config) { c.ProviderWriteMode = openrails.ProviderWritesLimited })
 	ctx := t.Context()
 	owner, member, stranger := s.customer(), s.customer(), s.customer()
 	studio := s.channel("studio", "Studio", owner.ID)
-	s.sell(offers.Target{Kind: offers.EntityTarget, ID: studio}, offers.Terms{}) // free to join: members-only needs a membership
-	none := []catalog.Creator{}
-	post := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.EntityPPV, Entity: studio}, OwnerEntityID: studio, Creators: &none,
-		Text: map[string]catalog.Text{"en": {Title: "Members' PPV"}}})
-	target := offers.Target{Kind: offers.ContentTarget, ID: post}
-	s.sell(target, offers.Terms{Amount: 2_990_000})
-	s.holds(member, gk(studio))
-	product, prices := s.product(ck(post))
-	if !slices.Equal(product.RequiredEntitlements, []string{gk(studio)}) || len(live(prices)) != 1 {
-		t.Fatalf("product %+v requires %v", product.ID, product.RequiredEntitlements)
+	post := s.post(catalog.ContentInput{Access: &access.Rule{Level: access.EntityPPV, Entity: studio}, OwnerEntityID: studio, Creators: &[]catalog.Creator{}, Text: map[string]catalog.Text{"en": {Title: "Members' PPV"}}})
+	product, price := s.sell(ck(post), "Members purchase", 2_990_000)
+	if _, err := s.bill.UpdateProduct(ctx, product.ID, billing.UpdateProductParams{RequiredEntitlements: billingcatalog.Value([]string{gk(studio)})}); err != nil {
+		t.Fatal(err)
 	}
-	price := live(prices)[0].ID
+	s.holds(member, gk(studio))
 	order := func(a access.Actor) error {
 		t.Helper()
-		customer, err := billing.ParseCustomerID(a.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = s.bill.CreateOrder(ctx, billing.CreateOrderParams{CustomerID: customer, Lines: []billing.OrderLineParams{{PriceID: price}},
-			IdempotencyKey: uuid.NewString()})
+		_, err := s.bill.CreateOrder(ctx, billing.CreateOrderParams{CustomerID: must(billing.ParseCustomerID(a.ID)), Lines: []billing.OrderLineParams{{PriceID: price.ID}}, IdempotencyKey: uuid.NewString()})
 		return err
 	}
-
 	var refused *billing.StatusError
 	if err := order(stranger); !errors.As(err, &refused) || refused.Code != billing.CodeEntitlementRequired {
-		t.Fatalf("a stranger's order: %v", err)
+		t.Fatalf("stranger order: %v", err)
 	}
 	if missing, _ := refused.Metadata["missing"].([]any); len(missing) != 1 || missing[0] != gk(studio) {
-		t.Fatalf("the refusal misses %v", refused.Metadata)
+		t.Fatalf("missing prerequisite: %v", refused.Metadata)
 	}
 	var detail catalog.Content
 	s.get(s.catalogAPI, stranger, "/contents/"+post, &detail)
-	if detail.Decision.Requires != gk(studio) || len(detail.Decision.Offers) != 1 {
-		t.Fatalf("the stranger's paywall %+v", detail.Decision)
+	if detail.Decision.Requires != gk(studio) || !slices.Contains(detail.Decision.Sell, ck(post)) {
+		t.Fatalf("stranger paywall: %+v", detail.Decision)
 	}
 	if err := order(member); err != nil {
-		t.Fatalf("a member's order: %v", err)
+		t.Fatalf("member order: %v", err)
 	}
 
-	// Plain PPV: the next sync drops the requirement.
+	// Content edits cannot silently change the merchant's purchase conditions.
 	if err := s.cat.Update(ctx, s.staff, []catalog.Update{{ID: post, ContentPatch: catalog.ContentPatch{Access: &access.Rule{Level: access.PPV}}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.offers.Sync(ctx, []offers.Target{target}); err != nil {
+	unchanged, _ := s.product(ck(post))
+	if !slices.Equal(unchanged.RequiredEntitlements, []string{gk(studio)}) {
+		t.Fatalf("content edit changed billing prerequisites: %+v", unchanged)
+	}
+	if _, err := s.bill.UpdateProduct(ctx, product.ID, billing.UpdateProductParams{RequiredEntitlements: billingcatalog.Value([]string{})}); err != nil {
 		t.Fatal(err)
 	}
-	if product, _ = s.product(ck(post)); len(product.RequiredEntitlements) != 0 {
-		t.Fatalf("a PPV product still requires %v", product.RequiredEntitlements)
-	}
 	if err := order(stranger); err != nil {
-		t.Fatalf("a stranger's order for a PPV post: %v", err)
+		t.Fatalf("explicit OpenRails change did not clear prerequisite: %v", err)
 	}
 }

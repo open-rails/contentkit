@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/authtest"
@@ -18,7 +17,6 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // A channel's post carries its channel as owner on cards and on its page:
@@ -84,16 +82,10 @@ func TestOwnerChip(t *testing.T) {
 	chip("detail", detail.Owner)
 }
 
-// A channel's editors (channel:content:write, not the author) open its
-// members-only posts and are offered nothing of it: editor and the body on
-// the page, every version of its gallery open without a sale, open cards
-// without offers, its drafts in its feed, the channel's page with no
-// membership offer, and the channel among their groups as its writer. A
-// non-member who edits nothing stays locked out and is offered it all.
-// Members-only posts need the channel to sell a membership first.
+// Scoped editors can read and edit their channel's locked content without
+// purchasing it. Other viewers receive the stable entitlement requirements.
 func TestOwnerEntityEditors(t *testing.T) {
 	w := newWorld(t)
-	ctx := t.Context()
 	_, creatorToken := w.person(iam.Role{})
 	writer, writerToken := w.person(iam.Role{})
 	_, strangerToken := w.person(iam.Role{})
@@ -110,11 +102,9 @@ func TestOwnerEntityEditors(t *testing.T) {
 	authtest.GrantRole(t, w.ak, iam.GroupByID(made[0].AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
 	membersOnly := catalog.ContentInput{Kind: "blog", OwnerEntityID: ch, Access: &access.Rule{Level: access.EntityLevel, Entity: ch},
 		Text: map[string]catalog.Text{"en": {Title: "Backstage", Description: "Teaser", Body: "Members words"}}}
-	// Members-only needs no offer yet: the channel may sell one later.
+	// Content access rules do not require a local sale record.
 	var members, draft, gallery catalog.Content
 	f.want(http.StatusCreated, creatorToken, "POST", "/contents", membersOnly, &members)
-	monthly := 720
-	f.want(http.StatusOK, creatorToken, "PUT", "/entities/"+ch+"/offer", offers.Terms{Amount: 4_990_000, Currency: "USD", RenewHours: &monthly}, nil)
 	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+members.ID+"/publish", catalog.PublishInput{}, nil)
 	f.want(http.StatusCreated, creatorToken, "POST", "/contents", catalog.ContentInput{Kind: "blog", OwnerEntityID: ch,
 		Text: map[string]catalog.Text{"en": {Title: "Next week"}}}, &draft)
@@ -123,41 +113,27 @@ func TestOwnerEntityEditors(t *testing.T) {
 		Text:     map[string]catalog.Text{"en": {Title: "Sketches"}},
 		Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"ja"}, Access: &access.Rule{Level: access.PPV}}}}, &gallery)
 	f.want(http.StatusOK, creatorToken, "POST", "/contents/"+gallery.ID+"/publish", catalog.PublishInput{}, nil)
-	f.want(http.StatusOK, creatorToken, "PUT", "/contents/"+gallery.ID+"/versions/"+gallery.Versions[1].ID+"/offer",
-		offers.Terms{Amount: 1_990_000, Currency: "USD"}, nil)
-	for deadline := time.Now().Add(time.Minute); ; time.Sleep(200 * time.Millisecond) {
-		list, err := e.Client().GetOffers(ctx, contentkit.GetOffersQuery{Unsynced: ptr(true)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(list.Offers) == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("offers never synced: %+v", list.Offers)
-		}
-	}
 
 	var d catalog.Content
 	f.want(http.StatusOK, writerToken, "GET", "/contents/"+members.ID+"?language=en", nil, &d)
-	if !d.Editor || !d.Decision.Allowed || len(d.Decision.Sell) > 0 || len(d.Decision.Offers) > 0 || d.Body != "Members words" {
+	if !d.Editor || !d.Decision.Allowed || len(d.Decision.Sell) > 0 || d.Body != "Members words" {
 		t.Fatalf("the channel's writer reads editor %v, decision %+v, body %q", d.Editor, d.Decision, d.Body)
 	}
 	d = catalog.Content{}
 	f.want(http.StatusOK, strangerToken, "GET", "/contents/"+members.ID+"?language=en", nil, &d)
-	if d.Editor || d.Decision.Allowed || d.Body != "" || len(d.Decision.Offers) != 1 || d.Decision.Offers[0].PriceID == "" {
+	if d.Editor || d.Decision.Allowed || d.Body != "" || len(d.Decision.Sell) == 0 {
 		t.Fatalf("a stranger reads editor %v, decision %+v, body %q", d.Editor, d.Decision, d.Body)
 	}
 	d = catalog.Content{}
 	f.want(http.StatusOK, writerToken, "GET", "/contents/"+gallery.ID, nil, &d)
 	for _, v := range d.Versions {
-		if !v.Decision.Allowed || len(v.Decision.Sell) > 0 || len(v.Decision.Offers) > 0 {
+		if !v.Decision.Allowed || len(v.Decision.Sell) > 0 {
 			t.Fatalf("the writer is offered the channel's gallery: version %s %+v", v.ID, v.Decision)
 		}
 	}
 	d = catalog.Content{}
 	f.want(http.StatusOK, strangerToken, "GET", "/contents/"+gallery.ID, nil, &d)
-	if len(d.Versions) != 2 || !d.Versions[0].Decision.Allowed || d.Versions[1].Decision.Allowed || len(d.Versions[1].Decision.Offers) != 1 {
+	if len(d.Versions) != 2 || !d.Versions[0].Decision.Allowed || d.Versions[1].Decision.Allowed || len(d.Versions[1].Decision.Sell) == 0 {
 		t.Fatalf("a stranger's gallery %+v", d.Versions)
 	}
 
@@ -172,10 +148,10 @@ func TestOwnerEntityEditors(t *testing.T) {
 		return out
 	}
 	feed := "/contents?kind=blog&language=en&owner_group=" + ch
-	if got := cards(writerToken, feed); len(got) != 2 || !got[members.ID].Allowed || len(got[members.ID].Offers) > 0 || !got[draft.ID].Allowed {
+	if got := cards(writerToken, feed); len(got) != 2 || !got[members.ID].Allowed || !got[draft.ID].Allowed {
 		t.Fatalf("the writer's feed %+v", got)
 	}
-	if got := cards(strangerToken, feed); len(got) != 1 || got[members.ID].Allowed || len(got[members.ID].Offers) != 1 {
+	if got := cards(strangerToken, feed); len(got) != 1 || got[members.ID].Allowed || len(got[members.ID].Sell) == 0 {
 		t.Fatalf("a stranger's feed %+v", got)
 	}
 	if got := cards(writerToken, "/contents?kind=blog&language=en"); len(got) != 1 || !got[members.ID].Allowed {
@@ -185,7 +161,7 @@ func TestOwnerEntityEditors(t *testing.T) {
 	for token, editor := range map[string]bool{creatorToken: true, writerToken: true, strangerToken: false} {
 		var page entities.EntityDetail
 		f.want(http.StatusOK, token, "GET", "/entities/"+ch, nil, &page)
-		if a := page.Access; a == nil || a.Editor != editor || (a.Offer == nil) != editor {
+		if a := page.Access; a == nil || a.Editor != editor {
 			t.Fatalf("the channel's page as an editor (%v): access %+v", editor, a)
 		}
 	}

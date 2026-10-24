@@ -3,6 +3,8 @@ package server
 import (
 	"testing"
 	"time"
+
+	contentkit "github.com/open-rails/contentkit"
 )
 
 const sample = `
@@ -78,5 +80,16 @@ authorization:
 	}
 	if c.Authorization == nil || c.Authorization.Issuer != "https://accounts.example.test" || c.Authorization.AppGroupID != c.Engine.Scope.AppID.String() || c.Authorization.TenantGroupID != c.Engine.Scope.TenantID.String() {
 		t.Fatalf("scoped authorization was not decoded: %+v", c.Authorization)
+	}
+}
+
+// Retired offer configuration must fail visibly rather than silently preserve
+// an independent billing catalog in the standalone server.
+func TestRetiredOfferConfigurationIsRejected(t *testing.T) {
+	if _, err := Load([]byte("engine:\n  offers: {currency: USD}\n"), func(string) string { return "" }); err == nil {
+		t.Fatal("retired offers configuration was accepted")
+	}
+	if _, err := contentkit.ParseRouteGroups([]string{"offers"}); err == nil {
+		t.Fatal("retired offers route group was accepted")
 	}
 }

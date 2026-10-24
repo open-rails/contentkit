@@ -253,3 +253,31 @@ func (c claims) Identity() auth.Identity {
 	return auth.Identity{Subject: c.id, SubjectKind: auth.SubjectUser}
 }
 func (c claims) Entitlements() []string { return c.ents }
+
+// sell configures the product directly in OpenRails; ContentKit stores no sale terms.
+func (w *world) sell(key, name string, amount int64) (billing.Product, billing.Price) {
+	w.t.Helper()
+	p, err := w.bill.CreateProduct(w.t.Context(), billing.CreateProductParams{Key: key, DisplayName: name, Entitlements: []string{key}})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	price, err := w.bill.CreatePrice(w.t.Context(), billing.CreatePriceParams{ProductID: p.ID, Key: "default", UnitAmount: amount, Currency: "USD"})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return *p, *price
+}
+
+func (w *world) product(key string) (billing.Product, []billing.Price) {
+	w.t.Helper()
+	page, err := w.bill.ListProducts(w.t.Context(), billing.ProductListParams{Keys: []string{key}})
+	if err != nil || len(page.Items) != 1 {
+		w.t.Fatalf("product %s: %v %v", key, page, err)
+	}
+	p := page.Items[0]
+	prices, err := w.bill.ListPrices(w.t.Context(), billing.PriceListParams{ProductID: p.ID})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return p, prices.Items
+}
