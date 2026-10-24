@@ -26,7 +26,7 @@ func (s *Store) recordAccessHistory(ctx context.Context, q Querier, ids []string
   'level', f.access_level, 'tiers', f.access_tiers,
   'group_id', f.access_entity_id, 'releases', f.access_releases) AS snapshot) state
  LEFT JOIN LATERAL (SELECT h.snapshot FROM `+history+` h
-  WHERE h.tenant_id=f.tenant_id AND h.version_id=f.version_id
+  WHERE h.tenant_id=f.tenant_id AND h.content_id=f.content_id AND h.version_id=f.version_id
   ORDER BY h.occurred_at DESC,h.id DESC LIMIT 1) previous ON true
  WHERE f.tenant_id=$1 AND f.content_id=ANY($2::text[])
   AND previous.snapshot IS DISTINCT FROM state.snapshot`, s.tenant, ids, at)
