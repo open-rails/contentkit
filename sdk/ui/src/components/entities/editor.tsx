@@ -1,3 +1,5 @@
+import { Delete02Icon, GitMergeIcon, MoreHorizontalIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
@@ -13,6 +15,7 @@ import { ContentKitUiRoot } from "../../scope.js";
 import { Badge } from "#ckui/ui/badge";
 import { Switch } from "#ckui/ui/switch";
 import { Button } from "#ckui/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
 import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
@@ -196,31 +199,37 @@ function EditForm({ entity, spec, languages, g, kinds, onLeaveGuard, ...p }: Ent
   return (
     <>
       {dialog}
-      <Head management={p.management} entity={entity} g={g} labels={p.labels} onMerged={p.onMerged} onDeleted={p.onDeleted} onError={p.onError} client={p.client} />
-      {/* Pinned below any host header that sets --ckui-sticky-top, so Save stays in reach down the page. */}
-      <div className="sticky top-[var(--ckui-sticky-top,0px)] z-10 flex flex-wrap items-center justify-end gap-3 rounded-xl border border-border bg-background px-4 py-2.5 shadow-sm transition-[top] duration-300 motion-reduce:transition-none" data-ckui="entity-save">
-        <p className="me-auto min-w-0 truncate font-medium max-sm:hidden" aria-hidden>{entity.name || entity.slug}</p>
-        <span role="status" className="text-muted-foreground">{dirty ? t("entitySave.unsaved") : saved ? t("entityEditor.saved") : ""}</span>
-        <Button size="sm" disabled={save.pending || !dirty || !details.slug.trim() || (!!spec.scoped_by && !details.scope)} onClick={() => void submit()}>{save.pending ? t("common.saving") : t("common.save")}</Button>
-      </div>
+      <Head management={p.management} entity={entity} g={g} labels={p.labels} onMerged={p.onMerged} onDeleted={p.onDeleted} onError={p.onError} client={p.client}>
+        <span className="flex items-center gap-3" data-ckui="entity-save">
+          <span role="status" className="text-muted-foreground empty:hidden">{dirty ? t("entitySave.unsaved") : saved ? t("entityEditor.saved") : ""}</span>
+          <Button size="sm" variant={dirty ? "default" : "outline"} disabled={save.pending || !dirty || !details.slug.trim() || (!!spec.scoped_by && !details.scope)} onClick={() => void submit()}>{save.pending ? t("common.saving") : t("common.save")}</Button>
+        </span>
+      </Head>
       {invalid && <ErrorLine>{invalid}</ErrorLine>}
       {failedParts && <ErrorLine>{t("entitySave.saveFailed", { parts: failedParts })} {save.error && contentError(m, save.error)}</ErrorLine>}
-      <Details management={p.management} entity={entity} spec={spec} form={details} onChange={(patch) => draft.edit((f) => ({ ...f, details: { ...f.details, ...patch } }))} labels={p.labels} client={p.client} />
-      <Names names={names} languages={languages} language={language} onLanguage={setLanguage} kind={nameKind} onKind={setNameKind} text={newName} onText={(newName) => draft.edit((f) => ({ ...f, newName }))} onChange={(names) => draft.edit((f) => ({ ...f, names }))} onAdd={() => draft.edit((f) => ({ ...f, names: pendingNames(), newName: "" }))} />
-      <Texts form={text} languages={offered} onChange={(l, patch) => draft.edit((f) => ({ ...f, text: { ...f.text, [l]: { ...f.text[l]!, ...patch } } }))} />
-      <Images management={p.management} entity={entity} spec={spec} onError={p.onError} client={p.client} />
-      <Edges management={p.management} entity={entity} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
-      {p.children?.(entity)}
+      {/* What the entity is called and what's in it on the left; its settings and pictures beside them. */}
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="grid min-w-0 gap-6">
+          <Names names={names} languages={languages} language={language} onLanguage={setLanguage} kind={nameKind} onKind={setNameKind} text={newName} onText={(newName) => draft.edit((f) => ({ ...f, newName }))} onChange={(names) => draft.edit((f) => ({ ...f, names }))} onAdd={() => draft.edit((f) => ({ ...f, names: pendingNames(), newName: "" }))} />
+          <Texts form={text} languages={offered} onChange={(l, patch) => draft.edit((f) => ({ ...f, text: { ...f.text, [l]: { ...f.text[l]!, ...patch } } }))} />
+          {p.children?.(entity)}
+        </div>
+        <aside className="grid min-w-0 gap-6">
+          <Details management={p.management} entity={entity} spec={spec} form={details} onChange={(patch) => draft.edit((f) => ({ ...f, details: { ...f.details, ...patch } }))} labels={p.labels} client={p.client} />
+          <Images management={p.management} entity={entity} spec={spec} onError={p.onError} client={p.client} />
+          <Edges management={p.management} entity={entity} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
+        </aside>
+      </div>
     </>
   );
 }
 
 function Section({ title, children, ckui, action, note }: { title: ReactNode; children: ReactNode; ckui: string; action?: ReactNode; note?: ReactNode }) {
   return (
-    <section className="grid gap-3" data-ckui={ckui}>
+    <section className="grid gap-4 rounded-lg border border-border bg-card p-4" data-ckui={ckui}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid gap-0.5">
-          <h3 className="text-base font-semibold">{title}</h3>
+          <h3 className="text-sm font-medium">{title}</h3>
           {note && <p className="text-xs text-muted-foreground">{note}</p>}
         </div>
         {action}
@@ -253,6 +262,7 @@ function Head({
   onError,
   client,
   management,
+  children,
 }: {
   management?: boolean;
   entity: EntityDetail;
@@ -262,22 +272,42 @@ function Head({
   onDeleted?: (g: Entity) => void;
   onError?: ContentKitErrorHandler;
   client?: ContentKitClient;
+  /** Actions before the menu, such as the editor's Save. */
+  children?: ReactNode;
 }) {
   const { t } = useMessages();
   const [merging, setMerging] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const remove = useAction("entity.save", onError);
+  const name = entity.name || entity.slug;
   return (
-    <div className="flex flex-wrap items-center gap-2" data-ckui="entity-head">
-      <h2 className="text-xl font-semibold tracking-tight break-words">{entity.name || entity.slug}</h2>
-      <Badge variant="outline">{labelOf(labels, entity.kind, "one")}</Badge>
-      <div className="ms-auto flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" onClick={() => setMerging(true)}>
-          {t("entityEditor.merge")}
-        </Button>
-        <Button size="sm" variant="destructive" disabled={remove.pending} onClick={() => setConfirmDelete(true)}>
-          {t("entityEditor.delete")}
-        </Button>
+    // Pinned below any host header that sets --ckui-sticky-top, so Save stays in reach down the page.
+    <div
+      className="sticky top-[var(--ckui-sticky-top,0px)] z-10 -mx-1 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-background px-1 py-3 transition-[top] duration-300 motion-reduce:transition-none"
+      data-ckui="entity-head"
+    >
+      <div className="flex min-w-0 flex-1 items-baseline gap-2">
+        <h2 className="truncate text-xl font-semibold tracking-tight" title={name}>{name}</h2>
+        <span className="shrink-0 text-sm text-muted-foreground">{labelOf(labels, entity.kind, "one")}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        {children}
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" disabled={remove.pending} aria-label={t("contentManager.moreActions", { title: name })} />}>
+            <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-40">
+            <DropdownMenuItem onClick={() => setMerging(true)}>
+              <HugeiconsIcon icon={GitMergeIcon} strokeWidth={2} />
+              {t("entityEditor.merge")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setConfirmDelete(true)}>
+              <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+              {t("entityEditor.delete")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <ErrorLine error={remove.error} className="basis-full" />
       <EntityMergeDialog
@@ -567,10 +597,10 @@ function Names({ names, languages, language, onLanguage, kind, onKind, text, onT
   return (
     <Section title={t("entityEditor.names")} ckui="entity-names-editor">
       {sorted.length ? (
-        <ul className="grid divide-y divide-border rounded-lg border border-border">
+        <ul className="grid divide-y divide-border rounded-md border border-border">
           {sorted.map((n) => (
             <li key={`${n.language}:${n.kind}:${n.name}`} className="flex flex-wrap items-center gap-2 p-2.5" data-ckui="entity-name" data-kind={n.kind} data-language={n.language}>
-              <Badge variant="outline">{languageName(n.language)}</Badge>
+              <span className="w-20 shrink-0 text-xs text-muted-foreground">{languageName(n.language)}</span>
               <span className="min-w-0 flex-1 break-words" lang={n.language}>
                 {n.name}
               </span>
@@ -637,33 +667,37 @@ function Texts({ form, languages, onChange: set }: { form: Record<string, Text>;
   const languageName = useLanguageName();
   return (
     <Section title={t("entityEditor.text")} ckui="entity-text">
-      <div className="grid gap-4">
+      {/* One row per language: its description beside the key it sorts by. */}
+      <div className="grid gap-3">
+        <div aria-hidden className="hidden gap-3 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[6rem_minmax(0,1fr)_11rem]">
+          <span />
+          <span>{t("entityEditor.description")}</span>
+          <span>{t("entityEditor.sortKey")}</span>
+        </div>
         {languages.map((l) => (
-          <fieldset key={l} className="grid gap-2" data-language={l}>
-            <legend className="mb-1 text-xs font-medium text-muted-foreground">{languageName(l)}</legend>
+          <div key={l} role="group" aria-labelledby={`${id}-${l}-l`} className="grid gap-2 md:grid-cols-[6rem_minmax(0,1fr)_11rem] md:items-start md:gap-3" data-language={l}>
+            <span id={`${id}-${l}-l`} className="pt-1.5 text-sm font-medium">{languageName(l)}</span>
             <Label htmlFor={`${id}-${l}-d`} className="sr-only">
               {t("entityEditor.descriptionIn", { language: languageName(l) })}
             </Label>
             <Textarea
               id={`${id}-${l}-d`}
               lang={l}
-              rows={3}
+              rows={2}
               placeholder={t("entityEditor.description")}
               value={form[l]?.description ?? ""}
               onChange={(e) => set(l, { description: e.target.value })}
             />
-            <Label htmlFor={`${id}-${l}-s`} className="text-xs font-normal text-muted-foreground">
-              {t("entityEditor.sortKey")}
-            </Label>
             <Input
               id={`${id}-${l}-s`}
               className="h-8"
               lang={l}
+              placeholder={t("entityEditor.sortKey")}
               aria-label={t("entityEditor.sortKeyIn", { language: languageName(l) })}
               value={form[l]?.sort_key ?? ""}
               onChange={(e) => set(l, { sort_key: e.target.value })}
             />
-          </fieldset>
+          </div>
         ))}
       </div>
     </Section>
