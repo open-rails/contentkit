@@ -25,8 +25,6 @@ export const discovery: typeof en = {
     showMore: "显示更多",
     unknownAccess: "暂时无法访问",
     members: "会员专享",
-    joinFree: "免费加入",
-    forSale: "可购买",
     locked: "已锁定",
     updated: "已更新",
     deleted: "已删除",

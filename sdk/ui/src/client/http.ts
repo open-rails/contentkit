@@ -31,8 +31,6 @@ export interface ContentKitMounts {
   notifications?: string;
   /** Content versions: reader plans, reader metadata, forks, downloads. Default `{baseUrl}/v1`. */
   versions?: string;
-  /** Offers, group joins and the library. Default `{baseUrl}/v1`. */
-  offers?: string;
   /** Discovery: lists, search, typeahead, similar, recommendations, history, signals. Default `{baseUrl}/v1`. */
   discovery?: string;
   /** Bulk import (a service's). Default `{baseUrl}/v1`. */

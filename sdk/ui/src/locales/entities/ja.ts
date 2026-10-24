@@ -28,7 +28,6 @@ export const entities: typeof en = {
     uploadAvatar: "アバターをアップロード",
     removeAvatar: "アバターを削除",
     images: "画像",
-    membershipPrice: "メンバーシップ価格",
     loadFailed: "エンティティを読み込めませんでした。",
     newTitle: "新規: {kind}",
     nameIn: "名前（{language}）",
@@ -122,11 +121,8 @@ export const entities: typeof en = {
   membership: {
     unknown: "現在メンバーシップを確認できません。",
     member: "メンバー",
-    leave: "退会",
-    paidPitch: "メンバーはすべてを開けます。",
-    freePitch: "参加するとフォローでき、メンバー向けの内容を開けます。",
-    joinFor: "{price} で参加",
-    join: "参加",
+    getAccess: "アクセスを取得",
+    accessPitch: "メンバーはこのセクションのコンテンツにアクセスできます。",
   },
   entityManager: {
     noAccess: "エンティティを管理する権限がありません。",
