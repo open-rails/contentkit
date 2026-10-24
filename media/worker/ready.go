@@ -52,7 +52,7 @@ func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err
 					return err
 				}
 				if k.Publish == nil {
-					m, _, err := h.manifests.Get(ctx, args.Ref)
+					m, _, err := h.manifests.GetTx(ctx, tx, args.Ref)
 					if err != nil {
 						return err
 					}

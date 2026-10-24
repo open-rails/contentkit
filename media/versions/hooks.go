@@ -259,7 +259,7 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 	if err := s.lockTarget(ctx, tx, v); err != nil {
 		return err
 	}
-	m, _, err := s.m.Manifests.Get(ctx, ref)
+	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
 	if errors.Is(err, media.ErrNotFound) {
 		return nil
 	} else if err != nil {
@@ -287,7 +287,7 @@ func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.
 	if err := s.lockTarget(ctx, tx, v); err != nil {
 		return err
 	}
-	m, _, err := s.m.Manifests.Get(ctx, ref)
+	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
 	if errors.Is(err, media.ErrNotFound) {
 		return nil
 	} else if err != nil {
@@ -336,7 +336,7 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 		if err := s.lockTarget(ctx, tx, v); err != nil {
 			return err
 		}
-		m, _, err := s.m.Manifests.Get(ctx, ref)
+		m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
 		if errors.Is(err, media.ErrNotFound) {
 			return nil
 		} else if err != nil {

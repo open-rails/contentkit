@@ -56,7 +56,7 @@ func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentre
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, schema+"/media-processing/"+item.Prefix()); err != nil {
 			return err
 		}
-		m, _, err := manifests.Get(ctx, ref)
+		m, _, err := manifests.GetTx(ctx, tx, ref)
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}

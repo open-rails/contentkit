@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -128,13 +129,27 @@ func (m *Manifests) WithLock(ctx context.Context, ref contentref.ContentRef, fn 
 // revalidated with a conditional GET, so a read is never stale. The
 // manifest is shared: never modify it (Clone it).
 func (m *Manifests) Get(ctx context.Context, ref contentref.ContentRef) (*Manifest, string, error) {
+	return m.getRef(ctx, m.journal.pool, ref)
+}
+
+// GetTx reads current media while validating version ownership through the
+// caller's held transaction. It preserves lock-then-read ordering without
+// borrowing another pool connection while other writers wait on that lock.
+func (m *Manifests) GetTx(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) (*Manifest, string, error) {
+	if tx == nil {
+		return nil, "", errors.New("media: GetTx requires a transaction")
+	}
+	return m.getRef(ctx, tx, ref)
+}
+
+func (m *Manifests) getRef(ctx context.Context, q folderQuerier, ref contentref.ContentRef) (*Manifest, string, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {
 		return nil, "", err
 	}
 	cur, etag, err := m.get(ctx, item.ManifestKey())
 	if err == nil && ref.Version() != "" {
-		if ownerErr := m.journal.checkFolderOwner(ctx, m.journal.pool, item, true); ownerErr != nil {
+		if ownerErr := m.journal.checkFolderOwner(ctx, q, item, true); ownerErr != nil {
 			return nil, etag, ownerErr
 		}
 	}
