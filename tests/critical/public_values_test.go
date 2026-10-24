@@ -36,7 +36,9 @@ func TestPublicScopeValues(t *testing.T) {
 		must(t, scope.Validate())
 		encoded, err := json.Marshal(scope)
 		must(t, err)
-		if string(encoded) != `{"tenant_id":"`+tenantText+`","app_id":"`+appText+`"}` {
+		var wire map[string]string
+		must(t, json.Unmarshal(encoded, &wire))
+		if len(wire) != 2 || wire["tenant_id"] != tenantText || wire["app_id"] != appText {
 			t.Fatalf("configuration encoding changed: %s", encoded)
 		}
 		var restored ck.Scope

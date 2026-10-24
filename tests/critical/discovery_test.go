@@ -232,18 +232,26 @@ func TestDiscoveryVisibility(t *testing.T) {
 		}
 	})
 	t.Run("CK-J07-S05_reader_filter_cannot_disable_hard_requirement", func(t *testing.T) {
-		filters, err := viewer.GetContentFilters(t.Context(), ck.GetContentFiltersQuery{})
+		_, filterToken := w.person(t, 0)
+		filterReader := reader("restricted.invalid", filterToken)
+		filters, err := filterReader.GetContentFilters(t.Context(), ck.GetContentFiltersQuery{})
 		must(t, err)
 		if len(filters.Filters) != 1 || filters.Filters[0].Entity.ID != optional.ID {
 			t.Fatalf("required/internal filters exposed as optional: %+v", filters)
 		}
 		show := true
-		_, err = viewer.PatchMeContentFilters(t.Context(), discovery.ContentFiltersUpdate{Filters: []discovery.GuestFilterSetting{{EntityID: string(required.ID), Visible: &show}}}, ck.PatchMeContentFiltersQuery{})
+		hide := false
+		updated, err := filterReader.PatchMeContentFilters(t.Context(), discovery.ContentFiltersUpdate{Filters: []discovery.GuestFilterSetting{{EntityID: string(optional.ID), Visible: &hide}}}, ck.PatchMeContentFiltersQuery{})
+		must(t, err)
+		if len(updated.Filters) != 1 || updated.Filters[0].Visible {
+			t.Fatalf("allowed reader preference did not persist: %+v", updated)
+		}
+		_, err = filterReader.PatchMeContentFilters(t.Context(), discovery.ContentFiltersUpdate{Filters: []discovery.GuestFilterSetting{{EntityID: string(required.ID), Visible: &show}}}, ck.PatchMeContentFiltersQuery{})
 		requireError(t, err, 400, "invalid_request")
-		page, err := viewer.GetContents(t.Context(), ck.GetContentsQuery{Ids: []string{excluded.ID, one.ID}, Mode: "hide"})
+		page, err := filterReader.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Mode: "hide"})
 		must(t, err)
 		assertCards(t, page, one.ID)
-		selected, err := viewer.GetContents(t.Context(), ck.GetContentsQuery{Entities: []string{string(optional.ID)}, Mode: "hide"})
+		selected, err := filterReader.GetContents(t.Context(), ck.GetContentsQuery{Entities: []string{string(optional.ID)}, Mode: "hide"})
 		must(t, err)
 		assertCards(t, selected, two.ID)
 	})
@@ -265,6 +273,11 @@ func TestDiscoveryVisibility(t *testing.T) {
 	})
 	t.Run("CK-J07-S07_public_entity_views_omit_internal_identity_and_associations", func(t *testing.T) {
 		_, err := public.GetEntity(t.Context(), string(internal.ID), ck.GetEntityQuery{})
+		requireError(t, err, 404, "not_found")
+		if internal.Code == "" {
+			t.Fatal("internal entity code positive fixture missing")
+		}
+		_, err = public.GetCode(t.Context(), internal.Code, ck.GetCodeQuery{})
 		requireError(t, err, 404, "not_found")
 		managed, err := admin.GetManageEntity(t.Context(), string(internal.ID), ck.GetManageEntityQuery{})
 		must(t, err)

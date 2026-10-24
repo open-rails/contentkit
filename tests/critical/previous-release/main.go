@@ -19,7 +19,11 @@ import (
 
 func main() {
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, os.Getenv("CONTENTKIT_CRITICAL_PG"))
+	dsn := os.Getenv("CONTENTKIT_CRITICAL_PG")
+	if dsn == "" {
+		log.Fatal("owned CONTENTKIT_CRITICAL_PG is required; no default database is permitted")
+	}
+	pool, err := pgxpool.New(ctx, dsn)
 	check(err)
 	defer pool.Close()
 	schema := os.Getenv("CONTENTKIT_PREVIOUS_SCHEMA")
