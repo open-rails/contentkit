@@ -89,9 +89,6 @@ func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentre
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		if len(m.Files) == 0 && len(old) == 0 {
-			return nil
-		}
 		readiness := k.Readiness(m)
 		// Event deduplication must not suppress an idempotent metadata repair.
 		// A prior snapshot job may have failed after the observation committed.
@@ -100,7 +97,7 @@ func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentre
 				return err
 			}
 		}
-		if string(old) == string(fingerprint[:]) {
+		if len(m.Files) == 0 && len(old) == 0 || string(old) == string(fingerprint[:]) {
 			return nil
 		}
 		eventType := EventProcessingProgressed

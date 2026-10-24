@@ -127,6 +127,25 @@ func TestProcessingCompletionAtomicAndRetryable(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema, "eventlog_events"}.Sanitize()+` WHERE source='contentkit' AND scope=$1`, ref.TenantID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("old completion reappeared after retention=%d: %v", count, err)
 	}
+	// An empty first observation still repairs real metadata (for example, all
+	// uploads were removed before the processor's first completion).
+	empty := f.ref("gallery", 2)
+	if _, err := f.ms.Create(ctx, empty); err != nil {
+		t.Fatal(err)
+	}
+	if err := media.CompleteProcessing(ctx, f.ms, empty, func(ctx context.Context, tx pgx.Tx, _ media.Readiness) error {
+		_, err := tx.Exec(ctx, `INSERT INTO `+effects+` VALUES(2)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+effects).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("empty observation skipped metadata repair: %d %v", count, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema, "eventlog_events"}.Sanitize()+` WHERE source='contentkit' AND scope=$1`, ref.TenantID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("empty observation emitted a no-op fact: %d %v", count, err)
+	}
+
 }
 
 func TestProcessingEventsReportChangedCountsAndSources(t *testing.T) {
