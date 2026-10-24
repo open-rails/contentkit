@@ -198,6 +198,7 @@ FROM `+jr.table+` WHERE tenant_id=$1 AND folder_prefix=$2 AND effects ? 'folder_
 // stable OperationID, even without quota; retry a failed reset with that ID.
 // Hosts deleting content commit RetireItemsTx and let content purge execute it.
 func (j *Jobs) Purge(ctx context.Context, d Deletion) error {
+	ctx = context.WithValue(ctx, purgeContextKey{}, true)
 	item, err := j.cfg.Registry.Item(d.Ref)
 	if err != nil {
 		return err

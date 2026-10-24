@@ -383,17 +383,26 @@ func (f *fixture) put(ref contentref.ContentRef, path, typ string, body []byte, 
 	return f.commit(ref, append([]media.Op{{Op: media.OpPut, Path: p, Blob: blob}}, extra...)...)
 }
 
-// commit commits ops, then places staged uploads as the worker does first.
+// commit runs upload acceptance and ingest placement, then the existing purge
+// operation. Tests of interruptions call those owners separately.
 func (f *fixture) commit(ref contentref.ContentRef, ops ...media.Op) *media.Manifest {
 	f.t.Helper()
 	m, err := f.up.Commit(context.Background(), f.editor, ref, uuid.NewString(), ops)
 	if err != nil {
 		f.t.Fatalf("commit %+v: %v", ops, err)
 	}
-	if len(m.StagedNames()) == 0 {
-		return m
+	if len(m.StagedNames()) > 0 {
+		m = f.place(ref)
 	}
-	return f.place(ref)
+	f.purge()
+	return m
+}
+
+func (f *fixture) purge() {
+	f.t.Helper()
+	if _, err := f.jobs.PurgeRetired(f.t.Context(), 1000); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 func (f *fixture) workerContext(ctx context.Context) context.Context {
@@ -531,6 +540,7 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 	}); err != nil {
 		f.t.Fatal(err)
 	}
+	f.purge()
 }
 
 // publicName resolves a logical preset name to the fixture's published key.

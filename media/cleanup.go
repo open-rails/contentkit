@@ -32,6 +32,8 @@ revision = gen_random_uuid()`, ref.TenantID, prefix, ref.ContentKind, due, opera
 	return err
 }
 
+type purgeContextKey struct{}
+
 type cleanupRecord struct {
 	prefix     string
 	revision   uuid.UUID
@@ -42,6 +44,7 @@ type cleanupRecord struct {
 // It finishes exact durable intents and expired allocations; it never discovers
 // objects by scanning the bucket. Failed records remain due for that same sweep.
 func (j *Jobs) PurgeRetired(ctx context.Context, limit int) (int, error) {
+	ctx = context.WithValue(ctx, purgeContextKey{}, true)
 	if limit <= 0 {
 		return 0, errors.New("media: purge limit must be positive")
 	}
