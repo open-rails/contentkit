@@ -131,6 +131,23 @@ jobs:
             if jobs[name]['result'] != 'success':
                 raise SystemExit(f'{name} did not pass')
         outputs = jobs['select']['outputs']
+        flags = ('go', 'server', 'authkit_adapter', 'openrails_adapter', 'media_image', 'media_video', 'ui', 'ui_unit', 'ui_browser', 'images', 'workflow')
+        for flag in flags:
+            if outputs.get(flag) not in ('true', 'false'):
+                raise SystemExit(f'missing or invalid suite selection: {flag}')
+        try:
+            shards = json.loads(outputs['go_shards'])
+        except (KeyError, ValueError):
+            raise SystemExit('missing or invalid Go shard selection')
+        if not isinstance(shards, list) or any(shard not in ('0', '1', '2', 'e2e') for shard in shards) or len(set(shards)) != len(shards):
+            raise SystemExit('invalid Go shards')
+        core = set(shards) & {'0', '1', '2'}
+        if core and core != {'0', '1', '2'}:
+            raise SystemExit('incomplete core Go suite')
+        go_needed = bool(shards) or any(outputs[flag] == 'true' for flag in ('server', 'authkit_adapter', 'openrails_adapter'))
+        ui_needed = any(outputs[flag] == 'true' for flag in ('ui_unit', 'ui_browser'))
+        if (outputs['go'] == 'true') != go_needed or (outputs['ui'] == 'true') != ui_needed:
+            raise SystemExit('inconsistent aggregate suite selection')
         suites = {'workflow-lint': 'workflow', 'go': 'go', 'media-image': 'media_image', 'media-video': 'media_video', 'sdk-ui': 'ui', 'image-definitions': 'images'}
         for name, selected in suites.items():
             if outputs.get(selected) not in ('true', 'false'):
