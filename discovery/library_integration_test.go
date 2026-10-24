@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -103,5 +105,43 @@ func TestPurchasedLibraryUsesBillingEntitlementsAndDomainPolicy(t *testing.T) {
 	b.unavailable = true
 	if status, _ := f.call(http.MethodGet, "clean.test", "reader", "/me/library", nil, nil); status != http.StatusServiceUnavailable {
 		t.Fatalf("billing failure status=%d", status)
+	}
+}
+
+func TestPurchasedLibraryDoesNotRevealUnreleasedEditions(t *testing.T) {
+	b := &dateBilling{releaseBilling: releaseBilling{held: map[string]bool{}}, complete: true}
+	cfg := siteConfig()
+	k := cfg.Kinds["gallery"]
+	k.TitlePolicy = kinds.TitleOriginalAndVersion
+	cfg.Kinds["gallery"] = k
+	f := newFixtureBilling(t, nil, "", cfg, b)
+	f.svc.o.Now = func() time.Time { return f.clock }
+	f.seed(item{n: 1, titles: map[string]string{"en": "Released edition"}, age: time.Hour, rule: `{"level":"ppv"}`, versions: []ver{{langs: []string{"en"}}, {langs: []string{"ja"}, future: true}}})
+	drafts, err := f.cat.PutVersions(f.ctx, testauth.Actor(access.Actor{ID: "staff"}, staffOnly{}), []catalog.VersionPut{{ContentID: f.cid(1), VersionInput: catalog.VersionInput{Languages: []string{"en"}, State: catalog.StateDraft, Text: map[string]catalog.VersionText{"en": {Title: "Secret draft"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drafts) != 1 {
+		t.Fatal("missing draft fixture")
+	}
+	future := f.vid(1, 1)
+	f.exec(`INSERT INTO {s}.content_version_text(tenant_id,version_id,language,title) VALUES($1,$2,'ja','Unreleased title') ON CONFLICT(tenant_id,version_id,language) DO UPDATE SET title=EXCLUDED.title`, tenant, future)
+	whole, _ := access.ContentKey(tenant, f.cid(1))
+	b.held[whole.String()] = true
+	var page LibraryPage
+	if status, _ := f.call(http.MethodGet, "main.test", "reader", "/me/library?language=ja", nil, &page); status != http.StatusOK {
+		t.Fatalf("library status=%d", status)
+	}
+	if len(page.Items) != 1 || len(page.Items[0].VersionIDs) != 1 || page.Items[0].VersionIDs[0] != f.vid(1, 0) || page.Items[0].Title != "Released edition" {
+		t.Fatalf("unreleased edition leaked: %+v", page)
+	}
+	// A whole-content entitlement is not publication permission. Once the
+	// scheduled edition's own release time arrives it joins the library.
+	f.clock = f.now.Add(2 * time.Hour)
+	if status, _ := f.call(http.MethodGet, "main.test", "reader", "/me/library?language=ja", nil, &page); status != http.StatusOK {
+		t.Fatalf("released library status=%d", status)
+	}
+	if len(page.Items) != 1 || len(page.Items[0].VersionIDs) != 2 || page.Items[0].Title != "Unreleased title" {
+		t.Fatalf("released edition missing: %+v", page)
 	}
 }

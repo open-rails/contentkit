@@ -104,8 +104,12 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 	}
 	args["tenant"], args["ids"], args["language"], args["languages"], args["cursor"], args["limit"] = s.o.Tenant, ids, q.Language, s.o.Kinds.Languages, q.Cursor, q.Limit+1
 	args["whole"], args["versions"], args["edition_titles"] = wholeIDs, versionIDs, editionTitles
+	args["now"] = s.o.Now()
 	// Eligibility is evaluated for each granted version. An unowned sibling
 	// may never qualify the parent and reveal a blocked purchased edition.
+	// As in catalog direct reads, only a matured live_from permits disclosure;
+	// a grant never publishes an unreleased edition. Deleted purchased editions
+	// retain live_from and can still appear.
 	rows, err := s.o.Pool.Query(ctx, `SELECT c.id,c.kind,c.state='deleted' OR c.deleted_at IS NOT NULL,
  CASE WHEN c.kind=ANY(@edition_titles::text[])
  THEN coalesce(nullif(ed.title,''),nullif(c.original_title,''),t.title,'') ELSE coalesce(t.title,'') END,
@@ -122,6 +126,7 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
    ORDER BY x.language=@language DESC,array_position(v.languages,x.language),array_position(@languages::text[],x.language),x.language LIMIT 1) vt ON true
   WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
    AND (c.id=ANY(@whole::text[]) OR v.id=ANY(@versions::text[]))
+   AND f.live_from <= @now::timestamptz
    AND `+scope+`
   HAVING count(*)>0
  ) ed ON true
