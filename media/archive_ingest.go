@@ -85,6 +85,7 @@ func (m *Manifests) IngestArchives(ctx context.Context, ref contentref.ContentRe
 }
 
 type archivePageSource struct {
+	file                       string
 	entry                      *zip.File
 	name, typ                  string
 	sum                        []byte
@@ -99,7 +100,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		return uploadErr(CodeConflict, "archive lacks a verified upload admission; recommit the ZIP through the upload API")
 	}
 	admission := *source.Admission
-	if admission.Enforce && admission.Owner == "" {
+	if admission.Enforce && (admission.Owner == "" || !admission.Accounting) {
 		return uploadErr(CodeForbidden, "archive quota owner is missing; recommit the ZIP")
 	}
 	k := item.Kind()
@@ -177,25 +178,30 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		names[i] = path.Base(pages[i].entry.Name)
 	}
 	cleaned := CleanPageBatchNames(names)
+	defer func() {
+		for _, page := range pages {
+			if page.file != "" {
+				_ = os.Remove(page.file)
+			}
+		}
+	}()
 	var expanded int64
 	// Complete validation precedes every blob write and manifest edit. Reading
 	// one image at a time bounds memory and detects a late CRC/type failure.
 	for i := range pages {
-		body, err := readArchiveEntry(ctx, pages[i].entry, min(rule.MaxBytes, archiveExpandedLimit-expanded))
+		decoded, err := spoolArchiveEntry(ctx, pages[i].entry, tempDir, min(rule.MaxBytes, archiveExpandedLimit-expanded))
+		pages[i].file = decoded.file
 		if err != nil {
 			return err
 		}
-		typ := archiveContentType(body)
-		if err := allows(rule, typ, int64(len(body))); err != nil {
+		if err := allows(rule, decoded.typ, decoded.size); err != nil {
 			return err
 		}
-		sum := sha256.Sum256(body)
-		pages[i].sum = sum[:]
-		pages[i].size = int64(len(body))
-		pages[i].typ = typ
+		pages[i].sum, pages[i].size, pages[i].typ = decoded.sum, decoded.size, decoded.typ
 		pages[i].name = cleaned[i]
-		expanded += int64(len(body))
+		expanded += decoded.size
 	}
+
 	digest := hex.EncodeToString(expected)
 	// A second alias of the same archive reuses already attached originals.
 	// Their identities are checked again in the atomic edit before completion.
@@ -285,17 +291,24 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		}
 		pages[i].blob = blob[0]
 		written = append(written, blob[0])
-		body, err := readArchiveEntry(ctx, pages[i].entry, rule.MaxBytes)
+		input, err := os.Open(pages[i].file)
 		if err != nil {
 			return err
 		}
 		physical, err := item.Blob(blob[0])
 		if err != nil {
+			input.Close()
 			return err
 		}
-		if _, err = m.store.Put(ctx, physical, bytes.NewReader(body), pages[i].size, PutOptions{ContentType: pages[i].typ, ChecksumSHA256: pages[i].sum, IfNoneMatch: "*"}); err != nil {
-			return err
+		_, writeErr := m.store.Put(ctx, physical, input, pages[i].size, PutOptions{ContentType: pages[i].typ, ChecksumSHA256: pages[i].sum, IfNoneMatch: "*"})
+		closeErr := input.Close()
+		if writeErr != nil {
+			return writeErr
 		}
+		if closeErr != nil {
+			return closeErr
+		}
+
 	}
 	_, err = m.editOperation(ctx, item.Ref(), true, bound{project: k.Unwritten}, mutation, func(cur *Manifest) error {
 		i := cur.Find(source.Path)
@@ -433,26 +446,56 @@ func archiveImageName(name string) bool {
 	}
 	return false
 }
-func readArchiveEntry(ctx context.Context, entry *zip.File, limit int64) ([]byte, error) {
+
+type decodedArchiveEntry struct {
+	file, typ string
+	size      int64
+	sum       []byte
+}
+
+func spoolArchiveEntry(ctx context.Context, entry *zip.File, tempDir string, limit int64) (decodedArchiveEntry, error) {
 	if limit <= 0 {
-		return nil, uploadErr(CodeTooLarge, "ZIP exceeds its expanded byte limit")
+		return decodedArchiveEntry{}, uploadErr(CodeTooLarge, "ZIP exceeds its expanded byte limit")
 	}
 	rc, err := entry.Open()
 	if err != nil {
-		return nil, uploadErr(CodeInvalid, "ZIP entry %s: %v", entry.Name, err)
+		return decodedArchiveEntry{}, uploadErr(CodeInvalid, "ZIP entry %s: %v", entry.Name, err)
 	}
 	defer rc.Close()
-	body, err := io.ReadAll(io.LimitReader(archiveContextReader{ctx, rc}, limit+1))
+	output, err := os.CreateTemp(tempDir, "contentkit-archive-page-*")
 	if err != nil {
+		return decodedArchiveEntry{}, err
+	}
+	result := decodedArchiveEntry{file: output.Name()}
+	hash := sha256.New()
+	n, copyErr := io.Copy(io.MultiWriter(output, hash), io.LimitReader(archiveContextReader{ctx, rc}, limit+1))
+	closeErr := output.Close()
+	if copyErr != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return result, ctx.Err()
 		}
-		return nil, uploadErr(CodeInvalid, "ZIP entry %s: %v", entry.Name, err)
+		return result, uploadErr(CodeInvalid, "ZIP entry %s: %v", entry.Name, copyErr)
 	}
-	if int64(len(body)) > limit || uint64(len(body)) != entry.UncompressedSize64 {
-		return nil, uploadErr(CodeTooLarge, "ZIP entry %s exceeds its size limit", entry.Name)
+	if closeErr != nil {
+		return result, closeErr
 	}
-	return body, nil
+	if n > limit || uint64(n) != entry.UncompressedSize64 {
+		return result, uploadErr(CodeTooLarge, "ZIP entry %s exceeds its size limit", entry.Name)
+	}
+	input, err := os.Open(result.file)
+	if err != nil {
+		return result, err
+	}
+	defer input.Close()
+	prefix := make([]byte, 64<<10)
+	read, err := input.Read(prefix)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return result, err
+	}
+	result.typ = archiveContentType(prefix[:read])
+	result.size = n
+	result.sum = hash.Sum(nil)
+	return result, nil
 }
 
 type archiveContextReader struct {
