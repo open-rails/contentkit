@@ -78,6 +78,7 @@ export const content: typeof en = {
     close: "Schließen",
     pageCount: "{count} Seiten",
     addVersion: "Version hinzufügen",
+    addVersionHint: "Wählen Sie die Sprachen der neuen Version aus.",
     chooseLanguage: "Sprache",
     versionLanguage: "Sprache der Version",
     versionLanguages: "Sprachen der Version",

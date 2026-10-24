@@ -915,7 +915,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
         }}>
           <DialogContent>
             <DialogHeader><DialogTitle>{t("contentEditor.addVersion")}</DialogTitle></DialogHeader>
-            <AddVersion languages={model.languages} many={spec.versions.languages === "many"} pending={addVersion.pending || !!copying}
+            <AddVersion heading={false} languages={model.languages} many={spec.versions.languages === "many"} pending={addVersion.pending || !!copying}
               sources={versions.filter((v) => v.state !== "deleted").map((v) => ({ id: v.id, label: versionChoices.find((c) => c.id === v.id)?.label ?? v.code, audio: v.has_audio, chapters: !!spec.segments && v.segments.length > 0 }))}
               onAdd={(input, from) => {
                 if (!item) return;

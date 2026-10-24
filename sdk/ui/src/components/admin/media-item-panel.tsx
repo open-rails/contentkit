@@ -10,7 +10,7 @@ import { isProcessing } from "../../client/media/windows.js";
 import { useMessages } from "../../i18n/context.js";
 import { useFlowClient } from "../../react/admin.js";
 import { useContentKitClient, useErrorReporter, useGuarded, type ContentKitErrorHandler } from "../../react/context.js";
-import { usePublicImage } from "../../react/public.js";
+import { usePresets, usePublicImage } from "../../react/public.js";
 import { useMediaRead } from "../../react/read.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Badge } from "#ckui/ui/badge";
@@ -104,7 +104,7 @@ export function VideoMediaEditor({ item, client: own, source: givenSource, subti
   const state: ItemState = !video ? "empty" : failed.length ? "failed" : uploads.some(isProcessing) ? "processing" : "ready";
   const subs = subtitles ? uploads.filter((f) => f.path.startsWith(under(subtitles))) : [];
   return (
-    <>
+    <div className="grid gap-4" data-ckui="video-media">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-base font-semibold">{t("mediaPanel.title")}</h2>
         <Badge variant={state === "failed" ? "destructive" : state === "ready" ? "outline" : "secondary"} data-ckui="media-state" data-state={state}>
@@ -122,10 +122,10 @@ export function VideoMediaEditor({ item, client: own, source: givenSource, subti
           </AlertDescription>
         </Alert>
       ))}
-      {source && <SourceSection item={item} path={source} accept={accept(source) ?? "video/*"} video={video} client={client} onError={onError} />}
-      {source && poster && video && <PosterSection item={item} path={poster} video={source} preset={posterPreset} client={client} onError={onError} />}
-      {subtitles && <Subtitles item={item} pattern={subtitles} accept={accept(subtitles)} files={subs} languages={languages} client={client} onError={onError} />}
-    </>
+      {source && <div className="border-t border-border pt-4"><SourceSection item={item} path={source} accept={accept(source) ?? "video/*"} video={video} client={client} onError={onError} /></div>}
+      {source && poster && video && <div className="border-t border-border pt-4"><PosterSection item={item} path={poster} video={source} preset={posterPreset} client={client} onError={onError} /></div>}
+      {subtitles && <div className="border-t border-border pt-4"><Subtitles item={item} pattern={subtitles} accept={accept(subtitles)} files={subs} languages={languages} client={client} onError={onError} /></div>}
+    </div>
   );
 }
 
@@ -203,12 +203,15 @@ function PosterSection({ item, path, video, preset, client, onError }: { item: R
   const { t } = useMessages();
   const [open, setOpen] = useState(false);
   const { image, reload } = usePublicImage(item, preset, { client });
+  // An empty slot has no image to take its shape from; posters frame a video, so wide by default.
+  const { presets } = usePresets({ client });
+  const aspect = image?.aspect || presets.find((r) => r.name === preset && r.aspect)?.aspect || "16:9";
   return (
     <section className="grid gap-2" data-ckui="media-poster">
       <h3 className="font-medium">{t("mediaPanel.poster")}</h3>
       <div className="flex flex-wrap items-center gap-3">
         <div className="w-40 overflow-hidden rounded-md border border-border">
-          <SlotImage image={image} fallback={<div className="aspect-video bg-muted" />} />
+          <SlotImage image={image} aspect={aspect} fallback={<div className="aspect-video bg-muted" />} />
         </div>
         <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
           {t("mediaPanel.choosePoster")}
@@ -276,7 +279,7 @@ function Subtitles({ item, pattern, accept, files, languages: offered, client, o
         <p className="text-muted-foreground">{t("mediaPanel.noSubtitles")}</p>
       )}
       <form
-        className="grid gap-2 rounded-lg border border-dashed border-border p-3 sm:grid-cols-2"
+        className="grid gap-3 sm:grid-cols-2"
         onSubmit={(e) => {
           e.preventDefault();
           void save();
@@ -314,7 +317,7 @@ function Subtitles({ item, pattern, accept, files, languages: offered, client, o
           <Label htmlFor={`${ids}-forced`}>{t("mediaPanel.forcedLabel")}</Label>
         </div>
         <ErrorLine error={add.error} className="sm:col-span-2" />
-        <Button type="submit" size="sm" className="justify-self-start" disabled={add.pending || !file || !lang.trim()}>
+        <Button type="submit" size="sm" variant="outline" className="justify-self-start" disabled={add.pending || !file || !lang.trim()}>
           {add.pending ? t("common.saving") : t("mediaPanel.addSubtitle")}
         </Button>
       </form>

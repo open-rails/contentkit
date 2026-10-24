@@ -78,6 +78,7 @@ export const content: typeof en = {
     close: "关闭",
     pageCount: "{count} 页",
     addVersion: "添加版本",
+    addVersionHint: "选择新版本的语言。",
     chooseLanguage: "语言",
     versionLanguage: "版本语言",
     versionLanguages: "版本语言",

@@ -1,4 +1,4 @@
-import { Add01Icon, CrownIcon, Delete02Icon, Image01Icon, MoreHorizontalIcon, Search01Icon, SquareUnlock02Icon, Upload04Icon, ViewIcon } from "@hugeicons/core-free-icons";
+import { Add01Icon, ArrowLeft02Icon, CrownIcon, Delete02Icon, Image01Icon, LinkSquare02Icon, MoreHorizontalIcon, Search01Icon, SquareUnlock02Icon, Upload04Icon, ViewIcon } from "@hugeicons/core-free-icons";
 import { cn } from "cn";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -15,8 +15,7 @@ import { useContent } from "../../react/contents.js";
 import { useKinds } from "../../react/entities.js";
 import { keyOf, useContentScope, usePaged, useResource } from "../../react/use-resource.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
-import { Badge } from "#ckui/ui/badge";
-import { Button } from "#ckui/ui/button";
+import { Button, buttonVariants } from "#ckui/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
 import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
@@ -29,8 +28,9 @@ import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "..
 import { ReaderContentEditor } from "./reader-content-editor.js";
 import { applyDraftDefaults, createDraft, uploadTarget, type BulkDraftDefaults } from "./bulk-drafts.js";
 import { UploadQueueBody } from "./upload-queue.js";
-import { ContentSections, RuleFields, allowsIndividualSales, cleanRule, defaultAccessRule, offersAccessChoice } from "../content/editors.js";
+import { AccessEditor, ContentDetailsEditor, RuleFields, VersionsEditor, allowsIndividualSales, cleanRule, defaultAccessRule, offersAccessChoice, versionLabel } from "../content/editors.js";
 import { AttributeFields } from "../entities/fields.js";
+import { MembershipEditor } from "../entities/memberships.js";
 import { EntityPicker, labelOf, type Labels } from "../entities/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
@@ -87,9 +87,6 @@ export function contentStatus(c: Content): ContentStatus {
 }
 
 const choices = (list?: readonly Choice[], name: (code: string) => string = (c) => c) => (list ?? []).map((c) => (typeof c === "string" ? { value: c, label: name(c) } : c));
-const badge: Record<ContentStatus, "default" | "secondary" | "outline" | "destructive"> = { published: "outline", scheduled: "secondary", draft: "outline", held: "secondary", rejected: "destructive" };
-// Published reads as a good state, not the brand accent.
-const badgeClass: Partial<Record<ContentStatus, string>> = { published: "border-success/45 bg-success/15 text-foreground" };
 const states = ["draft", "scheduled", "published"] as const;
 
 /**
@@ -141,10 +138,16 @@ function Contents({ basePath, navigation, ...p }: Inner) {
   }
   return (
     <>
-      <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => void (async () => {
-        if ((await leaveGuard.current?.()) ?? true) loc.go("");
-      })()}>
-        {t("contentManager.back")}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="-ms-2 gap-1.5 text-muted-foreground hover:text-foreground justify-self-start h-8 px-2"
+        onClick={() => void (async () => {
+          if ((await leaveGuard.current?.()) ?? true) loc.go("");
+        })()}
+      >
+        <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} data-icon="inline-start" />
+        {p.noun?.other ? t("contentManager.backToNoun", { noun: p.noun.other }) : t("contentManager.back")}
       </Button>
       <ContentEditor
         management
@@ -694,7 +697,7 @@ const dot: Record<ContentStatus, string> = { published: "bg-success", scheduled:
 function StatusDot({ status }: { status: ContentStatus }) {
   const { t } = useMessages();
   return (
-    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+    <span className="inline-flex items-center gap-2 whitespace-nowrap text-foreground font-medium">
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", dot[status])} />
       {t(`contentManager.${status}`)}
     </span>
@@ -826,6 +829,8 @@ export interface ContentEditorProps {
   onDeleted?: (content: Content) => void;
   client?: ContentKitClient;
   onError?: ContentKitErrorHandler;
+  /** The kind's name, localized by the host (e.g. video, videos). */
+  noun?: { one: string; other: string };
 }
 
 /**
@@ -855,7 +860,7 @@ export function ContentEditor(p:ContentEditorProps){
   return <StandardContentEditor key={boundary.key} {...props}/>;
 }
 
-function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerEntity, entities, onCreated, onDeleted, onError, management }: ContentEditorProps) {
+function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerEntity, entities, onCreated, onDeleted, onError, management, noun }: ContentEditorProps) {
   const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
@@ -875,6 +880,10 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   const [notice, setNotice] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
   const item = ed.content;
+  const versionChoices = useMemo(
+    () => (item?.versions ?? []).map((v) => ({ id: v.id, label: versionLabel(v, languageName, labels) })),
+    [item?.versions, languageName, labels],
+  );
   useEffect(() => {
     if (!item) return;
     const stored = item.text?.[language];
@@ -969,108 +978,321 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     placeholder: t("contentManager.bodyPlaceholder"),
     "aria-label": t("contentManager.body"),
   };
+
+  const storedTitle = stored?.title?.trim() || item?.title;
+  const newHeading = noun?.one ? (
+    <span className="first-letter:uppercase">{t("contentManager.newNamed", { one: noun.one })}</span>
+  ) : (
+    t("contentManager.newTitle")
+  );
+  const headingTitle = item ? (storedTitle || t("contentManager.editTitle")) : newHeading;
+
   return (
     <>
-    <form
-      className="grid gap-4"
-      data-ckui="content-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        void save();
-      }}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-base font-semibold">{t(item ? "contentManager.editTitle" : "contentManager.newTitle")}</h2>
-        {item && <Badge variant={badge[s]} className={badgeClass[s]}>{t(`contentManager.${s}`)}</Badge>}
-        {href && (
-          <a className="text-xs text-muted-foreground hover:underline" href={href}>
-            {t("contentManager.view")}
-          </a>
-        )}
-      </div>
-      {item?.moderation && (
-        <Alert variant={item.moderation === "rejected" ? "destructive" : "default"}>
-          <AlertDescription>
-            {item.moderation_reason
-              ? t(`contentManager.${item.moderation === "rejected" ? "rejectedBecause" : "heldBecause"}`, { reason: item.moderation_reason })
-              : t(`contentManager.${item.moderation === "rejected" ? "rejectedNote" : "heldNote"}`)}
-          </AlertDescription>
-        </Alert>
-      )}
-      <div className="grid gap-1.5">
-        <Label htmlFor={`${ids}-title`}>{t("contentManager.itemTitle")}</Label>
-        <Input id={`${ids}-title`} value={f.title} required maxLength={300} onChange={(e) => set({ title: e.target.value })} />
-      </div>
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="grid w-64 max-w-full gap-1.5">
-          <Label htmlFor={`${ids}-publish`}>{t("contentManager.publishAt")}</Label>
-          <Input id={`${ids}-publish`} type="datetime-local" value={f.publishAt} onChange={(e) => set({ publishAt: e.target.value })} />
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] items-start">
+        <div className="grid gap-6 min-w-0">
+          <form
+            className="grid gap-6"
+            data-ckui="content-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void save();
+            }}
+          >
+            {/* Header */}
+            <header className="grid gap-2" data-ckui="content-head">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight" title={typeof storedTitle === "string" && storedTitle ? storedTitle : undefined}>
+                  {headingTitle}
+                </h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  {!item && (
+                    <Button
+                      type="submit"
+                      size="sm"
+                      variant="default"
+                      disabled={ed.saving}
+                    >
+                      {ed.saving ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Spinner />
+                          <span>{t("common.saving")}</span>
+                        </span>
+                      ) : (
+                        t("contentManager.createDraft")
+                      )}
+                    </Button>
+                  )}
+                  {item && !item.live && (
+                    <>
+                      <Button
+                        type="submit"
+                        size="sm"
+                        variant="outline"
+                        disabled={ed.saving || item.state === "deleted"}
+                      >
+                        {ed.saving ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <Spinner />
+                            <span>{t("common.saving")}</span>
+                          </span>
+                        ) : (
+                          t("common.save")
+                        )}
+                      </Button>
+                      {item.state !== "deleted" && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="default"
+                          disabled={ed.saving}
+                          onClick={() => void publish(true)}
+                        >
+                          {t("contentManager.publish")}
+                        </Button>
+                      )}
+                    </>
+                  )}
+                  {item && item.live && (
+                    <>
+                      <Button
+                        type="submit"
+                        size="sm"
+                        variant={dirty ? "default" : "outline"}
+                        disabled={ed.saving || item.state === "deleted"}
+                      >
+                        {ed.saving ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <Spinner />
+                            <span>{t("common.saving")}</span>
+                          </span>
+                        ) : (
+                          t("common.save")
+                        )}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={ed.saving}
+                        onClick={() => void publish(false)}
+                      >
+                        {t("contentManager.unpublish")}
+                      </Button>
+                    </>
+                  )}
+                  {item && hidden && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={<Button size="icon-sm" variant="ghost" disabled={ed.saving} aria-label={t("contentManager.moreActions", { title: storedTitle || t("contentManager.itemTitle") })} />}
+                      >
+                        <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="min-w-40">
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => void remove()}
+                        >
+                          <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} data-icon="inline-start" />
+                          {t("contentManager.delete")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                </div>
+              </div>
+              {item && (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+                  <StatusDot status={s} />
+                  {item.live && item.published_at && (
+                    <>
+                      <span aria-hidden>·</span>
+                      <span>{t("pollManager.wentLive", { date: formatDate(m, item.published_at, false) })}</span>
+                    </>
+                  )}
+                  <span aria-hidden>·</span>
+                  <span className="font-mono text-xs">{item.code}</span>
+                  {languages.length > 1 && (
+                    <>
+                      <span aria-hidden>·</span>
+                      <div className="inline-flex items-center">
+                        <Label htmlFor={`${ids}-lang`} className="sr-only">
+                          {t("contentManager.language")}
+                        </Label>
+                        <Select
+                          value={language}
+                          onValueChange={async (v) => {
+                            if (dirty && !(await confirm({ title: t("contentManager.switchLanguage"), description: t("contentManager.discardLanguageEdits"), confirm: t("readerEditor.discard") }))) return;
+                            setLanguage(String(v ?? ""));
+                            setForm(item ? null : empty);
+                          }}
+                        >
+                          <SelectTrigger id={`${ids}-lang`} size="sm">
+                            <SelectValue>{(v: string) => languages.find((l) => l.value === v)?.label ?? v}</SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {languages.map((l) => (
+                              <SelectItem key={l.value} value={l.value}>
+                                {l.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </>
+                  )}
+                  {href && (
+                    <>
+                      <span aria-hidden>·</span>
+                      <a
+                        className={buttonVariants({ size: "sm", variant: "ghost" })}
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <HugeiconsIcon icon={ViewIcon} strokeWidth={2} data-icon="inline-start" />
+                        <span>{t("contentManager.view")}</span>
+                        <HugeiconsIcon icon={LinkSquare02Icon} strokeWidth={2} data-icon="inline-end" />
+                      </a>
+                    </>
+                  )}
+                </div>
+              )}
+            </header>
+
+            {item?.moderation && (
+              <Alert variant={item.moderation === "rejected" ? "destructive" : "default"}>
+                <AlertDescription>
+                  {item.moderation_reason
+                    ? t(`contentManager.${item.moderation === "rejected" ? "rejectedBecause" : "heldBecause"}`, { reason: item.moderation_reason })
+                    : t(`contentManager.${item.moderation === "rejected" ? "rejectedNote" : "heldNote"}`)}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Title and description */}
+            <div className="rounded-lg border border-border bg-card p-4 grid gap-4">
+              <h3 className="text-sm font-medium">
+                {t("contentManager.titleAndDescription")}
+              </h3>
+              <div className="grid gap-4">
+                <div className="grid gap-1.5">
+                  <Label htmlFor={`${ids}-title`}>
+                    {t("contentManager.itemTitle")}
+                  </Label>
+                  <Input
+                    id={`${ids}-title`}
+                    value={f.title}
+                    required
+                    maxLength={300}
+                    onChange={(e) => set({ title: e.target.value })}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor={`${ids}-description`}>
+                    {t(post ? "contentManager.postSummary" : "contentManager.description")}
+                  </Label>
+                  <Textarea
+                    id={`${ids}-description`}
+                    aria-describedby={post ? `${ids}-summary-help` : undefined}
+                    rows={3}
+                    value={f.description}
+                    onChange={(e) => set({ description: e.target.value })}
+                  />
+                  {post && (
+                    <p id={`${ids}-summary-help`} className="text-xs text-muted-foreground">
+                      {t("contentManager.postSummaryHelp")}
+                    </p>
+                  )}
+                </div>
+                {!item?.live && (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor={`${ids}-publish`}>
+                      {t("contentManager.publishAt")}
+                    </Label>
+                    <Input
+                      id={`${ids}-publish`}
+                      type="datetime-local"
+                      className="w-64 max-w-full"
+                      value={f.publishAt}
+                      onChange={(e) => set({ publishAt: e.target.value })}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Media / Cover */}
+            {(hidden || !item) && (
+              <Cover item={item} src={ed.coverSrc} saving={ed.saving} onFile={(file) => void ed.setCover(file).catch(fail)} />
+            )}
+
+            {/* Body */}
+            <div className="rounded-lg border border-border bg-card p-4 grid gap-4">
+              <div className="grid gap-1">
+                <h3 className="text-sm font-medium">
+                  {t("contentManager.body")}
+                </h3>
+                {!item && (
+                  <p className="text-xs text-muted-foreground">
+                    {t("contentManager.imagesAfterCreate")}
+                  </p>
+                )}
+              </div>
+              <div>
+                {renderEditor ? (
+                  renderEditor(editor)
+                ) : (
+                  <Textarea
+                    aria-label={editor["aria-label"]}
+                    rows={12}
+                    value={f.body}
+                    placeholder={editor.placeholder}
+                    onChange={(e) => set({ body: e.target.value })}
+                    className="w-full resize-y border-0 bg-transparent p-0 font-sans text-sm leading-relaxed placeholder:text-muted-foreground/50 focus-visible:ring-0"
+                  />
+                )}
+              </div>
+            </div>
+
+            {error && <ErrorLine>{typeof error === "string" ? error : contentError(m, error)}</ErrorLine>}
+            {notice && !error && (
+              <p role="status" className="rounded-md bg-success/15 px-3 py-2 text-sm text-foreground ring-1 ring-inset ring-success/45">
+                {notice}
+              </p>
+            )}
+          </form>
+
+          {/* Versions Container (outside form for HTML5 valid nesting) */}
+          {item && (
+            <div data-ckui="content-versions">
+              <VersionsEditor content={item} client={client} onError={onError} labels={labels} />
+            </div>
+          )}
         </div>
-        {languages.length > 1 && (
-          <div className="grid w-44 max-w-full gap-1.5">
-            <Label htmlFor={`${ids}-lang`}>{t("contentManager.language")}</Label>
-            <Select
-              value={language}
-              onValueChange={async (v) => {
-                if (dirty && !(await confirm({ title: t("contentManager.switchLanguage"), description: t("contentManager.discardLanguageEdits"), confirm: t("readerEditor.discard") }))) return;
-                setLanguage(String(v ?? ""));
-                setForm(item ? null : empty);
-              }}
-            >
-              <SelectTrigger id={`${ids}-lang`} className="w-full">
-                <SelectValue>{(v: string) => languages.find((l) => l.value === v)?.label ?? v}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {languages.map((l) => (
-                  <SelectItem key={l.value} value={l.value}>
-                    {l.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-      </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor={`${ids}-description`}>{t(post ? "contentManager.postSummary" : "contentManager.description")}</Label>
-        <Textarea id={`${ids}-description`} aria-describedby={post ? `${ids}-summary-help` : undefined} rows={2} value={f.description} onChange={(e) => set({ description: e.target.value })} />
-        {post && <p id={`${ids}-summary-help`} className="text-xs text-muted-foreground">{t("contentManager.postSummaryHelp")}</p>}
-      </div>
-      {(hidden || !item) && <Cover item={item} src={ed.coverSrc} saving={ed.saving} onFile={(file) => void ed.setCover(file).catch(fail)} />}
-      <div className="grid gap-1.5">
-        <span className="text-sm font-medium">{t("contentManager.body")}</span>
-        {renderEditor ? renderEditor(editor) : <Textarea aria-label={editor["aria-label"]} rows={12} value={f.body} placeholder={editor.placeholder} onChange={(e) => set({ body: e.target.value })} />}
-        {!item && <p className="text-xs text-muted-foreground">{t("contentManager.imagesAfterCreate")}</p>}
-      </div>
-      {error && <ErrorLine>{typeof error === "string" ? error : contentError(m, error)}</ErrorLine>}
-      {notice && !error && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {notice}
-        </p>
-      )}
-      <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-        <Button type="submit" disabled={ed.saving || item?.state === "deleted"}>
-          {ed.saving ? t("common.saving") : t(item ? "common.save" : "contentManager.createDraft")}
-        </Button>
-        {item && item.state !== "deleted" && !item.live && (
-          <Button type="button" variant="outline" disabled={ed.saving} onClick={() => void publish(true)}>
-            {t("contentManager.publish")}
-          </Button>
-        )}
-        {item?.state === "published" && (
-          <Button type="button" variant="outline" disabled={ed.saving} onClick={() => void publish(false)}>
-            {t("contentManager.unpublish")}
-          </Button>
-        )}
-        {item && hidden && (
-          <Button type="button" variant="destructive" className="ms-auto" disabled={ed.saving} onClick={() => void remove()}>
-            {t("contentManager.delete")}
-          </Button>
-        )}
+
+        {/* Aside Column */}
+        <aside className="grid gap-6">
+          {item && <ContentDetailsEditor content={item} client={client} onError={onError} labels={labels} />}
+          {item && offersAccessChoice(model?.kinds[kind]) && (
+            <AccessEditor content={item} client={client} onError={onError} labels={labels} />
+          )}
+          {item && !!model?.kinds[kind]?.entities?.length && (
+            <section data-ckui="content-groups">
+              <MembershipEditor
+                management={management}
+                content={item.id}
+                contentKind={item.kind}
+                versions={model?.kinds[kind]?.versions.hidden ? undefined : versionChoices}
+                labels={labels}
+                client={client}
+                onError={onError}
+              />
+            </section>
+          )}
+        </aside>
       </div>
       {dialog}
-    </form>
-    {item && <ContentSections management={management} content={item} client={client} onError={onError} labels={labels} />}
     </>
   );
 }
@@ -1079,19 +1301,30 @@ function Cover({ item, src, saving, onFile }: { item: Content | null; src?: stri
   const { t } = useMessages();
   const file = useRef<HTMLInputElement>(null);
   return (
-    <div className="grid gap-1.5" data-ckui="content-cover">
-      <span className="text-sm font-medium">{t("contentManager.cover")}</span>
+    <div className="rounded-lg border border-border bg-card p-4 grid gap-4" data-ckui="content-cover">
+      <h3 className="text-sm font-medium">{t("contentManager.cover")}</h3>
       {item ? (
-        <div className="flex flex-wrap items-center gap-3">
-          {src ? <img src={src} alt="" className="aspect-video w-64 max-w-full rounded-md border border-border object-cover" /> : <span className="text-muted-foreground">{t("contentManager.noCover")}</span>}
-          <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => file.current?.click()}>
-            {t(src ? "pollEditor.replaceImage" : "contentManager.addCover")}
-          </Button>
-          {src && (
-            <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => onFile(null)}>
-              {t("pollEditor.removeImage")}
-            </Button>
+        <div className="flex flex-wrap items-center gap-4">
+          {src ? (
+            <div className="relative group overflow-hidden rounded-md border border-border">
+              <img src={src} alt="" className="aspect-video w-64 max-w-full object-cover" />
+            </div>
+          ) : (
+            <div className="aspect-video w-64 max-w-full rounded-md border border-dashed border-border bg-muted flex flex-col items-center justify-center text-xs text-muted-foreground gap-1.5 p-4 text-center">
+              <HugeiconsIcon icon={Image01Icon} className="size-6 text-muted-foreground/50" />
+              <span>{t("contentManager.noCover")}</span>
+            </div>
           )}
+          <div className="flex flex-col gap-2">
+            <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => file.current?.click()}>
+              {t(src ? "pollEditor.replaceImage" : "contentManager.addCover")}
+            </Button>
+            {src && (
+              <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => onFile(null)} className="text-destructive hover:text-destructive">
+                {t("pollEditor.removeImage")}
+              </Button>
+            )}
+          </div>
           <input
             ref={file}
             type="file"

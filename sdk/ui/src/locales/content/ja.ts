@@ -78,6 +78,7 @@ export const content: typeof en = {
     close: "閉じる",
     pageCount: "{count} ページ",
     addVersion: "バージョンを追加",
+    addVersionHint: "新しいバージョンの言語を選択してください。",
     chooseLanguage: "言語",
     versionLanguage: "バージョンの言語",
     versionLanguages: "バージョンの言語",

@@ -181,8 +181,8 @@ it("visible-version players hide parent Delete in both the list and generic edit
   expect(screen.queryByRole("button", { name: "More actions for Alpha" })).toBeNull();
   list.unmount();
   render(<ContentEditor id="a" kind="gallery" client={s.client} />);
-  await screen.findByRole("heading", { name: "Edit" });
-  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  await screen.findByRole("heading", { name: "Alpha" });
+  expect(screen.queryByRole("button", { name: "More actions for Alpha" })).toBeNull();
 });
 
 const bulkId = (n: number) => `0192f000-0000-7000-8000-${String(n).padStart(12, "0")}`;
@@ -276,4 +276,54 @@ it("shows a per-file default failure, continues other files and retries the same
   await waitFor(() => expect(panel.querySelectorAll('[data-status="done"]')).toHaveLength(2));
   expect(s.calls.filter((c) => c.path === "/contents" && c.method === "POST")).toHaveLength(2);
   expect(s.calls.filter((c) => c.path === `/contents/${bulkId(1)}/entities/shared`)).toHaveLength(2);
+});
+
+it("renders version label instead of raw version ID for version-scoped entity chips in editor", async () => {
+  const version1Id = "01a155a1-0000-7000-8000-000000000001";
+  const version2Id = "01b266b2-0000-7000-8000-000000000002";
+  const entityId = "tag-fantasy";
+  const customModel: ContentModel = {
+    ...model,
+    languages: ["en", "es"],
+    kinds: {
+      video: {
+        route: "v",
+        presentation: "player",
+        versions: { hidden: false, languages: "one" },
+        entities: ["tag"],
+      },
+    },
+    entity_kinds: {
+      tag: { route: "tags", membership_scopes: ["content", "version"] },
+    },
+  };
+  const videoItem = item("v1", "Test Video", { level: "public" }, {
+    kind: "video",
+    versions: [
+      { id: version1Id, languages: ["en"], traits: [], state: "published", live: true, position: 1 },
+      { id: version2Id, languages: ["es"], traits: [], state: "published", live: true, position: 2 },
+    ] as unknown as Version[],
+  });
+
+  const fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), "https://test.invalid");
+    const path = url.pathname.replace(/^\/v1/, "");
+    if (path === "/kinds") return Response.json(customModel);
+    if (path === "/contents/v1") return Response.json(videoItem);
+    if (path === "/contents/v1/entities") {
+      return Response.json({
+        content_id: "v1",
+        memberships: [{ group_id: entityId, version_id: version1Id }],
+        entities: [{ id: entityId, kind: "tag", slug: "fantasy", name: "Fantasy", count: 1 }],
+      });
+    }
+    return Response.json({ code: "not_found", error: "Not found" }, { status: 404 });
+  });
+
+  const client = createContentKitClient({ baseUrl: "", fetch: fetch as typeof globalThis.fetch });
+  render(<ContentEditor id="v1" kind="video" client={client} />);
+
+  const chip = await screen.findByText(/Fantasy/);
+  expect(chip).toHaveTextContent("English");
+  expect(chip).not.toHaveTextContent("01a155a1");
 });

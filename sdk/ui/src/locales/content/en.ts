@@ -77,6 +77,7 @@ export const content = {
     close: "Close",
     pageCount: "{count} pages",
     addVersion: "Add version",
+    addVersionHint: "Pick the languages of the new version.",
     chooseLanguage: "Language",
     versionLanguage: "Version language",
     versionLanguages: "Version languages",

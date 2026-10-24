@@ -78,6 +78,7 @@ export const content: typeof en = {
     close: "닫기",
     pageCount: "{count}페이지",
     addVersion: "버전 추가",
+    addVersionHint: "새 버전의 언어를 선택하세요.",
     chooseLanguage: "언어",
     versionLanguage: "버전 언어",
     versionLanguages: "버전 언어",

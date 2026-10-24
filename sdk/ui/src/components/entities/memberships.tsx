@@ -9,6 +9,7 @@ import { useContentEntities, useKinds } from "../../react/entities.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
+import { SaveState } from "../content/editors.js";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
 import { EntityChips, type VersionChoice } from "./entity-chips.js";
 import { labelOf, type Labels } from "./parts.js";
@@ -85,7 +86,22 @@ export function MembershipEditor(p: MembershipEditorProps) {
     setDraft((d) => d.map((x) => (x.key === key ? { ...x, ...patch } : x)));
   };
   const root = (children: ReactNode) => (
-    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="membership-editor">
+    <ContentKitUiRoot
+      appearance={p.appearance}
+      className={cn("rounded-lg border border-border bg-card p-4 grid gap-4 text-sm", p.className)}
+      data-ckui="membership-editor"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium">
+            {t("contentAdmin.entities")}
+          </h3>
+          <span className="text-sm text-muted-foreground tabular-nums">
+            {draft.length}
+          </span>
+        </div>
+        <SaveState dirty={dirty} saved={saved} />
+      </div>
       {children}
     </ContentKitUiRoot>
   );
@@ -155,10 +171,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
       })}
       {!entityKinds.length && <p className="text-muted-foreground">{t("memberships.noKinds")}</p>}
       <ErrorLine error={save.error} />
-      <div className="flex items-center gap-3">
-        <Button type="submit" size="sm" disabled={save.pending || !dirty}>
-          {save.pending ? t("common.saving") : t("common.save")}
-        </Button>
+      <div className="flex justify-end gap-2 border-t border-border pt-4">
         {dirty && (
           <Button
             type="button"
@@ -173,11 +186,14 @@ export function MembershipEditor(p: MembershipEditorProps) {
             {t("memberships.discard")}
           </Button>
         )}
-        {saved && !dirty && (
-          <span role="status" className="text-muted-foreground">
-            {t("memberships.saved")}
-          </span>
-        )}
+        <Button
+          type="submit"
+          size="sm"
+          variant={dirty ? "default" : "outline"}
+          disabled={save.pending || !dirty}
+        >
+          {save.pending ? t("common.saving") : t("common.save")}
+        </Button>
       </div>
     </form>,
   );
