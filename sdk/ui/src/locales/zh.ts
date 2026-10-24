@@ -90,6 +90,7 @@ export const zh: ContentKitUiMessageBundle = {
     },
   },
   readiness: {
+    archivePages: "ZIP 页数",
     full: "媒体处理已暂停",
     fullHint: "已达到存储上限。请删除不需要的文件或提高上限。",
     failedStatus: "媒体处理失败",

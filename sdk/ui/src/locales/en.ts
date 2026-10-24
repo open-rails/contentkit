@@ -89,6 +89,7 @@ export const en = {
     },
   },
   readiness: {
+    archivePages: "ZIP pages",
     full: "Media processing is paused",
     fullHint: "The media storage limit was reached. Remove unused files or increase the limit to continue.",
     failedStatus: "Media processing failed",

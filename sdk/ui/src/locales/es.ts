@@ -90,6 +90,7 @@ export const es: ContentKitUiMessageBundle = {
     },
   },
   readiness: {
+    archivePages: "Páginas del ZIP",
     full: "Procesamiento multimedia en pausa",
     fullHint: "Se alcanzó el límite de almacenamiento. Elimina archivos sin usar o aumenta el límite.",
     failedStatus: "El procesamiento multimedia falló",

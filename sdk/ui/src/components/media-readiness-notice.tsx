@@ -56,6 +56,7 @@ export function MediaReadinessNotice({ item, read: given, prefix, description, c
   const progress = status?.encoding ?? uploads.find((f) => isVideoType(f.type) && isProcessing(f) && f.progress)?.progress;
   const stages = status ? [
     ...(status.archives.total > 0 ? [{ key: "archives", label: t("readiness.archives"), ...status.archives }] : []),
+    ...(status.archives.pages ? [{ key: "archive-pages", label: t("readiness.archivePages"), ...status.archives.pages }] : []),
     ...status.presets.map((preset) => ({ key: `preset:${preset.name}`, label: preset.name, ...preset })),
   ] : [];
   return (

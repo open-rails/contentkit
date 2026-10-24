@@ -90,6 +90,7 @@ export const de: ContentKitUiMessageBundle = {
     },
   },
   readiness: {
+    archivePages: "ZIP-Seiten",
     full: "Medienverarbeitung pausiert",
     fullHint: "Das Speicherlimit wurde erreicht. Entferne ungenutzte Dateien oder erhöhe das Limit.",
     failedStatus: "Medienverarbeitung fehlgeschlagen",

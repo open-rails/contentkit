@@ -90,6 +90,7 @@ export const ko: ContentKitUiMessageBundle = {
     },
   },
   readiness: {
+    archivePages: "ZIP 페이지",
     full: "미디어 처리 일시 중지",
     fullHint: "저장 용량 한도에 도달했습니다. 사용하지 않는 파일을 삭제하거나 한도를 늘리세요.",
     failedStatus: "미디어 처리 실패",
