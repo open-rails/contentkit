@@ -51,7 +51,7 @@ func (m *Manifests) IngestArchives(ctx context.Context, ref contentref.ContentRe
 		return err
 	}
 	for _, source := range current.Files {
-		if !source.IsUpload() || source.Unattached || source.Fail() != nil || item.Kind().ArchiveDestination(source.Path) == "" {
+		if !source.IsUpload() || source.Fail() != nil || item.Kind().ArchiveDestination(source.Path) == "" {
 			continue
 		}
 		digest := sourceDigest(source)
@@ -209,7 +209,6 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 	if err != nil {
 		return err
 	}
-	newBytes := expanded
 	for _, file := range current.Files {
 		if !file.IsUpload() {
 			continue
@@ -238,9 +237,10 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		}
 		page.retainedPath, page.retainedBlob = file.Path, file.Blob
 	}
+	var newBytes int64
 	for _, page := range pages {
-		if page.retainedPath != "" {
-			newBytes -= page.size
+		if page.retainedPath == "" {
+			newBytes += max(page.size, uploadFloor)
 		}
 	}
 
@@ -325,6 +325,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		if err := m.checkAllocationsIn(ctx, item, keys, cur.Incarnation); err != nil {
 			return err
 		}
+		archiveUnattached := cur.Files[i].Unattached
 		before := cur.uploadBytes()
 		objects := map[string]Object{}
 		for _, page := range pages {
@@ -374,6 +375,11 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 				if sourceDigest(old) != hex.EncodeToString(page.sum) {
 					return uploadErr(CodeConflict, "previous imported archive page changed")
 				}
+				if old.Unattached && !archiveUnattached {
+					if err := runner.apply(-1, Op{Op: OpAttach, Path: old.Path}); err != nil {
+						return err
+					}
+				}
 				continue
 			}
 			if page.blob == "" {
@@ -405,7 +411,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 			}
 			meta["page"] = pm
 			appendAt := MaxUploads
-			if err := runner.apply(-1, Op{Op: OpPut, Path: targetPath, Blob: page.blob, SourceName: path.Base(page.entry.Name), CreateID: createID, Meta: meta, Index: &appendAt}); err != nil {
+			if err := runner.apply(-1, Op{Op: OpPut, Path: targetPath, Blob: page.blob, SourceName: path.Base(page.entry.Name), CreateID: createID, Meta: meta, Index: &appendAt, Unattached: archiveUnattached}); err != nil {
 				return err
 			}
 			if j := cur.Find(targetPath); j >= 0 {
@@ -459,6 +465,10 @@ func spoolArchiveEntry(ctx context.Context, entry *zip.File, tempDir string, lim
 	}
 	rc, err := entry.Open()
 	if err != nil {
+		var disk *os.PathError
+		if errors.As(err, &disk) {
+			return decodedArchiveEntry{}, err
+		}
 		return decodedArchiveEntry{}, uploadErr(CodeInvalid, "ZIP entry %s: %v", entry.Name, err)
 	}
 	defer rc.Close()
@@ -467,14 +477,10 @@ func spoolArchiveEntry(ctx context.Context, entry *zip.File, tempDir string, lim
 		return decodedArchiveEntry{}, err
 	}
 	result := decodedArchiveEntry{file: output.Name()}
-	hash := sha256.New()
-	n, copyErr := io.Copy(io.MultiWriter(output, hash), io.LimitReader(archiveContextReader{ctx, rc}, limit+1))
+	n, sum, copyErr := copyArchiveEntry(ctx, rc, output, limit)
 	closeErr := output.Close()
 	if copyErr != nil {
-		if ctx.Err() != nil {
-			return result, ctx.Err()
-		}
-		return result, uploadErr(CodeInvalid, "ZIP entry %s: %v", entry.Name, copyErr)
+		return result, copyErr
 	}
 	if closeErr != nil {
 		return result, closeErr
@@ -494,8 +500,46 @@ func spoolArchiveEntry(ctx context.Context, entry *zip.File, tempDir string, lim
 	}
 	result.typ = archiveContentType(prefix[:read])
 	result.size = n
-	result.sum = hash.Sum(nil)
+	result.sum = sum
 	return result, nil
+}
+
+// copyArchiveEntry keeps sink failures separate from malformed compressed
+// input. Disk/cancellation errors are retryable infrastructure failures.
+func copyArchiveEntry(ctx context.Context, source io.Reader, destination io.Writer, limit int64) (int64, []byte, error) {
+	sink := &archiveSink{writer: destination}
+	hash := sha256.New()
+	n, err := io.Copy(io.MultiWriter(sink, hash), io.LimitReader(archiveContextReader{ctx, source}, limit+1))
+	if sink.failure != nil {
+		return n, nil, sink.failure
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return n, nil, ctx.Err()
+		}
+		var disk *os.PathError
+		if errors.As(err, &disk) {
+			return n, nil, err
+		}
+		return n, nil, uploadErr(CodeInvalid, "ZIP entry stream: %v", err)
+	}
+	return n, hash.Sum(nil), nil
+}
+
+type archiveSink struct {
+	writer  io.Writer
+	failure error
+}
+
+func (s *archiveSink) Write(p []byte) (int, error) {
+	n, err := s.writer.Write(p)
+	if n != len(p) && err == nil {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		s.failure = err
+	}
+	return n, err
 }
 
 type archiveContextReader struct {

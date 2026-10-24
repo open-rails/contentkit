@@ -6,7 +6,9 @@ import (
 	"context"
 	"image"
 	"image/color"
-	"image/png"
+	pngimage "image/png"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -48,8 +50,14 @@ func TestGenericArchiveIngestionReplaysAndPreservesServerMetadata(t *testing.T) 
 	if len(pages) != 2 {
 		t.Fatalf("imported pages=%v", pages)
 	}
+	for path, blob := range pages {
+		// Generic archive targets retain provenance through ordinary caption
+		// edits, just as gallery reader pages do.
+		f.commit(ref, media.Op{Op: media.OpPut, Path: path, Blob: blob, Meta: map[string]any{"caption": "edited page"}})
+		break
+	}
 	used, pending, err := ledger.Usage(ctx, ref.TenantID, "owner")
-	if err != nil || used != int64(len(source)+len(a)+len(b)) || pending != 0 {
+	if err != nil || used != m.UploadBytes() || pending != 0 {
 		t.Fatalf("usage=%d pending=%d err=%v", used, pending, err)
 	}
 	// An ordinary same-source metadata edit preserves server completion state.
@@ -80,6 +88,9 @@ func TestGenericArchiveIngestionReplaysAndPreservesServerMetadata(t *testing.T) 
 	if adopted.Meta["archive_completed_sha256"] == nil {
 		t.Fatal("second archive path stayed pending")
 	}
+	if len(m.Files) != 4 {
+		t.Fatalf("archive alias duplicated edited pages: %+v", m.Files)
+	}
 	for path, blob := range pages {
 		file, ok := m.Get(path)
 		if !ok || file.Blob != blob {
@@ -87,14 +98,14 @@ func TestGenericArchiveIngestionReplaysAndPreservesServerMetadata(t *testing.T) 
 		}
 	}
 	now, _, err := ledger.Usage(ctx, ref.TenantID, "owner")
-	if err != nil || now != used+int64(len(source)) {
-		t.Fatalf("replay growth=%d want=%d err=%v", now, used+int64(len(source)), err)
+	if err != nil || now != m.UploadBytes() {
+		t.Fatalf("replay growth=%d want=%d err=%v", now, m.UploadBytes(), err)
 	}
 }
 
 func TestArchiveQuotaRefusesBeforeAnyDecodedBlobWrite(t *testing.T) {
 	source := archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 3), "2.png": archivePNG(t, 4)})
-	f, ledger := archiveFixture(t, int64(len(source)+1))
+	f, ledger := archiveFixture(t, max(int64(len(source)), 64<<10)+1)
 	ctx := t.Context()
 	ref := f.ref("post", 2)
 	f.visible(2)
@@ -121,7 +132,7 @@ func TestArchiveQuotaRefusesBeforeAnyDecodedBlobWrite(t *testing.T) {
 		t.Fatalf("quota-refused work allocated %d decoded objects", after-before)
 	}
 	used, pending, err := ledger.Usage(ctx, ref.TenantID, "owner")
-	if err != nil || used != int64(len(source)) || pending != 0 {
+	if err != nil || used != m.UploadBytes() || pending != 0 {
 		t.Fatalf("quota refusal usage=%d/%d err=%v", used, pending, err)
 	}
 }
@@ -135,6 +146,111 @@ func TestArchiveDestinationRequiresExplicitUploadGrant(t *testing.T) {
 	_, err := f.up.Commit(t.Context(), f.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: blob}})
 	if code(err) != media.CodeForbidden {
 		t.Fatalf("ZIP source permission expanded destination: %v", err)
+	}
+}
+
+func TestStagedArchiveProcessesBeforeSaveAndAttachesAsOneBatch(t *testing.T) {
+	for _, put := range []bool{false, true} {
+		name := "attach"
+		if put {
+			name = "put"
+		}
+		t.Run(name, func(t *testing.T) {
+			f, _ := archiveFixture(t, 8<<20)
+			ref := f.ref("post", 4)
+			f.visible(4)
+			p, blob := f.upload(ref, "zip/staged", "application/zip", archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 7), "2.png": archivePNG(t, 8)}))
+			f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
+			if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+				t.Fatal(err)
+			}
+			m, _, err := f.ms.Get(t.Context(), ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(m.Files) != 3 || slices.ContainsFunc(m.Files, func(file media.File) bool { return !file.Unattached }) {
+				t.Fatalf("processing exposed staged pages: %+v", m.Files)
+			}
+			source, _ := m.Get(p)
+			if source.Meta["archive_completed_sha256"] == nil {
+				t.Fatal("unattached archive was not processed")
+			}
+			operation := media.Op{Op: media.OpAttach, Path: p}
+			if put {
+				operation = media.Op{Op: media.OpPut, Path: p, Blob: source.Blob}
+			}
+			// Save must recheck destination authority and leave the full batch
+			// staged if that authority was revoked while extraction ran.
+			f.auth.archiveTo = ""
+			if _, err := f.up.Commit(t.Context(), f.editor, ref, uuid.NewString(), []media.Op{operation}); code(err) != media.CodeForbidden {
+				t.Fatalf("revoked destination allowed attachment: %v", err)
+			}
+			m, _, err = f.ms.Get(t.Context(), ref)
+			if err != nil || slices.ContainsFunc(m.Files, func(file media.File) bool { return !file.Unattached }) {
+				t.Fatalf("refused Save partially attached batch: %+v / %v", m, err)
+			}
+			f.auth.archiveTo = "inline/{name}"
+			m = f.commit(ref, operation)
+			if len(m.Files) != 3 || slices.ContainsFunc(m.Files, func(file media.File) bool { return file.Unattached }) {
+				t.Fatalf("Save did not attach the complete batch: %+v", m.Files)
+			}
+		})
+	}
+}
+
+func TestCancellingStagedArchivePreservesAttachedPagesAndOtherAliases(t *testing.T) {
+	f, ledger := archiveFixture(t, 8<<20)
+	ref := f.ref("post", 5)
+	f.visible(5)
+	source := archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 9), "2.png": archivePNG(t, 10)})
+	p, blob := f.upload(ref, "zip/staged", "application/zip", source)
+	f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
+	if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := f.ms.Get(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, _ := m.Get(p)
+	page := m.Files[slices.IndexFunc(m.Files, func(file media.File) bool { return strings.HasPrefix(file.Path, "inline/") })]
+	// An editor can already have adopted one page from the extracted batch.
+	// Cancelling the source must preserve that page and its quota charge.
+	f.commit(ref, media.Op{Op: media.OpAttach, Path: page.Path}, media.Op{Op: media.OpPut, Path: "zip/alias.zip", Blob: archive.Blob, Unattached: true})
+	m = f.commit(ref, media.Op{Op: media.OpRemove, Path: p})
+	if len(m.Files) != 3 {
+		t.Fatalf("removing one ZIP alias removed its shared pages: %+v", m.Files)
+	}
+	m = f.commit(ref, media.Op{Op: media.OpRemove, Path: "zip/alias.zip"})
+	if len(m.Files) != 1 || m.Files[0].Path != page.Path || m.Files[0].Unattached {
+		t.Fatalf("cancelled batch did not retain exactly the adopted page: %+v", m.Files)
+	}
+	used, pending, err := ledger.Usage(t.Context(), ref.TenantID, "owner")
+	if err != nil || used != m.UploadBytes() || pending != 0 {
+		t.Fatalf("cancelled batch quota=%d pending=%d err=%v", used, pending, err)
+	}
+}
+
+func TestReplacingStagedArchiveRetiresItsUnusedPages(t *testing.T) {
+	f, _ := archiveFixture(t, 8<<20)
+	ref := f.ref("post", 6)
+	f.visible(6)
+	p, blob := f.upload(ref, "zip/staged", "application/zip", archiveBytes(t, map[string][]byte{"1.png": archivePNG(t, 11), "2.png": archivePNG(t, 12)}))
+	f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
+	if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+		t.Fatal(err)
+	}
+	p, blob = f.upload(ref, "zip/staged", "application/zip", archiveBytes(t, map[string][]byte{"new.png": archivePNG(t, 13)}))
+	m := f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
+	if len(m.Files) != 1 || m.Files[0].Path != p {
+		t.Fatalf("replacing staged archive retained stale pages: %+v", m.Files)
+	}
+	if err := f.ms.IngestArchives(t.Context(), ref, ""); err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := f.ms.Get(t.Context(), ref)
+	if err != nil || len(m.Files) != 2 || slices.ContainsFunc(m.Files, func(file media.File) bool { return !file.Unattached }) {
+		t.Fatalf("replacement batch=%+v err=%v", m, err)
 	}
 }
 
@@ -163,7 +279,7 @@ func archivePNG(t *testing.T, n uint8) []byte {
 	im := image.NewRGBA(image.Rect(0, 0, 2, 3))
 	im.Set(0, 0, color.RGBA{R: n, A: 255})
 	var b bytes.Buffer
-	if err := png.Encode(&b, im); err != nil {
+	if err := pngimage.Encode(&b, im); err != nil {
 		t.Fatal(err)
 	}
 	return b.Bytes()

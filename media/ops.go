@@ -162,9 +162,10 @@ type opRun struct {
 	copies map[int][]File
 	// exempt is an exempt grant: its takedown of a path already gone is a
 	// retry, not an error.
-	exempt    bool
-	trusted   bool                                           // in-process system commits may update reserved provenance
-	admission func(string, string) (*SourceAdmission, error) // verified source policy, only resolved when admitting a ZIP
+	exempt         bool
+	trusted        bool // in-process system commits may update reserved provenance
+	admission      func(string, string) (*SourceAdmission, error)
+	archiveAllowed func(string, string) error // verified source policy, only resolved when admitting a ZIP
 	// authorizePath rechecks a collision allocation against host path policy.
 	authorizePath func(string) error
 }
@@ -241,6 +242,12 @@ func (o *opRun) apply(n int, op Op) error {
 		if !f.Unattached {
 			return nil // attached already: a retry
 		}
+		if k.ArchiveDestination(f.Path) != "" {
+			if err := o.attachArchiveBatch(f); err != nil {
+				return err
+			}
+			i = m.Find(f.Path)
+		}
 		f.Unattached = false
 		if len(op.Meta) > 0 {
 			f.Meta = maps.Clone(f.Meta)
@@ -256,7 +263,7 @@ func (o *opRun) apply(n int, op Op) error {
 		m.Files = slices.Delete(m.Files, i, i+1)
 		o.insert(g, f, op.Index, true)
 	case OpRemove:
-		gone := []string{f.Path}
+		gone := append([]string{f.Path}, o.cancelledArchivePages(f)...)
 		if op.Takedown {
 			// The frames grabbed from it show it too.
 			stem, _ := splitExt(f.Path)
@@ -367,7 +374,7 @@ func (o *opRun) put(op Op) error {
 		if f.Meta == nil {
 			f.Meta = old.Meta
 		}
-		if k.IsPageUpload(f) && !o.trusted {
+		if !o.trusted {
 			f.Meta = preservePageMeta(f.Meta, old.Meta)
 		}
 		if o.trusted && op.CreateID == "" && old.Source() == f.Source() {
@@ -416,7 +423,11 @@ func (o *opRun) put(op Op) error {
 	if err := o.admitSource(&f, i); err != nil {
 		return err
 	}
+	var cancelled []string
 	if i >= 0 {
+		if m.Files[i].Source() != f.Source() {
+			cancelled = o.cancelledArchivePages(m.Files[i])
+		}
 		old := stripPending(m.Files[i])
 		old.CreateID = f.CreateID
 		if old.Key() == f.Key() {
@@ -431,7 +442,19 @@ func (o *opRun) put(op Op) error {
 		delete(m.Meta, "fork_failed") // versions: an editor's own upload settles a fork that gave up
 	}
 	f.Pending = k.Presets(f.Path, m.Hidden)
-	return o.place(g, i, f, op.Index)
+	if err := o.place(g, i, f, op.Index); err != nil {
+		return err
+	}
+	if len(cancelled) > 0 {
+		m.Files = slices.DeleteFunc(m.Files, func(file File) bool {
+			return slices.Contains(cancelled, file.Path) || !file.IsUpload() && slices.Contains(cancelled, file.From)
+		})
+		m.index = nil
+	}
+	if !f.Unattached && k.ArchiveDestination(f.Path) != "" {
+		return o.attachArchiveBatch(f)
+	}
+	return nil
 }
 
 // fitEdit checks e against the upload's bounds and stores what the editor

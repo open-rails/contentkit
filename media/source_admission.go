@@ -88,9 +88,79 @@ func validateArchiveDestination(k *Kind, source Upload) error {
 
 func (k *Kind) pendingArchives(m *Manifest) bool {
 	for _, f := range m.Files {
-		if f.IsUpload() && !f.Unattached && f.Fail() == nil && k.ArchiveDestination(f.Path) != "" && (f.Blob == "" || f.Meta["archive_completed_sha256"] != sourceDigest(f)) {
+		if f.IsUpload() && f.Fail() == nil && k.ArchiveDestination(f.Path) != "" && (f.Blob == "" || f.Meta["archive_completed_sha256"] != sourceDigest(f)) {
 			return true
 		}
 	}
 	return false
+}
+
+// archiveBatch identifies only this source's admitted destination within the
+// same manifest; a matching SHA in another target is a different batch.
+func (k *Kind) archiveBatch(source File) (string, string) {
+	if source.Type != "application/zip" {
+		return "", ""
+	}
+	target := k.ArchiveDestination(source.Path)
+	if source.Admission != nil && source.Admission.Target != "" {
+		target = source.Admission.Target
+	}
+	return target, sourceDigest(source)
+}
+func (k *Kind) archiveChild(file File, target, digest string) bool {
+	if !file.IsUpload() || digest == "" {
+		return false
+	}
+	group, _, _, _, ok := k.upload(file.Path)
+	if !ok || k.Uploads[group].Path != target {
+		return false
+	}
+	meta, _ := pageMetadata(file.Meta)
+	return meta["archive_sha256"] == digest
+}
+func (o *opRun) attachArchiveBatch(source File) error {
+	target, digest := o.k.archiveBatch(source)
+	if target == "" || digest == "" {
+		return nil
+	}
+	if o.archiveAllowed == nil {
+		return uploadErr(CodeForbidden, "archive attachment requires an approved destination")
+	}
+	if err := o.archiveAllowed(source.Path, target); err != nil {
+		return err
+	}
+	paths := []string{}
+	for _, file := range o.m.Files {
+		if file.Unattached && o.k.archiveChild(file, target, digest) {
+			paths = append(paths, file.Path)
+		}
+	}
+	for _, path := range paths {
+		if err := o.apply(-1, Op{Op: OpAttach, Path: path}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (o *opRun) cancelledArchivePages(source File) []string {
+	if !source.Unattached {
+		return nil
+	}
+	target, digest := o.k.archiveBatch(source)
+	if target == "" || digest == "" {
+		return nil
+	}
+	for _, other := range o.m.Files {
+		otherTarget, otherDigest := o.k.archiveBatch(other)
+		if other.Path != source.Path && other.IsUpload() && otherTarget == target && otherDigest == digest && o.k.ArchiveDestination(other.Path) != "" {
+			return nil
+		}
+	}
+	paths := []string{}
+	for _, file := range o.m.Files {
+		if file.Unattached && o.k.archiveChild(file, target, digest) {
+			paths = append(paths, file.Path)
+		}
+	}
+	return paths
 }

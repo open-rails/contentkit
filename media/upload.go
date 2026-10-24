@@ -508,19 +508,25 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		}
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt, trusted: trusted}
+		o.archiveAllowed = func(source, destination string) error {
+			stem, _ := splitExt(source)
+			delegated, err := u.authorize(editCtx, actor, UploadTarget{Ref: ref, Path: stem})
+			if err != nil {
+				return err
+			}
+			if delegated.ArchiveTo != destination || delegated.Owner != grant.Owner || delegated.Exempt != grant.Exempt {
+				return uploadErr(CodeForbidden, "ZIP expansion requires an explicitly approved destination with the same owner and quota policy")
+			}
+			return nil
+		}
 		admissions := map[string]*SourceAdmission{}
 		o.admission = func(source, destination string) (*SourceAdmission, error) {
 			key := source + "\x00" + destination
 			if prior := admissions[key]; prior != nil {
 				return prior, nil
 			}
-			stem, _ := splitExt(source)
-			delegated, err := u.authorize(editCtx, actor, UploadTarget{Ref: ref, Path: stem})
-			if err != nil {
+			if err := o.archiveAllowed(source, destination); err != nil {
 				return nil, err
-			}
-			if delegated.ArchiveTo != destination || delegated.Owner != grant.Owner || delegated.Exempt != grant.Exempt {
-				return nil, uploadErr(CodeForbidden, "ZIP expansion requires an explicitly approved destination with the same owner and quota policy")
 			}
 			admission := &SourceAdmission{Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Target: destination, Accounting: u.o.Limiter != nil}
 			if admission.Enforce {

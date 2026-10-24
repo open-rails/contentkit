@@ -14,11 +14,13 @@ The existing upload authorizer must explicitly return `UploadGrant.ArchiveTo` eq
 
 - Source ZIP bytes remain untouched and retained; page originals keep their original image formats.
 - Central-directory allocations, total entries, image count and actual expanded bytes are bounded before attachment. Every selected entry's CRC and accepted image type are checked.
-- Decoded bytes are reserved against the accepted quota before page objects are written. The final manifest edit charges only actual new originals, once.
+- Decoded originals are reserved against the accepted quota, including the normal per-upload minimum charge, before page objects are written. The final manifest edit charges only new originals, once.
 - New objects use the existing allocation journal. One conditional manifest edit attaches the whole archive; failed validation or storage writes cannot leave a partial new gallery. Exact cleanup owns unused allocations and uncertain writes.
 - Natural ordering, filename cleanup, source hashes/entry positions and page QA metadata are retained. Existing pages reused from the same archive are not duplicated or charged again.
 - Metadata edits to an unchanged ZIP preserve server-owned completion state. Reusing the same blob under another ZIP path has a separate completion receipt.
+- Unattached ZIP uploads process before Save; their extracted pages remain unattached too. Attaching the ZIP rechecks destination permission and attaches its staged pages atomically. Cancelling or replacing an unattached ZIP removes only its unused pages, preserving pages already adopted by the editor and batches retained by another ZIP alias.
 - Normal cancellation closes and removes local scratch files. Use an isolated worker scratch directory; pod ephemeral-storage limits/lifetime bound scratch left after a hard kill.
+- Scratch-disk failures and interrupted writes remain retryable infrastructure errors; malformed archives are reported as failed source uploads.
 
 Old unfinished ZIP uploads without a verified admission require an authorized re-commit. They are not silently processed as an exempt system user.
 
