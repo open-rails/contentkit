@@ -4,9 +4,9 @@
 // blobs (media.Manifests.Place), images, zips, public presets and editor
 // views (media/image, libvips), and HLS, MP4, subtitles and frames
 // (media/video, ffmpeg).
-// The host only presigns, commits, exposes and reads. After each job the
-// worker asks the host, through its media queue, to report the item's
-// readiness (Hooks.ItemReady), so the stock worker needs no host code.
+// The host presigns, commits and reads. Each processing attempt records its
+// retained progress/completion fact and wakes version metadata work in one
+// transaction. Stock workers need no host callbacks.
 //
 // The registry is the host's (media.Config, built by the same code or read
 // from its JSON); cmd/media-worker is the stock build for hosts whose kinds
@@ -49,14 +49,12 @@ type Config struct {
 	AccountSchema, AccountWorkerSchema string
 	Store                              media.Store
 	// Kinds is the host's registry. Failed and the catalog retirement barrier
-	// run here; ItemReady runs through the host media queue.
+	// and optional completion callbacks run here.
 	Kinds *media.Registry
-	// HostSchema and HostQueue are the host's River schema ("" is the
-	// connection's search path) and media queue (default media.DefaultQueue):
-	// sweeps, readiness and purges run there. Grace is the host's
+	// HostSchema is the host's River schema ("" is the connection's search path):
+	// metadata snapshots, sweeps and purges run there. Grace is the host's
 	// JobsConfig.Grace (default 24 h).
 	HostSchema string
-	HostQueue  string
 	Grace      time.Duration
 
 	TempDir string // scratch for video sources and outputs; default os.TempDir()
@@ -152,7 +150,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := video.SweepTemp(c.TempDir); err != nil {
 		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
 	}
-	host, err := media.NewHostQueue(c.Pool, c.Kinds, c.HostSchema, c.HostQueue)
+	publish, err := versions.ProcessingPublisher(c.Pool, c.HostSchema, c.Kinds)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +207,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	hooks := append(c.RiverHooks[:len(c.RiverHooks):len(c.RiverHooks)], &readyHook{manifests: manifests, host: host})
+	hooks := append(c.RiverHooks[:len(c.RiverHooks):len(c.RiverHooks)], &completionHook{manifests: manifests, publish: publish})
 	var middleware []rivertype.Middleware
 	if c.Metrics != nil {
 		middleware = []rivertype.Middleware{c.Metrics}

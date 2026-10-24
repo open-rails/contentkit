@@ -124,7 +124,7 @@ func (w *publishWorker) Work(ctx context.Context, job *river.Job[publishArgs]) e
 	}
 	err := w.s.publish(ctx, Target{Content: job.Args.Content, Version: job.Args.Version})
 	if errors.Is(err, ErrNotReady) {
-		// Commits and durable media progress/ready relays enqueue the next
+		// Commits and durable processor completions enqueue the next
 		// snapshot attempt, including a follow-up if this job is still running.
 		return nil
 	}
@@ -137,9 +137,17 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 	if err != nil {
 		return err
 	}
-	k, err := s.published(v)
+	k, err := s.reg.Kind(v.Kind)
 	if err != nil {
 		return err
+	}
+	// Metadata facts and facet refresh belong to this existing metadata worker,
+	// including player versions that have no reader snapshot configuration.
+	if err := s.refreshMediaFacts(ctx, v.Kind, t); err != nil {
+		return err
+	}
+	if k.Publish == nil {
+		return nil
 	}
 	if err := s.removeLegacyPreviews(ctx, k, t); err != nil {
 		return err

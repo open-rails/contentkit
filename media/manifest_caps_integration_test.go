@@ -86,8 +86,8 @@ func TestManifestCaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.res.set(cid(1), resolve.Resolution{})
-	if err := jobs.Expose(ctx, g); err != nil || f.exists(cover) {
-		t.Fatalf("hide: %v, cover kept %v", err, f.exists(cover))
+	if !f.exists(cover) {
+		t.Fatal("visibility removed public cover")
 	}
 	if err := jobs.Purge(ctx, media.Deletion{Ref: g, Owner: "owner", OperationID: "h2"}); err != nil {
 		t.Fatal(err)
@@ -126,8 +126,8 @@ func TestOversizedManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.res.set(cid(1), resolve.Resolution{})
-	if err := jobs.Expose(ctx, g); err != nil || f.exists(cover) {
-		t.Fatalf("hide: %v, cover kept %v", err, f.exists(cover))
+	if !f.exists(cover) {
+		t.Fatal("visibility removed public cover")
 	}
 	if err := jobs.Purge(ctx, media.Deletion{Ref: g, Owner: "owner", OperationID: "big"}); err != nil {
 		t.Fatal(err)
@@ -292,59 +292,6 @@ func TestCommitProjectsOutputs(t *testing.T) {
 	raw, _ := io.ReadAll(zr)
 	if !bytes.Contains(raw, []byte(name)) || bytes.Contains(raw, []byte(`\u003c`)) {
 		t.Fatal("names are written escaped")
-	}
-}
-
-// A hide always fits: an item at the edit limit hides; a stored manifest that
-// decodes but leaves no room for the flag is refused and the error returned
-// (the job retries), never taken for hidden.
-func TestHideFits(t *testing.T) {
-	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
-		c.Kinds[1].Public = nil // no publication is retired to make room for the flag
-	})
-	f.visible(1)
-	f.visible(2)
-	ctx := context.Background()
-	full := f.ref("post", 1)
-	f.put(full, "inline/a.png", "image/png", png(1))
-	if _, err := f.ms.EditExisting(ctx, full, func(m *media.Manifest) error {
-		m.Meta = padded(t, m, editLimit)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	f.res.set(cid(1), resolve.Resolution{})
-	if err := f.jobs.Expose(ctx, full); err != nil {
-		t.Fatal(err)
-	}
-	if m, _, _ := f.ms.Get(ctx, full); !m.Hidden {
-		t.Fatal("an item at the edit limit did not hide")
-	}
-
-	tight := f.ref("post", 2)
-	f.put(tight, "inline/b.png", "image/png", png(2))
-	f.produce(tight) // nothing pending: the hide only adds its flag
-	m, _, _ := f.ms.Get(ctx, tight)
-	c := *m
-	c.Meta = padded(t, m, media.MaxManifestBytes-5)
-	var b bytes.Buffer
-	zw := gzip.NewWriter(&b)
-	enc := json.NewEncoder(zw)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(&c); err != nil {
-		t.Fatal(err)
-	}
-	zw.Close()
-	item, _ := f.reg.Item(tight)
-	if _, err := f.env.Store.Put(ctx, item.ManifestKey(), bytes.NewReader(b.Bytes()), int64(b.Len()), media.PutOptions{ContentType: "application/gzip"}); err != nil {
-		t.Fatal(err)
-	}
-	f.res.set(cid(2), resolve.Resolution{})
-	if err := f.jobs.Expose(ctx, tight); !errors.Is(err, media.ErrManifestTooLarge) {
-		t.Fatalf("a hide that does not fit: %v", err)
-	}
-	if m, _, err := f.ms.Get(ctx, tight); err != nil || m.Hidden {
-		t.Fatalf("hidden %v %v", m != nil && m.Hidden, err)
 	}
 }
 

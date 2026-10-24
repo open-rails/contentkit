@@ -18,7 +18,6 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
@@ -80,8 +79,8 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 		return nil, errors.New("media: upload quota must use the journal's pool and ContentKit schema")
 	}
 	reg := o.Manifests.Registry()
-	if reg.cfg.Hooks.CanUpload == nil || reg.cfg.Hooks.Resolver == nil {
-		return nil, errors.New("media: Uploads needs Hooks.CanUpload and Hooks.Resolver")
+	if reg.cfg.Hooks.CanUpload == nil {
+		return nil, errors.New("media: Uploads needs Hooks.CanUpload")
 	}
 	if o.PresignTTL <= 0 {
 		o.PresignTTL = 15 * time.Minute
@@ -412,9 +411,9 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // staged upload or a blob in the folder, HEAD-checked against its Upload;
 // copies are copied server-side first. The owner is charged the change in
 // upload sizes; growth past its quota fails with CodeQuota (not for exempt
-// grants). Then the worker places staged uploads and processes the item. A
-// new item starts hidden unless anonymous viewers may see it
-// (Hooks.Resolver). Successful removes finish public cleanup before returning;
+// grants). Then the worker places staged uploads and processes the item.
+// Declared public presets are processed independently of visibility.
+// Successful removes finish public cleanup before returning;
 // unreferenced private blobs go when a grace period old, or at once for a
 // takedown (Op.Takedown).
 func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, operationID string, ops []Op) (*Manifest, error) {
@@ -494,10 +493,6 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		return man, nil
 	}
 	copies, copied, err := u.copies(ctx, actor, grant, item, ops)
-	if err != nil {
-		return nil, err
-	}
-	hidden, err := u.newHidden(ctx, item)
 	if err != nil {
 		return nil, err
 	}
@@ -583,9 +578,6 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 			return err
 		}
 		o.objects = objects
-		if hidden != nil && len(m.Files) == 0 && m.Meta == nil {
-			m.Hidden = *hidden
-		}
 		before, uploads := m.uploadBytes(), m.uploads()
 		for n, op := range ops {
 			if op.Op == OpPut {
@@ -677,7 +669,7 @@ func missing(before, after []string) []string {
 // publicPending reports an upload of a visible item waiting for a public
 // preset.
 func publicPending(k *Kind, m *Manifest) bool {
-	return !m.Hidden && slices.ContainsFunc(m.Files, func(f File) bool {
+	return slices.ContainsFunc(m.Files, func(f File) bool {
 		return f.IsUpload() && slices.ContainsFunc(f.Pending, func(p string) bool { return k.public(p) != nil })
 	})
 }
@@ -746,24 +738,6 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 		}
 	}
 	return *grant, nil
-}
-
-// newHidden is whether a new item (no manifest, or Create's empty one)
-// starts hidden, resolved anonymously; nil for an item with files or meta.
-// The commit applies it to a manifest that is still empty: no public file is
-// rendered before this first visibility decision.
-func (u *Uploads) newHidden(ctx context.Context, item Item) (*bool, error) {
-	if m, _, err := u.o.Manifests.Get(ctx, item.Ref()); err == nil && (len(m.Files) > 0 || m.Meta != nil) {
-		return nil, nil
-	} else if err != nil && !errors.Is(err, ErrNotFound) {
-		return nil, err
-	}
-	res, err := resolve.One(ctx, u.reg.cfg.Hooks.Resolver, item.Ref(), access.Actor{Anonymous: true})
-	if err != nil {
-		return nil, fmt.Errorf("media: resolve %s: %w", item.Ref(), err)
-	}
-	hidden := !res.Visible
-	return &hidden, nil
 }
 
 // verify HEAD-checks the put names in item's folder: staged uploads in

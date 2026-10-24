@@ -144,11 +144,10 @@ id (`CreateEntities` mints one when omitted).
 Media never adopts leftovers:
 
 - `Manifests.Create(ctx, ref)` starts an item: it writes the empty manifest,
-  hidden, and fails with `media.ErrFolderNotEmpty` (`*FolderNotEmptyError`)
+  and fails with `media.ErrFolderNotEmpty` (`*FolderNotEmptyError`)
   if the folder holds any object. Call it when the host row is created. A new
-  item exposes nothing public until its first visibility decision: the first
-  commit resolves it anonymously (`Hooks.Resolver`, required by `Uploads`),
-  and `Expose` afterwards.
+  item processes its declared public presets after attachment, independently
+  of publication visibility.
 - A folder's first manifest edit (a commit) is refused the same way over a
   previous item's blobs.
 - `Jobs.Purge(ctx, media.Deletion{Ref, Owner})` deletes a folder now, the
@@ -1120,12 +1119,11 @@ A republish keeps the current files published until their successor is
 ready, and cleanup retires a generation only after the projection names the
 next one. Browsers keep using a read's `public` or `usePublicImage`.
 
-### Public files and exposure
+### Public storage classes
 
-- Call `jobs.ExposeTx(ctx, tx, ref)` whenever anonymous visibility changes
-  (publish, unpublish, hold, soft delete, restore). Hiding deletes
-  `public/` at once; unhiding renders the public presets again from their
-  kept sources. Paid items keep public covers; what they gate is `private/`.
+- Declared public presets remain public before release and after unpublishing.
+  Publication and billing changes only change database access policy and private
+  token issuance. There is no exposure method or worker.
 - Render the defaults from the deploy step:
   `image.PublishDefaults(ctx, store, reg)` (it needs libvips) writes each
   `Public.Default` from its kind's `Defaults` to
@@ -1140,11 +1138,12 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   itself (a changed spec or recipe after a deploy): `Jobs.Regenerate(ctx,
   kind, preset)` visits every item of a kind, and the `regenerate` op one
   item. A `meta` change rewrites download names only.
-- An item is ready when no attached upload is pending (public presets count
-  only while it is visible) and every zip packs its inputs; failed once
+- An item is ready when no attached upload is pending (including declared
+  public presets) and every zip packs its inputs; failed once
   nothing is pending and an upload failed for its current blob and edit.
-  `Hooks.ItemReady(ctx, tx, ref, readiness)` runs in a host transaction
-  after the worker's jobs, through the host's media queue; it must be
+  Processor completion appends a retained processing fact and queues real
+  version metadata work in one transaction. Optional `Hooks.ItemReady` and
+  `Hooks.ItemProgressed` execute synchronously in that transaction and must be
   idempotent. `Hooks.Failed` runs where the producer runs.
 - Manifests stop at `media.MaxManifestBytes` (8 MiB of JSON). A commit is
   refused (413 `too_large`) when the item, processed, would pass that. If
@@ -1206,7 +1205,7 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   `accounts/user/{id}/` once. `Jobs.Purge` deletes now; `SweepOrphans` is an
   explicit repair operation, never a scheduled discovery job.
 - Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
-  their referenced blobs; then `Expose` the restored items.
+  their referenced blobs. Normal processing rebuilds declared public presets.
 
 ## Deploying the media job simplification
 
@@ -1394,8 +1393,9 @@ the host's periodic jobs. The worker migrates its schema itself.
   once per outage and increments expvar
   `contentkit_media_ratelimit_redis_errors`: the limit is abuse protection,
   tokens and visibility checks still gate every file.
-- **Visibility**: wire `Hooks.Resolver` and call `ExposeTx` on every
-  visibility change; `DeleteItemsTx` removes `public/` first.
+- **Access**: wire `Hooks.Resolver` for metadata and private-file reads. Public
+  object URLs are always free. Ordinary removal and permanent purge still erase
+  obsolete objects.
 
 ## Entities
 

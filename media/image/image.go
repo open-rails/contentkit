@@ -191,7 +191,7 @@ func (p *Processor) todo(ctx context.Context, item media.Item, m *media.Manifest
 				w.private = append(w.private, pr)
 			}
 		}
-		if !m.Hidden && !f.Unattached {
+		if !f.Unattached {
 			for _, pu := range k.PublicFor(f.Path) {
 				if job.Preset != "" && pu.Name != job.Preset {
 					continue
@@ -274,7 +274,7 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 	)
 	defer func() {
 		if err != nil && len(written) > 0 {
-			err = errors.Join(err, p.dropIfHidden(ctx, item, written))
+			err = errors.Join(err, p.dropIfGone(ctx, item, written))
 		}
 	}()
 	g, gctx := errgroup.WithContext(ctx)
@@ -306,7 +306,6 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		}
 	}
 	var orphaned []string
-	hidden := false
 	k := item.Kind()
 	_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
 		orphaned = orphaned[:0]
@@ -333,11 +332,6 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		}
 		var gone []string // outputs of uploads removed or replaced meanwhile, and of zips that bundled them
 		analysisCapacity := k.PageAnalysisCapacity(cur)
-		if hidden = cur.Hidden; hidden {
-			if err := p.drop(ctx, written); err != nil {
-				return err
-			}
-		}
 		for _, d := range results {
 			i := cur.Find(d.src.Path)
 			if i < 0 || cur.Files[i].Blob != d.src.Blob || cur.Files[i].Edit.Hash() != d.src.Edit.Hash() {
@@ -392,7 +386,7 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			for _, pub := range d.publications {
 				f, _ := cur.Get(d.src.Path)
 				owned, ok := f.Publication(pub.Preset)
-				if !ok || owned.Generation != pub.Generation || cur.Hidden {
+				if !ok || owned.Generation != pub.Generation {
 					for _, name := range pub.NamesOnDisk() {
 						key, err := item.Public(name)
 						if err != nil {
@@ -448,14 +442,11 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		// The outputs do not fit: mark the item Full, which stops processing
 		// (the rendered blobs go by age).
 		if err := p.c.Manifests.SetFull(ctx, item.Ref(), err); err != nil {
-			return errors.Join(err, p.dropIfHidden(ctx, item, written))
+			return errors.Join(err, p.dropIfGone(ctx, item, written))
 		}
-		return p.dropIfHidden(ctx, item, written)
+		return p.dropIfGone(ctx, item, written)
 	case err != nil:
 		return err
-	}
-	if hidden {
-		orphaned = nil // deleted under the lock
 	}
 	for _, d := range results {
 		if d.err != nil {
@@ -470,21 +461,13 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 	return nil
 }
 
-// dropIfHidden deletes keys, the public files of a pass that
-// failed, if the item is hidden or gone by now: checked under the manifest
-// lock, like the closing edit it stands in for. A visible item keeps them:
-// they are current, and the retry finds them fresh.
-func (p *Processor) dropIfHidden(ctx context.Context, item media.Item, keys []string) error {
+// dropIfGone removes failed-pass outputs only after the item was deleted.
+func (p *Processor) dropIfGone(ctx context.Context, item media.Item, keys []string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 	defer cancel()
-	_, err := p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
-		if cur.Hidden {
-			return p.drop(ctx, keys)
-		}
-		return nil
-	})
+	_, err := p.c.Manifests.EditExisting(ctx, item.Ref(), func(*media.Manifest) error { return nil })
 	if errors.Is(err, media.ErrNotFound) {
-		err = p.drop(ctx, keys)
+		return p.drop(ctx, keys)
 	}
 	return err
 }
@@ -545,7 +528,7 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 		_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
 			publication = media.Publication{}
 			f, ok := cur.Get(w.src.Path)
-			if !ok || cur.Hidden || f.Unattached {
+			if !ok || f.Unattached {
 				return nil
 			}
 			if f.Blob != w.src.Blob || f.Edit.Hash() != w.src.Edit.Hash() || !slices.Equal(k.PublicNames(cur, pu, w.src.Path), names) {

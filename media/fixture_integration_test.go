@@ -426,7 +426,7 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 	}
 	var publics []public
 	for _, u := range m.Files {
-		if !u.IsUpload() || u.Blob == "" || m.Hidden {
+		if !u.IsUpload() || u.Blob == "" {
 			continue
 		}
 		for _, p := range k.PublicFor(u.Path) {

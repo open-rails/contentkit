@@ -149,11 +149,6 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 			return nil
 		},
 		ItemReady: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
-			if r.Ready() {
-				if err := h.jobs.ExposeTx(ctx, tx, ref); err != nil {
-					return err
-				}
-			}
 			h.mu.Lock()
 			h.settled[ref.String()] = append(h.settled[ref.String()], r)
 			h.mu.Unlock()
@@ -419,8 +414,8 @@ func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 		t.Fatal("no public cover")
 	}
 	var n int
-	if err := h.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n == 0 {
-		t.Fatalf("no Expose enqueued in the host schema: %d %v", n, err)
+	if err := h.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n != 0 {
+		t.Fatalf("retired Expose enqueued in the host schema: %d %v", n, err)
 	}
 }
 

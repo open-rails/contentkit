@@ -311,19 +311,19 @@ func Rung(n int) *MP4 { return &MP4{Rung: n} }
 
 // Hooks are the app's callbacks.
 type Hooks struct {
-	// Resolver says who may see an item: the read API, Expose and a new
-	// item's first commit (Uploads) use it, and both require it.
+	// Resolver authorizes media reads. Declared public presets do not depend
+	// on publication visibility.
 	Resolver resolve.Resolver
 	// CanUpload says who may write which upload path.
 	CanUpload UploadAuthorizer
 	// ItemReady reports an item whose processing settled (ready, or failed
 	// with nothing processing) in a host transaction, after the worker's
-	// job, through the host's media queue. It must be idempotent; an error
+	// job, synchronously in its completion transaction. It must be idempotent; an error
 	// retries.
 	ItemReady func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r Readiness) error
 	// ItemProgressed reports changed reader media while other processing is
 	// pending, or a player once its first rendition is playable. It runs in a
-	// host transaction through the same durable queue as ItemReady, which
+	// processor completion transaction alongside ItemReady, which
 	// reports final completion. Optional; idempotent; an error retries.
 	ItemProgressed func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error
 	// BeforeRetire is the catalog integration barrier. It runs after the

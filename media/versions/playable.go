@@ -66,7 +66,7 @@ WHERE v.tenant_id = $1 AND c.kind = ANY($2) AND v.playable IS NOT TRUE AND v.id 
 			return err
 		}
 		for _, p := range batch {
-			if err := s.recordPlayableOne(ctx, p.kind, p.Target); err != nil {
+			if err := s.refreshMediaFacts(ctx, p.kind, p.Target); err != nil {
 				if errors.Is(err, media.ErrUnavailable) || ctx.Err() != nil {
 					return err
 				}
@@ -82,7 +82,7 @@ WHERE v.tenant_id = $1 AND c.kind = ANY($2) AND v.playable IS NOT TRUE AND v.id 
 	}
 }
 
-func (s *Service) recordPlayableOne(ctx context.Context, kind string, v Target) error {
+func (s *Service) refreshMediaFacts(ctx context.Context, kind string, v Target) error {
 	k, kindErr := s.reg.Kind(kind)
 	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 		if err := s.lockTarget(ctx, tx, v); err != nil {
@@ -99,6 +99,9 @@ func (s *Service) recordPlayableOne(ctx context.Context, kind string, v Target) 
 			} else if !errors.Is(err, media.ErrNotFound) {
 				return err
 			}
+		}
+		if !s.player(kind) {
+			return nil
 		}
 		// No media, or a kind without any: nothing plays.
 		var id string

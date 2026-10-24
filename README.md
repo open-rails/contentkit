@@ -55,7 +55,7 @@ another tenant is an error, never remapped.
 | `contenturl` | uniform content URLs `/{lang}/{route}/{CODE}[/{slug}][?v={version}]`: permanent 9-character codes per tenant, 4-character version codes, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`); the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access](#access-access)) |
 | `adapters/openrails` | `access.Billing` over the OpenRails client (its own module) |
-| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and due cleanup, immediate deletion, `Expose` and relays as River jobs |
+| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and due cleanup, immediate deletion and interrupted-commit recovery as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
 | `media/token` | media access tokens, shared by hosts and the media gateway |
@@ -429,9 +429,9 @@ reading only `*/private/*`, `*/download/*` and `*/public/*`, `MEDIA_GATEWAY_TOKE
 worker River schema (`media/workqueue`, `MEDIA_WORKER_SCHEMA`, per host:
 hosts sharing a database never share one): images, zips, public presets and
 editor views (`media/image`, libvips) and HLS, MP4, subtitles and
-frames (`media/video`, ffmpeg). The host presigns, commits, exposes and reads,
-and links only `media/workqueue`. The worker hands readiness
-(`Hooks.ItemReady`) back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), so the stock build
+frames (`media/video`, ffmpeg). The host presigns, commits and reads,
+and links only `media/workqueue`. The processor appends a retained event and
+directly enqueues version metadata work in `MEDIA_HOST_RIVER_SCHEMA`, so the stock build
 (`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`)
 needs only the registry as JSON (`MEDIA_KINDS_FILE`): an engine's is
 `Config.MediaKinds()`, which `contentkit media-config -config contentkit.yaml`
@@ -607,8 +607,9 @@ do not implement multipart-abort lifecycle rules need equivalent server settings
 
 The immediate `contentkit_media_delete_folder` job still performs storage I/O
 and releases quota after a host deletion commits. Its late-upload pass is a
-database deadline, not another delayed River job. Media rendering, `Expose`
-and readiness/cache relays remain asynchronous.
+database deadline, not another delayed River job. Media processors append retained
+progress/completion facts and enqueue real version metadata work atomically.
+Declared public files stay public independently of publication and billing.
 
 For upgrades from the old per-folder timers, stop old media hosts and workers,
 run the host's normal `MigratePostgres` command, then start the new cohort. The
@@ -681,7 +682,7 @@ their encodings so saved policies, grants and purchases keep working.
 `catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
 Writes are batches; each transaction keeps `content_facets` current (rules
 through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
-documents dirty, queues `content_events` and calls media (expose, republish,
+documents dirty, queues `content_events` and calls media (republish,
 fork, delete). Content edits do not rename or reprice billing products. Published with a
 future `publish_at` becomes visible when that time arrives; the periodic job
 records publication and runs its side effects. A deleted item

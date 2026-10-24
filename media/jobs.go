@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -28,9 +27,8 @@ type JobsConfig struct {
 	Registry  *Registry
 	Locker    Locker       // serializes manifest edits and sweep deletion; required
 	Journal   *PGJournal   // same ContentKit journal used by the uploader and media worker; required
-	Processes ProcessQueue // the worker's queue (workqueue.Queue): Expose and Regenerate render through it
-	// Pool is the host database Hooks.ItemReady's transaction runs on;
-	// required with ItemReady.
+	Processes ProcessQueue // the worker's queue (workqueue.Queue)
+	// Pool is retained for host integrations; processor callbacks use worker.Config.Pool.
 	Pool *pgxpool.Pool
 	// Grace bounds unfinished, recorded private allocations. Default 24 h.
 	Grace time.Duration
@@ -52,7 +50,7 @@ type JobsConfig struct {
 const DefaultQueue = "contentkit_media"
 
 // Jobs is media's River contribution to the host: sweep, folder deletion,
-// Expose, and the worker's readiness relay. Processing runs
+// and cleanup recovery. Processing runs
 // in the media worker (media/worker).
 type Jobs struct {
 	cfg       JobsConfig
@@ -68,9 +66,6 @@ var ErrJobsNotBound = errors.New("media: River jobs are not composed into a clie
 func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	if cfg.Store == nil || cfg.Registry == nil || cfg.Locker == nil || cfg.Journal == nil {
 		return nil, errors.New("media: Jobs needs a Store, a Registry, a Locker and a Journal")
-	}
-	if (cfg.Registry.cfg.Hooks.ItemReady != nil || cfg.Registry.cfg.Hooks.ItemProgressed != nil) && cfg.Pool == nil {
-		return nil, errors.New("media: Hooks.ItemReady and Hooks.ItemProgressed need JobsConfig.Pool")
 	}
 	if cfg.Limiter != nil && (cfg.Limiter.pool != cfg.Journal.pool || cfg.Limiter.usage != cfg.Journal.limiter.usage) {
 		return nil, errors.New("media: deletion quota must use the journal's pool and ContentKit schema")
@@ -135,8 +130,6 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &cleanupDueWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &exposeWorker{j: j}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &readyWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &recoverWorker{j: j}) },
 		} {
 			if err := add(); err != nil {
@@ -451,97 +444,4 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 		return err
 	}
 	return nil
-}
-
-// readyArgs asks the host to report an item's settled readiness
-// (Hooks.ItemReady); the media worker enqueues it after a job.
-type readyArgs struct {
-	Ref   contentref.ContentRef `json:"ref"`
-	After int64                 `json:"after,omitempty"`
-}
-
-func (readyArgs) Kind() string                      { return "contentkit_media_ready" }
-func (a readyArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
-
-type readyWorker struct {
-	river.WorkerDefaults[readyArgs]
-	j *Jobs
-}
-
-func (w *readyWorker) Work(ctx context.Context, job *river.Job[readyArgs]) (err error) {
-	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
-	hooks := w.j.cfg.Registry.cfg.Hooks
-	if hooks.ItemReady == nil && hooks.ItemProgressed == nil {
-		return nil
-	}
-	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
-		return err
-	}
-	item, err := w.j.cfg.Registry.Item(job.Args.Ref)
-	if err != nil {
-		return river.JobCancel(err)
-	}
-	m, _, err := w.j.manifests.Get(ctx, item.Ref())
-	if errors.Is(err, ErrNotFound) {
-		return nil // deleted meanwhile
-	} else if err != nil {
-		return err
-	}
-	r := item.Kind().Readiness(m)
-	if r.State == StateProcessing {
-		if hooks.ItemProgressed == nil || item.Kind().Publish == nil && !item.Kind().Playable(m) {
-			return nil // a later job reports it
-		}
-		return pgx.BeginFunc(ctx, w.j.cfg.Pool, func(tx pgx.Tx) error { return hooks.ItemProgressed(ctx, tx, item.Ref()) })
-	}
-	if hooks.ItemReady == nil {
-		return nil
-	}
-	return pgx.BeginFunc(ctx, w.j.cfg.Pool, func(tx pgx.Tx) error { return hooks.ItemReady(ctx, tx, item.Ref(), r) })
-}
-
-// HostQueue is the media worker's handle on the host's River schema: it
-// inserts readiness and Expose relays on the worker's behalf.
-// Cleanup is recorded in the shared journal, without queueing a relay.
-type HostQueue struct {
-	client *river.Client[pgx.Tx]
-	reg    *Registry
-	queue  string
-}
-
-// NewHostQueue targets the host's River schema ("" is the connection's
-// search path) and media queue ("" is DefaultQueue).
-func NewHostQueue(pool *pgxpool.Pool, reg *Registry, schema, queue string) (*HostQueue, error) {
-	if pool == nil || reg == nil {
-		return nil, errors.New("media: HostQueue needs a pool and a Registry")
-	}
-	if queue == "" {
-		queue = DefaultQueue
-	}
-	c, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema})
-	if err != nil {
-		return nil, err
-	}
-	return &HostQueue{client: c, reg: reg, queue: queue}, nil
-}
-
-func (h *HostQueue) insert(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-	o.Queue = h.queue
-	return h.client.Insert(ctx, args, o)
-}
-
-// Ready asks the host to report ref's readiness (Hooks.ItemReady) once it
-// has settled, or its progress (Hooks.ItemProgressed) while it plays but
-// still processes.
-func (h *HostQueue) Ready(ctx context.Context, ref contentref.ContentRef) error {
-	if _, err := h.reg.Item(ref); err != nil {
-		return err
-	}
-	return InsertOnce(ctx, h.insert, readyArgs{Ref: ref}, river.InsertOpts{})
-}
-
-// ExposeTx enqueues the host's Expose of refs in tx, a transaction on the
-// host database, like Jobs.ExposeTx.
-func (h *HostQueue) ExposeTx(ctx context.Context, tx pgx.Tx, refs ...contentref.ContentRef) error {
-	return exposeTx(ctx, h.reg, tx, h.client, h.queue, refs)
 }

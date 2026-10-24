@@ -188,7 +188,7 @@ func (o *opRun) apply(n int, op Op) error {
 			if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() == nil {
 				continue
 			}
-			presets := k.Presets(f.Path, m.Hidden)
+			presets := k.Presets(f.Path, false)
 			if op.Preset != "" && !slices.Contains(presets, op.Preset) {
 				continue
 			}
@@ -232,7 +232,7 @@ func (o *opRun) apply(n int, op Op) error {
 			return nil
 		}
 		f.Edit = e
-		f.Pending = k.Presets(f.Path, m.Hidden)
+		f.Pending = k.Presets(f.Path, false)
 		m.Files[i] = f
 	case OpMove:
 		g, _, _, _, _ := k.upload(f.Path)
@@ -449,7 +449,7 @@ func (o *opRun) put(op Op) error {
 	if !o.trusted && o.k.Versions {
 		delete(m.Meta, "fork_failed") // versions: an editor's own upload settles a fork that gave up
 	}
-	f.Pending = k.Presets(f.Path, m.Hidden)
+	f.Pending = k.Presets(f.Path, false)
 	if err := o.place(g, i, f, op.Index); err != nil {
 		return err
 	}
@@ -527,7 +527,7 @@ func (o *opRun) regrab(path string) {
 		if u, _, _, _, ok := k.upload(f.Path); ok && k.Uploads[u].Frames == k.Uploads[g].Path {
 			f.Blob, f.W, f.H, f.Size, f.Failed = "", 0, 0, 0, nil
 			f.Frame = &Frame{T: f.Frame.T, Auto: f.Frame.Auto}
-			f.Pending = k.Presets(f.Path, m.Hidden)
+			f.Pending = k.Presets(f.Path, false)
 		}
 	}
 }
@@ -562,7 +562,7 @@ func (o *opRun) frame(op Op) error {
 	if i >= 0 {
 		f.Meta, f.Unattached = m.Files[i].Meta, m.Files[i].Unattached
 	}
-	f.Pending = k.Presets(f.Path, m.Hidden)
+	f.Pending = k.Presets(f.Path, false)
 	return o.place(g, i, f, nil)
 }
 
@@ -658,7 +658,7 @@ func (o *opRun) copy(op Op, src []File) error {
 			}
 			f.Edit = e
 		}
-		f.Pending = k.Presets(f.Path, m.Hidden)
+		f.Pending = k.Presets(f.Path, false)
 		src = src[:1]
 	}
 	i := o.stem(stem)
@@ -674,7 +674,7 @@ func (o *opRun) copy(op Op, src []File) error {
 	}
 	// Private outputs come along current; public ones render here.
 	for _, p := range k.PublicFor(f.Path) {
-		if !m.Hidden && !slices.Contains(f.Pending, p.Name) {
+		if !slices.Contains(f.Pending, p.Name) {
 			f.Pending = append(slices.Clone(f.Pending), p.Name)
 		}
 	}

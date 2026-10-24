@@ -50,7 +50,6 @@ type MediaReader interface {
 // MediaFolders queues visibility changes and folder deletions in the content
 // transaction; *media.Jobs implements it.
 type MediaFolders interface {
-	ExposeTx(ctx context.Context, tx pgx.Tx, refs ...contentref.ContentRef) error
 	DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...media.Deletion) error
 }
 

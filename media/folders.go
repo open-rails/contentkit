@@ -26,8 +26,7 @@ func (e *FolderNotEmptyError) Error() string {
 }
 func (e *FolderNotEmptyError) Unwrap() error { return ErrFolderNotEmpty }
 
-// Create starts a new item: it writes the item's empty manifest, hidden
-// until the first commit or Expose resolves it, and fails with
+// Create starts a new item: it writes its empty manifest and fails with
 // ErrFolderNotEmpty if the folder already holds any object. Hosts call it
 // when they create the item's row, so a reused id surfaces there.
 func (m *Manifests) Create(ctx context.Context, ref contentref.ContentRef) (*Manifest, error) {
@@ -40,7 +39,7 @@ func (m *Manifests) Create(ctx context.Context, ref contentref.ContentRef) (*Man
 	} else if len(keys) > 0 {
 		return nil, &FolderNotEmptyError{Prefix: item.Prefix(), Keys: keys}
 	}
-	return m.Edit(ctx, ref, func(m *Manifest) error { m.Hidden = true; return nil })
+	return m.Edit(ctx, ref, func(m *Manifest) error { return nil })
 }
 
 // requireFresh backs a folder's first manifest: public files with no

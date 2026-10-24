@@ -270,18 +270,10 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 		return err
 	}
 	marks := make([]Entity, 0, len(written))
-	var exposed []Ref
 	for _, g := range written {
 		marks = append(marks, g)
-		if previous, exists := stored[string(g.ID)]; exists && previous.Internal != g.Internal {
-			exposed = append(exposed, Ref{Kind: g.Kind, ID: g.ID})
-		}
 	}
-	if s.folders != nil && len(exposed) > 0 {
-		if err := s.folders.ExposeTx(ctx, q, exposed); err != nil {
-			return err
-		}
-	}
+
 	if err := s.markDirty(ctx, q, marks); err != nil {
 		return err
 	}

@@ -233,23 +233,8 @@ func TestEditorRegeneratesMedia(t *testing.T) {
 		}
 		return n
 	}
-	// Publishing exposes the album on the engine's River; the stand-in
-	// worker then finishes what is queued, so the regenerate's job is new.
+	// Complete the stand-in worker's existing jobs so regeneration is new.
 	q := func(schema string) string { return pgx.Identifier{schema, "river_job"}.Sanitize() }
-	deadline := time.Now().Add(time.Minute)
-	for {
-		var n int
-		if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+q(w.schema+"_river")+` WHERE kind = 'contentkit_media_expose' AND finalized_at IS NULL`).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		if n == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the album's exposure never ran")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
 	if _, err := w.pool.Exec(ctx, `UPDATE `+q(w.queue.Schema())+` SET state = 'completed', finalized_at = now() WHERE finalized_at IS NULL`); err != nil {
 		t.Fatal(err)
 	}

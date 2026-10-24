@@ -791,7 +791,7 @@ func TestNamedAndHiddenNewItem(t *testing.T) {
 		t.Fatalf("named path %q", p)
 	}
 	m := f.commit(post, media.Op{Op: media.OpPut, Path: p, Blob: blob})
-	if u, _ := m.Get(p); !m.Hidden || u.Pending != nil {
+	if u, _ := m.Get(p); m.Hidden || u.Pending != nil {
 		t.Fatalf("hidden new item: hidden %v pending %v", m.Hidden, u.Pending)
 	}
 	if _, err := f.up.Commit(context.Background(), f.editor, post, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "inline/mine.png", Blob: f.fileBlob(post, p)}}); code(err) != media.CodeInvalid {

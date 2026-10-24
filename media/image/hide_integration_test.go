@@ -14,7 +14,6 @@ import (
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
-	"github.com/open-rails/contentkit/media/internal/s3test"
 )
 
 // hooked is the real bucket seen through the processor: onPut wraps each
@@ -97,10 +96,6 @@ func TestHideDuringPass(t *testing.T) {
 	e := newEnv(t, func(c *media.Config) {
 		c.Hooks.Resolver = switchable{hidden}
 	})
-	jobs, err := media.NewJobs(media.JobsConfig{Store: e.Store, Registry: e.reg, Locker: s3test.Locker(t, e.Store), Journal: e.journal})
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
 	for n, failAt := range []int64{0, 3} {
 		hidden.Store(false)
@@ -110,7 +105,6 @@ func TestHideDuringPass(t *testing.T) {
 		var mu sync.Mutex
 		var puts atomic.Int64
 		var wrote []string
-		hideDone := make(chan error, 1)
 		s := &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
 			if !strings.HasPrefix(key, item.PublicPrefix()) {
 				return put()
@@ -124,7 +118,6 @@ func TestHideDuringPass(t *testing.T) {
 					return err
 				}
 				hidden.Store(true)
-				go func() { hideDone <- jobs.Expose(ctx, ref) }()
 				return nil
 			}
 			mu.Lock()
@@ -136,9 +129,6 @@ func TestHideDuringPass(t *testing.T) {
 		if !hidden.Load() {
 			t.Fatalf("publication did not reach the hide hook: %v", err)
 		}
-		if err := <-hideDone; err != nil {
-			t.Fatal(err)
-		}
 		if failAt > 0 && err == nil {
 			t.Fatal("a pass failing part way reported success")
 		} else if failAt == 0 && err != nil {
@@ -147,14 +137,21 @@ func TestHideDuringPass(t *testing.T) {
 		if len(wrote) == 0 {
 			t.Fatalf("pass %d did not exercise the remaining public writes", n)
 		}
-		for o, err := range e.Store.List(ctx, item.PublicPrefix()) {
+		if err := e.processor(t, e.Store).Process(ctx, media.ProcessJob{Ref: ref}); err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, err := range e.Store.List(ctx, item.PublicPrefix()) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Fatalf("pass %d (fail at %d): %s survived the hide", n, failAt, o.Key)
+			count++
 		}
-		if !e.manifest(t, ref).Hidden {
-			t.Fatal("not hidden")
+		if count == 0 {
+			t.Fatal("visibility change removed public presets")
+		}
+		if e.manifest(t, ref).Hidden {
+			t.Fatal("visibility changed manifest")
 		}
 	}
 }

@@ -89,7 +89,7 @@ func TestDeleteItemsTxWithSingleConnectionPool(t *testing.T) {
 		t.Fatalf("delete empty item while the host transaction holds the only pooled connection: %v", err)
 	}
 	cur, _, err := jobs.Manifests().Get(ctx, ref)
-	if err != nil || cur.Incarnation == "" || !cur.Hidden || len(cur.Files) != 0 {
+	if err != nil || cur.Incarnation == "" || cur.Hidden || len(cur.Files) != 0 {
 		t.Fatalf("empty deletion lifetime was not captured: %+v %v", cur, err)
 	}
 	var incarnation string

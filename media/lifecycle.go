@@ -32,7 +32,7 @@ func (m *Manifests) deletionIncarnation(ctx context.Context, item Item) (*Manife
 		if err := m.requireFresh(ctx, item); err != nil {
 			return nil, err
 		}
-		cur = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}
+		cur = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Files: []File{}}
 		body, err := encodeManifest(cur)
 		if err != nil {
 			return nil, err
@@ -187,7 +187,7 @@ func (j *Jobs) resetItem(ctx context.Context, item Item, deletion uuid.UUID) err
 		if !cur.Deleted || cur.Receipt == nil || cur.Receipt.Operation != deletion.String() {
 			return errors.New("media: reset requires its settled deletion tombstone")
 		}
-		cur.Deleted = false
+		cur.Deleted, cur.Hidden = false, false
 		cur.Incarnation = uuid.NewString()
 		return nil
 	})

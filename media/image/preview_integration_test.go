@@ -74,7 +74,7 @@ func TestPreviewPreset(t *testing.T) {
 	previews(nil, nil) // position 1 is green now: the old image is not served meanwhile
 	e.process(t, media.ProcessJob{Ref: ref})
 	previews(&green, nil)
-	// Hidden: none.
+	// Historical visibility flags do not change public presets.
 	if _, err := e.ms.EditExisting(ctx, ref, func(m *media.Manifest) error {
 		m.Hidden = true
 		return nil
@@ -82,7 +82,7 @@ func TestPreviewPreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.process(t, media.ProcessJob{Ref: ref})
-	previews(nil, nil)
+	previews(&green, nil)
 }
 
 // A reorder landing between a pass publishing a preview and its closing

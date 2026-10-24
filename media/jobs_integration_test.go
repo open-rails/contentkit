@@ -379,9 +379,8 @@ func TestPreviewNamesGoWithTheCommit(t *testing.T) {
 	}
 }
 
-// Expose hides an item (public/ deleted at once, nothing public
-// pending) and unhides it (public presets pending, the worker asked).
-func TestExpose(t *testing.T) {
+// Publication changes leave declared public objects and processing untouched.
+func TestExposureIsStorageIndependent(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
 	g := f.gallery(1, 1)
@@ -389,79 +388,43 @@ func TestExpose(t *testing.T) {
 	ctx := context.Background()
 	name := f.publicName(g, "cover-460.webp")
 	cover, _ := item.Public(name)
-	if !f.exists(cover) {
-		t.Fatal("no public cover")
-	}
-	if status, body, _ := f.fetch(f.reg.PublicURL(g, name)); status != 200 || body != string(png(199)) {
-		t.Fatalf("public cover %d %q", status, body)
-	}
-	f.res.set(cid(1), resolve.Resolution{})
-	if err := f.jobs.Expose(ctx, g); err != nil {
+	_, before, err := f.ms.Get(ctx, g)
+	if err != nil {
 		t.Fatal(err)
-	}
-	m, _, _ := f.ms.Get(ctx, g)
-	if !m.Hidden || f.exists(cover) {
-		t.Fatalf("hidden %v, cover kept %v", m.Hidden, f.exists(cover))
 	}
 	f.q.take()
-	f.visible(1)
-	if err := f.jobs.Expose(ctx, g); err != nil {
-		t.Fatal(err)
-	}
-	m, _, _ = f.ms.Get(ctx, g)
-	if c, _ := m.Get("cover.png"); m.Hidden || !slices.Equal(c.Pending, []string{"cover"}) {
-		t.Fatalf("unhidden %v pending %v", m.Hidden, c.Pending)
-	}
-	if jobs := f.q.take(); len(jobs) != 1 || jobs[0].Ref != g {
-		t.Fatalf("render asked %+v", jobs)
-	}
-	if err := f.jobs.Expose(ctx, f.ref("gallery", 2)); err != nil {
-		t.Fatalf("an item without a manifest: %v", err)
+	for _, visible := range []bool{false, true, false} {
+		f.res.set(cid(1), resolve.Resolution{Visible: visible})
+		_, after, err := f.ms.Get(ctx, g)
+		if err != nil || after != before || !f.exists(cover) {
+			t.Fatalf("visibility changed media: etag=%s/%s, cover=%v, error=%v", before, after, f.exists(cover), err)
+		}
+		if queued := f.q.take(); len(queued) != 0 {
+			t.Fatalf("visibility queued processing: %+v", queued)
+		}
+		if status, _, _ := f.fetch(f.reg.PublicURL(g, name)); status != 200 {
+			t.Fatalf("public cover status=%d", status)
+		}
 	}
 }
 
-// A new item exposes nothing public before its first visibility decision
-// (audit): Create writes a hidden manifest, and the first commit resolves it
-// anonymously, so a draft's cover renders nothing public until Expose
-// unhides it; a visible item's first commit unhides it.
-func TestNewItemStartsHidden(t *testing.T) {
+func TestDraftPublicPresetsRenderNormally(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	g := f.ref("gallery", 1)
-	item, _ := f.reg.Item(g)
-	cover, _ := item.Public("cover-460.webp")
-	f.res.set(cid(1), resolve.Resolution{}) // a draft
-	if m, err := f.ms.Create(ctx, g); err != nil || !m.Hidden {
-		t.Fatalf("created %+v %v", m, err)
+	f.res.set(cid(1), resolve.Resolution{})
+	if _, err := f.ms.Create(ctx, g); err != nil {
+		t.Fatal(err)
 	}
 	m := f.put(g, "cover.png", "image/png", png(1))
-	if c, _ := m.Get("cover.png"); !m.Hidden || c.Pending != nil {
-		t.Fatalf("draft's first commit: hidden %v pending %v", m.Hidden, c.Pending)
+	if c, _ := m.Get("cover.png"); !slices.Contains(c.Pending, "cover") {
+		t.Fatalf("draft cover not pending: %+v", c)
 	}
 	f.produce(g)
-	for obj, err := range f.env.Store.List(ctx, item.PublicPrefix()) {
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Fatalf("a draft's cover is public: %s", obj.Key)
-	}
-	f.visible(1)
-	if err := f.jobs.Expose(ctx, g); err != nil {
-		t.Fatal(err)
-	}
-	f.produce(g)
-	cover, _ = item.Public(f.publicName(g, "cover-460.webp"))
+	item, _ := f.reg.Item(g)
+	cover, _ := item.Public(f.publicName(g, "cover-460.webp"))
 	if !f.exists(cover) {
-		t.Fatal("the published item's cover is not public")
-	}
-
-	v := f.ref("gallery", 2)
-	f.visible(2)
-	if _, err := f.ms.Create(ctx, v); err != nil {
-		t.Fatal(err)
-	}
-	if m := f.put(v, "cover.png", "image/png", png(2)); m.Hidden {
-		t.Fatal("a visible item's first commit kept it hidden")
+		t.Fatal("draft's declared public cover missing")
 	}
 }
 
@@ -638,7 +601,7 @@ func TestHostRecoversInterruptedManifestOnStartup(t *testing.T) {
 // The worker's relays reach the host's hooks through its media queue:
 // ItemReady in a host transaction once the item settles; the host deletes
 // items from its own transaction.
-func TestHostRelays(t *testing.T) {
+func TestProcessorCompletionTransaction(t *testing.T) {
 	env := s3test.Open(t)
 	pool := pgtest.Pool(t, nil)
 	var mu sync.Mutex
@@ -659,16 +622,24 @@ func TestHostRelays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema := riverHost(t, jobs, pool)
-	host, err := media.NewHostQueue(pool, f.reg, schema, "")
-	if err != nil {
-		t.Fatal(err)
+	riverHost(t, jobs, pool)
+	complete := func(ctx context.Context, ref contentref.ContentRef) error {
+		return media.CompleteProcessing(ctx, f.ms, ref, func(ctx context.Context, tx pgx.Tx, r media.Readiness) error {
+			hooks := f.reg.Config().Hooks
+			if r.State == media.StateProcessing {
+				if hooks.ItemProgressed != nil {
+					return hooks.ItemProgressed(ctx, tx, ref)
+				}
+				return nil
+			}
+			return hooks.ItemReady(ctx, tx, ref, r)
+		})
 	}
 	f.visible(1)
 	g := f.ref("gallery", 1)
 	f.put(g, "originals/1.png", "image/png", png(1))
 	ctx := context.Background()
-	if err := host.Ready(ctx, g); err != nil {
+	if err := complete(ctx, g); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)
@@ -678,7 +649,7 @@ func TestHostRelays(t *testing.T) {
 	}
 	mu.Unlock()
 	f.produce(g)
-	if err := host.Ready(ctx, g); err != nil {
+	if err := complete(ctx, g); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "ItemReady", func() bool { mu.Lock(); defer mu.Unlock(); return len(ready) == 1 && ready[0].Ready() })
@@ -761,7 +732,7 @@ func TestVersionFolderJobs(t *testing.T) {
 
 // A video still encoding reaches ItemProgressed through the host's media
 // queue once its first rendition is out, and ItemReady only once it settles.
-func TestHostRelaysPlayableProgress(t *testing.T) {
+func TestProcessorPlayableProgress(t *testing.T) {
 	env := s3test.Open(t)
 	pool := pgtest.Pool(t, nil)
 	var mu sync.Mutex
@@ -784,10 +755,18 @@ func TestHostRelaysPlayableProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema := riverHost(t, jobs, pool)
-	host, err := media.NewHostQueue(pool, f.reg, schema, "")
-	if err != nil {
-		t.Fatal(err)
+	riverHost(t, jobs, pool)
+	complete := func(ctx context.Context, ref contentref.ContentRef) error {
+		return media.CompleteProcessing(ctx, f.ms, ref, func(ctx context.Context, tx pgx.Tx, r media.Readiness) error {
+			hooks := f.reg.Config().Hooks
+			if r.State == media.StateProcessing {
+				if hooks.ItemProgressed != nil {
+					return hooks.ItemProgressed(ctx, tx, ref)
+				}
+				return nil
+			}
+			return hooks.ItemReady(ctx, tx, ref, r)
+		})
 	}
 	f.visible(1)
 	v := f.ref("video", 1)
@@ -797,11 +776,11 @@ func TestHostRelaysPlayableProgress(t *testing.T) {
 	}
 	ctx := context.Background()
 	counts := func() (int, int) { mu.Lock(); defer mu.Unlock(); return progressed, ready }
-	if err := host.Ready(ctx, v); err != nil {
+	if err := complete(ctx, v); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)
-	if p, r := counts(); p != 0 || r != 0 {
+	if p, r := counts(); p != 1 || r != 0 {
 		t.Fatalf("a video with nothing to play was reported: progressed %d, ready %d", p, r)
 	}
 	// The smallest rung lands while the others still encode.
@@ -813,10 +792,10 @@ func TestHostRelaysPlayableProgress(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := host.Ready(ctx, v); err != nil {
+	if err := complete(ctx, v); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "ItemProgressed", func() bool { p, _ := counts(); return p == 1 })
+	waitFor(t, "ItemProgressed", func() bool { p, _ := counts(); return p == 2 })
 	if _, r := counts(); r != 0 {
 		t.Fatalf("a video still encoding was reported ready %d times", r)
 	}

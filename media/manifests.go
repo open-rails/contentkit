@@ -163,13 +163,9 @@ func (m *Manifests) EditExisting(ctx context.Context, ref contentref.ContentRef,
 	return m.edit(ctx, ref, true, bound{}, fn)
 }
 
-// editLimit is where commits and the workers' records stop; an unhide, whose
-// pending names commits projected, may run to flagBytes short of the bound;
-// the flags (Hidden, Full and its Deficit) may use it all, so they always fit.
-const (
-	editLimit = MaxManifestBytes - editHeadroom
-	flagBytes = 64
-)
+// editLimit is where commits and worker records stop; lifecycle tombstones
+// and the Full/Deficit flags retain headroom so they always fit.
+const editLimit = MaxManifestBytes - editHeadroom
 
 // bound refuses an edit (ErrManifestTooLarge) that grows a manifest past
 // limit (default editLimit), counting what project adds; an edit that does
@@ -513,9 +509,9 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	case errors.Is(err, ErrNotFound) && existing:
 		return nil, false, err
 	case errors.Is(err, ErrNotFound):
-		cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}, ""
+		cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Files: []File{}}, ""
 	case errors.Is(err, ErrManifestUnreadable) && mutation.lifecycle:
-		cur = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}
+		cur = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Files: []File{}}
 	case err != nil:
 		return nil, false, err
 	}
@@ -706,7 +702,7 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 	for range m.retries {
 		cur, etag, err := m.get(ctx, item.ManifestKey())
 		if errors.Is(err, ErrNotFound) {
-			cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}, ""
+			cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Files: []File{}}, ""
 			if commit.Actor == "migration:layout" {
 				cur.Incarnation = layoutRecoveryIncarnation(commit.ID)
 			}

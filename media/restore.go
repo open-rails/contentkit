@@ -47,7 +47,7 @@ type RestoreOptions struct {
 // Restore publishes a snapshot through the same journal as uploads. Every file
 // receives a fresh allocation and the item a fresh incarnation, so old cleanup,
 // queued erasure and delayed writes cannot affect the restored content. Public
-// generations are never restored; current host visibility governs regeneration.
+// generations are never restored; normal processing regenerates declared public presets.
 func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*Manifest, error) {
 	operation, err := uuid.Parse(o.OperationID)
 	if err != nil || operation == uuid.Nil {
@@ -129,14 +129,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 		next := snap.Manifest.Clone()
 		next.Incarnation, next.Deleted, next.Full, next.Deficit = uuid.NewString(), false, false, 0
 		next.Receipt = nil
-		next.Hidden = true
-		if j.cfg.Registry.cfg.Hooks.Resolver != nil {
-			hidden, err := j.hidden(ctx, snap.Ref)
-			if err != nil {
-				return err
-			}
-			next.Hidden = hidden
-		}
+		next.Hidden = false
 		// Select old targets before reserving the new ones. Include allocations
 		// whose writes have not arrived, not just objects already in the bucket.
 		keys, err := j.manifests.allocationKeys(ctx, item)
@@ -216,7 +209,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 			}
 			f.Public = nil
 			if f.IsUpload() && !f.Gone && f.Fail() == nil {
-				f.Pending = item.Kind().Presets(f.Path, next.Hidden)
+				f.Pending = item.Kind().Presets(f.Path, false)
 			}
 		}
 		if j.cfg.Limiter != nil {

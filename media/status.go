@@ -48,7 +48,7 @@ type ProcessingFailure struct {
 // MediaStatus is a read-only editor snapshot of all uploads, including staging.
 // Unattached sources count placement and private processing; their public presets
 // wait until attachment. This state is separate from publication readiness.
-// Public presets count only while visible. An archive may have finished
+// Public presets count after attachment. An archive may have finished
 // placement while still waiting for extraction. Encoding is
 // the existing worker checkpoint, when available, never a new job or operation.
 type MediaStatus struct {
@@ -183,7 +183,7 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 				out.Archives.Completed++
 			}
 		}
-		for _, name := range k.Presets(f.Path, m.Hidden || f.Unattached) {
+		for _, name := range k.Presets(f.Path, f.Unattached) {
 			count := presets[name]
 			if count == nil {
 				count = &ProcessingCount{}
@@ -227,7 +227,7 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 
 func statusHasPending(k *Kind, m *Manifest, f File) bool {
 	return slices.ContainsFunc(f.Pending, func(name string) bool {
-		return k.private(name) != nil || !m.Hidden && !f.Unattached && k.public(name) != nil
+		return k.private(name) != nil || !f.Unattached && k.public(name) != nil
 	})
 }
 

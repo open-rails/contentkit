@@ -32,6 +32,7 @@ type TransactionalProcessQueue interface {
 // PGJournal records unfinished S3 attempts and their database effects. The S3
 // manifest remains authoritative; this table contains no current file list.
 type PGJournal struct {
+	schema       string
 	pool         *pgxpool.Pool
 	table        string
 	allocations  string
@@ -51,7 +52,7 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 	if err != nil {
 		return nil, err
 	}
-	return &PGJournal{pool: pool, table: pgx.Identifier{schema, "content_media_commits"}.Sanitize(),
+	return &PGJournal{schema: schema, pool: pool, table: pgx.Identifier{schema, "content_media_commits"}.Sanitize(),
 		allocations:  pgx.Identifier{schema, "content_media_allocations"}.Sanitize(),
 		publications: pgx.Identifier{schema, "content_media_publications"}.Sanitize(),
 		cleanup:      pgx.Identifier{schema, "content_media_cleanup"}.Sanitize(),

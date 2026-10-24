@@ -348,15 +348,6 @@ func (m *testMedia) DeleteItemsTx(_ context.Context, tx pgx.Tx, items ...media.D
 	return nil
 }
 
-func (m *testMedia) ExposeTx(_ context.Context, _ pgx.Tx, refs ...contentref.ContentRef) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, ref := range refs {
-		m.exposed = append(m.exposed, ref.String())
-	}
-	return nil
-}
-
 func (m *testMedia) options() *Media { return &Media{Images: m, Folders: m} }
 
 func (m *testMedia) deletions() []string {

@@ -358,7 +358,11 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if err != nil {
 			return err
 		}
-		ingest, err := workqueue.New(e.pool, reg, m.WorkerSchema)
+		accountWorkerSchema := ""
+		if account, ok := e.accountMediaStorage(); ok {
+			accountWorkerSchema = account.WorkerSchema
+		}
+		ingest, err := workqueue.NewWithAccounts(e.pool, reg, m.WorkerSchema, accountWorkerSchema)
 		if err != nil {
 			return err
 		}
@@ -375,6 +379,13 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		retention := max(24*time.Hour, ttl+window+time.Second)
 		if err := media.MigrateCleanup(ctx, e.pool, reg, journal, e.riverSchema, retention); err != nil {
 			return fmt.Errorf("contentkit: media cleanup migration: %w", err)
+		}
+		publish, err := versions.ProcessingPublisher(e.pool, e.riverSchema, reg)
+		if err != nil {
+			return err
+		}
+		if err := media.MigrateProcessing(ctx, e.pool, reg, journal, e.riverSchema, ingest, publish); err != nil {
+			return fmt.Errorf("contentkit: media processing handoff: %w", err)
 		}
 		if err := versions.MigrateReaderSnapshots(ctx, e.pool, e.schema, e.cfg.Tenant, e.riverSchema, reg); err != nil {
 			return fmt.Errorf("contentkit: reader snapshot migration: %w", err)

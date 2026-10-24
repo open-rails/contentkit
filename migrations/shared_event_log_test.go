@@ -118,3 +118,18 @@ func TestSharedEventStoragePreservesHistoryAndSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSharedAccountProcessingLogContainsCanonicalHelpersMigration(t *testing.T) {
+	body, err := fs.ReadFile(migrations.Accounts, "0009_media_processing_events.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(body), "$shared_eventlog$")
+	want, err := eventpg.MigrationSQL("__contentkit_eventlog_schema__", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 3 || parts[1] != "\n"+want {
+		t.Fatal("shared account SQL differs from pinned Helpers migration")
+	}
+}
