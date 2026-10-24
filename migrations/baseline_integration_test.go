@@ -129,8 +129,16 @@ func TestPublishingReconcileOrderUpgrade(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(op)-'group_ids' || jsonb_build_object('entity_ids',op.group_ids))::text FROM `+table+` op`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	// This fixture validates the historical receipt/index upgrade. Stop before
+	// the later migration that deliberately removes the receipt table.
+	retirement := slices.IndexFunc(steps, func(step migratekit.Migration) bool {
+		return step.Name == "0041_remove_publishing_operations.up.sql"
+	})
+	if retirement < 0 {
+		t.Fatal("publishing retirement migration is missing")
+	}
 	for range 2 {
-		if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
+		if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps[:retirement]); err != nil {
 			t.Fatal(err)
 		}
 	}

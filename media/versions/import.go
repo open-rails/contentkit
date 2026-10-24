@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -83,7 +84,19 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 		} else if err != nil {
 			return err
 		}
-		meta := maps.Clone(f.Meta)
+		// Import progress and concurrent editor metadata may have changed while
+		// pages were processed. Preserve the current metadata, not the stale
+		// source snapshot from before extraction.
+		latest, _, err := s.m.Manifests.Get(ctx, ref)
+		if err != nil {
+			return err
+		}
+		at := latest.Find(f.Path)
+		if at < 0 || latest.Files[at].Key() != f.Key() {
+			return errors.New("versions: archive changed while importing")
+		}
+		previousMeta := latest.Files[at].Meta
+		meta := maps.Clone(previousMeta)
 		if meta == nil {
 			meta = map[string]any{}
 		}
@@ -92,6 +105,9 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 			i := m.Find(f.Path)
 			if i < 0 || m.Files[i].Key() != f.Key() {
 				return errors.New("versions: archive changed while importing")
+			}
+			if !reflect.DeepEqual(m.Files[i].Meta, previousMeta) {
+				return ErrNotReady // retry without overwriting a concurrent edit
 			}
 			return nil
 		}); err != nil {
