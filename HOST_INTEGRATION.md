@@ -728,7 +728,7 @@ that fits the reader (`display_language` first, then position).
   effective rule for everyone (`level`, `tiers`; `public` once free), and
   its `version.has_audio` says the version's media has audio.
 - `GET /search` (`q`, the same filters; `relevance` personalized for a
-  signed-in reader, or any list sort of the best 1000 matches), `GET
+  signed-in reader, or any list sort of every match), `GET
   /typeahead` (direct title/entity-name/alias prefixes only; no contextual
   keywords or typo expansion). `SearchBox` puts matching recent queries first,
   followed by entities and content titles; full search remains broader.

@@ -282,7 +282,7 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 	t.Run("index plan with eligibility join", func(t *testing.T) {
 		f.exec(`INSERT INTO host.items(id) SELECT '01920000-0000-7000-9000-'||lpad(i::text,12,'0') FROM generate_series(1,50000) i;
 INSERT INTO host.versions(id,item_id,language,live,is_default) SELECT 'fv-'||i,'01920000-0000-7000-9000-'||lpad(i::text,12,'0'),'zh',true,true FROM generate_series(1,50000) i;
-INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),'fv-'||i,'zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i;
+INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),'fv-'||i,'zh','占位内容'||md5(i::text) FROM generate_series(1,50000) i;
 ANALYZE app.content_search_documents; ANALYZE host.versions; ANALYZE host.items`)
 		var trgm string
 		if err := pool.QueryRow(ctx, `SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE extname='pg_trgm'`).Scan(&trgm); err != nil {
@@ -293,8 +293,8 @@ ANALYZE app.content_search_documents; ANALYZE host.versions; ANALYZE host.items`
 		join := strings.ReplaceAll(groupedEligibilitySQL, "@traits::text[]", "'{}'::text[]")
 		rows, err := pool.Query(ctx, fmt.Sprintf(`EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) SELECT sd.content_id,e.priority FROM app.content_search_documents sd
 JOIN LATERAL (SELECT h.priority::int AS priority FROM (%s) AS h LIMIT 1) e ON true
-WHERE sd.tenant_id='doujins' AND sd.language='zh' AND app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.%%>) '鬼灭刃'
-ORDER BY app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.<->>) '鬼灭刃' LIMIT 100`, join, qt, qt))
+WHERE sd.tenant_id='doujins' AND sd.language='zh' AND sd.body OPERATOR(%s.%%>) '鬼灭刃'
+ORDER BY sd.body OPERATOR(%s.<->>) '鬼灭刃' LIMIT 100`, join, qt, qt))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -308,7 +308,7 @@ ORDER BY app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_docu
 		}
 		rows.Close()
 		t.Log(plan.String())
-		if !strings.Contains(plan.String(), "content_search_documents_keyword_fuzzy") || strings.Contains(plan.String(), "Seq Scan") {
+		if !strings.Contains(plan.String(), "content_search_documents_body_fuzzy") || strings.Contains(plan.String(), "Seq Scan") {
 			t.Fatalf("expected indexed bounded fuzzy path with lateral join:\n%s", plan.String())
 		}
 		started := time.Now()

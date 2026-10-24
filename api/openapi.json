@@ -9977,7 +9977,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "relevance (the default) or a list sort of the best matches",
+            "description": "relevance (the default) or a list sort of every match",
             "schema": {
               "type": "string"
             }

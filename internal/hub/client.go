@@ -230,6 +230,25 @@ func (c *Client) searchGroups(ctx context.Context, userText string, opts SearchO
 	return groups, truncated, nil
 }
 
+// KeywordMatch is the SQL selecting every content item matching userText in
+// the languages opts selects; see search.KeywordMatch. opts.Limit, Offset,
+// CandidateLimit and Eligibility are ignored.
+func (c *Client) KeywordMatch(ctx context.Context, userText string, opts SearchOptions) (search.Match, error) {
+	language := strings.TrimSpace(opts.Language)
+	if language == "" {
+		language = c.defaultLanguage
+	}
+	languages, err := resolveLanguageModes(language, opts.LanguageMode)
+	if err != nil {
+		return search.Match{}, fmt.Errorf("invalid SearchOptions.LanguageMode %q", opts.LanguageMode)
+	}
+	kinds := cloneAndTrim(opts.ContentKinds)
+	if len(kinds) == 0 {
+		return search.Match{}, fmt.Errorf("ContentKinds is required")
+	}
+	return search.KeywordMatch(ctx, c.pool, userText, search.Options{Schema: c.schema, Tenant: c.tenant, ContentKinds: kinds}, languages)
+}
+
 func hitFromGroup(g group) SearchHit {
 	return SearchHit{ContentRef: g.representative.ref, Language: g.representative.language, Score: g.best.score}
 }
