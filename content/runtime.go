@@ -66,7 +66,6 @@ type Options struct {
 	Processor ContentProcessor // comments; default: strip tags
 	// Moderator screens comment writes, and the catalog's (Screen); nil
 	// publishes everything.
-	// Compose a BasicModerator in front of an AI moderator with Chain.
 	Moderator ContentModerator
 	// ModeratorTimeout bounds one Screen call (default 5s); a slower
 	// moderator counts as failed and the write is held.

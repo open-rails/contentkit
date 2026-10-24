@@ -267,7 +267,6 @@ export class ResourceStore {
           cards(c.target.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes, dislikes: c.counts.dislikes } }));
           this.invalidate((t) => t.type === "daily-releases");
         }
-        this.invalidate((t) => t.type === "reactions");
         break;
       case "favorite.changed":
         patch((t) => t.type === "favorite" && sameTarget(t.target, c.target), () => ({ favorited: c.favorited, count: c.count }));

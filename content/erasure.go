@@ -172,7 +172,6 @@ func (rt *Runtime) eraseSubjects(ctx context.Context, actorIDs []string, account
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	eraseLocalPolicy(ctx, rt.moderator, rt.tenant, ids)
 	if rt.providerEraser != nil {
 		return rt.providerEraser.EraseSubjects(ctx, rt.tenant, ids)
 	}
