@@ -176,3 +176,11 @@ it("loads in the card's own shape: cover, title lines and one row per entity kin
   const cover = render(<CardGrid list={list} render="skeleton" titlePosition="cover" entityKinds={["artist"]} />, { wrapper: wrap(client) });
   expect(tile(cover.container).querySelectorAll("[data-slot=skeleton]")).toHaveLength(1);
 });
+
+it("shows the host's card title, falling back to the card's own", () => {
+  const client = createContentKitClient({ baseUrl: "", fetch: vi.fn(async () => Response.json({})) as typeof globalThis.fetch });
+  const list = { items: [card("a"), card("b")], loading: false, loadingMore: false, hasMore: false, loadMore: async () => {}, reload: () => {} };
+  render(<CardGrid list={list} render="titles" loadMedia={false} cardTitle={(c) => (c.id === "a" ? "Short a" : "")} />, { wrapper: wrap(client) });
+  expect(screen.getByRole("link", { name: "Short a" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "Title b" })).toBeVisible();
+});

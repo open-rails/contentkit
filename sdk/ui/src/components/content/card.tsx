@@ -61,6 +61,8 @@ export interface ContentCardProps {
   ownerHref?: (g: EntityLike) => string | undefined;
   /** Over the cover: the host's badges for the card, placed in the cover's box; clicks reach the card. */
   decorate?: (card: Card) => ReactNode;
+  /** The title the card shows, e.g. without a prefix its entity rows repeat; default its title, else its code. */
+  cardTitle?: (card: Card) => string;
   /** Mark updated, completed and (for staff) deleted cards over the cover. Default true; false when the host draws cardStatus itself. */
   status?: boolean;
   /** Dim the cover of what the reader disliked. Default true. */
@@ -197,7 +199,7 @@ function useChipFit(list: HTMLUListElement | null, total: number, chipsKey: stri
 }
 
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, entityKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, status = true, dimDisliked = true, children, className }: ContentCardProps) {
+export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, entityKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, cardTitle, status = true, dimDisliked = true, children, className }: ContentCardProps) {
   const m = useMessages();
   const { presets } = usePresets({ client });
   const coverAspect = aspectRatio ?? ratio(presets.find((p) => p.kind === card.kind && p.name === "cover")?.aspect);
@@ -227,7 +229,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
     metadata?.duration !== false && minutes ? m.plural("contents.minutes", minutes) : null,
     metaEntity ? <MetaLink key="group" url={metaEntity.path} name={metaEntity.name || metaEntity.slug} /> : null,
   ].filter(Boolean);
-  const title = card.title || card.code;
+  const title = cardTitle?.(card) || card.title || card.code;
   const entityClassName = cn("flex flex-wrap", entityStyle === "text" ? "gap-x-[0.3em] gap-y-1 [&>li:not(:last-child)]:after:text-muted-foreground [&>li:not(:last-child)]:after:content-[',']" : "gap-1");
   // A chip past one breakpoint's limit shows only at the other.
   const atWidth = (i: number) => i < limit.base && i < limit.lg ? undefined : i < limit.base ? "lg:hidden" : "hidden lg:list-item";

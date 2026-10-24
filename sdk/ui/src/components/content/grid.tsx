@@ -252,6 +252,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
                     owner={p.owner}
                     ownerHref={p.ownerHref}
                     decorate={p.decorate}
+                    cardTitle={p.cardTitle}
                     onOpen={() => exposure.click(entry.card.id, entry.position)}
                   />
                 )}

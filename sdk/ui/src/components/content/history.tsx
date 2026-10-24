@@ -62,6 +62,7 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
               owner={p.owner}
               ownerHref={p.ownerHref}
               decorate={p.decorate}
+              cardTitle={p.cardTitle}
             >
               <HistoryProgress card={card} presentation={kinds?.kinds[card.kind]?.presentation} />
               <Button size="xs" variant="ghost" className="justify-self-start" disabled={forget.pending} onClick={() => void forget.run(() => list.forget({ content_id: card.id }))}>
