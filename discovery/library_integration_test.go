@@ -33,7 +33,7 @@ func TestPurchasedLibraryUsesBillingEntitlementsAndDomainPolicy(t *testing.T) {
 	f.exec(`DELETE FROM {s}.content_text WHERE content_id=$1`, f.cid(4))
 	f.exec(`UPDATE {s}.content_items SET original_title='原題' WHERE id=$1`, f.cid(4))
 	f.exec(`UPDATE {s}.content_version_text SET title='Hidden edition' WHERE version_id=$1`, f.vid(4, 0))
-	f.exec(`UPDATE {s}.content_version_text SET title='Allowed edition' WHERE version_id=$1`, f.vid(4, 1))
+	f.exec(`INSERT INTO {s}.content_version_text(tenant_id,version_id,language,title) VALUES($1,$2,'ja','Allowed edition') ON CONFLICT(tenant_id,version_id,language) DO UPDATE SET title=EXCLUDED.title`, tenant, f.vid(4, 1))
 	blockedVersion, _ := access.VersionKey(tenant, f.cid(4), f.vid(4, 0))
 	b.held[blockedVersion.String()] = true
 	key, _ := access.ContentKey(tenant, f.cid(1))
