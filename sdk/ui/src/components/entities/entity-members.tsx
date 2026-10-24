@@ -5,12 +5,14 @@ import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { TypeaheadQuery } from "../../client/discovery.js";
+import { ratio } from "../../client/aspect.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
 import type { Card, Content, EntityDetail, EntityKind, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useTypeahead } from "../../react/discovery.js";
 import { useEntityMembers, useKinds, type Member } from "../../react/entities.js";
+import { usePresets } from "../../react/public.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Badge } from "#ckui/ui/badge";
 import { Button, buttonVariants } from "#ckui/ui/button";
@@ -84,6 +86,7 @@ export function EntityMembers(p: EntityMembersProps) {
   const { t } = m;
   const client = useContentKitClient(p.client);
   const { kinds } = useKinds({ client: p.client });
+  const { presets } = usePresets({ client: p.client });
   const spec: EntityKind = kinds?.entity_kinds?.[p.entity.kind] ?? {};
   const members = useEntityMembers(p.entity.id, { pageSize: p.pageSize, client: p.client });
   const contents = useMemberContents(
@@ -160,9 +163,13 @@ export function EntityMembers(p: EntityMembersProps) {
           : t("memberships.always")}
       </button>
     ));
+  // Each content kind's cover shape: wide for players (videos), portrait for reader works.
+  const shapeOf = (kind?: string) =>
+    ratio(presets.find((r) => r.kind === kind && r.name === "cover")?.aspect) ?? (kinds?.kinds[kind ?? ""]?.presentation === "player" ? 16 / 9 : 7 / 10);
   const thumb = (c: Content | undefined, className: string) => {
     const url = coverOf(c);
-    return url ? <img src={url} alt="" loading="lazy" className={cn("object-cover", className)} /> : <span aria-hidden className={cn("bg-muted", className)} />;
+    const style = { aspectRatio: String(shapeOf(c?.kind)) };
+    return url ? <img src={url} alt="" loading="lazy" className={cn("bg-muted object-cover", className)} style={style} /> : <span aria-hidden className={cn("block bg-muted", className)} style={style} />;
   };
   const linked = (x: Member, body: ReactNode, className?: string) => {
     const c = contents.get(x.content_id ?? "");
@@ -177,7 +184,7 @@ export function EntityMembers(p: EntityMembersProps) {
           p.renderContent(x, c)
         ) : (
           <>
-            {linked(x, thumb(c, "aspect-[7/10] w-full rounded-md"), "block")}
+            {linked(x, thumb(c, "w-full rounded-md"), "block")}
             {linked(x, title(x), cn("line-clamp-2 text-sm font-medium break-words", !c && "font-mono text-xs"))}
           </>
         )}
@@ -198,7 +205,7 @@ export function EntityMembers(p: EntityMembersProps) {
           <span className="min-w-0 flex-1">{p.renderContent(x, c)}</span>
         ) : (
           <>
-            {linked(x, thumb(c, "aspect-[7/10] w-24 rounded-md sm:w-28"), "shrink-0")}
+            {linked(x, thumb(c, cn("rounded-md", shapeOf(c?.kind) >= 1 ? "w-28" : "w-16")), "shrink-0")}
             {linked(x, title(x), cn("min-w-0 flex-1 break-words", !c && "font-mono text-xs"))}
           </>
         )}
@@ -225,9 +232,9 @@ export function EntityMembers(p: EntityMembersProps) {
         return href ? [{ kind, href }] : [];
       });
   return (
-    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="entity-members">
+    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 rounded-lg border border-border bg-card p-4 text-sm", p.className)} data-ckui="entity-members">
       <div className="grid gap-0.5">
-        <h3 className="text-base font-semibold">{t("memberships.members")}</h3>
+        <h3 className="text-sm font-medium">{t("memberships.members")}</h3>
         <p className="text-xs text-muted-foreground">{t("entityEditor.savesNow")}</p>
       </div>
       {starts.length > 0 && (
@@ -271,7 +278,7 @@ export function EntityMembers(p: EntityMembersProps) {
         byKind.map(([kind, items]) => (
           <section key={kind || "other"} className="grid gap-2" data-ckui="entity-members-kind" data-kind={kind}>
             {byKind.length > 1 && kind && <h4 className="text-xs font-medium text-muted-foreground uppercase">{labelOf(p.labels, kind)}</h4>}
-            <ul className="grid grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))] gap-3">{items.map(card)}</ul>
+            <ul className={cn("grid gap-3", shapeOf(kind) >= 1 ? "grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]" : "grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))]")}>{items.map(card)}</ul>
           </section>
         ))
       )}
