@@ -61,7 +61,7 @@ type Ref struct {
 	ExternalID string `json:"external_id,omitempty"`
 }
 
-// TargetRef is what an interaction, offer or alias is about: a content item,
+// TargetRef is what an interaction or alias is about: a content item,
 // one version (its content is implied), an entity or a comment, as the
 // section allows.
 type TargetRef struct {

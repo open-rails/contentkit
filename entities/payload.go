@@ -45,8 +45,8 @@ func cardShown(g *EntityCard) shown {
 func (s *Store) fill(ctx context.Context, list []shown, language string) error {
 	var asked []CoverOf
 	var put []func([]Rendition)
-	var sold []string
-	var soldAt []**EntityAccess
+	var entitledIDs []string
+	var standingAt []**EntityAccess
 	for _, sh := range list {
 		gk := s.cfg.EntityKinds[sh.kind]
 		if s.covers != nil && sh.cover != nil {
@@ -69,7 +69,7 @@ func (s *Store) fill(ctx context.Context, list []shown, language string) error {
 			})
 		}
 		if s.gate != nil && gk.Entitled && sh.access != nil {
-			sold, soldAt = append(sold, string(sh.id)), append(soldAt, sh.access)
+			entitledIDs, standingAt = append(entitledIDs, string(sh.id)), append(standingAt, sh.access)
 		}
 	}
 	if len(asked) > 0 {
@@ -81,9 +81,9 @@ func (s *Store) fill(ctx context.Context, list []shown, language string) error {
 			f(got[i])
 		}
 	}
-	if len(sold) > 0 {
-		keys := make([]access.Key, len(sold))
-		for i, id := range sold {
+	if len(entitledIDs) > 0 {
+		keys := make([]access.Key, len(entitledIDs))
+		for i, id := range entitledIDs {
 			var err error
 			keys[i], err = access.EntityKey(s.tenant, id)
 			if err != nil {
@@ -95,9 +95,9 @@ func (s *Store) fill(ctx context.Context, list []shown, language string) error {
 		if err != nil && !unknown {
 			return err
 		}
-		editors := s.contentEditors(ctx, sold)
-		for i, at := range soldAt {
-			*at = &EntityAccess{Key: keys[i], Member: held[i], Editor: editors[sold[i]], Unknown: unknown}
+		editors := s.contentEditors(ctx, entitledIDs)
+		for i, at := range standingAt {
+			*at = &EntityAccess{Key: keys[i], Member: held[i], Editor: editors[entitledIDs[i]], Unknown: unknown}
 		}
 	}
 	return nil

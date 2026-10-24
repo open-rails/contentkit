@@ -9,6 +9,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/domainpolicy"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/kinds"
 )
 
 // LibraryQuery pages a viewer's library.
@@ -27,8 +28,8 @@ type LibraryItem struct {
 	Language  string `json:"language,omitempty"`
 	// Deleted content stays readable to its buyers.
 	Deleted bool `json:"deleted"`
-	// Whole: the content key, every version. Otherwise VersionIDs are the
-	// versions bought.
+	// Whole reports a held content key. VersionIDs lists only the
+	// currently eligible versions covered by the held entitlement.
 	Whole      bool     `json:"whole"`
 	VersionIDs []string `json:"version_ids"`
 }
@@ -87,23 +88,55 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 		}
 	}
 	scope, args := hard.SQL("f", "library_domain")
-	args["tenant"], args["ids"], args["language"], args["languages"], args["cursor"], args["limit"] = s.o.Tenant, ids, q.Language, s.o.Kinds.Languages, q.Cursor, q.Limit+1
-	domainClause := "true"
-	if len(hard) > 0 {
-		domainClause = `(NOT (c.kind=ANY(@library_domain_kinds::text[])) OR EXISTS(SELECT 1 FROM ` + s.t.facets + ` f WHERE f.tenant_id=c.tenant_id AND f.content_id=c.id AND ` + scope + `))`
+	wholeIDs := make([]string, 0, len(whole))
+	for id := range whole {
+		wholeIDs = append(wholeIDs, id)
 	}
-	rows, err := s.o.Pool.Query(ctx, `SELECT c.id,c.kind,c.state='deleted' OR c.deleted_at IS NOT NULL,coalesce(t.title,''),coalesce(t.language,'')
- FROM `+s.t.items+` c LEFT JOIN LATERAL(SELECT title,language FROM `+s.t.text+` x WHERE x.tenant_id=c.tenant_id AND x.content_id=c.id ORDER BY x.language=@language DESC,array_position(@languages::text[],x.language),x.language LIMIT 1)t ON true
- WHERE c.tenant_id=@tenant AND c.id=ANY(@ids::text[]) AND (@cursor='' OR c.id<@cursor) AND `+domainClause+` ORDER BY c.id DESC LIMIT @limit`, args)
+	versionIDs := []string{}
+	for _, ids := range versions {
+		versionIDs = append(versionIDs, ids...)
+	}
+	editionTitles := []string{}
+	for name, kind := range s.o.Kinds.Kinds {
+		if kind.TitlePolicy == kinds.TitleOriginalAndVersion {
+			editionTitles = append(editionTitles, name)
+		}
+	}
+	args["tenant"], args["ids"], args["language"], args["languages"], args["cursor"], args["limit"] = s.o.Tenant, ids, q.Language, s.o.Kinds.Languages, q.Cursor, q.Limit+1
+	args["whole"], args["versions"], args["edition_titles"] = wholeIDs, versionIDs, editionTitles
+	// Eligibility is evaluated for each granted version. An unowned sibling
+	// may never qualify the parent and reveal a blocked purchased edition.
+	rows, err := s.o.Pool.Query(ctx, `SELECT c.id,c.kind,c.state='deleted' OR c.deleted_at IS NOT NULL,
+ CASE WHEN c.kind=ANY(@edition_titles::text[])
+ THEN coalesce(nullif(ed.title,''),nullif(c.original_title,''),t.title,'') ELSE coalesce(t.title,'') END,
+ CASE WHEN c.kind=ANY(@edition_titles::text[]) AND coalesce(ed.title,'')<>'' THEN ed.language ELSE coalesce(t.language,'') END,
+ ed.ids
+ FROM `+s.t.items+` c
+ JOIN LATERAL (
+  SELECT array_agg(v.id ORDER BY v.position,v.id) AS ids,
+   (array_agg(vt.title ORDER BY coalesce(@language=ANY(v.languages),false) DESC,v.position,v.id) FILTER(WHERE coalesce(vt.title,'')<>''))[1] AS title,
+   (array_agg(vt.language ORDER BY coalesce(@language=ANY(v.languages),false) DESC,v.position,v.id) FILTER(WHERE coalesce(vt.title,'')<>''))[1] AS language
+  FROM `+s.t.versions+` v
+  LEFT JOIN `+s.t.facets+` f ON f.tenant_id=v.tenant_id AND f.version_id=v.id
+  LEFT JOIN LATERAL (SELECT title,language FROM `+s.t.versionText+` x WHERE x.tenant_id=v.tenant_id AND x.version_id=v.id
+   ORDER BY x.language=@language DESC,array_position(v.languages,x.language),array_position(@languages::text[],x.language),x.language LIMIT 1) vt ON true
+  WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
+   AND (c.id=ANY(@whole::text[]) OR v.id=ANY(@versions::text[]))
+   AND `+scope+`
+  HAVING count(*)>0
+ ) ed ON true
+ LEFT JOIN LATERAL(SELECT title,language FROM `+s.t.text+` x WHERE x.tenant_id=c.tenant_id AND x.content_id=c.id
+  ORDER BY x.language=@language DESC,array_position(@languages::text[],x.language),x.language LIMIT 1)t ON true
+ WHERE c.tenant_id=@tenant AND c.id=ANY(@ids::text[]) AND (@cursor='' OR c.id<@cursor)
+ ORDER BY c.id DESC LIMIT @limit`, args)
 	if err != nil {
 		return LibraryPage{}, err
 	}
 	items, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (LibraryItem, error) {
 		var it LibraryItem
-		err := r.Scan(&it.ContentID, &it.Kind, &it.Deleted, &it.Title, &it.Language)
+		err := r.Scan(&it.ContentID, &it.Kind, &it.Deleted, &it.Title, &it.Language, &it.VersionIDs)
 		it.Whole = whole[it.ContentID]
-		it.VersionIDs = versions[it.ContentID]
-		if it.Whole || it.VersionIDs == nil {
+		if it.VersionIDs == nil {
 			it.VersionIDs = []string{}
 		}
 		slices.Sort(it.VersionIDs)
