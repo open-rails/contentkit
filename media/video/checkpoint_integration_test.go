@@ -2,6 +2,7 @@ package video_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -31,6 +32,14 @@ func (h *stopAtCheckpoint) WorkEnd(_ context.Context, job *rivertype.JobRow, err
 // A completed chunk survives a stopped worker. Its one owning job stays
 // available, so KEDA can observe it without a running River scheduler.
 func TestVideoCheckpointRemainsRunnableAfterWorkerStops(t *testing.T) {
+	testVideoCheckpoint(t, false)
+}
+
+func TestVideoRestoresExpiredCheckpoint(t *testing.T) {
+	testVideoCheckpoint(t, true)
+}
+
+func testVideoCheckpoint(t *testing.T, expire bool) {
 	e := newEnv(t, opts{chunk: 2 * time.Second, ladder: []int{360}})
 	e.put("source", "video/x-matroska", fixture{w: 640, h: 360, secs: 24, rate: 10}.make(t), nil)
 	runCtx, stop := context.WithCancel(e.ctx)
@@ -66,8 +75,24 @@ func TestVideoCheckpointRemainsRunnableAfterWorkerStops(t *testing.T) {
 	if err := e.pool.QueryRow(e.ctx, `SELECT count(*),min(output::text)::jsonb FROM `+e.schema+`.encode_chunk WHERE state='done'`).Scan(&chunks, &output); err != nil || chunks != 1 {
 		t.Fatalf("completed ranges %d: %v", chunks, err)
 	}
+	var objects map[string]string
+	if err := json.Unmarshal(output, &objects); err != nil {
+		t.Fatal(err)
+	}
+	if expire {
+		for _, key := range objects {
+			if err := e.store.Delete(e.ctx, key); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	e.start()
 	e.wait()
+	for _, key := range objects {
+		if _, err := e.store.Head(e.ctx, key); err != nil {
+			t.Fatalf("checkpoint missing after resume: %v", err)
+		}
+	}
 	var after []byte
 	if err := e.pool.QueryRow(e.ctx, `SELECT output FROM `+e.schema+`.encode_chunk WHERE ordinal=0`).Scan(&after); err != nil {
 		t.Fatal(err)
