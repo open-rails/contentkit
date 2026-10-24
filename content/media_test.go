@@ -174,7 +174,7 @@ func TestMedia_ForeignTenantIsNotFound(t *testing.T) {
 	}
 }
 
-func TestMedia_DeletingAPollDeletesItsFolder(t *testing.T) {
+func TestMedia_DeletingAPollRetiresItsFolder(t *testing.T) {
 	rt, m := newMediaTest(t, Options{})
 	poll, err := rt.polls.create(context.Background(), mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
@@ -185,7 +185,12 @@ func TestMedia_DeletingAPollDeletesItsFolder(t *testing.T) {
 	}
 	want := []string{testTenant + "/poll/" + poll.ID}
 	if got := m.deletions(); !slices.Equal(got, want) {
-		t.Fatalf("deleted %v, want %v", got, want)
+		t.Fatalf("retired %v, want %v", got, want)
+	}
+	var tombstone bool
+	var options int
+	if err := rt.store.pool.QueryRow(t.Context(), `SELECT deleted_at IS NOT NULL,(SELECT count(*) FROM `+rt.store.t.pollOptions+` WHERE question_id=$1 AND tenant_id=$2) FROM `+rt.store.t.pollQuestions+` WHERE id=$1 AND tenant_id=$2`, poll.ID, rt.tenant).Scan(&tombstone, &options); err != nil || !tombstone || options != 2 {
+		t.Fatalf("poll history lost before retirement: tombstone=%v options=%d err=%v", tombstone, options, err)
 	}
 }
 

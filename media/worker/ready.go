@@ -27,8 +27,10 @@ type completionHook struct {
 func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err error) (result error) {
 	workErr := err
 	var snooze *river.JobSnoozeError
-	checkpoint := job.Kind == (workqueue.VideoArgs{}).Kind() && errors.As(err, &snooze) && snooze.Duration == 0 && ctx.Err() == nil
-	if err != nil && !checkpoint || job.Kind != (workqueue.IngestArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
+	var cancel *rivertype.JobCancelError
+	checkpoint := errors.As(err, &snooze) && snooze.Duration == 0 && ctx.Err() == nil
+	settled := errors.As(err, &cancel) && ctx.Err() == nil
+	if err != nil && !checkpoint && !settled || job.Kind != (workqueue.IngestArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
 	}
 	defer func() { result = media.SnoozeUnavailable(ctx, h.manifests.Store(), job, result) }()

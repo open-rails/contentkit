@@ -261,37 +261,67 @@ func (s *Store) PurgeFolders(ctx context.Context, limit int) (int, error) {
 	if s.folders == nil {
 		return 0, nil
 	}
-	total := 0
-	remaining := limit
-	var failures error
-	after := ""
-	deadline := time.Now().Add(45 * time.Second)
-	for {
-		batchLimit := min(syncBatch, remaining)
-		var refs []Ref
-		err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-			rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT id,kind FROM %s WHERE tenant_id=$1 AND state='deleted' AND media_purged_at IS NULL
-AND deleted_at<$2 AND kind=ANY($3::text[]) AND id>$4 ORDER BY id LIMIT %d FOR UPDATE SKIP LOCKED`, s.table("content_entities"), batchLimit), s.tenant, time.Now().Add(-s.keep), s.userKinds(), after)
+	cutoff := time.Now().Add(-s.keep)
+	batch := min(syncBatch, limit)
+	// Keysets visit each eligible entity once per phase, including failed ones.
+	// The existing job context bounds the pass; storage attempt counts must not
+	// stop later entity IDs from receiving their durable claim.
+	walk := func(visit func([]Ref) error) error {
+		after := ""
+		for {
+			rows, err := s.pool.Query(ctx, fmt.Sprintf(`SELECT id,kind FROM %s WHERE tenant_id=$1 AND state='deleted' AND media_purged_at IS NULL
+AND deleted_at<$2 AND kind=ANY($3::text[]) AND id>$4 ORDER BY id LIMIT %d`, s.table("content_entities"), batch), s.tenant, cutoff, s.userKinds(), after)
 			if err != nil {
 				return err
 			}
-			refs, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (Ref, error) { var r Ref; err := row.Scan(&r.ID, &r.Kind); return r, err })
+			refs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Ref, error) { var r Ref; err := row.Scan(&r.ID, &r.Kind); return r, err })
 			if err != nil || len(refs) == 0 {
 				return err
 			}
-			return s.folders.RetireTx(ctx, tx, refs)
-		})
-		if err != nil {
-			return total, errors.Join(failures, err)
+			if err := visit(refs); err != nil {
+				return err
+			}
+			after = string(refs[len(refs)-1].ID)
+			if len(refs) < batch {
+				return nil
+			}
 		}
-		// Also drain poll/account/ordinary media obligations when no entity is due.
-		processed, purgeErr := s.folders.PurgeRetired(ctx, remaining)
-		remaining -= processed
-		err = purgeErr
-		failures = errors.Join(failures, err)
-		if ctx.Err() != nil {
-			return total, errors.Join(failures, ctx.Err())
+	}
+	var failures error
+	err := walk(func(refs []Ref) error {
+		for _, ref := range refs {
+			err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+				var one int
+				err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT 1 FROM %s WHERE tenant_id=$1 AND id=$2 AND state='deleted' AND media_purged_at IS NULL AND deleted_at<$3 FOR UPDATE SKIP LOCKED`, s.table("content_entities")), s.tenant, string(ref.ID), cutoff).Scan(&one)
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				started, err := s.folders.RetirementStartedTx(ctx, tx, ref)
+				if err != nil || started {
+					return err
+				}
+				return s.folders.RetireTx(ctx, tx, []Ref{ref})
+			})
+			failures = errors.Join(failures, err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 		}
+		return nil
+	})
+	failures = errors.Join(failures, err)
+	if ctx.Err() != nil {
+		return 0, errors.Join(failures, ctx.Err())
+	}
+	// Exactly one shared storage pass: retries cannot restart the same failing
+	// namespace for every entity batch. Poll and account intents join this pass.
+	_, err = s.folders.PurgeRetired(ctx, limit)
+	failures = errors.Join(failures, err)
+	total := 0
+	err = walk(func(refs []Ref) error {
 		var complete []string
 		for _, ref := range refs {
 			done, err := s.folders.RetirementComplete(ctx, ref)
@@ -303,18 +333,17 @@ AND deleted_at<$2 AND kind=ANY($3::text[]) AND id>$4 ORDER BY id LIMIT %d FOR UP
 				complete = append(complete, string(ref.ID))
 			}
 		}
-		if len(complete) > 0 {
-			result, err := s.pool.Exec(ctx, fmt.Sprintf(`UPDATE %s SET media_purged_at=now() WHERE tenant_id=$1 AND id=ANY($2::text[]) AND state='deleted' AND media_purged_at IS NULL`, s.table("content_entities")), s.tenant, complete)
-			if err != nil {
-				return total, errors.Join(failures, err)
-			}
-			total += int(result.RowsAffected())
+		if len(complete) == 0 {
+			return ctx.Err()
 		}
-		if remaining <= 0 || processed == 0 || len(refs) < batchLimit || time.Now().After(deadline) {
-			return total, failures
+		result, err := s.pool.Exec(ctx, fmt.Sprintf(`UPDATE %s SET media_purged_at=now() WHERE tenant_id=$1 AND id=ANY($2::text[]) AND state='deleted' AND media_purged_at IS NULL AND deleted_at<$3`, s.table("content_entities")), s.tenant, complete, cutoff)
+		if err != nil {
+			return err
 		}
-		after = string(refs[len(refs)-1].ID)
-	}
+		total += int(result.RowsAffected())
+		return nil
+	})
+	return total, errors.Join(failures, err)
 }
 
 func (s *Store) checkMediaRestorable(ctx context.Context, tx pgx.Tx, ref Ref) error {
