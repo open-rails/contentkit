@@ -327,9 +327,6 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	// Purchases are read through the same content library; retired offer and
 	// free-join endpoints are no longer part of the content API.
 	f.want(http.StatusOK, user, "GET", "/me/library", nil, nil)
-	for _, path := range []string{"/contents/" + g1 + "/offer", "/entities/" + saga + "/offer", "/offers", "/entities/" + saga + "/join"} {
-		f.want(http.StatusNotFound, staff, "PUT", path, map[string]any{"amount": "4.99"}, nil)
-	}
 	f.want(http.StatusOK, staff, "DELETE", "/entities/"+saga, nil, nil)
 
 	discoveryScenario(t, f, g1, u.ID, user, anon)

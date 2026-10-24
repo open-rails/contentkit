@@ -129,11 +129,10 @@ for _, r := range routes {
 the environment, an AuthKit resource server, OpenRails' remote client and
 health at `/livez`, `/readyz` and `/statusz` (`server/cmd/contentkit`).
 
-For machine publishing, [the archive publishing guide](docs/api/publishing.md)
-covers `Client.PublishArchive`, app-bound API keys and the resumable HTTP
-operation that submits a gallery with its artist, series and tags.
-The same guide covers retained source ZIPs, automatic page normalization and
-the shared editor's reversible [page review](docs/api/publishing.md#page-normalization-and-review).
+For machine uploads, [the media upload guide](docs/api/uploads.md) covers
+app-bound API keys, presign/upload/commit, durable processing status and explicit
+publication. The same guide covers retained source ZIPs, automatic page
+normalization and the editor's reversible [page review](docs/api/uploads.md#page-normalization-and-review).
 
 ## HTTP API
 
@@ -145,7 +144,6 @@ the shared editor's reversible [page review](docs/api/publishing.md#page-normali
 |---|---|---|
 | `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), content items and versions (`/v1/contents`, `/v1/manage or /v1/manage/{kind}`), catalog totals, comments, reactions, favorites, polls, comment bans, moderation | always |
 | `UploadRoutes` | `/v1/media/upload` | `Config.Media` |
-| `PublishingRoutes` | `/v1/publishing-operations`: one ZIP and its metadata through processing and publication | `Config.Media` |
 | `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, fork, download | `Config.Media` |
 | `CodeRoutes` | `/v1/codes/{code}` | always |
 | `EntityRoutes` | `/v1/entities`, `/v1/contents/{id}/entities`: listings and pages, writes for `root:entities:write` | always |

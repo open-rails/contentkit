@@ -93,9 +93,13 @@ or group entitlements.
 The opening of published content to an additional audience at a stated time.
 Earlier audiences keep access. A release does not grant a billing entitlement.
 
-**Publishing operation**:
-One durable submission of content, its associations and an archive, tracked
-from acceptance through processing to a ready draft or publication.
+**Media upload**:
+Files attached to a content version or another media owner. Accepting an upload
+starts media processing; it does not publish the content.
+
+**Media processing**:
+Durable work that validates and extracts uploaded archives or generates image,
+audio and video renditions. Its progress belongs to the media owner.
 
 **Ownership**:
 An account's relationship to content it created or controls in a particular

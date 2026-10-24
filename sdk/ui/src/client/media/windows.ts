@@ -40,7 +40,8 @@ export const isProcessing = (f: FileInfo) => !!f.upload && !f.failed && (!!f.sta
 /** An editor read with uploads still processing (not stalled because the item is full). */
 export function processing(read: ReadResult | null | undefined): boolean {
   if (!read || read.full) return false;
-  return read.state === "processing" || read.files.some(isProcessing);
+  if (read.status?.state === "full") return false;
+  return read.status?.state === "processing" || (!read.status && read.state === "processing") || read.files.some(isProcessing);
 }
 
 /** A page automatic processing removed (blank, duplicate or covered by a spread); a notice offers it back. */

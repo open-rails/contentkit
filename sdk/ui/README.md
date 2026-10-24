@@ -804,6 +804,12 @@ The host still owns navigation outside the flow, including browser Back handling
   letter capitalized, the New button and the empty state; generic wording
   without it). `useContentManagerAccess()`.
 
+  A reader kind's editor keeps its save, undo and publish actions pinned as
+  the page scrolls. A host with its own sticky header sets
+  `--ckui-sticky-top` on an ancestor to that header's visible height, so the
+  actions stop below it; `appearance.variables.stickyTop` sets a fixed value
+  instead and takes precedence.
+
   Post editors label the preview text **Summary (optional)**. A supplied
   summary becomes the list excerpt; otherwise ContentKit extracts the opening
   plain text from the post body (HTML, plain text or Quill Delta), without image
@@ -1211,3 +1217,29 @@ catalog. Use OpenRails or billing-ui directly for product and price management.
 entitlement key. The host resolves it through OpenRails and opens its billing
 flow. These components never create free grants or infer a price. The purchased
 content library remains available as `client.discovery.library()`.
+
+## Upload and publication
+
+Create the content and version first, then use the normal media upload API:
+`client.media.upload(file, { ref, path })` presigns and transfers bytes, and
+`client.media.commit(ref, ops)` attaches them and queues media processing.
+ZIP extraction, thumbnails and other renditions run in the normal media
+workers; their existing media progress remains available.
+
+Uploading never publishes the content. Edit its metadata and call
+`client.contents.publish(id, publishAt)` separately when it should go live.
+The bulk uploader creates private drafts and follows the same upload/commit
+flow. It has no publish-on-completion setting or publication status polling.
+
+The bulk upload queue retains the exact commit batch until the server confirms
+it. A retry reuses that batch ID and ordered operations. Browser persistence
+is scoped to the API mount and the provider's explicit viewer ID; without a
+known viewer, retries remain in memory only. Switching accounts aborts and
+clears the visible queue, without resuming the other account's work.
+
+`MediaReadinessNotice` uses the existing shared `useMediaRead` poller with an
+editor-only status read, without signing image URLs. It shows ZIP extraction,
+per-preset completion counts, encoding progress and failures. Polling stops
+when the item is ready or storage capacity blocks progress. Reopening the
+editor reads current server state; browser upload records are not processing
+state.

@@ -32,6 +32,8 @@ export interface ContentKitUiVariables {
   fontFamily?: string;
   /** The video player's played range, seek thumb and pressed toggles. Default white. */
   playerAccent?: string;
+  /** Where pinned bars stop below the host's own sticky header, such as the reader editor's actions. Default 0px. */
+  stickyTop?: string;
 }
 
 export interface ContentKitUiAppearance {

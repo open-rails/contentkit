@@ -135,10 +135,11 @@ export interface AnswerRecord {
   updated_at?: string;
 }
 
-export interface Archive {
-  name: string;
-  size: number;
-  sha256: string;
+export interface ArchiveStatus {
+  completed: number;
+  total: number;
+  failed: number;
+  pages?: ProcessingCount;
 }
 
 export interface Attribute {
@@ -362,8 +363,6 @@ export interface CompleteReply {
   type: string;
   size: number;
 }
-
-export type CompleteRequest = Record<string, never>;
 
 export interface Config {
   anonymous: Anonymous;
@@ -818,22 +817,6 @@ export interface EntityRecord {
   updated_at?: string;
 }
 
-export interface EntityReference {
-  id?: string;
-  kind?: string;
-  name?: string;
-  language?: string;
-  scope?: EntityReference;
-}
-
-export interface EntityResolution {
-  id: string;
-  kind: string;
-  name: string;
-  created: boolean;
-  scope?: EntityResolution;
-}
-
 export interface EntitySummary {
   id: string;
   kind: string;
@@ -1212,6 +1195,16 @@ export interface ManageCount {
   truncated?: boolean;
 }
 
+export interface MediaStatus {
+  state: string;
+  uploads: ProcessingCount;
+  archives: ArchiveStatus;
+  presets: PresetStatus[];
+  encoding?: EncodeProgress;
+  failure_count: number;
+  failures: ProcessingFailure[];
+}
+
 export interface MemberPage {
   members: Membership[];
   next_cursor?: string;
@@ -1345,33 +1338,6 @@ export interface Op {
   preset?: string;
   force?: boolean;
   takedown?: boolean;
-}
-
-export interface Operation {
-  id: string;
-  state: "awaiting_upload" | "blocked" | "failed" | "processing" | "published" | "publishing" | "ready" | "review_required" | "scheduled";
-  content_id: string;
-  version_id: string;
-  publish_at?: string;
-  entities: EntityResolution[];
-  progress: Progress;
-  result?: OperationResult;
-  error?: OperationError;
-  upload?: PresignReply;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface OperationError {
-  code: string;
-  message: string;
-  retryable: boolean;
-  field?: string;
-}
-
-export interface OperationResult {
-  path: string;
-  pages: number;
 }
 
 export interface Order {
@@ -1599,6 +1565,13 @@ export interface PresetRule {
   stable?: boolean;
 }
 
+export interface PresetStatus {
+  name: string;
+  completed: number;
+  total: number;
+  failed: number;
+}
+
 export interface PresignBody {
   ref: RefBody;
   path: string;
@@ -1622,10 +1595,16 @@ export interface Preview {
   segments?: number;
 }
 
-export interface Progress {
-  stage: string;
+export interface ProcessingCount {
   completed: number;
   total: number;
+  failed: number;
+}
+
+export interface ProcessingFailure {
+  path: string;
+  code: string;
+  message: string;
 }
 
 export interface PublicImage {
@@ -1697,6 +1676,7 @@ export interface ReadResult {
   limit: number;
   hls?: string[];
   state?: ItemState;
+  status?: MediaStatus;
   full?: boolean;
   uploads?: UploadRule[];
   files: FileInfo[];
@@ -1788,16 +1768,6 @@ export interface Rendition {
   url: string;
   w: number;
   h: number;
-}
-
-export interface Request {
-  content: ContentInput;
-  entities?: EntityReference[];
-  archive: Archive;
-  publish?: "draft" | "when_ready";
-  publish_at?: string;
-  create_missing_entities?: boolean;
-  source?: Source;
 }
 
 export interface RequestReply {
@@ -1917,12 +1887,6 @@ export interface SitemapEntry {
 export interface SitemapPage {
   entries: SitemapEntry[];
   next_cursor?: string;
-}
-
-export interface Source {
-  provider: string;
-  id: string;
-  url?: string;
 }
 
 export interface StagedCopy {

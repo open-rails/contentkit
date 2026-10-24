@@ -208,24 +208,26 @@ function Toolbar({ editor, disabled, canUpload, uploading, onImages }: { editor:
         />
       </div>
       {linking !== null && (
-        <form
+        <div
           className="flex flex-wrap items-center gap-2 px-1 pb-1"
-          onSubmit={(e) => {
-            e.preventDefault();
-            saveLink();
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              saveLink();
+            }
           }}
         >
           <label htmlFor={`${id}-href`} className="sr-only">
             {t("editor.linkUrl")}
           </label>
           <Input id={`${id}-href`} className="h-8 min-w-48 flex-1" type="url" placeholder="https://" value={linking} autoFocus onChange={(e) => setLinking(e.target.value)} />
-          <Button type="submit" size="sm">
+          <Button type="button" size="sm" onClick={() => saveLink()}>
             {t(linking.trim() ? "editor.applyLink" : "editor.removeLink")}
           </Button>
           <Button type="button" size="sm" variant="ghost" onClick={() => setLinking(null)}>
             {t("common.cancel")}
           </Button>
-        </form>
+        </div>
       )}
     </div>
   );
