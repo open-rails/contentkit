@@ -174,11 +174,25 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
       {list.loading && !list.items.length ? (
         <ol aria-hidden className={layout.className} style={layout.style}>
           {Array.from({ length: 8 }, (_, i) => (
-            <li key={i}>
+            // The card's own shape: cover, then its title and entity rows, so loading does not jump.
+            <li key={i} className="grid content-start gap-2">
               <Skeleton
                 className={p.aspectRatio === undefined ? (p.shape === "landscape" ? "aspect-video w-full" : "aspect-[3/4] w-full") : "w-full"}
                 style={p.aspectRatio === undefined ? undefined : { aspectRatio: p.aspectRatio }}
               />
+              {p.titlePosition !== "cover" && (
+                <div className="grid gap-1">
+                  <div className="grid h-[2lh] content-center gap-2 text-lg leading-snug sm:text-xl">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-3/4" />
+                  </div>
+                  {(p.entityLayout === "rows" ? (p.entityKinds ?? []) : (p.entityKinds ?? []).slice(0, 1)).map((kind) => (
+                    <div key={kind} className="flex h-5 items-center">
+                      <Skeleton className="h-3 w-2/3" />
+                    </div>
+                  ))}
+                </div>
+              )}
             </li>
           ))}
         </ol>

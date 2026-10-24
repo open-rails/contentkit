@@ -164,3 +164,15 @@ it("stops infinite loading after a failed next page and retries explicitly witho
   expect(nextCalls).toBe(2);
   expect(page.mock.calls.map(([cursor]) => cursor)).toEqual([undefined, "next", "next"]);
 });
+
+it("loads in the card's own shape: cover, title lines and one row per entity kind", () => {
+  const client = createContentKitClient({ baseUrl: "", fetch: vi.fn(async () => Response.json({})) as typeof globalThis.fetch });
+  const list = { items: [], loading: true, loadingMore: false, hasMore: false, loadMore: async () => {}, reload: () => {} };
+  const tile = (container: HTMLElement) => container.querySelector("[data-ckui=content-grid] li")!;
+  const rows = render(<CardGrid list={list} render="skeleton" entityKinds={["artist", "series"]} entityLayout="rows" />, { wrapper: wrap(client) });
+  // Cover, two title lines, then the artist and series rows.
+  expect(tile(rows.container).querySelectorAll("[data-slot=skeleton]")).toHaveLength(5);
+  rows.unmount();
+  const cover = render(<CardGrid list={list} render="skeleton" titlePosition="cover" entityKinds={["artist"]} />, { wrapper: wrap(client) });
+  expect(tile(cover.container).querySelectorAll("[data-slot=skeleton]")).toHaveLength(1);
+});
