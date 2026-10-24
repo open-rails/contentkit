@@ -70,9 +70,31 @@ func TestHostLifecycle(t *testing.T) {
 		if err == nil || bad != nil {
 			t.Fatal("request-style tenant override was accepted beside canonical scope")
 		}
+		for _, sample := range []struct {
+			name   string
+			change func(*ck.Deps)
+		}{
+			{"postgres", func(d *ck.Deps) { d.Postgres = nil }},
+			{"authentication", func(d *ck.Deps) { d.Auth = nil }},
+			{"authorization", func(d *ck.Deps) { d.Authorization = nil }},
+		} {
+			t.Run(sample.name, func(t *testing.T) {
+				deps := a.deps
+				sample.change(&deps)
+				bad, err := ck.New(t.Context(), a.cfg, deps)
+				if err == nil || bad != nil {
+					t.Fatal("missing required dependency accepted")
+				}
+			})
+		}
 	})
 	t.Run("CK-J01-S05_route_selection_is_enforced", func(t *testing.T) {
-		routes, err := a.engine.Routes(ck.Routes{Prefix: "/subset", Groups: ck.ContentRoutes})
+		selected, err := ck.ParseRouteGroups([]string{"content"})
+		must(t, err)
+		if _, err := ck.ParseRouteGroups([]string{"content", "unconfigured-group"}); err == nil {
+			t.Fatal("unknown route group was silently admitted")
+		}
+		routes, err := a.engine.Routes(ck.Routes{Prefix: "/subset", Groups: selected})
 		must(t, err)
 		mux := http.NewServeMux()
 		for _, route := range routes {
@@ -80,6 +102,11 @@ func TestHostLifecycle(t *testing.T) {
 		}
 		srv := httptest.NewServer(mux)
 		defer srv.Close()
+		included, err := ck.NewClient(srv.URL+"/subset", nil).GetKinds(t.Context())
+		must(t, err)
+		if len(included.Kinds) != 2 {
+			t.Fatal("selected route positive control missing")
+		}
 		for _, path := range []string{"/subset/v1/entities", "/subset/v1/media/presets", "/wrong/v1/kinds"} {
 			res, err := http.Get(srv.URL + path)
 			must(t, err)

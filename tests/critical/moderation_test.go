@@ -1,11 +1,14 @@
 package critical_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -55,6 +58,7 @@ func assertCommentVisibility(t *testing.T, c *ck.Client, id, cid string, visible
 func TestCommentModerationBoundaries(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
 	a, sibling := w.apps[0], w.apps[1]
+	setDatabaseTime := useModerationDatabaseClock(t, w, a)
 	manager, managerToken := w.person(t, 0)
 	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(manager.ID), w.commentManager)
 	authtest.GrantRole(t, w.tenant[0], sibling.group, iam.UserSubject(manager.ID), w.commentManager)
@@ -179,7 +183,8 @@ func TestCommentModerationBoundaries(t *testing.T) {
 	t.Run("CK-J20-S04_expiry_and_lift_restore_eligibility", func(t *testing.T) {
 		writer, token := w.person(t, 0)
 		item := publishedArticle(t, a, "Expiry boundary")
-		until := time.Now().Add(750 * time.Millisecond)
+		until := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+		setDatabaseTime(until.Add(-time.Microsecond))
 		_, err := managerClient.PutGlobalCommentBan(t.Context(), writer.ID, content.BanInput{Until: &until})
 		must(t, err)
 		standing, err := a.client(token).GetContentCanComment(t.Context(), item.ID, ck.GetContentCanCommentQuery{})
@@ -187,13 +192,28 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		if standing.CanComment || standing.Ban == nil {
 			t.Fatal("future ban was not active")
 		}
-		// Bans intentionally use database/wall time, not the publication clock.
-		waitFor(t, func() bool {
-			var due bool
-			must(t, w.pool.QueryRow(t.Context(), "SELECT now() >= $1::timestamptz", until).Scan(&due))
-			return due
-		})
-		postComment(t, a.client(token), item.ID, "Expiry restores writes")
+		// Bans use PostgreSQL's time source. The owned connection resolves
+		// now() to the fixture clock, so equality is exercised exactly.
+		for _, sample := range []struct {
+			name    string
+			at      time.Time
+			allowed bool
+		}{{"before", until.Add(-time.Microsecond), false}, {"at", until, true}, {"after", until.Add(time.Microsecond), true}} {
+			t.Run(sample.name, func(t *testing.T) {
+				setDatabaseTime(sample.at)
+				standing, err := a.client(token).GetContentCanComment(t.Context(), item.ID, ck.GetContentCanCommentQuery{})
+				must(t, err)
+				if standing.CanComment != sample.allowed {
+					t.Fatalf("ban boundary %s: %+v", sample.name, standing)
+				}
+				_, err = a.client(token).PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "Expiry boundary " + sample.name}, ck.PostContentCommentsQuery{})
+				if sample.allowed {
+					must(t, err)
+				} else {
+					requireError(t, err, 403, "comment_banned")
+				}
+			})
+		}
 		ban, err := managerClient.GetGlobalCommentBan(t.Context(), writer.ID)
 		must(t, err)
 		if !ban.Expired {
@@ -267,14 +287,33 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		held, err := a.engine.Client().GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: "comment"})
 		must(t, err)
 		found := false
+		var revision int64
 		for _, row := range held.Items {
 			if row.ID == comment.ID {
 				found = row.Body == comment.Body && row.Revision > 0
+				revision = row.Revision
 			}
 		}
 		if !found {
 			t.Fatal("unauthorized release changed held source state")
 		}
+		decision := content.ResolveInput{Decision: content.DecisionApprove, Revision: revision}
+		_, err = client.PostModerationResolve(t.Context(), "comment", comment.ID, decision)
+		requireError(t, err, 403, "forbidden")
+		if revision < 2 {
+			t.Fatal("hold did not advance the review revision")
+		}
+		stale := decision
+		stale.Revision--
+		_, err = managerClient.PostModerationResolve(t.Context(), "comment", comment.ID, stale)
+		requireError(t, err, 404, "not_found")
+		assertCommentVisibility(t, a.client(""), item.ID, comment.ID, false)
+		applied, err := managerClient.PostModerationResolve(t.Context(), "comment", comment.ID, decision)
+		must(t, err)
+		if applied.Decision != content.DecisionApprove {
+			t.Fatalf("review applied a different decision: %+v", applied)
+		}
+		assertCommentVisibility(t, a.client(""), item.ID, comment.ID, true)
 		words, err := a.engine.Client().GetModerationBannedWords(t.Context())
 		must(t, err)
 		for _, word := range words {
@@ -283,4 +322,42 @@ func TestCommentModerationBoundaries(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Only this owned pool's search path changes the provider clock; AuthKit,
+// sibling apps and every other fixture keep the ordinary PostgreSQL clock.
+func useModerationDatabaseClock(t *testing.T, w *world, a *application) func(time.Time) {
+	t.Helper()
+	qs := pgx.Identifier{w.schema}.Sanitize()
+	_, err := w.pool.Exec(t.Context(), `CREATE TABLE `+qs+`.critical_clock(instant timestamptz NOT NULL); CREATE FUNCTION `+qs+`.now() RETURNS timestamptz LANGUAGE SQL STABLE AS $$ SELECT instant FROM `+qs+`.critical_clock $$`)
+	must(t, err)
+	_, err = w.pool.Exec(t.Context(), `INSERT INTO `+qs+`.critical_clock VALUES ($1)`, w.clock.now())
+	must(t, err)
+	cfg := w.pool.Config().Copy()
+	cfg.ConnConfig.RuntimeParams["search_path"] = qs + ",pg_catalog,public"
+	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	must(t, err)
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	a.cfg.Database.SkipMigrations = true
+	a.deps.Postgres = pool
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		a.server.Close()
+		must(t, a.engine.Close(ctx))
+		pool.Close()
+	})
+	return func(at time.Time) {
+		_, err := w.pool.Exec(t.Context(), `UPDATE `+qs+`.critical_clock SET instant=$1`, at)
+		must(t, err)
+		var observed time.Time
+		must(t, pool.QueryRow(t.Context(), "SELECT now()").Scan(&observed))
+		if !observed.Equal(at) {
+			t.Fatalf("database clock control failed: got %s want %s", observed, at)
+		}
+	}
 }

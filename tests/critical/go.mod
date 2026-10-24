@@ -8,9 +8,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.35.4
-	github.com/open-rails/contentkit v0.125.0
-	github.com/open-rails/contentkit/adapters/authkit v0.0.0
+	github.com/open-rails/authkit v1.35.5
+	github.com/open-rails/contentkit v0.126.0
+	github.com/open-rails/contentkit/adapters/authkit v0.11.0
 	golang.org/x/image v0.46.0
 )
 
@@ -109,7 +109,8 @@ require (
 	github.com/mr-tron/base58 v1.3.0 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
-	github.com/open-rails/contentkit/adapters/openrails v0.0.0
+	github.com/open-rails/contentkit/adapters/openrails v0.9.0
+	github.com/open-rails/contentkit/server v0.0.0
 	github.com/open-rails/helpers v1.16.1
 	github.com/open-rails/migratekit v1.11.2 // indirect
 	github.com/open-rails/openrails v0.263.1
@@ -152,3 +153,5 @@ replace github.com/open-rails/contentkit => ../..
 replace github.com/open-rails/contentkit/adapters/authkit => ../../adapters/authkit
 
 replace github.com/open-rails/contentkit/adapters/openrails => ../../adapters/openrails
+
+replace github.com/open-rails/contentkit/server => ../../server

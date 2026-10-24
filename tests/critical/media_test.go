@@ -96,7 +96,7 @@ func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
 	must(t, err)
 	registry, err := media.NewRegistry(config)
 	must(t, err)
-	m.worker, err = worker.New(t.Context(), worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, ImageWorkers: 1, ImageSources: 1, VideoWorkers: 1, AudioWorkers: 1, ShutdownGrace: time.Second})
+	m.worker, err = worker.New(t.Context(), worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, ImageWorkers: 1, ImageSources: 1, VideoWorkers: 1, ShutdownGrace: time.Second})
 	must(t, err)
 	run, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel

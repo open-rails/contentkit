@@ -1,8 +1,8 @@
 {
   "source_plan": "open-rails/tracker#1290",
-  "candidate_base": "c61cbd1e56c9a5cac6b6e826e8b3ea1618e30de8",
+  "candidate_base": "8377f8b328bc891d1028fea6286730b59631cd53",
   "status": "IN_PROGRESS_NOT_QUALIFIED",
-  "note": "Names are coverage obligations, not assertions. A required scenario remains pending until its actual behavior and relevant operation cases are implemented and executed. Future media-owner cases are intentionally not selected.",
+  "note": "Names are coverage obligations, not assertions. Required scenarios remain pending until their actual behavior and selected operation cases are reviewed and executed. Landed P0 purge scenarios are selected; P1 audio remains deferred.",
   "required": [
     {
       "id": "CK-J01-S01",
@@ -189,9 +189,10 @@
     {
       "id": "CK-J05-S03",
       "journey": "CK-J05",
-      "behavior": "Version cannot become visible before its parent or moderation approval",
+      "behavior": "Version cannot become visible before its parent",
       "status": "pending",
-      "evidence": []
+      "evidence": [],
+      "contract_change": "Content item moderation removed upstream in PR383; approval subcase retired, parent/version visibility remains selected."
     },
     {
       "id": "CK-J05-S04",
@@ -346,6 +347,22 @@
       "behavior": "Retention-boundary purge removes content/media while billing history remains",
       "status": "pending",
       "evidence": []
+    },
+    {
+      "id": "CK-J08-S05",
+      "journey": "CK-J08",
+      "behavior": "Storage failure retains deleted content rows for the same purge sweep",
+      "status": "pending",
+      "evidence": [],
+      "adopted_from": "Accepted future P0 requirement; implementation landed by origin/master8377f8b3"
+    },
+    {
+      "id": "CK-J08-S06",
+      "journey": "CK-J08",
+      "behavior": "Concurrent restore versus durable purge claim has one stable winner",
+      "status": "pending",
+      "evidence": [],
+      "adopted_from": "Accepted future P0 requirement; implementation landed by origin/master8377f8b3"
     },
     {
       "id": "CK-J09-S01",
@@ -857,7 +874,9 @@
     "media": "Focused actual image, S3, multipart and gateway checks pass. Owner quota, expired tickets, worker process crashes, concurrent edits, HLS and archives, retention purge, and all named and inline variants remain.",
     "browser": "The built package, real React identity changes, delayed network responses and TS image ingest pass. The remaining client matrix and declared error, retry and header metadata need coverage. RequestID is a Go field, outside the current TS ContentKitError contract.",
     "erasure": "A real ClickHouse connection cut leaves erasure incomplete; recovery clears only the target subject; late signals remain fenced. Restored app backups, paused writers, shared avatars and inboxes, and sibling app retries remain.",
-    "qualification": "All 121 scenario statuses remain pending semantic and operation review. The default runner intentionally refuses qualification; focused execution is explicitly partial."
+    "qualification": "All123 scenario statuses remain pending semantic and operation review. The default runner intentionally refuses qualification; focused execution is explicitly partial.",
+    "upstream": "Normal signed merge of8377f8b3 preserved media runtime. HTTP identities remain166. POST content publish and PUT text no longer advertise202 or moderation_rejected; comment moderation remains current. P0 purge CK-J08-S05/S06 activated; P1 audio deferred.",
+    "bindings": "binding_matrix.tsv freezes the selected public contract:115Go and115TypeScript bindings (230total). Every binding remains pending; invocation alone does not establish functional, error, alias or transport coverage."
   },
   "operation_contracts": [
     {
@@ -3669,6 +3688,1848 @@
         "TestHTTPAuthenticationMatrix/CK-API-167_POST_/v1/import/external-ids/member_without_named_permission"
       ],
       "remaining": "Review and implement the selected functional, validation, permission, target, transport and client binding obligations; the executed gate checks alone do not qualify this operation."
+    }
+  ],
+  "binding_contracts": [
+    {
+      "id": "go:Client.GetKinds",
+      "name": "Client.GetKinds",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetConfig",
+      "name": "Client.GetConfig",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostCommentHold",
+      "name": "Client.PostCommentHold",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostCommentRelease",
+      "name": "Client.PostCommentRelease",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetCommentBans",
+      "name": "Client.GetCommentBans",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PutCommentBan",
+      "name": "Client.PutCommentBan",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.DeleteCommentBan",
+      "name": "Client.DeleteCommentBan",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetGlobalCommentBans",
+      "name": "Client.GetGlobalCommentBans",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetGlobalCommentBan",
+      "name": "Client.GetGlobalCommentBan",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PutGlobalCommentBan",
+      "name": "Client.PutGlobalCommentBan",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.DeleteGlobalCommentBan",
+      "name": "Client.DeleteGlobalCommentBan",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetEntityHeldComments",
+      "name": "Client.GetEntityHeldComments",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetEntityCommentBans",
+      "name": "Client.GetEntityCommentBans",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PutEntityCommentBan",
+      "name": "Client.PutEntityCommentBan",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.DeleteEntityCommentBan",
+      "name": "Client.DeleteEntityCommentBan",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetContentCanComment",
+      "name": "Client.GetContentCanComment",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetEntityCanComment",
+      "name": "Client.GetEntityCanComment",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetModerationHeld",
+      "name": "Client.GetModerationHeld",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostModerationResolve",
+      "name": "Client.PostModerationResolve",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetModerationBannedWords",
+      "name": "Client.GetModerationBannedWords",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostModerationBannedWords",
+      "name": "Client.PostModerationBannedWords",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.DeleteModerationBannedWords",
+      "name": "Client.DeleteModerationBannedWords",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetModerationIpBans",
+      "name": "Client.GetModerationIpBans",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostModerationIpBans",
+      "name": "Client.PostModerationIpBans",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.DeleteModerationIpBans",
+      "name": "Client.DeleteModerationIpBans",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetEvents",
+      "name": "Client.GetEvents",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetCatalogTotals",
+      "name": "Client.GetCatalogTotals",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.DeleteContentVersion",
+      "name": "Client.DeleteContentVersion",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetContents",
+      "name": "Client.GetContents",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostContentRestore",
+      "name": "Client.PostContentRestore",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostContentPublish",
+      "name": "Client.PostContentPublish",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostContentUnpublish",
+      "name": "Client.PostContentUnpublish",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostMediaUploadPresign",
+      "name": "Client.PostMediaUploadPresign",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostMediaUploadParts",
+      "name": "Client.PostMediaUploadParts",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostMediaUploadPartsList",
+      "name": "Client.PostMediaUploadPartsList",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostMediaUploadComplete",
+      "name": "Client.PostMediaUploadComplete",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostMediaUploadAbort",
+      "name": "Client.PostMediaUploadAbort",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostMediaUploadCommit",
+      "name": "Client.PostMediaUploadCommit",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetMediaPresets",
+      "name": "Client.GetMediaPresets",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetMedia",
+      "name": "Client.GetMedia",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetMediaHls",
+      "name": "Client.GetMediaHls",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetMediaVersion",
+      "name": "Client.GetMediaVersion",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetMediaVersionHls",
+      "name": "Client.GetMediaVersionHls",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostEntities",
+      "name": "Client.PostEntities",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PatchEntity",
+      "name": "Client.PatchEntity",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.DeleteEntity",
+      "name": "Client.DeleteEntity",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetManageEntities",
+      "name": "Client.GetManageEntities",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetManageEntity",
+      "name": "Client.GetManageEntity",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetMeEntities",
+      "name": "Client.GetMeEntities",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetNotificationsInbox",
+      "name": "Client.GetNotificationsInbox",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PutNotificationRead",
+      "name": "Client.PutNotificationRead",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.DeleteNotificationRead",
+      "name": "Client.DeleteNotificationRead",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PutNotificationDismiss",
+      "name": "Client.PutNotificationDismiss",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.DeleteNotificationDismiss",
+      "name": "Client.DeleteNotificationDismiss",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.PostNotificationsPublish",
+      "name": "Client.PostNotificationsPublish",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetContentVersionDownload",
+      "name": "Client.GetContentVersionDownload",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetContentVersionArchive",
+      "name": "Client.GetContentVersionArchive",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetMeLibrary",
+      "name": "Client.GetMeLibrary",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetReleases",
+      "name": "Client.GetReleases",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetContentCards",
+      "name": "Client.GetContentCards",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetSearch",
+      "name": "Client.GetSearch",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetTypeahead",
+      "name": "Client.GetTypeahead",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetContentSimilar",
+      "name": "Client.GetContentSimilar",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetRecommendations",
+      "name": "Client.GetRecommendations",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetReleaseDates",
+      "name": "Client.GetReleaseDates",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetSitemapContents",
+      "name": "Client.GetSitemapContents",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetSitemapEntities",
+      "name": "Client.GetSitemapEntities",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.GetManageSearchSuggestions",
+      "name": "Client.GetManageSearchSuggestions",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.SetAccountDeleted",
+      "name": "Engine.SetAccountDeleted",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.AnonymizeAccount",
+      "name": "Engine.AnonymizeAccount",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.Client",
+      "name": "Engine.Client",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.ListEvents",
+      "name": "Client.ListEvents",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.EventReader",
+      "name": "Client.EventReader",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Client.IngestMedia",
+      "name": "Client.IngestMedia",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.Start",
+      "name": "Engine.Start",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.Close",
+      "name": "Engine.Close",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.Ready",
+      "name": "Engine.Ready",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.Probes",
+      "name": "Engine.Probes",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.EraseSubjects",
+      "name": "Engine.EraseSubjects",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.EraseAppSubjects",
+      "name": "Engine.EraseAppSubjects",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.ReplayErasureFences",
+      "name": "Engine.ReplayErasureFences",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.ReplayAccountErasures",
+      "name": "Engine.ReplayAccountErasures",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.RiverJobs",
+      "name": "Engine.RiverJobs",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.OpenRailsNotifications",
+      "name": "Engine.OpenRailsNotifications",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.OpenRailsNotificationsContext",
+      "name": "Engine.OpenRailsNotificationsContext",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.Routes",
+      "name": "Engine.Routes",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.RouteGroups",
+      "name": "Engine.RouteGroups",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Engine.Scope",
+      "name": "Engine.Scope",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Config.AccountMedia",
+      "name": "Config.AccountMedia",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:NewClient",
+      "name": "NewClient",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Error.Error",
+      "name": "Error.Error",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Reply.Decode",
+      "name": "Reply.Decode",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:MediaCommitError.Error",
+      "name": "MediaCommitError.Error",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:MediaCommitError.Unwrap",
+      "name": "MediaCommitError.Unwrap",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Config.MediaKinds",
+      "name": "Config.MediaKinds",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:MigratePostgres",
+      "name": "MigratePostgres",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:MigrateClickHouse",
+      "name": "MigrateClickHouse",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:New",
+      "name": "New",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:NewForErasureReplay",
+      "name": "NewForErasureReplay",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:WithRiverClient",
+      "name": "WithRiverClient",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:ParseRouteGroups",
+      "name": "ParseRouteGroups",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:NewTenantID",
+      "name": "NewTenantID",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:NewAppID",
+      "name": "NewAppID",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:TenantID.String",
+      "name": "TenantID.String",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:AppID.String",
+      "name": "AppID.String",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:TenantID.IsZero",
+      "name": "TenantID.IsZero",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:AppID.IsZero",
+      "name": "AppID.IsZero",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:ParseTenantID",
+      "name": "ParseTenantID",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:ParseAppID",
+      "name": "ParseAppID",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:TenantID.MarshalText",
+      "name": "TenantID.MarshalText",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:AppID.MarshalText",
+      "name": "AppID.MarshalText",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:TenantID.UnmarshalText",
+      "name": "TenantID.UnmarshalText",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:AppID.UnmarshalText",
+      "name": "AppID.UnmarshalText",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:Scope.Validate",
+      "name": "Scope.Validate",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "go:MigrateVersionStorage",
+      "name": "MigrateVersionStorage",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:CatalogClient.listEvents",
+      "name": "CatalogClient.listEvents",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:CatalogClient.totals",
+      "name": "CatalogClient.totals",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:BansClient.list",
+      "name": "BansClient.list",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:BansClient.get",
+      "name": "BansClient.get",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:BansClient.ban",
+      "name": "BansClient.ban",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:BansClient.lift",
+      "name": "BansClient.lift",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ModerationClient.held",
+      "name": "ModerationClient.held",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ModerationClient.resolve",
+      "name": "ModerationClient.resolve",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ModerationClient.bannedWords",
+      "name": "ModerationClient.bannedWords",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ModerationClient.banWords",
+      "name": "ModerationClient.banWords",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ModerationClient.unbanWords",
+      "name": "ModerationClient.unbanWords",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ModerationClient.ipBans",
+      "name": "ModerationClient.ipBans",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ModerationClient.banIPs",
+      "name": "ModerationClient.banIPs",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ModerationClient.liftIPBans",
+      "name": "ModerationClient.liftIPBans",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentsClient.publish",
+      "name": "ContentsClient.publish",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentsClient.publishWhenReady",
+      "name": "ContentsClient.publishWhenReady",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentsClient.unpublish",
+      "name": "ContentsClient.unpublish",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentsClient.restore",
+      "name": "ContentsClient.restore",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentsClient.removeVersion",
+      "name": "ContentsClient.removeVersion",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.library",
+      "name": "DiscoveryClient.library",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.list",
+      "name": "DiscoveryClient.list",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.knownCards",
+      "name": "DiscoveryClient.knownCards",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.search",
+      "name": "DiscoveryClient.search",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.typeahead",
+      "name": "DiscoveryClient.typeahead",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.adminSuggestions",
+      "name": "DiscoveryClient.adminSuggestions",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.similar",
+      "name": "DiscoveryClient.similar",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.recommendations",
+      "name": "DiscoveryClient.recommendations",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.releaseDates",
+      "name": "DiscoveryClient.releaseDates",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:DiscoveryClient.releases",
+      "name": "DiscoveryClient.releases",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:EntitiesClient.create",
+      "name": "EntitiesClient.create",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:EntitiesClient.update",
+      "name": "EntitiesClient.update",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:EntitiesClient.remove",
+      "name": "EntitiesClient.remove",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:EntitiesClient.mine",
+      "name": "EntitiesClient.mine",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitError.refusal",
+      "name": "ContentKitError.refusal",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitError.isLimit",
+      "name": "ContentKitError.isLimit",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitError.isCeiling",
+      "name": "ContentKitError.isCeiling",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitError.blocksQueue",
+      "name": "ContentKitError.blocksQueue",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitError.transient",
+      "name": "ContentKitError.transient",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaApi.presign",
+      "name": "MediaApi.presign",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaApi.parts",
+      "name": "MediaApi.parts",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaApi.listParts",
+      "name": "MediaApi.listParts",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaApi.complete",
+      "name": "MediaApi.complete",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaApi.abort",
+      "name": "MediaApi.abort",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaApi.commit",
+      "name": "MediaApi.commit",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaApi.read",
+      "name": "MediaApi.read",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaApi.presets",
+      "name": "MediaApi.presets",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaApi.itemURL",
+      "name": "MediaApi.itemURL",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.upload",
+      "name": "MediaClient.upload",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.put",
+      "name": "MediaClient.put",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.commit",
+      "name": "MediaClient.commit",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.read",
+      "name": "MediaClient.read",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.waitFor",
+      "name": "MediaClient.waitFor",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.editorView",
+      "name": "MediaClient.editorView",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.presets",
+      "name": "MediaClient.presets",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.getFrame",
+      "name": "MediaClient.getFrame",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.hlsBase",
+      "name": "MediaClient.hlsBase",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.hls",
+      "name": "MediaClient.hls",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.uploadNamed",
+      "name": "MediaClient.uploadNamed",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.uploadInline",
+      "name": "MediaClient.uploadInline",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.presetPath",
+      "name": "MediaClient.presetPath",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.pollRef",
+      "name": "MediaClient.pollRef",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:MediaClient.discard",
+      "name": "MediaClient.discard",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.subscribe",
+      "name": "ItemUploadQueue.subscribe",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.getSnapshot",
+      "name": "ItemUploadQueue.getSnapshot",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.add",
+      "name": "ItemUploadQueue.add",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.move",
+      "name": "ItemUploadQueue.move",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.update",
+      "name": "ItemUploadQueue.update",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.remove",
+      "name": "ItemUploadQueue.remove",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.retry",
+      "name": "ItemUploadQueue.retry",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.start",
+      "name": "ItemUploadQueue.start",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.pause",
+      "name": "ItemUploadQueue.pause",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.commit",
+      "name": "ItemUploadQueue.commit",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ItemUploadQueue.dispose",
+      "name": "ItemUploadQueue.dispose",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:NotificationsClient.list",
+      "name": "NotificationsClient.list",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:NotificationsClient.refresh",
+      "name": "NotificationsClient.refresh",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:NotificationsClient.setRead",
+      "name": "NotificationsClient.setRead",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:NotificationsClient.setDismissed",
+      "name": "NotificationsClient.setDismissed",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:VersionsClient.download",
+      "name": "VersionsClient.download",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitClient.config",
+      "name": "ContentKitClient.config",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitClient.kinds",
+      "name": "ContentKitClient.kinds",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitClient.url",
+      "name": "ContentKitClient.url",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitClient.setReadScope",
+      "name": "ContentKitClient.setReadScope",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ContentKitClient.subscribe",
+      "name": "ContentKitClient.subscribe",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:createContentKitClient",
+      "name": "createContentKitClient",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:imageRef",
+      "name": "imageRef",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:imageRefs",
+      "name": "imageRefs",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:allowsEntityScope",
+      "name": "allowsEntityScope",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:isContentKitError",
+      "name": "isContentKitError",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:toContentKitError",
+      "name": "toContentKitError",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:transportFailure",
+      "name": "transportFailure",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:readContentKitError",
+      "name": "readContentKitError",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:failureError",
+      "name": "failureError",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:sha256Hex",
+      "name": "sha256Hex",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:isContentId",
+      "name": "isContentId",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:itemKey",
+      "name": "itemKey",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:sameItem",
+      "name": "sameItem",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:checkRef",
+      "name": "checkRef",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:uploadRules",
+      "name": "uploadRules",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:ruleFor",
+      "name": "ruleFor",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:filesFor",
+      "name": "filesFor",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:screenFiles",
+      "name": "screenFiles",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:uniqueName",
+      "name": "uniqueName",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:defaultTransport",
+      "name": "defaultTransport",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:xhrTransport",
+      "name": "xhrTransport",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:fetchTransport",
+      "name": "fetchTransport",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:chunkOffsets",
+      "name": "chunkOffsets",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:mergeReads",
+      "name": "mergeReads",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:isProcessing",
+      "name": "isProcessing",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:processing",
+      "name": "processing",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:statusKind",
+      "name": "statusKind",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:expiryDelay",
+      "name": "expiryDelay",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:refreshable",
+      "name": "refreshable",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:publicURL",
+      "name": "publicURL",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:publicRenditions",
+      "name": "publicRenditions",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+    },
+    {
+      "id": "ts:isPending",
+      "name": "isPending",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     }
   ]
 }

@@ -2,7 +2,6 @@ package critical_test
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,14 +23,6 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/kinds"
 )
-
-func TestMain(m *testing.M) {
-	if os.Getenv("CONTENTKIT_CRITICAL_PG") == "" {
-		fmt.Fprintln(os.Stderr, "CONTENTKIT_CRITICAL_PG is required; critical integration cases never skip missing PostgreSQL")
-		os.Exit(2)
-	}
-	os.Exit(m.Run())
-}
 
 type clock struct {
 	mu sync.RWMutex
@@ -73,8 +64,12 @@ type application struct {
 
 func newWorld(t *testing.T, configure ...func(*ck.Config)) *world {
 	t.Helper()
+	dsn := os.Getenv("CONTENTKIT_CRITICAL_PG")
+	if dsn == "" {
+		t.Fatal("CONTENTKIT_CRITICAL_PG is required; integration cases never skip or use a default database")
+	}
 	ctx := t.Context()
-	pool, err := pgxpool.New(ctx, os.Getenv("CONTENTKIT_CRITICAL_PG"))
+	pool, err := pgxpool.New(ctx, dsn)
 	must(t, err)
 	t.Cleanup(pool.Close)
 	must(t, pool.Ping(ctx))

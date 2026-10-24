@@ -4,8 +4,7 @@ go 1.26.10
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.35.4
+	github.com/open-rails/authkit v1.35.5
 	github.com/open-rails/contentkit v0.125.0
 )
 
@@ -29,6 +28,7 @@ require (
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/maypok86/otter/v2 v2.3.1-0.20261012174237-6b4979235160 // indirect

@@ -41,6 +41,7 @@ jobs:
         cache-dependency-path: |
           go.sum
           tests/critical/go.sum
+          tests/critical/previous-release/go.sum
           server/go.sum
           adapters/authkit/go.sum
           adapters/openrails/go.sum
@@ -85,6 +86,7 @@ jobs:
         done
         test -z "$(gofmt -l tests/critical)"
         (cd tests/critical && go mod tidy -diff && go vet -p 1 ./...)
+        (cd tests/critical/previous-release && go mod tidy -diff && go build -p 1 -o /dev/null . && go vet -p 1 ./...)
     - name: Run every reviewed critical contract with race detection
       run: python3 tests/critical/run.py --race
     - uses: actions/upload-artifact@v4

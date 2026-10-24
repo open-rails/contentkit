@@ -129,6 +129,11 @@ func TestEntityConcurrentOwnershipAndStaleScopes(t *testing.T) {
 		if current.OwnerEntityID != string(entity.ID) || current.Title != "Before scope retirement" {
 			t.Fatalf("refused stale writes changed content: %+v", current)
 		}
+		unchanged, err := a.engine.Client().GetManage(t.Context(), ck.GetManageQuery{Q: "Before scope retirement"})
+		must(t, err)
+		if len(unchanged) != 1 || unchanged[0].ID != created.ID {
+			t.Fatalf("refused stale writes created extra content: %+v", unchanged)
+		}
 	})
 }
 

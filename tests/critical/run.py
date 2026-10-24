@@ -28,6 +28,14 @@ def check_inventory(ledger):
     actual = {row["id"]: (row["method"], row["path"]) for row in ledger.get("operation_contracts", [])}
     if actual != expected or len(actual) != len(ledger.get("operation_contracts", [])):
         raise ValueError("HTTP ledger omits, duplicates or changes a selected operation")
+    with (HERE / "binding_matrix.tsv").open() as source:
+        bindings = list(csv.DictReader(source, delimiter="\t"))
+    expected_bindings = {row["id"]: row["name"] for row in bindings}
+    if len(expected_bindings) != len(bindings):
+        raise ValueError("binding inventory duplicates a selected contract")
+    actual_bindings = {row["id"]: row["name"] for row in ledger.get("binding_contracts", [])}
+    if actual_bindings != expected_bindings or len(actual_bindings) != len(ledger.get("binding_contracts", [])):
+        raise ValueError("binding ledger omits, duplicates or changes a selected contract")
 
 
 def qualified_cases(ledger):
@@ -98,7 +106,9 @@ def main():
     if args.verify:
         events = [json.loads(line) for line in args.verify.read_text().splitlines() if line.strip()]
     else:
-        required = ["CONTENTKIT_CRITICAL_PG"]
+        # Pure public-value selections need no database. Every integration
+        # fixture independently refuses an empty DSN before opening a pool.
+        required = [] if args.focus else ["CONTENTKIT_CRITICAL_PG"]
         if not args.focus or re.search("Media|Upload|Multipart|Gateway|Browser", args.focus):
             required += ["CONTENTKIT_CRITICAL_S3_ENDPOINT", "CONTENTKIT_CRITICAL_S3_USER", "CONTENTKIT_CRITICAL_S3_PASSWORD"]
         if not args.focus:

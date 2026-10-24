@@ -74,3 +74,30 @@ coverage does not establish HLS/archive authorization.
 The TypeScript `ContentKitError` contract exposes status/code, retryAfter,
 details, blobs, ban, action, reason, availableAt and unknownCode. RequestID is a
 Go error field; adding it to TypeScript is outside the current public contract.
+
+The candidate now includes upstream `8377f8b3`. The two accepted P0 purge
+scenarios `CK-J08-S05` and `CK-J08-S06` are current obligations, bringing the
+selected scenario count to 123. Audio remains P1. Content-item moderation was
+removed upstream; the version/parent publication boundary remains required.
+The HTTP inventory still contains 166 operations. `binding_matrix.tsv` records
+the 115 Go and 115 TypeScript public bindings selected by the approved plan;
+the runner refuses an omitted, duplicated or changed binding ledger row.
+
+New focused checks cover real owner/entity/app comment moderation boundaries,
+ban expiry and lift, normalized word/IP rules, concurrent entity ownership,
+deleted and foreign-recreated authorization scopes, and startup against
+PostgreSQL-enforced read-only transactions. The scope refusal currently surfaces
+as `503 unavailable`; ordinary missing permission remains `403 forbidden`.
+These additions do not complete the pending semantic and operation review.
+
+Small public-value contracts run without a database or browser after building
+the shipped SDK:
+
+```sh
+python3 tests/critical/run.py --focus '^Test(PublicScopeValues|ShippedTypeScriptValues)$'
+```
+
+They use known cryptographic literals, native SHA-256 as an independent streaming
+oracle, canonical identity/configuration round trips, typed error payloads,
+upload admission limits and media read-window/expiry values. Integration
+fixtures still refuse missing database settings before attempting a connection.
