@@ -102,8 +102,23 @@ An account's relationship to content it created or controls in a particular
 app. Ownership in one app does not confer authority in another.
 
 **Entitlement**:
-An authoritative right to access a paid feature or content. A product can
-grant rights in one app or several without merging their content.
+A right granted and tracked by OpenRails that ContentKit requires to access a
+feature or content. A product can grant rights in one app or several without
+merging their content.
+
+**Product**:
+An OpenRails catalog item that grants one or more entitlements when acquired.
+Products can grant access to specific content, a version, a channel or a site tier.
+_Avoid_: ContentKit offer
+
+**Price**:
+OpenRails terms for buying a product, including amount, currency and any
+recurring billing or access duration. ContentKit does not maintain a second
+copy of those terms.
+
+**Access requirement**:
+The entitlement or audience condition ContentKit evaluates before granting
+access to content. Changing a price does not change that requirement.
 
 **Merchant**:
 The OpenRails billing business linked to a ContentKit tenant. The merchant
