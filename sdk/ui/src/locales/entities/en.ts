@@ -27,7 +27,6 @@ export const entities = {
     uploadAvatar: "Upload avatar",
     removeAvatar: "Remove avatar",
     images: "Images",
-    membershipPrice: "Membership price",
     loadFailed: "The entity couldn't be loaded.",
     newTitle: "New {kind}",
     nameIn: "Name ({language})",
@@ -125,11 +124,8 @@ export const entities = {
   membership: {
     unknown: "We can't check your membership right now.",
     member: "Member",
-    leave: "Leave",
-    paidPitch: "Members open everything in it.",
-    freePitch: "Join to follow it and open what members can.",
-    joinFor: "Join for {price}",
-    join: "Join",
+    getAccess: "Get access",
+    accessPitch: "Members can access the content in this section.",
   },
   entityManager: {
     noAccess: "You don't have permission to manage entities.",

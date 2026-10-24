@@ -19,7 +19,7 @@ func TestVisibilityIntegration(t *testing.T) {
 	f := newFixture(t, nil)
 	yaoi, gore, red := f.entity("tag", "yaoi"), f.entity("tag", "gore"), f.entity("tag", "red")
 	studio := f.entity("channel", "studio")
-	f.sell(studio)
+
 	f.editor("studio", "ed")
 
 	item := func(title string, edit func(*ContentInput), languages ...string) string {

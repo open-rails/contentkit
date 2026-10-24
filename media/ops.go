@@ -173,14 +173,7 @@ func (o *opRun) apply(n int, op Op) error {
 	switch op.Op {
 	case OpMeta:
 		next := maps.Clone(op.Meta)
-		for _, key := range []string{"publishing_archives", "publishing_cover_errors"} {
-			if value, ok := m.Meta[key]; ok {
-				if next == nil {
-					next = map[string]any{}
-				}
-				next[key] = value
-			}
-		}
+
 		m.Meta = next
 		return nil
 	case OpRegenerate:

@@ -390,9 +390,6 @@ func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	}
 	eventually(t, "the forked pages", time.Minute, pages)
 	// Sales retain billing history, not the physical media after retention.
-	if _, err := pool.Exec(ctx, `UPDATE `+schema+`.content_items SET ever_sold=true WHERE tenant_id=$1 AND id=$2`, env.Tenant, g.ID); err != nil {
-		t.Fatal(err)
-	}
 	// A rule change republishes the versions that inherit it.
 	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+g.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.PPV}}, nil)
 	must(http.StatusMethodNotAllowed, staff, "DELETE", "/v1/contents/"+g.ID, nil, nil)

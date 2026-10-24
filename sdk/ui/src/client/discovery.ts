@@ -10,6 +10,7 @@ import type {
   EngagementSnapshot,
   ExposureInput,
   Exposures,
+  LibraryPage,
   RecentSearches,
   ReleaseDates,
   SignalInput,
@@ -183,6 +184,11 @@ export class DiscoveryClient {
 
   constructor(private readonly http: Http) {
     this.browserSearches = browserSearchHistory(http.mount("discovery"));
+  }
+
+  /** Content unlocked by the reader's purchased entitlements. */
+  library(q: { language?: string; cursor?: string; limit?: number } = {}, signal?: AbortSignal): Promise<LibraryPage> {
+    return call(this.http, "GET", "/me/library", { query: q, signal });
   }
 
   /** Contents as cards, one per content item with the version that fits the reader. */

@@ -18,10 +18,9 @@ import (
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/testauth"
-	"github.com/open-rails/contentkit/offers"
 )
 
-// shop is a site over the world: entities, the catalog, discovery and offers
+// shop is a site over the world: entities, the catalog, and discovery
 // wired as the engine wires them, each module's routes served under /v1 and
 // held to the route catalog.
 type shop struct {
@@ -37,7 +36,7 @@ func newShop(t *testing.T, edits ...func(*openrails.Config)) *shop {
 	ctx := t.Context()
 	s := &shop{world: newWorld(t, edits...), staff: testauth.Actor(access.Actor{ID: "staff"}, catalogStaff{})}
 	var err error
-	if s.entities, err = entities.New(entities.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds,
+	if s.entities, err = entities.New(entities.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds, Gate: s.gate,
 		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return s.cat.ContentChanged(ctx, q, ids)
 		}}); err != nil {
@@ -45,7 +44,7 @@ func newShop(t *testing.T, edits ...func(*openrails.Config)) *shop {
 	}
 	authn := testauth.Auth{Authz: catalogStaff{}}
 	if s.cat, err = catalog.New(ctx, catalog.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds, Auth: authn, Gate: s.gate,
-		Entities: s.entities, Offers: s.offers}); err != nil {
+		Entities: s.entities}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.cat.Close)
@@ -54,7 +53,7 @@ func newShop(t *testing.T, edits ...func(*openrails.Config)) *shop {
 		t.Fatal(err)
 	}
 	disc, err := discovery.New(discovery.Options{Pool: s.pool, Schema: s.schema, Tenant: tenant, Kinds: s.kinds, Visibility: s.cat,
-		Resolver: s.cat.Resolver(), Gate: s.gate, Entities: s.entities, Hub: h, Sales: s.offers})
+		Resolver: s.cat.Resolver(), Gate: s.gate, Entities: s.entities, Hub: h})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,16 +123,4 @@ func (s *shop) post(in catalog.ContentInput) string {
 		s.t.Fatal(err)
 	}
 	return ids[0]
-}
-
-// sell puts terms on target and syncs them to OpenRails.
-func (s *shop) sell(target offers.Target, terms offers.Terms) {
-	s.t.Helper()
-	ctx := s.t.Context()
-	if _, err := s.offers.Put(ctx, []offers.Put{{Target: target, Terms: terms}}); err != nil {
-		s.t.Fatal(err)
-	}
-	if err := s.offers.Sync(ctx, []offers.Target{target}); err != nil {
-		s.t.Fatal(err)
-	}
 }

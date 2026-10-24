@@ -78,7 +78,9 @@ func (h readHandler) read(w http.ResponseWriter, req *http.Request) {
 		http.SetCookie(w, res.Cookie)
 	}
 	writeJSON(w, http.StatusOK, res)
-	g.logIssued(req, h.log)
+	if g != nil {
+		g.logIssued(req, h.log)
+	}
 	h.log.Debug("media read", "path", req.URL.Path, "duration", time.Since(start))
 }
 
@@ -130,7 +132,7 @@ func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *G
 		return nil, nil, err
 	}
 	q := req.URL.Query()
-	opts := ReadOptions{Prefix: q.Get("prefix"), Paths: q["path"], Download: q.Has("download"), Editor: q.Has("editor")}
+	opts := ReadOptions{Prefix: q.Get("prefix"), Paths: q["path"], Download: q.Has("download"), Editor: q.Has("editor"), Status: q.Has("status")}
 	for _, p := range []struct {
 		name string
 		dst  *int

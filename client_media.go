@@ -1,9 +1,11 @@
 package contentkit
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,23 +30,40 @@ type MediaFile struct {
 	Meta map[string]any
 }
 
+// MediaCommitError retains the exact batch whose result was not confirmed.
+// When Err permits a retry, persist Commit and resend it with
+// PostMediaUploadCommit; do not repeat the upload or assign a new operation ID.
+// Err remains available through Unwrap.
+// Commit contains file references and metadata, never signed storage URLs.
+type MediaCommitError struct {
+	Commit media.CommitBody
+	Err    error
+}
+
+func (e *MediaCommitError) Error() string {
+	return fmt.Sprintf("contentkit: media commit was not confirmed: %v", e.Err)
+}
+
+func (e *MediaCommitError) Unwrap() error { return e.Err }
+
 // ingestPartSize is the multipart part IngestMedia prefers.
 const ingestPartSize = 32 << 20
 
 // IngestMedia uploads files into one media item (a content item's, or one
 // version's) and commits them as one operation: the upload routes' presign,
-// a PUT or multipart parts to the bucket over bucket (http.DefaultClient when
-// nil), then commit. operationID is a UUID of this commit; sending the files
+// a PUT or multipart parts to the bucket over a separate storage client (a
+// fresh unauthenticated client when nil), then commit. operationID is a UUID of this commit; sending the files
 // again (a new operationID) finds bytes the folder holds and uploads nothing
 // twice. Files with From are copied server-side, in one request. It is how
 // an importer fills an imported version's folder. This helper does not retain
-// upload plans: retry an uncertain commit with its exact CommitBody, not a
-// fresh invocation under the same operationID. PublishArchive provides a
-// durable, restartable workflow for an archive and its catalog metadata.
+// upload plans: on a commit error, MediaCommitError retains the exact batch
+// for PostMediaUploadCommit, instead of a fresh invocation with the same ID. The call returns its attached
+// uploads and pending processing; ZIP extraction and renditions run through
+// the normal media workers. It changes no content metadata or publication. Create the item/version before uploading, and edit
+// or publish it explicitly afterward. The storage client must not inject API
+// credentials; its cookies and redirect handler are never used.
 func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media.RefBody, operationID string, files []MediaFile) (media.CommitReply, error) {
-	if bucket == nil {
-		bucket = http.DefaultClient
-	}
+	bucket = mediaStorageClient(bucket)
 	ops := make([]media.Op, len(files))
 	var copies []media.CopyRequest
 	var copied []int
@@ -96,7 +115,35 @@ func (c *Client) IngestMedia(ctx context.Context, bucket *http.Client, ref media
 			ops[copied[j]] = media.Op{Op: media.OpPut, Path: s.Path, Blob: s.Blob, Meta: files[copied[j]].Meta}
 		}
 	}
-	return c.PostMediaUploadCommit(ctx, media.CommitBody{Ref: ref, OperationID: operationID, Ops: ops})
+	// Freeze nested caller metadata as well as the ordered ops. UseNumber keeps
+	// large integer metadata exact through this JSON-compatible snapshot.
+	raw, err := json.Marshal(media.CommitBody{Ref: ref, OperationID: operationID, Ops: ops})
+	if err != nil {
+		return media.CommitReply{}, fmt.Errorf("contentkit: encode media commit: %w", err)
+	}
+	var batch media.CommitBody
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&batch); err != nil {
+		return media.CommitReply{}, fmt.Errorf("contentkit: freeze media commit: %w", err)
+	}
+	reply, err := c.PostMediaUploadCommit(ctx, batch)
+	if err != nil {
+		return reply, &MediaCommitError{Commit: batch, Err: err}
+	}
+	return reply, nil
+}
+
+// mediaStorageClient isolates presigned capabilities from API authentication
+// and browser sessions. A capability is valid only at its signed URL.
+func mediaStorageClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{}
+	}
+	copy := *client
+	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	copy.Jar = nil
+	return &copy
 }
 
 // multipart writes body in parts and answers the assembled upload's blob.

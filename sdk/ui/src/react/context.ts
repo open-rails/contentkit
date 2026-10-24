@@ -54,9 +54,7 @@ export type SocialOperation =
   | "membership.save"
   | "history.forget"
   | "filters.save"
-  | "preferences.save"
-  | "offer.save"
-  | "membership.join";
+  | "preferences.save";
 
 /** The failure's context: the operation and, for one file, its name. */
 export interface ContentKitErrorInfo {

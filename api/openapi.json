@@ -6279,6 +6279,15 @@
             }
           },
           {
+            "name": "status",
+            "in": "query",
+            "description": "editors: whole-item processing counts only, without URLs, media grants or editor-view work",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "ContentKit-Reader-Preferences",
             "in": "header",
             "required": false,
@@ -6507,6 +6516,15 @@
             "name": "editor",
             "in": "query",
             "description": "editors: uploads with edits, failures, progress and editor views",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "editors: whole-item processing counts only, without URLs, media grants or editor-view work",
             "allowEmptyValue": true,
             "schema": {
               "type": "boolean"
@@ -6802,7 +6820,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Lists active entities with name, code, path, cover, avatar, count and a sellable entity's offer and the viewer's membership, filtered, ordered and cursor-paged.",
+        "summary": "Lists active entities with name, code, path, cover, avatar, count and the viewer's entitlement membership, filtered, ordered and cursor-paged.",
         "parameters": [
           {
             "name": "kind",
@@ -6994,7 +7012,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor.",
+        "summary": "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and membership standing; a merged entity answers with its survivor.",
         "parameters": [
           {
             "name": "id",
@@ -9240,453 +9258,17 @@
         ]
       }
     },
-    "/v1/contents/{id}/offer": {
-      "put": {
-        "tags": [
-          "offers"
-        ],
-        "summary": "Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Terms"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Offer"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "offers",
-        "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:offers:write",
-        "x-contentkit-errors": [
-          "not_found",
-          "conflict"
-        ],
-        "x-contentkit-error-sets": [
-          "module:offers",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "offers"
-        ],
-        "summary": "Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Offer"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "offers",
-        "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:offers:write",
-        "x-contentkit-errors": [
-          "not_found",
-          "conflict"
-        ],
-        "x-contentkit-error-sets": [
-          "module:offers",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/contents/{id}/versions/{vid}/offer": {
-      "put": {
-        "tags": [
-          "offers"
-        ],
-        "summary": "Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "vid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Terms"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Offer"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "offers",
-        "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:offers:write",
-        "x-contentkit-errors": [
-          "not_found",
-          "conflict"
-        ],
-        "x-contentkit-error-sets": [
-          "module:offers",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "offers"
-        ],
-        "summary": "Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "vid",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Offer"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "offers",
-        "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:offers:write",
-        "x-contentkit-errors": [
-          "not_found",
-          "conflict"
-        ],
-        "x-contentkit-error-sets": [
-          "module:offers",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/entities/{id}/offer": {
-      "put": {
-        "tags": [
-          "offers"
-        ],
-        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Terms"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Offer"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "offers",
-        "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:offers:write",
-        "x-contentkit-errors": [
-          "not_found",
-          "conflict"
-        ],
-        "x-contentkit-error-sets": [
-          "module:offers",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "offers"
-        ],
-        "summary": "Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Offer"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "offers",
-        "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:offers:write",
-        "x-contentkit-errors": [
-          "not_found",
-          "conflict"
-        ],
-        "x-contentkit-error-sets": [
-          "module:offers",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/entities/{id}/join": {
-      "post": {
-        "tags": [
-          "offers"
-        ],
-        "summary": "Joins a public group free to join: grants the viewer its key. Internal entities are not joinable.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EntityJoin"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "not_found",
-          "not_joinable"
-        ],
-        "x-contentkit-error-sets": [
-          "module:offers",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "offers"
-        ],
-        "summary": "Leaves a group joined free; a bought membership stays.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EntityJoin"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "offers",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "not_found",
-          "conflict"
-        ],
-        "x-contentkit-error-sets": [
-          "module:offers",
-          "auth",
-          "request"
-        ]
-      }
-    },
     "/v1/me/library": {
       "get": {
         "tags": [
-          "offers"
+          "discovery"
         ],
-        "summary": "The content the viewer bought, newest first, deleted content included, within this domain's hard visibility boundary.",
+        "summary": "Content covered by the reader's purchased content or version entitlements, within the current domain's hard visibility boundary.",
         "parameters": [
           {
             "name": "language",
             "in": "query",
-            "description": "the language of the titles",
+            "description": "title language",
             "schema": {
               "type": "string"
             }
@@ -9694,7 +9276,7 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "the previous page's next_cursor",
+            "description": "previous next_cursor",
             "schema": {
               "type": "string"
             }
@@ -9728,82 +9310,11 @@
             "host": []
           }
         ],
-        "x-contentkit-module": "offers",
+        "x-contentkit-module": "discovery",
         "x-contentkit-auth": "user",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
-          "module:offers",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/offers": {
-      "get": {
-        "tags": [
-          "offers"
-        ],
-        "summary": "Offers, newest first, with their OpenRails sync state.",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "query",
-            "description": "active or withdrawn",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "unsynced",
-            "in": "query",
-            "description": "only offers OpenRails does not match yet",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "the previous page's next_cursor",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "page size: 50 by default, at most 100",
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OfferPage"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "offers",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:offers:write",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:offers",
+          "module:discovery",
           "auth",
           "request"
         ]
@@ -12567,7 +12078,7 @@
         "tags": [
           "import"
         ],
-        "summary": "Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.",
+        "summary": "Imports a batch of groups, content items, memberships, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.",
         "requestBody": {
           "required": true,
           "content": {
@@ -12651,191 +12162,6 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:import",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/publishing-operations/{id}": {
-      "put": {
-        "tags": [
-          "publishing"
-        ],
-        "summary": "Creates or resumes one immutable archive submission. id is a client-chosen UUID. Requires content write; creating missing taxonomy also requires group write. Tenant and app come from the verified request. Repeating identical input returns the same draft and renews expired upload instructions; changed input is a conflict. when_ready requires provider-supported durable authorization.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Request"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Operation"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "publishing",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "operation_conflict",
-          "source_conflict",
-          "ambiguous_entity",
-          "unknown_entity",
-          "operation_busy",
-          "forbidden",
-          "not_configured"
-        ],
-        "x-contentkit-error-sets": [
-          "module:publishing",
-          "auth",
-          "request"
-        ]
-      },
-      "get": {
-        "tags": [
-          "publishing"
-        ],
-        "summary": "Reads an owned submission, its compact progress, asynchronous failure or final catalog path. This read never creates upload URLs or advances the operation. HTTP 200 does not imply successful publication.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "ContentKit-Reader-Preferences",
-            "in": "header",
-            "required": false,
-            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
-            "schema": {
-              "type": "string",
-              "maxLength": 8192
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Operation"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "publishing",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "not_found",
-          "forbidden"
-        ],
-        "x-contentkit-error-sets": [
-          "module:publishing",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/publishing-operations/{id}/complete": {
-      "post": {
-        "tags": [
-          "publishing"
-        ],
-        "summary": "Completes the submission's declared upload and durably begins processing. The server owns its exact media commit; no caller-supplied content IDs or blob references are accepted. Repeats do not create another import.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CompleteRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Operation"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "publishing",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "not_found",
-          "forbidden",
-          "not_uploaded",
-          "operation_busy"
-        ],
-        "x-contentkit-error-sets": [
-          "module:publishing",
           "auth",
           "request"
         ]
@@ -13212,19 +12538,27 @@
           }
         }
       },
-      "Archive": {
+      "ArchiveStatus": {
         "type": "object",
         "properties": {
-          "name": {
-            "type": "string"
-          },
-          "size": {
+          "completed": {
             "type": "integer"
           },
-          "sha256": {
-            "type": "string"
+          "total": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          },
+          "pages": {
+            "$ref": "#/components/schemas/ProcessingCount"
           }
-        }
+        },
+        "required": [
+          "completed",
+          "total",
+          "failed"
+        ]
       },
       "Attribute": {
         "type": "object",
@@ -13403,12 +12737,6 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/MembershipSet"
-            }
-          },
-          "offers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/OfferRecord"
             }
           },
           "aliases": {
@@ -13620,12 +12948,6 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Release"
-            }
-          },
-          "offers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Sale"
             }
           }
         },
@@ -14021,10 +13343,6 @@
           "size"
         ]
       },
-      "CompleteRequest": {
-        "type": "object",
-        "properties": {}
-      },
       "Config": {
         "type": "object",
         "properties": {
@@ -14168,12 +13486,6 @@
           },
           "moderation_reason": {
             "type": "string"
-          },
-          "ever_sold": {
-            "type": "boolean"
-          },
-          "offer": {
-            "$ref": "#/components/schemas/Offer"
           },
           "revision": {
             "type": "integer"
@@ -14843,12 +14155,6 @@
             "items": {
               "$ref": "#/components/schemas/Release"
             }
-          },
-          "offers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Sale"
-            }
           }
         },
         "required": [
@@ -15142,9 +14448,6 @@
           "key": {
             "type": "string"
           },
-          "offer": {
-            "$ref": "#/components/schemas/Sale"
-          },
           "member": {
             "type": "boolean"
           },
@@ -15334,9 +14637,6 @@
           },
           "access": {
             "$ref": "#/components/schemas/EntityAccess"
-          },
-          "offer": {
-            "$ref": "#/components/schemas/Offer"
           }
         },
         "required": [
@@ -15408,25 +14708,6 @@
           }
         }
       },
-      "EntityJoin": {
-        "type": "object",
-        "properties": {
-          "group_id": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "member": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "group_id",
-          "key",
-          "member"
-        ]
-      },
       "EntityKind": {
         "type": "object",
         "properties": {
@@ -15454,7 +14735,7 @@
           "uploads": {
             "$ref": "#/components/schemas/UploadLimits"
           },
-          "sellable": {
+          "entitled": {
             "type": "boolean"
           },
           "auth_scope": {
@@ -15589,52 +14870,6 @@
             "format": "date-time"
           }
         }
-      },
-      "EntityReference": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "language": {
-            "type": "string"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/EntityReference"
-          }
-        }
-      },
-      "EntityResolution": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "created": {
-            "type": "boolean"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/EntityResolution"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "name",
-          "created"
-        ]
       },
       "EntitySummary": {
         "type": "object",
@@ -16894,6 +16129,46 @@
           "total"
         ]
       },
+      "MediaStatus": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "uploads": {
+            "$ref": "#/components/schemas/ProcessingCount"
+          },
+          "archives": {
+            "$ref": "#/components/schemas/ArchiveStatus"
+          },
+          "presets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PresetStatus"
+            }
+          },
+          "encoding": {
+            "$ref": "#/components/schemas/EncodeProgress"
+          },
+          "failure_count": {
+            "type": "integer"
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProcessingFailure"
+            }
+          }
+        },
+        "required": [
+          "state",
+          "uploads",
+          "archives",
+          "presets",
+          "failure_count",
+          "failures"
+        ]
+      },
       "MemberPage": {
         "type": "object",
         "properties": {
@@ -17265,87 +16540,6 @@
           "source_name"
         ]
       },
-      "Offer": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "target": {
-            "$ref": "#/components/schemas/Target"
-          },
-          "key": {
-            "type": "string"
-          },
-          "terms": {
-            "$ref": "#/components/schemas/Terms"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "withdrawn"
-            ]
-          },
-          "synced": {
-            "type": "boolean"
-          },
-          "product_id": {
-            "type": "string"
-          },
-          "price_id": {
-            "type": "string"
-          },
-          "last_error": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "integer"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "id",
-          "target",
-          "key",
-          "terms",
-          "state",
-          "synced",
-          "revision",
-          "updated_at"
-        ]
-      },
-      "OfferPage": {
-        "type": "object",
-        "properties": {
-          "offers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Offer"
-            }
-          },
-          "next_cursor": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "offers"
-        ]
-      },
-      "OfferRecord": {
-        "type": "object",
-        "properties": {
-          "target": {
-            "$ref": "#/components/schemas/TargetRef"
-          },
-          "terms": {
-            "$ref": "#/components/schemas/Terms"
-          }
-        }
-      },
       "Op": {
         "type": "object",
         "properties": {
@@ -17402,111 +16596,6 @@
             "type": "boolean"
           }
         }
-      },
-      "Operation": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "awaiting_upload",
-              "blocked",
-              "failed",
-              "processing",
-              "published",
-              "publishing",
-              "ready",
-              "review_required",
-              "scheduled"
-            ]
-          },
-          "content_id": {
-            "type": "string"
-          },
-          "version_id": {
-            "type": "string"
-          },
-          "publish_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "entities": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EntityResolution"
-            }
-          },
-          "progress": {
-            "$ref": "#/components/schemas/Progress"
-          },
-          "result": {
-            "$ref": "#/components/schemas/OperationResult"
-          },
-          "error": {
-            "$ref": "#/components/schemas/OperationError"
-          },
-          "upload": {
-            "$ref": "#/components/schemas/PresignReply"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "id",
-          "state",
-          "content_id",
-          "version_id",
-          "entities",
-          "progress",
-          "created_at",
-          "updated_at"
-        ]
-      },
-      "OperationError": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "retryable": {
-            "type": "boolean"
-          },
-          "field": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "retryable"
-        ]
-      },
-      "OperationResult": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string"
-          },
-          "pages": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "path",
-          "pages"
-        ]
       },
       "Order": {
         "type": "object",
@@ -18260,6 +17349,29 @@
           "default"
         ]
       },
+      "PresetStatus": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "completed",
+          "total",
+          "failed"
+        ]
+      },
       "PresignBody": {
         "type": "object",
         "properties": {
@@ -18321,23 +17433,42 @@
           }
         }
       },
-      "Progress": {
+      "ProcessingCount": {
         "type": "object",
         "properties": {
-          "stage": {
-            "type": "string"
-          },
           "completed": {
             "type": "integer"
           },
           "total": {
             "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
           }
         },
         "required": [
-          "stage",
           "completed",
-          "total"
+          "total",
+          "failed"
+        ]
+      },
+      "ProcessingFailure": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "code",
+          "message"
         ]
       },
       "PublicImage": {
@@ -18556,6 +17687,9 @@
           },
           "state": {
             "$ref": "#/components/schemas/ItemState"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MediaStatus"
           },
           "full": {
             "type": "boolean"
@@ -18883,40 +18017,6 @@
           "h"
         ]
       },
-      "Request": {
-        "type": "object",
-        "properties": {
-          "content": {
-            "$ref": "#/components/schemas/ContentInput"
-          },
-          "entities": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EntityReference"
-            }
-          },
-          "archive": {
-            "$ref": "#/components/schemas/Archive"
-          },
-          "publish": {
-            "type": "string",
-            "enum": [
-              "draft",
-              "when_ready"
-            ]
-          },
-          "publish_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "create_missing_entities": {
-            "type": "boolean"
-          },
-          "source": {
-            "$ref": "#/components/schemas/Source"
-          }
-        }
-      },
       "RequestReply": {
         "type": "object",
         "properties": {
@@ -19104,28 +18204,6 @@
         },
         "required": [
           "level"
-        ]
-      },
-      "Sale": {
-        "type": "object",
-        "properties": {
-          "key": {
-            "type": "string"
-          },
-          "target": {
-            "$ref": "#/components/schemas/Target"
-          },
-          "terms": {
-            "$ref": "#/components/schemas/Terms"
-          },
-          "price_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "key",
-          "target",
-          "terms"
         ]
       },
       "Segment": {
@@ -19342,20 +18420,6 @@
           "entries"
         ]
       },
-      "Source": {
-        "type": "object",
-        "properties": {
-          "provider": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "url": {
-            "type": "string"
-          }
-        }
-      },
       "StagedCopy": {
         "type": "object",
         "properties": {
@@ -19375,29 +18439,6 @@
           "size"
         ]
       },
-      "Target": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "content",
-              "group",
-              "version"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "content_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "kind",
-          "id"
-        ]
-      },
       "TargetRef": {
         "type": "object",
         "properties": {
@@ -19414,27 +18455,6 @@
             "$ref": "#/components/schemas/Ref"
           }
         }
-      },
-      "Terms": {
-        "type": "object",
-        "properties": {
-          "amount": {
-            "type": "string"
-          },
-          "currency": {
-            "type": "string"
-          },
-          "access_hours": {
-            "type": "integer"
-          },
-          "renew_hours": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "amount",
-          "currency"
-        ]
       },
       "TicketBody": {
         "type": "object",
@@ -19665,9 +18685,6 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/VersionText"
             }
-          },
-          "offer": {
-            "$ref": "#/components/schemas/Offer"
           },
           "viewer": {
             "$ref": "#/components/schemas/ViewerState"
@@ -19967,7 +18984,6 @@
       "ErrorCode": {
         "type": "string",
         "enum": [
-          "ambiguous_entity",
           "animation_not_allowed",
           "animation_too_long",
           "animation_unsupported",
@@ -19977,7 +18993,6 @@
           "comments_closed",
           "comments_locked",
           "conflict",
-          "content_changed",
           "download_unavailable",
           "event_cursor_expired",
           "forbidden",
@@ -19987,7 +19002,6 @@
           "image_unreadable",
           "incomplete",
           "internal_error",
-          "invalid_archive",
           "invalid_request",
           "limit_reached",
           "moderation_rejected",
@@ -19997,18 +19011,14 @@
           "not_joinable",
           "not_ready",
           "not_uploaded",
-          "operation_busy",
-          "operation_conflict",
           "quota_exceeded",
           "rate_limited",
-          "source_conflict",
           "tenant_mismatch",
           "too_large",
           "too_many_files",
           "type_not_allowed",
           "unauthorized",
           "unavailable",
-          "unknown_entity",
           "upgrade_required",
           "video_aspect_unsupported",
           "video_over_budget",
@@ -20129,10 +19139,8 @@
     "entities": "/v1",
     "notifications": "/v1/notifications",
     "versions": "/v1",
-    "offers": "/v1",
     "discovery": "/v1",
-    "import": "/v1",
-    "publishing": "/v1"
+    "import": "/v1"
   },
   "x-contentkit-error-sets": {
     "module:kinds": [
@@ -20180,10 +19188,6 @@
       "not_found",
       "unavailable"
     ],
-    "module:offers": [
-      "internal_error",
-      "unavailable"
-    ],
     "module:discovery": [
       "internal_error",
       "unavailable"
@@ -20191,14 +19195,9 @@
     "module:import": [
       "internal_error",
       "unavailable"
-    ],
-    "module:publishing": null
+    ]
   },
   "x-contentkit-error-codes": {
-    "ambiguous_entity": {
-      "status": 409,
-      "meaning": "More than one entity matches the localized name or alias and scope; supply its ID."
-    },
     "animation_not_allowed": {
       "status": 422,
       "meaning": "An animated image where the upload path refuses animation."
@@ -20234,10 +19233,6 @@
     "conflict": {
       "status": 409,
       "meaning": "A concurrent change, a path or slug already taken, or an operation id already used for another commit."
-    },
-    "content_changed": {
-      "status": 409,
-      "meaning": "A publishing operation's content or version was edited after submission."
     },
     "download_unavailable": {
       "status": 403,
@@ -20275,10 +19270,6 @@
       "status": 500,
       "meaning": "A server fault; the cause is in the server log."
     },
-    "invalid_archive": {
-      "status": 422,
-      "meaning": "The publishing archive cannot produce the required supported pages."
-    },
     "invalid_request": {
       "status": 400,
       "meaning": "The request is malformed: its body, a query parameter or a path value."
@@ -20315,14 +19306,6 @@
       "status": 409,
       "meaning": "A commit names an upload that has not landed; `blobs` lists the ones to upload again."
     },
-    "operation_busy": {
-      "status": 409,
-      "meaning": "The publishing operation is preparing an upload or completing another request; retry."
-    },
-    "operation_conflict": {
-      "status": 409,
-      "meaning": "A publishing operation ID already names different immutable input."
-    },
     "quota_exceeded": {
       "status": 413,
       "meaning": "The uploader's storage quota is used up."
@@ -20330,10 +19313,6 @@
     "rate_limited": {
       "status": 429,
       "meaning": "Too many requests; retry after `retry_after` seconds (also the Retry-After header)."
-    },
-    "source_conflict": {
-      "status": 409,
-      "meaning": "The external source already belongs to another publishing operation in this app."
     },
     "tenant_mismatch": {
       "status": 500,
@@ -20358,10 +19337,6 @@
     "unavailable": {
       "status": 503,
       "meaning": "The host's auth, media storage or signal plane cannot be reached, or a commit's recovery is pending; retry."
-    },
-    "unknown_entity": {
-      "status": 400,
-      "meaning": "A publishing entity reference does not resolve in this app and entity creation is disabled."
     },
     "upgrade_required": {
       "status": 503,

@@ -303,7 +303,7 @@ func pageCollisionMeta(meta map[string]any, name string) map[string]any {
 }
 
 // These fields are owned by the importer, not by upload clients.
-var archiveStateKeys = []string{"archive_complete", "archive_completed_sha256", "archive_complete_sha256"}
+var archiveStateKeys = []string{"archive_complete", "archive_completed_sha256", "archive_complete_sha256", "archive_pages_total"}
 
 func clearArchiveState(meta map[string]any) map[string]any {
 	out := maps.Clone(meta)
@@ -320,7 +320,7 @@ func clientUploadOps(input []Op) []Op {
 			continue
 		}
 		meta := clearArchiveState(ops[i].Meta)
-		for _, key := range []string{"page", "publishing_archives", "publishing_cover_errors"} {
+		for _, key := range []string{"page"} {
 			delete(meta, key)
 		}
 		if len(meta) == 0 {

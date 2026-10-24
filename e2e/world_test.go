@@ -167,7 +167,7 @@ func (w *world) config() contentkit.Config {
 				"album":   {Route: "a", Presentation: "reader", Versions: one},
 				"blog":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			},
-			EntityKinds: map[string]kinds.EntityKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true, Sellable: true}}},
+			EntityKinds: map[string]kinds.EntityKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true, Entitled: true}}},
 		Interactions: contentkit.InteractionsConfig{Limits: contentkit.LimitsConfig{Disabled: true}},
 		Avatars:      &contentkit.AvatarsConfig{Kind: avatarKind()},
 		Media: &contentkit.MediaConfig{Config: w.mediaConfig(),

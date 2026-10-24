@@ -129,8 +129,16 @@ func TestPublishingReconcileOrderUpgrade(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(op)-'group_ids' || jsonb_build_object('entity_ids',op.group_ids))::text FROM `+table+` op`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	// This fixture validates the historical receipt/index upgrade. Stop before
+	// the later migration that deliberately removes the receipt table.
+	retirement := slices.IndexFunc(steps, func(step migratekit.Migration) bool {
+		return step.Name == "0041_remove_publishing_operations.up.sql"
+	})
+	if retirement < 0 {
+		t.Fatal("publishing retirement migration is missing")
+	}
 	for range 2 {
-		if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
+		if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps[:retirement]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -265,7 +273,7 @@ func TestPostgresBaseline(t *testing.T) {
 		}
 		applied = append(applied, f)
 	}
-	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql", "0011_search_substrings.up.sql", "0012_management_names.up.sql", "0013_code_paths.up.sql", "0014_page_notices.up.sql", "0015_pages_added.up.sql", "0016_body_excerpt.up.sql", "0017_reader_chapter_starts.up.sql", "0018_media_commit_notifications.up.sql", "0019_offer_targets.up.sql", "0020_listing_order_index.up.sql", "0021_publishing_reconcile_order.up.sql", "0022_management_order_index.up.sql", "0023_playable_versions.up.sql", "0024_original_titles_and_publication_visibility.up.sql", "0025_empty_version_lifecycle.up.sql", "0026_empty_publication_pages.up.sql", "0027_due_media_cleanup.up.sql", "0028_reader_metadata_snapshots.up.sql", "0029_version_storage_owner.up.sql", "0030_structured_post_excerpt.up.sql", "0031_notification_event_cursors.up.sql", "0032_catalog_event_log.up.sql", "0033_shared_catalog_event_storage.up.sql", "0034_audience_releases.up.sql", "0035_direct_interaction_counts.up.sql", "0036_retained_offer_targets.up.sql", "0037_account_anonymization.up.sql", "0038_runtime_entity_reads.up.sql", "0039_entity_terminology.up.sql", "0043_stored_search_terms.up.sql"}
+	want := []string{"0001_baseline.up.sql", "0002_app_bindings.up.sql", "0003_prepare_version_covers.up.sql", "0004_finish_version_covers.up.sql", "0005_erasure_completion.up.sql", "0006_publishing_operations.up.sql", "0007_internal_entities.up.sql", "0008_access_history.up.sql", "0009_page_review.up.sql", "0010_name_prefix_index.up.sql", "0011_search_substrings.up.sql", "0012_management_names.up.sql", "0013_code_paths.up.sql", "0014_page_notices.up.sql", "0015_pages_added.up.sql", "0016_body_excerpt.up.sql", "0017_reader_chapter_starts.up.sql", "0018_media_commit_notifications.up.sql", "0019_offer_targets.up.sql", "0020_listing_order_index.up.sql", "0021_publishing_reconcile_order.up.sql", "0022_management_order_index.up.sql", "0023_playable_versions.up.sql", "0024_original_titles_and_publication_visibility.up.sql", "0025_empty_version_lifecycle.up.sql", "0026_empty_publication_pages.up.sql", "0027_due_media_cleanup.up.sql", "0028_reader_metadata_snapshots.up.sql", "0029_version_storage_owner.up.sql", "0030_structured_post_excerpt.up.sql", "0031_notification_event_cursors.up.sql", "0032_catalog_event_log.up.sql", "0033_shared_catalog_event_storage.up.sql", "0034_audience_releases.up.sql", "0035_direct_interaction_counts.up.sql", "0036_retained_offer_targets.up.sql", "0037_account_anonymization.up.sql", "0038_runtime_entity_reads.up.sql", "0039_entity_terminology.up.sql", "0040_remove_offers.up.sql", "0041_remove_publishing_operations.up.sql", "0043_stored_search_terms.up.sql"}
 	if err := rows.Err(); err != nil || !slices.Equal(applied, want) {
 		t.Fatalf("ledger %v %v", applied, err)
 	}

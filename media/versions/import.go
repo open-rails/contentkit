@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,7 +21,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Archive import limits: images per archive and expanded bytes.
@@ -85,7 +84,19 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 		} else if err != nil {
 			return err
 		}
-		meta := maps.Clone(f.Meta)
+		// Import progress and concurrent editor metadata may have changed while
+		// pages were processed. Preserve the current metadata, not the stale
+		// source snapshot from before extraction.
+		latest, _, err := s.m.Manifests.Get(ctx, ref)
+		if err != nil {
+			return err
+		}
+		at := latest.Find(f.Path)
+		if at < 0 || latest.Files[at].Key() != f.Key() {
+			return errors.New("versions: archive changed while importing")
+		}
+		previousMeta := latest.Files[at].Meta
+		meta := maps.Clone(previousMeta)
 		if meta == nil {
 			meta = map[string]any{}
 		}
@@ -93,7 +104,10 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 		if _, err := s.m.Uploads.CommitChecked(ctx, system, ref, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: f.Path, Blob: f.Blob, Edit: f.Edit, Meta: meta}}, func(m *media.Manifest) error {
 			i := m.Find(f.Path)
 			if i < 0 || m.Files[i].Key() != f.Key() {
-				return ErrArchiveChanged
+				return errors.New("versions: archive changed while importing")
+			}
+			if !reflect.DeepEqual(m.Files[i].Meta, previousMeta) {
+				return ErrNotReady // retry without overwriting a concurrent edit
 			}
 			return nil
 		}); err != nil {
@@ -104,14 +118,6 @@ func (s *Service) expand(ctx context.Context, t Target) error {
 }
 
 func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentref.ContentRef, f media.File) error {
-	operation, _ := f.Meta[ArchiveOperation].(string)
-	expected, _ := f.Meta[ArchiveSHA256].(string)
-	if operation != "" {
-		digest, ok := layout.BlobDigest(f.Blob)
-		if !ok || hex.EncodeToString(digest) != expected {
-			return permanent{errors.New("archive checksum does not match its publishing declaration")}
-		}
-	}
 	item, err := s.reg.Item(ref)
 	if err != nil {
 		return err
@@ -139,6 +145,9 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		if e.FileInfo().IsDir() || strings.HasPrefix(base, ".") || strings.Contains(e.Name, "__MACOSX/") || !imageName(base) {
 			continue
 		}
+		if e.UncompressedSize64 > maxImportExpanded-expanded {
+			return permanent{fmt.Errorf("archive expanded bytes exceed %d", maxImportExpanded)}
+		}
 		entries = append(entries, e)
 		expanded += e.UncompressedSize64
 	}
@@ -165,6 +174,29 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		sourceNames[i] = path.Base(entry.Name)
 	}
 	cleanedNames := media.CleanPageBatchNames(sourceNames)
+	up := k.Uploads[slices.IndexFunc(k.Uploads, func(u media.Upload) bool { return u.Path == k.Publish.Pages })]
+	// Validate the full archive before attaching any page. The second pass
+	// keeps memory bounded to one page while a malformed later entry cannot
+	// leave an earlier page attached to the gallery.
+	if err := validateArchiveEntries(ctx, entries, up); err != nil {
+		return err
+	}
+	if _, err := s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
+		i := m.Find(f.Path)
+		if i < 0 || m.Files[i].Key() != f.Key() {
+			return errors.New("archive changed during validation")
+		}
+		meta := maps.Clone(m.Files[i].Meta)
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		meta["archive_pages_total"] = len(entries)
+		m.Files[i].Meta = meta
+		return nil
+	}); err != nil {
+		return err
+	}
+
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if err != nil {
 		return err
@@ -172,9 +204,6 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 	dir := strings.TrimSuffix(k.Publish.Pages, "{name}")
 	names := map[string]bool{}
 	archiveHash := pageDigest(f)
-	if archiveHash == "" {
-		archiveHash = expected
-	}
 	existing := map[int]media.File{}
 	for _, f := range m.Files {
 		if f.IsUpload() && inPattern(k.Publish.Pages, f.Path) {
@@ -187,8 +216,6 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 			}
 		}
 	}
-	up := k.Uploads[slices.IndexFunc(k.Uploads, func(u media.Upload) bool { return u.Path == k.Publish.Pages })]
-	expectedPages := map[string]string{}
 	for index, e := range entries {
 		body, err := readEntry(e, up.MaxBytes)
 		if err != nil {
@@ -202,9 +229,8 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		sum := hex.EncodeToString(raw[:])
 		if previous, ok := existing[index+1]; ok {
 			if pageDigest(previous) != sum || pageMeta(previous).SourceEntry != e.Name {
-				return permanent{ErrArchiveChanged}
+				return permanent{errors.New("archive page changed during import")}
 			}
-			expectedPages[previous.Path] = sum
 			continue
 		}
 		name, span, flags := plannedPageName(cleanedNames[index], names)
@@ -216,7 +242,6 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 		writePageMeta(&metaFile, pm)
 		ext := strings.ToLower(path.Ext(e.Name))
 		target := dir + name + ext
-		expectedPages[target] = sum
 		if _, err := s.m.Uploads.Ingest(ctx, system, media.IngestRequest{Ref: ref, Path: target, Type: typ,
 			Body: bytes.NewReader(body), Size: int64(len(body)), Meta: metaFile.Meta}); err != nil {
 			if _, refused := media.AsUploadError(err); refused {
@@ -225,38 +250,30 @@ func (s *Service) importArchive(ctx context.Context, k *media.Kind, ref contentr
 			return err
 		}
 	}
-	if operation != "" {
-		_, err := s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
-			pages := archivePages(k, m)
-			if len(pages) != len(expectedPages) {
-				return permanent{ErrArchiveChanged}
-			}
-			for _, page := range pages {
-				if expectedPages[page.Path] != page.SHA256 {
-					return permanent{ErrArchiveChanged}
-				}
-			}
-			var receipts map[string]archiveReceipt
-			if existing := m.Meta[archiveReceipts]; existing != nil {
-				b, err := json.Marshal(existing)
-				if err != nil {
-					return err
-				}
-				if err := json.Unmarshal(b, &receipts); err != nil {
-					return err
-				}
-			}
-			if receipts == nil {
-				receipts = map[string]archiveReceipt{}
-			}
-			receipts[operation] = archiveReceipt{SHA256: expected, Pages: pages}
-			if m.Meta == nil {
-				m.Meta = map[string]any{}
-			}
-			m.Meta[archiveReceipts] = receipts
-			return nil
-		})
-		return err
+	return nil
+}
+
+// validateArchiveEntries verifies actual decoded bytes, CRC and media types.
+// Header size claims are not a substitute for reading each bounded stream.
+func validateArchiveEntries(ctx context.Context, entries []*zip.File, up media.Upload) error {
+	var expanded int64
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		limit := min(up.MaxBytes, int64(maxImportExpanded)-expanded)
+		if limit <= 0 {
+			return permanent{fmt.Errorf("archive expanded bytes exceed %d", maxImportExpanded)}
+		}
+		body, err := readEntry(entry, limit)
+		if err != nil {
+			return err
+		}
+		expanded += int64(len(body))
+		typ := http.DetectContentType(body)
+		if !slices.Contains(up.Types, typ) {
+			return permanent{fmt.Errorf("%s: pages take no %s", entry.Name, typ)}
+		}
 	}
 	return nil
 }

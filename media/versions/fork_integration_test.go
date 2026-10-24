@@ -349,3 +349,32 @@ func keys(m map[string][]byte) []string {
 	}
 	return out
 }
+
+// A malformed later image must not attach earlier ZIP entries to the gallery.
+func TestInvalidArchiveDoesNotAttachPartialPages(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	ref := s.ref("gallery", v)
+	s.mustUpload(s.creator, ref, "originals/existing", "image/png", pngOf(t, 20, 30, 71))
+	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 1 })
+	existing, _ := s.manifest(ref).Get("originals/existing.png")
+	archive := zipOf(t, map[string][]byte{"001.png": pngOf(t, 20, 30, 72), "002.png": []byte("not an image")})
+	s.mustUpload(s.creator, ref, "import/bad", "application/zip", archive)
+	eventually(t, "invalid full archive rejected", time.Minute, func() bool { f, ok := s.manifest(ref).Get("import/bad.zip"); return ok && f.Fail() != nil })
+	m := s.manifest(ref)
+	pages := 0
+	for _, f := range m.Files {
+		if f.IsUpload() && strings.HasPrefix(f.Path, "originals/") {
+			pages++
+			if f.Path != existing.Path || f.Blob != existing.Blob {
+				t.Fatalf("bad archive partially replaced pages: %+v", f)
+			}
+		}
+	}
+	if pages != 1 {
+		t.Fatalf("bad archive attached %d pages; expected existing page only", pages)
+	}
+	if f, ok := m.Get("import/bad.zip"); !ok || f.Blob == "" {
+		t.Fatal("failed archive source was lost")
+	}
+}

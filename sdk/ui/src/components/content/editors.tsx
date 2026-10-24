@@ -32,7 +32,6 @@ import { AttributeFields, formOf } from "../entities/fields.js";
 import { MembershipEditor } from "../entities/memberships.js";
 import { useDraft } from "../../react/use-draft.js";
 import { EditorSaveContext, useEditorSaveTask } from "./editor-save.js";
-import { OfferFields } from "./offer-fields.js";
 
 interface Common {
   client?: ContentKitClient;
@@ -51,12 +50,6 @@ export function defaultAccessRule(model: ContentModel, kind: string): Rule {
   const levels = model.kinds[kind]?.access_levels;
   const level = (!levels?.length || levels.includes("public") ? "public" : levels[0]) as Rule["level"];
   return { level, ...(level === "tier" ? { tiers: model.tiers.slice(0, 1) } : {}) };
-}
-
-/** The host's content model controls individual sale controls everywhere. */
-export function allowsIndividualSales(model: ContentModel | null, kind: string): boolean {
-  const spec = model?.kinds[kind];
-  return !!spec && (!spec.access_levels?.length || spec.access_levels.some((level) => level === "ppv" || level === "group_ppv"));
 }
 
 /** Whether staff choose a kind's access: it allows more than one level (none listed allows all). */
@@ -267,7 +260,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
   const fixedTier = !!declaredLevels?.length && tiers.length === 1;
   const levels = declaredLevels?.length ? LEVELS.filter((level) => declaredLevels.includes(level)) : LEVELS;
   const entityKinds = Object.entries(model?.entity_kinds ?? {})
-    .filter(([, g]) => g.sellable || g.auth_scope)
+    .filter(([, g]) => g.entitled || g.auth_scope)
     .map(([k]) => k);
   const releaseLevels = levels.filter((level) => level === "public" || level === "tier" && tiers.length > 0 || level === "group" && entityKinds.length > 0);
   // Picked once the model has loaded: its first group kind until one is chosen.
@@ -422,10 +415,9 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
   const reload = useEditorReload(content, p.client);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
-  const offer = useAction("offer.save", p.onError);
   const dirty = rule.dirty.length > 0;
   return (
-    <Section title={t(allowsIndividualSales(model, content.kind) ? "contentEditor.accessTitle" : "contentEditor.accessOnlyTitle")} aside={<SaveState dirty={dirty} saved={saved} />} ckui="access-editor">
+    <Section title={t("contentEditor.accessOnlyTitle")} aside={<SaveState dirty={dirty} saved={saved} />} ckui="access-editor">
       <form
         className="grid gap-3"
         onSubmit={(e) => {
@@ -464,13 +456,6 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
           </Button>
         </div>
       </form>
-      {allowsIndividualSales(model, content.kind) && <OfferFields
-        offer={content.offer}
-        pending={offer.pending}
-        onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id }, terms))}
-        onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id }))}
-      />}
-      <ErrorLine error={offer.error} />
     </Section>
   );
 }
@@ -497,7 +482,7 @@ function VersionStatus({ version }: { version: Version }) {
 
 /**
  * A content's versions: order, languages, traits, label, state and
- * schedule, an access override and its own offer, segments (chapters) and
+ * schedule, an access override, segments (chapters) and
  * the version's media folder; add and delete. A kind whose one version is
  * hidden shows only that version's segments and media.
  */
@@ -770,7 +755,6 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
   const remove = useAction("content.save", p.onError);
-  const offer = useAction("offer.save", p.onError);
   const valid=langs.length>0&&(!(directAccess||own)||complete(rule));
   const submit=async(state?: VersionState)=>{
     if(!valid)return false;
@@ -818,6 +802,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
   const segments = chapters && !!spec?.segments;
   return (
     <div className="grid gap-4 pt-2">
+
       {media && <VersionMedia content={content} version={v} model={model} {...p} />}
       {media && (
         <div className="border-t border-border pt-4">
@@ -878,17 +863,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
         </form>
       </div>
       {readerToolsTarget && readingLayout && createPortal(readingLayout, readerToolsTarget)}
-      {allowsIndividualSales(model, content.kind) && (
-        <div className="border-t border-border pt-4">
-          <OfferFields
-            offer={v.offer}
-            pending={offer.pending}
-            onSell={(terms) => offer.run(() => client.offers.sell({ content: content.id, version: v.id }, terms))}
-            onWithdraw={() => void offer.run(() => client.offers.withdraw({ content: content.id, version: v.id }))}
-          />
-        </div>
-      )}
-      <ErrorLine error={offer.error} />
+
     </div>
   );
 }

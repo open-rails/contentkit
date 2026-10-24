@@ -43,7 +43,7 @@ const model: ContentModel = {
     post: { route: "p", presentation: "post", versions: { languages: "one", hidden: true } },
     comic: { route: "c", presentation: "reader", versions: { languages: "one" }, segments: true },
   },
-  entity_kinds: { channel: { owner: "user", sellable: true, auth_scope: true } },
+  entity_kinds: { channel: { owner: "user", entitled: true, auth_scope: true } },
 };
 
 const at = "2026-10-13T00:00:00Z";

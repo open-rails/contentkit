@@ -22,7 +22,6 @@ import (
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/internal/httpapi"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // ErrInvalid is a batch refused as a whole.
@@ -39,8 +38,6 @@ type Options struct {
 	Catalog  *catalog.Store
 	Entities *entities.Store
 	Content  *content.Runtime
-	// Offers is nil without billing: offers are skipped.
-	Offers *offers.Service
 	// Signals is nil, or answers discovery.ErrNoSignals, without a signal
 	// plane: signals are skipped.
 	Signals *discovery.Service
@@ -117,7 +114,7 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 // RecordCount returns the count checked against MaxRecords, including nested
 // content versions and poll options. Importers can use it to size their batches.
 func (b Batch) RecordCount() int {
-	n := len(b.Entities) + len(b.Memberships) + len(b.Offers) + len(b.Aliases) + len(b.Comments) + len(b.Reactions) + len(b.Favorites) +
+	n := len(b.Entities) + len(b.Memberships) + len(b.Aliases) + len(b.Comments) + len(b.Reactions) + len(b.Favorites) +
 		len(b.Votes) + len(b.Answers) + len(b.LegacyReading) + len(b.Signals) + len(b.Deletes)
 	for _, c := range b.Contents {
 		n += 1 + len(c.Versions)
@@ -311,13 +308,13 @@ func classify(err error) (string, string) {
 	switch {
 	case errors.Is(err, content.ErrSubjectErased):
 		return CodeErased, "The person was erased."
-	case errors.Is(err, errNotFound), errors.Is(err, catalog.ErrNotFound), errors.Is(err, entities.ErrNotFound), errors.Is(err, offers.ErrNotFound),
+	case errors.Is(err, errNotFound), errors.Is(err, catalog.ErrNotFound), errors.Is(err, entities.ErrNotFound),
 		errors.Is(err, content.ErrNotFound), errors.Is(err, codes.ErrNotFound), errors.Is(err, discovery.ErrNotFound):
 		return CodeNotFound, httpapi.Rule(err, httpapi.CodeNotFound)
-	case errors.Is(err, errConflict), errors.Is(err, catalog.ErrConflict), errors.Is(err, entities.ErrConflict), errors.Is(err, offers.ErrConflict),
+	case errors.Is(err, errConflict), errors.Is(err, catalog.ErrConflict), errors.Is(err, entities.ErrConflict),
 		errors.Is(err, content.ErrConflict), errors.Is(err, codes.ErrConflict):
 		return CodeConflict, httpapi.Rule(err, httpapi.CodeConflict)
-	case errors.Is(err, errInvalid), errors.Is(err, catalog.ErrInvalid), errors.Is(err, entities.ErrInvalid), errors.Is(err, offers.ErrInvalid),
+	case errors.Is(err, errInvalid), errors.Is(err, catalog.ErrInvalid), errors.Is(err, entities.ErrInvalid),
 		errors.Is(err, content.ErrInvalid), errors.Is(err, codes.ErrInvalid), errors.Is(err, discovery.ErrInvalid), errors.Is(err, contentref.ErrInvalidID):
 		return CodeInvalid, httpapi.Rule(err, httpapi.CodeInvalidRequest)
 	case errors.As(err, &pg):

@@ -135,10 +135,11 @@ export interface AnswerRecord {
   updated_at?: string;
 }
 
-export interface Archive {
-  name: string;
-  size: number;
-  sha256: string;
+export interface ArchiveStatus {
+  completed: number;
+  total: number;
+  failed: number;
+  pages?: ProcessingCount;
 }
 
 export interface Attribute {
@@ -194,7 +195,6 @@ export interface Batch {
   entities?: EntityRecord[];
   contents?: ContentRecord[];
   memberships?: MembershipSet[];
-  offers?: OfferRecord[];
   aliases?: AliasRecord[];
   comments?: CommentRecord[];
   reactions?: ReactionRecord[];
@@ -243,7 +243,6 @@ export interface CardAccess {
   requires?: string;
   preview?: Preview;
   releases?: Release[];
-  offers?: Sale[];
 }
 
 export interface CardVersion {
@@ -365,8 +364,6 @@ export interface CompleteReply {
   size: number;
 }
 
-export type CompleteRequest = Record<string, never>;
-
 export interface Config {
   anonymous: Anonymous;
   comment_max_length: number;
@@ -407,8 +404,6 @@ export interface Content {
   text?: Record<string, CatalogText>;
   moderation?: ModerationState;
   moderation_reason?: string;
-  ever_sold?: boolean;
-  offer?: Offer;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -604,7 +599,6 @@ export interface Decision {
   requires?: string;
   preview?: Preview;
   releases?: Release[];
-  offers?: Sale[];
 }
 
 export interface DeleteRecord {
@@ -704,7 +698,6 @@ export interface Entity {
 
 export interface EntityAccess {
   key: string;
-  offer?: Sale;
   member: boolean;
   editor?: boolean;
   unknown?: boolean;
@@ -758,7 +751,6 @@ export interface EntityDetail {
   edges: Edge[];
   counts: Count[];
   access?: EntityAccess;
-  offer?: Offer;
 }
 
 export interface EntityInput {
@@ -777,12 +769,6 @@ export interface EntityInput {
   text?: EntitiesText[];
 }
 
-export interface EntityJoin {
-  group_id: string;
-  key: string;
-  member: boolean;
-}
-
 export interface EntityKind {
   route?: string;
   ordered?: boolean;
@@ -792,7 +778,7 @@ export interface EntityKind {
   max_per_owner?: number;
   avatar?: boolean;
   uploads?: UploadLimits;
-  sellable?: boolean;
+  entitled?: boolean;
   auth_scope?: boolean;
   windows?: boolean;
   membership_scopes?: ("content" | "version")[];
@@ -829,22 +815,6 @@ export interface EntityRecord {
   code?: string;
   created_at?: string;
   updated_at?: string;
-}
-
-export interface EntityReference {
-  id?: string;
-  kind?: string;
-  name?: string;
-  language?: string;
-  scope?: EntityReference;
-}
-
-export interface EntityResolution {
-  id: string;
-  kind: string;
-  name: string;
-  created: boolean;
-  scope?: EntityResolution;
 }
 
 export interface EntitySummary {
@@ -1225,6 +1195,16 @@ export interface ManageCount {
   truncated?: boolean;
 }
 
+export interface MediaStatus {
+  state: string;
+  uploads: ProcessingCount;
+  archives: ArchiveStatus;
+  presets: PresetStatus[];
+  encoding?: EncodeProgress;
+  failure_count: number;
+  failures: ProcessingFailure[];
+}
+
 export interface MemberPage {
   members: Membership[];
   next_cursor?: string;
@@ -1340,30 +1320,6 @@ export interface NoticePage {
   preview_url?: string;
 }
 
-export interface Offer {
-  id: string;
-  target: Target;
-  key: string;
-  terms: Terms;
-  state: "active" | "withdrawn";
-  synced: boolean;
-  product_id?: string;
-  price_id?: string;
-  last_error?: string;
-  revision: number;
-  updated_at: string;
-}
-
-export interface OfferPage {
-  offers: Offer[];
-  next_cursor?: string;
-}
-
-export interface OfferRecord {
-  target: TargetRef;
-  terms: Terms;
-}
-
 export interface Op {
   op: OpName;
   source_name?: string;
@@ -1382,33 +1338,6 @@ export interface Op {
   preset?: string;
   force?: boolean;
   takedown?: boolean;
-}
-
-export interface Operation {
-  id: string;
-  state: "awaiting_upload" | "blocked" | "failed" | "processing" | "published" | "publishing" | "ready" | "review_required" | "scheduled";
-  content_id: string;
-  version_id: string;
-  publish_at?: string;
-  entities: EntityResolution[];
-  progress: Progress;
-  result?: OperationResult;
-  error?: OperationError;
-  upload?: PresignReply;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface OperationError {
-  code: string;
-  message: string;
-  retryable: boolean;
-  field?: string;
-}
-
-export interface OperationResult {
-  path: string;
-  pages: number;
 }
 
 export interface Order {
@@ -1636,6 +1565,13 @@ export interface PresetRule {
   stable?: boolean;
 }
 
+export interface PresetStatus {
+  name: string;
+  completed: number;
+  total: number;
+  failed: number;
+}
+
 export interface PresignBody {
   ref: RefBody;
   path: string;
@@ -1659,10 +1595,16 @@ export interface Preview {
   segments?: number;
 }
 
-export interface Progress {
-  stage: string;
+export interface ProcessingCount {
   completed: number;
   total: number;
+  failed: number;
+}
+
+export interface ProcessingFailure {
+  path: string;
+  code: string;
+  message: string;
 }
 
 export interface PublicImage {
@@ -1734,6 +1676,7 @@ export interface ReadResult {
   limit: number;
   hls?: string[];
   state?: ItemState;
+  status?: MediaStatus;
   full?: boolean;
   uploads?: UploadRule[];
   files: FileInfo[];
@@ -1827,16 +1770,6 @@ export interface Rendition {
   h: number;
 }
 
-export interface Request {
-  content: ContentInput;
-  entities?: EntityReference[];
-  archive: Archive;
-  publish?: "draft" | "when_ready";
-  publish_at?: string;
-  create_missing_entities?: boolean;
-  source?: Source;
-}
-
 export interface RequestReply {
   method: string;
   url: string;
@@ -1883,13 +1816,6 @@ export interface Rule {
   group_id?: string;
   preview?: Preview;
   releases?: Release[];
-}
-
-export interface Sale {
-  key: string;
-  target: Target;
-  terms: Terms;
-  price_id?: string;
 }
 
 export interface Segment {
@@ -1963,22 +1889,10 @@ export interface SitemapPage {
   next_cursor?: string;
 }
 
-export interface Source {
-  provider: string;
-  id: string;
-  url?: string;
-}
-
 export interface StagedCopy {
   path: string;
   blob: string;
   size: number;
-}
-
-export interface Target {
-  kind: "content" | "group" | "version";
-  id: string;
-  content_id?: string;
 }
 
 export interface TargetRef {
@@ -1986,13 +1900,6 @@ export interface TargetRef {
   version?: Ref;
   group?: Ref;
   comment?: Ref;
-}
-
-export interface Terms {
-  amount: string;
-  currency: string;
-  access_hours?: number;
-  renew_hours?: number;
 }
 
 export interface TicketBody {
@@ -2062,7 +1969,6 @@ export interface Version {
   segments: Segment[];
   decision: Decision;
   text?: Record<string, VersionText>;
-  offer?: Offer;
   viewer?: ViewerState;
 }
 

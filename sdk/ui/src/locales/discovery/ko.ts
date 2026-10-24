@@ -25,8 +25,6 @@ export const discovery: typeof en = {
     showMore: "더 보기",
     unknownAccess: "지금은 이용할 수 없음",
     members: "멤버 전용",
-    joinFree: "무료 가입",
-    forSale: "판매 중",
     locked: "잠김",
     updated: "업데이트됨",
     deleted: "삭제됨",

@@ -22,7 +22,6 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/offers"
 )
 
 const tenant = "onlydemo"
@@ -42,7 +41,7 @@ func (c *counting) take() int { return int(c.n.Swap(0)) }
 
 // world is ContentKit's schema and a real embedded OpenRails on the
 // CONTENTKIT_TEST_URL database (CONTENTKIT_TEST_REQUIRE_DB=1 fails instead of
-// skipping), with a Gate and the offers Service over them.
+// skipping), with a read-only entitlement Gate over them.
 type world struct {
 	t       *testing.T
 	pool    *pgxpool.Pool
@@ -52,7 +51,6 @@ type world struct {
 	billing access.Billing
 	kinds   kinds.Config
 	gate    *access.Gate
-	offers  *offers.Service
 	n       int
 }
 
@@ -88,16 +86,11 @@ func newWorld(t *testing.T, edits ...func(*openrails.Config)) *world {
 	w.billing = ckopenrails.Billing(w.client)
 	w.kinds = kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium", "gold"}, TokenClaims: []string{"premium"},
 		Kinds:       map[string]kinds.Kind{"post": {Route: "p", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}}},
-		EntityKinds: map[string]kinds.EntityKind{"channel": {Owner: "user", Sellable: true}, "series": {Sellable: true, Ordered: true}, "tag": {}}}
+		EntityKinds: map[string]kinds.EntityKind{"channel": {Owner: "user", Entitled: true}, "series": {Entitled: true, Ordered: true}, "tag": {}}}
 	if err := w.kinds.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	if w.gate, err = access.NewGate(access.GateConfig{Tenant: tenant, Kinds: w.kinds, Billing: w.billing}); err != nil {
-		t.Fatal(err)
-	}
-	w.offers, err = offers.New(offers.Options{Pool: pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds, Billing: w.billing, Gate: w.gate,
-		Config: offers.Config{Minimum: map[offers.TargetKind]offers.Amount{offers.ContentTarget: 500_000, offers.EntityTarget: 1_000_000}}})
-	if err != nil {
 		t.Fatal(err)
 	}
 	return w
@@ -260,3 +253,31 @@ func (c claims) Identity() auth.Identity {
 	return auth.Identity{Subject: c.id, SubjectKind: auth.SubjectUser}
 }
 func (c claims) Entitlements() []string { return c.ents }
+
+// sell configures the product directly in OpenRails; ContentKit stores no sale terms.
+func (w *world) sell(key, name string, amount int64) (billing.Product, billing.Price) {
+	w.t.Helper()
+	p, err := w.bill.CreateProduct(w.t.Context(), billing.CreateProductParams{Key: key, DisplayName: name, Entitlements: []string{key}})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	price, err := w.bill.CreatePrice(w.t.Context(), billing.CreatePriceParams{ProductID: p.ID, Key: "default", UnitAmount: amount, Currency: "USD"})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return *p, *price
+}
+
+func (w *world) product(key string) (billing.Product, []billing.Price) {
+	w.t.Helper()
+	page, err := w.bill.ListProducts(w.t.Context(), billing.ProductListParams{Keys: []string{key}})
+	if err != nil || len(page.Items) != 1 {
+		w.t.Fatalf("product %s: %v %v", key, page, err)
+	}
+	p := page.Items[0]
+	prices, err := w.bill.ListPrices(w.t.Context(), billing.PriceListParams{ProductID: p.ID})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return p, prices.Items
+}

@@ -104,6 +104,10 @@ func dailyFilterParams() []httpapi.Param {
 }
 
 var routes = []httpapi.Route[handler]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/library", Resource: "discovery", Auth: httpapi.User,
+		Doc:       "Content covered by the reader's purchased content or version entitlements, within the current domain's hard visibility boundary.",
+		Query:     []httpapi.Param{httpapi.Text("language", "title language"), httpapi.Text("cursor", "previous next_cursor"), httpapi.Int("limit", "page size: 20 by default, at most 100")},
+		Responses: []httpapi.Reply{httpapi.OK(LibraryPage{})}}, Serve: httpapi.H(handler.library)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/engagement", Resource: "discovery", Auth: httpapi.Public,
 		Doc:     "Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.",
 		Request: EngagementBatch{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.engagement)},

@@ -189,7 +189,7 @@ func (s *Store) checkStoredPolicies(ctx context.Context, tx pgx.Tx, ids []string
 }
 
 // checkRuleEntities refuses a rule naming an entity that is not an active entity of
-// a sellable kind.
+// an entitlement-backed kind.
 func (s *Store) checkRuleEntities(ctx context.Context, q Querier, rules ...*access.Rule) error {
 	var ids []string
 	for _, r := range rules {
@@ -229,8 +229,8 @@ func (s *Store) checkRuleEntities(ctx context.Context, q Querier, rules ...*acce
 		if !ok {
 			return invalid("access group %s does not exist", id)
 		}
-		if !s.cfg.EntityKinds[kind].Sellable {
-			return invalid("access group %s is a %s, which is not sellable", id, kind)
+		if !s.cfg.EntityKinds[kind].Entitled {
+			return invalid("access group %s is a %s, which is not entitlement-backed", id, kind)
 		}
 	}
 	return nil

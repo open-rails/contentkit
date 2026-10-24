@@ -11,6 +11,8 @@ import { useMessages } from "../i18n/context.js";
 import { useMediaRead } from "../react/read.js";
 import { ContentKitUiRoot } from "../scope.js";
 import { Alert, AlertDescription, AlertTitle } from "#ckui/ui/alert";
+import { Button } from "#ckui/ui/button";
+import { Progress as ProgressBar } from "#ckui/ui/progress";
 import { EncodeProgress } from "./encode-progress.js";
 
 export interface MediaReadinessNoticeProps {
@@ -35,31 +37,46 @@ export interface MediaReadinessNoticeProps {
  */
 export function MediaReadinessNotice({ item, read: given, prefix, description, className, appearance, client }: MediaReadinessNoticeProps) {
   const { t } = useMessages();
-  const r = useMediaRead(item, { editor: true, prefix, read: given, client });
+  const r = useMediaRead(item, { editor: true, status: given === undefined && !prefix, prefix, read: given, client });
+  if (r.error) return <ContentKitUiRoot appearance={appearance} className={cn("w-full", className)} data-ckui="readiness" data-state="unavailable">
+    <Alert variant="destructive" role="alert">
+      <AlertTitle>{t("readiness.statusFailed")}</AlertTitle>
+      <AlertDescription><Button size="sm" variant="outline" onClick={r.reload}>{t("common.retry")}</Button></AlertDescription>
+    </Alert>
+  </ContentKitUiRoot>;
   const uploads = (r.read?.files ?? []).filter((f) => f.upload && !f.unattached);
-  const failed = uploads.filter((f) => f.failed);
+  const status = r.read?.status;
+  const failures = status?.failures ?? uploads.filter((f) => f.failed).map((f) => ({ path: f.path, code: f.failed!.code, message: f.failed!.message }));
+  const failureCount = status?.failure_count ?? failures.length;
+  const full = !!r.read?.full || status?.state === "full";
+  const failed = full || status?.state === "failed" || failureCount > 0;
   const busy = processing(r.read);
-  if (!r.read || (!failed.length && !busy)) return null;
-  const names = failed.map((f) => f.path.split("/").pop()!);
-  const progress = uploads.find((f) => isVideoType(f.type) && isProcessing(f) && f.progress)?.progress;
+  if (!r.read || (!failed && !busy)) return null;
+  const names = failures.map((f) => f.path.split("/").pop()!);
+  const progress = status?.encoding ?? uploads.find((f) => isVideoType(f.type) && isProcessing(f) && f.progress)?.progress;
+  const stages = status ? [
+    ...(status.archives.total > 0 ? [{ key: "archives", label: t("readiness.archives"), ...status.archives }] : []),
+    ...(status.archives.pages ? [{ key: "archive-pages", label: t("readiness.archivePages"), ...status.archives.pages }] : []),
+    ...status.presets.map((preset) => ({ key: `preset:${preset.name}`, label: preset.name, ...preset })),
+  ] : [];
   return (
-    <ContentKitUiRoot appearance={appearance} className={cn("w-full", className)} data-ckui="readiness" data-state={failed.length ? "failed" : "processing"}>
-      {failed.length ? (
-        <Alert variant="destructive" role="alert">
-          <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} />
-          <AlertTitle>{names.length === 1 ? t("readiness.failedOne", { name: names[0]! }) : t("readiness.failedMany", { count: names.length, names: names.join(", ") })}</AlertTitle>
-          <AlertDescription>{t("readiness.failedHint")}</AlertDescription>
-        </Alert>
-      ) : (
-        <Alert role="status">
-          <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="motion-safe:animate-spin" />
-          <AlertTitle>{t("readiness.processing")}</AlertTitle>
-          <AlertDescription>
-            {description ?? t("readiness.processingHint")}
-            {progress && <EncodeProgress progress={progress} className="mt-2" />}
-          </AlertDescription>
-        </Alert>
-      )}
+    <ContentKitUiRoot appearance={appearance} className={cn("w-full", className)} data-ckui="readiness" data-state={failed ? "failed" : "processing"}>
+      <Alert variant={failed ? "destructive" : "default"} role={failed ? "alert" : "status"}>
+        <HugeiconsIcon icon={failed ? Alert02Icon : Loading03Icon} strokeWidth={2} className={failed ? undefined : "motion-safe:animate-spin"} />
+        <AlertTitle>{full ? t("readiness.full") : failed ? failureCount === 0 ? t("readiness.failedStatus") : failureCount === 1 ? t("readiness.failedOne", { name: names[0] ?? "" }) : t("readiness.failedMany", { count: failureCount, names: names.join(", ") }) : t("readiness.processing")}</AlertTitle>
+        <AlertDescription className="grid gap-2">
+          {description ?? t(full ? "readiness.fullHint" : failed ? "readiness.failedHint" : "readiness.processingHint")}
+          {failures.length > 0 && <ul>{failures.map((failure, index) => <li key={`${failure.path}:${failure.code}:${index}`}>{failure.path}: {failure.message}</li>)}</ul>}
+          {stages.map((stage) => {
+            const label = t("readiness.stageProgress", { name: stage.label, completed: stage.completed, total: stage.total });
+            return <div key={stage.key} className="grid gap-1" data-ckui="media-stage" data-stage={stage.key}>
+              <p className="tabular-nums">{label}</p>
+              <ProgressBar value={stage.total > 0 ? 100 * stage.completed / stage.total : null} aria-label={stage.label} aria-valuetext={label} />
+            </div>;
+          })}
+          {progress && <EncodeProgress progress={progress} />}
+        </AlertDescription>
+      </Alert>
     </ContentKitUiRoot>
   );
 }

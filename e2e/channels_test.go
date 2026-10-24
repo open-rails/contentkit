@@ -26,12 +26,11 @@ import (
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/offers"
 )
 
-// channel is OnlyDemo's channel: user-owned, sellable, AuthKit-scoped, one
+// channel is OnlyDemo's channel: user-owned, entitlement-protected, AuthKit-scoped, one
 // per person, its creators' uploads limited.
-var channel = kinds.EntityKind{Route: "c", Owner: "user", Sellable: true, AuthScope: true, MaxPerOwner: 1,
+var channel = kinds.EntityKind{Route: "c", Owner: "user", Entitled: true, AuthScope: true, MaxPerOwner: 1,
 	Uploads: kinds.UploadLimits{FilesPerHour: 2, QuotaBytes: 1 << 20}}
 
 // channelBilling is the site's merchant on an embedded OpenRails: its client
@@ -59,16 +58,8 @@ func channelBilling(w *world) *openrails.Client {
 	return merchant
 }
 
-// A person's channel over the real engine, AuthKit, OpenRails and media: the
-// creator owns it within the cap and AuthKit scopes it; an editor of the
-// scope uploads and selects its avatar and sells it; a stranger may do
-// neither; cards carry the avatar, the offer and the viewer's membership;
-// the viewer joins it free and finds it among their groups; uploads are rate
-// limited and capped per channel; the host's Go client reads and writes it;
-// a holder of channel:content:write writes its posts; renaming it renames
-// its OpenRails product; deleting it retires its scope, its posts and hides
-// its media; restoring it brings back its scope, media and the posts its
-// deletion took, not one deleted before.
+// A person's channel keeps its owner, scoped editing, media limits and
+// externally granted membership. Content edits do not change billing products.
 func TestChannels(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
@@ -120,11 +111,6 @@ func TestChannels(t *testing.T) {
 	f.want(http.StatusOK, editorToken, "POST", "/media/upload/presign", presignPNG(ref, "cover/c.png", pngBytes(t, 33)), nil)
 	f.want(http.StatusTooManyRequests, editorToken, "POST", "/media/upload/presign", presignPNG(ref, "cover/d.png", pngBytes(t, 34)), nil)
 
-	// Selling: the editor sets it free to join; the stranger may not.
-	free := offers.Terms{Currency: "USD"}
-	f.want(http.StatusForbidden, strangerToken, "PUT", path+"/offer", free, nil)
-	f.want(http.StatusOK, editorToken, "PUT", path+"/offer", free, nil)
-
 	var page entities.EntityPage
 	f.want(http.StatusOK, viewerToken, "GET", "/entities?kind=channel&language=en", nil, &page)
 	card := page.Entities[0]
@@ -132,10 +118,10 @@ func TestChannels(t *testing.T) {
 		card.Avatar.Renditions[0].URL != published.Renditions[0].URL {
 		t.Fatalf("card avatar %+v, published %+v", card.Avatar, published)
 	}
-	if a := card.Access; a == nil || a.Member || a.Offer == nil || a.Offer.Terms.Amount != 0 || a.Key.Entity() != string(ch.ID) {
+	if a := card.Access; a == nil || a.Member || a.Key.Entity() != string(ch.ID) {
 		t.Fatalf("card access %+v", a)
 	}
-	f.want(http.StatusOK, viewerToken, "POST", path+"/join", nil, nil)
+	product, _ := grantKeys(t, merchant, viewer.ID, card.Access.Key.String())
 	var d entities.EntityDetail
 	f.want(http.StatusOK, viewerToken, "GET", path, nil, &d)
 	if d.Access == nil || !d.Access.Member || d.Avatar == nil || len(d.Avatar.Renditions) == 0 {
@@ -151,23 +137,7 @@ func TestChannels(t *testing.T) {
 		t.Fatalf("the editor's groups %+v", mine)
 	}
 
-	// A paid subscription, then free again: the sync stops renewals.
-	monthly := 720
-	f.want(http.StatusOK, editorToken, "PUT", path+"/offer", offers.Terms{Amount: 4_990_000, Currency: "USD", RenewHours: &monthly}, nil)
-	f.want(http.StatusOK, creatorToken, "PUT", path+"/offer", free, nil)
 	c := e.Client()
-	for deadline := time.Now().Add(time.Minute); ; time.Sleep(200 * time.Millisecond) {
-		list, err := c.GetOffers(ctx, contentkit.GetOffersQuery{Unsynced: ptr(true)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(list.Offers) == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("offers never synced: %+v", list.Offers)
-		}
-	}
 
 	// The host's in-process client: staff, without a credential.
 	if _, err := c.PatchEntity(ctx, string(ch.ID), entities.EntityUpdate{Text: []entities.Text{{Language: "en", Description: "Films"}}}); err != nil {
@@ -195,20 +165,11 @@ func TestChannels(t *testing.T) {
 	f.want(http.StatusForbidden, strangerToken, "PATCH", "/contents/"+made2.ID, catalog.ContentPatch{Comments: &comments}, nil)
 	f.want(http.StatusForbidden, writerToken, "PATCH", path, entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Mine"}}}, nil)
 
-	// Renaming the channel renames its product on OpenRails.
+	// The name in OpenRails is independent of the channel's displayed name.
 	f.want(http.StatusOK, editorToken, "PATCH", path, entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Studio Two"}}}, nil)
-	bill := ckopenrails.Billing(merchant)
-	for deadline := time.Now().Add(time.Minute); ; time.Sleep(200 * time.Millisecond) {
-		products, err := bill.Products(ctx, []string{card.Access.Key.String()})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if p, ok := products[card.Access.Key.String()]; ok && p.DisplayName == "Studio Two" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the product keeps its name: %+v", products)
-		}
+	products, err := merchant.ListProducts(ctx, billing.ProductListParams{Keys: []string{product.Key}})
+	if err != nil || len(products.Items) != 1 || products.Items[0].DisplayName != product.DisplayName {
+		t.Fatalf("channel rename changed billing product: %+v %v", products, err)
 	}
 
 	// Deleting retires the scope, deletes the channel's posts and hides its
@@ -458,4 +419,24 @@ func TestChannelCommentModeration(t *testing.T) {
 	if g := mine.Entities; len(g) != 1 || g[0].ID != ch.ID || !g[0].Moderator || g[0].Writer || g[0].Editor {
 		t.Fatalf("the moderator's groups %+v", mine)
 	}
+}
+
+// grantKeys changes only OpenRails. ContentKit observes the granted keys on its
+// next entitlement read; it has no offer or automatic join of its own.
+func grantKeys(t *testing.T, merchant *openrails.Client, account string, keys ...string) (billing.Product, billing.ProductAccessID) {
+	t.Helper()
+	ctx := t.Context()
+	customer := billing.CustomerID(uuid.MustParse(account))
+	if _, err := merchant.UpdateCustomer(ctx, customer, billing.UpdateCustomerParams{}); err != nil {
+		t.Fatal(err)
+	}
+	product, err := merchant.CreateProduct(ctx, billing.CreateProductParams{Key: "fixture-" + uuid.NewString(), DisplayName: "Billing membership", Entitlements: keys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants, err := merchant.CreateProductAccess(ctx, billing.CreateProductAccessBatchParams{Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}}})
+	if err != nil || len(grants) != 1 {
+		t.Fatalf("grant: %+v %v", grants, err)
+	}
+	return *product, grants[0].ID
 }

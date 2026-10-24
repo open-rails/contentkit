@@ -19,8 +19,6 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/contentkit/offers"
-	"github.com/open-rails/contentkit/publishing"
 	"github.com/open-rails/helpers/notify"
 )
 
@@ -1423,6 +1421,8 @@ type GetMediaQuery struct {
 	Download bool
 	// editors: uploads with edits, failures, progress and editor views
 	Editor bool
+	// editors: whole-item processing counts only, without URLs, media grants or editor-view work
+	Status bool
 }
 
 func (q GetMediaQuery) values() url.Values {
@@ -1444,6 +1444,9 @@ func (q GetMediaQuery) values() url.Values {
 	}
 	if q.Editor {
 		v.Set("editor", "")
+	}
+	if q.Status {
+		v.Set("status", "")
 	}
 	return v
 }
@@ -1493,6 +1496,8 @@ type GetMediaVersionQuery struct {
 	Download bool
 	// editors: uploads with edits, failures, progress and editor views
 	Editor bool
+	// editors: whole-item processing counts only, without URLs, media grants or editor-view work
+	Status bool
 }
 
 func (q GetMediaVersionQuery) values() url.Values {
@@ -1514,6 +1519,9 @@ func (q GetMediaVersionQuery) values() url.Values {
 	}
 	if q.Editor {
 		v.Set("editor", "")
+	}
+	if q.Status {
+		v.Set("status", "")
 	}
 	return v
 }
@@ -1660,7 +1668,7 @@ func (q GetEntitiesQuery) values() url.Values {
 	return v
 }
 
-// GetEntities is GET /v1/entities (public). Lists active entities with name, code, path, cover, avatar, count and a sellable entity's offer and the viewer's membership, filtered, ordered and cursor-paged.
+// GetEntities is GET /v1/entities (public). Lists active entities with name, code, path, cover, avatar, count and the viewer's entitlement membership, filtered, ordered and cursor-paged.
 func (c *Client) GetEntities(ctx context.Context, q GetEntitiesQuery) (entities.EntityPage, error) {
 	var out entities.EntityPage
 	err := c.call(ctx, http.MethodGet, "/v1/entities", q.values(), nil, &out)
@@ -1681,7 +1689,7 @@ func (q GetEntityQuery) values() url.Values {
 	return v
 }
 
-// GetEntity is GET /v1/entities/{id} (public). An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and sale; a merged entity answers with its survivor.
+// GetEntity is GET /v1/entities/{id} (public). An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and membership standing; a merged entity answers with its survivor.
 func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (entities.EntityDetail, error) {
 	var out entities.EntityDetail
 	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
@@ -2201,67 +2209,11 @@ func (c *Client) GetContentVersionArchive(ctx context.Context, id string, versio
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/archive", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil)
 }
 
-// PutContentOffer is PUT /v1/contents/{id}/offer (editor). Puts an offer on a content item: its content key opens every version. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
-func (c *Client) PutContentOffer(ctx context.Context, id string, body offers.Terms) (offers.Offer, error) {
-	var out offers.Offer
-	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/offer", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// DeleteContentOffer is DELETE /v1/contents/{id}/offer (editor). Withdraws a content item's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
-func (c *Client) DeleteContentOffer(ctx context.Context, id string) (offers.Offer, error) {
-	var out offers.Offer
-	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/offer", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// PutContentVersionOffer is PUT /v1/contents/{id}/versions/{vid}/offer (editor). Puts an offer on one version: its version key opens it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
-func (c *Client) PutContentVersionOffer(ctx context.Context, id string, vid string, body offers.Terms) (offers.Offer, error) {
-	var out offers.Offer
-	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/offer", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
-	return out, err
-}
-
-// DeleteContentVersionOffer is DELETE /v1/contents/{id}/versions/{vid}/offer (editor). Withdraws a version's offer; buyers keep it. For creators of the content, editors of its owner group (its owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope) and staff holding root:offers:write.
-func (c *Client) DeleteContentVersionOffer(ctx context.Context, id string, vid string) (offers.Offer, error) {
-	var out offers.Offer
-	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}/offer", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, &out)
-	return out, err
-}
-
-// PutEntityOffer is PUT /v1/entities/{id}/offer (editor). Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. Terms without renew_hours stop existing subscriptions renewing. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
-func (c *Client) PutEntityOffer(ctx context.Context, id string, body offers.Terms) (offers.Offer, error) {
-	var out offers.Offer
-	err := c.call(ctx, http.MethodPut, expand("/v1/entities/{id}/offer", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// DeleteEntityOffer is DELETE /v1/entities/{id}/offer (editor). Withdraws a group's offer; members keep theirs, subscribers until their paid period ends: no subscription renews. For the group's owner, holders of {kind}:offers:write or {kind}:settings:manage in its AuthKit scope and staff holding root:offers:write.
-func (c *Client) DeleteEntityOffer(ctx context.Context, id string) (offers.Offer, error) {
-	var out offers.Offer
-	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/offer", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// PostEntityJoin is POST /v1/entities/{id}/join (user). Joins a public group free to join: grants the viewer its key. Internal entities are not joinable.
-func (c *Client) PostEntityJoin(ctx context.Context, id string) (offers.EntityJoin, error) {
-	var out offers.EntityJoin
-	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/join", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// DeleteEntityJoin is DELETE /v1/entities/{id}/join (user). Leaves a group joined free; a bought membership stays.
-func (c *Client) DeleteEntityJoin(ctx context.Context, id string) (offers.EntityJoin, error) {
-	var out offers.EntityJoin
-	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/join", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
 // GetMeLibraryQuery is the query of GetMeLibrary.
 type GetMeLibraryQuery struct {
-	// the language of the titles
+	// title language
 	Language string
-	// the previous page's next_cursor
+	// previous next_cursor
 	Cursor string
 	// page size: 20 by default, at most 100
 	Limit int
@@ -2281,46 +2233,10 @@ func (q GetMeLibraryQuery) values() url.Values {
 	return v
 }
 
-// GetMeLibrary is GET /v1/me/library (user). The content the viewer bought, newest first, deleted content included, within this domain's hard visibility boundary.
-func (c *Client) GetMeLibrary(ctx context.Context, q GetMeLibraryQuery) (offers.LibraryPage, error) {
-	var out offers.LibraryPage
+// GetMeLibrary is GET /v1/me/library (user). Content covered by the reader's purchased content or version entitlements, within the current domain's hard visibility boundary.
+func (c *Client) GetMeLibrary(ctx context.Context, q GetMeLibraryQuery) (discovery.LibraryPage, error) {
+	var out discovery.LibraryPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/library", q.values(), nil, &out)
-	return out, err
-}
-
-// GetOffersQuery is the query of GetOffers.
-type GetOffersQuery struct {
-	// active or withdrawn
-	State string
-	// only offers OpenRails does not match yet
-	Unsynced *bool
-	// the previous page's next_cursor
-	Cursor string
-	// page size: 50 by default, at most 100
-	Limit int
-}
-
-func (q GetOffersQuery) values() url.Values {
-	v := url.Values{}
-	if q.State != "" {
-		v.Set("state", q.State)
-	}
-	if q.Unsynced != nil {
-		v.Set("unsynced", fmt.Sprint(*q.Unsynced))
-	}
-	if q.Cursor != "" {
-		v.Set("cursor", q.Cursor)
-	}
-	if q.Limit != 0 {
-		v.Set("limit", fmt.Sprint(q.Limit))
-	}
-	return v
-}
-
-// GetOffers is GET /v1/offers (staff). Offers, newest first, with their OpenRails sync state.
-func (c *Client) GetOffers(ctx context.Context, q GetOffersQuery) (offers.OfferPage, error) {
-	var out offers.OfferPage
-	err := c.call(ctx, http.MethodGet, "/v1/offers", q.values(), nil, &out)
 	return out, err
 }
 
@@ -3665,7 +3581,7 @@ func (c *Client) GetManageSearchSuggestions(ctx context.Context, q GetManageSear
 	return out, err
 }
 
-// PostImport is POST /v1/import (staff). Imports a batch of groups, content items, memberships, offers, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.
+// PostImport is POST /v1/import (staff). Imports a batch of groups, content items, memberships, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.
 func (c *Client) PostImport(ctx context.Context, body importer.Batch) (importer.Result, error) {
 	var out importer.Result
 	err := c.call(ctx, http.MethodPost, "/v1/import", nil, body, &out)
@@ -3676,26 +3592,5 @@ func (c *Client) PostImport(ctx context.Context, body importer.Batch) (importer.
 func (c *Client) PostImportExternalIds(ctx context.Context, body importer.ExternalIDsQuery) (importer.ExternalIDs, error) {
 	var out importer.ExternalIDs
 	err := c.call(ctx, http.MethodPost, "/v1/import/external-ids", nil, body, &out)
-	return out, err
-}
-
-// PutPublishingOperation is PUT /v1/publishing-operations/{id} (public). Creates or resumes one immutable archive submission. id is a client-chosen UUID. Requires content write; creating missing taxonomy also requires group write. Tenant and app come from the verified request. Repeating identical input returns the same draft and renews expired upload instructions; changed input is a conflict. when_ready requires provider-supported durable authorization.
-func (c *Client) PutPublishingOperation(ctx context.Context, id string, body publishing.Request) (publishing.Operation, error) {
-	var out publishing.Operation
-	err := c.call(ctx, http.MethodPut, expand("/v1/publishing-operations/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// PostPublishingOperationComplete is POST /v1/publishing-operations/{id}/complete (public). Completes the submission's declared upload and durably begins processing. The server owns its exact media commit; no caller-supplied content IDs or blob references are accepted. Repeats do not create another import.
-func (c *Client) PostPublishingOperationComplete(ctx context.Context, id string, body publishing.CompleteRequest) (publishing.Operation, error) {
-	var out publishing.Operation
-	err := c.call(ctx, http.MethodPost, expand("/v1/publishing-operations/{id}/complete", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// GetPublishingOperation is GET /v1/publishing-operations/{id} (public). Reads an owned submission, its compact progress, asynchronous failure or final catalog path. This read never creates upload URLs or advances the operation. HTTP 200 does not imply successful publication.
-func (c *Client) GetPublishingOperation(ctx context.Context, id string) (publishing.Operation, error) {
-	var out publishing.Operation
-	err := c.call(ctx, http.MethodGet, expand("/v1/publishing-operations/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }

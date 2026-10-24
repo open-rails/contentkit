@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contenturl"
-	"github.com/open-rails/contentkit/offers"
 )
 
 // Sort orders an entity listing; every order is made total by id.
@@ -80,10 +79,10 @@ type EntityCard struct {
 	Avatar     *Avatar        `json:"avatar,omitempty"`
 	Count      int            `json:"count"`
 	Attributes map[string]any `json:"attributes"`
-	// Access is a sellable entity's sale: its key, active offer and the
+	// Access is an entitlement-backed entity's key and the
 	// viewer's standing.
-	Access    *offers.EntityAccess `json:"access,omitempty"`
-	CreatedAt time.Time            `json:"created_at"`
+	Access    *EntityAccess `json:"access,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
 }
 
 // EntityPage is one page of a listing.
@@ -109,11 +108,9 @@ type EntityDetail struct {
 	Children     []EntityCard `json:"children"`
 	Edges        []Edge       `json:"edges"`
 	Counts       []Count      `json:"counts"`
-	// Access is a sellable entity's sale: its key, active offer and the
+	// Access is an entitlement-backed entity's key and the
 	// viewer's standing.
-	Access *offers.EntityAccess `json:"access,omitempty"`
-	// Offer is a sellable entity's current offer, for its offer editors.
-	Offer *offers.Offer `json:"offer,omitempty"`
+	Access *EntityAccess `json:"access,omitempty"`
 }
 
 type listCursor struct {
@@ -350,7 +347,7 @@ func (s *Store) path(kind, code, slug, language string) string {
 }
 
 // List pages active entities with their display name, code, path, cover,
-// avatar, count and, for a sellable kind, its sale to the store's viewer
+// avatar, count and, for an entitlement-backed kind, the store viewer's membership
 // (As).
 func (s *Store) List(ctx context.Context, opts ListOptions) (EntityPage, error) {
 	if err := s.requireInternalRead(ctx, opts.IncludeInternal); err != nil {
@@ -431,7 +428,7 @@ func (s *Store) Cards(ctx context.Context, ids []EntityID, o CardOptions) ([]Ent
 const maxMergeHops = 8
 
 // Detail returns an active entity with its names, text, parent, scope,
-// children, edges, counts and sale, resolved for language as List does. A merged
+// children, edges, counts and membership standing, resolved for language as List does. A merged
 // entity answers with its survivor; a deleted one is ErrNotFound.
 func (s *Store) Detail(ctx context.Context, id EntityID, language string) (EntityDetail, error) {
 	return s.detail(ctx, id, language, false)
@@ -576,7 +573,6 @@ func (s *Store) detail(ctx context.Context, id EntityID, language string, includ
 	if err := s.fill(ctx, shows, language); err != nil {
 		return d, err
 	}
-	d.Offer = s.currentOffer(ctx, d.Entity)
 	return d, nil
 }
 

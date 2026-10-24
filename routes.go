@@ -50,10 +50,6 @@ const (
 	// NotificationRoutes: the user inbox and the host's publish route
 	// (/v1/notifications).
 	NotificationRoutes
-	// OfferRoutes: offers on content, versions and groups, free group joins
-	// and the viewer's library (/v1/.../offer, /v1/entities/{id}/join,
-	// /v1/me/library, /v1/offers).
-	OfferRoutes
 	// DiscoveryRoutes: lists, search, typeahead, similar and recommended
 	// contents, release dates, the reader's content filters and history,
 	// signals and exposures (/v1/contents, /v1/search, /v1/me/history, ...).
@@ -61,11 +57,9 @@ const (
 	// ImportRoutes: the bulk import a legacy importer writes through
 	// (/v1/import).
 	ImportRoutes
-	// PublishingRoutes: durable archive submissions (/v1/publishing-operations).
-	PublishingRoutes
 
 	// AllRoutes is every route group.
-	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | EntityRoutes | NotificationRoutes | OfferRoutes | DiscoveryRoutes | ImportRoutes | PublishingRoutes
+	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | EntityRoutes | NotificationRoutes | DiscoveryRoutes | ImportRoutes
 )
 
 var groupModules = []struct {
@@ -79,14 +73,12 @@ var groupModules = []struct {
 	{CodeRoutes, []httpapi.Module{httpapi.Codes}, "codes"},
 	{EntityRoutes, []httpapi.Module{httpapi.Entities}, "entities"},
 	{NotificationRoutes, []httpapi.Module{httpapi.Notifications}, "notifications"},
-	{OfferRoutes, []httpapi.Module{httpapi.Offers}, "offers"},
 	{DiscoveryRoutes, []httpapi.Module{httpapi.Discovery}, "discovery"},
 	{ImportRoutes, []httpapi.Module{httpapi.Import}, "import"},
-	{PublishingRoutes, []httpapi.Module{httpapi.Publishing}, "publishing"},
 }
 
 // ParseRouteGroups reads route group names ("content", "upload", "media",
-// "codes", "entities", "notifications", "offers", "discovery", "import", "publishing" or "all"), as a server's configuration
+// "codes", "entities", "notifications", "discovery", "import" or "all"), as a server's configuration
 // lists them.
 func ParseRouteGroups(names []string) (RouteGroups, error) {
 	var out RouteGroups
@@ -139,7 +131,7 @@ func (e *Engine) Routes(selection Routes) ([]Route, error) {
 	return []Route{{Path: prefix + httpapi.Version + "/", Handler: e.dispatch(prefix, modules)}}, nil
 }
 
-var needs = map[RouteGroups]string{UploadRoutes: "Config.Media", MediaRoutes: "Config.Media", PublishingRoutes: "Config.Media", OfferRoutes: "Deps.Billing"}
+var needs = map[RouteGroups]string{UploadRoutes: "Config.Media", MediaRoutes: "Config.Media"}
 
 // RouteGroups is every route group the engine can serve: those whose modules
 // its Config provides.

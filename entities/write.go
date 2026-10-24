@@ -482,7 +482,7 @@ func (s *Store) Entities(ctx context.Context, ids []EntityID) ([]Entity, error) 
 // or provisions its AuthKit scope and hides or shows its media; deleting a
 // user-owned entity deletes the content it owns, restoring it restores that
 // content and, within the retention, its media (Options.Owned,
-// Options.Folders). Renaming a sellable entity renames its offer's product.
+// Options.Folders). Billing product names are managed by the billing provider.
 // Written as a person (As), each
 // entity is a user-owned one the person owns or holds
 // access.EntitySettingsManage in, its slug, links, owner and scope stay, and
@@ -540,7 +540,7 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		changed = changed[:0]
 		var textIDs, nameIDs, reach []string
 		var restored []entityRow
-		var flipped, renamed []Ref
+		var flipped []Ref
 		var relabeled []string
 		given := map[string][]nameRow{}
 		var unavailable []Ref
@@ -575,9 +575,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 				flipped = append(flipped, Ref{Kind: g.Kind, ID: g.ID})
 			} else if u.Internal != nil && *u.Internal != g.Internal {
 				flipped = append(flipped, Ref{Kind: g.Kind, ID: g.ID})
-			}
-			if u.Names != nil || u.Slug != nil {
-				renamed = append(renamed, Ref{Kind: g.Kind, ID: g.ID})
 			}
 			if row.Slug != g.Slug {
 				relabeled = append(relabeled, string(g.ID))
@@ -648,9 +645,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 			if err := s.insertNames(ctx, q, names); err != nil {
 				return err
 			}
-		}
-		if err := s.resyncSold(ctx, q, renamed); err != nil {
-			return err
 		}
 		if len(textIDs) > 0 {
 			if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND entity_id = ANY($2::text[])`, s.table("content_entity_text")), s.tenant, textIDs); err != nil {

@@ -15,7 +15,6 @@ import { HoverPreview } from "../hover-preview.js";
 import { RenditionImg } from "../rendition-img.js";
 import { RelativeTime } from "../social/parts.js";
 import { EntityAvatar, EntityLink, labelOf, type EntityLike, type Labels } from "../entities/parts.js";
-import { priceLabel } from "./paywall.js";
 
 export interface ContentCardProps {
   card: Card;
@@ -133,16 +132,13 @@ function Decorations({ card, decorate, aboveTitle }: { card: Card; decorate?: (c
 
 const compact = (n: number, language?: string) => new Intl.NumberFormat(language, { notation: "compact", maximumFractionDigits: 1 }).format(n);
 
-/** Why a card is locked, in words (its price when it is on sale); null when it opens. */
+/** Why a card is locked, without copying prices from the billing catalog. */
 export function lockLabel(m: Translator, a: CardAccess, tiers: readonly string[] = [], labels?: Labels): string | null {
   if (a.allowed) return null;
   if (a.unknown) return m.t("contents.unknownAccess");
-  const offer = a.offers?.[0];
-  if (offer) return offer.target.kind === "group" && Number(offer.terms.amount) === 0 ? m.t("contents.joinFree") : priceLabel(m, offer.terms);
   const tier = a.sell?.find((k) => tiers.includes(k));
   if (tier) return labelOf(labels, tier);
   if (a.sell?.some((k) => k.includes(":group:"))) return m.t("contents.members");
-  if (a.sell?.length) return m.t("contents.forSale");
   return m.t("contents.locked");
 }
 

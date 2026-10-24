@@ -9,7 +9,6 @@ require (
 	github.com/open-rails/contentkit v0.117.0
 	github.com/open-rails/helpers v1.16.1
 	github.com/open-rails/openrails v0.262.0
-	github.com/riverqueue/river v0.49.0
 )
 
 require (
@@ -83,6 +82,7 @@ require (
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
+	github.com/riverqueue/river v0.49.0 // indirect
 	github.com/riverqueue/river/riverdriver v0.49.0 // indirect
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.49.0 // indirect
 	github.com/riverqueue/river/rivershared v0.49.0 // indirect
@@ -122,5 +122,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-// The adapter tracks ContentKit's tree: access.Billing and offers ship with it.
+// Tests use the checkout's entitlement-reader contract.
 replace github.com/open-rails/contentkit => ../..

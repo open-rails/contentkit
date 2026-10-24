@@ -93,7 +93,7 @@ func TestEntitySchemaUpgradePreservesIdentityAndReplay(t *testing.T) {
 			operationBefore := snapshot(`SELECT (to_jsonb(o)-'group_ids')::text FROM `+q+`.content_publishing_operations o WHERE tenant_id=$1 AND id=$2`, tenant, operation)
 			eventsBefore := snapshot(`SELECT jsonb_agg(to_jsonb(e) ORDER BY position)::text FROM `+q+`.content_events e WHERE tenant_id=$1`, tenant)
 			for range 2 {
-				if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
+				if err := migrator.ApplyMigrations(ctx, steps[:at("0039_entity_terminology.up.sql")]); err != nil {
 					t.Fatal(err)
 				}
 			}
