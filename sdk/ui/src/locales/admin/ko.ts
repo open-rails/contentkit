@@ -381,6 +381,7 @@ export const admin: typeof en = {
     removeTrack: "트랙 {n} 삭제",
     matched: "오디오 {count}개를 페이지나 앵커에 맞췄습니다.",
     matchedNone: "페이지나 앵커와 맞는 오디오 파일 이름이 없어 바꾸지 않았습니다.",
+    replacedCues: "교체된 기존 큐: {count}.",
     pagesWithoutAudio: "오디오가 없는 페이지: {names}",
     audioWithoutPlace: "맞는 페이지나 앵커가 없는 오디오: {names}",
     at_anchors: "앵커 {n}",

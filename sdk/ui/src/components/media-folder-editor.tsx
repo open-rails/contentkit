@@ -4,12 +4,12 @@ import {
   Delete02Icon,
   Edit02Icon,
   File01Icon,
+  FileUploadIcon,
   Image01Icon,
   ImageAdd01Icon,
   Loading03Icon,
   MusicNote01Icon,
   Refresh01Icon,
-  RepeatIcon,
   Video01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
@@ -769,7 +769,7 @@ function UploadRow({
           </Button>
         )}
         <Button variant="ghost" size="icon-sm" aria-label={t("common.replace")} title={t("common.replace")} disabled={locked} onClick={() => onReplace(f.path)}>
-          <HugeiconsIcon icon={RepeatIcon} strokeWidth={2} />
+          <HugeiconsIcon icon={FileUploadIcon} strokeWidth={2} />
         </Button>
         <Button variant="ghost" size="icon-sm" aria-label={t("common.remove")} title={t("common.remove")} disabled={locked} onClick={() => void folder.remove([f.path]).catch(() => {})}>
           <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />

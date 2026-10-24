@@ -79,7 +79,7 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
   const meta = draft.value.meta;
   const dirty = draft.dirty.length > 0;
   const [saved, setSaved] = useState(false);
-  const [matched, setMatched] = useState<AudioMatch | null>(null);
+  const [matched, setMatched] = useState<(AudioMatch & { replaced: number }) | null>(null);
   const save = useAction("reader.save", onError);
   const problems = useMemo(() => (meta ? readerMetaProblems(meta, names) : []), [meta, names]);
   const edit = (fn: (m: ReaderMeta) => ReaderMeta) => {
@@ -109,11 +109,10 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
         <p className="text-muted-foreground">
           {t("readerManifest.summary", { pages: names.pages.length, files: names.files.length })} {!names.files.length && t("readerManifest.noAudio")}
         </p>
-        <Defaults meta={meta} edit={edit} />
         <Entity title={t("readerManifest.anchors")} help={t("readerManifest.anchorsHelp")} add={t("readerManifest.addAnchor")} disabled={!names.pages.length}
           onAdd={() => edit((m) => ({ ...m, anchors: [...(m.anchors ?? []), { id: nextId(m.anchors ?? []), page: names.pages[0]!.id, offset_percent: 0 }] }))}>
           {anchors.map((a, i) => (
-            <AnchorRow key={i} index={i} anchor={a} media={media} onChange={(next) => edit((m) => ({ ...m, anchors: replace(m.anchors, i, next) }))}
+            <AnchorRow key={i} index={i} anchor={a} media={media} problems={problems.filter((p) => p.at === "anchors" && p.index === i)} onChange={(next) => edit((m) => ({ ...m, anchors: replace(m.anchors, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, anchors: drop(m.anchors, i) }))} />
           ))}
         </Entity>
@@ -122,7 +121,7 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
           extra={
             <Button type="button" size="sm" variant="outline" disabled={!names.files.length} onClick={() => {
               const r = matchAudio(names, anchorIds);
-              setMatched(r);
+              setMatched({ ...r, replaced: r.foreground.length ? (meta.foreground ?? []).length : 0 });
               if (r.foreground.length) edit((m) => ({ ...m, foreground: r.foreground }));
             }}>
               {t("readerManifest.match")}
@@ -130,18 +129,19 @@ export function ReaderManifestEditor({ kind, content, version, client: own, onEr
           }>
           {matched && <MatchReport match={matched} />}
           {(meta.foreground ?? []).map((c, i) => (
-            <ForegroundRow key={i} index={i} cue={c} names={names} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, foreground: replace(m.foreground, i, next) }))}
+            <ForegroundRow key={i} index={i} cue={c} names={names} problems={problems.filter((p) => p.at === "foreground" && p.index === i)} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, foreground: replace(m.foreground, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, foreground: drop(m.foreground, i) }))} />
           ))}
         </Entity>
         <Entity title={t("readerManifest.background")} help={t("readerManifest.backgroundHelp")} add={t("readerManifest.addTrack")} disabled={!names.files.length}
           onAdd={() => edit((m) => ({ ...m, background: [...(m.background ?? []), { file: names.files[0]! }] }))}>
           {(meta.background ?? []).map((c, i) => (
-            <BackgroundRow key={i} index={i} cue={c} names={names} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, background: replace(m.background, i, next) }))}
+            <BackgroundRow key={i} index={i} cue={c} names={names} problems={problems.filter((p) => p.at === "background" && p.index === i)} media={media} anchors={anchorIds} onChange={(next) => edit((m) => ({ ...m, background: replace(m.background, i, next) }))}
               onRemove={() => edit((m) => ({ ...m, background: drop(m.background, i) }))} />
           ))}
         </Entity>
-        {problems.length > 0 && <Problems problems={problems} />}
+        <Defaults meta={meta} edit={edit} />
+        <Problems problems={problems.filter((p) => p.at === "defaults")} />
         <ErrorLine error={save.error} />
         {!coordinated && <div className="flex flex-wrap items-center gap-3">
           <Button type="submit" size="sm" disabled={save.pending || !dirty || problems.length > 0}>
@@ -240,7 +240,7 @@ function Remove({ label, onRemove }: { label: string; onRemove: () => void }) {
   );
 }
 
-function AnchorRow({ index, anchor: a, media, onChange, onRemove }: { index: number; anchor: Anchor; media: PlanMedia; onChange: (a: Anchor) => void; onRemove: () => void }) {
+function AnchorRow({ index, anchor: a, media, problems, onChange, onRemove }: { index: number; anchor: Anchor; media: PlanMedia; problems: ReaderMetaProblem[]; onChange: (a: Anchor) => void; onRemove: () => void }) {
   const { t } = useMessages();
   const n = index + 1;
   return (
@@ -252,11 +252,12 @@ function AnchorRow({ index, anchor: a, media, onChange, onRemove }: { index: num
       <Input className="h-8 w-28" type="number" min={0} step="any" aria-label={t("readerManifest.duration", { n })} placeholder={t("readerManifest.durationPlaceholder")}
         value={shown(a.duration_seconds)} onChange={(e) => onChange({ ...a, duration_seconds: e.target.value.trim() === "" ? undefined : num(e.target.value) })} />
       <Remove label={t("readerManifest.removeAnchor", { n })} onRemove={onRemove} />
+      <Problems problems={problems} />
     </div>
   );
 }
 
-function ForegroundRow({ index, cue: c, names, media, anchors, onChange, onRemove }: { index: number; cue: ForegroundCue; names: ReaderNames; media: PlanMedia; anchors: readonly string[]; onChange: (c: ForegroundCue) => void; onRemove: () => void }) {
+function ForegroundRow({ index, cue: c, names, media, anchors, problems, onChange, onRemove }: { index: number; cue: ForegroundCue; names: ReaderNames; media: PlanMedia; problems: ReaderMetaProblem[]; anchors: readonly string[]; onChange: (c: ForegroundCue) => void; onRemove: () => void }) {
   const { t } = useMessages();
   const n = index + 1;
   return (
@@ -265,11 +266,12 @@ function ForegroundRow({ index, cue: c, names, media, anchors, onChange, onRemov
       <AudioPreview url={media.audio.get(c.file)} label={c.file} />
       <Place label={t("readerManifest.cueAt", { n })} value={placeOf(c.page, c.anchor)} media={media} anchors={anchors} onChange={(v) => onChange({ file: c.file, ...fromPlace(v) })} />
       <Remove label={t("readerManifest.removeCue", { n })} onRemove={onRemove} />
+      <Problems problems={problems} />
     </div>
   );
 }
 
-function BackgroundRow({ index, cue: c, names, media, anchors, onChange, onRemove }: { index: number; cue: BackgroundCue; names: ReaderNames; media: PlanMedia; anchors: readonly string[]; onChange: (c: BackgroundCue) => void; onRemove: () => void }) {
+function BackgroundRow({ index, cue: c, names, media, anchors, problems, onChange, onRemove }: { index: number; cue: BackgroundCue; names: ReaderNames; media: PlanMedia; problems: ReaderMetaProblem[]; anchors: readonly string[]; onChange: (c: BackgroundCue) => void; onRemove: () => void }) {
   const { t } = useMessages();
   const n = index + 1;
   const from = fromPlace(placeOf(c.from_page, c.from_anchor));
@@ -290,26 +292,32 @@ function BackgroundRow({ index, cue: c, names, media, anchors, onChange, onRemov
       <Input className="h-8 w-28" aria-label={t("readerManifest.layer", { n })} placeholder={t("readerManifest.layerPlaceholder")} value={c.layer ?? ""}
         onChange={(e) => onChange({ ...c, layer: e.target.value || undefined })} />
       <Remove label={t("readerManifest.removeTrack", { n })} onRemove={onRemove} />
+      <Problems problems={problems} />
     </div>
   );
 }
 
-function MatchReport({ match }: { match: AudioMatch }) {
+function MatchReport({ match }: { match: AudioMatch & { replaced: number } }) {
   const { t } = useMessages();
   return (
     <div className="grid gap-1 rounded-md bg-muted p-2 text-xs" role="status">
-      <p>{match.foreground.length ? t("readerManifest.matched", { count: match.foreground.length }) : t("readerManifest.matchedNone")}</p>
+      <p>
+        {match.foreground.length ? t("readerManifest.matched", { count: match.foreground.length }) : t("readerManifest.matchedNone")}
+        {match.replaced > 0 && ` ${t("readerManifest.replacedCues", { count: match.replaced })}`}
+      </p>
       {match.unmatchedPages.length > 0 && <p>{t("readerManifest.pagesWithoutAudio", { names: match.unmatchedPages.join(", ") })}</p>}
       {match.unmatchedFiles.length > 0 && <p>{t("readerManifest.audioWithoutPlace", { names: match.unmatchedFiles.join(", ") })}</p>}
     </div>
   );
 }
 
+/** A row's or the defaults' problems, beside what they are about. */
 function Problems({ problems }: { problems: ReaderMetaProblem[] }) {
   const { t } = useMessages();
+  if (!problems.length) return null;
   const where = (p: ReaderMetaProblem) => t(`readerManifest.at_${p.at}`, { n: p.index + 1 });
   return (
-    <ul className="grid gap-0.5 text-destructive" role="alert" data-ckui="reader-problems">
+    <ul className="grid basis-full gap-0.5 text-xs text-destructive" role="alert" data-ckui="reader-problems">
       {problems.map((p, i) => (
         <li key={i}>{t(`readerManifest.problem_${p.problem}`, { where: where(p) })}</li>
       ))}

@@ -381,6 +381,7 @@ export const admin: typeof en = {
     removeTrack: "トラック {n} を削除",
     matched: "{count} 件の音声をページまたはアンカーに割り当てました。",
     matchedNone: "ページやアンカーに一致する音声ファイル名がないため、変更していません。",
+    replacedCues: "置き換えた既存のキュー: {count}。",
     pagesWithoutAudio: "音声のないページ：{names}",
     audioWithoutPlace: "一致するページやアンカーのない音声：{names}",
     at_anchors: "アンカー {n}",
