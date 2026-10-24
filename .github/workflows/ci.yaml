@@ -38,6 +38,7 @@ jobs:
       env:
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: |
         python3 - <<'PY'
         import os, subprocess
@@ -49,6 +50,11 @@ jobs:
             parents = [line.split()[1] for line in commit.splitlines() if line.startswith('parent ')]
             if parents != [os.environ['PR_BASE_SHA'], os.environ['PR_HEAD_SHA']]:
                 raise SystemExit('not the expected PR plus current-base merge')
+            ref = 'refs/heads/' + os.environ['PR_BASE_REF']
+            subprocess.run(['git', 'check-ref-format', ref], check=True)
+            current = subprocess.check_output(['git', 'ls-remote', '--exit-code', 'origin', ref], text=True).split()[0]
+            if current != os.environ['PR_BASE_SHA']:
+                raise SystemExit('base advanced; update the PR and rerun')
         PY
     - name: Validate selection and select suites
       id: select
@@ -114,9 +120,34 @@ jobs:
     if: always() && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     steps:
-    - env:
-        RESULTS: ${{ join(needs.*.result, ' ') }}
+    - name: Require every selected suite to pass
+      env:
+        NEEDS: ${{ toJSON(needs) }}
       run: |
-        for result in $RESULTS; do
-          [[ "$result" == success || "$result" == skipped ]] || exit 1
-        done
+        python3 - <<'PY'
+        import json, os
+        jobs = json.loads(os.environ['NEEDS'])
+        for name in ('select', 'scan'):
+            if jobs[name]['result'] != 'success':
+                raise SystemExit(f'{name} did not pass')
+        outputs = jobs['select']['outputs']
+        suites = {'workflow-lint': 'workflow', 'go': 'go', 'media-image': 'media_image', 'media-video': 'media_video', 'sdk-ui': 'ui', 'image-definitions': 'images'}
+        for name, selected in suites.items():
+            if outputs.get(selected) not in ('true', 'false'):
+                raise SystemExit(f'missing or invalid suite selection: {selected}')
+            result = jobs[name]['result']
+            if outputs[selected] == 'true':
+                if result != 'success':
+                    raise SystemExit(f'selected {name} did not pass: {result}')
+            elif result not in ('success', 'skipped'):
+                raise SystemExit(f'{name} failed: {result}')
+        PY
+    - name: Require the tested base to remain current
+      if: github.event_name == 'pull_request'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        current="$(gh api "repos/$GITHUB_REPOSITORY/commits/$BASE_REF" --jq .sha)"
+        [[ "$current" == "$BASE_SHA" ]] || { echo 'Base advanced; update the PR and rerun.' >&2; exit 1; }

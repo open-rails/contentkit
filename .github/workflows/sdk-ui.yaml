@@ -116,3 +116,25 @@ jobs:
         for p in $(docker compose ls -a --format json | jq -r '.[].Name' | grep '^ckui-e2e-' || true); do
           docker compose -p "$p" -f e2e/compose.yaml --profile worker down -v --remove-orphans -t 2
         done
+
+  gate:
+    name: Selected UI suites
+    needs: [sdk-ui, e2e]
+    if: always() && !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    steps:
+    - env:
+        RESULTS: ${{ toJSON(needs) }}
+        UNIT: ${{ github.event_name == 'workflow_dispatch' || inputs.unit }}
+        BROWSER: ${{ github.event_name == 'workflow_dispatch' || inputs.browser }}
+      run: |
+        python3 - <<'PY'
+        import json, os
+        jobs = json.loads(os.environ['RESULTS'])
+        for name, flag in [('sdk-ui', 'UNIT'), ('e2e', 'BROWSER')]:
+            result = jobs[name]['result']
+            if os.environ[flag] == 'true' and result != 'success':
+                raise SystemExit(f'selected {name} did not pass: {result}')
+            if os.environ[flag] != 'true' and result not in ('success', 'skipped'):
+                raise SystemExit(f'{name} failed: {result}')
+        PY

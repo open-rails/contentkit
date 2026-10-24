@@ -216,3 +216,25 @@ jobs:
         go mod tidy -diff
         go vet ./...
         go test ./... -count=1 -race
+
+  gate:
+    name: Selected Go suites
+    needs: [test, server, authkit-adapter, openrails-adapter]
+    if: always() && !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    steps:
+    - env:
+        RESULTS: ${{ toJSON(needs) }}
+        SELECTED: ${{ toJSON(inputs) }}
+      run: |
+        python3 - <<'PY'
+        import json, os
+        jobs, inputs = json.loads(os.environ['RESULTS']), json.loads(os.environ['SELECTED'])
+        selected = {'test': inputs.get('shards', '[]') != '[]', 'server': inputs.get('server', False), 'authkit-adapter': inputs.get('authkit_adapter', False), 'openrails-adapter': inputs.get('openrails_adapter', False)}
+        for name, required in selected.items():
+            result = jobs[name]['result']
+            if required and result != 'success':
+                raise SystemExit(f'selected {name} did not pass: {result}')
+            if not required and result not in ('success', 'skipped'):
+                raise SystemExit(f'{name} failed: {result}')
+        PY
