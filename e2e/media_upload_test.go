@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -32,7 +34,6 @@ import (
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/worker"
-	"github.com/open-rails/contentkit/publishing"
 )
 
 type publisherTransport struct {
@@ -50,10 +51,9 @@ func (p publisherTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(r)
 }
 
-// Exercise the real HTTP, native app-bound API key, durable SQL operation,
-// direct S3 upload, ZIP import and stock image worker as one workflow. Stop the
-// engine after accepting the ZIP; a new engine must finish that same operation.
-func TestPublishingArchiveSurvivesRestart(t *testing.T) {
+// Exercise independent content creation, the ordinary three-step media
+// upload, durable import after restart, status polling and explicit publication.
+func TestMediaUploadSurvivesRestartWithoutPublishing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
@@ -135,30 +135,51 @@ func TestPublishingArchiveSurvivesRestart(t *testing.T) {
 	api := serveEngine(engine)
 	writes := &atomic.Int32{}
 	client := contentkit.NewClient(api.URL+prefix, &http.Client{Transport: publisherTransport{key.Secret, writes}})
-	id := uuid.NewString()
-	archive := publishingZIP(t)
-	request := publishing.Request{Content: catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "A publisher integration gallery"}}}, Publish: publishing.WhenReady, CreateMissingEntities: true,
-		Entities: []publishing.EntityReference{{Kind: "artist", Name: "Test Artist", Language: "en"}, {Kind: "series", Name: "Example Series", Language: "en"}, {Kind: "tag", Name: "Color", Language: "en"}}, Source: &publishing.Source{Provider: "test", ID: id}}
-	interrupted, stop := context.WithCancel(ctx)
-	first, err := client.PublishArchive(interrupted, contentkit.ArchivePublication{OperationID: id, File: bytes.NewReader(archive), Filename: "pages.zip", Request: request, PollInterval: 20 * time.Millisecond, OnOperation: func(op publishing.Operation) {
-		if op.State == publishing.Processing {
-			stop()
+
+	created, err := client.PostContents(ctx, catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "A separately uploaded gallery"}}})
+	if err != nil || len(created.Versions) != 1 {
+		t.Fatalf("create draft: %+v %v", created, err)
+	}
+	ref := media.RefBody{Kind: "gallery", ID: created.ID, Version: created.Versions[0].ID}
+	upload := func(ref media.RefBody, payload []byte, name string) media.CommitBody {
+		t.Helper()
+		sum := sha256.Sum256(payload)
+		writes.Store(0)
+		plan, err := client.PostMediaUploadPresign(ctx, media.PresignBody{Ref: ref, Path: "import/" + name, Type: "application/zip", Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])})
+		if err != nil || plan.Put == nil {
+			t.Fatalf("presign: %+v %v", plan, err)
 		}
-	}})
-	stop()
-	if !errors.Is(err, context.Canceled) || first.ID != id || first.State != publishing.Processing {
-		t.Fatalf("interrupted receipt=%+v err=%v", first, err)
-	}
-	if len(first.Entities) != 3 {
-		t.Fatalf("missing entity resolution receipt: %+v", first.Entities)
-	}
-	for _, entity := range first.Entities {
-		if entity.ID == "" || entity.Name == "" || !entity.Created {
-			t.Fatalf("new entity not reported: %+v", entity)
+		req, err := http.NewRequestWithContext(ctx, plan.Put.Method, plan.Put.URL, bytes.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
 		}
+		for k, v := range plan.Put.Headers {
+			req.Header.Set(k, v)
+		}
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			t.Fatalf("storage PUT: %d", response.StatusCode)
+		}
+		commit := media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob, SourceName: plan.SourceName}}}
+		if _, err := client.PostMediaUploadCommit(ctx, commit); err != nil {
+			t.Fatal(err)
+		}
+		if writes.Load() != 2 {
+			t.Fatalf("upload used %d API writes, want presign+commit", writes.Load())
+		}
+		return commit
 	}
-	if writes.Load() != 2 {
-		t.Fatalf("metadata submission and complete should be two API writes; got %d", writes.Load())
+	commit := upload(ref, uploadZIP(t), "pages.zip")
+	pending, err := client.GetMediaVersion(ctx, ref.Kind, ref.ID, ref.Version, contentkit.GetMediaVersionQuery{Status: true})
+	if err != nil || pending.Status == nil || pending.Status.State != "processing" {
+		t.Fatalf("pending status: %+v %v", pending, err)
+	}
+	if len(pending.Files) != 0 || pending.Expires != 0 {
+		t.Fatalf("status minted capabilities: %+v", pending)
 	}
 	api.Close()
 	if err = engine.Close(ctx); err != nil {
@@ -181,8 +202,6 @@ func TestPublishingArchiveSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This gallery fixture only processes images. Limit the unused video
-	// encoder to CPU H.264, supported by the host ffmpeg used in Go CI.
 	workerInstance, err := worker.New(ctx, worker.Config{Pool: pool, Schema: schema + "_media_worker", ContentSchema: schema, Store: env.Store, Kinds: registry, HostSchema: schema + "_river", TempDir: t.TempDir(), Threads: 1, ImageWorkers: 1, VideoWorkers: 1, VideoEncoder: "cpu", VideoCodecs: []media.Codec{media.CodecH264}})
 	if err != nil {
 		t.Fatal(err)
@@ -196,124 +215,97 @@ func TestPublishingArchiveSurvivesRestart(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	final, err := client.PublishArchive(ctx, contentkit.ArchivePublication{OperationID: id, File: bytes.NewReader(archive), Filename: "pages.zip", Request: request, PollInterval: 40 * time.Millisecond})
-	if err != nil {
-		t.Fatalf("resume receipt=%+v err=%v", final, err)
+	waitStatus := func(ref media.RefBody, want string) *media.MediaStatus {
+		t.Helper()
+		for {
+			read, err := client.GetMediaVersion(ctx, ref.Kind, ref.ID, ref.Version, contentkit.GetMediaVersionQuery{Status: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if read.Status != nil && read.Status.State == want {
+				return read.Status
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatalf("waiting for %s: %+v", want, read.Status)
+				return nil
+			case <-time.After(40 * time.Millisecond):
+			}
+		}
 	}
-	if final.ID != id || final.ContentID != first.ContentID || final.VersionID != first.VersionID || final.State != publishing.Published || final.Result == nil || final.Result.Pages != 3 || final.Result.Path == "" || final.Upload != nil {
-		t.Fatalf("publication=%+v", final)
+	ready := waitStatus(ref, "ready")
+	if ready.Archives.Completed != 1 || ready.Archives.Pages == nil || ready.Archives.Pages.Completed != 3 || ready.Archives.Pages.Total != 3 {
+		t.Fatalf("ZIP progress: %+v", ready)
+	}
+	foundLow := false
+	for _, preset := range ready.Presets {
+		if preset.Name == "low" {
+			foundLow = true
+			if preset.Total != 3 || preset.Completed != 3 {
+				t.Fatalf("rendition progress: %+v", preset)
+			}
+		}
+	}
+	if !foundLow {
+		t.Fatalf("missing rendition progress: %+v", ready)
+	}
+	if _, err = client.PostMediaUploadCommit(ctx, commit); err != nil {
+		t.Fatalf("replayed commit: %v", err)
+	}
+	var state string
+	if err = pool.QueryRow(ctx, "SELECT state FROM "+pgx.Identifier{schema, "content_items"}.Sanitize()+" WHERE tenant_id=$1 AND id=$2", env.Tenant, created.ID).Scan(&state); err != nil || state != catalog.StateDraft {
+		t.Fatalf("upload unexpectedly published: %s %v", state, err)
 	}
 	var count int
 	if err = pool.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{schema, "content_items"}.Sanitize()+" WHERE tenant_id=$1", env.Tenant).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("duplicate catalog items: %d %v", count, err)
+		t.Fatalf("duplicate gallery: %d %v", count, err)
 	}
-	var groups int
-	if err = pool.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{schema, "content_memberships"}.Sanitize()+" WHERE tenant_id=$1 AND content_id=$2 AND state='active'", env.Tenant, final.ContentID).Scan(&groups); err != nil || groups != 3 {
-		t.Fatalf("resolved groups: %d %v", groups, err)
-	}
-	// The archive listed page10 before page2 and page1; natural order is a
-	// quiet notice the app-bound key can read and dismiss, never restore.
-	notices, err := client.GetContentVersionPageNotices(ctx, final.ContentID, final.VersionID)
-	if err != nil || len(notices.Notices) != 1 || notices.Notices[0].Kind != "reordered" {
-		t.Fatalf("page notices: %+v %v", notices, err)
-	}
-	var applied []string
-	for _, page := range notices.Notices[0].Pages {
-		applied = append(applied, fmt.Sprintf("%s:%d>%d", page.SourceName, page.From, page.To))
-	}
-	if strings.Join(applied, ",") != "page1.png:3>1,page2.png:2>2,page10.png:1>3" {
-		t.Fatalf("archive order to applied order: %v", applied)
-	}
-	notice := notices.Notices[0].ID
-	_, err = client.PostContentVersionPageNoticeRestore(ctx, final.ContentID, final.VersionID, notice)
-	var nothing *contentkit.Error
-	if !errors.As(err, &nothing) || nothing.Status != http.StatusBadRequest {
-		t.Fatalf("a reorder has nothing to restore: %v", err)
-	}
-	if err = client.PostContentVersionPageNoticeDismiss(ctx, final.ContentID, final.VersionID, notice); err != nil {
+	title := "Metadata changed after processing"
+	if _, err = client.PatchContent(ctx, created.ID, catalog.ContentPatch{OriginalTitle: &title}); err != nil {
 		t.Fatal(err)
 	}
-	if notices, err = client.GetContentVersionPageNotices(ctx, final.ContentID, final.VersionID); err != nil || len(notices.Notices) != 0 {
-		t.Fatalf("dismissed notice: %+v %v", notices, err)
+	if _, err = client.PostContentPublish(ctx, created.ID, catalog.PublishInput{}); err != nil {
+		t.Fatal(err)
 	}
-	reply, err := client.GetContentVersionReader(ctx, final.ContentID, final.VersionID)
+	// Normal media processing can finish exposure after explicit publication.
+	waitStatus(ref, "ready")
+	reply, err := client.GetContentVersionReader(ctx, created.ID, ref.Version)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var plan versions.ReaderPlan
 	if reply.Status != http.StatusOK || reply.Decode(&plan) != nil || plan.Pages == nil || *plan.Pages != 3 {
-		t.Fatalf("a dismissal changed the reader: %+v", plan)
+		t.Fatalf("reader pages after explicit publish: %+v", plan)
 	}
-	checker, err := suiteChecker()
-	if err != nil {
+	notices, err := client.GetContentVersionPageNotices(ctx, created.ID, ref.Version)
+	if err != nil || len(notices.Notices) != 1 || notices.Notices[0].Kind != "reordered" {
+		t.Fatalf("page notices: %+v %v", notices, err)
+	}
+	notice := notices.Notices[0].ID
+	_, err = client.PostContentVersionPageNoticeRestore(ctx, created.ID, ref.Version, notice)
+	var nothing *contentkit.Error
+	if !errors.As(err, &nothing) || nothing.Status != http.StatusBadRequest {
+		t.Fatalf("reorder restoration: %v", err)
+	}
+	if err = client.PostContentVersionPageNoticeDismiss(ctx, created.ID, ref.Version, notice); err != nil {
 		t.Fatal(err)
 	}
-	for _, route := range []string{"versions GET /contents/{id}/versions/{version}/page-notices", "versions POST /contents/{id}/versions/{version}/page-notices/{notice}/dismiss", "versions POST /contents/{id}/versions/{version}/page-notices/{notice}/restore"} {
-		if !checker.Served()[route] {
-			t.Fatalf("page notice route was not checked: %s", route)
-		}
+	bad, err := client.PostContents(ctx, catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Invalid archive stays a draft"}}})
+	if err != nil || len(bad.Versions) != 1 {
+		t.Fatalf("bad archive draft: %+v %v", bad, err)
 	}
-	changed := request
-	changed.Content.Text = map[string]catalog.Text{"en": {Title: "Different input"}}
-	_, err = client.PublishArchive(ctx, contentkit.ArchivePublication{OperationID: id, File: bytes.NewReader(archive), Filename: "pages.zip", Request: changed})
-	var apiError *contentkit.Error
-	if !errors.As(err, &apiError) || apiError.Code != "operation_conflict" {
-		t.Fatalf("changed input should conflict: %v", err)
+	badRef := media.RefBody{Kind: "gallery", ID: bad.ID, Version: bad.Versions[0].ID}
+	upload(badRef, []byte("not a ZIP archive"), "invalid.zip")
+	failed := waitStatus(badRef, "failed")
+	if failed.FailureCount == 0 {
+		t.Fatalf("missing processing failure: %+v", failed)
 	}
-
-	// A successful HTTP submission does not turn corrupt bytes into a
-	// successful publication: the worker records a terminal, typed failure.
-	invalid := request
-	invalid.Source = nil
-	failed, err := client.PublishArchive(ctx, contentkit.ArchivePublication{
-		OperationID: uuid.NewString(), File: bytes.NewReader([]byte("not a ZIP archive")),
-		Filename: "invalid.zip", Request: invalid, PollInterval: 40 * time.Millisecond,
-	})
-	var failure *publishing.OperationError
-	if !errors.As(err, &failure) || failed.State != publishing.Failed || failure.Code != "invalid_archive" {
-		t.Fatalf("invalid archive receipt=%+v err=%v", failed, err)
-	}
-
-	future := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
-	scheduledRequest := request
-	scheduledRequest.Source = nil
-	scheduledRequest.PublishAt = &future
-	scheduled, err := client.PublishArchive(ctx, contentkit.ArchivePublication{
-		OperationID: uuid.NewString(), File: bytes.NewReader(archive), Filename: "scheduled.zip",
-		Request: scheduledRequest, PollInterval: 40 * time.Millisecond,
-	})
-	if err != nil || scheduled.State != publishing.Scheduled || scheduled.PublishAt == nil || !scheduled.PublishAt.Equal(future) || scheduled.Result == nil || scheduled.Result.Pages != 3 {
-		t.Fatalf("scheduled receipt=%+v err=%v", scheduled, err)
-	}
-	response, err := http.Get(api.URL + prefix + "/v1/contents/" + scheduled.ContentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusNotFound {
-		t.Fatalf("scheduled gallery became public early: HTTP %d", response.StatusCode)
-	}
-
-	draftRequest := request
-	draftRequest.Source, draftRequest.Publish = nil, publishing.Draft
-	draft, err := client.PublishArchive(ctx, contentkit.ArchivePublication{
-		OperationID: uuid.NewString(), File: bytes.NewReader(archive), Filename: "draft.zip",
-		Request: draftRequest, PollInterval: 40 * time.Millisecond,
-	})
-	if err != nil || draft.State != publishing.Ready || draft.Result == nil || draft.Result.Pages != 3 {
-		t.Fatalf("ready draft receipt=%+v err=%v", draft, err)
-	}
-	response, err = http.Get(api.URL + prefix + "/v1/contents/" + draft.ContentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusNotFound {
-		t.Fatalf("draft gallery became public: HTTP %d", response.StatusCode)
+	if err = pool.QueryRow(ctx, "SELECT state FROM "+pgx.Identifier{schema, "content_items"}.Sanitize()+" WHERE tenant_id=$1 AND id=$2", env.Tenant, bad.ID).Scan(&state); err != nil || state != catalog.StateDraft {
+		t.Fatalf("failed upload published: %s %v", state, err)
 	}
 }
 
-func publishingZIP(t *testing.T) []byte {
+func uploadZIP(t *testing.T) []byte {
 	t.Helper()
 	var out bytes.Buffer
 	zw := zip.NewWriter(&out)

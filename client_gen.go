@@ -19,7 +19,6 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/contentkit/publishing"
 	"github.com/open-rails/helpers/notify"
 )
 
@@ -1422,6 +1421,8 @@ type GetMediaQuery struct {
 	Download bool
 	// editors: uploads with edits, failures, progress and editor views
 	Editor bool
+	// editors: whole-item processing counts only, without URLs, media grants or editor-view work
+	Status bool
 }
 
 func (q GetMediaQuery) values() url.Values {
@@ -1443,6 +1444,9 @@ func (q GetMediaQuery) values() url.Values {
 	}
 	if q.Editor {
 		v.Set("editor", "")
+	}
+	if q.Status {
+		v.Set("status", "")
 	}
 	return v
 }
@@ -1492,6 +1496,8 @@ type GetMediaVersionQuery struct {
 	Download bool
 	// editors: uploads with edits, failures, progress and editor views
 	Editor bool
+	// editors: whole-item processing counts only, without URLs, media grants or editor-view work
+	Status bool
 }
 
 func (q GetMediaVersionQuery) values() url.Values {
@@ -1513,6 +1519,9 @@ func (q GetMediaVersionQuery) values() url.Values {
 	}
 	if q.Editor {
 		v.Set("editor", "")
+	}
+	if q.Status {
+		v.Set("status", "")
 	}
 	return v
 }
@@ -3583,26 +3592,5 @@ func (c *Client) PostImport(ctx context.Context, body importer.Batch) (importer.
 func (c *Client) PostImportExternalIds(ctx context.Context, body importer.ExternalIDsQuery) (importer.ExternalIDs, error) {
 	var out importer.ExternalIDs
 	err := c.call(ctx, http.MethodPost, "/v1/import/external-ids", nil, body, &out)
-	return out, err
-}
-
-// PutPublishingOperation is PUT /v1/publishing-operations/{id} (public). Creates or resumes one immutable archive submission. id is a client-chosen UUID. Requires content write; creating missing taxonomy also requires group write. Tenant and app come from the verified request. Repeating identical input returns the same draft and renews expired upload instructions; changed input is a conflict. when_ready requires provider-supported durable authorization.
-func (c *Client) PutPublishingOperation(ctx context.Context, id string, body publishing.Request) (publishing.Operation, error) {
-	var out publishing.Operation
-	err := c.call(ctx, http.MethodPut, expand("/v1/publishing-operations/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// PostPublishingOperationComplete is POST /v1/publishing-operations/{id}/complete (public). Completes the submission's declared upload and durably begins processing. The server owns its exact media commit; no caller-supplied content IDs or blob references are accepted. Repeats do not create another import.
-func (c *Client) PostPublishingOperationComplete(ctx context.Context, id string, body publishing.CompleteRequest) (publishing.Operation, error) {
-	var out publishing.Operation
-	err := c.call(ctx, http.MethodPost, expand("/v1/publishing-operations/{id}/complete", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// GetPublishingOperation is GET /v1/publishing-operations/{id} (public). Reads an owned submission, its compact progress, asynchronous failure or final catalog path. This read never creates upload URLs or advances the operation. HTTP 200 does not imply successful publication.
-func (c *Client) GetPublishingOperation(ctx context.Context, id string) (publishing.Operation, error) {
-	var out publishing.Operation
-	err := c.call(ctx, http.MethodGet, expand("/v1/publishing-operations/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
