@@ -1,7 +1,6 @@
 package media_test
 
 import (
-	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -140,8 +139,5 @@ func TestRegistryRefuses(t *testing.T) {
 	}
 	if _, err := media.NewRegistry(media.Config{Namespace: "accounts", Kinds: []media.Kind{{Name: "user", Namespace: "accounts", Uploads: up}}}); err == nil {
 		t.Error("an app namespace named after a shared one accepted")
-	}
-	if _, err := media.NewRegistry(media.Config{Namespace: "d", Hooks: media.Hooks{PurgePublic: func(context.Context, []string) {}}}); err == nil {
-		t.Error("PurgePublic without BaseURL accepted")
 	}
 }

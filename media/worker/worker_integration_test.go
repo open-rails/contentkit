@@ -98,9 +98,8 @@ type host struct {
 	mu         sync.Mutex
 	settled    map[string][]media.Readiness // Hooks.ItemReady, by ref
 	progressed map[string]int
-	purged     []string // Hooks.PurgePublic
-	schema     string   // the host's River schema
-	workers    string   // the host's worker schema
+	schema     string // the host's River schema
+	workers    string // the host's worker schema
 }
 
 // Resolve hides the ids in h.hidden from anonymous viewers.
@@ -144,11 +143,6 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	h := &host{Env: env, pool: pool, settled: map[string][]media.Readiness{}, progressed: map[string]int{}}
 	var err error
 	h.reg, err = media.NewRegistry(registry(env.Tenant, media.Hooks{Resolver: h, CanUpload: allow{},
-		PurgePublic: func(_ context.Context, urls []string) {
-			h.mu.Lock()
-			h.purged = append(h.purged, urls...)
-			h.mu.Unlock()
-		},
 		ItemProgressed: func(_ context.Context, _ pgx.Tx, ref contentref.ContentRef) error {
 			h.mu.Lock()
 			h.progressed[ref.String()]++
@@ -403,7 +397,7 @@ func (l *lockedBuffer) count(s string) int {
 
 // The host commits; the worker renders the pages' thumbs and the public
 // cover, the host's jobs report the item ready (Hooks.ItemReady, in a host
-// transaction) and purge the cover's URLs (Hooks.PurgePublic).
+// transaction).
 func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 	h := newHost(t)
 	ref := h.ref(t, "gallery")
@@ -425,11 +419,6 @@ func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 	if !h.exists(t, key) {
 		t.Fatal("no public cover")
 	}
-	eventually(t, "the cover purged", 30*time.Second, func() bool {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		return slices.Contains(h.purged, h.reg.PublicURL(ref, name))
-	})
 	var n int
 	if err := h.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n == 0 {
 		t.Fatalf("no Expose enqueued in the host schema: %d %v", n, err)

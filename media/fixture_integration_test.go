@@ -14,7 +14,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -249,7 +248,6 @@ type fixture struct {
 	auth    *authorizer
 	q       *queue
 	journal *media.PGJournal
-	purged  chan []string
 	gateway *httptest.Server
 	editor  access.Actor
 }
@@ -262,10 +260,10 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 	t.Helper()
 	f := &fixture{t: t, env: env, ns: env.Tenant, shared: "acct" + strings.ReplaceAll(env.Tenant, "-", ""),
 		res:  &resolver{verdicts: map[string]resolve.Resolution{}, anon: map[string]resolve.Resolution{}},
-		auth: &authorizer{}, purged: make(chan []string, 64), editor: access.Actor{ID: "editor", Kind: "user"}}
+		auth: &authorizer{}, editor: access.Actor{ID: "editor", Kind: "user"}}
 	t.Cleanup(func() { f.drop(f.shared + "/") })
 	cfg := testConfig(f.ns, f.shared)
-	cfg.Hooks = media.Hooks{Resolver: f.res, CanUpload: f.auth, PurgePublic: func(_ context.Context, urls []string) { f.purged <- urls }}
+	cfg.Hooks = media.Hooks{Resolver: f.res, CanUpload: f.auth}
 	if mutate != nil {
 		mutate(&cfg)
 	}
@@ -555,18 +553,6 @@ func (f *fixture) fetch(u string, hdr ...string) (int, string, http.Header) {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b), resp.Header
-}
-
-// purges waits for the next PurgePublic call.
-func (f *fixture) purges() []string {
-	f.t.Helper()
-	select {
-	case urls := <-f.purged:
-		return urls
-	case <-time.After(10 * time.Second):
-		f.t.Fatal("no purge")
-		return nil
-	}
 }
 
 func png(n int) []byte {

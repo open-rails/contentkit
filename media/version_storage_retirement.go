@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -288,13 +287,6 @@ func (j *Jobs) cleanVersionStorage(ctx context.Context, source Item, operations 
 		if err := j.cfg.Store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
-	}
-	if purge := j.cfg.Registry.cfg.Hooks.PurgePublic; purge != nil && len(receipt.Effects.Public) != 0 {
-		urls := make([]string, len(receipt.Effects.Public))
-		for i, key := range receipt.Effects.Public {
-			urls[i] = strings.TrimRight(j.cfg.Registry.cfg.BaseURL, "/") + layout.URLPrefix + key
-		}
-		purge(ctx, urls)
 	}
 	if receipt.Effects.VersionStorage.Final {
 		return nil

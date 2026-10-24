@@ -45,9 +45,6 @@ func NewRegistry(c Config) (*Registry, error) {
 			return nil, fmt.Errorf("media: BaseURL %q must be an http(s) origin", c.BaseURL)
 		}
 	}
-	if c.Hooks.PurgePublic != nil && c.BaseURL == "" {
-		return nil, errors.New("media: Hooks.PurgePublic needs BaseURL")
-	}
 	if c.Editor == (Image{}) {
 		c.Editor = DefaultEditor
 	}

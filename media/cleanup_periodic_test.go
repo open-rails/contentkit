@@ -2,7 +2,6 @@ package media
 
 import (
 	"context"
-	"iter"
 	"testing"
 	"time"
 
@@ -14,14 +13,11 @@ import (
 	"github.com/open-rails/contentkit/internal/pgtest"
 )
 
-// The idle periodic workers need no object access beyond an empty upgrade scan.
+// Idle periodic workers query known database obligations without object access.
 type idleCleanupStore struct{ Store }
 
 func (idleCleanupStore) Capabilities(context.Context) (Capabilities, error) {
 	return Capabilities{ConditionalPut: true}, nil
-}
-func (idleCleanupStore) List(context.Context, string) iter.Seq2[Object, error] {
-	return func(func(Object, error) bool) {}
 }
 
 type cleanupStartupProbeArgs struct{}

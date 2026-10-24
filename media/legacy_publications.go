@@ -184,7 +184,6 @@ func (j *Jobs) repeatLegacyDeletion(ctx context.Context, item Item, c manifestCo
 	if err := j.deleteKeys(ctx, keys); err != nil {
 		return err
 	}
-	j.purge(ctx, c.Effects.Public)
 	return nil
 }
 

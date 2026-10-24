@@ -7,7 +7,6 @@ import (
 	"iter"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,7 +52,7 @@ type JobsConfig struct {
 const DefaultQueue = "contentkit_media"
 
 // Jobs is media's River contribution to the host: sweep, folder deletion,
-// Expose, and the worker's relays (ItemReady, PurgePublic). Processing runs
+// Expose, and the worker's readiness relay. Processing runs
 // in the media worker (media/worker).
 type Jobs struct {
 	cfg       JobsConfig
@@ -138,9 +137,7 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &exposeWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &readyWorker{j: j}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &purgeWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &recoverWorker{j: j}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &upgradeWorker{j: j}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -159,12 +156,6 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 				return recoverArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, MaxAttempts: 3,
 					UniqueOpts: river.UniqueOpts{ByPeriod: time.Minute}}
 			}, &river.PeriodicJobOpts{ID: "contentkit_media_recover", RunOnStart: true}))
-		// The upgrade starts with the host and queues its own batches until
-		// done; the daily run retries failures and costs one read after.
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, 24*time.Hour,
-			func() (river.JobArgs, *river.InsertOpts) {
-				return upgradeArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, UniqueOpts: PendingOnce}
-			}, &river.PeriodicJobOpts{ID: "contentkit_media_upgrade", RunOnStart: true}))
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
 		j.mu.Lock()
@@ -509,39 +500,8 @@ func (w *readyWorker) Work(ctx context.Context, job *river.Job[readyArgs]) (err 
 	return pgx.BeginFunc(ctx, w.j.cfg.Pool, func(tx pgx.Tx) error { return hooks.ItemReady(ctx, tx, item.Ref(), r) })
 }
 
-// purgeArgs relays public keys the worker overwrote or deleted to
-// Hooks.PurgePublic.
-type purgeArgs struct {
-	Keys []string `json:"keys"`
-}
-
-func (purgeArgs) Kind() string { return "contentkit_media_purge" }
-
-type purgeWorker struct {
-	river.WorkerDefaults[purgeArgs]
-	j *Jobs
-}
-
-func (w *purgeWorker) Work(ctx context.Context, job *river.Job[purgeArgs]) error {
-	w.j.purge(ctx, job.Args.Keys)
-	return nil
-}
-
-// purge hands public keys to Hooks.PurgePublic as URLs.
-func (j *Jobs) purge(ctx context.Context, keys []string) {
-	purge := j.cfg.Registry.cfg.Hooks.PurgePublic
-	if purge == nil || len(keys) == 0 {
-		return
-	}
-	urls := make([]string, 0, len(keys))
-	for _, k := range keys {
-		urls = append(urls, strings.TrimRight(j.cfg.Registry.cfg.BaseURL, "/")+layout.URLPrefix+k)
-	}
-	purge(ctx, urls)
-}
-
 // HostQueue is the media worker's handle on the host's River schema: it
-// inserts ItemReady, PurgePublic and Expose relays on the worker's behalf.
+// inserts readiness and Expose relays on the worker's behalf.
 // Cleanup is recorded in the shared journal, without queueing a relay.
 type HostQueue struct {
 	client *river.Client[pgx.Tx]
@@ -578,15 +538,6 @@ func (h *HostQueue) Ready(ctx context.Context, ref contentref.ContentRef) error 
 		return err
 	}
 	return InsertOnce(ctx, h.insert, readyArgs{Ref: ref}, river.InsertOpts{})
-}
-
-// Purge asks the host to purge public keys from its CDN (Hooks.PurgePublic).
-func (h *HostQueue) Purge(ctx context.Context, keys []string) error {
-	if len(keys) == 0 {
-		return nil
-	}
-	_, err := h.insert(ctx, purgeArgs{Keys: keys}, &river.InsertOpts{})
-	return err
 }
 
 // ExposeTx enqueues the host's Expose of refs in tx, a transaction on the

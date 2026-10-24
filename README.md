@@ -366,8 +366,7 @@ copying shared memberships into each edition.
 
 `Config.Media` is the registry (`media.Config`, without hooks) and how it is
 served; the engine builds the uploads, reads, journal, worker queue and jobs
-from it and `Deps.Store`. `Deps.PurgePublic` hears of overwritten public URLs
-for a CDN purge. Every media item is ContentKit's: content kinds' through
+from it and `Deps.Store`. Every media item is ContentKit's: content kinds' through
 the catalog's resolver, entities', avatars' and, when the registry declares
 the `poll` kind, poll images.
 
@@ -453,8 +452,7 @@ hosts sharing a database never share one): images, zips, public presets and
 editor views (`media/image`, libvips) and HLS, MP4, audio, subtitles and
 frames (`media/video`, ffmpeg). The host presigns, commits, exposes and reads,
 and links only `media/workqueue`. The worker hands readiness
-(`Hooks.ItemReady`), purges (`Hooks.PurgePublic`) and sweeps back to the
-host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), so the stock build
+(`Hooks.ItemReady`) back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), so the stock build
 (`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`)
 needs only the registry as JSON (`MEDIA_KINDS_FILE`): an engine's is
 `Config.MediaKinds()`, which `contentkit media-config -config contentkit.yaml`
