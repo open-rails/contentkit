@@ -61,9 +61,9 @@ func TestMetrics(t *testing.T) {
 		`media_video_attempt_count{outcome="snoozed",queue="media_video"} 1`,
 		`media_video_attempt_count{outcome="cancelled",queue="media_video"} 2`,
 		`media_video_attempt_count{outcome="error",queue="media_video"} 2`,
-		`media_video_cpu_seconds_total{class="hd",outcome="success"} 1.25`,
-		`media_video_cpu_seconds_total{class="hd",outcome="error"} 0.5`,
-		`media_videod_output_seconds_total{class="hd"} 2`,
+		`media_video_encode_cpu_seconds_total{class="hd",outcome="success"} 1.25`,
+		`media_video_encode_cpu_seconds_total{class="hd",outcome="error"} 0.5`,
+		`media_video_encoded_output_seconds_total{class="hd"} 2`,
 		`media_video_core_seconds_per_output_second_count{class="hd"} 1`,
 		`media_video_core_seconds_per_output_second_sum{class="hd"} 0.625`,
 	} {

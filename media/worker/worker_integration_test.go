@@ -1008,7 +1008,7 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 
 // faultyWorker is newHost with the worker's store behind an HTTP proxy whose
 // fault answers a request itself (true) or lets it through.
-func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Request) bool) *host {
+func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Request) bool, hooks ...rivertype.Hook) *host {
 	return newHostOn(t, func(env *s3test.Env) media.Store {
 		target, _ := url.Parse(env.Config.Endpoint)
 		proxy := httputil.NewSingleHostReverseProxy(target)
@@ -1025,7 +1025,7 @@ func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Reques
 			t.Fatal(err)
 		}
 		return store
-	})
+	}, hooks...)
 }
 
 // imageJob reports the state of the worker's latest image job.
