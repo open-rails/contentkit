@@ -64,7 +64,8 @@ var uploadRoutes = []httpapi.Route[uploadHandler]{
 var mediaReadQuery = []httpapi.Param{httpapi.Text("prefix", "only files under this path prefix, e.g. low-res/"),
 	httpapi.Repeated("path", "at most 64 exact paths to sign, without offset or limit; all authorized metadata remains listed"),
 	httpapi.Int("offset", "files to skip before the URLs start"), httpapi.Int("limit", "files that get URLs"),
-	httpapi.Flag("download", "URLs carry their download names"), httpapi.Flag("editor", "editors: uploads with edits, failures, progress and editor views")}
+	httpapi.Flag("download", "URLs carry their download names"), httpapi.Flag("editor", "editors: uploads with edits, failures, progress and editor views"),
+	httpapi.Flag("status", "editors: whole-item processing counts only, without URLs, media grants or editor-view work")}
 
 var readRoutes = []httpapi.Route[readHandler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/presets", Resource: "media", Auth: httpapi.Open,
