@@ -35,8 +35,6 @@ export interface ContentKitMounts {
   discovery?: string;
   /** Bulk import (a service's). Default `{baseUrl}/v1`. */
   import?: string;
-  /** Durable archive publishing operations. Default `{baseUrl}/v1`. */
-  publishing?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;
