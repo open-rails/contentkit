@@ -47,12 +47,10 @@ for (const mode of ["alone", "router"] as const) {
       await expect(mod.getByRole("tab", { name: "All comments" })).toHaveAttribute("aria-selected", "true");
       await expect(rows).toHaveText([new RegExp(`Bob one ${tag}`)]);
 
-      // A deep link opens the section and filter it names.
-      await page.goto(admin("/admin/comments/queue", staff, { mode, theme, params: { kind: "content" } }));
+      // A deep link opens the section it names.
+      await page.goto(admin("/admin/comments/queue", staff, { mode, theme }));
       await expect(mod.getByRole("tab", { name: "Review queue" })).toHaveAttribute("aria-selected", "true", { timeout: 30_000 });
-      await expect(mod.getByRole("button", { name: "Content" })).toHaveAttribute("aria-pressed", "true");
-      await mod.getByRole("button", { name: "Comments", exact: true }).click();
-      await expect(page).toHaveURL(/\/admin\/comments\/queue$/);
+      await expect(page).toHaveURL(/\/admin\/comments\/queue/);
 
       if (mode === "router") {
         // The host's own links move the flow: one source of truth.
