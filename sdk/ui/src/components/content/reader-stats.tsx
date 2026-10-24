@@ -13,7 +13,7 @@ export interface ReaderStatsProps {
   /** Display names of content kinds and access tiers by identifier. */
   labels?: Labels;
   /** Complete labels for finished-content counts, e.g. {gallery: "Galleries read"}. */
-  completedLabels?: Labels;
+  completedLabels?: Readonly<Record<string, string>>;
   /** Content kinds to show, including an unavailable placeholder. Default: returned kinds. */
   kinds?: readonly string[];
   /** Access tiers to show, including an unavailable placeholder. Default: returned tiers. */
