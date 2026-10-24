@@ -38,6 +38,7 @@ export const entities: typeof en = {
     details: "詳細",
     saved: "保存しました。",
     none: "なし",
+    choose: "選択…",
     change: "変更",
     clearField: "{field}を外す",
     names: "名前と別名",

@@ -494,6 +494,7 @@ function Entity({
 
 const TILE = "group relative grid min-w-0 content-start gap-1 rounded-lg border bg-background p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
+// A solid chip so it reads over any page; its hit area extends to 40px.
 function RemoveTile({ label, disabled, onRemove }: { label: string; disabled?: boolean; onRemove: () => void }) {
   return (
     <button
@@ -501,7 +502,7 @@ function RemoveTile({ label, disabled, onRemove }: { label: string; disabled?: b
       aria-label={label}
       title={label}
       disabled={disabled}
-      className="absolute end-2 top-2 inline-flex size-7 items-center justify-center rounded-md bg-destructive/10 text-destructive shadow-sm hover:bg-destructive/20 disabled:hidden"
+      className="absolute end-2 top-2 inline-flex size-7 items-center justify-center rounded-md bg-background text-destructive shadow-sm ring-1 ring-border after:absolute after:-inset-1.5 hover:bg-destructive hover:text-white disabled:hidden"
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
       onClick={(e) => {

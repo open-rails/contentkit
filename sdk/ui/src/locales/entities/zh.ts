@@ -38,6 +38,7 @@ export const entities: typeof en = {
     details: "详情",
     saved: "已保存。",
     none: "无",
+    choose: "请选择…",
     change: "更改",
     clearField: "清除{field}",
     names: "名称和别名",

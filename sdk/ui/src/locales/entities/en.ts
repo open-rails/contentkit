@@ -37,6 +37,7 @@ export const entities = {
     details: "Details",
     saved: "Saved.",
     none: "None",
+    choose: "Choose…",
     change: "Change",
     clearField: "Clear {field}",
     names: "Names and aliases",
