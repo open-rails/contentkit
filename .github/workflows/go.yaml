@@ -1,240 +1,99 @@
-name: go
-# Core Go packages. media/image, media/video, media/worker, media/versions (its tests run the worker) and cmd/media-worker run in their own workflows.
-# Reusable Go suites; the CI coordinator selects modules before runners start.
+name: Critical public contracts
 'on':
-  workflow_call:
-    inputs:
-      shards:
-        type: string
-        default: '["0","1","2","e2e"]'
-      server:
-        type: boolean
-        default: true
-      authkit_adapter:
-        type: boolean
-        default: true
-      openrails_adapter:
-        type: boolean
-        default: true
+  workflow_call: {}
 permissions:
   contents: read
-concurrency:
-  group: go-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 jobs:
-  test:
-    name: test (${{ matrix.shard }})
-    if: inputs.shards != '[]' && !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(inputs.shards) }}
+  critical:
+    name: Critical backend and browser
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     services:
       postgres:
         image: groonga/pgroonga:4.1.0-debian-18
         env:
           POSTGRES_USER: contentkit
           POSTGRES_PASSWORD: contentkit
-          POSTGRES_DB: contentkit_test
+          POSTGRES_DB: critical
         ports:
         - 5432:5432
         options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
-      redis:
-        image: redis:8-alpine
-        ports:
-        - 6379:6379
-        options: --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 20
     env:
-      CONTENTKIT_TEST_REDIS_URLS: redis://localhost:6379/0,redis://localhost:6380/0
-      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
-      CONTENTKIT_PROFILE_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_profiles?sslmode=disable
-      CONTENTKIT_TEST_CH_ADDR: localhost:9000
-      CONTENTKIT_TEST_CH_USER: contentkit
-      CONTENTKIT_TEST_CH_PASSWORD: contentkit
-      CONTENTKIT_TEST_CH_CLUSTER: contentkit
-      CONTENTKIT_TEST_S3_ENDPOINT: http://localhost:9100
-      CONTENTKIT_TEST_S3_ACCESS_KEY: contentkit
-      CONTENTKIT_TEST_S3_SECRET_KEY: contentkit-secret
-      CONTENTKIT_TEST_S3_REQUIRE: conditional,checksum
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+      CONTENTKIT_CRITICAL_PG: postgres://contentkit:contentkit@localhost:5432/critical?sslmode=disable
+      CONTENTKIT_CRITICAL_S3_ENDPOINT: http://localhost:9100
+      CONTENTKIT_CRITICAL_S3_USER: contentkit
+      CONTENTKIT_CRITICAL_S3_PASSWORD: contentkit-secret
+      CONTENTKIT_CRITICAL_CH_ADDR: localhost:9000
+      CONTENTKIT_CRITICAL_CH_USER: contentkit
+      CONTENTKIT_CRITICAL_CH_PASSWORD: contentkit
+      CONTENTKIT_CRITICAL_CH_CLUSTER: contentkit
     steps:
     - uses: actions/checkout@v4
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
-    - name: Start ClickHouse with Keeper, MinIO and Garnet
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: tests/critical/go.mod
+        cache-dependency-path: |
+          go.sum
+          tests/critical/go.sum
+          server/go.sum
+          adapters/authkit/go.sum
+          adapters/openrails/go.sum
+    - name: Start shared object and signal stores
       run: |
-        docker run -d --name garnet -p 6380:6379 ghcr.io/microsoft/garnet:latest
-        docker run -d --name clickhouse -p 9000:9000 \
+        docker run -d --name critical-minio -p 9100:9000 \
+          -e MINIO_ROOT_USER=contentkit -e MINIO_ROOT_PASSWORD=contentkit-secret \
+          cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
+        docker run -d --name critical-clickhouse -p 9000:9000 \
           -e CLICKHOUSE_USER=contentkit -e CLICKHOUSE_PASSWORD=contentkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
           -v "$GITHUB_WORKSPACE/.github/clickhouse/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
           clickhouse/clickhouse-server:25.8
-        docker run -d --name minio -p 9100:9000 \
-          -e MINIO_ROOT_USER=contentkit -e MINIO_ROOT_PASSWORD=contentkit-secret \
-          cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
-    - uses: actions/setup-go@v5
-      with:
-        go-version-file: go.mod
-    - name: Wait for services
-      run: |
-        docker exec '${{ job.services.postgres.id }}' createdb -U contentkit contentkit_profiles
         for i in $(seq 1 60); do
-          curl -fsS http://localhost:9100/minio/health/ready >/dev/null &&
-            (exec 3<>/dev/tcp/localhost/6380) 2>/dev/null &&
-            docker exec clickhouse clickhouse-client --user contentkit --password contentkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'" && exit 0
-          sleep 2
+          if curl -fsS http://localhost:9100/minio/health/ready >/dev/null &&
+            docker exec critical-clickhouse clickhouse-client --user contentkit --password contentkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'"; then exit 0; fi
+          sleep 1
         done
-        docker logs clickhouse; docker logs minio; docker logs garnet
+        docker logs critical-minio
+        docker logs critical-clickhouse
         exit 1
-    - name: vet, test (package shard)
-      if: matrix.shard != 'e2e'
-      run: |
-        pkgs=$(go list ./... | grep -vE '/media/(image|video|worker|versions)$|/cmd/media-worker$' | awk -v s=${{ matrix.shard }} 'NR % 3 == s')
-        go vet $pkgs
-        go test $pkgs -count=1 -race -p 2
-    - name: Install media tools (e2e renders avatars and publishes galleries)
-      if: matrix.shard == 'e2e'
+    - name: Install native processing dependencies
       run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh libvips-dev ffmpeg
-    - name: e2e with a real AuthKit (its own module), vet, test
-      if: matrix.shard == 'e2e'
-      working-directory: e2e
-      env:
-        AUTHKIT_TEST_DATABASE_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
-        AUTHKIT_TEST_REQUIRE_DB: '1'
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: sdk/ui/package.json
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: sdk/ui/pnpm-lock.yaml
+    - name: Build the shipped SDK and real browser harness
+      working-directory: sdk/ui
       run: |
-        test -z "$(gofmt -l .)"
-        go mod tidy -diff
-        go vet ./...
-        go test ./... -count=1 -race
-  server:
-    # server/ is its own module: the standalone binary over a real Postgres and AuthKit.
-    if: inputs.server && !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    services:
-      postgres:
-        image: groonga/pgroonga:4.1.0-debian-18
-        env:
-          POSTGRES_USER: contentkit
-          POSTGRES_PASSWORD: contentkit
-          POSTGRES_DB: contentkit_test
-        ports:
-        - 5432:5432
-        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
-    defaults:
-      run:
-        working-directory: server
-    env:
-      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: ${{ github.sha }}
-        persist-credentials: false
-    - uses: actions/setup-go@v5
-      with:
-        go-version-file: server/go.mod
-        cache-dependency-path: server/go.sum
-    - name: gofmt, tidy, vet, test
+        pnpm install --frozen-lockfile --ignore-scripts
+        pnpm build
+        pnpm exec vite build --config ../../tests/critical/browser/vite.config.mjs
+        pnpm exec playwright install --with-deps chromium
+    - name: Build and vet public modules and native commands
       run: |
-        test -z "$(gofmt -l .)"
-        go mod tidy -diff
-        go vet ./...
-        go test ./... -count=1 -race
-  authkit-adapter:
-    # adapters/authkit is its own module: group scopes over a real AuthKit.
-    if: inputs.authkit_adapter && !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    services:
-      postgres:
-        image: groonga/pgroonga:4.1.0-debian-18
-        env:
-          POSTGRES_USER: contentkit
-          POSTGRES_PASSWORD: contentkit
-          POSTGRES_DB: contentkit_test
-        ports:
-        - 5432:5432
-        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
-    defaults:
-      run:
-        working-directory: adapters/authkit
-    env:
-      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
-      CONTENTKIT_TEST_REQUIRE_DB: '1'
-      AUTHKIT_TEST_DATABASE_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
-      AUTHKIT_TEST_REQUIRE_DB: '1'
-    steps:
-    - uses: actions/checkout@v4
+        for module in . server adapters/authkit adapters/openrails; do
+          (cd "$module" && go build -p 1 ./... && go vet -p 1 ./...)
+        done
+        test -z "$(gofmt -l tests/critical)"
+        (cd tests/critical && go mod tidy -diff && go vet -p 1 ./...)
+    - name: Run every reviewed critical contract with race detection
+      run: python3 tests/critical/run.py --race
+    - uses: actions/upload-artifact@v4
+      if: always()
       with:
-        ref: ${{ github.sha }}
-        persist-credentials: false
-    - uses: actions/setup-go@v5
-      with:
-        go-version-file: adapters/authkit/go.mod
-        cache-dependency-path: adapters/authkit/go.sum
-    - name: gofmt, tidy, vet, test
-      run: |
-        test -z "$(gofmt -l .)"
-        go mod tidy -diff
-        go vet ./...
-        go test ./... -count=1 -race
-  openrails-adapter:
-    # adapters/openrails is its own module: access.Billing and offers over a real embedded OpenRails.
-    if: inputs.openrails_adapter && !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    services:
-      postgres:
-        image: groonga/pgroonga:4.1.0-debian-18
-        env:
-          POSTGRES_USER: contentkit
-          POSTGRES_PASSWORD: contentkit
-          POSTGRES_DB: contentkit_test
-        ports:
-        - 5432:5432
-        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
-    defaults:
-      run:
-        working-directory: adapters/openrails
-    env:
-      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
-      CONTENTKIT_TEST_REQUIRE_DB: '1'
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: ${{ github.sha }}
-        persist-credentials: false
-    - uses: actions/setup-go@v5
-      with:
-        go-version-file: adapters/openrails/go.mod
-        cache-dependency-path: adapters/openrails/go.sum
-    - name: gofmt, tidy, vet, test
-      run: |
-        test -z "$(gofmt -l .)"
-        go mod tidy -diff
-        go vet ./...
-        go test ./... -count=1 -race
-
-  gate:
-    name: Selected Go suites
-    needs: [test, server, authkit-adapter, openrails-adapter]
-    if: always() && !github.event.pull_request.draft
-    runs-on: ubuntu-24.04
-    steps:
-    - env:
-        RESULTS: ${{ toJSON(needs) }}
-        SELECTED: ${{ toJSON(inputs) }}
-      run: |
-        python3 - <<'PY'
-        import json, os
-        jobs, inputs = json.loads(os.environ['RESULTS']), json.loads(os.environ['SELECTED'])
-        selected = {'test': inputs.get('shards', '[]') != '[]', 'server': inputs.get('server', False), 'authkit-adapter': inputs.get('authkit_adapter', False), 'openrails-adapter': inputs.get('openrails_adapter', False)}
-        for name, required in selected.items():
-            result = jobs[name]['result']
-            if required and result != 'success':
-                raise SystemExit(f'selected {name} did not pass: {result}')
-            if not required and result not in ('success', 'skipped'):
-                raise SystemExit(f'{name} failed: {result}')
-        PY
+        name: contentkit-critical-results
+        path: tests/critical/results/
+        if-no-files-found: warn
+        retention-days: 7
+    - name: Stop only this job's stores
+      if: always()
+      run: docker rm -f critical-minio critical-clickhouse

@@ -27,6 +27,9 @@ type GateConfig struct {
 	// rules and claimed tiers open.
 	Billing Billing
 	Logger  *slog.Logger
+	// Now is the application clock used for audience-release decisions.
+	// Nil uses time.Now, matching ordinary production behavior.
+	Now func() time.Time
 }
 
 // Gate decides access to versions from one billing read per viewer and
@@ -40,6 +43,7 @@ type Gate struct {
 	prefixes  []string
 	log       *slog.Logger
 	anon      *Filter
+	now       func() time.Time
 }
 
 // NewGate validates c.
@@ -48,7 +52,10 @@ func NewGate(c GateConfig) (*Gate, error) {
 		return nil, fmt.Errorf("access: GateConfig.Tenant %q must match [a-z0-9_-]{1,64}", c.Tenant)
 	}
 	g := &Gate{billing: c.Billing, tenant: c.Tenant, tierSet: map[string]bool{}, claimable: map[string]bool{},
-		prefixes: []string{ContentPrefix(c.Tenant), EntityPrefix(c.Tenant)}, log: c.Logger}
+		prefixes: []string{ContentPrefix(c.Tenant), EntityPrefix(c.Tenant)}, log: c.Logger, now: c.Now}
+	if g.now == nil {
+		g.now = time.Now
+	}
 	if g.log == nil {
 		g.log = slog.Default()
 	}
@@ -237,7 +244,7 @@ func (g *Gate) Settle(ctx context.Context, actor Actor, f *Filter, items []Item)
 	keep = make([]bool, len(items))
 	var pending []itemPlan
 	var at []int
-	now := time.Now()
+	now := g.now()
 	for i, p := range plans {
 		d, unknown := verdict(p, &knowledge{filter: f}, now, false)
 		if len(unknown) == 0 {
@@ -392,7 +399,7 @@ func (g *Gate) decide(ctx context.Context, actor Actor, f *Filter, plans []itemP
 			kn.filter = kn.memo.loadFilter()
 		}
 	}
-	now := time.Now()
+	now := g.now()
 	out := make([]Decision, len(plans))
 	need := map[string]bool{}
 	for i, p := range plans {

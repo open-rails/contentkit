@@ -1,7 +1,8 @@
 name: CI
+# Source validation runs only on ready PRs into delivery branches or explicit dispatch.
 'on':
   pull_request:
-    branches: [master]
+    branches: [master, 'release/**']
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch: {}
   workflow_call: {}
@@ -11,23 +12,12 @@ concurrency:
   group: ci-${{ github.event.pull_request.draft && format('draft-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  select:
-    name: Select suites
+  source:
+    name: Verify candidate source
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     outputs:
-      go: ${{ steps.select.outputs.go }}
-      go_shards: ${{ steps.select.outputs.go_shards }}
-      server: ${{ steps.select.outputs.server }}
-      authkit_adapter: ${{ steps.select.outputs.authkit_adapter }}
-      openrails_adapter: ${{ steps.select.outputs.openrails_adapter }}
-      media_image: ${{ steps.select.outputs.media_image }}
-      media_video: ${{ steps.select.outputs.media_video }}
-      ui: ${{ steps.select.outputs.ui }}
-      ui_unit: ${{ steps.select.outputs.ui_unit }}
-      ui_browser: ${{ steps.select.outputs.ui_browser }}
-      images: ${{ steps.select.outputs.images }}
-      workflow: ${{ steps.select.outputs.workflow }}
+      images: ${{ steps.artifacts.outputs.images }}
     steps:
     - uses: actions/checkout@v4
       with:
@@ -56,58 +46,37 @@ jobs:
             if current != os.environ['PR_BASE_SHA']:
                 raise SystemExit('base advanced; update the PR and rerun')
         PY
-    - name: Validate selection and select suites
-      id: select
-      env:
-        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      run: |
-        python3 -B -m unittest discover -s .github/scripts -p test_select_ci.py
-        python3 .github/scripts/select-ci.py
-  scan:
-    needs: select
-    uses: ./.github/workflows/scan.yaml
-  workflow-lint:
-    needs: select
-    if: needs.select.outputs.workflow == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: ${{ github.sha }}
-        persist-credentials: false
     - name: Lint workflows
       run: |
         curl --fail --silent --show-error --location https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output "$RUNNER_TEMP/actionlint.tar.gz"
         printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --status
         tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
         "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
-  go:
-    needs: select
-    if: needs.select.outputs.go == 'true'
+    - name: Select image-definition smoke
+      id: artifacts
+      env:
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        python3 - <<'PY_ARTIFACTS'
+        import os, subprocess
+        base = os.environ.get('PR_BASE_SHA')
+        changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines() if base else []
+        selected = not base or any(path.endswith('Dockerfile') or path in ('.dockerignore', '.github/workflows/images.yaml') for path in changed)
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+            out.write('images=' + str(selected).lower() + '\n')
+        PY_ARTIFACTS
+  scan:
+    needs: source
+    uses: ./.github/workflows/scan.yaml
+  critical:
+    needs: source
     uses: ./.github/workflows/go.yaml
-    with:
-      shards: ${{ needs.select.outputs.go_shards }}
-      server: ${{ needs.select.outputs.server == 'true' }}
-      authkit_adapter: ${{ needs.select.outputs.authkit_adapter == 'true' }}
-      openrails_adapter: ${{ needs.select.outputs.openrails_adapter == 'true' }}
-  media-image:
-    needs: select
-    if: needs.select.outputs.media_image == 'true'
-    uses: ./.github/workflows/media-image.yaml
-  media-video:
-    needs: select
-    if: needs.select.outputs.media_video == 'true'
-    uses: ./.github/workflows/media-video.yaml
   sdk-ui:
-    needs: select
-    if: needs.select.outputs.ui == 'true'
+    needs: source
     uses: ./.github/workflows/sdk-ui.yaml
-    with:
-      unit: ${{ needs.select.outputs.ui_unit == 'true' }}
-      browser: ${{ needs.select.outputs.ui_browser == 'true' }}
   image-definitions:
-    needs: select
-    if: needs.select.outputs.images == 'true'
+    needs: source
+    if: needs.source.outputs.images == 'true'
     uses: ./.github/workflows/images.yaml
     permissions:
       contents: read
@@ -116,49 +85,27 @@ jobs:
       verify_only: true
   gate:
     name: ${{ github.event.pull_request.draft && 'Draft PR (CI not requested)' || 'CI Gate' }}
-    needs: [select, scan, workflow-lint, go, media-image, media-video, sdk-ui, image-definitions]
+    needs: [source, scan, critical, sdk-ui, image-definitions]
     if: always() && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     steps:
-    - name: Require every selected suite to pass
+    - name: Require every selected contract and artifact check
       env:
         NEEDS: ${{ toJSON(needs) }}
       run: |
-        python3 - <<'PY'
+        python3 - <<'PY_CHECK'
         import json, os
         jobs = json.loads(os.environ['NEEDS'])
-        for name in ('select', 'scan'):
+        for name in ('source', 'scan', 'critical', 'sdk-ui'):
             if jobs[name]['result'] != 'success':
-                raise SystemExit(f'{name} did not pass')
-        outputs = jobs['select']['outputs']
-        flags = ('go', 'server', 'authkit_adapter', 'openrails_adapter', 'media_image', 'media_video', 'ui', 'ui_unit', 'ui_browser', 'images', 'workflow')
-        for flag in flags:
-            if outputs.get(flag) not in ('true', 'false'):
-                raise SystemExit(f'missing or invalid suite selection: {flag}')
-        try:
-            shards = json.loads(outputs['go_shards'])
-        except (KeyError, ValueError):
-            raise SystemExit('missing or invalid Go shard selection')
-        if not isinstance(shards, list) or any(shard not in ('0', '1', '2', 'e2e') for shard in shards) or len(set(shards)) != len(shards):
-            raise SystemExit('invalid Go shards')
-        core = set(shards) & {'0', '1', '2'}
-        if core and core != {'0', '1', '2'}:
-            raise SystemExit('incomplete core Go suite')
-        go_needed = bool(shards) or any(outputs[flag] == 'true' for flag in ('server', 'authkit_adapter', 'openrails_adapter'))
-        ui_needed = any(outputs[flag] == 'true' for flag in ('ui_unit', 'ui_browser'))
-        if (outputs['go'] == 'true') != go_needed or (outputs['ui'] == 'true') != ui_needed:
-            raise SystemExit('inconsistent aggregate suite selection')
-        suites = {'workflow-lint': 'workflow', 'go': 'go', 'media-image': 'media_image', 'media-video': 'media_video', 'sdk-ui': 'ui', 'image-definitions': 'images'}
-        for name, selected in suites.items():
-            if outputs.get(selected) not in ('true', 'false'):
-                raise SystemExit(f'missing or invalid suite selection: {selected}')
-            result = jobs[name]['result']
-            if outputs[selected] == 'true':
-                if result != 'success':
-                    raise SystemExit(f'selected {name} did not pass: {result}')
-            elif result not in ('success', 'skipped'):
-                raise SystemExit(f'{name} failed: {result}')
-        PY
+                raise SystemExit(f"required {name} did not pass: {jobs[name]['result']}")
+        selected = jobs['source']['outputs'].get('images')
+        if selected not in ('true', 'false'):
+            raise SystemExit('missing artifact selection')
+        result = jobs['image-definitions']['result']
+        if selected == 'true' and result != 'success' or selected == 'false' and result not in ('success', 'skipped'):
+            raise SystemExit(f'image-definition smoke did not satisfy selection: {result}')
+        PY_CHECK
     - name: Require the tested base to remain current
       if: github.event_name == 'pull_request'
       env:

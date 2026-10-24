@@ -967,24 +967,19 @@ error body, or a timeout, is `server_unavailable`.
 ## Development
 
 ```sh
-pnpm check                # typecheck, lint, unit tests (pure math and client-free components), build
-pnpm build
-pnpm test:e2e             # the integration project and the browser specs against a real ContentKit
-pnpm test:integration     # or either alone
-pnpm test:browser         # (demo/ in Chromium, light/dark × desktop/mobile screenshots)
-pnpm demo                 # the stack with seeded demo pages, until Ctrl-C
+pnpm check                # typecheck, lint and built package
+pnpm exec vite build --config ../../tests/critical/browser/vite.config.mjs
+pnpm test:browser         # actual built SDK and React against the critical real-service fixture
+pnpm test                # full reviewed critical contract; fails while replacement remains incomplete
+pnpm demo                # separately retained seeded demo stack
 ```
 
-The suites need Docker, Go and ffmpeg. `e2e/server` composes the real
-ContentKit's engine (content, entities, codes, media upload and read) with
-AuthKit for identity over PGroonga PostgreSQL 18, MinIO, and media-worker and
-media-gateway built from this checkout (`e2e/compose.yaml`). Each run brings
-the stack up under its own project name and takes it down; the server exits
-with its runner. Pages sign in with auth-ui and pass `auth.authFetch`. Tests
-set up through `/__test`: accounts (`staff`, `moderator`, `editor` roles),
-items the host's resolver knows, stored-object checks, and faults (no CORS,
-429 and expired tokens at the gateway, dropped or held bucket requests, API
-error replies).
+The browser cases use the services and credentials configured for
+[the critical suite](../../tests/critical/README.md). Missing dependencies and
+selected skips fail. They run the built package against real scoped ContentKit
+and AuthKit; held responses are network fault fixtures. The old unit/integration
+entrypoints have been removed. Demo and benchmark support remain separate from
+qualification.
 
 The wire types, route table and error codes in `src/client/generated/` are
 generated from ContentKit's route catalog (`pnpm contract`; CI runs

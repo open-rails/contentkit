@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 )
 
 // Filter is one viewer's access as one billing read left it: the configured
@@ -65,7 +64,7 @@ func (f *Filter) Allows(it Item) (allowed, known bool) {
 	if err != nil {
 		return false, true
 	}
-	d, unknown := verdict(p, &knowledge{filter: f}, time.Now(), false)
+	d, unknown := verdict(p, &knowledge{filter: f}, f.g.now(), false)
 	return d.Allowed, len(unknown) == 0
 }
 
