@@ -12,7 +12,7 @@ func TestArchiveAdmissionCannotComeFromClientMetadata(t *testing.T) {
 	if err := runner.admitSource(&file, -1); err == nil {
 		t.Fatal("client metadata admitted background quota authority")
 	}
-	runner.admission = func() (*SourceAdmission, error) {
+	runner.admission = func(string, string) (*SourceAdmission, error) {
 		return &SourceAdmission{Owner: "actual", Enforce: true, Quota: 100}, nil
 	}
 	if err := runner.admitSource(&file, -1); err != nil {
@@ -21,7 +21,7 @@ func TestArchiveAdmissionCannotComeFromClientMetadata(t *testing.T) {
 	if file.Admission == nil || file.Admission.Owner != "actual" || file.Admission.Quota != 100 {
 		t.Fatalf("admission=%+v", file.Admission)
 	}
-	runner.admission = func() (*SourceAdmission, error) { return nil, errors.New("policy unavailable") }
+	runner.admission = func(string, string) (*SourceAdmission, error) { return nil, errors.New("policy unavailable") }
 	file.Admission = nil
 	if err := runner.admitSource(&file, -1); err == nil {
 		t.Fatal("missing quota policy granted an exemption")
@@ -30,7 +30,7 @@ func TestArchiveAdmissionCannotComeFromClientMetadata(t *testing.T) {
 
 func TestArchiveDestinationIsConfiguredWithoutCatalog(t *testing.T) {
 	k := admissionTestKind(t)
-	if got := k.archiveTo("zip/book.zip"); got != "body/{name}" {
+	if got := k.ArchiveDestination("zip/book.zip"); got != "body/{name}" {
 		t.Fatalf("generic archive destination=%q", got)
 	}
 	if err := validateArchiveDestination(k, k.Uploads[0]); err != nil {

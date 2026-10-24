@@ -368,4 +368,7 @@ type UploadGrant struct {
 	Allowed bool
 	Exempt  bool
 	Owner   string
+	// ArchiveTo explicitly approves every generated filename in this configured
+	// destination pattern. Empty does not authorize expansion.
+	ArchiveTo string
 }

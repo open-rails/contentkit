@@ -508,21 +508,30 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		}
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt, trusted: trusted}
-		var sourceAdmission *SourceAdmission
-		o.admission = func() (*SourceAdmission, error) {
-			if sourceAdmission != nil {
-				return sourceAdmission, nil
+		admissions := map[string]*SourceAdmission{}
+		o.admission = func(source, destination string) (*SourceAdmission, error) {
+			key := source + "\x00" + destination
+			if prior := admissions[key]; prior != nil {
+				return prior, nil
 			}
-			sourceAdmission = &SourceAdmission{Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt}
-			if sourceAdmission.Enforce {
+			stem, _ := splitExt(source)
+			delegated, err := u.authorize(editCtx, actor, UploadTarget{Ref: ref, Path: stem})
+			if err != nil {
+				return nil, err
+			}
+			if delegated.ArchiveTo != destination || delegated.Owner != grant.Owner || delegated.Exempt != grant.Exempt {
+				return nil, uploadErr(CodeForbidden, "ZIP expansion requires an explicitly approved destination with the same owner and quota policy")
+			}
+			admission := &SourceAdmission{Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Target: destination}
+			if admission.Enforce {
 				quota, err := u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
 				if err != nil {
-					sourceAdmission = nil
 					return nil, err
 				}
-				sourceAdmission.Quota = quota
+				admission.Quota = quota
 			}
-			return sourceAdmission, nil
+			admissions[key] = admission
+			return admission, nil
 		}
 		o.authorizePath = func(path string) error {
 			stem, _ := splitExt(path)
@@ -597,7 +606,7 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		}
 		mutation.effects.Cancel = removesPending(prior, ops)
 		mutation.effects.Notify = u.reg.cfg.Hooks.ItemCommitted != nil
-		job := ProcessJob{Ref: ref, Place: len(m.StagedNames()) > 0}
+		job := ProcessJob{Ref: ref, Place: len(m.StagedNames()) > 0 || item.Kind().pendingArchives(m)}
 		for _, op := range ops {
 			if op.Op == OpRegenerate {
 				job.Preset, job.Force = op.Preset, op.Force

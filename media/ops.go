@@ -163,8 +163,8 @@ type opRun struct {
 	// exempt is an exempt grant: its takedown of a path already gone is a
 	// retry, not an error.
 	exempt    bool
-	trusted   bool                             // in-process system commits may update reserved provenance
-	admission func() (*SourceAdmission, error) // verified source policy, only resolved when admitting a ZIP
+	trusted   bool                                           // in-process system commits may update reserved provenance
+	admission func(string, string) (*SourceAdmission, error) // verified source policy, only resolved when admitting a ZIP
 	// authorizePath rechecks a collision allocation against host path policy.
 	authorizePath func(string) error
 }
@@ -375,6 +375,16 @@ func (o *opRun) put(op Op) error {
 		}
 		if old.Source() != f.Source() {
 			f.Meta = clearArchiveState(f.Meta)
+		} else if k.ArchiveDestination(f.Path) != "" {
+			f.Meta = maps.Clone(f.Meta)
+			if f.Meta == nil {
+				f.Meta = map[string]any{}
+			}
+			for _, key := range archiveStateKeys {
+				if value, ok := old.Meta[key]; ok {
+					f.Meta[key] = value
+				}
+			}
 		}
 		f.Unattached = old.Unattached && op.Unattached
 	} else if u.Max > 0 && o.count(g) >= u.Max {

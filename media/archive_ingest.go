@@ -5,10 +5,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -51,7 +51,7 @@ func (m *Manifests) IngestArchives(ctx context.Context, ref contentref.ContentRe
 		return err
 	}
 	for _, source := range current.Files {
-		if !source.IsUpload() || source.Unattached || source.Fail() != nil || item.Kind().archiveTo(source.Path) == "" {
+		if !source.IsUpload() || source.Unattached || source.Fail() != nil || item.Kind().ArchiveDestination(source.Path) == "" {
 			continue
 		}
 		digest := sourceDigest(source)
@@ -102,10 +102,13 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		return uploadErr(CodeForbidden, "archive quota owner is missing; recommit the ZIP")
 	}
 	k := item.Kind()
-	destination := k.archiveTo(source.Path)
+	destination := k.ArchiveDestination(source.Path)
 	target := k.uploadIndex(destination)
 	if target < 0 {
 		return uploadErr(CodeInvalid, "archive destination is not a configured upload")
+	}
+	if admission.Target != destination {
+		return uploadErr(CodeForbidden, "archive destination changed after upload admission; recommit the ZIP")
 	}
 	rule := k.Uploads[target]
 	key, err := item.Blob(source.Blob)
@@ -178,7 +181,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		if err != nil {
 			return err
 		}
-		typ := http.DetectContentType(body)
+		typ := archiveContentType(body)
 		if err := allows(rule, typ, int64(len(body))); err != nil {
 			return err
 		}
@@ -191,13 +194,28 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 	}
 	digest := hex.EncodeToString(expected)
 	fingerprintInput, _ := json.Marshal(struct {
-		Source, Target string
-		Admission      SourceAdmission
-	}{source.Blob, destination, admission})
+		Source, Path, Target string
+		Admission            SourceAdmission
+	}{source.Blob, source.Path, destination, admission})
 	operation := uuid.NewSHA1(uuid.NameSpaceOID, append([]byte("contentkit:archive-ingest:v1:"+item.Ref().String()+":"), fingerprintInput...))
 	mutation := &manifestMutation{commit: manifestCommit{ID: operation, Ref: item.Ref(), Folder: item.Prefix(), Actor: "contentkit:archive-ingest", Fingerprint: sha256.Sum256(fingerprintInput)}, quota: admission.Quota}
 	if _, replayed, err := m.replayCommit(ctx, item, mutation.commit); err != nil || replayed {
 		return err
+	}
+	// Reserve the validated expanded bytes before any page PUT. The accepted
+	// source policy is replayed without invoking a host callback in the worker.
+	reservationKey := item.TempPrefix() + "archive-quota-" + operation.String()
+	quotaLedger := *m.journal.forTenant(item.Ref().TenantID).limiter
+	quotaLedger.limits.Quota = func(context.Context, string, string) (int64, error) { return admission.Quota, nil }
+	if admission.Enforce {
+		if err := quotaLedger.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Owner: admission.Owner, Uploader: "contentkit:archive-ingest", Key: reservationKey, Size: expanded}); err != nil {
+			return err
+		}
+		defer func() {
+			clean, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+			defer cancel()
+			_ = quotaLedger.Settle(clean, Settlement{Tenant: item.Ref().TenantID, Owner: admission.Owner, Keys: []string{reservationKey}})
+		}()
 	}
 	written := []string{}
 	defer func() {
@@ -335,7 +353,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		if cur.uploads() > MaxUploads {
 			return tooManyFiles(MaxUploads, "archive exceeds item upload limit")
 		}
-		mutation.effects.Settlement = Settlement{Tenant: item.Ref().TenantID, Owner: admission.Owner, Delta: cur.uploadBytes() - before, Enforce: admission.Enforce}
+		mutation.effects.Settlement = Settlement{Tenant: item.Ref().TenantID, Owner: admission.Owner, Keys: []string{reservationKey}, Delta: cur.uploadBytes() - before, Enforce: admission.Enforce}
 		return nil
 	})
 	return err
@@ -349,7 +367,7 @@ func sourceDigest(f File) string {
 }
 func archiveImageName(name string) bool {
 	switch strings.ToLower(path.Ext(name)) {
-	case ".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif":
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif", ".heic", ".heif", ".tif", ".tiff":
 		return true
 	}
 	return false
@@ -386,4 +404,35 @@ func (r archiveContextReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 	return r.src.Read(p)
+}
+
+// archiveContentType recognizes the supported raster containers without
+// guessing from an extension. Native image processing still validates/decodes
+// the actual codec and enforces frame/pixel limits before producing renditions.
+func archiveContentType(body []byte) string {
+	if len(body) >= 16 && string(body[4:8]) == "ftyp" {
+		size := int(binary.BigEndian.Uint32(body[:4]))
+		if size >= 16 && size <= len(body) {
+			brands := []string{string(body[8:12])}
+			for i := 16; i+4 <= size; i += 4 {
+				brands = append(brands, string(body[i:i+4]))
+			}
+			if slices.Contains(brands, "avif") || slices.Contains(brands, "avis") {
+				return "image/avif"
+			}
+			for _, brand := range brands {
+				switch brand {
+				case "heic", "heix", "hevc", "hevx":
+					return "image/heic"
+				}
+			}
+			if slices.Contains(brands, "mif1") || slices.Contains(brands, "msf1") {
+				return "image/heif"
+			}
+		}
+	}
+	if len(body) >= 4 && (bytes.Equal(body[:4], []byte{'I', 'I', 42, 0}) || bytes.Equal(body[:4], []byte{'M', 'M', 0, 42})) {
+		return "image/tiff"
+	}
+	return http.DetectContentType(body)
 }

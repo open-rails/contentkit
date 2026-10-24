@@ -11,14 +11,15 @@ import (
 // A background importer uses the same owner and ceiling when attaching decoded
 // originals. Quota <= 0 is unlimited, as in PGLimits.Quota.
 type SourceAdmission struct {
+	Target  string `json:"target"`
 	Owner   string `json:"owner,omitempty"`
 	Enforce bool   `json:"enforce,omitempty"`
 	Quota   int64  `json:"quota,omitempty"`
 }
 
-// archiveTo returns this upload's configured image destination. The reader
+// ArchiveDestination returns this upload's configured image destination. The reader
 // preset's existing mapping remains supported; generic kinds can set ArchiveTo.
-func (k *Kind) archiveTo(source string) string {
+func (k *Kind) ArchiveDestination(source string) string {
 	i, _, _, _, ok := k.upload(source)
 	if !ok {
 		return ""
@@ -33,7 +34,7 @@ func (k *Kind) archiveTo(source string) string {
 }
 
 func (o *opRun) admitSource(f *File, previous int) error {
-	if o.k.archiveTo(f.Path) == "" {
+	if o.k.ArchiveDestination(f.Path) == "" {
 		return nil
 	}
 	if previous >= 0 && o.m.Files[previous].Source() == f.Source() && o.m.Files[previous].Admission != nil {
@@ -42,7 +43,7 @@ func (o *opRun) admitSource(f *File, previous int) error {
 		if o.trusted || o.admission == nil {
 			return nil
 		}
-		fresh, err := o.admission()
+		fresh, err := o.admission(f.Path, o.k.ArchiveDestination(f.Path))
 		if err != nil {
 			return err
 		}
@@ -54,7 +55,7 @@ func (o *opRun) admitSource(f *File, previous int) error {
 	if o.admission == nil {
 		return errors.New("media: ZIP upload has no verified source admission")
 	}
-	admission, err := o.admission()
+	admission, err := o.admission(f.Path, o.k.ArchiveDestination(f.Path))
 	if err != nil {
 		return err
 	}
@@ -82,4 +83,13 @@ func validateArchiveDestination(k *Kind, source Upload) error {
 		}
 	}
 	return nil
+}
+
+func (k *Kind) pendingArchives(m *Manifest) bool {
+	for _, f := range m.Files {
+		if f.IsUpload() && !f.Unattached && f.Fail() == nil && k.ArchiveDestination(f.Path) != "" && (f.Blob == "" || f.Meta["archive_completed_sha256"] != sourceDigest(f)) {
+			return true
+		}
+	}
+	return false
 }

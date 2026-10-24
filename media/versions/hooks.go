@@ -197,15 +197,19 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 	case err != nil || t.Ref.TenantID != k.NS():
 		return media.UploadGrant{}, nil
 	case isSystem(actor) && k.Versions:
-		return media.UploadGrant{Allowed: true, Exempt: true}, nil
+		return media.UploadGrant{Allowed: true, Exempt: true, ArchiveTo: k.ArchiveDestination(t.Path)}, nil
 	case k.Versions:
-		return s.canEdit(ctx, actor, k, t)
+		g, err := s.canEdit(ctx, actor, k, t)
+		g.ArchiveTo = k.ArchiveDestination(t.Path)
+		return g, err
 	case s.isEntityKind(k.Name):
-		return s.canEditEntity(ctx, actor, t)
+		g, err := s.canEditEntity(ctx, actor, t)
+		g.ArchiveTo = k.ArchiveDestination(t.Path)
+		return g, err
 	case k.Name == s.reg.Config().Avatars.Kind:
 		writer, err := s.avatarEditor(ctx, actor, t.Ref.ContentID)
 		self := actor.Member() && actor.AccountID() == t.Ref.ContentID
-		return media.UploadGrant{Allowed: writer, Owner: t.Ref.ContentID, Exempt: writer && !self}, err
+		return media.UploadGrant{Allowed: writer, Owner: t.Ref.ContentID, Exempt: writer && !self, ArchiveTo: k.ArchiveDestination(t.Path)}, err
 	case s.o.Others != nil:
 		return s.o.Others.CanUpload(ctx, actor, t)
 	}
