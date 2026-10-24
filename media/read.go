@@ -427,6 +427,9 @@ type ReadOptions struct {
 	// pending, failure, editor view and retained source URL, unattached ones
 	// included. Source URLs are independent of the viewer's ServeOriginals.
 	Editor bool
+	// Status returns only whole-manifest processing counts, for editors.
+	// It issues no URLs or editor-view work and ignores pagination/prefix.
+	Status bool
 }
 
 // Read resolves ref once and answers the read API.
@@ -438,6 +441,13 @@ func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor acce
 func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor access.Actor, o ReadOptions) (*ReadResult, *Grant, error) {
 	if o.Offset < 0 || o.Limit < 0 {
 		return nil, nil, fmt.Errorf("%w: negative offset or limit", ErrInvalidRequest)
+	}
+	if o.Status {
+		status, err := r.Status(ctx, ref, actor)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &ReadResult{Access: AccessNone, State: status.State, Status: status, Files: []FileInfo{}}, nil, nil
 	}
 	var paths map[string]bool
 	if len(o.Paths) > 0 {
@@ -538,7 +548,9 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		_ = r.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref, Editor: true}) // best effort: the next read asks again
 	}
 	if editor {
-		r.addProgress(ctx, g, out.Files)
+		progress := r.statusProgress(ctx, ref, g.Manifest)
+		out.Status = statusOf(k, g.Manifest, progress)
+		r.addProgress(out.Files, progress)
 	}
 	return out, g, nil
 }
@@ -592,31 +604,18 @@ func (e *editorViews) url(ctx context.Context, f File) (string, error) {
 	return e.g.url(name, "", false, e.g.cookie())
 }
 
-// addProgress fills Progress on pending video and audio uploads. A failed
-// progress read leaves it out rather than failing the read.
-func (r *Reader) addProgress(ctx context.Context, g *Grant, files []FileInfo) {
-	if r.o.Progress == nil {
-		return
-	}
-	var pending []int
-	for i, f := range files {
-		if f.Upload && len(f.Pending) > 0 && (isVideoType(f.Type) || isAudioType(f.Type)) {
-			pending = append(pending, i)
+// addProgress fills pending upload progress from the same checkpoint used by status.
+func (r *Reader) addProgress(files []FileInfo, st EncodeStatus) {
+	for i := range files {
+		f := &files[i]
+		if !f.Upload || len(f.Pending) == 0 || !(isVideoType(f.Type) || isAudioType(f.Type)) {
+			continue
 		}
-	}
-	if len(pending) == 0 {
-		return
-	}
-	st, err := r.o.Progress.EncodeProgress(ctx, g.Item.Ref())
-	if err != nil {
-		return
-	}
-	for _, i := range pending {
-		if p, ok := st.Files[files[i].Path]; ok {
-			files[i].Progress = &p
+		if p, ok := st.Files[f.Path]; ok {
+			f.Progress = &p
 		} else if st.Queued != nil {
 			q := *st.Queued
-			files[i].Progress = &q
+			f.Progress = &q
 		}
 	}
 }
