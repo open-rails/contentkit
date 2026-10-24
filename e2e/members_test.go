@@ -18,16 +18,10 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/entities"
-	"github.com/open-rails/contentkit/offers"
 )
 
-// A channel's members-only post over the real engine, AuthKit and OpenRails.
-// Its owner reads the offer they sell, which no paywall offers them; nobody
-// joins a channel that sells nothing (not_joinable). The blog kind's default
-// locked view hides comments: a member and the channel's owner read and write
-// them; a signed-in stranger and an anonymous visitor get none of their text,
-// in the thread, its replies or the latest feed, and can neither post, reply,
-// react nor edit; the standing says why.
+// Channel access is granted and revoked directly in OpenRails. ContentKit
+// applies the entitlement to the post and all of its comment interactions.
 func TestMembersOnlyChannelComments(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
@@ -51,32 +45,16 @@ func TestMembersOnlyChannelComments(t *testing.T) {
 	ch := string(made[0].ID)
 	path := "/entities/" + ch
 
-	// Selling nothing: no offer for the owner, no join for anyone.
-	var d entities.EntityDetail
-	f.want(http.StatusOK, ownerToken, "GET", path, nil, &d)
-	if d.Offer != nil || d.Access == nil || !d.Access.Editor {
-		t.Fatalf("an unsold channel as its owner sees it: offer %+v access %+v", d.Offer, d.Access)
-	}
-	// People read why, not the error chain behind it.
-	var refusal struct{ Error, Code string }
-	if f.want(http.StatusConflict, memberToken, "POST", path+"/join", nil, &refusal); refusal.Code != "not_joinable" || refusal.Error == "" ||
-		strings.Contains(refusal.Error, "offers:") || strings.Contains(refusal.Error, ch) {
-		t.Fatalf("joining a channel that sells nothing: %+v", refusal)
-	}
-
-	// A free membership: its owner reads the offer to manage it, the paywall
-	// offers it to everyone else.
-	f.want(http.StatusOK, ownerToken, "PUT", path+"/offer", offers.Terms{Currency: "USD"}, nil)
 	var owned, seen entities.EntityDetail
 	f.want(http.StatusOK, ownerToken, "GET", path, nil, &owned)
-	if o := owned.Offer; o == nil || o.State != offers.Active || o.Terms.Amount != 0 || owned.Access.Offer != nil || !owned.Access.Editor {
-		t.Fatalf("the owner's channel: offer %+v access %+v", owned.Offer, owned.Access)
+	if owned.Access == nil || !owned.Access.Editor {
+		t.Fatalf("owner access: %+v", owned.Access)
 	}
 	f.want(http.StatusOK, strangerToken, "GET", path, nil, &seen)
-	if seen.Offer != nil || seen.Access == nil || seen.Access.Offer == nil || seen.Access.Editor {
-		t.Fatalf("a stranger's channel: offer %+v access %+v", seen.Offer, seen.Access)
+	if seen.Access == nil || seen.Access.Member || seen.Access.Editor {
+		t.Fatalf("stranger access: %+v", seen.Access)
 	}
-	f.want(http.StatusOK, memberToken, "POST", path+"/join", nil, nil)
+	_, granted := grantKeys(t, merchant, member.ID, owned.Access.Key.String())
 
 	var post catalog.Content
 	members := access.Rule{Level: access.EntityLevel, Entity: ch}
@@ -156,7 +134,9 @@ func TestMembersOnlyChannelComments(t *testing.T) {
 
 	// Leaving locks the member out of the thread, and out of editing their own
 	// comment there.
-	f.want(http.StatusOK, memberToken, "DELETE", path+"/join", nil, nil)
+	if err := merchant.RevokeProductAccess(ctx, granted, billing.RevokeProductAccessParams{Reason: "fixture membership ended"}); err != nil {
+		t.Fatal(err)
+	}
 	if got := bodies(memberToken, thread); len(got) != 0 {
 		t.Fatalf("a former member reads the thread %v", got)
 	}
