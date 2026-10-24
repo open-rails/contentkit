@@ -16,11 +16,11 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// deletionIncarnation captures even an item with no uploads without opening
-// a second transaction while DeleteItemsTx holds the host's connection. An
+// ensureIncarnation captures even an item with no uploads without opening
+// a second transaction while RetireItemsTx holds the host's connection. An
 // empty root has no coupled quota, queue or cleanup effects. Its conditional
 // PUT cannot overwrite a tombstone or a concurrently initialized lifetime.
-func (m *Manifests) deletionIncarnation(ctx context.Context, item Item) (*Manifest, error) {
+func (m *Manifests) ensureIncarnation(ctx context.Context, item Item) (*Manifest, error) {
 	if err := RequireConditionalPut(ctx, m.store); err != nil {
 		return nil, err
 	}
@@ -138,6 +138,9 @@ func (j *Jobs) retireFolder(ctx context.Context, item Item, intent manifestCommi
 	if err := j.deleteItem(ctx, item, d.Owner, operation, d.Incarnation, time.Time{}, false); err != nil {
 		return err
 	}
+	if err := j.repeatDeletion(ctx, item, operation); err != nil {
+		return err
+	}
 	jr := j.cfg.Journal.forTenant(item.Ref().TenantID)
 	_, err := jr.pool.Exec(ctx, `UPDATE `+jr.table+` SET effects=jsonb_set(effects,'{folder_delete,completed}','true'),updated_at=now()
 WHERE tenant_id=$1 AND operation_id=$2`, item.Ref().TenantID, intent.ID)
@@ -187,8 +190,7 @@ func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUI
 			return errors.New("media: retired allocation is still referenced")
 		}
 	}
-	c.Effects.Mirror = nil
-	return j.manifests.finishCommit(ctx, item, c, true, current)
+	return j.deleteKeys(ctx, append(slices.Clone(c.Effects.Public), c.Effects.Private...))
 }
 
 func (j *Jobs) resetItem(ctx context.Context, item Item, deletion uuid.UUID) error {

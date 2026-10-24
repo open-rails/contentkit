@@ -204,13 +204,9 @@ func TestManifestCommitRecoveryFencesLateWrites(t *testing.T) {
 		for _, applied := range []bool{false, true} {
 			t.Run(fmt.Sprintf("existing=%t/applied=%t", existing, applied), func(t *testing.T) {
 				env := s3test.Open(t)
-				pool := pgtest.Pool(t, nil)
-				schema := pgtest.Schema(t, t.Context(), pool)
-				journal, err := media.NewPGJournal(pool, schema, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
+				pool, schema := env.Pool(), env.ContentSchema()
 				reg := miniRegistry(t, env.Tenant)
+				journal, _ := env.Processing(reg)
 				ref := contentref.New(env.Tenant, "post", cid(7))
 				item, _ := reg.Item(ref)
 				store := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey(), applied: applied}
@@ -252,20 +248,17 @@ WHERE tenant_id = $1 AND folder_prefix = $2 ORDER BY created_at DESC LIMIT 1`, r
 				}
 				state("prepared")
 				store.blockFence = true
-				if err := ms.RecoverPending(t.Context(), 1); !errors.Is(err, media.ErrUnavailable) {
-					t.Fatalf("unreachable fence: %v", err)
+				if !applied {
+					if err := ms.Recover(t.Context(), ref); !errors.Is(err, media.ErrUnavailable) {
+						t.Fatalf("unreachable retry: %v", err)
+					}
+					state("frozen")
 				}
-				state("frozen")
 				store.blockFence = false
-				if err := ms.RecoverPending(t.Context(), 1); err != nil {
+				if err := ms.Recover(t.Context(), ref); err != nil {
 					t.Fatal(err)
 				}
-				wantState, wantTitle := "absent", ""
-				if applied {
-					wantState, wantTitle = "applied", "attempt"
-				} else if existing {
-					wantTitle = "before"
-				}
+				wantState, wantTitle := "applied", "attempt"
 				state(wantState)
 				if _, err := env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(store.body), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
 					t.Fatalf("delayed original PUT after recovery: %v", err)
@@ -277,7 +270,7 @@ WHERE tenant_id = $1 AND folder_prefix = $2 ORDER BY created_at DESC LIMIT 1`, r
 				if title, _ := man.Meta["title"].(string); title != wantTitle {
 					t.Fatalf("recovered manifest %+v, want title %q: %v", man, wantTitle, err)
 				}
-				if err := ms.RecoverPending(t.Context(), 1); err != nil {
+				if err := ms.Recover(t.Context(), ref); err != nil {
 					t.Fatal(err)
 				}
 				_, after, err := ms.Get(t.Context(), ref)
@@ -299,13 +292,9 @@ func TestLateCommitCannotAcknowledgeAnotherOperation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	env := s3test.Open(t)
-	pool := pgtest.Pool(t, nil)
-	schema := pgtest.Schema(t, ctx, pool)
-	journal, err := media.NewPGJournal(pool, schema, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pool, schema := env.Pool(), env.ContentSchema()
 	reg := miniRegistry(t, env.Tenant)
+	journal, _ := env.Processing(reg)
 	ref := contentref.New(env.Tenant, "post", cid(7))
 	item, _ := reg.Item(ref)
 	prepared, release := make(chan struct{}), make(chan struct{})
@@ -456,12 +445,14 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 					t.Fatalf("uncertain write: %v", err)
 				}
 				usage(before+max(delta, 0), reserved)
-				if jobs := f.q.take(); len(jobs) != 0 {
-					t.Fatalf("uncertain commit queued processing before recovery: %+v", jobs)
+				if jobs := f.q.take(); len(jobs) != 1 || jobs[0].Commit != operationID {
+					t.Fatalf("uncertain commit needs its durable ingest owner: %+v", jobs)
 				}
 				store.blockFence = true
-				if err := manifests.Recover(t.Context(), ref); !errors.Is(err, media.ErrUnavailable) {
-					t.Fatalf("failed fence: %v", err)
+				if !applied {
+					if err := manifests.Recover(t.Context(), ref); !errors.Is(err, media.ErrUnavailable) {
+						t.Fatalf("failed retry: %v", err)
+					}
 				}
 				usage(before+max(delta, 0), reserved)
 				store.blockFence = false
@@ -469,16 +460,9 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 					if err := manifests.Recover(t.Context(), ref); err != nil {
 						t.Fatal(err)
 					}
-					if applied {
-						usage(before+delta, 0)
-					} else {
-						usage(before, reserved)
-					}
+					usage(before+delta, 0)
 				}
 				wantJobs := 0
-				if applied {
-					wantJobs = 1
-				}
 				if jobs := f.q.take(); len(jobs) != wantJobs {
 					t.Fatalf("recovery queued %d jobs, want %d: %+v", len(jobs), wantJobs, jobs)
 				}
@@ -494,9 +478,6 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 					usage(before+delta, 0)
 				}
 				wantJobs = 0
-				if !applied {
-					wantJobs = 1
-				}
 				if jobs := f.q.take(); len(jobs) != wantJobs {
 					t.Fatalf("batch retry queued %d jobs, want %d", len(jobs), wantJobs)
 				}
@@ -509,6 +490,7 @@ func TestForeignJournalCannotEditOrCleanReceipt(t *testing.T) {
 	env := s3test.Open(t)
 	pool := pgtest.Pool(t, nil)
 	reg := miniRegistry(t, env.Tenant)
+	_, _ = env.Processing(reg)
 	ref, _ := reg.Ref("post", cid(7))
 	item, _ := reg.Item(ref)
 	store := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey(), uncertain: true, applied: true}

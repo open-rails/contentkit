@@ -132,11 +132,17 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		} else {
 			forceZips = false
 		}
-		if err := p.pass(ctx, item, m, todo, zips); err != nil {
-			if errors.Is(err, media.ErrManifestTooLarge) {
-				return p.c.Manifests.SetFull(ctx, item.Ref(), err)
+		for start := 0; start < max(1, len(todo)); start += 8 {
+			batch := todo[start:min(start+8, len(todo))]
+			if err := p.pass(ctx, item, m, batch, zips); err != nil {
+				if errors.Is(err, media.ErrManifestTooLarge) {
+					return p.c.Manifests.SetFull(ctx, item.Ref(), err)
+				}
+				return err
 			}
-			return err
+			if err := media.CompleteProcessing(ctx, p.c.Manifests, item.Ref(), nil); err != nil {
+				return err
+			}
 		}
 		if m.Full {
 			// One pass: a public render that failed has no record to stop

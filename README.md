@@ -579,19 +579,21 @@ original downloads. The browser reads their duration when metadata loads.
 Existing generated M4A files remain readable for older uploads. Audio tracks
 inside a movie still belong to its video conversion.
 
-**Cleanup**: a manifest edit records the exact source, rendition, staging and
-public keys it removes in its durable journal. After the conditional manifest
-write commits, it withdraws stale published snapshots and deletes those keys.
-Shared references and retained originals remain intact. Failed deletes leave
-the operation pending for recovery; reordering alone never deletes files.
+**Commit ownership**: before a conditional manifest PUT, PostgreSQL commits the
+exact accepted manifest, quota admission and an operation-specific ingest job
+in one transaction. The request attempts the write immediately; that same ingest
+job finishes it after an interrupted request. Retrying an operation does not
+reapply old edits to newer input or charge twice. Editor status observes the
+admitted work even before its S3 manifest lands. Image and video jobs finish
+their own interrupted writes before processing further.
 
-Each catalog/account schema also stores one `content_media_cleanup` record per
-storage prefix. One daily `contentkit_media_cleanup_due` job processes bounded
-batches of recorded allocation and deletion deadlines. It does not list the
-bucket to discover unreferenced objects. A bounded retry of exact retired keys
-catches writes authorized before retirement. Unknown objects are an integrity
-error to investigate, not routine garbage. A prefix is a media item or version's
-folder, not necessarily a gallery.
+**Cleanup**: edits record exact retired source, rendition, staging and public
+keys and withdraw stale reader snapshots. The existing content-deletion sweep
+performs physical deletion, including live-item discarded allocations, entity
+and poll folders, account assets and bounded late-write retries. It retains each
+intent through storage failure and never discovers garbage by listing the
+bucket. Shared references and new incarnations remain intact. Version media and
+catalog retirement stay in that same sweep after the normal retention period.
 
 Completed temporary uploads and optional ZIP caches expire after seven days;
 unfinished uploads past that deadline must restart. The S3 adapter tags only
@@ -605,16 +607,18 @@ versions expire after one day; permanent noncurrent versions retain the host's
 configured restore window. Lifecycle execution is asynchronous. Backends that
 do not implement multipart-abort lifecycle rules need equivalent server settings.
 
-The immediate `contentkit_media_delete_folder` job still performs storage I/O
-and releases quota after a host deletion commits. Its late-upload pass is a
-database deadline, not another delayed River job. Media processors append retained
-progress/completion facts and enqueue real version metadata work atomically.
+Media has three processing jobs: ingest, image and video. Ingest validates an
+entire ZIP before attaching pages in bounded, replayable batches; image work
+commits bounded source batches. Those processors append retained progress facts
+directly after their commits and complete with real version metadata work.
 Declared public files stay public independently of publication and billing.
 
 For upgrades from the old per-folder timers, stop old media hosts and workers,
 run the host's normal `MigratePostgres` command, then start the new cohort. The
-migration atomically transfers pending sweep/final-deletion timers and cancels
-them; running old cleanup jobs block migration. Read-only startup rejects
+migration atomically transfers queued folder deletions to the deletion ledger
+and cancels obsolete timers; running old jobs block migration. Old uncertain
+manifest writes must first be settled by the previous release, because their
+original accepted input was not stored. Read-only startup rejects
 unmigrated timers. Standalone media hosts call `media.MigrateCleanup` with their
 registry, routed journal and River schema. `SweepAll` and `SweepOrphans` remain
 explicit repair tools, rather than periodic bucket-wide work. Neither is

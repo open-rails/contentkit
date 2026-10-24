@@ -55,7 +55,7 @@ VALUES($1,$2,'gallery.published','infinity',$3)`, source.TenantID, legacy, []uui
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jobs.CleanupDue(t.Context(), 100); err != nil {
+	if _, err := jobs.PurgeRetired(t.Context(), 100); err != nil {
 		t.Fatal(err)
 	}
 	if !f.exists(oldKey) {
@@ -71,7 +71,7 @@ VALUES($1,$2,'gallery.published','infinity',$3)`, source.TenantID, legacy, []uui
 	if _, err := pool.Exec(t.Context(), `UPDATE `+commits+` SET effects=jsonb_set(effects,'{private}',$2::jsonb) WHERE operation_id=$1`, operation, badTargets); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jobs.CleanupDue(t.Context(), 100); err == nil {
+	if _, err := jobs.PurgeRetired(t.Context(), 100); err == nil {
 		t.Fatal("legacy receipt was allowed to target a source prefix")
 	}
 	if !f.exists(sourceKey) || !f.exists(oldKey) {
@@ -87,7 +87,7 @@ VALUES($1,$2,'gallery.published','infinity',$3)`, source.TenantID, legacy, []uui
 	if _, err := pool.Exec(t.Context(), `UPDATE `+cleanupTable(f)+` SET due_at=now() WHERE folder_prefix=$1`, legacy); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jobs.CleanupDue(t.Context(), 100); err == nil {
+	if _, err := jobs.PurgeRetired(t.Context(), 100); err == nil {
 		t.Fatal("legacy receipt could overwrite the source through a mirror")
 	}
 	if !f.exists(oldKey) || !f.exists(sourceKey) {
@@ -106,7 +106,7 @@ VALUES($1,$2,'gallery.published','infinity',$3)`, source.TenantID, legacy, []uui
         VALUES($1,$2,'gallery.published',$3,$4,'restore',$5,$6,'applied','{}',now()+interval '1 second')`, source.TenantID, adopted, cid(3), legacy, make([]byte, 32), uuid.New()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jobs.CleanupDue(t.Context(), 100); err == nil {
+	if _, err := jobs.PurgeRetired(t.Context(), 100); err == nil {
 		t.Fatal("retirement crossed a newer adoption")
 	}
 	if !f.exists(oldKey) || !f.exists(sourceKey) {
@@ -118,7 +118,7 @@ VALUES($1,$2,'gallery.published','infinity',$3)`, source.TenantID, legacy, []uui
 	if _, err := pool.Exec(t.Context(), `UPDATE `+cleanupTable(f)+` SET due_at=now() WHERE folder_prefix=$1`, legacy); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jobs.CleanupDue(t.Context(), 100); err != nil {
+	if _, err := jobs.PurgeRetired(t.Context(), 100); err != nil {
 		t.Fatal(err)
 	}
 	if f.exists(oldKey) || f.exists(legacy+"manifest.json") {
@@ -139,7 +139,7 @@ VALUES($1,$2,'gallery.published','infinity',$3)`, source.TenantID, legacy, []uui
 	// A late old copy lands after the first cleanup; the same receipt removes it.
 	f.object(oldKey, "late")
 	clock = time.Now().Add(10 * 24 * time.Hour)
-	if _, err := jobs.CleanupDue(t.Context(), 100); err != nil {
+	if _, err := jobs.PurgeRetired(t.Context(), 100); err != nil {
 		t.Fatal(err)
 	}
 	if f.exists(oldKey) {
@@ -217,7 +217,7 @@ VALUES($1,$2,'gallery.published',$3,$4,'old-worker',$5,$6,'applied',$7)`, source
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := jobs.CleanupDue(t.Context(), 100); err != nil {
+			if _, err := jobs.PurgeRetired(t.Context(), 100); err != nil {
 				t.Fatal(err)
 			}
 			if f.exists(key) {

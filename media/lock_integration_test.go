@@ -7,8 +7,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	riverhelpers "github.com/open-rails/helpers/river"
-	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
@@ -73,18 +71,11 @@ func TestDeleteItemsTxWithSingleConnectionPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	riverSchema := pgtest.EmptySchema(t, t.Context(), pool)
-	if err := riverhelpers.ApplyMigrations(t.Context(), pool, riverSchema); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := riverhelpers.New(t.Context(), pool, &river.Config{Schema: riverSchema}, jobs.RiverJobs()); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	ref, _ := reg.Ref("post", cid(7))
 	if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		return jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref})
+		return jobs.RetireItemsTx(ctx, tx, media.Deletion{Ref: ref})
 	}); err != nil {
 		t.Fatalf("delete empty item while the host transaction holds the only pooled connection: %v", err)
 	}
@@ -93,7 +84,7 @@ func TestDeleteItemsTxWithSingleConnectionPool(t *testing.T) {
 		t.Fatalf("empty deletion lifetime was not captured: %+v %v", cur, err)
 	}
 	var incarnation string
-	if err := pool.QueryRow(ctx, "SELECT args->>'incarnation' FROM "+pgx.Identifier{riverSchema, "river_job"}.Sanitize()+" WHERE kind='contentkit_media_delete_folder'").Scan(&incarnation); err != nil || incarnation != cur.Incarnation {
+	if err := pool.QueryRow(ctx, "SELECT effects->'folder_delete'->>'incarnation' FROM "+pgx.Identifier{schema, "content_media_commits"}.Sanitize()+" WHERE effects ? 'folder_delete'").Scan(&incarnation); err != nil || incarnation != cur.Incarnation {
 		t.Fatalf("queued wrong incarnation: %q %v", incarnation, err)
 	}
 }
