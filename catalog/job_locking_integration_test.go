@@ -323,8 +323,7 @@ func TestPurgeVersionsSkipsLockedRowsIntegration(t *testing.T) {
 	if _, err := version.Exec(ctx, `SELECT id FROM `+f.table("content_versions")+` WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenant, vids[1]); err != nil {
 		t.Fatal(err)
 	}
-	cutoff := f.now().Add(-DefaultDeletedRetention)
-	if n, err := f.s.eraseVersions(ctx, cutoff); err != nil || n != 1 {
+	if n, err := f.s.PurgeDeleted(ctx); err != nil || n != 1 {
 		t.Fatalf("purge must skip both locked rows while processing another parent: %d %v", n, err)
 	}
 	if err := parent.Rollback(ctx); err != nil {
@@ -333,7 +332,7 @@ func TestPurgeVersionsSkipsLockedRowsIntegration(t *testing.T) {
 	if err := version.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := f.s.eraseVersions(ctx, cutoff); err != nil || n != 2 {
+	if n, err := f.s.PurgeDeleted(ctx); err != nil || n != 2 {
 		t.Fatalf("purge permanently skipped released locks: %d %v", n, err)
 	}
 }
@@ -345,11 +344,12 @@ func TestPurgeVersionsBoundsBatchIntegration(t *testing.T) {
  SELECT $1,'purge-' || n,$2,ARRAY['ja'],'deleted',$3::timestamptz FROM generate_series(1,$4) n`, tenant, id, f.now().Add(-time.Hour), purgeBatch+1); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := f.s.eraseVersions(f.ctx, f.now()); err != nil || n != purgeBatch {
-		t.Fatalf("first version purge batch: %d %v", n, err)
+	n, after, err := f.s.eraseVersionBatch(f.ctx, f.now(), "")
+	if err != nil || n != purgeBatch || after == "" {
+		t.Fatalf("first version purge batch: %d cursor=%q %v", n, after, err)
 	}
-	if n, err := f.s.eraseVersions(f.ctx, f.now()); err != nil || n != 1 {
-		t.Fatalf("remaining version purge batch: %d %v", n, err)
+	if n, next, err := f.s.eraseVersionBatch(f.ctx, f.now(), after); err != nil || n != 1 || next != "" {
+		t.Fatalf("remaining version purge batch: %d cursor=%q %v", n, next, err)
 	}
 }
 
@@ -391,7 +391,7 @@ func TestCatalogJobsSkipLockedVersionParentBatchesIntegration(t *testing.T) {
 			if test.name == "publish" {
 				n, err = f.s.PublishDue(ctx)
 			} else {
-				n, err = f.s.eraseVersions(ctx, f.now().Add(-DefaultDeletedRetention))
+				n, err = f.s.PurgeDeleted(ctx)
 			}
 			if err != nil || n != 1 {
 				t.Fatalf("locked versions in the first %d parents hid later available work: processed=%d err=%v", test.limit, n, err)
