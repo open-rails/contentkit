@@ -129,7 +129,7 @@ var routes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/search", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the query")}, filterParams, readerParams,
-			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of the best matches"), cardEntities, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page"),
+			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of every match"), cardEntities, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page"),
 				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams, []httpapi.Param{numberedPage}),
 		Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,

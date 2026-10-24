@@ -275,7 +275,7 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	}
 	// Real filler catalog. EXPLAIN must prove an indexed fuzzy scan without forcing
 	// enable_seqscan off; a query that only works on the tiny fixture is insufficient.
-	if _, err = pool.Exec(ctx, `INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),NULL,CASE WHEN i%2=0 THEN 'zh' ELSE 'en' END,'占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i; ANALYZE app.content_search_documents`); err != nil {
+	if _, err = pool.Exec(ctx, `INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),NULL,CASE WHEN i%2=0 THEN 'zh' ELSE 'en' END,'占位内容'||md5(i::text) FROM generate_series(1,50000) i; ANALYZE app.content_search_documents`); err != nil {
 		t.Fatal(err)
 	}
 	var trgm string
@@ -286,58 +286,16 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	if _, err = pool.Exec(ctx, `SET pg_trgm.word_similarity_threshold=0.1`); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := pool.Query(ctx, fmt.Sprintf(`EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='zh' AND app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.%%>) '魔法女少' ORDER BY app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.<->>) '魔法女少' LIMIT 100`, qt, qt))
-	if err != nil {
-		t.Fatal(err)
-	}
 	var plan strings.Builder
-	for rows.Next() {
-		var line string
-		if err = rows.Scan(&line); err != nil {
-			t.Fatal(err)
-		}
-		plan.WriteString(line + "\n")
-	}
-	rows.Close()
-	if rows.Err() != nil {
-		t.Fatal(rows.Err())
-	}
-	t.Log(plan.String())
-	if !strings.Contains(plan.String(), "content_search_documents_keyword_fuzzy") || strings.Contains(plan.String(), "Seq Scan") {
-		t.Fatalf("expected indexed bounded fuzzy path:\n%s", plan.String())
-	}
-	rows, err = pool.Query(ctx, `EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) SELECT sd.content_id
- FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='zh'
- AND app.contentkit_keyword_terms(sd.title,sd.aliases,'{}'::text[],'') OPERATOR(public.&^) '魔法' LIMIT 20`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan.Reset()
-	for rows.Next() {
-		var line string
-		if err = rows.Scan(&line); err != nil {
-			t.Fatal(err)
-		}
-		plan.WriteString(line + "\n")
-	}
-	rows.Close()
-	if rows.Err() != nil {
-		t.Fatal(rows.Err())
-	}
-	t.Log(plan.String())
-	if !strings.Contains(plan.String(), "content_search_documents_name_prefix") || strings.Contains(plan.String(), "Seq Scan") {
-		t.Fatalf("expected indexed name-prefix path:\n%s", plan.String())
-	}
 	for _, tc := range []struct{ query, index string }{
 		{fmt.Sprintf(`SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='zh'
- AND app.contentkit_search_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.%%>) '魔法女少'
- ORDER BY app.contentkit_search_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.<->>) '魔法女少' LIMIT 100`, qt, qt), "content_search_documents_search_fuzzy"},
+ AND sd.body OPERATOR(%s.%%>) '魔法女少' ORDER BY sd.body OPERATOR(%s.<->>) '魔法女少' LIMIT 100`, qt, qt), "content_search_documents_body_fuzzy"},
 		{`SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='zh'
  AND app.contentkit_search_terms(sd.title,sd.aliases,'{}'::text[],'') OPERATOR(public.&^) '魔法' LIMIT 20`, "content_search_documents_names_prefix"},
 		{`SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='en'
  AND app.contentkit_search_names(sd.title,sd.aliases) LIKE '%berry%' LIMIT 20`, "content_search_documents_names_substring"},
 		{`SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='en'
- AND app.contentkit_search_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) LIKE '%berry%' LIMIT 100`, "content_search_documents_search_substring"},
+ AND sd.body LIKE '%berry%' LIMIT 100`, "content_search_documents_body_substring"},
 	} {
 		rows, err := pool.Query(ctx, `EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) `+tc.query)
 		if err != nil {

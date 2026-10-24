@@ -189,8 +189,10 @@ Entity identity, aliases and slug normalization are unchanged.
 A full-search score is a match tier: exact title 1, alias 0.9, name prefix
 0.84–0.85, name substring 0.81–0.82, contextual/token matches 0.75–0.77,
 and typo 0.5–0.52. Queries are capped at 256 characters, 16 tokens and two
-seconds. Migration `0011_search_substrings` adds search-only expression indexes
-while retaining previous functions and indexes for mixed 0.103 writers.
+seconds. Each search document stores its normalized terms (migration
+`0043_stored_search_terms`), so a bounded candidate window keeps the strongest
+name matches. A search sorted by newest, title or popularity orders every
+literal match; typo matches come from the nearest-distance window.
 
 `GET /v1/manage/search-suggestions` is private quick navigation to editors.
 Explicitly request `include_contents` and/or `include_entities`, optionally
@@ -201,27 +203,6 @@ labels while matching current names in every language. This API does not use
 body/associated-entity keywords, public reader filters or a results-page fallback.
 Migration `0012_management_names` adds separate current-name views and indexes;
 approved/published search documents and old writers remain unchanged.
-
-After **every** old app, search reader, importer and worker has stopped, reclaim
-the compatibility indexes explicitly with an operator pool that has DDL
-authority. Do this separately for each catalog schema; it is never run by
-startup or migrations:
-
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-defer cancel()
-report, err := search.RetireLegacyIndexes(ctx, operatorPool, "doujins_contentkit", true)
-```
-
-The final flag confirms the old cohort has stopped. The operation verifies all
-replacement indexes are ready and checks tracked SQL helper dependencies before
-dropping the four old indexes concurrently, then the two old keyword wrappers
-with `RESTRICT`. Interrupted passes are safe to retry; the report lists the
-validated indexes and which old objects were dropped or already absent. Hosts
-expose this as `tools retire-search-indexes --legacy-readers-stopped`. Include external/dynamic
-SQL callers in the cohort review; PostgreSQL cannot track those call sites.
-`contentkit_keyword_normalize`, generated entity identity and canonical alias
-uniqueness remain intact, along with all current search/management indexes.
 
 ## Errors
 
