@@ -53,8 +53,7 @@ another tenant is an error, never remapped.
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `EntityID` |
 | `contenturl` | uniform content URLs `/{lang}/{route}/{CODE}[/{slug}][?v={version}]`: permanent 9-character codes per tenant, 4-character version codes, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
-| `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`); the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access and offers](#access-and-offers-access-offers)) |
-| `offers` | offers on content, versions and entities, their OpenRails sync job, free entity joins and the library |
+| `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`); the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access](#access-access)) |
 | `adapters/openrails` | `access.Billing` over the OpenRails client (its own module) |
 | `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and due cleanup, immediate deletion, `Expose` and relays as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
@@ -112,10 +111,11 @@ for _, r := range routes {
   belongs to ContentKit: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
   projection repair, publication events, event retention and content purge,
-  offer sync and the media jobs. Hosts schedule nothing. Start before
+  and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and
-  `Deps.Billing`, and the offers service from `Config.Offers`.
+  `Deps.Billing`. Billing supplies authoritative entitlement reads; product
+  and price management stays in OpenRails.
 - `Client()` is the HTTP surface as a Go client acting as the host, over an
   in-process transport (for example `PublishNotifications`,
   `CreateContent`).
@@ -150,7 +150,7 @@ the shared editor's reversible [page review](docs/api/publishing.md#page-normali
 | `CodeRoutes` | `/v1/codes/{code}` | always |
 | `EntityRoutes` | `/v1/entities`, `/v1/contents/{id}/entities`: listings and pages, writes for `root:entities:write` | always |
 | `NotificationRoutes` | `/v1/notifications`: the inbox, and the host's publish route | always |
-| `OfferRoutes` | `/v1/contents/{id}/offer`, `/v1/entities/{id}/offer` and `join`, `/v1/me/library`, `/v1/offers` | `Deps.Billing` |
+| `DiscoveryRoutes` | public lists/search, history and `/v1/me/library` for purchased content | always; purchased access uses `Deps.Billing` |
 
 | Tier | Admits |
 |---|---|
@@ -240,13 +240,15 @@ statuses are listed in [docs/api/routes.md](docs/api/routes.md#error-codes).
 unset) with the request method, path, status and duration. Postgres constraint
 names, driver text and stack traces are logged, never served.
 
-## Access and offers (`access`, `offers`)
+## Access (`access`)
 
-An app can restrict each content kind's editorial and sales policy in its
-ContentKit model. The same policy is returned by `/kinds` and used by the admin
-UI; it is enforced for content creation, updates, version overrides, imports
-and individual offer creation. Omitting a policy retains the full feature set.
-For example, a subscription-only gallery app can set:
+OpenRails owns products, prices, checkout, subscriptions, purchases and granted
+entitlements. ContentKit owns content and its access requirements. Applications
+compose OpenRails's product/price API and billing UI with ContentKit's content
+editor; no local offer catalog or billing synchronization jobs are involved.
+The same boundary applies to embedded and HTTP deployments.
+
+A subscription-only app can restrict its content model to free and tier access:
 
 ```yaml
 kinds:
@@ -256,79 +258,54 @@ kinds:
     comment_modes: [open]
 ```
 
-This permits free and tier-gated content, disables individual content/version
-sales and keeps comments open. Tier names still come from `tiers`; the host's
-OpenRails catalog supplies those subscriptions. Allowed access levels are
-`public`, `tier`, `ppv`, `group`, `group_ppv`. Allowed comment modes are `open`,
-`closed`, `hidden`. An omitted or empty list permits all modes. Entity sales
-remain independently controlled by each entity kind's `sellable` setting.
-Changing policy does not rewrite previously stored content access rules;
-migrate those deliberately before applying a stricter policy. Disallowed
-individual offers stop appearing as sales immediately and the normal offer
-reconciliation withdraws them from billing, retaining their purchase history.
-A restored item adopts a fixed comment mode where the kind declares one.
+The model is returned by `/kinds` and enforced on creation, updates, version
+overrides and imports. Allowed access levels are `public`, `tier`, `ppv`,
+`group`, `group_ppv`; an omitted list permits every level. Comment modes are
+`open`, `closed`, `hidden`. Tier names come from `tiers`; their products and
+prices are defined in OpenRails. An entity kind with `entitled: true` exposes
+entitlement-based standing, without defining a price. Changing the model does
+not rewrite existing access rules or billing products.
 
-
-ContentKit gives entitlement keys meaning; OpenRails grants them and never
-parses one. Keys are constructed, never typed:
+ContentKit defines stable entitlement keys; OpenRails grants them without
+interpreting their syntax:
 
 | Key | Opens |
 |---|---|
 | `access.ContentKey` → `<tenant>:content:<id>` | every version of a content item |
 | `access.VersionKey` → `<tenant>:content:<id>/<version>` | one version |
-| `access.EntityKey` → `<tenant>:group:<id>` | every member of the entity, and content whose rule names it |
-| `access.TierKey` → `premium` | versions whose rule names the tier (`kinds.Config.Tiers`) |
+| `access.EntityKey` → `<tenant>:group:<id>` | associated content whose rules permit that entity entitlement |
+| `access.TierKey` → `premium` | versions whose rule names that tier |
 
-A `Rule` is stored as JSON on content (`content_items.access`), as a
-version's override (`content_versions.access`) and on sellable entities:
-`{"level": "public" | "tier" | "group" | "ppv" | "group_ppv", "tiers", "group_id", "preview": {"pages" | "segments"}, "releases": [{"at", "level", "tiers", "group_id"}]}`.
-`Rule.Validate(kinds)` checks it; `Rule.Facet()` projects it onto
-`content_facets`. A version opens with any of: its version key, its content
-key, the key of an entity holding it, a tier its rule names, its rule's entity
-(`group`), or a public rule or matured public audience release.
+Use these existing keys in an OpenRails product's `entitlements`. A product may
+grant several keys; its product key and its granted entitlements are separate
+concepts. OpenRails's `required_entitlements` can require a channel membership
+before a customer buys an individually gated item. Product/price edits report
+OpenRails errors directly. They do not first save local terms for later sync.
 
-A content item's `body` is part of what it sells: reads return it only to its
-editors and to viewers who open a version; others get `description` and the
-paywall `decision`. Content, version and card decisions list `offers`, each
-sold key's offer (`key`, `target`, `terms`, `price_id`; a paid one once
-synced), the shape of an entity's `access.offer`; tier keys are the host's to
-label. A `group_ppv` item's product requires the entity key
-(OpenRails `required_entitlements`), so OpenRails refuses a non-member's order
-(`entitlement_required`) for the key the decision `requires`. Content an entity
-owns (`owner_group_id`, a channel) lists under `owner_group=` and carries the
-entity's card as `owner`; owning is not membership and opens nothing.
+`Rule` is stored on content and optional version overrides. It is validated
+against the model and projected onto `content_facets`. `Gate` reads grants
+through `access.Billing.Held`; optional `access.TenureReader` supplies account
+statistics. Access decisions expose `Sell` entitlement keys and `Requires` as
+hints for the host's OpenRails checkout integration, never copied prices.
 
 ```go
-gate, _ := access.NewGate(access.GateConfig{Tenant: "onlydemo", Kinds: cfg.Kinds, Billing: ckopenrails.Billing(client)})
-f, _ := gate.Filter(ctx, actor)                  // one billing read: tiers, content and group keyspaces
-pred, args, _ := f.SQL("f", access.Hide)         // over content_facets f: only what the viewer opens
-keep, short, _ := gate.Settle(ctx, actor, f, items) // free unless a keyspace was truncated
-ds, _ := gate.Decide(ctx, actor, items)          // Allowed, or Sell, Requires, Preview, Releases
-prices, _ := offerSvc.Live(ctx, ds[0].Sell)      // which Sell keys are on sale, with their prices
+gate, _ := access.NewGate(access.GateConfig{
+    Tenant: "onlydemo", Kinds: cfg.Kinds, Billing: ckopenrails.Billing(client),
+})
+f, _ := gate.Filter(ctx, actor)
+pred, args, _ := f.SQL("f", access.Hide)
+keep, short, _ := gate.Settle(ctx, actor, f, items)
+decisions, _ := gate.Decide(ctx, actor, items)
 ```
 
-- `access.WithMemo(ctx)` keeps the viewer's `Filter` and the keys read for
-  the request: a request costs one billing read. Anonymous viewers cost none.
-- Tiers in `kinds.Config.TokenClaims` are answered from the verified token
-  when its `auth.Verified` implements `access.Entitled`; a refund then lags
-  by the token TTL.
-- A failed read fails closed: `Filter.Unknown()`, `Decision.Unknown` and an
-  error wrapping `access.ErrUnavailable`; free rules keep serving.
-- Past `access.HeldLimit` keys a keyspace is truncated: `SQL(Hide)` admits its
-  candidates and `Settle` decides them in one exact read.
+`access.WithMemo(ctx)` reuses entitlement reads during a request. Verified token
+claims can supply configured tiers; revocation then has the token's lifetime.
+Billing read failures fail closed for protected content, while public content
+remains readable. Truncated keyspace reads are settled with exact-key checks.
+`GET /v1/me/library` lists purchased content using the same authoritative grants
+and domain visibility boundary.
 
-`access.Billing` is the billing dependency: `Held`, catalog edits (products
-and prices) and free grants. `adapters/openrails.Billing` implements it over
-the OpenRails client, embedded or remote.
-
-`offers` sells content, versions and entities (`PUT|DELETE
-/contents/{id}/offer`, `/contents/{id}/versions/{vid}/offer`,
-`/entities/{id}/offer`). Its River job syncs each target to one OpenRails
-product whose key and only entitlement is the access key, named after the
-title, with one price (`offers.PriceKey`): a reprice is a new price, a
-withdrawal archives the product and buyers keep their key. A free entity
-offer (amount 0) is joined with `POST /entities/{id}/join`; `GET /me/library`
-lists the content a viewer bought.
+See [the ownership decision](docs/adr/0002-openrails-owns-commerce.md).
 
 ## Media
 
@@ -695,13 +672,13 @@ their encodings so saved policies, grants and purchases keep working.
 `catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
 Writes are batches; each transaction keeps `content_facets` current (rules
 through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
-documents dirty, queues `content_events`, renames offers' products after
-titles and calls media (expose, republish, fork, delete). Published with a
+documents dirty, queues `content_events` and calls media (expose, republish,
+fork, delete). Content edits do not rename or reprice billing products. Published with a
 future `publish_at` becomes visible when that time arrives; the periodic job
 records publication and runs its side effects. A deleted item
 stays readable to holders of its own keys; its media is erased after
-`DeletedRetention`. Offers and archived billing products retain purchase identity
-after the content and media are gone.
+`DeletedRetention`. OpenRails retains product and purchase identity after
+content and media are gone; deleting content does not delete billing history.
 
 The `Viewer` is the one visibility rule: published content whose release time
 has arrived, the domain's scope and the viewer's content filters. Every
