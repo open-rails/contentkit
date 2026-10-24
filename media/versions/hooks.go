@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -188,8 +187,7 @@ type uploads struct{ s *Service }
 
 // CanUpload lets editors of a content (staff, its creators, its owner
 // group's editors) write its items, a group's editors its item, a person
-// their own avatar. Legacy copied preview paths remain reserved while old
-// versions migrate. A version being forked takes no other writes.
+// their own avatar. A version being forked takes no other writes.
 func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	s := u.s
 	k, err := s.reg.Kind(t.Ref.ContentKind)
@@ -233,9 +231,6 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.Kind
 		return media.UploadGrant{}, err
 	}
 	if target.Version != "" && k.Publish != nil {
-		if p := k.Publish.Previews; p != "" && t.Path != "" && strings.HasPrefix(t.Path, previewDir(k)) {
-			return media.UploadGrant{}, nil
-		}
 		m, _, err := s.m.Manifests.Get(ctx, t.Ref)
 		if err != nil && !errors.Is(err, media.ErrNotFound) {
 			return media.UploadGrant{}, err

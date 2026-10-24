@@ -13,16 +13,6 @@ import (
 // The catalog calls these in its writing transaction: a target is a content
 // (every version's item) or one version.
 
-// ExposeTx brings targets' media to their visibility once it changed:
-// published, unpublished, deleted, or due.
-func (s *Service) ExposeTx(ctx context.Context, tx pgx.Tx, targets []Target) error {
-	refs, _, err := s.itemRefs(ctx, tx, targets)
-	if err != nil {
-		return err
-	}
-	return s.m.Jobs.ExposeTx(ctx, tx, refs...)
-}
-
 // RepublishTx queues versions' publication after their segments changed.
 func (s *Service) RepublishTx(context.Context, pgx.Tx, []Target) error {
 	// Access and chapters are queried live. They do not alter the immutable

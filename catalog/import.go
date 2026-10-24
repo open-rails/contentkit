@@ -285,9 +285,6 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 		return err
 	}
 	if s.media != nil {
-		if err := s.exposeTx(ctx, tx, updated); err != nil {
-			return err
-		}
 		if err := s.media.Versions.RepublishTx(ctx, tx, republish); err != nil {
 			return err
 		}
@@ -992,5 +989,5 @@ func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions
 		return err
 	}
 	events = append(events, deleted...)
-	return s.apply(ctx, tx, ids, effects{events: events, expose: true})
+	return s.apply(ctx, tx, ids, effects{events: events})
 }

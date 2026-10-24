@@ -18,6 +18,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertest"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -281,7 +284,7 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 	f.journal = journal
 	f.q = &queue{Queue: processing, t: t, pool: env.Pool()}
 	locker := s3test.Locker(t, env.Store)
-	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Journal: journal, Processes: f.q, Pool: env.Pool()}); err != nil {
+	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Journal: journal, Processes: f.q}); err != nil {
 		t.Fatal(err)
 	}
 	f.ms = f.jobs.Manifests()
@@ -380,23 +383,41 @@ func (f *fixture) put(ref contentref.ContentRef, path, typ string, body []byte, 
 	return f.commit(ref, append([]media.Op{{Op: media.OpPut, Path: p, Blob: blob}}, extra...)...)
 }
 
-// commit commits ops, then places staged uploads as the worker does first.
+// commit runs upload acceptance and ingest placement, then the existing purge
+// operation. Tests of interruptions call those owners separately.
 func (f *fixture) commit(ref contentref.ContentRef, ops ...media.Op) *media.Manifest {
 	f.t.Helper()
 	m, err := f.up.Commit(context.Background(), f.editor, ref, uuid.NewString(), ops)
 	if err != nil {
 		f.t.Fatalf("commit %+v: %v", ops, err)
 	}
-	if len(m.StagedNames()) == 0 {
-		return m
+	if len(m.StagedNames()) > 0 {
+		m = f.place(ref)
 	}
-	return f.place(ref)
+	f.purge()
+	return m
+}
+
+func (f *fixture) purge() {
+	f.t.Helper()
+	if _, err := f.jobs.PurgeRetired(f.t.Context(), 1000); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fixture) workerContext(ctx context.Context) context.Context {
+	f.t.Helper()
+	client, err := river.NewClient(riverpgxv5.New(f.env.Pool()), &river.Config{Schema: f.q.Schema()})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return rivertest.WorkContext(ctx, client)
 }
 
 // place stands in for the worker's place job.
 func (f *fixture) place(ref contentref.ContentRef) *media.Manifest {
 	f.t.Helper()
-	ctx := context.Background()
+	ctx := f.workerContext(context.Background())
 	if _, err := f.ms.Place(ctx, ref); err != nil {
 		f.t.Fatalf("place %s: %v", ref, err)
 	}
@@ -413,7 +434,7 @@ func (f *fixture) place(ref contentref.ContentRef) *media.Manifest {
 // pending.
 func (f *fixture) produce(ref contentref.ContentRef) {
 	f.t.Helper()
-	ctx := context.Background()
+	ctx := f.workerContext(context.Background())
 	item, _ := f.reg.Item(ref)
 	k := item.Kind()
 	m, _, err := f.ms.Get(ctx, ref)
@@ -426,7 +447,7 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 	}
 	var publics []public
 	for _, u := range m.Files {
-		if !u.IsUpload() || u.Blob == "" || m.Hidden {
+		if !u.IsUpload() || u.Blob == "" {
 			continue
 		}
 		for _, p := range k.PublicFor(u.Path) {
@@ -519,6 +540,7 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 	}); err != nil {
 		f.t.Fatal(err)
 	}
+	f.purge()
 }
 
 // publicName resolves a logical preset name to the fixture's published key.

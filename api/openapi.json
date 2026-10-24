@@ -7114,7 +7114,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Marks a entity deleted, retires its AuthKit scope and hides its media; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back, and its media within the retention. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
+        "summary": "Marks an entity deleted and retires its AuthKit scope; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back within retention. Declared public media remains public until permanent purge. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.",
         "parameters": [
           {
             "name": "id",

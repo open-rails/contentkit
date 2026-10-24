@@ -91,10 +91,6 @@ func (g entityCovers) Covers(ctx context.Context, covers []entities.CoverOf) ([]
 // built after entities.
 type entityFolders struct{ e *Engine }
 
-func (g entityFolders) ExposeTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
-	return g.e.media.versions.EntityFolders().ExposeTx(ctx, tx, refs)
-}
-
 func (g entityFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
 	return g.e.media.versions.EntityFolders().DeleteTx(ctx, tx, refs)
 }

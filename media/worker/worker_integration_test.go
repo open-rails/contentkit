@@ -149,11 +149,6 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 			return nil
 		},
 		ItemReady: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
-			if r.Ready() {
-				if err := h.jobs.ExposeTx(ctx, tx, ref); err != nil {
-					return err
-				}
-			}
 			h.mu.Lock()
 			h.settled[ref.String()] = append(h.settled[ref.String()], r)
 			h.mu.Unlock()
@@ -178,22 +173,9 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	if err := riverhelpers.ApplyMigrations(ctx, pool, h.schema); err != nil {
 		t.Fatal(err)
 	}
-	if h.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: h.reg, Locker: s3test.Locker(t, env.Store), Journal: journal, Pool: pool, Processes: h.queue}); err != nil {
+	if h.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: h.reg, Locker: s3test.Locker(t, env.Store), Journal: journal, Processes: h.queue}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := riverhelpers.New(ctx, pool, &river.Config{Schema: h.schema, FetchPollInterval: 100 * time.Millisecond,
-		FetchCooldown: 50 * time.Millisecond}, h.jobs.RiverJobs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = client.StopAndCancel(ctx)
-	})
 	h.ms = h.jobs.Manifests()
 	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: h.ms}); err != nil {
 		t.Fatal(err)
@@ -419,8 +401,8 @@ func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 		t.Fatal("no public cover")
 	}
 	var n int
-	if err := h.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n == 0 {
-		t.Fatalf("no Expose enqueued in the host schema: %d %v", n, err)
+	if err := h.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n != 0 {
+		t.Fatalf("retired Expose enqueued in the host schema: %d %v", n, err)
 	}
 }
 
@@ -1000,11 +982,22 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 			}
 		})
 	}
-	if _, err := admin.Exec(ctx, "ALTER TABLE "+pgx.Identifier{contentSchema, "content_media_commits"}.Sanitize()+" RENAME TO content_media_commits_missing"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := worker.New(ctx, cfg); err == nil || !strings.Contains(err.Error(), contentSchema) || !strings.Contains(err.Error(), "content_media_commits") {
-		t.Fatalf("worker accepted a missing journal or did not identify it: %v", err)
+	for _, table := range []string{"content_media_commits", "content_media_processing", "eventlog_pending"} {
+		t.Run(table, func(t *testing.T) {
+			name := pgx.Identifier{contentSchema, table}.Sanitize()
+			hidden := pgx.Identifier{contentSchema, table + "_missing"}.Sanitize()
+			if _, err := admin.Exec(ctx, "ALTER TABLE "+name+" RENAME TO "+pgx.Identifier{table + "_missing"}.Sanitize()); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if _, err := admin.Exec(ctx, "ALTER TABLE "+hidden+" RENAME TO "+pgx.Identifier{table}.Sanitize()); err != nil {
+					t.Error(err)
+				}
+			})
+			if _, err := worker.New(ctx, cfg); err == nil || !strings.Contains(err.Error(), contentSchema) || !strings.Contains(err.Error(), table) {
+				t.Fatalf("worker accepted missing completion storage %s: %v", table, err)
+			}
+		})
 	}
 }
 

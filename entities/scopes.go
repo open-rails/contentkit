@@ -49,11 +49,8 @@ type Scope struct {
 	Owner string
 }
 
-// Folders brings entities' media folders in line with their state in a
-// writing transaction: ExposeTx hides a deleted entity's and shows a restored
-// one's, DeleteTx deletes them.
+// Folders permanently deletes entity media in the catalog purge transaction.
 type Folders interface {
-	ExposeTx(ctx context.Context, tx pgx.Tx, entities []Ref) error
 	DeleteTx(ctx context.Context, tx pgx.Tx, entities []Ref) error
 }
 

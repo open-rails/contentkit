@@ -3,8 +3,11 @@ package contentkit
 import (
 	"context"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/helpers/eventlog"
+	eventpg "github.com/open-rails/helpers/eventlog/postgres"
 
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -63,4 +66,15 @@ func (e *Engine) avatarPlacement(ctx context.Context, claim bool) error {
 		return ErrAvatarPlacement
 	}
 	return nil
+}
+
+// AccountMediaEvents reads this Engine's configured tenant account processing
+// log. Trusted account integrations own their cursors; no app receives a copy
+// of a shared-avatar event. Application media uses Client.EventReader.
+func (e *Engine) AccountMediaEvents() (eventlog.Reader, error) {
+	if e.scope == nil {
+		return nil, errors.New("contentkit: shared account media is not configured")
+	}
+	schema, _ := e.accountStorage()
+	return eventpg.New(e.pool, eventpg.Config{Schema: schema, Source: "contentkit", Scope: e.accountMediaPartition()})
 }

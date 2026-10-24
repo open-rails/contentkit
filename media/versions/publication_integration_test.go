@@ -530,3 +530,87 @@ func digest(blob string) []byte {
 }
 
 func sameBytes(a, b string) bool { return a != "" && b != "" && bytes.Equal(digest(a), digest(b)) }
+
+// Public covers are prepared during processing even when every chapter is in
+// the future. Reader grants still enforce those release dates.
+func TestAutomaticPublicCoverIgnoresReleaseAndAccessChanges(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
+	v := s.version(c)
+	ref := s.ref("gallery", v)
+	later := time.Now().Add(time.Hour)
+	s.segment(v, 1, 0, 1, &later)
+	s.mustUpload(s.creator, ref, "originals/001", "image/png", pngOf(t, 30, 40, 7))
+	eventually(t, "unreleased public cover", 2*time.Minute, func() bool {
+		m, _, err := s.ms.Get(s.ctx, ref)
+		if err != nil {
+			return false
+		}
+		cover, ok := m.Get("cover.png")
+		if !ok {
+			return false
+		}
+		publication, ok := cover.Publication("cover")
+		return ok && publication.Ready() && cover.Meta[media.MetaAutoCover] == true
+	})
+	// The fan cannot obtain private files from the future chapter.
+	plan := s.plan(s.fan, v, func(p *versions.ReaderPlan) bool { return len(p.Segments) == 1 })
+	if plan.Segments[0].Released || plan.Segments[0].Item != nil {
+		t.Fatalf("future chapter grant: %+v", plan)
+	}
+	_, before, err := s.ms.Get(s.ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, policy := range []struct{ state, access string }{{"draft", `{"level":"public"}`}, {"published", `{"level":"public"}`}, {"published", `{"level":"tier","tiers":["premium"]}`}} {
+		s.exec(`UPDATE `+s.table("content_items")+` SET state=$3,access=$4::jsonb WHERE tenant_id=$1 AND id=$2`, s.tenant, c, policy.state, policy.access)
+		if err := versions.Publish(s.svc, s.ctx, v); err != nil {
+			t.Fatal(err)
+		}
+		_, after, err := s.ms.Get(s.ctx, ref)
+		if err != nil || before != after {
+			t.Fatalf("access/release rewrote media: %s/%s %v", before, after, err)
+		}
+	}
+}
+
+func TestDeclaredPublicPreviewSurvivesSnapshotUpdates(t *testing.T) {
+	s := newSite(t, siteOptions{mediaGallery: func(k *media.Kind) {
+		for i := range k.Uploads {
+			if k.Uploads[i].Path == "previews/{name}" {
+				k.Uploads[i].Types = pngs
+			}
+		}
+	}})
+	v := s.version(s.content("gallery", `{"level":"public"}`))
+	ref := s.ref("gallery", v)
+	s.mustUpload(s.creator, ref, "originals/001", "image/png", pngOf(t, 30, 40, 3))
+	s.mustUpload(s.creator, ref, "previews/teaser", "image/png", pngOf(t, 30, 40, 4))
+	var generation string
+	eventually(t, "declared public preview", time.Minute, func() bool {
+		f, ok := s.manifest(ref).Get("previews/teaser.png")
+		if !ok {
+			return false
+		}
+		p, ok := f.Publication("preview")
+		if !ok || !p.Ready() {
+			return false
+		}
+		generation = p.Generation
+		return true
+	})
+	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages != nil && *p.Pages == 1 })
+	for range 2 {
+		if err := versions.Publish(s.svc, s.ctx, v); err != nil {
+			t.Fatal(err)
+		}
+		f, ok := s.manifest(ref).Get("previews/teaser.png")
+		if !ok {
+			t.Fatal("metadata snapshot deleted declared public preview source")
+		}
+		p, ok := f.Publication("preview")
+		if !ok || !p.Ready() || p.Generation != generation {
+			t.Fatalf("metadata snapshot replaced declared public preview: %+v", p)
+		}
+	}
+}

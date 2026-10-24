@@ -70,8 +70,8 @@ func TestStatusCountsWholeManifestAndArchiveEntries(t *testing.T) {
 	}
 	m.Hidden = true
 	hidden := statusOf(k, m, EncodeStatus{})
-	if len(hidden.Presets) != 1 || hidden.Presets[0].Name != "read" {
-		t.Fatalf("hidden public preset counted: %+v", hidden.Presets)
+	if len(hidden.Presets) != len(got.Presets) {
+		t.Fatalf("historical hidden flag changed public preset counts: %+v", hidden.Presets)
 	}
 }
 

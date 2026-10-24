@@ -404,8 +404,8 @@ WHERE kind='contentkit_media_delete_folder' AND args->>'prefix'=$1`, draftItem.P
 	if _, err := e.entities.DeleteEntities(ctx, []entities.EntityID{ch}); err != nil {
 		t.Fatal(err)
 	}
-	if jobs("contentkit_media_expose", string(ch)) == 0 || jobs("contentkit_media_delete_folder", string(ch)) != 0 {
-		t.Fatal("deleting the channel did not hide its media, or deleted it")
+	if jobs("contentkit_media_expose", string(ch)) != 0 || jobs("contentkit_media_delete_folder", string(ch)) != 0 {
+		t.Fatal("deleting the channel queued exposure or deletion")
 	}
 	if n, err := e.entities.PurgeFolders(ctx); err != nil || n != 0 {
 		t.Fatalf("purged %d (%v) within the retention", n, err)

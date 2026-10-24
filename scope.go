@@ -245,6 +245,13 @@ func (e *Engine) scopeBindings(ctx context.Context, write bool) error {
 	if err != nil {
 		return err
 	}
+	if write && e.scope != nil {
+		// Initialize the configured shared-account stream with the ownership
+		// claim so reads before the first processing event have a stable cursor.
+		if _, err := tx.Exec(ctx, `INSERT INTO `+pgx.Identifier{accountSchema, "eventlog_streams"}.Sanitize()+` (source,scope) VALUES('contentkit',$1) ON CONFLICT DO NOTHING`, e.accountMediaPartition()); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 

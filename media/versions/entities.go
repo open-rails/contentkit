@@ -283,23 +283,6 @@ func (s *Service) EntityFolders() entities.Folders { return entityFolders{s} }
 
 type entityFolders struct{ s *Service }
 
-// ExposeTx queues bringing each entity's media item to its state in tx: a
-// deleted entity's is hidden, a restored one's shown.
-func (g entityFolders) ExposeTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
-	items := make([]contentref.ContentRef, 0, len(refs))
-	for _, r := range refs {
-		ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
-		if err != nil {
-			return err
-		}
-		items = append(items, ref)
-	}
-	if len(items) == 0 || g.s.m.Jobs == nil {
-		return nil
-	}
-	return g.s.m.Jobs.ExposeTx(ctx, tx, items...)
-}
-
 // DeleteTx queues the deletion of each entity's media item in tx.
 func (g entityFolders) DeleteTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
 	del := make([]media.Deletion, 0, len(refs))
