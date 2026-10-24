@@ -122,6 +122,27 @@ export function LoadFailed({ error, message, retry }: { error?: ContentKitError;
   );
 }
 
+export function Segmented({ label, options }: { label: string; options: readonly { key: string; label: ReactNode; pressed: boolean; onSelect: () => void }[] }) {
+  return (
+    <div className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md border border-border bg-muted/50 p-0.5" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          aria-pressed={o.pressed}
+          onClick={o.onSelect}
+          className={cn(
+            "h-7 rounded-[5px] px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+            o.pressed ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** Previous and next around the current page number, announced as it changes. */
 export interface PagerProps {
   page: number;

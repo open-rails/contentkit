@@ -32,7 +32,7 @@ import { AccessEditor, ContentDetailsEditor, RuleFields, VersionsEditor, allowsI
 import { AttributeFields } from "../entities/fields.js";
 import { MembershipEditor } from "../entities/memberships.js";
 import { EntityPicker, labelOf, type Labels } from "../entities/parts.js";
-import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
+import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, Segmented, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
 type Choice = string | { value: string; label: string };
 
@@ -386,8 +386,6 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const newLabel = noun ? t("contentManager.newNamed", { one: noun.one }) : t("contentManager.new");
   // From md up the rows line up as a table: select, item, status, access, date, actions.
   const columns = [canSelect && "1rem", "minmax(0,1fr)", "8rem", canChangeParentAccess && "8rem", "9rem", "6.5rem"].filter(Boolean).join(" ");
-  const tab = (active: boolean) =>
-    cn("h-7 rounded-[5px] px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50", active ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground");
   const toggle = (c: Content, on: boolean) =>
     setSelected((cur) => {
       const n = new Set(cur);
@@ -427,14 +425,13 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
         </section>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md border border-border bg-muted/50 p-0.5" role="group" aria-label={heading}>
-          <button type="button" className={tab(!deleted)} aria-pressed={!deleted} onClick={() => loc.go("", { q: query })}>
-            {t("contentManager.items")}
-          </button>
-          <button type="button" className={tab(deleted)} aria-pressed={deleted} onClick={() => loc.go("", { q: query, deleted: "1" })}>
-            {t("contentManager.deleted")}
-          </button>
-        </div>
+        <Segmented
+          label={heading}
+          options={[
+            { key: "items", label: t("contentManager.items"), pressed: !deleted, onSelect: () => loc.go("", { q: query }) },
+            { key: "deleted", label: t("contentManager.deleted"), pressed: deleted, onSelect: () => loc.go("", { q: query, deleted: "1" }) },
+          ]}
+        />
         <form
           className="relative min-w-48 flex-1"
           role="search"
