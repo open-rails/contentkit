@@ -123,7 +123,7 @@ func newPurgeFixture(t *testing.T) *purgeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.jobs, err = media.NewJobs(media.JobsConfig{Store: f.store, Registry: f.registry, Locker: media.PGLocker(env.Pool()), Journal: journal, Processes: queue, Pool: env.Pool(), Now: now})
+	f.jobs, err = media.NewJobs(media.JobsConfig{Store: f.store, Registry: f.registry, Locker: media.PGLocker(env.Pool()), Journal: journal, Processes: queue, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func newPurgeFixture(t *testing.T) *purgeFixture {
 	if err = riverhelpers.ApplyMigrations(t.Context(), env.Pool(), f.host); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = riverhelpers.New(t.Context(), env.Pool(), &river.Config{Schema: f.host}, f.jobs.RiverJobs(), f.versions.RiverJobs()); err != nil {
+	if _, err = riverhelpers.New(t.Context(), env.Pool(), &river.Config{Schema: f.host}, f.versions.RiverJobs()); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -371,9 +371,6 @@ func TestCatalogPurgeOwnsLateWritesAfterRowsAreGone(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.advance(8 * 24 * time.Hour)
-	if _, err := f.jobs.CleanupDue(t.Context(), 100); err != nil {
-		t.Fatal(err)
-	}
 	f.assertStorage(key, true)
 	if n, err := f.purge(); err != nil || n != 0 {
 		t.Fatalf("late-write retry: %d %v", n, err)

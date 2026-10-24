@@ -128,7 +128,7 @@ func (s *Service) CheckRestorableTx(ctx context.Context, tx pgx.Tx, targets []Ta
 
 // ResumeDeletes keeps late-write cleanup in the content purge operation.
 func (s *Service) ResumeDeletes(ctx context.Context, limit int) (int, error) {
-	return s.m.Jobs.CleanupPurgedVersions(ctx, limit)
+	return s.m.Jobs.PurgeRetired(ctx, limit)
 }
 
 // itemRefs are targets' versions' media items, and their versions by kind.

@@ -198,6 +198,13 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 	if err != nil {
 		return err
 	}
+	for _, r := range rows {
+		if r.State == string(StateActive) {
+			if err := s.checkMediaRestorable(ctx, q, Ref{Kind: r.Kind, ID: EntityID(r.ID)}); err != nil {
+				return err
+			}
+		}
+	}
 	// Check after the upsert: a concurrent creator may have inserted an
 	// initially absent entity and bound host references before ON CONFLICT
 	// acquires its lock. The callback sees those committed links and can roll

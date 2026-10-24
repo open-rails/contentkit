@@ -120,6 +120,9 @@ func (e *Engine) migrateCatalogEvents(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, `LOCK TABLE `+jobs+` IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 			return err
 		}
+		if err := e.migrateEntityJobsTx(ctx, tx, jobs); err != nil {
+			return err
+		}
 		var running bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+jobs+` WHERE kind=ANY($1) AND state='running')`, []string{"contentkit_catalog_deliver_events", "contentkit_openrails_notifications"}).Scan(&running); err != nil {
 			return err
@@ -191,6 +194,9 @@ func (e *Engine) validateCatalogEventHandoff(ctx context.Context) error {
 		return err
 	}
 	if exists {
+		if err := e.validateEntityJobHandoff(ctx, jobs); err != nil {
+			return err
+		}
 		if err := e.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+jobs+` WHERE kind=ANY($1) AND state IN ('available','pending','retryable','scheduled','running'))`, []string{"contentkit_catalog_deliver_events", "contentkit_openrails_notifications"}).Scan(&pending); err != nil {
 			return err
 		}

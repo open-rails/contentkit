@@ -829,8 +829,8 @@ func (rt *Runtime) RaisePreferenceFloor(ctx context.Context, tx pgx.Tx, floor in
 
 // ImportDeletes deletes comments and polls in tx as their delete routes do:
 // a comment is tombstoned and its reference's and thread's counts follow; a
-// poll is flagged deleted and its media folder goes. Deleted ones stay as
-// they are.
+// poll tombstone and exact media retirement intent commit together. The
+// existing content-deletion sweep erases files; deleted rows remain for history.
 func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string) error {
 	s := rt.store
 	if len(comments) > 0 {

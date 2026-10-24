@@ -339,7 +339,7 @@ func (m *testMedia) lookupCount() int {
 	return m.lookups
 }
 
-func (m *testMedia) DeleteItemsTx(_ context.Context, tx pgx.Tx, items ...media.Deletion) error {
+func (m *testMedia) RetireItemsTx(_ context.Context, tx pgx.Tx, items ...media.Deletion) error {
 	for _, d := range items {
 		m.mu.Lock()
 		m.deleted = append(m.deleted, d.Ref.String())
