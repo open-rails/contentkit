@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -71,7 +72,7 @@ func (h readHandler) progress(w http.ResponseWriter, req *http.Request) {
 	if cursor == "" {
 		cursor = req.URL.Query().Get("after")
 	}
-	if err := serveProgress(w, req, ref, reader, cursor, authorize, snapshot, time.Second); err != nil && req.Context().Err() == nil {
+	if err := serveProgress(w, req, ref, reader, cursor, authorize, snapshot, time.Second, 10*time.Second); err != nil && req.Context().Err() == nil {
 		h.log.Debug("media progress stream ended", "err", err)
 	}
 }
@@ -98,7 +99,7 @@ func failProgress(w http.ResponseWriter, req *http.Request, h readHandler, err e
 // serveProgress holds one page and one snapshot, with no producer goroutine or
 // unbounded subscriber buffer. Backpressure is the socket's bounded write; a
 // disconnected client cancels the retained-log query and every timer.
-func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.ContentRef, reader eventlog.Reader, cursor string, authorize func(context.Context) error, snapshot func(context.Context) (*ReadResult, error), interval time.Duration) error {
+func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.ContentRef, reader eventlog.Reader, cursor string, authorize func(context.Context) error, snapshot func(context.Context) (*ReadResult, error), interval, heartbeatInterval time.Duration) error {
 	ctx := req.Context()
 	query := eventlog.Query{After: cursor, Limit: 100, Types: []string{EventProcessingProgressed, EventProcessingCompleted}}
 	page, err := reader.ListEvents(ctx, query)
@@ -164,15 +165,36 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 	if err := write(name, query.After, initial); err != nil {
 		return err
 	}
-	heartbeat := time.NewTicker(10 * time.Second)
+	heartbeat := time.NewTicker(heartbeatInterval)
 	defer heartbeat.Stop()
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
+	current := initial
+	lastStatus := progressStatusKey(initial)
 	beat := func() error {
 		if err := authorize(ctx); err != nil {
 			_, failure := progressFailure(err)
 			_ = write("error", query.After, failure)
 			return err
+		}
+		// Encoder checkpoints can advance during a long chunk without changing
+		// the manifest. Observe that existing canonical state on the heartbeat.
+		if current.Status != nil && current.Status.State == StateProcessing {
+			value, err := snapshot(ctx)
+			if err != nil {
+				_, failure := progressFailure(err)
+				_ = write("error", query.After, failure)
+				return err
+			}
+			key := progressStatusKey(value)
+			current = value
+			if !bytes.Equal(key, lastStatus) {
+				if err := write("progress", query.After, value); err != nil {
+					return err
+				}
+				lastStatus = key
+				return nil
+			}
 		}
 		return write("heartbeat", query.After, struct{}{})
 	}
@@ -237,6 +259,7 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 				_ = write("error", query.After, failure)
 				return err
 			}
+			current, lastStatus = value, progressStatusKey(value)
 			// A meaningful producer fact may replace an output without changing counts.
 			if err := write(name, query.After, value); err != nil {
 				return err
@@ -260,4 +283,20 @@ func progressFailure(err error) (int, ErrorReply) {
 	default:
 		return 503, ErrorReply{Code: "unavailable", Error: "Media progress is unavailable; reconnect."}
 	}
+}
+
+// At alone is a liveness timestamp, not a visible progress change. Phase,
+// segments, speed, ETA and stalled state remain observable.
+func progressStatusKey(read *ReadResult) []byte {
+	if read.Status == nil {
+		return nil
+	}
+	status := *read.Status
+	if status.Encoding != nil {
+		encoding := *status.Encoding
+		encoding.At = 0
+		status.Encoding = &encoding
+	}
+	key, _ := json.Marshal(status)
+	return key
 }

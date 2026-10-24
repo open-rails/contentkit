@@ -39,7 +39,7 @@ func TestProgressHTTPReplayIsolationAndCancellation(t *testing.T) {
 		_ = serveProgress(w, r, ref, log, r.Header.Get("Last-Event-ID"), func(context.Context) error { return nil }, func(context.Context) (*ReadResult, error) {
 			n := snapshots.Add(1)
 			return &ReadResult{Files: []FileInfo{}, Status: &MediaStatus{State: StateProcessing, Uploads: ProcessingCount{Completed: int(n), Total: 30}}}, nil
-		}, time.Millisecond)
+		}, time.Millisecond, 10*time.Second)
 	}))
 	defer server.Close()
 	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL, nil)
@@ -102,7 +102,7 @@ func TestProgressHTTPRetentionGapAndRevocation(t *testing.T) {
 			return nil
 		}, func(context.Context) (*ReadResult, error) {
 			return &ReadResult{Files: []FileInfo{}, Status: &MediaStatus{State: StateProcessing}}, nil
-		}, time.Millisecond)
+		}, time.Millisecond, 10*time.Second)
 	}))
 	defer server.Close()
 	res, err := http.Get(server.URL)
@@ -147,7 +147,7 @@ func TestProgressHTTPInvalidCursorDoesNotReadSnapshot(t *testing.T) {
 	}), "another-scope", func(context.Context) error { t.Fatal("invalid cursor reached authorization"); return nil }, func(context.Context) (*ReadResult, error) {
 		t.Fatal("invalid cursor read a snapshot")
 		return nil, nil
-	}, time.Millisecond)
+	}, time.Millisecond, 10*time.Second)
 	if err != eventlog.ErrInvalidCursor || recorder.Code != http.StatusBadRequest || strings.Contains(recorder.Header().Get("Content-Type"), "event-stream") {
 		t.Fatalf("invalid cursor: status=%d error=%v", recorder.Code, err)
 	}
@@ -172,7 +172,7 @@ func TestProgressHTTPRechecksCredentialAfterReadingEvents(t *testing.T) {
 		}, func(context.Context) (*ReadResult, error) {
 			snapshots.Add(1)
 			return &ReadResult{Files: []FileInfo{}}, nil
-		}, time.Millisecond)
+		}, time.Millisecond, 10*time.Second)
 	}))
 	defer server.Close()
 	response, err := http.Get(server.URL)
@@ -199,7 +199,7 @@ func TestProgressHTTPStreamsBeyondHostWriteTimeout(t *testing.T) {
 			pages.Add(1)
 			return eventlog.Page{NextCursor: "next", Events: []eventlog.Event{{Data: json.RawMessage(`{"kind":"gallery","content_id":"mine"}`)}}}, nil
 		})
-		_ = serveProgress(w, r, contentref.ContentRef{ContentKind: "gallery", ContentID: "mine"}, reader, "", func(context.Context) error { return nil }, func(context.Context) (*ReadResult, error) { return &ReadResult{Files: []FileInfo{}}, nil }, 750*time.Millisecond)
+		_ = serveProgress(w, r, contentref.ContentRef{ContentKind: "gallery", ContentID: "mine"}, reader, "", func(context.Context) error { return nil }, func(context.Context) (*ReadResult, error) { return &ReadResult{Files: []FileInfo{}}, nil }, 750*time.Millisecond, 10*time.Second)
 	}))
 	server.Config.WriteTimeout = 500 * time.Millisecond
 	server.EnableHTTP2 = true
@@ -239,7 +239,7 @@ func TestProgressHTTPCatchupKeepsHeartbeats(t *testing.T) {
 			}
 			return eventlog.Page{NextCursor: "next", HasMore: true}, nil
 		})
-		_ = serveProgress(w, r, contentref.ContentRef{}, reader, "", func(context.Context) error { return nil }, func(context.Context) (*ReadResult, error) { return &ReadResult{Files: []FileInfo{}}, nil }, time.Second)
+		_ = serveProgress(w, r, contentref.ContentRef{}, reader, "", func(context.Context) error { return nil }, func(context.Context) (*ReadResult, error) { return &ReadResult{Files: []FileInfo{}}, nil }, time.Second, 10*time.Second)
 	}))
 	defer server.Close()
 	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL, nil)
@@ -256,4 +256,48 @@ func TestProgressHTTPCatchupKeepsHeartbeats(t *testing.T) {
 		}
 	}
 	t.Fatalf("retained catch-up starved heartbeat: %v", scanner.Err())
+}
+
+func TestProgressHTTPHeartbeatObservesEncodingWithoutManifestEvents(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var snapshots atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reader := eventlog.ReaderFunc(func(context.Context, eventlog.Query) (eventlog.Page, error) {
+			return eventlog.Page{NextCursor: "unchanged"}, nil
+		})
+		_ = serveProgress(w, r, contentref.ContentRef{}, reader, "", func(context.Context) error { return nil }, func(context.Context) (*ReadResult, error) {
+			n := snapshots.Add(1)
+			done := 1
+			if n > 2 {
+				done = 2
+			}
+			return &ReadResult{Files: []FileInfo{}, Status: &MediaStatus{State: StateProcessing, Encoding: &EncodeProgress{Phase: PhaseEncoding, SegmentsDone: done, SegmentsTotal: 25, At: int64(n)}}}, nil
+		}, time.Millisecond, 20*time.Millisecond)
+	}))
+	defer server.Close()
+	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL, nil)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	scanner := bufio.NewScanner(response.Body)
+	var frames []string
+	var frame strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		frame.WriteString(line + "\n")
+		if line == "" {
+			frames = append(frames, frame.String())
+			frame.Reset()
+			if len(frames) == 3 {
+				break
+			}
+		}
+	}
+	if len(frames) != 3 || !strings.Contains(frames[1], "event: heartbeat") || !strings.Contains(frames[2], "event: progress") || !strings.Contains(frames[2], `"segments_done":2`) {
+		t.Fatalf("video progress=%v error=%v", frames, scanner.Err())
+	}
+	cancel()
 }

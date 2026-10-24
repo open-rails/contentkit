@@ -74,7 +74,12 @@ the boundary before the snapshot prevents lost concurrent completions. An
 invalid or differently scoped cursor is refused. Each observer owns its cursor;
 there is no registry, delivery job, acknowledgment or global poll coordinator.
 The request reads bounded retained pages, and writes one bounded snapshot at a
-time with a write deadline and a heartbeat every ten seconds.
+time with a write deadline and a heartbeat every ten seconds. While processing,
+the heartbeat also reads canonical status so existing encoder segment/phase
+checkpoints can update the UI before a manifest rendition is complete. A
+timestamp-only encoder change does not emit progress; no producer or delivery
+job is added. Write deadlines are cleared between messages, including while
+catching up retained pages.
 
 Live permission and credential checks run before subsequent observations and
 heartbeats without replaying the request's sender proof. Expiry, revocation,
