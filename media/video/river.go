@@ -173,32 +173,22 @@ func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.Vide
 			}
 			continue
 		}
-		chunks, err := c.chunks(ctx, id)
+		chunk, pending, err := c.nextChunk(ctx, id)
 		if err != nil {
 			return err
 		}
-		remaining := 0
-		for _, ch := range chunks {
-			if ch.Output == nil {
-				remaining++
-			}
-		}
-		if remaining > 0 {
+		if pending {
 			if _, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'encoding', updated_at = now() WHERE id = $1 AND state != 'cancelled'`, id); err != nil {
 				return err
 			}
-			for _, ch := range chunks {
-				if ch.Output != nil {
-					continue
-				}
-				if err := c.encodeChunk(ctx, run, ch, job.ID); err != nil {
-					return err
-				}
-				remaining--
-				break
+			if err := c.encodeChunk(ctx, run, chunk, job.ID); err != nil {
+				return err
+			}
+			if err := c.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.chunkTable()+` WHERE run_id = $1 AND state = 'planned')`, id).Scan(&pending); err != nil {
+				return err
 			}
 		}
-		if remaining == 0 {
+		if !pending {
 			if _, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'assembling', updated_at = now() WHERE id = $1 AND state != 'cancelled'`, id); err != nil {
 				return err
 			}
@@ -207,8 +197,14 @@ func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.Vide
 			}
 			// Initial playback has priority over improving a playable video's ladder.
 			if job.Priority == 1 {
-				if _, err := c.Pool.Exec(ctx, `UPDATE `+c.jobTable()+` SET priority = 2 WHERE id = $1`, job.ID); err != nil {
+				finished, err := c.loadRun(ctx, id)
+				if err != nil {
 					return err
+				}
+				if finished.State == "complete" {
+					if _, err := c.Pool.Exec(ctx, `UPDATE `+c.jobTable()+` SET priority = 2 WHERE id = $1`, job.ID); err != nil {
+						return err
+					}
 				}
 			}
 		}

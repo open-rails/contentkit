@@ -509,7 +509,6 @@ WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND source_etag = $4 AND 
 SET state = 'complete', updated_at = now() WHERE id = $1`, id); err != nil {
 				return err
 			}
-			state = "complete"
 		} else if i >= done && (state == "cancelled" || state == "complete") {
 			// A rung adopted from existing outputs was recorded without chunks.
 			var chunked bool
@@ -529,9 +528,7 @@ SET state = 'planned', output = NULL, finished_at = NULL WHERE run_id = $1`, id)
 SET state = 'planned', class = $2, updated_at = now() WHERE id = $1`, id, string(class)); err != nil {
 				return err
 			}
-			state = "planned"
 		}
-
 	}
 	return tx.Commit(ctx)
 }
@@ -552,18 +549,16 @@ func (c WorkerConfig) loadRun(ctx context.Context, id string) (encodeRun, error)
 	return run, json.Unmarshal(probeJSON, &run.Probe)
 }
 
-func (c WorkerConfig) chunk(ctx context.Context, id string, index int) (encodeChunk, error) {
+// nextChunk reads only the next unfinished range. Successful checkpoints are
+// loaded together only for assembly, even for a video with thousands of ranges.
+func (c WorkerConfig) nextChunk(ctx context.Context, id string) (encodeChunk, bool, error) {
 	var ch encodeChunk
-	var raw []byte
-	err := c.Pool.QueryRow(ctx, `SELECT ordinal, start_ms, end_ms, output FROM `+c.chunkTable()+`
-WHERE run_id = $1 AND ordinal = $2`, id, index).Scan(&ch.Ordinal, &ch.StartMS, &ch.EndMS, &raw)
-	if err != nil {
-		return ch, err
+	err := c.Pool.QueryRow(ctx, `SELECT ordinal, start_ms, end_ms FROM `+c.chunkTable()+`
+ WHERE run_id = $1 AND state = 'planned' ORDER BY ordinal LIMIT 1`, id).Scan(&ch.Ordinal, &ch.StartMS, &ch.EndMS)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ch, false, nil
 	}
-	if len(raw) > 0 {
-		err = json.Unmarshal(raw, &ch.Output)
-	}
-	return ch, err
+	return ch, err == nil, err
 }
 
 func (c WorkerConfig) chunks(ctx context.Context, id string) ([]encodeChunk, error) {

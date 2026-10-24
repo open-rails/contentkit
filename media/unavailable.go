@@ -25,10 +25,10 @@ const unavailableCheck = 5 * time.Second
 // discards a job. It snoozes only when the job's own context is still live
 // (a job that outran its timeout spends its attempt) and a fresh, bounded
 // store.Check fails too (one bad object on a healthy bucket spends its
-// attempt); River's snooze count in job metadata is capped by
-// MaxOutageSnoozes. Other errors pass through.
+// attempt). Only actual outage snoozes count toward MaxOutageSnoozes;
+// successful video checkpoint yields do not consume this budget. Other errors pass through.
 func SnoozeUnavailable(ctx context.Context, store Store, job *rivertype.JobRow, err error) error {
-	if store == nil || !errors.Is(err, ErrUnavailable) || ctx.Err() != nil || snoozes(job) >= MaxOutageSnoozes {
+	if store == nil || !errors.Is(err, ErrUnavailable) || ctx.Err() != nil || outageSnoozes(job) >= MaxOutageSnoozes {
 		return err
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, unavailableCheck)
@@ -36,12 +36,15 @@ func SnoozeUnavailable(ctx context.Context, store Store, job *rivertype.JobRow, 
 	if store.Check(checkCtx) == nil {
 		return err
 	}
+	if setErr := river.MetadataSet(ctx, "contentkit_outage_snoozes", outageSnoozes(job)+1); setErr != nil {
+		return errors.Join(err, setErr)
+	}
 	return river.JobSnooze(UnavailableSnooze)
 }
 
-func snoozes(job *rivertype.JobRow) int {
+func outageSnoozes(job *rivertype.JobRow) int {
 	var meta struct {
-		Snoozes int `json:"snoozes"`
+		Snoozes int `json:"contentkit_outage_snoozes"`
 	}
 	if job != nil {
 		_ = json.Unmarshal(job.Metadata, &meta)

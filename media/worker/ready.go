@@ -27,7 +27,8 @@ type readyHook struct {
 func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err error) (result error) {
 	workErr := err
 	var snooze *river.JobSnoozeError
-	if err != nil && !errors.As(err, &snooze) || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
+	checkpoint := job.Kind == (workqueue.VideoArgs{}).Kind() && errors.As(err, &snooze) && snooze.Duration == 0 && ctx.Err() == nil
+	if err != nil && !checkpoint || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
 	}
 	// Output can become visible before this final manifest read. An outage
@@ -39,7 +40,7 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 	if err := json.Unmarshal(job.EncodedArgs, &args); err != nil {
 		return workErr // the job itself decoded them
 	}
-	m, _, err := h.manifests.Get(ctx, args.Ref)
+	m, etag, err := h.manifests.Get(ctx, args.Ref)
 	if errors.Is(err, media.ErrNotFound) {
 		return workErr // deleted meanwhile
 	} else if err != nil {
@@ -54,8 +55,27 @@ func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err erro
 	if k.Readiness(m).State == media.StateProcessing && (!publishes(job.Kind) || !k.Playable(m)) {
 		return workErr
 	}
+	// A video job yields after each bounded range. Only a new manifest
+	// publication needs a host relay; remember it only after enqueue succeeds.
+	var delivered struct {
+		ETag string `json:"contentkit_ready_etag"`
+	}
+	video := job.Kind == (workqueue.VideoArgs{}).Kind()
+	if video {
+		if err := json.Unmarshal(job.Metadata, &delivered); err != nil {
+			return err
+		}
+		if delivered.ETag == etag {
+			return workErr
+		}
+	}
 	if readyErr := h.host.Ready(ctx, args.Ref); readyErr != nil {
 		return readyErr
+	}
+	if video {
+		if err := river.MetadataSet(ctx, "contentkit_ready_etag", etag); err != nil {
+			return err
+		}
 	}
 	return workErr
 }
