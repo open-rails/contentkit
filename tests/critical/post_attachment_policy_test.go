@@ -91,21 +91,25 @@ func TestPostAttachmentPolicies(t *testing.T) {
 	}
 	close(start)
 	successes := 0
+	var refused []media.Op
 	for range 2 {
 		r := <-results
 		if r.err == nil {
 			successes++
 			continue
 		}
-		// A competing admission may ask for a retry while the winner owns the
-		// journal. On retry the actual policy must still reject the sixth image.
-		_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{r.op}})
-		requireError(t, err, 409, "too_many_files")
+		refused = append(refused, r.op)
 	}
 	if successes != 1 {
 		t.Fatalf("concurrent fifth-image admissions succeeded %d times; want one", successes)
 	}
 	read := awaitMediaReady(t, client, ref)
+	// The winner has completed its durable work. A refused concurrent request
+	// cannot bypass the count policy when retried after its transient lock ends.
+	for _, op := range refused {
+		_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{op}})
+		requireError(t, err, 409, "too_many_files")
+	}
 	count := 0
 	for _, f := range read.Files {
 		if f.Upload && strings.HasPrefix(f.Path, "images/") {
@@ -138,6 +142,7 @@ func TestPostAttachmentPolicies(t *testing.T) {
 	video1, video2 := stageVideo("videos/one.mp4"), stageVideo("videos/two.mp4")
 	_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{video1}})
 	must(t, err)
+	awaitMediaReady(t, client, ref)
 	_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{video2}})
 	requireError(t, err, 409, "too_many_files")
 	_, err = client.PostMediaUploadPresign(t.Context(), media.PresignBody{Ref: ref, Path: "images/not-a-video.mp4", Type: "video/mp4", Size: int64(len(video)), SHA256: digestBytes(video)})
