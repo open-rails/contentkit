@@ -255,7 +255,7 @@ func (k Kind) LockedView() Locked {
 // Shows reports whether l shows property p.
 func (l Locked) Shows(p string) bool { return slices.Contains(l.Show, p) }
 
-func (l Locked) validate(segments bool) error {
+func (l Locked) validate() error {
 	for i, p := range l.Show {
 		if !slices.Contains(Shown, p) || slices.Contains(l.Show[:i], p) {
 			return fmt.Errorf("locked shows unknown or repeated %q (one of %v)", p, Shown)
@@ -265,24 +265,24 @@ func (l Locked) validate(segments bool) error {
 		if err := p.Validate(); err != nil {
 			return err
 		}
-		if p.Segments > 0 && !segments {
-			return errors.New("locked previews segments but the kind has none")
-		}
 	}
 	return nil
 }
 
-// Preview is the free part of locked content: its first Pages pages or first
-// Segments segments (chapters).
+// Preview selects public preview renditions of locked content's first Pages.
+// Chapters share the content item's access rule and cannot be free subsets.
 type Preview struct {
 	Pages    int `json:"pages,omitempty" yaml:"pages"`
-	Segments int `json:"segments,omitempty" yaml:"segments"`
+	Segments int `json:"segments,omitempty" yaml:"segments"` // legacy input; nonzero values are refused
 }
 
-// Validate refuses a preview of nothing or of negative parts.
+// Validate refuses empty previews and legacy chapter-subset access.
 func (p Preview) Validate() error {
-	if p.Pages < 0 || p.Segments < 0 || p.Pages == 0 && p.Segments == 0 {
-		return errors.New("preview needs positive pages or segments")
+	if p.Segments != 0 {
+		return errors.New("preview segments are unsupported: chapters share item access")
+	}
+	if p.Pages <= 0 {
+		return errors.New("preview needs positive pages")
 	}
 	return nil
 }
@@ -534,7 +534,7 @@ func (c Config) Validate() error {
 			return err
 		}
 		if l := k.Locked; l != nil {
-			if err := l.validate(k.Segments); err != nil {
+			if err := l.validate(); err != nil {
 				return fmt.Errorf("%w: kind %s: %v", ErrInvalid, name, err)
 			}
 		}

@@ -20,7 +20,7 @@ type LibraryQuery struct {
 	Limit    int    // 20 by default, at most 100
 }
 
-// LibraryItem is one content item the viewer bought.
+// LibraryItem groups the independently purchased editions of one gallery.
 type LibraryItem struct {
 	ContentID string `json:"content_id"`
 	Kind      string `json:"kind"`
@@ -28,8 +28,8 @@ type LibraryItem struct {
 	Language  string `json:"language,omitempty"`
 	// Deleted content stays readable to its buyers.
 	Deleted bool `json:"deleted"`
-	// Whole reports a held content key. VersionIDs lists only the
-	// currently eligible versions covered by the held entitlement.
+	// Whole is always false: a gallery parent does not grant audience access.
+	// VersionIDs lists only currently eligible, individually granted editions.
 	Whole      bool     `json:"whole"`
 	VersionIDs []string `json:"version_ids"`
 }
@@ -43,7 +43,7 @@ type LibraryPage struct {
 	Complete bool `json:"complete"`
 }
 
-// Library lists the content actor holds a content or version key of: the
+// Library lists the editions actor holds an exact version key of: the
 // keys under the tenant's content prefix, from the request's one billing
 // read. Deleted content is listed too, within the current domain's hard
 // visibility boundary.
@@ -56,22 +56,13 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 	if err != nil {
 		return LibraryPage{}, err
 	}
-	whole := map[string]bool{}
 	versions := map[string][]string{}
-	for _, c := range f.Contents() {
-		whole[c] = true
-	}
 	for v, c := range f.Versions() {
 		versions[c] = append(versions[c], v)
 	}
-	ids := make([]string, 0, len(whole)+len(versions))
-	for c := range whole {
-		ids = append(ids, c)
-	}
+	ids := make([]string, 0, len(versions))
 	for c := range versions {
-		if !whole[c] {
-			ids = append(ids, c)
-		}
+		ids = append(ids, c)
 	}
 	page := LibraryPage{Items: []LibraryItem{}, Complete: f.Complete()}
 	if len(ids) == 0 {
@@ -88,13 +79,13 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 		}
 	}
 	scope, args := hard.SQL("f", "library_domain")
-	wholeIDs := make([]string, 0, len(whole))
-	for id := range whole {
-		wholeIDs = append(wholeIDs, id)
-	}
 	versionIDs := []string{}
-	for _, ids := range versions {
+	versionParents := []string{}
+	for parent, ids := range versions {
 		versionIDs = append(versionIDs, ids...)
+		for range ids {
+			versionParents = append(versionParents, parent)
+		}
 	}
 	editionTitles := []string{}
 	for name, kind := range s.o.Kinds.Kinds {
@@ -103,7 +94,7 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 		}
 	}
 	args["tenant"], args["ids"], args["language"], args["languages"], args["cursor"], args["limit"] = s.o.Tenant, ids, q.Language, s.o.Kinds.Languages, q.Cursor, q.Limit+1
-	args["whole"], args["versions"], args["edition_titles"] = wholeIDs, versionIDs, editionTitles
+	args["versions"], args["version_parents"], args["edition_titles"] = versionIDs, versionParents, editionTitles
 	args["now"] = s.o.Now()
 	// Eligibility is evaluated for each granted version. An unowned sibling
 	// may never qualify the parent and reveal a blocked purchased edition.
@@ -125,7 +116,8 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
   LEFT JOIN LATERAL (SELECT title,language FROM `+s.t.versionText+` x WHERE x.tenant_id=v.tenant_id AND x.version_id=v.id
    ORDER BY x.language=@language DESC,array_position(v.languages,x.language),array_position(@languages::text[],x.language),x.language LIMIT 1) vt ON true
   WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
-   AND (c.id=ANY(@whole::text[]) OR v.id=ANY(@versions::text[]))
+   AND EXISTS (SELECT 1 FROM unnest(@versions::text[], @version_parents::text[]) held(version_id, content_id)
+    WHERE held.version_id=v.id AND held.content_id=c.id)
    AND f.live_from <= @now::timestamptz
    AND `+scope+`
   HAVING count(*)>0
@@ -140,7 +132,6 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 	items, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (LibraryItem, error) {
 		var it LibraryItem
 		err := r.Scan(&it.ContentID, &it.Kind, &it.Deleted, &it.Title, &it.Language, &it.VersionIDs)
-		it.Whole = whole[it.ContentID]
 		if it.VersionIDs == nil {
 			it.VersionIDs = []string{}
 		}

@@ -20,7 +20,7 @@ var aliasRe = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 // SQL returns a boolean predicate over the content_facets row aliased alias,
 // with its pgx named args (all prefixed access_). Hide admits the rows the
 // viewer opens: free, a held tier the rule names, a held key of the rule's
-// entity or of an entity holding the row (entity_ids), a held content or version
+// entity or of an entity holding the row (entity_ids), or an exact held version
 // key; plus, while a keyspace is truncated, its candidates, which
 // Gate.Settle decides. An Unknown filter admits no candidates. Lock admits
 // every row. The text depends only on alias and mode, so one prepared
@@ -44,11 +44,15 @@ func (f *Filter) SQL(alias string, mode Mode) (string, map[string]any, error) {
 		}
 	}
 	versions := sortedKeys(f.versions)
+	parents := make([]string, len(versions))
+	for i, version := range versions {
+		parents[i] = f.versions[version]
+	}
 	args := map[string]any{
 		"access_tiers":             tiers,
 		"access_groups":            f.Entities(),
-		"access_contents":          f.Contents(),
 		"access_versions":          versions,
+		"access_version_contents":  parents,
 		"access_contents_complete": f.anonymous || f.contentsComplete,
 		"access_groups_complete":   f.anonymous || f.entitiesComplete,
 	}
@@ -60,8 +64,8 @@ func (f *Filter) SQL(alias string, mode Mode) (string, map[string]any, error) {
  OR (%[1]s.access_level = 'tier' AND %[1]s.access_tiers && @access_tiers::text[])
  OR (%[1]s.access_level = 'group' AND %[1]s.access_entity_id = ANY(@access_groups::text[]))
  OR %[1]s.entity_ids && @access_groups::text[]
- OR %[1]s.content_id = ANY(@access_contents::text[])
- OR %[1]s.version_id = ANY(@access_versions::text[])
+ OR EXISTS (SELECT 1 FROM unnest(@access_versions::text[], @access_version_contents::text[]) held(version_id, content_id)
+  WHERE held.version_id = %[1]s.version_id AND held.content_id = %[1]s.content_id)
  OR NOT @access_contents_complete::boolean
  OR (NOT @access_groups_complete::boolean AND (%[1]s.access_level = 'group' OR cardinality(%[1]s.entity_ids) > 0 OR EXISTS (SELECT 1 FROM jsonb_array_elements(%[1]s.access_releases) release WHERE release->>'level' = 'group' AND (release->>'at')::timestamptz <= now()))))`, alias), args, nil
 }

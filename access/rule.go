@@ -20,7 +20,7 @@ const (
 	Public      Level = "public"    // anyone
 	TierLevel   Level = "tier"      // holders of any of Rule.Tiers
 	EntityLevel Level = "group"     // holders of Rule.Entity's key: members-only content
-	PPV         Level = "ppv"       // buyers of the content or version
+	PPV         Level = "ppv"       // buyers of this version
 	EntityPPV   Level = "group_ppv" // buyers; buying needs Rule.Entity's key first
 )
 
@@ -29,7 +29,7 @@ var ErrRule = errors.New("access: invalid rule")
 
 // Rule is the access rule stored as JSON on content (content_items.access), on
 // a version as its override (content_versions.access) and on an entity. Whatever the level, a version also opens to
-// holders of its version key, its content key and the key of any entity
+// holders of its exact version key and the key of any entity
 // holding it.
 type Rule struct {
 	Level  Level    `json:"level"`

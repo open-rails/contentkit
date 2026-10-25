@@ -16,7 +16,7 @@ type Filter struct {
 	unknown   bool
 	err       error
 	tiers     map[string]bool   // configured tiers whose answer is known: claimed or read
-	contents  map[string]bool   // content ids of held content keys
+	contents  map[string]bool   // legacy parent grants, retained only for audit/Holds
 	versions  map[string]string // version id -> content id of held version keys
 	entities  map[string]bool   // group ids of held group keys
 	// contentsComplete and groupsComplete: the keyspace was read in full.
@@ -33,7 +33,8 @@ func (f *Filter) Unknown() bool { return f.unknown }
 // Tier reports whether the viewer holds the configured tier name.
 func (f *Filter) Tier(name string) bool { return f.tiers[name] }
 
-// Contents returns the content ids whose content key the viewer holds, sorted.
+// Contents returns legacy parent grants for audit and explicit migration.
+// They do not grant version access and must not be used as audience ownership.
 func (f *Filter) Contents() []string { return sortedKeys(f.contents) }
 
 // Versions returns the held version keys: version id -> content id.
@@ -70,7 +71,7 @@ func (f *Filter) Allows(it Item) (allowed, known bool) {
 
 // lookup answers one key from the keyspace it falls in.
 func (f *Filter) lookup(k Key) (held, known bool) {
-	if f.anonymous {
+	if f.anonymous || k.kind != KeyTier && k.tenant != f.g.tenant {
 		return false, true
 	}
 	switch k.kind {
@@ -82,7 +83,8 @@ func (f *Filter) lookup(k Key) (held, known bool) {
 	case KeyContent:
 		return f.contents[k.id], f.contents[k.id] || f.contentsComplete && !f.unknown
 	case KeyVersion:
-		_, h := f.versions[k.version]
+		parent, present := f.versions[k.version]
+		h := present && parent == k.id
 		return h, h || f.contentsComplete && !f.unknown
 	case KeyEntity:
 		return f.entities[k.id], f.entities[k.id] || f.entitiesComplete && !f.unknown
@@ -111,6 +113,9 @@ func (f *Filter) load(ans Answer, q Query) error {
 			case KeyContent:
 				f.contents[k.id] = true
 			case KeyVersion:
+				if parent, exists := f.versions[k.version]; exists && parent != k.id {
+					return fmt.Errorf("entitlements contain conflicting parents for version %q", k.version)
+				}
 				f.versions[k.version] = k.id
 			case KeyEntity:
 				f.entities[k.id] = true

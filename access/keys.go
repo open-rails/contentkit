@@ -12,7 +12,7 @@ import (
 type KeyKind uint8
 
 const (
-	KeyContent KeyKind = iota + 1 // <tenant>:content:<id>: every version of one content item
+	KeyContent KeyKind = iota + 1 // <tenant>:content:<id>: legacy parent grant; audit/migration only
 	KeyVersion                    // <tenant>:content:<id>/<version>: one version
 	KeyEntity                     // <tenant>:group:<id>: every member of an entity, and content whose rule names it
 	KeyTier                       // <tier>: a tier from config, such as premium
@@ -39,7 +39,11 @@ type Key struct {
 	version string // KeyVersion
 }
 
-// ContentKey is the key of content id: it opens every version.
+// ContentKey identifies a legacy parent grant for audit and explicit migration.
+// It never opens a version. New products must use VersionKey for each item.
+//
+// Deprecated: Use VersionKey for audience access. ContentKey remains for
+// explicitly auditing and migrating old billing records.
 func ContentKey(tenant, id string) (Key, error) { return makeKey(KeyContent, tenant, id, "") }
 
 // VersionKey is the key of one version of content.

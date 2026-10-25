@@ -83,7 +83,8 @@ func (g *Gate) Tenant() string { return g.tenant }
 // Tiers returns the configured tiers, sorted.
 func (g *Gate) Tiers() []string { return slices.Clone(g.tiers) }
 
-// Item is one version to decide (or a content item as a whole, Version "").
+// Item is one independently accessible version. Content identifies its
+// catalog grouping; Version is required and is the entitlement boundary.
 type Item struct {
 	Content string
 	Version string
@@ -101,7 +102,7 @@ type Decision struct {
 	// offered (the viewer may already hold it).
 	Unknown bool
 	// Sell are the keys whose purchase opens it, the rule's own first (its
-	// tiers or entity), then the version's and the content's;
+	// tiers or entity), then the version's;
 	// The host resolves these keys through its billing provider.
 	Sell []Key
 	// Requires is the key a buyer must hold first (EntityPPV), nil when held.
@@ -189,6 +190,7 @@ func (g *Gate) Decide(ctx context.Context, actor Actor, items []Item) ([]Decisio
 // billing read. An anonymous actor holds nothing and costs no read. A failed
 // read answers false for what it would have decided and returns an error
 // wrapping ErrUnavailable.
+// Non-tier keys outside this gate's tenant are refused without a billing read.
 func (g *Gate) Holds(ctx context.Context, actor Actor, keys []Key) ([]bool, error) {
 	out := make([]bool, len(keys))
 	if anonymous(actor) {
@@ -198,6 +200,9 @@ func (g *Gate) Holds(ctx context.Context, actor Actor, keys []Key) ([]bool, erro
 	kn.filter = kn.memo.loadFilter()
 	need := map[string]bool{}
 	for i, k := range keys {
+		if k.kind != KeyTier && k.tenant != g.tenant {
+			continue
+		}
 		held, known := kn.lookup(k)
 		out[i] = held
 		if !known {
@@ -271,8 +276,7 @@ type releasePlan struct {
 type itemPlan struct {
 	invalid  bool
 	rule     Rule
-	version  *Key
-	content  Key
+	version  Key
 	entities []Key // Item.Entities, and the rule's entity for EntityLevel
 	tiers    []Key // TierLevel: the configured ones among the rule's
 	requires *Key  // EntityPPV
@@ -298,15 +302,8 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 		return p, err
 	}
 	var err error
-	if p.content, err = ContentKey(g.tenant, it.Content); err != nil {
+	if p.version, err = VersionKey(g.tenant, it.Content, it.Version); err != nil {
 		return p, err
-	}
-	if it.Version != "" {
-		v, err := VersionKey(g.tenant, it.Content, it.Version)
-		if err != nil {
-			return p, err
-		}
-		p.version = &v
 	}
 	for _, id := range it.Entities {
 		k, err := EntityKey(g.tenant, id)
@@ -455,10 +452,7 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 		}
 		return h
 	}
-	opens := slices.Concat(p.tiers, p.entities, []Key{p.content})
-	if p.version != nil {
-		opens = append(opens, *p.version)
-	}
+	opens := slices.Concat(p.tiers, p.entities, []Key{p.version})
 	for _, release := range p.releases {
 		if !now.Before(release.at) {
 			opens = append(opens, release.keys...)
@@ -483,10 +477,7 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 	case EntityLevel:
 		d.Sell = []Key{p.entities[len(p.entities)-1]}
 	}
-	if p.version != nil {
-		d.Sell = append(d.Sell, *p.version)
-	}
-	d.Sell = append(d.Sell, p.content)
+	d.Sell = append(d.Sell, p.version)
 	if !requiresHeld {
 		d.Requires = p.requires
 	}
