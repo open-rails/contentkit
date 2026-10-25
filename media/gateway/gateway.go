@@ -182,9 +182,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cacheControl = privateCacheControl
-		if q := r.URL.Query(); q.Has("dl") {
-			dl = new(q.Get("dl"))
-		}
+	}
+	if q := r.URL.Query(); q.Has("dl") {
+		dl = new(q.Get("dl"))
 	}
 	if !o.scope.IsZero() {
 		check := r.Clone(r.Context())

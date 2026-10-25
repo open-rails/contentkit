@@ -9022,7 +9022,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
+        "summary": "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's for an already served file, or the existing archive transfer route's for a ZIP or internal original/rendition (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
         "parameters": [
           {
             "name": "id",
@@ -9102,7 +9102,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
+        "summary": "Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks. Internal originals and HostOnly renditions never gain a gateway URL. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
         "parameters": [
           {
             "name": "id",
@@ -9179,7 +9179,15 @@
           {
             "name": "name",
             "in": "query",
-            "description": "the zip's file name",
+            "description": "the attachment file name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "description": "true for a signed exact single-file transfer",
             "schema": {
               "type": "string"
             }
@@ -9227,6 +9235,21 @@
                 "schema": {
                   "type": "string"
                 }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pending"
+                }
               }
             }
           },
@@ -9242,7 +9265,11 @@
         ],
         "x-contentkit-module": "versions",
         "x-contentkit-auth": "public",
-        "x-contentkit-errors": [],
+        "x-contentkit-errors": [
+          "forbidden",
+          "download_unavailable",
+          "no_download"
+        ],
         "x-contentkit-error-sets": [
           "module:versions",
           "auth",

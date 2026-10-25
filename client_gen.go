@@ -2145,7 +2145,7 @@ func (c *Client) PostContentVersionFork(ctx context.Context, id string, version 
 	return out, err
 }
 
-// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's, or, for a ZIP, the archive route's (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
+// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's for an already served file, or the existing archive transfer route's for a ZIP or internal original/rendition (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
 func (c *Client) GetContentVersionDownload(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/download", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }
@@ -2166,8 +2166,10 @@ type GetContentVersionArchiveQuery struct {
 	Claims string
 	// the pages to mark, from 1: 3,5,7
 	Mark string
-	// the zip's file name
+	// the attachment file name
 	Name string
+	// true for a signed exact single-file transfer
+	File string
 	// the exact ordered source revision
 	Revision string
 	// the exact authorized ZIP page count
@@ -2202,6 +2204,9 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	if q.Name != "" {
 		v.Set("name", q.Name)
 	}
+	if q.File != "" {
+		v.Set("file", q.File)
+	}
 	if q.Revision != "" {
 		v.Set("revision", q.Revision)
 	}
@@ -2214,7 +2219,7 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	return v
 }
 
-// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the ZIP a download granted after repeating access, publication, chapter and policy checks. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.
+// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks. Internal originals and HostOnly renditions never gain a gateway URL. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.
 func (c *Client) GetContentVersionArchive(ctx context.Context, id string, version string, q GetContentVersionArchiveQuery) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/archive", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil)
 }

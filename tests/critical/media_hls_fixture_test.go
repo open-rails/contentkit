@@ -33,6 +33,10 @@ type tinyHLSFixture struct {
 }
 
 func newTinyHLSFixture(t *testing.T, private ...bool) *tinyHLSFixture {
+	return newTinyHLSConfiguredFixture(t, len(private) > 0 && private[0], nil)
+}
+
+func newTinyHLSConfiguredFixture(t *testing.T, private bool, configure func(*ck.Config)) *tinyHLSFixture {
 	t.Helper()
 	m := newResilientMedia(t, func(c *ck.Config) {
 		c.Content.Kinds["clip"] = kinds.Kind{Route: "clips", Presentation: "player", Versions: kinds.VersionRules{Languages: "one", Hidden: true}}
@@ -44,6 +48,9 @@ func newTinyHLSFixture(t *testing.T, private ...bool) *tinyHLSFixture {
 		site := c.Media.Config.Kinds[len(c.Media.Config.Kinds)-1]
 		site.Name = "siteclip"
 		c.Media.Config.Kinds = append(c.Media.Config.Kinds, site)
+		if configure != nil {
+			configure(c)
+		}
 	})
 	config := m.config
 	config.VideoCodecs = []media.Codec{media.CodecH264}
@@ -72,7 +79,7 @@ func newTinyHLSFixture(t *testing.T, private ...bool) *tinyHLSFixture {
 	}
 	data, err := os.ReadFile(source)
 	must(t, err)
-	f := &tinyHLSFixture{resilientMedia: m, Source: data, MasterPath: "streams/master.m3u8", Reader: m.app.client(""), private: len(private) > 0 && private[0]}
+	f := &tinyHLSFixture{resilientMedia: m, Source: data, MasterPath: "streams/master.m3u8", Reader: m.app.client(""), private: private}
 	if f.private {
 		// This fixture checks media capability scope, not billing grants.
 		// The authorized editor receives an ordinary completed-reader view.

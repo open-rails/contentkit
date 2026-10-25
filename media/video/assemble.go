@@ -295,12 +295,25 @@ func (e *Encoder) muxMP4(ctx context.Context, w runWork, presets []*media.Privat
 			area = layout.AreaDownload // one blob serves every rung's presets
 		}
 	}
-	blob, size, err := e.put(ctx, w.item, area, out, "video/mp4", fp)
-	if err != nil {
-		return nil, err
+	var blob string
+	var size int64
+	if !w.item.Kind().Versions {
+		blob, size, err = e.put(ctx, w.item, area, out, "video/mp4", fp)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var files []media.File
 	for _, q := range presets {
+		if w.item.Kind().Versions {
+			// Presets can have different publication policy (notably HostOnly).
+			// Reuse the encoded bytes, but never share a physical allocation
+			// whose move into public/private would also expose an internal one.
+			blob, size, err = e.put(ctx, w.item, w.item.Kind().Area("", q.Name), out, "video/mp4", fp)
+			if err != nil {
+				return nil, err
+			}
+		}
 		files = append(files, media.File{Path: w.item.Kind().OutputPath(q, w.f.Path), Blob: blob, Type: "video/mp4", Size: size,
 			W: width, H: height, Dur: math.Round(w.pl.duration*1000) / 1000, Preset: q.Name, FP: e.fp(q, w.f)})
 	}
