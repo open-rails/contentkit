@@ -1,10 +1,11 @@
-import { Add01Icon, ArrowLeft02Icon, CrownIcon, Delete02Icon, Image01Icon, LinkSquare02Icon, MoreHorizontalIcon, Search01Icon, SquareUnlock02Icon, Upload04Icon, ViewIcon } from "@hugeicons/core-free-icons";
+import { Add01Icon, ArrowLeft02Icon, Delete02Icon, Image01Icon, LinkSquare02Icon, MoreHorizontalIcon, Search01Icon, Upload04Icon, ViewIcon } from "@hugeicons/core-free-icons";
 import { cn } from "cn";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { imageRefs } from "../../client/contents.js";
+import { selectedEdition } from "../../client/edition-access.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
 import type { Content, EntityCard, EntityDetail, ManageCount, Rule, Version } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
@@ -60,7 +61,7 @@ export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
   labels?: Labels;
   /** The list's default page size: 20, 50 or 100. */
   pageSize?: number;
-  /** Row checkboxes with bulk access, delete and restore (default true). */
+  /** Row checkboxes for deleting or restoring hidden editions (default true). */
   selectable?: boolean;
   /** The kind's name, localized by the host and as it reads mid-sentence (e.g. gallery, galleries): the list heading, New button and empty state. */
   noun?: { one: string; other: string };
@@ -250,10 +251,6 @@ export function accessLabel(t: Translator["t"], rule: Rule, labels?: Labels): st
   }
 }
 
-// Filter values: "" every rule, a level, or "tier:{name}" for one tier.
-const accessQuery = (v: string): { access?: string; tier?: string } =>
-  !v ? {} : v.startsWith("tier:") ? { access: "tier", tier: v.slice(5) } : { access: v };
-
 async function eachLimited<T>(items: readonly T[], fn: (item: T) => Promise<unknown>): Promise<number> {
   let failed = 0;
   let next = 0;
@@ -280,14 +277,13 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const language = choices(offered)[0]?.value;
   const query = loc.query.get("q") ?? "";
   const status = states.find((s) => s === loc.query.get("status")) ?? "";
-  const accessFilter = spec?.access_scope === "version" ? "" : loc.query.get("access") ?? "";
   const deleted = loc.query.get("deleted") === "1";
   const page = pageOf(loc.query);
   const sizeParam = Number(loc.query.get("size"));
   const size = PAGE_SIZES.find((n) => n === sizeParam) ?? defaultSize;
-  const filters = { q: query, status, access: accessFilter || undefined, deleted: deleted ? "1" : undefined, size: size !== defaultSize ? size : undefined };
+  const filters = { q: query, status, deleted: deleted ? "1" : undefined, size: size !== defaultSize ? size : undefined };
   const filter = (next: Partial<typeof filters>) => loc.go("", { ...filters, ...next });
-  const filtered = !!(query || status || accessFilter);
+  const filtered = !!(query || status);
   const [text, setText] = useState(query);
   useEffect(() => setText(query), [query]);
   // Searches as the admin types; Enter applies at once.
@@ -297,22 +293,21 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
-  const tiers = model?.tiers ?? [];
   // Reader works take one ZIP per draft, players one video per draft.
   const presentation = spec?.presentation;
   const hasHiddenVersion = !!spec?.versions.hidden;
-  const canChangeParentAccess = offersAccessChoice(spec) && spec?.access_scope !== "version";
-  const canSelect = selectable && (deleted ? hasHiddenVersion : hasHiddenVersion || (canChangeParentAccess && tiers.length > 0));
+  const showEditionAccess = offersAccessChoice(spec);
+  const canSelect = selectable && hasHiddenVersion;
   const bulkable = presentation === "reader" || presentation === "player";
   const [bulkOpen, setBulkOpen] = useState(false);
   const { store, scope } = useContentScope(client);
   const state = deleted ? "deleted" : status || undefined;
   const tag = { type: "contents", scope: deleted ? "deleted" : undefined } as const;
-  const filterQuery = { q: query || undefined, state, ...accessQuery(accessFilter) };
-  const listing = usePaged(store, keyOf("contents-page", scope, kind, query, state, accessFilter, language, size), tag, page, size, (q, signal) =>
+  const filterQuery = { q: query || undefined, state };
+  const listing = usePaged(store, keyOf("contents-page", scope, kind, query, state, language, size), tag, page, size, (q, signal) =>
     client.contents.manage({ ...q, ...filterQuery, kind, language }, signal),
   );
-  const counted = useResource<ManageCount>(store, keyOf("contents-count", scope, kind, query, state, accessFilter), tag, (signal) =>
+  const counted = useResource<ManageCount>(store, keyOf("contents-count", scope, kind, query, state), tag, (signal) =>
     client.contents.manageCount({ ...filterQuery, kind }, signal),
   );
   const items = listing.items;
@@ -321,29 +316,8 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const del = useAction("content.save", onError);
   const { confirm, dialog } = useConfirm();
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  useEffect(() => setSelected(new Set()), [kind, query, state, accessFilter, page, size]);
-  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
-  const [rowErrors, setRowErrors] = useState<Readonly<Record<string, ContentKitError>>>({});
+  useEffect(() => setSelected(new Set()), [kind, query, state, page, size]);
   const [bulk, setBulk] = useState<{ pending: boolean; summary?: string }>({ pending: false });
-  const premium = tiers[0];
-  const toggleable = (c: Content) => canChangeParentAccess && !!premium && (c.access.level === "public" || c.access.level === "tier");
-  const nextRule = (c: Content, toPremium: boolean): Rule => (toPremium ? { level: "tier", tiers: [premium!] } : { level: "public" });
-  const setAccess = async (c: Content, toPremium: boolean) => {
-    setBusy((b) => new Set(b).add(c.id));
-    setRowErrors(({ [c.id]: _, ...rest }) => rest);
-    try {
-      await client.contents.update(c.id, { access: nextRule(c, toPremium) });
-    } catch (e) {
-      const err = toContentKitError(e);
-      setRowErrors((r) => ({ ...r, [c.id]: err }));
-    } finally {
-      setBusy((b) => {
-        const n = new Set(b);
-        n.delete(c.id);
-        return n;
-      });
-    }
-  };
   const removeVersion = (c: Content) => {
     const version = c.versions.find((v) => v.state !== "deleted");
     if (!version) throw new Error("contentkit-ui: the item has no undeleted version");
@@ -379,7 +353,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const heading = noun?.other ?? t("contentManager.title");
   const newLabel = noun ? t("contentManager.newNamed", { one: noun.one }) : t("contentManager.new");
   // From md up the rows line up as a table: select, item, status, access, date, actions.
-  const columns = [canSelect && "1rem", "minmax(0,1fr)", "8rem", canChangeParentAccess && "8rem", "9rem", "6.5rem"].filter(Boolean).join(" ");
+  const columns = [canSelect && "1rem", "minmax(0,1fr)", "8rem", showEditionAccess && "8rem", "9rem", "6.5rem"].filter(Boolean).join(" ");
   const toggle = (c: Content, on: boolean) =>
     setSelected((cur) => {
       const n = new Set(cur);
@@ -455,31 +429,6 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
             </SelectContent>
           </Select>
         )}
-        {canChangeParentAccess && <Select value={accessFilter} onValueChange={(v) => filter({ access: String(v ?? "") || undefined })}>
-          <SelectTrigger size="sm" aria-label={t("contentManager.access")}>
-            <SelectValue>
-              {(v: string) =>
-                !v
-                  ? t("contentManager.anyAccess")
-                  : v.startsWith("tier:")
-                    ? labelOf(labels, v.slice(5))
-                    : accessLabel(t, { level: v as Rule["level"] }, labels)
-              }
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">{t("contentManager.anyAccess")}</SelectItem>
-            <SelectItem value="public">{t("contentManager.free")}</SelectItem>
-            {tiers.length > 0 && <SelectItem value="tier">{t("contentManager.premium")}</SelectItem>}
-            {tiers.length > 1 &&
-              tiers.map((x) => (
-                <SelectItem key={x} value={`tier:${x}`}>
-                  {labelOf(labels, x)}
-                </SelectItem>
-              ))}
-            {(!spec?.access_levels?.length || spec.access_levels.includes("ppv")) && <SelectItem value="ppv">{t("contentManager.ppv")}</SelectItem>}
-          </SelectContent>
-        </Select>}
       </div>
       <ErrorLine error={del.error} />
       {bulk.summary && (
@@ -538,16 +487,6 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                   </Button>
                 ) : (
                   <>
-                    {canChangeParentAccess && premium && (
-                      <Button size="xs" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, true) }))}>
-                        {t("contentManager.makePremium")}
-                      </Button>
-                    )}
-                    {canChangeParentAccess && premium && (
-                      <Button size="xs" variant="outline" disabled={bulk.pending} onClick={() => void runBulk(chosen.filter(toggleable), (c) => client.contents.update(c.id, { access: nextRule(c, false) }))}>
-                        {t("contentManager.makeFree")}
-                      </Button>
-                    )}
                     {hasHiddenVersion && <Button size="xs" variant="destructive" disabled={bulk.pending} onClick={() => void bulkDelete()}>
                       {t("contentManager.delete")}
                     </Button>}
@@ -562,7 +501,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                 {canSelect && <span className="md:hidden">{t("contentManager.selectPage")}</span>}
                 <span className="hidden md:block">{t("contentManager.itemTitle")}</span>
                 <span className="hidden md:block">{t("contentManager.status")}</span>
-                {canChangeParentAccess && <span className="hidden md:block">{t("contentManager.access")}</span>}
+                {showEditionAccess && <span className="hidden md:block">{t("contentManager.access")}</span>}
                 <span className="hidden md:block">{t("contentManager.date")}</span>
                 <span className="hidden md:block" />
               </>
@@ -571,9 +510,9 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
           {items.map((c) => {
             const s = contentStatus(c);
             const href = s === "published" ? contentHref?.(c) : undefined;
-            const pending = busy.has(c.id);
-            const isPremium = c.access.level === "tier";
-            const more = href || toggleable(c) || hasHiddenVersion;
+            const editionRule = selectedEdition(c)?.access;
+            const isPremium = editionRule?.level === "tier";
+            const more = href || hasHiddenVersion;
             return (
               <li
                 key={c.id}
@@ -605,13 +544,12 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                       <span aria-hidden>·</span>
                       <span className="uppercase">{c.language}</span>
                     </div>
-                    <ErrorLine error={rowErrors[c.id] ?? null} />
                   </div>
                 </div>
                 <div className="text-sm">{deleted ? <span className="text-muted-foreground">{t("contentManager.deleted")}</span> : <StatusDot status={s} />}</div>
-                {canChangeParentAccess && (
+                {showEditionAccess && (
                   <div className={cn("text-sm", isPremium ? "font-medium text-foreground" : "text-muted-foreground")} data-ckui="access-badge">
-                    {accessLabel(t, c.access, labels)}
+                    {editionRule ? accessLabel(t, editionRule, labels) : "—"}
                   </div>
                 )}
                 <div className="grid text-sm text-muted-foreground">
@@ -639,9 +577,9 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                       {more ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger
-                            render={<Button size="icon-sm" variant="ghost" disabled={pending} aria-busy={pending} aria-label={t("contentManager.moreActions", { title: c.title })} />}
+                            render={<Button size="icon-sm" variant="ghost" aria-label={t("contentManager.moreActions", { title: c.title })} />}
                           >
-                            {pending ? <Spinner /> : <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} />}
+                            <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} />
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="min-w-40">
                             {href && (
@@ -650,13 +588,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                                 {t("contentManager.view")}
                               </DropdownMenuItem>
                             )}
-                            {toggleable(c) && (
-                              <DropdownMenuItem onClick={() => void setAccess(c, !isPremium)}>
-                                <HugeiconsIcon icon={isPremium ? SquareUnlock02Icon : CrownIcon} strokeWidth={2} />
-                                {t(isPremium ? "contentManager.makeFree" : "contentManager.makePremium")}
-                              </DropdownMenuItem>
-                            )}
-                            {hasHiddenVersion && (href || toggleable(c)) && <DropdownMenuSeparator />}
+                            {hasHiddenVersion && href && <DropdownMenuSeparator />}
                             {hasHiddenVersion && (
                               <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={del.pending} onClick={() => void remove(c)}>
                                 <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />

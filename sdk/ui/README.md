@@ -805,6 +805,11 @@ The host still owns navigation outside the flow, including browser Back handling
   letter capitalized, the New button and the empty state; generic wording
   without it). `useContentManagerAccess()`.
 
+  Access badges and editors use the selected edition's rule, including a kind's
+  hidden single edition. Existing access changes target that edition; list rows
+  offer no parent-wide access toggles or bulk access mutation. A new item's
+  chosen access rule becomes its first edition's creation default.
+
   A reader kind's editor keeps its save, undo and publish actions pinned as
   the page scrolls. A host with its own sticky header sets
   `--ckui-sticky-top` on an ancestor to that header's visible height, so the

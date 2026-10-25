@@ -33,6 +33,7 @@ import { ImageCropDialog } from "../image-crop-dialog.js";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
 import { RuleFields, cleanRule, complete, VersionEditor, VersionStatus, SegmentsEditor, AddVersion, versionLabel, defaultAccessRule } from "../content/editors.js";
+import { saveEditionAccess, selectedEdition } from "../../client/edition-access.js";
 import { publicationOf } from "../../client/publication.js";
 import { ErrorLine, contentError, formatDate, useAction } from "../social/parts.js";
 import { localInput } from "../social/bans.js";
@@ -186,9 +187,9 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
         originalTitle: item?.original_title ?? "",
         comments: item?.comments ?? (!spec.comment_modes?.length || spec.comment_modes.includes("open") ? "open" : spec.comment_modes[0]!),
         attributes: formOf(spec.attributes ?? {}, item?.attributes ?? {}),
-        access: item?.access ?? defaultAccessRule(model, p.kind),
+        access: version?.access ?? defaultAccessRule(model, p.kind),
       }),
-      [item?.original_title, item?.comments, item?.attributes, item?.access, spec.attributes, spec.comment_modes, model, p.kind],
+      [item?.original_title, item?.comments, item?.attributes, version?.access, spec.attributes, spec.comment_modes, model, p.kind],
     ),
   );
   const associations = useDraft(
@@ -251,7 +252,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
       kind: p.kind,
       text: { [l]: { ...before, title } },
       owner_group_id: p.ownerEntity,
-      ...(spec.access_levels?.length ? { access: cleanRule(latest.current.details.get().access) } : {}),
+      access: cleanRule(latest.current.details.get().access),
       ...(spec.comment_modes?.length ? { comments: latest.current.details.get().comments } : {}),
     };
     creating.current = ed
@@ -469,14 +470,19 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
         // before the revision-checked details write, never reuse a stale one.
         content = await client.contents.get(content.id, language);
         if (!current()) return;
-        if (changedDetails.length) {
+        if (changedDetails.some((field) => field !== "access")) {
           content = await client.contents.update(content.id, {
             ...(changedDetails.includes("originalTitle") ? { original_title: snapshotDetails.originalTitle } : {}),
             ...(changedDetails.includes("comments") ? { comments: snapshotDetails.comments } : {}),
             ...(changedDetails.includes("attributes") ? { attributes } : {}),
-            ...(changedDetails.includes("access") ? { access: cleanRule(snapshotDetails.access) } : {}),
             revision: content.revision,
           });
+        }
+        if (changedDetails.includes("access")) {
+          const target = version ? selectedEdition(content, version.id) : !item ? selectedEdition(content) : undefined;
+          if (!target) throw new ValidationError(t("readerEditor.versionMissing"));
+          const saved = await saveEditionAccess(client.contents, content, cleanRule(snapshotDetails.access), target.id);
+          content = { ...content, versions: content.versions.map((edition) => edition.id === saved.id ? saved : edition) };
         }
         if (!current()) return;
         if (originalAndVersion && (state.versionTexts.dirty.length || !version?.text?.[state.editionLanguage]?.title)) {
@@ -514,13 +520,17 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
       const blocked = await coordinator.save(current);
       if (blocked) throw new ValidationError(t("readerEditor.fixSection", { section: blocked }));
       if (!current()) return;
+      // Edition sections can save their own policy. Checkpoint the latest
+      // edition rule instead of restoring the earlier details snapshot.
+      content = await client.contents.get(content.id, language);
+      if (!current()) return;
       const cleanTexts = settleTexts(Object.fromEntries(languages.map((l) => [l.value, content.text?.[l.value] ?? snapshotTexts[l.value] ?? blank()])));
       const cleanVersionTexts = settleVersionTexts(savedVersionTexts);
       const cleanDetails = settleDetails({
         originalTitle: content.original_title ?? "",
         comments: content.comments,
         attributes: formOf(spec.attributes ?? {}, content.attributes),
-        access: content.access,
+        access: selectedEdition(content, version?.id)?.access ?? snapshotDetails.access,
       });
       if (!cleanTexts || !cleanVersionTexts || !cleanDetails || !cleanAssociations) throw new ValidationError(t("readerEditor.changedDuringSave"));
       // Files are the last draft mutation: a failed metadata section cannot
@@ -597,7 +607,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     setDraftGeneration((value) => value + 1);
     texts.checkpoint()(Object.fromEntries(languages.map((l) => [l.value, editableText(item, l.value)])));
     versionTexts.checkpoint()({});
-    details.checkpoint()({ originalTitle: item!.original_title ?? "", comments: item!.comments, attributes: formOf(spec.attributes ?? {}, item!.attributes ?? {}), access: item!.access });
+    details.checkpoint()({ originalTitle: item!.original_title ?? "", comments: item!.comments, attributes: formOf(spec.attributes ?? {}, item!.attributes ?? {}), access: version?.access ?? defaultAccessRule(model, p.kind) });
     publication.checkpoint()({ at: item!.publish_at ? localInput(new Date(item!.publish_at)) : "" });
     associations.checkpoint()({ memberships: membership.memberships.filter((a) => !a.version_id && sharedKinds.includes(membership.entities.get(a.group_id ?? "")?.kind ?? "")), create: [] });
     versionAssociations.checkpoint()({ memberships: [], create: [] });

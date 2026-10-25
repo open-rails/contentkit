@@ -1,6 +1,7 @@
 import { cn } from "cn";
 import { chapterRanges } from "../../client/chapters.js";
 import { publicationOf, publicationPhase } from "../../client/publication.js";
+import { saveEditionAccess, selectedEdition } from "../../client/edition-access.js";
 import { createPortal } from "react-dom";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Add01Icon } from "@hugeicons/core-free-icons";
@@ -389,7 +390,7 @@ export function cleanRule(r: Rule): Rule {
 /** Who may open the content and what it sells for. */
 export function AccessEditor(p: Common & { content: Content }) {
   const { client, scope } = useContentScope(p.client);
-  const key = useEditorKey(p.content.id, client, scope);
+  const key = useEditorKey(`${p.content.id}:${selectedEdition(p.content)?.id ?? ""}`, client, scope);
   return <AccessForm key={key} {...p} client={client} />;
 }
 
@@ -397,8 +398,8 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
   const { t } = useMessages();
   const client = useContentKitClient(p.client);
   const { model } = useKind(content.kind, p.client);
-  const version = content.versions.find((v) => v.id === content.selected_version_id) ?? content.versions.find((v) => v.state !== "deleted");
-  const rule = useDraft(version?.access ?? content.access);
+  const version = selectedEdition(content);
+  const rule = useDraft(version?.access ?? (model ? defaultAccessRule(model, content.kind) : { level: "public" } as Rule));
   const reload = useEditorReload(content, p.client);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
@@ -412,7 +413,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
           if (!version) return;
           setSaved(false);
           const settle = rule.checkpoint();
-          void save.run(() => client.contents.updateVersion(content.id, version.id, { access: cleanRule(rule.value) })).then((d) => d && setSaved(settle(d.access ?? rule.value)));
+          void save.run(() => saveEditionAccess(client.contents, content, cleanRule(rule.value), version.id)).then((d) => d && setSaved(settle(d.access ?? rule.value)));
         }}
       >
         <RuleFields value={rule.value} onChange={(r) => { rule.edit(r); setSaved(false); }} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />
