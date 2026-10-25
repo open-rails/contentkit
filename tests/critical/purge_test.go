@@ -261,16 +261,28 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 			return ref
 		}
 		restored := makeDeleted("Restore wins")
+		// Finish this upload's metadata before constructing the controlled race.
+		// Processing readiness does not mean every follow-up snapshot has run.
+		waitFor(t, func() bool {
+			var pending int
+			must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+" WHERE kind='contentkit_version_publish' AND args->>'version'=$1 AND state NOT IN ('completed','cancelled')", restored.Version).Scan(&pending))
+			return pending == 0
+		})
 		qs := pgx.Identifier{w.schema}.Sanitize()
 		const barrier int64 = 612900086
-		holder, err := w.pool.Acquire(t.Context())
-		must(t, err)
-		_, err = holder.Exec(t.Context(), "SELECT pg_advisory_lock($1)", barrier)
+		// The test controls the pause outside the application pool. Otherwise
+		// the paused restore and two waiting edits exhaust a four-connection
+		// pool together with this holder, preventing the test from releasing it.
+		holder, err := pgx.ConnectConfig(t.Context(), w.pool.Config().ConnConfig.Copy())
 		must(t, err)
 		defer func() {
-			_, _ = holder.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", barrier)
-			holder.Release()
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = holder.Exec(cleanup, "SELECT pg_advisory_unlock($1)", barrier)
+			_ = holder.Close(cleanup)
 		}()
+		_, err = holder.Exec(t.Context(), "SELECT pg_advisory_lock($1)", barrier)
+		must(t, err)
 		_, err = w.pool.Exec(t.Context(), fmt.Sprintf(`CREATE FUNCTION %s.critical_pause_restore() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.id=TG_ARGV[0] AND NEW.state='published' THEN PERFORM pg_advisory_xact_lock(%d); END IF; RETURN NEW; END$$;
 CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR EACH ROW EXECUTE FUNCTION %s.critical_pause_restore('%s')`, qs, barrier, qs, qs, restored.Version))
 		must(t, err)
@@ -281,6 +293,35 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 			_, err := admin.PatchContentVersion(ctx, restored.ID, restored.Version, catalog.VersionInput{State: "published"})
 			result <- err
 		}()
+		var restorePID int
+		waitFor(t, func() bool {
+			var pids []int
+			must(t, holder.QueryRow(ctx, "SELECT coalesce(array_agg(pid), '{}') FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND NOT granted", barrier).Scan(&pids))
+			if len(pids) != 1 {
+				return false
+			}
+			restorePID = pids[0]
+			return true
+		})
+		// Two ordinary edits reproduce the same occupied connections as late
+		// metadata workers queued behind the paused restore. The purger must
+		// still skip that locked item rather than erase its media.
+		label := "Concurrent metadata edit"
+		writes := make(chan error, 2)
+		for range 2 {
+			go func() {
+				_, err := admin.PatchContentVersion(ctx, restored.ID, restored.Version, catalog.VersionInput{Label: &label})
+				writes <- err
+			}()
+		}
+		waitFor(t, func() bool {
+			var blocked int
+			must(t, holder.QueryRow(ctx, `WITH RECURSIVE blocked(pid) AS (
+ SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid))
+ UNION SELECT a.pid FROM pg_stat_activity a JOIN blocked b ON b.pid=ANY(pg_blocking_pids(a.pid)) WHERE a.datname=current_database()
+) SELECT count(*) FROM blocked`, restorePID).Scan(&blocked))
+			return blocked >= 2
+		})
 		waitFor(t, func() bool {
 			var n int
 			must(t, w.pool.QueryRow(ctx, "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted", barrier).Scan(&n))
@@ -290,6 +331,9 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 		_, err = holder.Exec(ctx, "SELECT pg_advisory_unlock($1)", barrier)
 		must(t, err)
 		must(t, <-result)
+		for range 2 {
+			must(t, <-writes)
+		}
 		live, err := admin.GetContent(t.Context(), restored.ID, ck.GetContentQuery{})
 		must(t, err)
 		if live.DeletedAt != nil || !live.Live {
