@@ -5,7 +5,7 @@ go 1.26.10
 require (
 	github.com/google/uuid v1.6.0
 	github.com/open-rails/authkit v1.39.0
-	github.com/open-rails/contentkit v0.127.0
+	github.com/open-rails/contentkit v0.128.0
 )
 
 require (
