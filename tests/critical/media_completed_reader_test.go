@@ -20,6 +20,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // This resolver is the trusted authorization seam of the standalone media
@@ -68,6 +69,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 			mapping := map[string]string{}
 			for _, f := range delivery.Files {
 				mapping[f.Source] = f.Blob
+				mapping[f.Blob] = f.Blob // canonical files may already adopt storage completion
 			}
 			if omitIndex {
 				var kept []media.DeliveryFile
@@ -82,6 +84,11 @@ func TestCompletedPublicationReader(t *testing.T) {
 			for _, f := range current.Files {
 				if blob := mapping[f.Blob]; blob != "" {
 					f.Blob = blob
+					if f.Track != nil {
+						track := *f.Track
+						track.Index = indexSource // immutable pre-move snapshot reference
+						f.Track = &track
+					}
 					out.Files = append(out.Files, f)
 				}
 			}
@@ -98,7 +105,11 @@ func TestCompletedPublicationReader(t *testing.T) {
 	must(t, err)
 	item, err := registry.Item(ref)
 	must(t, err)
-	journal, err := media.NewPGJournal(w.pool, w.schema, nil)
+	workerSchema := w.schema + "_media_worker"
+	must(t, workqueue.Migrate(t.Context(), w.pool, workerSchema))
+	queue, err := workqueue.New(w.pool, registry, workerSchema)
+	must(t, err)
+	journal, err := media.NewPGJournal(w.pool, w.schema, queue)
 	must(t, err)
 	manifests, err := media.NewManifests(storage.store, registry, media.ManifestOptions{Locker: media.PGLocker(w.pool), Journal: journal})
 	must(t, err)

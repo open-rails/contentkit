@@ -579,7 +579,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		out.Access = AccessPartial
 	}
 	k := g.Item.Kind()
-	if !k.Versions && (editor || k.Publish == nil) {
+	if !editor || !k.Versions {
 		for _, n := range k.previewNames(g.Manifest) {
 			out.Previews = append(out.Previews, g.r.base+layout.URLPrefix+g.Item.PublicPrefix()+n)
 		}
@@ -589,6 +589,13 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		out.Public, err = g.editorPublicImages()
 		if err != nil {
 			return nil, nil, err
+		}
+		for _, image := range out.Public {
+			if preset := k.public(image.Preset); preset != nil && preset.First > 0 {
+				for _, rendition := range image.Renditions {
+					out.Previews = append(out.Previews, rendition.URL)
+				}
+			}
 		}
 	}
 	if !editor && k.Publish != nil {
