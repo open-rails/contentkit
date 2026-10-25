@@ -30,8 +30,15 @@
       "id": "CK-J01-S03",
       "journey": "CK-J01",
       "behavior": "SkipMigrations checks prepared schema without DDL",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Both actual PostgreSQL read-only transactions and a ClickHouse readonly=1 connection reject DDL, then prepared-schema startup succeeds with SkipMigrations. The configured ClickHouse probe is healthy and borrowed handles remain usable after Close.",
+        "New cases passed under the race detector in resume-boundaries5; the full package failed only separate new fixture/oracle issues. Strict qualification re-executes every named case."
+      ],
+      "cases": [
+        "TestPreparedSignalSchemaReadOnly/CK-J01-S03_prepared_ClickHouse_startup_performs_no_DDL",
+        "TestHostLifecycle/CK-J01-S03_prepared_schema_can_start_read_only"
+      ]
     },
     {
       "id": "CK-J01-S04",
@@ -272,15 +279,31 @@
       "id": "CK-J06-S01",
       "journey": "CK-J06",
       "behavior": "Content/version/entity/tier grants expose only their intended resource",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Real OpenRails product grants independently exercise content, exact version, entity and tier access. Each reader sees only its intended resource/edition; unrelated protected content stays redacted.",
+        "New cases passed under the race detector in resume-boundaries5; the full package failed only separate new fixture/oracle issues. Strict qualification re-executes every named case."
+      ],
+      "cases": [
+        "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped",
+        "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped/content",
+        "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped/entity",
+        "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped/tier",
+        "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped/version"
+      ]
     },
     {
       "id": "CK-J06-S02",
       "journey": "CK-J06",
       "behavior": "Future entitlement does not grant early access",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Two consecutive public product grants create a future access window. Revoking the first cannot open the second early; one microsecond before its start denies and exact equality grants the body.",
+        "New cases passed under the race detector in resume-boundaries5; the full package failed only separate new fixture/oracle issues. Strict qualification re-executes every named case."
+      ],
+      "cases": [
+        "TestCommerceEntitlementBoundaries/CK-J06-S02_future_window_cannot_open_content_early"
+      ]
     },
     {
       "id": "CK-J06-S03",
@@ -300,22 +323,40 @@
       "id": "CK-J06-S05",
       "journey": "CK-J06",
       "behavior": "Entitlement service outage refuses protected access",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A real TCP cut disconnects the billing PostgreSQL pool while ContentKit storage stays healthy. Previously granted content becomes Decision.Unknown with no body or purchase offer; the purchased library returns503.",
+        "New cases passed under the race detector in resume-boundaries5; the full package failed only separate new fixture/oracle issues. Strict qualification re-executes every named case."
+      ],
+      "cases": [
+        "TestCommerceEntitlementBoundaries/CK-J06-S05_unavailable_entitlement_authority_refuses_protected_access"
+      ]
     },
     {
       "id": "CK-J06-S06",
       "journey": "CK-J06",
       "behavior": "Purchased library stays inside app/domain boundaries",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "One account holds actual products for content in two apps and both sides of a hard domain filter. A restricted domain returns only its purchased eligible item, a broad domain includes both local purchases, and the sibling app returns only its own purchase.",
+        "New cases passed under the race detector in resume-boundaries5; the full package failed only separate new fixture/oracle issues. Strict qualification re-executes every named case."
+      ],
+      "cases": [
+        "TestCommerceEntitlementBoundaries/CK-J06-S06_library_respects_app_and_domain_even_when_both_are_purchased"
+      ]
     },
     {
       "id": "CK-J06-S07",
       "journey": "CK-J06",
       "behavior": "Changing product price leaves ContentKit requirement/grant identities unchanged",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Replacing a product price at the same price key changes financial terms while its entitlement key and existing product-access ID/product remain unchanged; the prior customer still reads the same content.",
+        "New cases passed under the race detector in resume-boundaries5; the full package failed only separate new fixture/oracle issues. Strict qualification re-executes every named case."
+      ],
+      "cases": [
+        "TestCommerceEntitlementBoundaries/CK-J06-S07_new_price_preserves_content_and_grant_identity"
+      ]
     },
     {
       "id": "CK-J07-S01",

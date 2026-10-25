@@ -37,7 +37,7 @@ type realBilling struct {
 	server   *httptest.Server
 }
 
-func attachBilling(t *testing.T, w *world, a *application) *realBilling {
+func attachBilling(t *testing.T, w *world, a *application, configure ...func(*openrails.Deps)) *realBilling {
 	t.Helper()
 	b := &realBilling{clock: clockwork.NewFakeClockAt(w.clock.now())}
 	b.stripe = stripemock.New(stripemock.Options{Clock: b.clock.Now})
@@ -58,7 +58,11 @@ func attachBilling(t *testing.T, w *world, a *application) *realBilling {
 	merchant.CardVault = "stripe"
 	cfg.Merchants["reader"] = merchant
 	var err error
-	b.engine, err = openrails.New(t.Context(), cfg, openrails.Deps{Postgres: w.pool, Clock: b.clock, FXTransport: fixedFXWire(t), StripeTransport: b.stripe.Transport(), UserInfo: w.tenant[0].UserInfo()})
+	deps := openrails.Deps{Postgres: w.pool, Clock: b.clock, FXTransport: fixedFXWire(t), StripeTransport: b.stripe.Transport(), UserInfo: w.tenant[0].UserInfo()}
+	for _, apply := range configure {
+		apply(&deps)
+	}
+	b.engine, err = openrails.New(t.Context(), cfg, deps)
 	must(t, err)
 	t.Cleanup(func() { must(t, b.engine.Close(context.Background())) })
 	b.merchant, err = b.engine.MerchantBySlug("reader")
