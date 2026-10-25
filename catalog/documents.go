@@ -83,7 +83,7 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
    SELECT coalesce((SELECT n.name FROM `+s.t.entityNames+` n WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND n.kind = 'name' ORDER BY n.language LIMIT 1), g.slug), false, ''
    WHERE NOT EXISTS (SELECT 1 FROM `+s.t.entityNames+` n WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND n.kind = 'name' AND n.language IN ($3, $5))) k
   WHERE g.tenant_id = c.tenant_id AND g.state = 'active' AND NOT g.internal AND g.id = ANY(`+s.qs+`.content_keyword_entity_ids(c.tenant_id,c.id))
-  ORDER BY g.kind, g.slug, k.alias, k.language = $3 DESC, k.name)
+  ORDER BY k.alias, g.kind, g.slug, k.language = $3 DESC, k.name)
  FROM `+s.t.items+` c LEFT JOIN `+s.t.text+` t ON t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3
  WHERE c.tenant_id = $1 AND c.id = ANY($2) AND c.kind = $4 AND c.state = 'published'`, s.tenant, ids, language, kind, s.defaultLanguage())
 	if err != nil {
