@@ -9,8 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/search"
@@ -89,6 +92,9 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 	}
 	o.Filter, err = publicationCursor(o.Filter, o.Cursor, sortName)
 	if err != nil {
+		return empty, err
+	}
+	if o.Filter.named, err = s.namedEntities(ctx, text); err != nil {
 		return empty, err
 	}
 	q, err := s.compile(ctx, o.Reader, o.Filter)
@@ -305,3 +311,23 @@ func (s *Service) entityTypeahead(ctx context.Context, text, language string, ki
 
 // now is the service clock.
 func (s *Service) now() time.Time { return s.o.Now() }
+
+// namedEntities are the active public entities a query names: the whole query
+// or one of its words is a name, alias or slug of the entity. Searching for an
+// entity the reader hides shows its contents (Doujins #211); filters a domain
+// requires still apply.
+func (s *Service) namedEntities(ctx context.Context, text string) ([]string, error) {
+	terms := append([]string{text}, strings.Fields(text)...)
+	slugs := make([]string, len(terms))
+	for i, t := range terms {
+		slugs[i] = codes.Slugify(t)
+	}
+	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT g.id FROM %[1]s g WHERE g.tenant_id = $1 AND g.state = 'active' AND NOT g.internal
+ AND (g.slug = ANY($3::text[]) OR EXISTS (SELECT 1 FROM %[2]s n WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id
+  AND n.normalized = ANY(SELECT %[3]s(t) FROM unnest($2::text[]) t)))`, s.t.entities, s.t.entityNames, s.t.normalize),
+		s.o.Tenant, terms, slugs)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
