@@ -101,7 +101,16 @@ func (s *Store) Merge(ctx context.Context, merges []Merge) ([]MergeReport, error
 		for _, g := range final {
 			marks = append(marks, g)
 		}
-		return s.markDirty(ctx, q, marks)
+		if err := s.markDirty(ctx, q, marks); err != nil {
+			return err
+		}
+		var sync []string
+		for _, g := range marks {
+			if g.State != StateActive && g.AuthScope != "" {
+				sync = append(sync, string(g.ID))
+			}
+		}
+		return s.queueSync(ctx, q, sync)
 	})
 	if err != nil {
 		return nil, err

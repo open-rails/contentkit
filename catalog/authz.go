@@ -45,7 +45,7 @@ func (s *Store) entityEditor(ctx context.Context, q Querier, actor access.Actor,
 		return out, nil
 	}
 	rows, err := q.Query(ctx, `SELECT id, kind, coalesce(owner_user_id, ''), coalesce(auth_scope, '') FROM `+s.t.entities+`
- WHERE tenant_id = $1 AND id = ANY($2) AND (owner_user_id IS NOT NULL OR auth_scope IS NOT NULL)`, s.tenant, entityIDs)
+ WHERE tenant_id = $1 AND id = ANY($2) AND state = 'active' AND (owner_user_id IS NOT NULL OR auth_scope IS NOT NULL)`, s.tenant, entityIDs)
 	if err != nil {
 		return nil, err
 	}

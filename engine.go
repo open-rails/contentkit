@@ -399,7 +399,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 // newCatalog builds the stores media is built over: entities and the catalog, which refreshes facets when entities change.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
-	opts := entities.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.EntityReferences,
+	opts := entities.Options{Pool: e.pool, Schema: e.schema, RiverSchema: e.riverSchema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.EntityReferences,
 		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},

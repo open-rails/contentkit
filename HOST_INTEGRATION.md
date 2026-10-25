@@ -1523,3 +1523,11 @@ Nothing reads cached facet scores. See
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
+
+Entity lifecycle changes enqueue `contentkit_entity_sync` in the same transaction
+as the entity write, including imports and writes made before local workers start.
+That job provisions or retires channel editor groups and follows channel deletion
+or restoration into its owned content. There is no periodic entity reconciliation
+scan. River retains failed work for explicit retry after its normal attempt limit.
+Standalone entity stores must point `entities.Options.RiverSchema` at migrated
+River tables (by default, `<entity-schema>_river`).
