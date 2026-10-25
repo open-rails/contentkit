@@ -109,6 +109,19 @@ func (m *Manifests) checkAllocations(ctx context.Context, item Item, keys []stri
 	return m.checkAllocationsIn(ctx, item, keys, cur.Incarnation)
 }
 
+func manifestAllocations(item Item, m *Manifest) []string {
+	var keys []string
+	for _, name := range m.Blobs() {
+		key, _ := item.Blob(name)
+		keys = append(keys, key)
+	}
+	for _, name := range m.StagedNames() {
+		key, _ := item.Staged(name)
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 func (m *Manifests) checkAllocationsIn(ctx context.Context, item Item, keys []string, incarnation string) error {
 	journal := m.journal.forTenant(item.Ref().TenantID)
 	if len(keys) == 0 {
