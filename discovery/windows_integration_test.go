@@ -9,7 +9,9 @@ import (
 	"github.com/open-rails/contentkit/entities"
 )
 
-func TestTimedEntityFiltersAndAccessWithoutWorkers(t *testing.T) {
+// Listings follow the windows job; a direct access decision applies the
+// window at once, with no worker.
+func TestTimedEntityFiltersAndAccess(t *testing.T) {
 	billing := &dateBilling{releaseBilling: releaseBilling{held: map[string]bool{}}, complete: true}
 	f := newFixtureBilling(t, nil, "", siteConfig(), billing)
 	f.entity("rail", "featured")
@@ -23,14 +25,18 @@ func TestTimedEntityFiltersAndAccessWithoutWorkers(t *testing.T) {
 	actor := access.Actor{ID: "reader"}
 	check := func(want int, allowed bool) {
 		t.Helper()
-		page, err := f.svc.List(f.ctx, ListOptions{Reader: Reader{Actor: actor, Host: "main.test", Mode: access.Hide}, Filter: Filter{Kind: "gallery", Entities: []string{id}}, Sort: "position"})
-		if err != nil || len(page.Contents) != want {
-			t.Fatalf("featured membership/access: %+v %v want=%d", page, err, want)
-		}
 		ref := contentref.New(tenant, "gallery", f.cid(1))
 		resolved, err := f.cat.Resolver().Resolve(f.ctx, []contentref.ContentRef{ref}, actor)
 		if err != nil || resolved[ref.Key()].Accessible != allowed {
 			t.Fatalf("direct access: %+v %v want=%v", resolved, err, allowed)
+		}
+		f.exec(`UPDATE {s}.content_facets SET updated_at=now()-interval '4 days'`)
+		if err := f.entities.RefreshWindows(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+		page, err := f.svc.List(f.ctx, ListOptions{Reader: Reader{Actor: actor, Host: "main.test", Mode: access.Hide}, Filter: Filter{Kind: "gallery", Entities: []string{id}}, Sort: "position"})
+		if err != nil || len(page.Contents) != want {
+			t.Fatalf("featured membership/access: %+v %v want=%d", page, err, want)
 		}
 	}
 	check(0, false)

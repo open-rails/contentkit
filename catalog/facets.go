@@ -90,7 +90,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
    THEN greatest(coalesce(c.published_at, c.publish_at), coalesce(v.published_at, v.publish_at)) END,
   c.state = 'deleted' OR v.state = 'deleted', c.kind = ANY($4::text[]) AND v.playable IS FALSE, v.languages,
   a.level, a.tiers, a.entity_id, coalesce(a.releases, '[]'::jsonb), c.restrictions, a.entities, v.traits, c.owner_entity_id, v.position, coalesce(c.published_at, c.publish_at),
-  c.attributes || v.attributes, clock_timestamp()
+  c.attributes || v.attributes, now()
  FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], entity_id text, releases jsonb, entities text[])
  JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = a.version_id
  JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id

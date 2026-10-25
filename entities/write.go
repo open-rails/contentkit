@@ -453,25 +453,16 @@ func (s *Store) Entities(ctx context.Context, ids []EntityID) ([]Entity, error) 
 		return out, nil
 	}
 	err = s.read(ctx, func(q Querier) error {
-		rows, err := q.Query(ctx, "SELECT "+strings.Replace(entityColumns, "g.cover,", s.coverSQL()+",", 1)+" FROM "+s.table("content_entities")+" g WHERE g.tenant_id=@tenant AND g.id=ANY(@ids::text[])",
-			pgx.NamedArgs{"tenant": s.tenant, "ids": list, "covered_kinds": s.coveredKinds()})
+		found, err := s.byIDs(ctx, q, list)
 		if err != nil {
 			return err
-		}
-		read, err := scanEntities(rows)
-		if err != nil {
-			return err
-		}
-		found := make(map[EntityID]Entity, len(read))
-		for _, g := range read {
-			found[g.ID] = g
 		}
 		for _, id := range list {
 			if g, ok := found[EntityID(id)]; ok {
 				out = append(out, g)
 			}
 		}
-		return err
+		return nil
 	})
 	return out, err
 }
