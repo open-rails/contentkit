@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Playlist content types.
@@ -193,7 +195,7 @@ func (g *Grant) MediaPlaylist(ctx context.Context, filePath string) ([]byte, err
 	if f.Track == nil || f.Track.Kind != TrackVideo && f.Track.Kind != TrackAudio {
 		return nil, ErrNotAllowed
 	}
-	idx, err := g.r.index(ctx, g.Item, f.Track.Index)
+	idx, err := g.trackIndex(ctx, f.Track.Index)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +241,7 @@ func (g *Grant) SpriteVTT(ctx context.Context, dir string) ([]byte, error) {
 	if sprite == nil {
 		return nil, ErrNotAllowed
 	}
-	idx, err := g.r.index(ctx, g.Item, sprite.Track.Index)
+	idx, err := g.trackIndex(ctx, sprite.Track.Index)
 	if err != nil {
 		return nil, err
 	}
@@ -268,14 +270,62 @@ func (g *Grant) SpriteVTT(ctx context.Context, dir string) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
-// index reads a track index blob through the cache (blobs never change).
-func (r *Reader) index(ctx context.Context, item Item, blob string) (*TrackIndex, error) {
-	if idx := r.indexes.get(blob); idx != nil {
-		return idx, nil
+// trackIndex resolves immutable source references through only the completed
+// delivery projection. A prepared index must never bypass publication merely
+// because it is read by the application instead of the gateway.
+func (g *Grant) trackIndex(ctx context.Context, blob string) (*TrackIndex, error) {
+	if !g.editorRead {
+		var err error
+		blob, err = g.deliveredBlob(blob)
+		if err != nil {
+			return nil, err
+		}
 	}
+	return g.r.index(ctx, g.Item, blob)
+}
+
+func (g *Grant) deliveredBlob(blob string) (string, error) {
+	seen := map[string]bool{}
+	for {
+		if seen[blob] {
+			return "", ErrNotAllowed
+		}
+		seen[blob] = true
+		next := ""
+		for _, delivery := range slices.Backward(g.Manifest.Deliveries) {
+			if !delivery.Ready || delivery.Withdrawn {
+				continue
+			}
+			for _, file := range delivery.Files {
+				if file.Source == blob {
+					next = file.Blob
+					break
+				}
+			}
+			if next != "" {
+				break
+			}
+		}
+		if next == "" || next == blob {
+			area, _, valid := layout.SplitBlobRef(blob)
+			if !valid || area != layout.AreaPublic && area != layout.AreaPrivate {
+				return "", ErrNotAllowed
+			}
+			return blob, nil
+		}
+		blob = next
+	}
+}
+
+// index reads a track index blob through an item-scoped cache. Two editions
+// with equal digest names still have separate storage and delivery authority.
+func (r *Reader) index(ctx context.Context, item Item, blob string) (*TrackIndex, error) {
 	key, err := item.Blob(blob)
 	if err != nil {
 		return nil, err
+	}
+	if idx := r.indexes.get(key); idx != nil {
+		return idx, nil
 	}
 	rc, _, err := r.o.Manifests.store.Get(ctx, key, GetOptions{})
 	if err != nil {
@@ -290,7 +340,7 @@ func (r *Reader) index(ctx context.Context, item Item, blob string) (*TrackIndex
 	if err := json.Unmarshal(body, &idx); err != nil {
 		return nil, fmt.Errorf("media: track index %s: %w", key, err)
 	}
-	r.indexes.put(blob, &idx, int64(len(body)))
+	r.indexes.put(key, &idx, int64(len(body)))
 	return &idx, nil
 }
 

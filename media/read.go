@@ -92,6 +92,9 @@ var (
 	ErrInvalidRequest = errors.New("media: invalid request")
 	// ErrNotAllowed is a file the viewer may not have.
 	ErrNotAllowed = errors.New("media: not allowed")
+	// ErrEditorReadUnsupported refuses unserved editor media when a custom
+	// store cannot issue a browser-reachable, exact-key editor capability.
+	ErrEditorReadUnsupported = errors.New("media: store does not support authorized editor reads")
 )
 
 func NewReader(o ReaderOptions) (*Reader, error) {
@@ -151,6 +154,8 @@ type Grant struct {
 	item       string          // whole-item token only; never issued for a restricted grant
 	files      map[string]bool // exact private blob allowlist, nil for whole-item grants
 	actor      access.Actor
+	editorRead bool // explicit management read, after current editor authorization
+	ctx        context.Context
 	r          *Reader
 }
 
@@ -173,7 +178,8 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 		return nil, ErrNotVisible
 	}
 	scope := strings.TrimSuffix(item.Prefix(), "/")
-	restricted := !res.Editor && (res.MediaFiles != nil || item.Kind().Versions && item.Kind().Publish != nil)
+	editorRead := res.Editor && resolve.EditorRead(ctx)
+	restricted := !res.Editor && res.MediaFiles != nil
 	if res.Full() || res.Editor || len(res.MediaFiles) > 0 {
 		if err := r.issue.allow(ctx, actor, res.Editor, scope); err != nil {
 			return nil, err
@@ -185,8 +191,29 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	} else if err != nil {
 		return nil, err
 	}
-	g := &Grant{Item: item, Resolution: res, Manifest: man, actor: actor, r: r,
+	if item.Kind().Versions && !editorRead {
+		if !man.PublicationLayoutReady() {
+			return nil, ErrPublicationLayoutRequired
+		}
+		if r.reg.cfg.Hooks.ReaderManifest == nil {
+			return nil, fmt.Errorf("%w: version reader manifest is not configured", ErrResolve)
+		}
+		man, err = r.reg.cfg.Hooks.ReaderManifest(ctx, ref, actor, man)
+		if err != nil {
+			return nil, err
+		}
+		if man == nil {
+			return nil, ErrNotVisible
+		}
+	}
+	g := &Grant{Item: item, Resolution: res, Manifest: man, actor: actor, editorRead: editorRead, ctx: ctx, r: r,
 		Expires: token.Expiry(r.o.Now(), r.o.Delivery.TTL, r.o.Delivery.Window)}
+	if editorRead {
+		if limit := r.o.Now().Add(5 * time.Minute); limit.Before(g.Expires) {
+			g.Expires = limit
+		}
+		g.Expires = g.Expires.Truncate(time.Second)
+	}
 	if restricted {
 		g.files = make(map[string]bool)
 		for _, f := range man.Files {
@@ -213,6 +240,22 @@ func (g *Grant) Editor() bool { return g.Resolution.Editor }
 // ServeOriginals or declared audio assets; HostOnly presets, files in download/ (Kind.Downloads),
 // unattached files and frames not grabbed yet never.
 func (g *Grant) Allowed(f File) bool {
+	if f.Blob == "" || f.Gone {
+		return false
+	}
+	area, _, ok := layout.SplitBlobRef(f.Blob)
+	if !ok {
+		return false
+	}
+	if g.editorRead {
+		return true
+	}
+	if area != layout.AreaPublic && area != layout.AreaPrivate {
+		return false
+	}
+	if area == layout.AreaPublic {
+		return g.listed(f)
+	}
 	if g.files != nil {
 		return g.files[f.Blob] && g.restrictedFile(f)
 	}
@@ -252,21 +295,52 @@ func (g *Grant) URL(f File, dl bool) (string, error) {
 
 // editorSourceURL is used only by explicit editor reads. Retained uploads
 // remain inspectable independently of the viewer's ServeOriginals policy.
-// A source in download/ needs its own key-scoped token: item tokens never
-// open that area, even for editors.
-func (g *Grant) editorSourceURL(f File, dl bool) (string, error) {
-	if !g.Editor() || !g.Full() || !f.IsUpload() || f.Blob == "" || f.Gone {
+// Unserved originals/future objects use a separate short-lived exact-key
+// storage capability; reader gateway tokens never open those areas.
+func (g *Grant) editorSourceURL(f File) (string, error) {
+	if !g.editorRead || !f.IsUpload() || f.Gone {
 		return "", ErrNotAllowed
 	}
-	if area, _, _ := layout.SplitBlobRef(f.Blob); area == layout.AreaDownload {
-		name := ""
-		if dl {
-			name = f.Download
-		}
-		u, _, err := g.r.DownloadURL(g.Item, f, name, g.Expires.Sub(g.r.o.Now()))
-		return u, err
+	if f.Blob != "" {
+		return g.editorURL(f.Blob)
 	}
-	return g.url(f.Blob, f.Download, dl, g.cookie())
+	key, err := g.Item.Staged(f.Staged)
+	if err != nil {
+		return "", ErrNotAllowed
+	}
+	return g.editorObjectURL(key)
+}
+
+// editorURL never falls back to the gateway or the worker's internal S3 URL.
+// The initial grant must have verified current editor authority explicitly.
+func (g *Grant) editorURL(blob string) (string, error) {
+	if !g.editorRead {
+		return "", ErrNotAllowed
+	}
+	key, err := g.Item.Blob(blob)
+	if err != nil {
+		return "", err
+	}
+	return g.editorObjectURL(key)
+}
+
+func (g *Grant) editorObjectURL(key string) (string, error) {
+	if !g.editorRead {
+		return "", ErrNotAllowed
+	}
+	store, ok := g.r.o.Manifests.store.(EditorReadStore)
+	if !ok {
+		return "", ErrEditorReadUnsupported
+	}
+	ttl := min(5*time.Minute, g.Expires.Sub(g.r.o.Now()))
+	if ttl <= 0 {
+		return "", ErrNotAllowed
+	}
+	request, err := store.PresignEditorGet(g.ctx, key, ttl)
+	if err != nil {
+		return "", err
+	}
+	return request.URL, nil
 }
 
 // cookie reports cookie delivery. An application has no browser to hold the
@@ -281,16 +355,30 @@ func (g *Grant) cookie() bool {
 // already opens the file and the gateway only accepts a name of the file's
 // type.
 func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
+	area, _, valid := layout.SplitBlobRef(blob)
+	if !valid {
+		return "", ErrNotAllowed
+	}
+	if area != layout.AreaPublic && area != layout.AreaPrivate {
+		if g.editorRead {
+			return g.editorURL(blob)
+		}
+		return "", ErrNotAllowed
+	}
 	key, err := g.Item.Blob(blob)
 	if err != nil {
 		return "", err
 	}
 	q := url.Values{}
-	if g.files != nil {
+	if area == layout.AreaPublic {
+		// Public delivery is unsigned, including for a locked viewer.
+	} else if g.files != nil {
 		if !g.files[blob] {
 			return "", ErrNotAllowed
 		}
 		q.Set("t", g.r.ring.Sign(token.PrivateFileScope(key), g.Expires))
+	} else if g.item == "" {
+		return "", ErrNotAllowed
 	} else if !cookie {
 		q.Set("t", g.item)
 	}
@@ -304,24 +392,32 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 	return u, nil
 }
 
-// DownloadURL is the URL of f, a file of item in download/, carrying a
-// download token of its one key that expires after ttl and serving it as an
-// attachment named name. The version download route uses its own access
-// check and quota; explicit editor reads also issue these for upload sources.
+// DownloadURL serves a published public/private file as an attachment named
+// name. Private downloads use an exact-file token after the caller's access
+// and quota checks. Originals, future preparation and legacy download/ objects
+// are never exposed through the reader gateway.
 func (r *Reader) DownloadURL(item Item, f File, name string, ttl time.Duration) (string, time.Time, error) {
 	key, err := item.Blob(f.Blob)
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if area, _, _ := layout.SplitBlobRef(f.Blob); area != layout.AreaDownload {
-		return "", time.Time{}, fmt.Errorf("%w: %s is not in download/", ErrNotAllowed, f.Path)
+	area, _, valid := layout.SplitBlobRef(f.Blob)
+	if !valid || area != layout.AreaPublic && area != layout.AreaPrivate || ttl <= 0 {
+		return "", time.Time{}, fmt.Errorf("%w: %s is not a served download", ErrNotAllowed, f.Path)
 	}
 	exp := time.Unix(r.o.Now().Add(ttl).Unix(), 0)
-	q := url.Values{"t": {r.ring.Sign(token.DownloadScope(key), exp)}}
+	q := url.Values{}
+	if area == layout.AreaPrivate {
+		q.Set("t", r.ring.Sign(token.PrivateFileScope(key), exp))
+	}
 	if name != "" {
 		q.Set("dl", name)
 	}
-	return r.base + layout.URLPrefix + key + "?" + q.Encode(), exp, nil
+	address := r.base + layout.URLPrefix + key
+	if len(q) > 0 {
+		address += "?" + q.Encode()
+	}
+	return address, exp, nil
 }
 
 // SignTicket signs a host route's own scope until exp with the delivery key:
@@ -483,12 +579,18 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		out.Access = AccessPartial
 	}
 	k := g.Item.Kind()
-	if editor || k.Publish == nil {
+	if !k.Versions && (editor || k.Publish == nil) {
 		for _, n := range k.previewNames(g.Manifest) {
 			out.Previews = append(out.Previews, g.r.base+layout.URLPrefix+g.Item.PublicPrefix()+n)
 		}
 	}
 	out.Public = r.reg.publicImages(g.Item, g.Manifest)
+	if editor && k.Versions {
+		out.Public, err = g.editorPublicImages()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	if !editor && k.Publish != nil {
 		out.Public = slices.DeleteFunc(out.Public, func(p PublicImage) bool { return p.Preset == k.Publish.Previews })
 	}
@@ -523,8 +625,8 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		sign := paths[f.Path] || paths == nil && n >= o.Offset && n < o.Offset+o.Limit
 		if sign {
 			switch {
-			case editor && f.IsUpload() && f.Blob != "" && !f.Gone:
-				fi.URL, err = g.editorSourceURL(f, o.Download)
+			case editor && f.IsUpload() && (f.Blob != "" || f.Staged != "") && !f.Gone:
+				fi.URL, err = g.editorSourceURL(f)
 			case g.Allowed(f):
 				fi.URL, err = g.URL(f, o.Download)
 			}
@@ -565,10 +667,13 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 // served uploads (attached only), never one in download/. An editor read
 // lists every file.
 func (g *Grant) listed(f File) bool {
-	if area, _, _ := layout.SplitBlobRef(f.Blob); area == layout.AreaDownload {
+	if area, _, ok := layout.SplitBlobRef(f.Blob); !ok || area != layout.AreaPublic && area != layout.AreaPrivate {
 		return false
 	}
 	if f.IsUpload() {
+		if f.Type == "application/zip" {
+			return false
+		}
 		return !f.Unattached && (g.Item.Kind().ServeOriginals || g.Item.Kind().AudioUpload(f)) && f.Blob != "" && !f.Gone
 	}
 	if p := g.Item.Kind().private(f.Preset); p != nil && p.HostOnly {
@@ -578,10 +683,9 @@ func (g *Grant) listed(f File) bool {
 	return !ok || !src.IsUpload() || !src.Unattached
 }
 
-// editorViews finds an item's editor views: one listing of private/ per read.
+// editorViews checks only the upload's recorded editor-view allocation.
 type editorViews struct {
 	g       *Grant
-	have    map[string]bool
 	missing bool
 }
 
@@ -594,20 +698,42 @@ func (e *editorViews) url(ctx context.Context, f File) (string, error) {
 		e.missing = true
 		return "", nil
 	}
-	if e.have == nil {
-		e.have = map[string]bool{}
-		for o, err := range e.g.r.o.Manifests.store.List(ctx, e.g.Item.PrivatePrefix()) {
-			if err != nil {
-				return "", err
-			}
-			e.have[strings.TrimPrefix(o.Key, e.g.Item.PrivatePrefix())] = true
-		}
+	key, err := e.g.Item.Blob(name)
+	if err != nil {
+		return "", err
 	}
-	if !e.have[name] {
+	if _, err = e.g.r.o.Manifests.store.Head(ctx, key); errors.Is(err, ErrNotFound) {
 		e.missing = true
 		return "", nil
+	} else if err != nil {
+		return "", err
 	}
-	return e.g.url(name, "", false, e.g.cookie())
+	return e.g.editorURL(name)
+}
+
+func (g *Grant) editorPublicImages() ([]PublicImage, error) {
+	var images []PublicImage
+	for _, file := range g.Manifest.Files {
+		for _, publication := range file.Public {
+			if !publication.Ready() || len(publication.Blobs) == 0 {
+				continue
+			}
+			image := PublicImage{From: file.Path, Preset: publication.Preset}
+			for i, blob := range publication.Blobs {
+				address, err := g.editorURL(blob)
+				if err != nil {
+					return nil, err
+				}
+				rendition := PublicRendition{URL: address}
+				if i < len(publication.Dims) {
+					rendition.W, rendition.H = publication.Dims[i].W, publication.Dims[i].H
+				}
+				image.Renditions = append(image.Renditions, rendition)
+			}
+			images = append(images, image)
+		}
+	}
+	return images, nil
 }
 
 // addProgress fills pending upload progress from the same checkpoint used by status.
