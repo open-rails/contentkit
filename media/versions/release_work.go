@@ -172,6 +172,9 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 	if !m.PublicationLayoutReady() {
 		return nil, media.ErrPublicationLayoutRequired
 	}
+	// GetTx returns a shared cached manifest. The projection's public/track
+	// references are remapped after copying; never mutate that cached source.
+	m = m.Clone()
 	now := s.o.Now()
 	itemDue := now
 	for _, value := range []*time.Time{at, parentAt} {
@@ -389,6 +392,11 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 					// ownership is checked against its source/edit key. Reader
 					// grants reject originals independently of this snapshot.
 					f.Staged, f.Editor = "", nil
+				}
+				for j := range f.Public {
+					if f.Public[j].Source == file.Key() {
+						f.Public[j].Source = f.Key()
+					}
 				}
 				plan.View.Files = append(plan.View.Files, f)
 			}
