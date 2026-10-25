@@ -778,7 +778,7 @@ func (u *Uploads) verify(ctx context.Context, item Item, m *Manifest, names []st
 		} else if err != nil {
 			return nil, err
 		}
-		if layout.ValidBlobName(n) && !u.reusable(m, views, n) {
+		if layout.ValidBlobRef(n) && !u.reusable(m, views, n) {
 			missing = append(missing, n)
 			continue
 		}
@@ -821,6 +821,10 @@ func commitMargin(grace time.Duration) time.Duration { return min(grace/4, time.
 // it), so a failed commit leaves no unmetered bytes; it returns the reserved
 // keys.
 func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGrant, item Item, ops []Op) (map[int][]File, []string, error) {
+	type copyKey struct {
+		op        int
+		key, area string
+	}
 	type source struct {
 		n     int
 		from  Item
@@ -834,7 +838,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		srcKeys  []string
 		areas    []string
 		manifest = map[contentref.ContentKey]*Manifest{}
-		names    = map[string]string{} // source key -> allocation in item
+		names    = map[copyKey]string{} // one allocation per copy, source and area
 	)
 	for n, op := range ops {
 		if op.Op != OpCopy {
@@ -869,21 +873,21 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		sc := source{n: n, from: from, files: files, first: len(sums)}
 		for _, b := range copyBlobs(item.Kind(), cmpOr(op.To, op.From.Path), files) {
 			srcKey, _ := from.Blob(b[0])
-			if _, seen := names[srcKey+"|"+b[1]]; seen {
+			if _, seen := names[copyKey{n, srcKey, b[1]}]; seen {
 				continue
 			}
 			sum, ok := layout.BlobDigest(b[0])
 			if !ok {
 				return nil, nil, fmt.Errorf("media: invalid copy source %q", b[0])
 			}
-			names[srcKey+"|"+b[1]] = ""
+			names[copyKey{n, srcKey, b[1]}] = ""
 			sc.todo, sums, srcKeys, areas = append(sc.todo, b[0]), append(sums, sum), append(srcKeys, srcKey), append(areas, b[1])
 		}
 		sources = append(sources, sc)
 	}
 	// Each copy lands in its destination file's area.
 	allocated := make([]string, len(sums))
-	for _, area := range []string{layout.AreaPrivate, layout.AreaDownload} {
+	for _, area := range []string{layout.AreaPrivate, layout.AreaDownload, layout.AreaOriginals, layout.AreaFuture} {
 		var at []int
 		var of [][]byte
 		for i, a := range areas {
@@ -902,8 +906,11 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 			allocated[i] = refs[j]
 		}
 	}
-	for i, key := range srcKeys {
-		names[key+"|"+areas[i]] = allocated[i]
+	for _, sc := range sources {
+		for j := range sc.todo {
+			i := sc.first + j
+			names[copyKey{sc.n, srcKeys[i], areas[i]}] = allocated[i]
+		}
 	}
 	var reserved []string
 	if u.o.Limiter != nil && !grant.Exempt {
@@ -943,12 +950,12 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 			files[i].Editor = nil // editor views belong to their original item's allocation
 			if !files[i].Gone && files[i].Blob != "" {
 				from, _ := sc.from.Blob(files[i].Blob)
-				files[i].Blob = names[from+"|"+copyArea(item.Kind(), cmpOr(op.To, op.From.Path), i, files[i])]
+				files[i].Blob = names[copyKey{sc.n, from, copyArea(item.Kind(), cmpOr(op.To, op.From.Path), i, files[i])}]
 			}
 			if files[i].Track != nil && files[i].Track.Index != "" {
 				track := *files[i].Track
 				from, _ := sc.from.Blob(track.Index)
-				track.Index = names[from+"|"+layout.AreaPrivate]
+				track.Index = names[copyKey{sc.n, from, copyIndexArea(item.Kind())}]
 				files[i].Track = &track
 			}
 		}
@@ -960,7 +967,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 // fileBlobs are the blobs files reference.
 // copyBlobs are the blobs of a copy's files, each with the area it lands in
 // at the destination: the upload's at to, an output's by its preset; track
-// indexes in private/.
+// indexes in the destination's prepared-output area.
 func copyBlobs(k *Kind, to string, files []File) [][2]string {
 	var out [][2]string
 	for i, f := range files {
@@ -968,10 +975,17 @@ func copyBlobs(k *Kind, to string, files []File) [][2]string {
 			out = append(out, [2]string{f.Blob, copyArea(k, to, i, f)})
 		}
 		if f.Track != nil && f.Track.Index != "" {
-			out = append(out, [2]string{f.Track.Index, layout.AreaPrivate})
+			out = append(out, [2]string{f.Track.Index, copyIndexArea(k)})
 		}
 	}
 	return out
+}
+
+func copyIndexArea(k *Kind) string {
+	if k.Versions {
+		return layout.AreaFuture
+	}
+	return layout.AreaPrivate
 }
 
 // copyArea is the area the i-th file of a copy to path to lands in.

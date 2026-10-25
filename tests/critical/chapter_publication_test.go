@@ -30,6 +30,56 @@ func chapterImage(t *testing.T, seed uint8) []byte {
 	return out.Bytes()
 }
 
+func TestCopiedPageChapterPlacement(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	attachMedia(t, w, a, func(c *ck.Config) {
+		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
+	})
+	admin, viewer := a.engine.Client(), a.client("")
+	source := galleryRef(t, admin, "Copy source")
+	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, source, uuid.NewString(), []ck.MediaFile{{Path: "pages/source.png", Type: "image/png", Body: bytes.NewReader(chapterImage(t, 41))}})
+	must(t, err)
+	awaitMediaReady(t, admin, source)
+	ref := galleryRef(t, admin, "Independent copied pages")
+	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{
+		{Op: media.OpCopy, From: &media.CopyFrom{ID: source.ID, Version: source.Version, Path: "pages/source.png"}, To: "pages/01.png"},
+		{Op: media.OpCopy, From: &media.CopyFrom{ID: source.ID, Version: source.Version, Path: "pages/source.png"}, To: "pages/20.png"},
+		{Op: media.OpCopy, From: &media.CopyFrom{ID: ref.ID, Version: ref.Version, Path: "pages/01.png"}, To: "pages/30.png"},
+	}})
+	must(t, err)
+	ready := awaitMediaReady(t, admin, ref)
+	requireMediaPaths(t, ready, "pages/01.png", "pages/20.png", "pages/30.png", "reader/01.webp", "reader/20.webp", "reader/30.webp")
+	future := w.clock.now().Add(time.Hour)
+	_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, catalog.SegmentsInput{Segments: []catalog.SegmentInput{
+		{Position: 0, StartPage: "pages/01.png"},
+		{Position: 1, StartPage: "pages/20.png", ReleaseAt: &future},
+	}})
+	must(t, err)
+	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+	must(t, err)
+	awaitPaths := func(want ...string) {
+		t.Helper()
+		waitForChapterPublication(t, func() bool {
+			read, err := viewer.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+			var paths []string
+			for _, f := range read.Files {
+				if f.URL != "" {
+					paths = append(paths, f.Path)
+				}
+			}
+			return err == nil && slices.Equal(paths, want)
+		})
+	}
+	awaitPaths("reader/01.webp")
+	// Identical bytes in three source entries must follow their own chapter.
+	// Moving the same-item copy publishes it without exposing the other copy.
+	index := 1
+	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpMove, Path: "pages/30.png", Index: &index}}})
+	must(t, err)
+	awaitPaths("reader/01.webp", "reader/30.webp")
+}
+
 func TestChapterPlacementReconciliation(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]

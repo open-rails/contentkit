@@ -656,6 +656,16 @@ func (o *opRun) copy(op Op, src []File) error {
 		return uploadErr(CodeTooLarge, "page source metadata exceeds %d bytes", MaxMetaBytes)
 	}
 	group, _, _, _, _ := k.upload(from)
+	// Two pages can belong to different chapters after an order edit. Their
+	// derived allocations must therefore move independently. Same-item copies
+	// retain the internal original and render fresh outputs for the new path.
+	if k.Versions && op.From.ID == o.ref.ContentID && op.From.Version == o.ref.Version() {
+		if f.Gone {
+			return uploadErr(CodeNotFound, "upload %q: original is no longer available", from)
+		}
+		f.Pending, f.Failed, f.Editor = k.Presets(f.Path, false), nil, nil
+		src = src[:1]
+	}
 	if g != group || op.Edit != nil {
 		if f.Gone {
 			return uploadErr(CodeNotFound, "upload %q: original is no longer available", from)
