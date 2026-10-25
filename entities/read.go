@@ -58,6 +58,8 @@ type ListOptions struct {
 	Page int
 	// Limit defaults to 50 and is capped at 200.
 	Limit int
+	// namesOnly leaves out counts and automatic covers.
+	namesOnly bool
 }
 
 // maxPageOffset bounds numbered pages; deeper reading pages by cursor.
@@ -270,6 +272,10 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
  AND (%s OR f.kind=ANY(@covered_kinds::text[]))
  ORDER BY coalesce(ic.favorites,0) DESC,f.published_at DESC NULLS LAST,f.content_id LIMIT 1) ac ON true`,
 		s.table("content_facets"), s.table("content_interaction_counts"), liveListed, access.PublicSQL("f"))
+	autoCover := "ac.cover"
+	if opts.namesOnly {
+		count, counts, covers, autoCover = "0", "", "", "NULL::jsonb"
+	}
 	displayJoins := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT nn.name,nn.language,nn.normalized FROM %s nn
  WHERE nn.tenant_id=g.tenant_id AND nn.entity_id=g.id AND nn.kind='name'
  ORDER BY CASE WHEN nn.language=@language THEN 0 WHEN nn.language='en' THEN 1 ELSE 2+coalesce(array_position(@fallback::text[],nn.language),1000) END,nn.language LIMIT 1) nm ON true
@@ -296,7 +302,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		order = count + " DESC, g.id"
 	}
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
- coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), CASE WHEN g.cover IS NULL OR g.cover ? 'auto' THEN ac.cover ELSE g.cover END, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), CASE WHEN g.cover IS NULL OR g.cover ? 'auto' THEN %[13]s ELSE g.cover END, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
 FROM %[1]s
 %[11]s
 %[12]s
@@ -304,7 +310,7 @@ LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AN
 %[7]s
 %[8]s`,
 		from, s.table("content_entity_names"), s.table("content_entity_text"), s.table("content_codes"),
-		count, sortName, counts, predicate, scope, parent, displayJoins, covers)
+		count, sortName, counts, predicate, scope, parent, displayJoins, covers, autoCover)
 	c.sql = base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
 		c.count = "SELECT count(*) FROM (" + base + ") counted"
@@ -411,6 +417,9 @@ type CardOptions struct {
 	// Covers fills covers' and avatars' renditions in one call; chips leave
 	// them out.
 	Covers bool
+	// NamesOnly reads names and paths without counts or automatic covers,
+	// which are derived from every content of each entity.
+	NamesOnly bool
 }
 
 // Cards returns the active entities among ids as cards, resolved as List
@@ -423,7 +432,7 @@ func (s *Store) Cards(ctx context.Context, ids []EntityID, o CardOptions) ([]Ent
 	if err != nil || len(want) == 0 {
 		return []EntityCard{}, err
 	}
-	c, err := s.compile(ListOptions{Language: o.Language, IncludeInternal: o.IncludeInternal}, want)
+	c, err := s.compile(ListOptions{Language: o.Language, IncludeInternal: o.IncludeInternal, namesOnly: o.NamesOnly}, want)
 	if err != nil {
 		return nil, err
 	}
