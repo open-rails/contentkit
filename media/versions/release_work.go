@@ -463,6 +463,31 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 		return err
 	}
 	defer unlock()
+	// A newer intent cannot declare the item settled while an older active
+	// swap still has served objects awaiting retirement. Continue those exact
+	// obligations under the same item owner before preparing another move.
+	rows, err := s.o.Pool.Query(ctx, `SELECT id::text,result FROM `+s.publicationRequestsTable()+`
+ WHERE tenant_id=$1 AND version_id=$2 AND state='retiring' AND id<>$3::uuid ORDER BY created_at,id`, s.o.Tenant, t.Version, id)
+	if err != nil {
+		return err
+	}
+	type retirement struct {
+		ID     string
+		Result []byte
+	}
+	prior, err := pgx.CollectRows(rows, pgx.RowToStructByPos[retirement])
+	if err != nil {
+		return err
+	}
+	for _, pending := range prior {
+		var plan releasePlan
+		if err := json.Unmarshal(pending.Result, &plan); err != nil {
+			return err
+		}
+		if err := s.finishRetirement(ctx, pending.ID, &plan); err != nil {
+			return err
+		}
+	}
 	v, err := s.one(ctx, t)
 	if err != nil {
 		return err
@@ -683,6 +708,12 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 			return errors.New("versions: catalog publication completion is not configured")
 		}
 		if err := completion.PublicationCompletedTx(ctx, tx, plan.Target, id, plan.Chapters, plan.Released, at); err != nil {
+			return err
+		}
+		// The automatic cover is selected only from the now-active pages.
+		// Its normal metadata/image work is idempotent and cannot select a
+		// future chapter merely because its preparation has finished.
+		if err := s.enqueueTx(ctx, tx, publishArgs{Content: plan.Content, Version: plan.Version}); err != nil {
 			return err
 		}
 		if current && plan.NextAt != nil {

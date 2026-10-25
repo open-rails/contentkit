@@ -151,6 +151,9 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 		if err := s.preparePageSelection(ctx, k, t); err != nil && !errors.Is(err, media.ErrNotFound) {
 			return err
 		}
+		if err := s.applyCover(ctx, k, t); err != nil && !errors.Is(err, media.ErrNotFound) {
+			return err
+		}
 	}
 	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 		return s.SchedulePublicationTx(ctx, tx, []Target{t})

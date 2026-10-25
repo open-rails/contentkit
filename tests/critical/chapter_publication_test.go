@@ -109,12 +109,12 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpMove, Path: "pages/19b.png", Index: &index}}})
 	must(t, err)
 	awaitPaths("reader/01.webp", "reader/17.webp")
-	response, err := http.Get(oldURL)
-	must(t, err)
-	response.Body.Close()
-	if response.StatusCode != http.StatusNotFound {
-		t.Fatalf("move to future left old served URL readable: HTTP %d", response.StatusCode)
-	}
+	waitForWithin(t, 15*time.Second, func() bool {
+		response, err := http.Get(oldURL)
+		must(t, err)
+		response.Body.Close()
+		return response.StatusCode == http.StatusNotFound
+	})
 	// Advancing the application clock alone cannot publish the chapter.
 	w.clock.set(future)
 	_, paths, err := readPaths()
