@@ -362,7 +362,7 @@ it("names a new entity's kind in the singular and says what Create still needs",
   const user = userEvent.setup();
   render(<EntityEditor id={null} kind="channel" management labels={{ channel: { one: "Channel", other: "Channels" } }} />, { wrapper: wrap(s.client) });
   expect(await screen.findByRole("heading", { name: "New Channel" })).toBeVisible();
-  const create = screen.getByRole("button", { name: "Create" });
+  const create = screen.getByRole("button", { name: "Create Channel" });
   expect(create).toBeDisabled();
   expect(create).toHaveAccessibleDescription("Still needed: Name (English), Slug");
   await user.type(screen.getByRole("textbox", { name: /Name \(English\)/ }), "Studio");

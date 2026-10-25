@@ -348,9 +348,17 @@ function EntityPicture({ card }: { card: EntityCard }) {
 }
 
 function Create({ loc, kind, client, labels, onError }: Ctx) {
+  const { t } = useMessages();
   return (
     <div className="grid gap-4">
-      <Back loc={loc} kind={kind} />
+      <nav aria-label={t("entityEditor.breadcrumb")} className="flex items-center gap-1.5 text-sm text-muted-foreground" data-ckui="entity-breadcrumb">
+        <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} className="size-4" />
+        <button type="button" className="hover:text-foreground hover:underline underline-offset-4" onClick={() => loc.go(kind)}>
+          {labelOf(labels, kind, "other")}
+        </button>
+        <span aria-hidden>/</span>
+        <span aria-current="page" className="text-foreground">{t("entityEditor.newTitle", { kind: labelOf(labels, kind, "one") })}</span>
+      </nav>
       <EntityEditor
         management
         id={null}
@@ -359,6 +367,7 @@ function Create({ loc, kind, client, labels, onError }: Ctx) {
         client={client}
         onError={onError}
         onCreated={(g) => loc.go(`${kind}/${g.id}`, undefined, { replace: true })}
+        onCancel={() => loc.go(kind)}
       />
     </div>
   );
@@ -380,7 +389,7 @@ function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, 
       >
         {(entity) => (
           <>
-            <ScopedEntities entity={entity} management labels={labels} client={client} onSelect={(c) => loc.go(`${c.kind}/${c.id}`)} className="rounded-lg border border-border bg-card p-4" />
+            <ScopedEntities entity={entity} management labels={labels} client={client} onSelect={(c) => loc.go(`${c.kind}/${c.id}`)} className="rounded-lg border border-border bg-muted/30 p-4" />
             <EntityMembers
               entity={entity}
               labels={labels}
