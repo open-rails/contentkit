@@ -39,7 +39,9 @@ var (
 		}
 		return out
 	}()
-	// roles are what /__test/users hands out.
+	// Every fixture member can create/edit their own posts. Other roles add staff powers.
+	contributor = rbac.Root.Role("contributor", perm[access.ContentCreate], perm[access.ContentEditOwn])
+	// roles are what /__test/users additionally hands out.
 	roles = map[string]iam.Role{
 		"staff": rbac.Root.Role("staff", perm[access.ContentWrite], perm[access.ContentViewRestricted], perm[access.PollsWrite], perm[access.CommentsModerate],
 			perm[access.ModerationReview], perm[access.CommentsBan], perm[access.EntitiesWrite]),
@@ -115,8 +117,8 @@ type testUser struct {
 	AccessToken string `json:"access_token"`
 }
 
-// newUser creates a verified account with authtest, holding role in the root
-// group ("" none), and signs it in through AuthKit's HTTP surface.
+// newUser creates a verified account with authtest, holding contributor and the optional role in the root
+// group ("" no extra role), and signs it in through AuthKit's HTTP surface.
 func (h *harness) newUser(role string) (u testUser, err error) {
 	r, ok := roles[role]
 	if !ok && role != "" {
@@ -125,11 +127,14 @@ func (h *harness) newUser(role string) (u testUser, err error) {
 	defer recoverFailure(&err)
 	t := requestTB{}
 	au := authtest.NewUser(t, h.auth)
+	authtest.GrantRole(t, h.auth, iam.RootGroup(), iam.UserSubject(au.ID), contributor)
 	if ok {
 		authtest.GrantRole(t, h.auth, iam.RootGroup(), iam.UserSubject(au.ID), r)
 	}
 	tokens := authtest.SignIn(t, h.auth, au)
-	return testUser{ID: au.ID, Username: au.Username, Email: au.Email, Password: au.Password, Role: role, AccessToken: tokens.AccessToken}, nil
+	u = testUser{ID: au.ID, Username: au.Username, Email: au.Email, Password: au.Password, Role: role, AccessToken: tokens.AccessToken}
+	h.users.Store(au.ID, u)
+	return u, nil
 }
 
 // requestTB runs authtest's helpers outside a test: a failure panics with

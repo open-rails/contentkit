@@ -59,7 +59,6 @@ func (h *harness) routes(static string) http.Handler {
 	mux.HandleFunc("PATCH /__test/items/{kind}/{id}", h.updateItem)
 	mux.HandleFunc("GET /__test/object", h.object)
 	mux.HandleFunc("GET /__test/publication", h.publication)
-	mux.HandleFunc("POST /__test/recount", h.recount)
 	mux.HandleFunc("GET /__test/outbox", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, h.outbox.Messages("", r.URL.Query().Get("to")))
 	})
@@ -139,8 +138,8 @@ func (h *harness) createUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // createItem: {kind, owner?, access?, hidden?, title?} → the item, a
-// content item of kind made through the catalog by the host: owner its
-// creator, access "none" pay-per-view, published unless hidden.
+// content item made through the catalog as its authenticated owner (or host
+// when none is specified), access "none" pay-per-view, published unless hidden.
 func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		item
@@ -166,10 +165,15 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 	if it.Kind != blogKind {
 		input.Versions = []catalog.VersionInput{{Languages: []string{"en"}}}
 	}
-	if it.Owner != "" {
-		input.Creators = &[]catalog.Creator{{UserID: it.Owner}}
-	}
 	ck := h.ck.Client()
+	if it.Owner != "" {
+		stored, ok := h.users.Load(it.Owner)
+		if !ok {
+			fail(w, http.StatusBadRequest, errors.New("owner is not a fixture account"))
+			return
+		}
+		ck = contentkit.NewClient(h.origin+apiPrefix, &http.Client{Transport: fixtureCredential{stored.(testUser).AccessToken}})
+	}
 	c, err := ck.PostContents(r.Context(), input)
 	if err == nil && !it.Hidden {
 		c, err = ck.PostContentPublish(r.Context(), c.ID, catalog.PublishInput{})
@@ -366,4 +370,14 @@ func (h *harness) createNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusCreated, items[0])
+}
+
+// fixtureCredential sends a real AuthKit credential through the public routes.
+type fixtureCredential struct{ token string }
+
+func (f fixtureCredential) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header = r.Header.Clone()
+	r.Header.Set("Authorization", "Bearer "+f.token)
+	return http.DefaultTransport.RoundTrip(r)
 }

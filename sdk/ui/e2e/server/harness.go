@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -21,7 +22,6 @@ import (
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
@@ -61,7 +61,7 @@ type harness struct {
 	reg        *media.Registry
 	manifests  *media.Manifests
 	ring       token.Ring
-	entities   *entities.Store // runs the recount job on demand
+	users      sync.Map // fixture account ID -> authenticated test user
 	s3Endpoint *url.URL
 	bucket     string
 	origin     string
@@ -191,9 +191,6 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, err
 	}
 	if h.manifests, err = media.NewManifests(h.store, h.reg, media.ManifestOptions{Locker: media.PGLocker(h.pool), Journal: journal}); err != nil {
-		return nil, err
-	}
-	if h.entities, err = entities.New(entities.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: site()}); err != nil {
 		return nil, err
 	}
 	signing, err := token.ParseKey(c.tokenKey)
