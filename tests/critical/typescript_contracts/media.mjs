@@ -232,7 +232,19 @@ export async function runMediaContracts(group, fixture) {
       title: "Inline body",
       body: "Text ![inline](" + inline.ref + ")",
     });
-    const exposed = await anonymous.contents.get(imageRef.id);
+    // Only the completed ordinary reader projection proves publication. An
+    // uploaded/processed image and a saved body can precede that durable move.
+    const publishedInline = async (previous) => {
+      const deadline = Date.now() + 30_000;
+      do {
+        const content = await anonymous.contents.get(imageRef.id);
+        const url = content.images?.[inline.name];
+        if (typeof url === "string" && url !== previous) return content;
+        await new Promise((resolve) => setTimeout(resolve, 550));
+      } while (Date.now() < deadline);
+      assert.fail("inline image did not reach the completed reader projection");
+    };
+    const exposed = await publishedInline();
     assert.equal(exposed.decision.allowed, true);
     assert.equal(typeof exposed.images[inline.name], "string");
     assert(exposed.body.includes(exposed.images[inline.name]));
@@ -255,7 +267,7 @@ export async function runMediaContracts(group, fixture) {
       hash(Buffer.from(await (await fetch(bodyOriginal.url)).arrayBuffer())),
       fixture.sha256,
     );
-    const after = await anonymous.contents.get(imageRef.id);
+    const after = await publishedInline(exposed.images[inline.name]);
     assert.equal(after.decision.allowed, true);
     assert(after.body.includes(after.images[inline.name]));
     proved("MediaClient.uploadInline");

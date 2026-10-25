@@ -100,6 +100,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 		must(t, err)
 		a.server = mountEngine(t, a.engine)
+		startPublicationRuntime(t, a)
 		owner, token, channel := ownedEntity(t, w, a, "TypeScript owned channel")
 		reader, readerToken := w.person(t, 0)
 		persona, err := w.auth.Persona("app")
@@ -109,6 +110,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		must(t, err)
 		_, err = a.engine.Client().PostContentPublish(t.Context(), paid.ID, catalog.PublishInput{})
 		must(t, err)
+		awaitEditionPublication(t, a, a.engine.Client(), paid.ID, paid.Versions[0].ID)
 		key, err := access.VersionKey(a.cfg.Scope.AppID.String(), paid.ID, paid.Versions[0].ID)
 		must(t, err)
 		product, err := commerce.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: "typescript-library", DisplayName: "Library", Entitlements: []string{key.String()}})
@@ -123,7 +125,6 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 			t.Fatal("real purchased library grant absent")
 		}
 		foreign := publishedArticle(t, w.apps[1], "TypeScriptNeedle foreign app")
-		must(t, a.engine.Start(t.Context()))
 		runTypeScriptContract(t, "discovery_entities", map[string]any{"base": a.server.URL + "/content", "owner": token, "reader": readerToken, "ownerID": owner.ID, "channel": string(channel.ID), "foreign": foreign.ID, "paid": paid.ID}, []string{
 			"EntitiesClient.create", "EntitiesClient.update", "EntitiesClient.remove", "EntitiesClient.mine", "DiscoveryClient.library", "DiscoveryClient.list", "DiscoveryClient.knownCards", "DiscoveryClient.search", "DiscoveryClient.typeahead", "DiscoveryClient.adminSuggestions", "DiscoveryClient.similar", "DiscoveryClient.recommendations", "DiscoveryClient.releaseDates", "DiscoveryClient.releases",
 		})
