@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -124,6 +127,111 @@ func TestCommerceMediaGrantRevocation(t *testing.T) {
 					t.Fatalf("prior ZIP grant bypassed current access: %d", response.StatusCode)
 				}
 			})
+		}
+	})
+	t.Run("CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives", func(t *testing.T) {
+		ref := galleryRef(t, admin, "Timed chapters")
+		base := b.clock.Now()
+		chapterAt, publicAt := base.Add(time.Hour), base.Add(2*time.Hour)
+		_, err := admin.PatchContent(t.Context(), ref.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: publicAt, Level: access.Public}}}})
+		must(t, err)
+		secondImage := image.NewNRGBA(image.Rect(0, 0, 80, 60))
+		for y := 0; y < 60; y++ {
+			for x := 0; x < 80; x++ {
+				secondImage.SetNRGBA(x, y, color.NRGBA{R: uint8(255 - x*2), G: uint8(y * 3), B: 200, A: 255})
+			}
+		}
+		var secondPayload bytes.Buffer
+		must(t, png.Encode(&secondPayload, secondImage))
+		_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{
+			{Path: "pages/first.png", Type: "image/png", Body: bytes.NewReader(payload)},
+			{Path: "pages/second.png", Type: "image/png", Body: bytes.NewReader(secondPayload.Bytes())},
+		})
+		must(t, err)
+		awaitMediaReady(t, admin, ref)
+		_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, catalog.SegmentsInput{Segments: []catalog.SegmentInput{{Title: "Available chapter", Start: 0, End: 1}, {Title: "Later chapter", Start: 1, End: 2, ReleaseAt: &chapterAt}}})
+		must(t, err)
+		waitForWithin(t, 45*time.Second, func() bool {
+			_, err := admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+			var pending *ck.Error
+			if errors.As(err, &pending) && pending.Code == "not_ready" {
+				return false
+			}
+			must(t, err)
+			return true
+		})
+		fixtureVersion, err := admin.GetContentVersion(t.Context(), ref.ID, ref.Version, ck.GetContentVersionQuery{})
+		must(t, err)
+		if fixtureVersion.Pages == nil || *fixtureVersion.Pages != 2 {
+			t.Fatalf("chapter fixture did not publish two distinct pages: %+v", fixtureVersion)
+		}
+		user, credential := w.person(t, 0)
+		customer, err := billing.ParseCustomerID(user.ID)
+		must(t, err)
+		_, err = b.merchant.UpdateCustomer(t.Context(), customer, billing.UpdateCustomerParams{})
+		must(t, err)
+		gold, err := b.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: "scheduled-gold", DisplayName: "Early tier", Entitlements: []string{"gold"}})
+		must(t, err)
+		_, err = b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: gold.ID}}})
+		must(t, err)
+		reader, anonymous := a.client(credential), a.client("")
+		setTime := func(at time.Time) { b.clock.Advance(at.Sub(b.clock.Now())); w.clock.set(at) }
+		assertFiles := func(client *ck.Client, count int) {
+			read, err := client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+			must(t, err)
+			if len(read.Files) != count || read.Total != count {
+				t.Fatalf("timed reader got %d files/total%d, expected%d", len(read.Files), read.Total, count)
+			}
+		}
+		archive := func(client *ck.Client, want int) ck.GetContentVersionArchiveQuery {
+			var grant versions.FileDownload
+			waitFor(t, func() bool {
+				response, err := client.GetContentVersionDownload(t.Context(), ref.ID, ref.Version)
+				must(t, err)
+				if response.Status == 202 {
+					return false
+				}
+				must(t, response.Decode(&grant))
+				return grant.URL != ""
+			})
+			u, err := url.Parse(grant.URL)
+			must(t, err)
+			q := u.Query()
+			query := ck.GetContentVersionArchiveQuery{For: q.Get("for"), Account: q.Get("account"), AccountSet: q.Get("account_set"), Kind: q.Get("kind"), Editor: q.Get("editor"), Claims: q.Get("claims"), Mark: q.Get("mark"), Name: q.Get("name"), Revision: q.Get("revision"), Pages: q.Get("pages"), Ticket: q.Get("ticket")}
+			response, err := client.GetContentVersionArchive(t.Context(), ref.ID, ref.Version, query)
+			must(t, err)
+			zipFile, err := zip.NewReader(bytes.NewReader(response.Body), int64(len(response.Body)))
+			must(t, err)
+			if len(zipFile.File) != want {
+				t.Fatalf("timed ZIP contains%d pages, expected%d", len(zipFile.File), want)
+			}
+			return query
+		}
+		setTime(chapterAt.Add(-time.Microsecond))
+		assertFiles(reader, 1)
+		assertFiles(anonymous, 0)
+		firstTicket := archive(reader, 1)
+		firstTicket.Pages = "2"
+		_, err = reader.GetContentVersionArchive(t.Context(), ref.ID, ref.Version, firstTicket)
+		requireError(t, err, 404, "not_found")
+		setTime(chapterAt)
+		assertFiles(reader, 2)
+		assertFiles(anonymous, 0)
+		archive(reader, 2)
+		setTime(publicAt.Add(-time.Microsecond))
+		assertFiles(anonymous, 0)
+		setTime(publicAt)
+		assertFiles(anonymous, 2)
+		archive(anonymous, 2)
+		// Opening an audience does not grant billing rights to an unpurchased
+		// account: the release timestamp is the authority, not a new purchase.
+		unpaid, _ := w.person(t, 0)
+		unpaidID, err := billing.ParseCustomerID(unpaid.ID)
+		must(t, err)
+		rights, err := b.merchant.CheckEntitlements(t.Context(), billing.CheckEntitlementsParams{CustomerID: unpaidID, Entitlements: []string{"gold"}})
+		must(t, err)
+		if rights.Entitlements["gold"] {
+			t.Fatal("public audience release granted a billing tier")
 		}
 	})
 }

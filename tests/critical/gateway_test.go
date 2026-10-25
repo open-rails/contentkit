@@ -125,6 +125,9 @@ func TestGatewayCapabilities(t *testing.T) {
 				if overlap && !bytes.Equal(body, data) {
 					t.Fatal("overlap changed bytes")
 				}
+				if !overlap && (bytes.Contains(body, data) || res.Header.Get("Cache-Control") != "no-store") {
+					t.Fatal("removed rotation key leaked or cached private bytes")
+				}
 				res, body = request(t, server.URL, "GET", first, rotated.Sign(token.PrivateFileScope(first), time.Now().Add(time.Minute)), "", nil)
 				if res.StatusCode != 200 || !bytes.Equal(body, data) {
 					t.Fatal("current rotation key failed")
@@ -181,6 +184,12 @@ func TestGatewayCapabilities(t *testing.T) {
 		if res.StatusCode != 404 {
 			t.Fatalf("unauthorized HEAD: %d", res.StatusCode)
 		}
+		for _, headers := range []map[string]string{{"Range": "bytes=2-8"}, {"If-None-Match": etag}} {
+			res, body = request(t, m.gateway.URL, "GET", first, "", "", headers)
+			if res.StatusCode != 404 || bytes.Contains(body, data[2:9]) || res.Header.Get("Cache-Control") != "no-store" {
+				t.Fatal("range or conditional request bypassed private authorization")
+			}
+		}
 	})
 	t.Run("CK-J13-S08_cors_cache_and_download_headers", func(t *testing.T) {
 		address := m.gateway.URL + "/v1/" + download + "?t=" + url.QueryEscape(ring.Sign(token.DownloadScope(download), time.Now().Add(time.Minute))) + "&dl=" + url.QueryEscape("report \"quoted\".txt")
@@ -211,6 +220,10 @@ func TestGatewayCapabilities(t *testing.T) {
 		res, _ := request(t, m.gateway.URL, "GET", first, grant(first), "", map[string]string{"Origin": "https://critical.invalid"})
 		if res.Header.Get("Access-Control-Allow-Origin") != "https://critical.invalid" || res.Header.Get("Access-Control-Allow-Credentials") != "true" || !strings.HasPrefix(res.Header.Get("Cache-Control"), "private,") {
 			t.Fatalf("private policy: %v", res.Header)
+		}
+		res, _ = request(t, m.gateway.URL, "GET", first, grant(first), "", map[string]string{"Origin": "https://evil.invalid"})
+		if res.Header.Get("Access-Control-Allow-Origin") != "" {
+			t.Fatal("private CORS response authorized a foreign origin")
 		}
 		res, _ = request(t, m.gateway.URL, "GET", public, "", "", map[string]string{"Origin": "https://evil.invalid"})
 		if res.StatusCode != 200 || res.Header.Get("Access-Control-Allow-Origin") != "" || !strings.HasPrefix(res.Header.Get("Cache-Control"), "public,") {

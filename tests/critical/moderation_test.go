@@ -145,6 +145,11 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		if ban.Scope != content.EntityScope(string(one.ID)) {
 			t.Fatalf("wrong entity ban: %+v", ban)
 		}
+		standing, err := viewer.GetEntityCanComment(t.Context(), string(one.ID), ck.GetEntityCanCommentQuery{})
+		must(t, err)
+		if standing.CanComment || standing.Ban == nil {
+			t.Fatal("entity standing omitted the active scoped ban")
+		}
 		_, err = viewer.PostEntityComments(t.Context(), string(one.ID), content.CommentInput{Body: "blocked on entity"})
 		requireError(t, err, 403, "comment_banned")
 		_, err = viewer.PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "blocked on owned content"}, ck.PostContentCommentsQuery{})
@@ -156,6 +161,11 @@ func TestCommentModerationBoundaries(t *testing.T) {
 			t.Fatalf("entity ban list mismatch: %+v", bans)
 		}
 		must(t, client.DeleteEntityCommentBan(t.Context(), string(one.ID), writer.ID))
+		standing, err = viewer.GetEntityCanComment(t.Context(), string(one.ID), ck.GetEntityCanCommentQuery{})
+		must(t, err)
+		if !standing.CanComment {
+			t.Fatal("entity standing did not observe the lifted ban")
+		}
 		postComment(t, viewer, first.ID, "Entity lift takes effect")
 	})
 	t.Run("CK-J20-S03_global_ban_remains_inside_app", func(t *testing.T) {
@@ -234,6 +244,15 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		if len(words) != 2 {
 			t.Fatalf("rule batch not persisted: %+v", words)
 		}
+		storedWords, err := admin.GetModerationBannedWords(t.Context())
+		must(t, err)
+		present := map[string]bool{}
+		for _, word := range storedWords {
+			present[word.Word] = true
+		}
+		if len(storedWords) != 2 || !present["forbidden"] || !present["masked"] {
+			t.Fatalf("rule list lost persisted words: %+v", storedWords)
+		}
 		for i, text := range []string{"forbidden", "FORBIDDEN", "for\u200bbidden", "ＦＯＲＢＩＤＤＥＮ"} {
 			t.Run(fmt.Sprint(i), func(t *testing.T) {
 				_, err := client.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: text}, ck.PostContentCommentsQuery{})
@@ -251,6 +270,11 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		must(t, err)
 		if len(bans) != 1 || bans[0].Network != "127.0.0.0/24" {
 			t.Fatalf("CIDR not normalized: %+v", bans)
+		}
+		storedBans, err := admin.GetModerationIpBans(t.Context())
+		must(t, err)
+		if len(storedBans) != 1 || storedBans[0].Network != "127.0.0.0/24" || storedBans[0].Reason != "Normalized subnet" {
+			t.Fatalf("IP-ban list lost persisted rule: %+v", storedBans)
 		}
 		_, err = client.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "banned subnet"}, ck.PostContentCommentsQuery{})
 		requireError(t, err, 403, "comment_banned")

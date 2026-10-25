@@ -1,6 +1,10 @@
 name: Critical public contracts
 'on':
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      suite:
+        type: string
+        default: all
 permissions:
   contents: read
 jobs:
@@ -76,7 +80,10 @@ jobs:
       working-directory: sdk/ui
       run: |
         pnpm install --frozen-lockfile --ignore-scripts
-        pnpm build
+        pnpm contract:check
+        pnpm typecheck && pnpm lint && pnpm build
+        pnpm pack --pack-destination "$RUNNER_TEMP"
+        python3 ../../.github/scripts/check-npm-package.py "$RUNNER_TEMP/openrails-contentkit-ui-0.0.0.tgz" 0.0.0
         pnpm exec vite build --config ../../tests/critical/browser/vite.config.mjs
         pnpm exec playwright install --with-deps chromium
     - name: Build and vet public modules and native commands
@@ -88,13 +95,15 @@ jobs:
         (cd tests/critical && go mod tidy -diff && go vet -p 1 ./...)
         (cd tests/critical/previous-release && go mod tidy -diff && go build -p 1 -o /dev/null . && go vet -p 1 ./...)
     - name: Run every reviewed critical contract with race detection
-      run: python3 tests/critical/run.py --race
+      env:
+        CRITICAL_SUITE: ${{ inputs.suite }}
+      run: python3 tests/critical/run.py --race --suite "$CRITICAL_SUITE"
     - uses: actions/upload-artifact@v4
       if: always()
       with:
         name: contentkit-critical-results
         path: tests/critical/results/
-        if-no-files-found: warn
+        if-no-files-found: error
         retention-days: 7
     - name: Stop only this job's stores
       if: always()

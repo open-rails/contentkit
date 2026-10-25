@@ -775,6 +775,10 @@ still incomplete; focused development runs are explicitly partial evidence.
 CI runs on ready PRs into `master` or `release/**`, or by explicit dispatch,
 and retains the source/base freshness gate, build, type, security and artifact
 checks. Ordinary source pushes do not run the suite.
+Selection is automatic and conservative: documentation-only changes skip heavy
+checks; isolated SDK source changes require all reviewed TypeScript bindings;
+shared, unknown, dependency and CI changes select the broader suite. Each run
+reports its selection reasons. The critical job builds and checks the SDK once.
 
 Previously observed backend capabilities (not replacement-suite qualification):
 

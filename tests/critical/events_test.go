@@ -2,6 +2,7 @@ package critical_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -96,10 +97,18 @@ func TestRetainedLog(t *testing.T) {
 		requireError(t, err, 400, "invalid_request")
 		_, err = admin.ListEvents(t.Context(), catalog.EventQuery{After: "not-a-cursor"})
 		requireError(t, err, 400, "invalid_request")
+		_, err = admin.EventReader().ListEvents(t.Context(), eventlog.Query{After: "not-a-cursor"})
+		if !errors.Is(err, eventlog.ErrInvalidCursor) {
+			t.Fatalf("shared reader lost invalid-cursor classification: %v", err)
+		}
 		publishedArticle(t, a, "retention boundary")
 		w.clock.set(baseTime.Add(91 * 24 * time.Hour))
 		_, err = admin.ListEvents(t.Context(), catalog.EventQuery{After: page.NextCursor})
 		requireError(t, err, 410, "event_cursor_expired")
+		_, err = admin.EventReader().ListEvents(t.Context(), eventlog.Query{After: page.NextCursor})
+		if !errors.Is(err, eventlog.ErrExpiredCursor) {
+			t.Fatalf("shared reader lost expiry/resync classification: %v", err)
+		}
 		w.clock.set(baseTime)
 	})
 	t.Run("CK-J26-S07_rollback_cannot_leave_an_event_without_content", func(t *testing.T) {

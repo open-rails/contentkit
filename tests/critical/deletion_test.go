@@ -2,9 +2,11 @@ package critical_test
 
 import (
 	"testing"
+	"time"
 
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/importer"
 )
 
 func TestVersionDeletionDerivesParent(t *testing.T) {
@@ -67,5 +69,34 @@ func TestVersionDeletionDerivesParent(t *testing.T) {
 		if !got.Live || got.DeletedAt != nil || got.ID != item.ID || got.SelectedVersionID != version {
 			t.Fatalf("edition restore did not recover its derived parent: %+v", got)
 		}
+	})
+	t.Run("legacy_parent_restore_does_not_bypass_last_version_deletion", func(t *testing.T) {
+		prior := time.Now().Add(-time.Hour)
+		imported, err := admin.PostImport(t.Context(), importer.Batch{Source: "go-restore-contract", Contents: []importer.ContentRecord{{ExternalID: "historical-parent", Kind: "article", State: "deleted", PublishedAt: &prior, PublishAt: &prior, DeletedAt: &prior, Text: map[string]catalog.Text{"en": {Title: "Historical restore", Body: "Preserved imported manuscript"}}}}})
+		must(t, err)
+		if len(imported.Failed) != 0 {
+			t.Fatalf("historical import failed: %+v", imported.Failed)
+		}
+		id := imported.IDs["content"]["historical-parent"]
+		if id == "" {
+			t.Fatal("historical content identity missing")
+		}
+		_, err = w.apps[1].engine.Client().PostContentRestore(t.Context(), id)
+		requireError(t, err, 404, "not_found")
+		_, err = a.client("").GetContent(t.Context(), id, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		restored, err := admin.PostContentRestore(t.Context(), id)
+		must(t, err)
+		visible, err := a.client("").GetContent(t.Context(), id, ck.GetContentQuery{})
+		must(t, err)
+		if restored.ID != id || !visible.Live || visible.Body != "Preserved imported manuscript" {
+			t.Fatalf("parent restore lost public content: %+v", visible)
+		}
+		derived := publishedArticle(t, a, "Last edition requires edition restore")
+		must(t, admin.DeleteContentVersion(t.Context(), derived.ID, derived.Versions[0].ID))
+		_, err = admin.PostContentRestore(t.Context(), derived.ID)
+		requireError(t, err, 409, "conflict")
+		_, err = a.client("").GetContent(t.Context(), derived.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
 	})
 }

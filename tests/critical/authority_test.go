@@ -151,12 +151,30 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		client := ck.NewClient(srv.URL, &http.Client{Transport: bearerTransport{token, http.DefaultTransport}})
 		_, err = client.GetContents(t.Context(), ck.GetContentsQuery{})
 		must(t, err)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.writer)
+		defer authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.writer)
+		created, err := client.PostContents(t.Context(), input)
+		must(t, err)
+		before, err := a.engine.Client().GetManage(t.Context(), ck.GetManageQuery{})
+		must(t, err)
 		wire.cut()
 		if _, err := auth.Group(t.Context(), a.group); err == nil {
 			t.Fatal("fault did not disconnect the actual AuthKit directory")
 		}
 		_, err = client.GetContents(t.Context(), ck.GetContentsQuery{})
 		requireError(t, err, 503, "unavailable")
+		_, err = client.PostContents(t.Context(), input)
+		requireError(t, err, 503, "unavailable")
+		after, err := a.engine.Client().GetManage(t.Context(), ck.GetManageQuery{})
+		must(t, err)
+		if len(before) != len(after) {
+			t.Fatal("authentication outage still committed a content mutation")
+		}
+		kept, err := a.engine.Client().GetContent(t.Context(), created.ID, ck.GetContentQuery{})
+		must(t, err)
+		if kept.Body != "Private app-bound body" {
+			t.Fatal("authentication outage changed previously committed content")
+		}
 		_, err = ck.NewClient(srv.URL, nil).GetContents(t.Context(), ck.GetContentsQuery{})
 		must(t, err)
 	})
@@ -185,6 +203,11 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		ownTitle := "Creator may edit this"
 		_, err = a.client(token).PatchContent(t.Context(), created.ID, catalog.ContentPatch{OriginalTitle: &ownTitle})
 		must(t, err)
+		owned, err := a.client(token).GetContent(t.Context(), created.ID, ck.GetContentQuery{})
+		must(t, err)
+		if owned.OriginalTitle != ownTitle {
+			t.Fatal("accepted creator edit was not persisted")
+		}
 		bob, _ := w.person(t, 0)
 		otherInput := input
 		otherInput.Creators = &[]catalog.Creator{{UserID: bob.ID, Role: "author"}}
@@ -204,9 +227,16 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		client := a.client(credential)
 		_, err := client.PostContents(t.Context(), input)
 		must(t, err)
+		before, err := a.engine.Client().GetManage(t.Context(), ck.GetManageQuery{})
+		must(t, err)
 		authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(user.ID), w.writer)
 		_, err = client.PostContents(t.Context(), input)
 		requireError(t, err, 403, "forbidden")
+		after, err := a.engine.Client().GetManage(t.Context(), ck.GetManageQuery{})
+		must(t, err)
+		if len(before) != len(after) {
+			t.Fatal("revoked writer still created content")
+		}
 	})
 }
 

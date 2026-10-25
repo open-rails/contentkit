@@ -15,8 +15,10 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -184,6 +186,8 @@ func TestDiscoveryVisibility(t *testing.T) {
 		if len(managed.Entities) != 1 || managed.Entities[0].ID != internal.ID {
 			t.Fatalf("internal name positive control absent: %+v", managed)
 		}
+		_, err = public.GetManageSearchSuggestions(t.Context(), ck.GetManageSearchSuggestionsQuery{Q: "HiddenClassificationNeedle", IncludeEntities: &include, EntityKinds: []string{"tag"}})
+		requireError(t, err, 401, "unauthorized")
 	})
 	t.Run("CK-J07-S04_sitemap_calendar_and_totals_apply_domain_scope", func(t *testing.T) {
 		page, err := public.GetSitemapContents(t.Context(), ck.GetSitemapContentsQuery{Kind: "article"})
@@ -269,6 +273,41 @@ func TestDiscoveryVisibility(t *testing.T) {
 		must(t, err)
 		if wideLink.ContentID != excluded.ID {
 			t.Fatal("domain refusal lacked a visible parent control")
+		}
+	})
+	t.Run("CK-API-103_open_alias_lookup_preserves_app_and_visibility_boundaries", func(t *testing.T) {
+		batch := importer.Batch{Source: "critical-aliases", Aliases: []importer.AliasRecord{
+			{Kind: "legacy", Key: "visible", Locator: "page-3", Target: importer.TargetRef{Content: &importer.Ref{ID: one.ID}}},
+			{Kind: "legacy", Key: "draft", Locator: "private-draft-position", Target: importer.TargetRef{Content: &importer.Ref{ID: draft.ID}}},
+			{Kind: "legacy", Key: "internal", Locator: "private-entity-position", Target: importer.TargetRef{Entity: &importer.Ref{ID: string(internal.ID)}}},
+		}}
+		result, err := admin.PostImport(t.Context(), batch)
+		must(t, err)
+		if len(result.Failed) != 0 || result.Written["aliases"] != 3 {
+			t.Fatalf("real alias import failed: %+v", result)
+		}
+		query := contenturl.AliasLookup{Aliases: []contenturl.AliasKey{{Source: batch.Source, Kind: "legacy", Key: "visible"}, {Source: batch.Source, Kind: "legacy", Key: "draft"}, {Source: batch.Source, Kind: "legacy", Key: "internal"}}}
+		for _, client := range []*ck.Client{wide, reader("wide.invalid", "invalid-credential-is-ignored-on-open-route")} {
+			resolved, err := client.PostCodesAliases(t.Context(), query, ck.PostCodesAliasesQuery{})
+			must(t, err)
+			if len(resolved.Aliases) != 3 || resolved.Aliases[0].Status != "found" || resolved.Aliases[0].Resolved == nil || resolved.Aliases[0].Resolved.ContentID != one.ID || resolved.Aliases[0].Locator != "page-3" {
+				t.Fatalf("public alias positive control absent: %+v", resolved)
+			}
+			for _, hidden := range resolved.Aliases[1:] {
+				if hidden.Status != "not_found" || hidden.Resolved != nil || hidden.Locator != "" {
+					t.Fatalf("open alias exposed private target: %+v", hidden)
+				}
+			}
+		}
+		foreign, err := w.apps[1].client("").PostCodesAliases(t.Context(), query, ck.PostCodesAliasesQuery{})
+		must(t, err)
+		if len(foreign.Aliases) != 3 {
+			t.Fatal("foreign alias result lost request order")
+		}
+		for _, hidden := range foreign.Aliases {
+			if hidden.Status != "not_found" || hidden.Resolved != nil || hidden.Locator != "" {
+				t.Fatal("alias lookup crossed app storage")
+			}
 		}
 	})
 	t.Run("CK-J07-S07_public_entity_views_omit_internal_identity_and_associations", func(t *testing.T) {

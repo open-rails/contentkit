@@ -3,21 +3,24 @@ name: CI
 'on':
   pull_request:
     branches: [master, 'release/**']
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, closed]
   workflow_dispatch: {}
   workflow_call: {}
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.event.pull_request.draft && format('draft-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.draft && github.event.action != 'converted_to_draft' && github.event.action != 'closed' && format('draft-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   source:
     name: Verify candidate source
-    if: github.event.pull_request.draft != true
+    if: github.event.pull_request.draft != true && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     outputs:
-      images: ${{ steps.artifacts.outputs.images }}
+      images: ${{ steps.areas.outputs.images }}
+      critical: ${{ steps.areas.outputs.critical }}
+      suite: ${{ steps.areas.outputs.suite }}
+      scan: ${{ steps.areas.outputs.scan }}
     steps:
     - uses: actions/checkout@v4
       with:
@@ -26,12 +29,14 @@ jobs:
         persist-credentials: false
     - name: Verify tested merge
       env:
+        GH_TOKEN: ${{ github.token }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: |
         python3 - <<'PY'
         import os, subprocess
+        from urllib.parse import quote
         tested = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
         if tested != os.environ['GITHUB_SHA']:
             raise SystemExit('checkout differs from tested commit')
@@ -42,7 +47,8 @@ jobs:
                 raise SystemExit('not the expected PR plus current-base merge')
             ref = 'refs/heads/' + os.environ['PR_BASE_REF']
             subprocess.run(['git', 'check-ref-format', ref], check=True)
-            current = subprocess.check_output(['git', 'ls-remote', '--exit-code', 'origin', ref], text=True).split()[0]
+            endpoint = 'repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/ref/heads/' + quote(os.environ['PR_BASE_REF'], safe='/')
+            current = subprocess.check_output(['gh', 'api', endpoint, '--jq', '.object.sha'], text=True).strip()
             if current != os.environ['PR_BASE_SHA']:
                 raise SystemExit('base advanced; update the PR and rerun')
         PY
@@ -52,28 +58,30 @@ jobs:
         printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --status
         tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
         "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
-    - name: Select image-definition smoke
-      id: artifacts
+    - name: Select affected checks conservatively
+      id: areas
       env:
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       run: |
-        python3 - <<'PY_ARTIFACTS'
-        import os, subprocess
-        base = os.environ.get('PR_BASE_SHA')
-        changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines() if base else []
-        selected = not base or any(path.endswith('Dockerfile') or path in ('.dockerignore', '.github/workflows/images.yaml') for path in changed)
-        with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-            out.write('images=' + str(selected).lower() + '\n')
-        PY_ARTIFACTS
+        set -euo pipefail
+        python3 .github/scripts/check-ci-policy.py
+        if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+          python3 .github/scripts/ci-scope.py --base "$PR_BASE_SHA" --head "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/selected-checks.json"
+        else
+          python3 .github/scripts/ci-scope.py --full --github-output "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/selected-checks.json"
+        fi
+        cat "$RUNNER_TEMP/selected-checks.json" >> "$GITHUB_STEP_SUMMARY"
+
   scan:
     needs: source
+    if: needs.source.outputs.scan == 'true'
     uses: ./.github/workflows/scan.yaml
   critical:
     needs: source
+    if: needs.source.outputs.critical == 'true'
     uses: ./.github/workflows/go.yaml
-  sdk-ui:
-    needs: source
-    uses: ./.github/workflows/sdk-ui.yaml
+    with:
+      suite: ${{ needs.source.outputs.suite }}
   image-definitions:
     needs: source
     if: needs.source.outputs.images == 'true'
@@ -84,9 +92,9 @@ jobs:
     with:
       verify_only: true
   gate:
-    name: ${{ github.event.pull_request.draft && 'Draft PR (CI not requested)' || 'CI Gate' }}
-    needs: [source, scan, critical, sdk-ui, image-definitions]
-    if: always() && github.event.pull_request.draft != true
+    name: ${{ (github.event.pull_request.draft || github.event.action == 'closed') && 'Inactive PR (CI not requested)' || 'CI Gate' }}
+    needs: [source, scan, critical, image-definitions]
+    if: always() && github.event.pull_request.draft != true && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     steps:
     - name: Require every selected contract and artifact check
@@ -96,15 +104,16 @@ jobs:
         python3 - <<'PY_CHECK'
         import json, os
         jobs = json.loads(os.environ['NEEDS'])
-        for name in ('source', 'scan', 'critical', 'sdk-ui'):
-            if jobs[name]['result'] != 'success':
-                raise SystemExit(f"required {name} did not pass: {jobs[name]['result']}")
-        selected = jobs['source']['outputs'].get('images')
-        if selected not in ('true', 'false'):
-            raise SystemExit('missing artifact selection')
-        result = jobs['image-definitions']['result']
-        if selected == 'true' and result != 'success' or selected == 'false' and result not in ('success', 'skipped'):
-            raise SystemExit(f'image-definition smoke did not satisfy selection: {result}')
+        if jobs['source']['result'] != 'success':
+            raise SystemExit('source verification did not pass')
+        plan = jobs['source']['outputs']
+        for name, area in [('scan', 'scan'), ('critical', 'critical'), ('image-definitions', 'images')]:
+            selected = plan.get(area)
+            if selected not in ('true', 'false'):
+                raise SystemExit(f'missing selection for {area}')
+            expected = 'success' if selected == 'true' else 'skipped'
+            if jobs[name]['result'] != expected:
+                raise SystemExit(f"{name}: {jobs[name]['result']}; expected {expected}")
         PY_CHECK
     - name: Require the tested base to remain current
       if: github.event_name == 'pull_request'

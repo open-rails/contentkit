@@ -80,6 +80,9 @@ func TestStandaloneParityAndDrain(t *testing.T) {
 		if !reflect.DeepEqual(leftConfig, rightConfig) {
 			t.Fatal("standalone changed interaction configuration")
 		}
+		if leftConfig.CommentMaxLength != 2200 || leftConfig.Anonymous.Comments || leftConfig.Anonymous.Reactions || leftConfig.Anonymous.Votes {
+			t.Fatalf("default interaction configuration is wrong: %+v", leftConfig)
+		}
 		leftContent, err := a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 		rightContent, err := client.GetContent(t.Context(), item.ID, ck.GetContentQuery{})

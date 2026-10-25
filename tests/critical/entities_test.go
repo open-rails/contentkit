@@ -149,6 +149,18 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		if group.TenantID.String() != a.cfg.Scope.TenantID.String() || group.Persona.String() != "channel" {
 			t.Fatalf("provisioned scope has wrong ownership: %+v", group)
 		}
+		managed, err := a.engine.Client().GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+		must(t, err)
+		if len(managed.Entities) != 1 || managed.Entities[0].ID != entity.ID {
+			t.Fatalf("management list lost its actual entity: %+v", managed)
+		}
+		_, err = a.client(token).GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+		requireError(t, err, 403, "forbidden")
+		foreign, err := w.apps[1].engine.Client().GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+		must(t, err)
+		if len(foreign.Entities) != 0 {
+			t.Fatal("management entity listing crossed app boundary")
+		}
 		_, err = w.apps[1].client(token).PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{Text: []entities.Text{{Language: "en", Description: "cross-app edit"}}})
 		requireError(t, err, 404, "not_found")
 		current, err := a.client(token).GetEntity(t.Context(), string(entity.ID), ck.GetEntityQuery{})
