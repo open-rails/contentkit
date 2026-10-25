@@ -229,3 +229,9 @@ ts:refreshable	ts	TS exported function	refreshable	sdk/ui/src/client/playback.ts
 ts:publicURL	ts	TS exported function	publicURL	sdk/ui/src/client/public.ts	included-critical public-value vector
 ts:publicRenditions	ts	TS exported function	publicRenditions	sdk/ui/src/client/public.ts	included-critical public-value vector
 ts:isPending	ts	TS exported function	isPending	sdk/ui/src/client/versions.ts	included-critical public-value vector
+go:Client.WatchMedia	go	Go Client streaming method	Client.WatchMedia	client_media_progress.go	included-critical media247 streaming/UI acceptance
+go:Engine.AccountMediaEvents	go	Go Engine retained account log	Engine.AccountMediaEvents	account_media.go	included-critical media247 streaming/UI acceptance
+ts:MediaApi.watch	ts	TS client streaming method	MediaApi.watch	sdk/ui/src/client/media/api.ts	included-critical media247 streaming/UI acceptance
+ts:MediaClient.watch	ts	TS client streaming method	MediaClient.watch	sdk/ui/src/client/media/client.ts	included-critical media247 streaming/UI acceptance
+ts:ContentUpload	ts	TS exported component	ContentUpload	sdk/ui/src/components/admin/content-upload.tsx	included-critical media247 streaming/UI acceptance
+ts:MediaProcessingPanel	ts	TS exported component	MediaProcessingPanel	sdk/ui/src/components/media-processing-panel.tsx	included-critical media247 streaming/UI acceptance

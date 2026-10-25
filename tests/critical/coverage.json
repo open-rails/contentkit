@@ -1,8 +1,8 @@
 {
   "source_plan": "open-rails/tracker#1290",
   "candidate_base": "7ab8fdef",
-  "status": "IN_PROGRESS_NOT_QUALIFIED",
-  "note": "Names are coverage obligations, not assertions. Required scenarios remain pending until their actual behavior and selected operation cases are reviewed and executed. Landed P0 purge scenarios are selected; P1 audio remains deferred.",
+  "status": "IN_PROGRESS_MEDIA_247_INTEGRATION_NOT_QUALIFIED",
+  "note": "Earlier scenario/binding reviews refer to the pre-SSE checkpoint. Media247 has been integrated; post-integration execution and six new public streaming/UI bindings are required. Do not restore retired polling options or workers. HTTP identities remain166;98 rows select phase1 security-only coverage.",
   "required": [
     {
       "id": "CK-J01-S01",
@@ -974,6 +974,33 @@
       ]
     },
     {
+      "id": "CK-J11-S08",
+      "journey": "CK-J11",
+      "behavior": "Real 25-image ZIP upload reports durable SSE progress, thumbnails and reopen state while remaining draft",
+      "status": "pending",
+      "evidence": [],
+      "cases": [],
+      "remaining": "Coordinated media247 acceptance on committed combined source; no old jobs or polling."
+    },
+    {
+      "id": "CK-J11-S09",
+      "journey": "CK-J11",
+      "behavior": "Authorized processing streams enforce snapshot/replay/resync, revocation, cancellation and bounded output",
+      "status": "pending",
+      "evidence": [],
+      "cases": [],
+      "remaining": "Coordinated media247 acceptance on committed combined source; no old jobs or polling."
+    },
+    {
+      "id": "CK-J12-S01",
+      "journey": "CK-J12",
+      "behavior": "Real video produces playable configured AV1 and H264 renditions with its soundtrack",
+      "status": "pending",
+      "evidence": [],
+      "cases": [],
+      "remaining": "Coordinated media247 acceptance on committed combined source; no old jobs or polling."
+    },
+    {
       "id": "CK-J13-S01",
       "journey": "CK-J13",
       "behavior": "Private exact-file grant refuses a sibling file or another item",
@@ -1706,7 +1733,8 @@
     "erasure": "A real ClickHouse connection cut leaves erasure incomplete; recovery clears only the target subject; late signals remain fenced. Restored app backups, paused writers, shared avatars and inboxes, and sibling app retries remain.",
     "qualification": "All123 scenario statuses remain pending semantic and operation review. The default runner intentionally refuses qualification; focused execution is explicitly partial.",
     "upstream": "Normal signed merge of8377f8b3 preserved media runtime. HTTP identities remain166. POST content publish and PUT text no longer advertise202 or moderation_rejected; comment moderation remains current. P0 purge CK-J08-S05/S06 activated; P1 audio deferred.",
-    "bindings": "binding_matrix.tsv freezes the selected public contract:115Go and115TypeScript bindings (230total). Every binding remains pending; invocation alone does not establish functional, error, alias or transport coverage."
+    "bindings": "binding_matrix.tsv freezes the selected public contract:115Go and115TypeScript bindings (230total). Every binding remains pending; invocation alone does not establish functional, error, alias or transport coverage.",
+    "media_247": "Adds CK-J11-S08/S09 and promotes existing CK-J12-S01. Advanced audio-language/subtitle selection in CK-J12-S02 remains P1; a single AAC soundtrack does not qualify it. External media owner retains ZIP/SSE and codec acceptance files. Six new streaming/UI bindings are pending."
   },
   "operation_contracts": [
     {
@@ -8271,6 +8299,54 @@
       "evidence": [
         "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
       ]
+    },
+    {
+      "id": "go:Client.WatchMedia",
+      "name": "Client.WatchMedia",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "go:Engine.AccountMediaEvents",
+      "name": "Engine.AccountMediaEvents",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "ts:MediaApi.watch",
+      "name": "MediaApi.watch",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "ts:MediaClient.watch",
+      "name": "MediaClient.watch",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "ts:ContentUpload",
+      "name": "ContentUpload",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "ts:MediaProcessingPanel",
+      "name": "MediaProcessingPanel",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
     }
   ]
 }
