@@ -45,7 +45,8 @@ type VersionText struct {
 	Description string `json:"description,omitempty"`
 }
 
-// Creator is a person credited on a content item; creators edit it.
+// Creator is a person credited on a content item. Credits do not grant access
+// or editing authority; those follow the authenticated author and channel roles.
 type Creator struct {
 	UserID   string `json:"user_id"`
 	Role     string `json:"role,omitempty"`

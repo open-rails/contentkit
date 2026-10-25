@@ -35,22 +35,24 @@ func (c *clock) set(at time.Time) { c.mu.Lock(); defer c.mu.Unlock(); c.at = at 
 // world contains real public runtimes. The only controlled dependency is time;
 // AuthKit's Outbox is an external mail/SMS transport, not an identity mock.
 type world struct {
-	pool             *pgxpool.Pool
-	auth             *authkit.Client
-	roles            *authkit.Roles
-	writer           iam.Role
-	viewer           iam.Role
-	moderator        iam.Role
-	commentManager   iam.Role
-	globalReviewer   iam.Role
-	channelWriter    iam.Role
-	channelModerator iam.Role
-	tenant           [2]*authkit.Client
-	apps             []*application
-	clock            *clock
-	schema           string
-	signer           keys.Signer
-	configure        []func(*ck.Config)
+	pool               *pgxpool.Pool
+	auth               *authkit.Client
+	roles              *authkit.Roles
+	writer             iam.Role
+	contributor        iam.Role
+	viewer             iam.Role
+	moderator          iam.Role
+	commentManager     iam.Role
+	globalReviewer     iam.Role
+	channelWriter      iam.Role
+	channelContributor iam.Role
+	channelModerator   iam.Role
+	tenant             [2]*authkit.Client
+	apps               []*application
+	clock              *clock
+	schema             string
+	signer             keys.Signer
+	configure          []func(*ck.Config)
 }
 
 type application struct {
@@ -89,6 +91,7 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 	write := permissions[access.ContentWrite]
 	moderate := permissions[access.CommentsModerate]
 	w.writer = appPersona.Role("writer", write)
+	w.contributor = appPersona.Role("contributor", permissions[access.ContentCreate])
 	w.viewer = appPersona.Role("auditor", permissions[access.ContentViewRestricted])
 	w.moderator = appPersona.Role("moderator", moderate)
 	w.commentManager = appPersona.Role("comment-manager", moderate, permissions[access.CommentsBan], permissions[access.ModerationReview])
@@ -99,6 +102,7 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 		channelPermissions[permission] = channel.Declare(permission)[0]
 	}
 	w.channelWriter = channel.Role("writer", channelPermissions["channel:content:write"])
+	w.channelContributor = channel.Role("contributor", channelPermissions["channel:content:create"])
 	w.channelModerator = channel.Role("moderator", channelPermissions["channel:comments:moderate"])
 	w.auth, _ = authtest.New(t,
 		authtest.WithConfig(func(c *authkit.Config) {

@@ -11,7 +11,7 @@ import (
 // Visibility is contenturl.RouterOptions.Visibility for content kinds: a
 // page shows while its item is live for an anonymous visitor of the
 // request's site, is Gone once a live item was deleted (or erased), is a
-// Preview for a signed-in editor of an item not live yet (staff, creators),
+// Preview for a signed-in editor of an item not live yet (staff, authenticated authors),
 // and is Hidden otherwise. Other kinds are Visible.
 func (s *Store) Visibility(r *http.Request, links []contenturl.Link) ([]contenturl.Visibility, error) {
 	out := make([]contenturl.Visibility, len(links))

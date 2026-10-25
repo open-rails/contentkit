@@ -1531,3 +1531,21 @@ or restoration into its owned content. There is no periodic entity reconciliatio
 scan. River retains failed work for explicit retry after its normal attempt limit.
 Standalone entity stores must point `entities.Options.RiverSchema` at migrated
 River tables (by default, `<entity-schema>_river`).
+
+## Post contributors and attribution
+
+A host can grant `access.ContentCreate` to registered accounts for personal posts
+outside a channel. Inside a channel, grant `access.EntityContentCreate(kind)` in
+that channel's scope. These permissions let the authenticated author create,
+edit and publish their own posts; they grant no channel-management authority or
+access to other authors' drafts. `ContentWrite` and `EntityContentWrite(kind)`
+retain their broad staff/team-editor semantics. Site blogs need only staff grants;
+creator platforms can allow channel owners, and community feeds can add narrowly
+scoped contributors.
+
+Personal authority follows the existing immutable `content_items.created_by`,
+set from the authenticated tenant account. Editable creator credits are display
+metadata and never delegate editing, private reads or moderation ownership.
+Imported content without `created_by` stays under staff/channel control; changing
+attribution cannot manufacture personal ownership. No entitlement is implied by
+posting permissions: paid readership is still checked through OpenRails.

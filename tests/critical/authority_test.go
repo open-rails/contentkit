@@ -208,10 +208,9 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		if owned.OriginalTitle != ownTitle {
 			t.Fatal("accepted creator edit was not persisted")
 		}
-		bob, _ := w.person(t, 0)
-		otherInput := input
-		otherInput.Creators = &[]catalog.Creator{{UserID: bob.ID, Role: "author"}}
-		other, err := a.engine.Client().PostContents(t.Context(), otherInput)
+		bob, bobToken := w.person(t, 0)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(bob.ID), w.contributor)
+		other, err := a.client(bobToken).PostContents(t.Context(), input)
 		must(t, err)
 		_, err = a.client(token).PatchContent(t.Context(), other.ID, catalog.ContentPatch{OriginalTitle: &ownTitle})
 		requireError(t, err, 403, "forbidden")

@@ -185,7 +185,7 @@ func (s *Service) readerFiles(ctx context.Context, actor access.Actor, k *media.
 
 type uploads struct{ s *Service }
 
-// CanUpload lets editors of a content (staff, its creators, its owner
+// CanUpload lets editors of a content (staff, its authenticated author, its owner
 // group's editors) write its items, a group's editors its item, a person
 // their own avatar. A version being forked takes no other writes.
 func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {

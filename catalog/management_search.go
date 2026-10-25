@@ -136,7 +136,7 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 			}
 		}
 		args := pgx.NamedArgs{"ms_staff": rights.write, "ms_account": actor.AccountID(), "ms_groups": editorEntities}
-		allowed := `(@ms_staff OR EXISTS (SELECT 1 FROM ` + s.t.creators + ` cc WHERE cc.tenant_id=c.tenant_id AND cc.content_id=c.id AND cc.user_id=@ms_account AND @ms_account<>'')
+		allowed := `(@ms_staff OR (c.created_by=@ms_account AND @ms_account<>'')
  OR EXISTS (SELECT 1 FROM ` + s.t.entities + ` og WHERE og.tenant_id=c.tenant_id AND og.id=c.owner_entity_id AND og.state='active' AND og.owner_user_id=@ms_account AND @ms_account<>'')
  OR c.owner_entity_id=ANY(@ms_groups::text[]))`
 		eligible := &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.items + ` c

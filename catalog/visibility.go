@@ -41,7 +41,7 @@ type ViewerOptions struct {
 
 // Viewer is the one visibility rule (ContentKit #117 spec §4) for one
 // request: live content and versions, the site scope, the
-// viewer's content filters and entitlements, and the staff, creators and
+// viewer's content filters and entitlements, and the staff, authenticated authors and
 // owner-entity editors who see everything. Listed renders it as SQL over
 // content_facets for lists and searches; Store.Contents and Resolver decide
 // items with it.
@@ -280,8 +280,8 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 // privileged is the SQL test, over Listed's args, of a row whose channel the
 // viewer edits or whose content they created.
 func (v *Viewer) privileged(alias string) string {
-	return "(" + alias + ".owner_entity_id = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.creators +
-		" cc WHERE cc.tenant_id = " + alias + ".tenant_id AND cc.content_id = " + alias + ".content_id AND cc.user_id = @cv_user)))"
+	return "(" + alias + ".owner_entity_id = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.items +
+		" authored WHERE authored.tenant_id = " + alias + ".tenant_id AND authored.id = " + alias + ".content_id AND authored.created_by = @cv_user)))"
 }
 
 // Playable is a boolean SQL predicate over the content_facets row aliased
@@ -349,7 +349,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	}
 	rows, err := s.pool.Query(ctx, `SELECT f.content_id, f.version_id, f.kind, f.live_from, c.state = 'deleted', ver.state = 'deleted',
  f.languages, c.access, ver.access, f.restrictions, f.entity_ids, coalesce(f.owner_entity_id, ''), f.position,
- EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = f.tenant_id AND cc.content_id = f.content_id AND cc.user_id = $3 AND $3 <> '')
+ (coalesce(c.created_by, '') = $3 AND $3 <> '')
  FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
  JOIN `+s.t.versions+` ver ON ver.tenant_id = f.tenant_id AND ver.id = f.version_id
  WHERE f.tenant_id = $1 AND f.content_id = ANY($2) ORDER BY f.content_id, f.position, f.version_id`, s.tenant, ids, viewerID(v.actor))
@@ -509,7 +509,7 @@ func (s *Store) directViews(ctx context.Context, actor access.Actor, ids []strin
 // one of its versions is visible by the rule for direct reads (live, deleted
 // and held by its own keys, or edited by the viewer), accessible when the
 // viewer opens it (a content reference: any of its visible versions), with
-// staff, creators and owner-entity editors as Editor and the first creator as
+// staff, authenticated authors and owner-entity editors as Editor and the author as
 // Owner. A reference it omits is unseen.
 func (s *Store) Resolver() resolve.Resolver { return resolver{s} }
 
@@ -552,7 +552,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 	return out, nil
 }
 
-// ownership is a content item's first creator, comments setting and active
+// ownership is a content item's authenticated author, comments setting and active
 // user-owned owner entity.
 type ownership struct {
 	creator, comments string
@@ -560,8 +560,7 @@ type ownership struct {
 }
 
 func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership, error) {
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, coalesce((SELECT cc.user_id FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id
- AND cc.content_id = c.id ORDER BY cc.position, cc.user_id LIMIT 1), ''), coalesce(g.id, ''), coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, coalesce(c.created_by, ''), coalesce(g.id, ''), coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
  FROM `+s.t.items+` c LEFT JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_entity_id AND g.state = 'active'
  WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {

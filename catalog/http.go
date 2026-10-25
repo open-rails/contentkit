@@ -26,7 +26,7 @@ var totalsPath = httpapi.Contents.Prefix() + "/catalog/totals"
 
 func init() { httpapi.Register(httpapi.Contents, routes) }
 
-const editorsDoc = " Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only."
+const editorsDoc = " The authenticated author, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only."
 
 var languageParam = httpapi.Text("language", "the language to show text in; the site's first language, then any, when it has none")
 
@@ -81,7 +81,7 @@ var routes = []httpapi.Route[*Store]{
 		Responses: []httpapi.Reply{httpapi.OK(ManageCount{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleManageCount)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Creates a content item as a draft, with one version serving its text's languages when it names none. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
+		Doc:     "Creates a content item as a draft, with one version serving its text's languages when it names none. Staff with root:content:write may create anywhere. Signed-in people with root:content:create may create their own unowned posts; channel posts require that channel's owner or {kind}:content:create/write grant. Creator credits are attribution, not editorship.",
 		Request: ContentInput{}, Responses: []httpapi.Reply{httpapi.Created(Content{})}, Errors: []string{httpapi.CodeForbidden}},
 		Serve: httpapi.H((*Store).handleCreate)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
@@ -845,7 +845,7 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	state += cond
 	return `SELECT c.id FROM ` + s.t.items + ` c WHERE c.tenant_id = $1 AND ` + state + `
  AND ($2 = '' OR c.kind = $2) AND ($3 = '' OR c.owner_entity_id = $3)
- AND ($4 OR $5 OR EXISTS (SELECT 1 FROM ` + s.t.creators + ` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $6))
+ AND ($4 OR $5 OR (c.created_by=$6 AND $6<>''))
  AND ($7 = '' OR strpos(lower(coalesce(c.original_title,'')),lower($7))>0 OR EXISTS (
  SELECT 1 FROM ` + s.t.versions + ` v JOIN ` + s.t.versionText + ` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
  WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND strpos(lower(t.title),lower($7))>0)
