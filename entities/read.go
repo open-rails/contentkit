@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
 )
 
@@ -215,7 +216,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	}
 	countKind := ""
 	if ck := strings.TrimSpace(opts.ContentKind); ck != "" {
-		countKind, c.args["content_kind"] = " AND ec.content_kind = @content_kind", ck
+		countKind, c.args["content_kind"] = " AND f.kind = @content_kind", ck
 	}
 	if opts.Cursor != "" {
 		var cur listCursor
@@ -245,8 +246,30 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
 	count := "coalesce(cc.n, 0)"
-	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT sum(ec.content_count)::int AS n FROM %s ec
- WHERE ec.tenant_id = g.tenant_id AND ec.entity_id = g.id AND ec.language = @count_language%s) cc ON true`, s.table("content_entity_counts"), countKind)
+	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT count(DISTINCT f.content_id)::int AS n FROM %s f
+ WHERE f.tenant_id=g.tenant_id AND (f.entity_ids @> ARRAY[g.id] OR f.owner_entity_id=g.id)
+ AND g.state='active' AND %s AND (@count_language='' OR @count_language::text=ANY(f.languages))%s) cc ON true`,
+		s.table("content_facets"), liveListed, countKind)
+	if c.sort == SortCount {
+		// Ranking needs counts for every candidate entity. Aggregate the eligible
+		// facets once instead of repeating an indexed lookup per entity.
+		counts = fmt.Sprintf(`LEFT JOIN (SELECT members.entity_id, count(*)::int AS n FROM (
+ SELECT membership.entity_id,f.content_id
+ FROM %s f CROSS JOIN LATERAL unnest(array_append(f.entity_ids,f.owner_entity_id)) membership(entity_id)
+ WHERE f.tenant_id=@tenant AND membership.entity_id IS NOT NULL AND %s
+ AND (@count_language='' OR @count_language::text=ANY(f.languages))%s
+ GROUP BY membership.entity_id,f.content_id) members
+ GROUP BY members.entity_id) cc ON cc.entity_id=g.id AND g.state='active'`, s.table("content_facets"), liveListed, countKind)
+	}
+	c.args["covered_kinds"] = s.coveredKinds()
+	covers := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT jsonb_build_object('content_id',f.content_id,'auto',true) AS cover
+ FROM %s f LEFT JOIN %s ic ON ic.tenant_id=f.tenant_id AND ic.content_kind=f.kind
+  AND ic.content_id=f.content_id AND ic.content_version_id IS NULL
+ WHERE f.tenant_id=g.tenant_id AND (f.entity_ids @> ARRAY[g.id] OR f.owner_entity_id=g.id)
+ AND g.state='active' AND (g.cover IS NULL OR g.cover ? 'auto') AND %s
+ AND (%s OR f.kind=ANY(@covered_kinds::text[]))
+ ORDER BY coalesce(ic.favorites,0) DESC,f.published_at DESC NULLS LAST,f.content_id LIMIT 1) ac ON true`,
+		s.table("content_facets"), s.table("content_interaction_counts"), liveListed, access.PublicSQL("f"))
 	displayJoins := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT nn.name,nn.language,nn.normalized FROM %s nn
  WHERE nn.tenant_id=g.tenant_id AND nn.entity_id=g.id AND nn.kind='name'
  ORDER BY CASE WHEN nn.language=@language THEN 0 WHEN nn.language='en' THEN 1 ELSE 2+coalesce(array_position(@fallback::text[],nn.language),1000) END,nn.language LIMIT 1) nm ON true
@@ -273,14 +296,15 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		order = count + " DESC, g.id"
 	}
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
- coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), g.cover, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), CASE WHEN g.cover IS NULL OR g.cover ? 'auto' THEN ac.cover ELSE g.cover END, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
 FROM %[1]s
 %[11]s
+%[12]s
 LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AND cd.content_id = g.id
 %[7]s
 %[8]s`,
 		from, s.table("content_entity_names"), s.table("content_entity_text"), s.table("content_codes"),
-		count, sortName, counts, predicate, scope, parent, displayJoins)
+		count, sortName, counts, predicate, scope, parent, displayJoins, covers)
 	c.sql = base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
 		c.count = "SELECT count(*) FROM (" + base + ") counted"

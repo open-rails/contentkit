@@ -778,7 +778,6 @@ export interface EntityKind {
   uploads?: UploadLimits;
   entitled?: boolean;
   auth_scope?: boolean;
-  windows?: boolean;
   membership_scopes?: ("content" | "version")[];
   version_level?: boolean;
   creatable?: boolean;
@@ -813,6 +812,11 @@ export interface EntityRecord {
   code?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface EntityRef {
+  kind: string;
+  slug: string;
 }
 
 export interface EntitySummary {
@@ -1079,19 +1083,6 @@ export interface InlineImage {
   url: string | null;
 }
 
-export interface Input {
-  recipient: Recipient;
-  origin: Origin;
-  kind: string;
-  data: unknown;
-  created_at: string;
-  visibility?: string;
-  app_id?: string;
-  status?: string;
-  action_requested?: boolean;
-  severity?: string;
-}
-
 export interface Interaction {
   content?: Card;
   entity?: EntityCard;
@@ -1103,27 +1094,6 @@ export interface InteractionPage {
   items: Interaction[];
   next_cursor?: string;
   summary?: ListingSummary;
-}
-
-export interface Item {
-  id: string;
-  recipient: Recipient;
-  origin: Origin;
-  kind: string;
-  data: unknown;
-  created_at: string;
-  visibility?: string;
-  app_id?: string;
-  status?: string;
-  action_requested?: boolean;
-  severity?: string;
-  read_at: string | null;
-  dismissed_at: string | null;
-  resolved_at: string | null;
-  updated_at: string;
-  revision: number;
-  producer_revision?: number;
-  withdrawn?: boolean;
 }
 
 export interface Kind {
@@ -1138,6 +1108,7 @@ export interface Kind {
   segments?: boolean;
   entities?: string[];
   attributes?: Record<string, Attribute>;
+  owner_entity?: EntityRef;
   sort?: string;
   locked?: Locked;
   download?: Download;
@@ -1221,8 +1192,6 @@ export interface Membership {
   version_id?: string;
   role?: string;
   position?: number;
-  active_from?: string;
-  active_until?: string;
   state?: "active" | "proposed";
 }
 
@@ -1231,8 +1200,6 @@ export interface MembershipRecord {
   version?: Ref;
   role?: string;
   position?: number;
-  active_from?: string;
-  active_until?: string;
   state?: string;
 }
 
@@ -1281,6 +1248,8 @@ export interface MyEntity {
   created_at: string;
   owner: boolean;
   editor: boolean;
+  can_post: boolean;
+  can_edit_own: boolean;
   writer: boolean;
   moderator: boolean;
   member: boolean;
@@ -1346,18 +1315,6 @@ export interface Order {
 
 export interface OrderInput {
   ids: string[];
-}
-
-export interface Origin {
-  system: string;
-  scope: string;
-  id: string;
-  subject?: string;
-}
-
-export interface Page {
-  items: Item[];
-  next_cursor?: string;
 }
 
 export interface PageEngagement {
@@ -1628,10 +1585,6 @@ export interface PublicUser {
   avatar_srcset?: string;
 }
 
-export interface Publication {
-  notifications: Input[];
-}
-
 export interface PublicationStatus {
   id: string;
   state: string;
@@ -1642,10 +1595,6 @@ export interface PublicationStatus {
 
 export interface PublishInput {
   publish_at?: string;
-}
-
-export interface Published {
-  items: Item[];
 }
 
 export interface RankingInfo {
@@ -1723,11 +1672,6 @@ export interface RecentSearch {
 
 export interface RecentSearches {
   searches: RecentSearch[];
-}
-
-export interface Recipient {
-  audience: string;
-  id: string;
 }
 
 export interface RecordFailure {

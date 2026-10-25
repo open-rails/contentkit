@@ -169,7 +169,7 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 	if err != nil {
 		return nil, err
 	}
-	scopes, err := s.entityScopes(ctx, visible, v.now)
+	scopes, err := s.entityScopes(ctx, visible)
 	if err != nil {
 		return nil, err
 	}

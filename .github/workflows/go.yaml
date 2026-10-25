@@ -92,9 +92,23 @@ jobs:
         pnpm exec playwright install --with-deps chromium
     - name: Build and vet public modules and native commands
       run: |
-        for module in . server adapters/authkit adapters/openrails; do
+        for module in . adapters/authkit adapters/openrails; do
           (cd "$module" && go build -p 1 ./... && go vet -p 1 ./...)
         done
+        # The published server module has no local replacements. Qualify this
+        # checkout before its paired root/adapter tags exist, just as Docker does.
+        server_mod="$RUNNER_TEMP/contentkit-server.mod"
+        cp server/go.mod "$server_mod"
+        cp server/go.sum "${server_mod%.mod}.sum"
+        (
+          cd server
+          go mod edit -modfile="$server_mod" \
+            -replace=github.com/open-rails/contentkit="$GITHUB_WORKSPACE" \
+            -replace=github.com/open-rails/contentkit/adapters/openrails="$GITHUB_WORKSPACE/adapters/openrails" \
+            -replace=github.com/open-rails/contentkit/adapters/authkit="$GITHUB_WORKSPACE/adapters/authkit"
+          go build -mod=readonly -modfile="$server_mod" -p 1 ./...
+          go vet -mod=readonly -modfile="$server_mod" -p 1 ./...
+        )
         test -z "$(gofmt -l tests/critical)"
         (cd tests/critical && go mod tidy -diff && go vet -p 1 ./...)
         (cd tests/critical/previous-release && go mod tidy -diff && go build -p 1 -o /dev/null . && go vet -p 1 ./...)

@@ -26,7 +26,7 @@ var totalsPath = httpapi.Contents.Prefix() + "/catalog/totals"
 
 func init() { httpapi.Register(httpapi.Contents, routes) }
 
-const editorsDoc = " Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only."
+const editorsDoc = " The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority."
 
 var languageParam = httpapi.Text("language", "the language to show text in; the site's first language, then any, when it has none")
 
@@ -56,7 +56,7 @@ var routes = []httpapi.Route[*Store]{
 		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleGetVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage", Resource: "contents", Auth: httpapi.Public,
-		Doc: "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.",
+		Doc: "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.",
 		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published (live) or deleted; every state but deleted by default"),
 			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
 			httpapi.Text("access", "only items whose own rule has this level: public, tier, group, ppv or group_ppv"), httpapi.Text("tier", "only items whose rule names this configured tier"),
@@ -81,7 +81,7 @@ var routes = []httpapi.Route[*Store]{
 		Responses: []httpapi.Reply{httpapi.OK(ManageCount{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleManageCount)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Creates a content item as a draft, with one version serving its text's languages when it names none. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
+		Doc:     "Creates a content item as a draft, with one version serving its text's languages when it names none. Staff with root:content:write may create anywhere. Signed-in people with root:content:create may create their own unowned posts; channel posts require that channel's owner or {kind}:content:create/write grant. Creator credits are attribution, not editorship.",
 		Request: ContentInput{}, Responses: []httpapi.Reply{httpapi.Created(Content{})}, Errors: []string{httpapi.CodeForbidden}},
 		Serve: httpapi.H((*Store).handleCreate)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
@@ -253,6 +253,8 @@ func classify(err error) (int, string, string) {
 		return http.StatusConflict, "not_ready", notReady.Error()
 	case errors.Is(err, errMediaNotConfigured):
 		return http.StatusNotImplemented, "not_configured", "images need ContentKit media"
+	case errors.Is(err, errFixedOwnerUnavailable):
+		return http.StatusServiceUnavailable, httpapi.CodeUnavailable, "configured content channel is unavailable"
 	case errors.Is(err, access.ErrUnavailable):
 		return http.StatusServiceUnavailable, httpapi.CodeUnavailable, "entitlements are unavailable; retry"
 	}
@@ -793,6 +795,10 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	if err != nil {
 		return "", nil, err
 	}
+	own, err := s.ownAccess(ctx, actor, false)
+	if err != nil {
+		return "", nil, err
+	}
 	entity := false
 	if q.OwnerEntity != "" && !rights.write {
 		editors, err := s.entityEditor(ctx, s.pool, actor, []string{q.OwnerEntity})
@@ -844,7 +850,7 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	state += cond
 	return `SELECT c.id FROM ` + s.t.items + ` c WHERE c.tenant_id = $1 AND ` + state + `
  AND ($2 = '' OR c.kind = $2) AND ($3 = '' OR c.owner_entity_id = $3)
- AND ($4 OR $5 OR EXISTS (SELECT 1 FROM ` + s.t.creators + ` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $6))
+ AND ($4 OR $5 OR (c.created_by=$6 AND $6<>'' AND ((c.owner_entity_id IS NULL AND $12::boolean) OR c.owner_entity_id=ANY($13::text[]))))
  AND ($7 = '' OR strpos(lower(coalesce(c.original_title,'')),lower($7))>0 OR EXISTS (
  SELECT 1 FROM ` + s.t.versions + ` v JOIN ` + s.t.versionText + ` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
  WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND strpos(lower(t.title),lower($7))>0)
@@ -852,7 +858,7 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
   AND (strpos(lower(t.title), lower($7)) > 0 OR strpos(lower(t.description), lower($7)) > 0 OR strpos(lower(t.body), lower($7)) > 0)))
  AND ($10 = '' OR EXISTS (SELECT 1 FROM ` + s.qs + `.content_codes k WHERE k.tenant_id = c.tenant_id AND k.content_kind = c.kind AND k.content_id = c.id AND k.code = $10))
  AND (cardinality($11::text[]) = 0 OR c.id = ANY($11::text[]))`,
-		[]any{s.tenant, q.Kind, q.OwnerEntity, rights.write, entity, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs)}, nil
+		[]any{s.tenant, q.Kind, q.OwnerEntity, rights.write, entity, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs), own.app, own.entities}, nil
 }
 
 // ManageCount is how many items a manage listing selects.

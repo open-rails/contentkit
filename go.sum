@@ -84,10 +84,10 @@ github.com/maypok86/otter/v2 v2.3.1-0.20261012174237-6b4979235160/go.mod h1:NknZ
 github.com/montanaflynn/stats v0.0.0-20171201202039-1bf9dbcd8cbe/go.mod h1:wL8QJuTMNUDYhXwkmfOly8iTdp5TEcJFWZD2D7SIkUc=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
-github.com/open-rails/authkit v1.38.0-notifications.1.0.20261025040938-4d2ea5f94e65 h1:Ectb6+d8pDBSlIPFZb4L15LHNy8PZw81cfmkAiKD0wo=
-github.com/open-rails/authkit v1.38.0-notifications.1.0.20261025040938-4d2ea5f94e65/go.mod h1:EEhJyo+qV8sL/OlM/XfFH8/BZ6u8wp99j31nzmn7Ktw=
-github.com/open-rails/helpers v1.16.2-0.20261025033036-8c93ee4139d4 h1:Awi52sqUfflg00bO3wMwti+r3x1UWzpHZ4/+dhYsV34=
-github.com/open-rails/helpers v1.16.2-0.20261025033036-8c93ee4139d4/go.mod h1:Olub8akvlMMb6wxdVX15+9sTETLvNnyyJytioFxj83o=
+github.com/open-rails/authkit v1.39.0 h1:Ml1Pab7r9yz1LD+pymhziABL4Q/g7wT42gOdQvh1FCs=
+github.com/open-rails/authkit v1.39.0/go.mod h1:Ws/T4JBv7peLiUJaJDl/H3waxQbmMGPbZLu27hK/Y78=
+github.com/open-rails/helpers v1.18.0 h1:HPhjfiF3M85pf5I2QyAi21mxXudD/QpNdYFAYyJGeT4=
+github.com/open-rails/helpers v1.18.0/go.mod h1:Olub8akvlMMb6wxdVX15+9sTETLvNnyyJytioFxj83o=
 github.com/open-rails/migratekit v1.11.2 h1:QTtn8i/Yj62SiGv6b7FnQ/mKudSDfLjnlmPSQN0NA7k=
 github.com/open-rails/migratekit v1.11.2/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/paulmach/orb v0.12.0 h1:z+zOwjmG3MyEEqzv92UN49Lg1JFYx0L9GpGKNVDKk1s=

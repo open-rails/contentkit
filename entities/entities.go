@@ -196,6 +196,8 @@ type Options struct {
 	Owned OwnedContent
 	// Queue is the River queue of entity syncs; DefaultQueue when empty.
 	Queue string
+	// RiverSchema holds durable lifecycle jobs; Schema + "_river" when empty.
+	RiverSchema string
 	// Logger receives the HTTP API's failures. nil -> slog.Default().
 	Logger *slog.Logger
 }
@@ -219,26 +221,27 @@ type OwnedContent interface {
 
 // Store is one tenant's entities.
 type Store struct {
-	pool       *pgxpool.Pool
-	tx         pgx.Tx
-	qs         string
-	schema     string
-	tenant     string
-	cfg        kinds.Config
-	changed    func(ctx context.Context, q Querier, contentIDs []string) error
-	renamed    func(ctx context.Context, q Querier, entityIDs []string) error
-	documents  func(ctx context.Context, q Querier) error
-	references References
-	covers     CoverResolver
-	gate       *access.Gate
-	scopes     Scopes
-	folders    Folders
-	keep       time.Duration
-	owned      OwnedContent
-	queue      string
-	log        *slog.Logger
-	as         *writer
-	river      *riverBinding
+	pool        *pgxpool.Pool
+	tx          pgx.Tx
+	qs          string
+	schema      string
+	tenant      string
+	cfg         kinds.Config
+	changed     func(ctx context.Context, q Querier, contentIDs []string) error
+	renamed     func(ctx context.Context, q Querier, entityIDs []string) error
+	documents   func(ctx context.Context, q Querier) error
+	references  References
+	covers      CoverResolver
+	gate        *access.Gate
+	scopes      Scopes
+	folders     Folders
+	keep        time.Duration
+	owned       OwnedContent
+	queue       string
+	riverSchema string
+	log         *slog.Logger
+	as          *writer
+	river       *riverBinding
 }
 
 // New validates the options and returns the store.
@@ -268,12 +271,19 @@ func New(opts Options) (*Store, error) {
 	if queue == "" {
 		queue = DefaultQueue
 	}
+	riverSchema := strings.TrimSpace(opts.RiverSchema)
+	if riverSchema == "" {
+		riverSchema = strings.TrimSpace(opts.Schema) + "_river"
+	}
+	if _, err := search.QuoteSchema(riverSchema); err != nil {
+		return nil, fmt.Errorf("%w: RiverSchema: %v", ErrInvalid, err)
+	}
 	keep := opts.DeletedRetention
 	if keep <= 0 {
 		keep = DefaultDeletedRetention
 	}
 	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, renamed: opts.NamesChanged, documents: opts.DocumentsChanged, references: opts.References,
-		covers: opts.Covers, gate: opts.Gate, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, queue: queue, log: log,
+		covers: opts.Covers, gate: opts.Gate, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, queue: queue, riverSchema: riverSchema, log: log,
 		river: &riverBinding{}}, nil
 }
 

@@ -118,7 +118,7 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 		if !r.Visible {
 			continue
 		}
-		rr := resolve.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner, Accessible: r.Accessible}
+		rr := resolve.Resolution{Visible: true, Editor: r.Editor, ReadRestricted: r.ReadRestricted, Owner: r.Owner, Accessible: r.Accessible}
 
 		out[ref.Key()] = rr
 	}
@@ -127,7 +127,7 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 
 type uploads struct{ s *Service }
 
-// CanUpload lets editors of a content (staff, its creators, its owner
+// CanUpload lets editors of a content (staff, its authenticated author, its owner
 // group's editors) write its items, a group's editors its item, a person
 // their own avatar. A version being forked takes no other writes.
 func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {

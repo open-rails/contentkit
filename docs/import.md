@@ -53,7 +53,7 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
 
 ## Order and failures
 
-Sections are written in order: entities, contents, memberships, offers,
+Sections are written in order: entities, contents, memberships,
 aliases, comments, reactions, favorites, polls, votes, answers, signals,
 deletes; a
 record may name what an earlier section or call wrote. Each section runs in
@@ -63,14 +63,15 @@ savepoint, so the result lists only the records that failed
 Fix the cause and send them, or the whole batch, again. A batch holds at
 most 20,000 records.
 
-Offers are skipped without billing (synced by the offers job otherwise),
-signals without a signal plane; `skipped` counts them.
+Signals are skipped without a signal plane; `skipped` counts them. Products
+and prices are managed through OpenRails, not the ContentKit import.
 
 ## After an import
 
-The import queues the engine's jobs: search documents, group counts and
-covers, listing counts and, after signals, popularity. Interaction counts
-are recounted exactly in the writing transaction.
+Imports update content facets and interaction counts in their writing
+transactions, and queue search-document updates. Entity counts and automatic
+covers derive from current facets on reads; there is no periodic recount.
+Creator-channel lifecycle changes retain exact durable sync work.
 
 ## Media
 
@@ -113,7 +114,7 @@ named as the body references them.
 | `entities` | `EntityRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `edges`, `code`, times |
 | `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `comments` (open, closed, hidden), `access`, `restrictions`, `attributes`, `owner_group`, `creators`, `text`, `versions`, `code`, times |
 | | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `text` |
-| `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `active_from`, `active_until`, `state`) |
+| `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `state`) |
 | `offers` | `OfferRecord` | `target` (content, version, group), `terms` |
 | `aliases` | `AliasRecord` | `kind`, `key`, `locator`, `target` (content, group) |
 | `comments` | `CommentRecord` | `external_id`, `target` (content, version), `language`, `reply_to`, `user_id` / `anon_name`, `body`, `deleted_at`, times |

@@ -19,11 +19,11 @@ import (
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
+	"github.com/open-rails/authkit/notify"
+	notifypg "github.com/open-rails/authkit/notify/postgres"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/media/layout"
-	"github.com/open-rails/helpers/notify"
-	notifypg "github.com/open-rails/helpers/notify/postgres"
 )
 
 // The host installs the inbox beside its real AuthKit directory and injects a
@@ -35,7 +35,7 @@ type accountNoticeWorld struct {
 	accounts     *authkit.Client
 	accountOwner *authkit.Client
 	server       *httptest.Server
-	sink         notifypg.TxSink
+	sink         notify.Publisher
 	store        *notifypg.Store
 	legacy       *notifypg.Store
 	schema       string
@@ -245,7 +245,7 @@ func TestAccountNotificationChannel(t *testing.T) {
 			t.Fatal("parent deletion recursively deleted its surviving reply")
 		}
 		for _, old := range before {
-			must(t, n.sink.Apply(t.Context(), []notify.Mutation{{Input: old.Input, Revision: old.ProducerRevision}}))
+			must(t, n.sink.Publish(t.Context(), []notify.Publication{publicationFrom(old.Input, old.ProducerRevision)}))
 		}
 		if len(n.items(t, owner.ID)) != 0 {
 			t.Fatal("stale delivery resurrected deleted notices")
@@ -329,7 +329,7 @@ func TestAccountNotificationChannel(t *testing.T) {
 			must(t, err)
 			return false
 		})
-		must(t, n.sink.Apply(t.Context(), []notify.Mutation{{Input: before[0].Input, Revision: before[0].ProducerRevision}}))
+		must(t, n.sink.Publish(t.Context(), []notify.Publication{publicationFrom(before[0].Input, before[0].ProducerRevision)}))
 		page, err := n.store.List(t.Context(), before[0].Recipient, notify.ListOptions{})
 		must(t, err)
 		if len(page.Items) != 0 {
@@ -478,8 +478,8 @@ func TestAccountNotificationLegacyAdoption(t *testing.T) {
 		if adopted.Visibility != notify.VisibilityApp || adopted.AppID != n.a.cfg.Scope.AppID.String() || adopted.ReadAt == nil || adopted.DismissedAt == nil {
 			t.Fatalf("classification reset local state: %+v", adopted)
 		}
-		must(t, n.sink.Apply(t.Context(), []notify.Mutation{{Input: input, Revision: 2, Withdrawn: true}}))
-		must(t, n.sink.Apply(t.Context(), []notify.Mutation{{Input: input, Revision: 3}}))
+		must(t, n.sink.Withdraw(t.Context(), []notify.Withdrawal{{RecipientID: input.Recipient.ID, ID: input.Origin.ID, Revision: 2}}))
+		must(t, n.sink.Publish(t.Context(), []notify.Publication{publicationFrom(input, 3)}))
 		reopened, err := n.accounts.GetNotification(t.Context(), owner.ID, old.ID)
 		must(t, err)
 		if reopened.ReadAt != nil || reopened.DismissedAt != nil || reopened.ProducerRevision != 3 {

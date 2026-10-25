@@ -41,7 +41,7 @@ type ViewerOptions struct {
 
 // Viewer is the one visibility rule (ContentKit #117 spec §4) for one
 // request: live content and versions, the site scope, the
-// viewer's content filters and entitlements, and the staff, creators and
+// viewer's content filters and entitlements, and the staff, authenticated authors and
 // owner-entity editors who see everything. Listed renders it as SQL over
 // content_facets for lists and searches; Store.Contents and Resolver decide
 // items with it.
@@ -53,6 +53,9 @@ type Viewer struct {
 	mode           access.Mode
 	now            time.Time
 	staff          bool
+	staffWrite     bool
+	ownRead        ownAccess
+	ownWrite       ownAccess
 	management     bool
 	filter         *access.Filter
 	policies       domainpolicy.Policies
@@ -86,6 +89,19 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		s.log.WarnContext(ctx, "catalog: staff check failed; reading as a non-staff viewer", "err", err)
 	}
 	v.staff = rights.view || rights.write
+	v.staffWrite = rights.write
+	if !v.staffWrite {
+		v.ownRead, err = s.ownAccess(ctx, o.Actor, false)
+		if err != nil {
+			s.log.WarnContext(ctx, "catalog: own-read authority unavailable", "err", err)
+			v.ownRead = ownAccess{}
+		}
+		v.ownWrite, err = s.ownAccess(ctx, o.Actor, true)
+		if err != nil {
+			s.log.WarnContext(ctx, "catalog: own-edit authority unavailable", "err", err)
+			v.ownWrite = ownAccess{}
+		}
+	}
 	f, err := s.accessG.Filter(ctx, o.Actor)
 	if err != nil && !errors.Is(err, access.ErrUnavailable) {
 		return nil, err
@@ -161,7 +177,7 @@ func (v *Viewer) Editors(ctx context.Context, entities []string) map[string]bool
 	for _, g := range entities {
 		switch {
 		case g == "":
-		case v.staff || v.editable(g):
+		case v.staffWrite || v.editable(g):
 			out[g] = true
 		case v.asked != nil && v.asked[g]:
 			out[g] = true
@@ -249,7 +265,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	args := pgx.NamedArgs{"cv_now": v.now,
 		"cv_language": v.language, "cv_owned_contents": contents, "cv_owned_versions": versions,
 		"cv_owned_candidates": !v.filter.Complete() && !v.filter.Unknown(), "cv_user": viewerID(v.actor), "cv_editors": v.editorEntities,
-		"cv_include_deleted": v.includeDeleted}
+		"cv_include_deleted": v.includeDeleted, "cv_own_app": v.ownRead.app, "cv_own_channels": v.ownRead.entities}
 	for k, a := range accessArgs {
 		args[k] = a
 	}
@@ -285,8 +301,8 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 // privileged is the SQL test, over Listed's args, of a row whose channel the
 // viewer edits or whose content they created.
 func (v *Viewer) privileged(alias string) string {
-	return "(" + alias + ".owner_entity_id = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.creators +
-		" cc WHERE cc.tenant_id = " + alias + ".tenant_id AND cc.content_id = " + alias + ".content_id AND cc.user_id = @cv_user)))"
+	return "(" + alias + ".owner_entity_id = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.items +
+		" authored WHERE authored.tenant_id = " + alias + ".tenant_id AND authored.id = " + alias + ".content_id AND authored.created_by = @cv_user AND ((authored.owner_entity_id IS NULL AND @cv_own_app::boolean) OR authored.owner_entity_id=ANY(@cv_own_channels::text[])))))"
 }
 
 // Playable is a boolean SQL predicate over the content_facets row aliased
@@ -332,7 +348,7 @@ func (v *Viewer) inScope(r facetRow) bool { return v.policies.Allows(r.kind, r.e
 
 // itemView is the rule's verdict on one content item for the viewer.
 type itemView struct {
-	found, visible, editor bool
+	found, visible, editor, readRestricted bool
 	// versions are the visible versions in position order, each with its
 	// access decision.
 	versions  []facetRow
@@ -352,14 +368,9 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	if len(ids) == 0 {
 		return out, nil
 	}
-	// Listings read stored entity_ids, which the windows job refreshes; an
-	// access decision evaluates timed memberships now, even with no worker.
-	currentEntityIDs := `CASE WHEN EXISTS (SELECT 1 FROM ` + s.t.memberships + ` m WHERE m.tenant_id = f.tenant_id AND m.content_id = f.content_id
- AND (m.version_id IS NULL OR m.version_id = f.version_id) AND (m.active_from IS NOT NULL OR m.active_until IS NOT NULL))
- THEN ` + s.qs + `.content_current_entity_ids(f.tenant_id, f.content_id, f.version_id) ELSE f.entity_ids END`
 	rows, err := s.pool.Query(ctx, `SELECT f.content_id, f.version_id, f.kind, f.live_from, c.state = 'deleted', ver.state = 'deleted',
- f.languages, c.access, CASE WHEN ver.released THEN ver.released_access ELSE ver.access END, f.restrictions, `+currentEntityIDs+`, coalesce(f.owner_entity_id, ''), f.position,
- EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = f.tenant_id AND cc.content_id = f.content_id AND cc.user_id = $3 AND $3 <> '')
+ f.languages, c.access, CASE WHEN ver.released THEN ver.released_access ELSE ver.access END, f.restrictions, f.entity_ids, coalesce(f.owner_entity_id, ''), f.position,
+ (coalesce(c.created_by, '') = $3 AND $3 <> '')
  FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
  JOIN `+s.t.versions+` ver ON ver.tenant_id = f.tenant_id AND ver.id = f.version_id
  WHERE f.tenant_id = $1 AND f.content_id = ANY($2) ORDER BY f.content_id, f.position, f.version_id`, s.tenant, ids, viewerID(v.actor))
@@ -391,7 +402,16 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	}
 	// Live versions are decided by their rule; deleted ones that were live
 	// open only to holders of their own exact version key.
-	known := func(id string) bool { return v.staff || creator[id] || v.editable(byID[id][0].ownerEntity) }
+	personal := func(id string, write bool) bool {
+		if !creator[id] {
+			return false
+		}
+		if write {
+			return v.ownWrite.allows(byID[id][0].ownerEntity)
+		}
+		return v.ownRead.allows(byID[id][0].ownerEntity)
+	}
+	known := func(id string) bool { return v.staff || personal(id, false) || v.editable(byID[id][0].ownerEntity) }
 	var live, held []facetRow
 	for id, rs := range byID {
 		if known(id) {
@@ -449,7 +469,9 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	for id, rs := range byID {
 		iv := &itemView{found: true, decisions: map[string]Decision{}}
 		out[id] = iv
-		if iv.editor = known(id) || editors[rs[0].ownerEntity]; iv.editor {
+		iv.editor = v.staffWrite || personal(id, true) || v.editable(rs[0].ownerEntity) || editors[rs[0].ownerEntity]
+		iv.readRestricted = known(id) || editors[rs[0].ownerEntity]
+		if iv.readRestricted {
 			for _, r := range rs {
 				if !v.management && !v.inScope(r) {
 					continue
@@ -519,7 +541,7 @@ func (s *Store) directViews(ctx context.Context, actor access.Actor, ids []strin
 // one of its versions is visible by the rule for direct reads (live, deleted
 // and held by its own keys, or edited by the viewer), accessible when the
 // viewer opens it (a content reference: any of its visible versions), with
-// staff, creators and owner-entity editors as Editor and the first creator as
+// staff, authenticated authors and owner-entity editors as Editor and the author as
 // Owner. A reference it omits is unseen.
 func (s *Store) Resolver() resolve.Resolver { return resolver{s} }
 
@@ -548,7 +570,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 			continue
 		}
 		o := owners[ref.ContentID]
-		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: o.creator, Comments: o.comments, OwnerEntity: o.entity}
+		res := resolve.Resolution{Ref: ref, Editor: iv.editor, ReadRestricted: iv.readRestricted, Owner: o.creator, Comments: o.comments, OwnerEntity: o.entity}
 		for _, ver := range iv.versions {
 			if want := ref.Version(); want == "" || ver.versionID == want {
 				res.Visible = true
@@ -562,7 +584,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 	return out, nil
 }
 
-// ownership is a content item's first creator, comments setting and active
+// ownership is a content item's authenticated author, comments setting and active
 // user-owned owner entity.
 type ownership struct {
 	creator, comments string
@@ -570,8 +592,7 @@ type ownership struct {
 }
 
 func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership, error) {
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, coalesce((SELECT cc.user_id FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id
- AND cc.content_id = c.id ORDER BY cc.position, cc.user_id LIMIT 1), ''), coalesce(g.id, ''), coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, CASE WHEN c.owner_entity_id IS NULL THEN coalesce(c.created_by, '') ELSE '' END, coalesce(g.id, ''), coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
  FROM `+s.t.items+` c LEFT JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_entity_id AND g.state = 'active'
  WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
@@ -586,7 +607,11 @@ func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership,
 		if err := rows.Scan(&id, &o.comments, &o.creator, &g.ID, &g.Kind, &g.Owner, &g.Scope); err != nil {
 			return nil, err
 		}
-		if g.ID != "" && s.cfg.EntityKinds[g.Kind].Owner == "user" {
+		if g.ID != "" && (s.cfg.EntityKinds[g.Kind].Owner == "user" || s.cfg.EntityKinds[g.Kind].AuthScope) {
+			if s.cfg.EntityKinds[g.Kind].AuthScope && g.Scope == "" {
+				// Keep the channel ban boundary while refusing the owner fallback.
+				g.Owner = ""
+			}
 			o.entity = &g
 		}
 		out[id] = o

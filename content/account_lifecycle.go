@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/helpers/notify"
 )
 
 func (rt *Runtime) accountLifecycleTable() string {
@@ -88,8 +87,10 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 	// Every app consumes the terminal event and fences its own inbox scope.
 	// A global fence would block a sibling's startup before its consumer could
 	// finish that sibling's still-pending anonymization.
-	if err := rt.Notifications.EraseAppRecipient(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: actorID}); err != nil {
-		return err
+	if rt.eraseAccountReceipts != nil {
+		if err := rt.eraseAccountReceipts(ctx, []string{actorID}, false); err != nil {
+			return err
+		}
 	}
 	if rt.providerEraser != nil {
 		return rt.providerEraser.EraseSubjects(ctx, rt.tenant, []string{actorID})

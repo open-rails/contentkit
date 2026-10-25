@@ -263,6 +263,9 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		if p.kind, err = s.kind(c.Kind); err != nil {
 			return nil, err
 		}
+		if p.OwnerEntityID, err = s.fixedOwner(ctx, s.pool, c.Kind, c.OwnerEntityID); err != nil {
+			return nil, err
+		}
 		if p.OriginalTitle, p.OriginalLanguage, err = cleanOriginalTitle(p.OriginalTitle, p.OriginalLanguage); err != nil {
 			return nil, err
 		}
@@ -324,7 +327,7 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		if slices.ContainsFunc(p.versions, func(v VersionInput) bool { return v.Fork != nil }) {
 			return nil, invalid("a new item's versions have no sibling to fork")
 		}
-		owners = append(owners, c.OwnerEntityID)
+		owners = append(owners, p.OwnerEntityID)
 		preps[i] = p
 	}
 	if err := s.authorizeCreate(ctx, s.pool, actor, owners); err != nil {
@@ -350,6 +353,11 @@ func (s *Store) createPreparedTx(ctx context.Context, tx pgx.Tx, actor access.Ac
 	ids := make([]string, len(preps))
 	var events []Event
 	for i, p := range preps {
+		// Revalidate under the write transaction: the configured channel may
+		// have been renamed or retired after PrepareCreate authorized it.
+		if _, err := s.fixedOwner(ctx, tx, p.Kind, p.OwnerEntityID); err != nil {
+			return nil, err
+		}
 		if err := s.checkRuleEntities(ctx, tx, p.Access); err != nil {
 			return nil, err
 		}

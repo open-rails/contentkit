@@ -17,11 +17,13 @@ import (
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/keys"
+	"github.com/open-rails/authkit/notify"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 type clock struct {
@@ -35,31 +37,41 @@ func (c *clock) set(at time.Time) { c.mu.Lock(); defer c.mu.Unlock(); c.at = at 
 // world contains real public runtimes. The only controlled dependency is time;
 // AuthKit's Outbox is an external mail/SMS transport, not an identity mock.
 type world struct {
-	pool             *pgxpool.Pool
-	auth             *authkit.Client
-	roles            *authkit.Roles
-	writer           iam.Role
-	viewer           iam.Role
-	moderator        iam.Role
-	commentManager   iam.Role
-	globalReviewer   iam.Role
-	channelWriter    iam.Role
-	channelModerator iam.Role
-	tenant           [2]*authkit.Client
-	apps             []*application
-	clock            *clock
-	schema           string
-	signer           keys.Signer
-	configure        []func(*ck.Config)
+	pool               *pgxpool.Pool
+	auth               *authkit.Client
+	roles              *authkit.Roles
+	writer             iam.Role
+	contributor        iam.Role
+	submitter          iam.Role
+	ownEditor          iam.Role
+	viewer             iam.Role
+	moderator          iam.Role
+	commentManager     iam.Role
+	globalReviewer     iam.Role
+	channelWriter      iam.Role
+	channelContributor iam.Role
+	channelSubmitter   iam.Role
+	channelOwnEditor   iam.Role
+	channelModerator   iam.Role
+	channelManager     iam.Role
+	tenant             [2]*authkit.Client
+	apps               []*application
+	clock              *clock
+	schema             string
+	signer             keys.Signer
+	configure          []func(*ck.Config)
 }
 
 type application struct {
-	engine *ck.Engine
-	cfg    ck.Config
-	deps   ck.Deps
-	group  iam.GroupRef
-	server *httptest.Server
-	tenant *authkit.Client
+	test        *testing.T
+	engine      *ck.Engine
+	cfg         ck.Config
+	deps        ck.Deps
+	group       iam.GroupRef
+	server      *httptest.Server
+	tenant      *authkit.Client
+	inbox       *authkit.Client
+	inboxServer *httptest.Server
 }
 
 func newWorld(t *testing.T, configure ...func(*ck.Config)) *world {
@@ -89,6 +101,9 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 	write := permissions[access.ContentWrite]
 	moderate := permissions[access.CommentsModerate]
 	w.writer = appPersona.Role("writer", write)
+	w.contributor = appPersona.Role("contributor", permissions[access.ContentCreate], permissions[access.ContentEditOwn])
+	w.submitter = appPersona.Role("submitter", permissions[access.ContentCreate])
+	w.ownEditor = appPersona.Role("own-editor", permissions[access.ContentEditOwn])
 	w.viewer = appPersona.Role("auditor", permissions[access.ContentViewRestricted])
 	w.moderator = appPersona.Role("moderator", moderate)
 	w.commentManager = appPersona.Role("comment-manager", moderate, permissions[access.CommentsBan], permissions[access.ModerationReview])
@@ -99,7 +114,11 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 		channelPermissions[permission] = channel.Declare(permission)[0]
 	}
 	w.channelWriter = channel.Role("writer", channelPermissions["channel:content:write"])
+	w.channelContributor = channel.Role("contributor", channelPermissions["channel:content:create"], channelPermissions["channel:content:edit-own"])
+	w.channelSubmitter = channel.Role("submitter", channelPermissions["channel:content:create"])
+	w.channelOwnEditor = channel.Role("own-editor", channelPermissions["channel:content:edit-own"])
 	w.channelModerator = channel.Role("moderator", channelPermissions["channel:comments:moderate"])
+	w.channelManager = channel.Role("manager", channelPermissions["channel:settings:manage"], channelPermissions["channel:media:write"])
 	w.auth, _ = authtest.New(t,
 		authtest.WithConfig(func(c *authkit.Config) {
 			c.Roles = w.roles
@@ -159,11 +178,33 @@ func (w *world) newApplication(t *testing.T, tenant *authkit.Client, tid iam.Ten
 	for _, configure := range w.configure {
 		configure(&cfg)
 	}
+	// The fixture's account owner explicitly enables the optional inbox. The
+	// content runtime only receives a scoped producer; it creates no inbox tables.
+	inboxSchema := "contentkit_accounts"
+	if cfg.Accounts != nil {
+		inboxSchema = cfg.Accounts.Schema
+	}
+	inboxOwner := authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) {
+		c.Notifications = &authkit.NotificationsConfig{Schema: inboxSchema,
+			Scopes: map[string]string{tid.String(): "contentkit:" + (layout.Scope{TenantID: tid.String()}).Partition()},
+			AppID:  aid.String(), LegacyOrigins: []notify.OriginScope{{System: "contentkit", Scope: aid.String()}, {System: "critical-shared", Scope: tid.String()}},
+			Producers: []authkit.NotificationProducer{
+				{Name: "contentkit", TenantID: tid, Origin: notify.OriginScope{System: "contentkit", Scope: aid.String()}, Visibility: notify.VisibilityApp, AppID: aid.String()},
+				{Name: "application", TenantID: tid, Origin: notify.OriginScope{System: "critical", Scope: aid.String()}, Visibility: notify.VisibilityApp, AppID: aid.String()},
+			},
+		}
+	}))
+	inbox, err := inboxOwner.ForTenant(ctx, tid)
+	must(t, err)
+	deps.Notifications, err = inbox.Notifications("contentkit")
+	must(t, err)
+	inboxServer := httptest.NewServer(inboxOwner.Handler())
+	t.Cleanup(inboxServer.Close)
 	deps.Scopes, err = ckauth.AppScopes(w.auth, scope)
 	must(t, err)
 	engine, err := ck.New(ctx, cfg, deps)
 	must(t, err)
-	a := &application{engine: engine, cfg: cfg, deps: deps, group: group, tenant: tenant}
+	a := &application{test: t, engine: engine, cfg: cfg, deps: deps, group: group, tenant: tenant, inbox: inbox, inboxServer: inboxServer}
 	routes, err := engine.Routes(ck.Routes{Prefix: "/content", Groups: engine.RouteGroups()})
 	must(t, err)
 	mux := http.NewServeMux()

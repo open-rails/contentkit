@@ -382,7 +382,7 @@ export interface ContentRailProps extends Omit<CardListProps, "infinite" | "empt
   recommendations?: boolean;
   /** The reader's history: { status: "in_progress" } is a continue-watching rail. */
   history?: HistoryQuery;
-  /** An ordered group's members in its order: a featured rail (its windows apply). */
+  /** An ordered group's members in its order: a featured rail. */
   entity?: string;
   /** Any list: a sort and filters. */
   list?: ContentQuery;

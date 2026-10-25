@@ -22,8 +22,6 @@ func (e sharedEntities) Similar(ctx context.Context, anchor contentref.ContentRe
  SELECT DISTINCT g.id, CASE WHEN g.kind = 'tag' THEN 1 ELSE 4 END AS weight
  FROM %s m JOIN %s g ON g.tenant_id = m.tenant_id AND g.id = m.entity_id
  WHERE m.tenant_id = $1 AND m.content_id = $2 AND m.state = 'active'
- AND (m.active_from IS NULL OR m.active_from <= now())
- AND (m.active_until IS NULL OR m.active_until > now())
  AND g.state = 'active' AND NOT g.internal AND g.kind IN ('artist', 'series', 'character', 'tag')
  ORDER BY weight DESC, g.id LIMIT 64
 ), matches AS (
@@ -31,8 +29,6 @@ func (e sharedEntities) Similar(ctx context.Context, anchor contentref.ContentRe
  CROSS JOIN LATERAL (
   SELECT m.content_id FROM %s m
   WHERE m.tenant_id = $1 AND m.entity_id = a.id AND m.content_id <> $2 AND m.state = 'active'
-  AND (m.active_from IS NULL OR m.active_from <= now())
-  AND (m.active_until IS NULL OR m.active_until > now())
   ORDER BY m.position DESC, m.content_id DESC LIMIT 200
  ) m
 )

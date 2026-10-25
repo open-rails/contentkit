@@ -45,6 +45,8 @@ ContentKit names its staff permissions, always the full
 
 | Constant | Permission | Holders may |
 |---|---|---|
+| `access.ContentCreate` | `root:content:create` | create and read their own content outside channels |
+| `access.ContentEditOwn` | `root:content:edit-own` | read, edit, publish and manage media of content they created outside channels |
 | `access.ContentWrite` | `root:content:write` | write and publish content, delete and restore its versions, and manage its images |
 | `access.ContentViewRestricted` | `root:content:view-restricted` | see every content item in any state, listing, site or filter |
 | `access.PollsWrite` | `root:polls:write` | write and delete polls, options and images; see inactive ones |
@@ -53,12 +55,16 @@ ContentKit names its staff permissions, always the full
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
 | `access.EntitiesWrite` | `root:entities:write` | create, edit, merge and delete entities, and set memberships |
 
-A user-owned entity kind with `auth_scope` (channels) has its own
+A site-owned or user-owned entity kind with `auth_scope` (channels) has its own
 permissions, held in each entity's AuthKit scope, whose persona declares
-`access.EntityPermissions(kind)`: `{kind}:content:write` (its content),
+`access.EntityPermissions(kind)`: `{kind}:content:create` (own submissions),
+`{kind}:content:edit-own` (own posts), `{kind}:content:write` (all its content),
 `{kind}:settings:manage` (the entity),
 `{kind}:media:write` and `{kind}:comments:moderate` (delete, hold, release
-and ban on the entity's content). The entity's owner holds them all.
+and ban on the entity's content). The host defines roles and assignments. For
+scoped entities, current AuthKit grants determine authority; an owner attribution
+alone grants nothing. See [Posts and channels](docs/posts-and-channels.md) for
+contributor, editor and moderator policies.
 
 Declare them in the auth's roles from the constants, so a rename breaks the
 build instead of drifting:
@@ -1309,10 +1315,11 @@ and `hentai0_media_worker`, and passes it everywhere:
 It is required. Hosts sharing a database must never share one: a worker
 drains every job in its schema, so it would take another host's jobs (same
 queue and job kinds) and fail them against its own registry and bucket. Queue
-names (`media_place`, `media_image`, `media_video`, `media_audio`) are fixed
-within a schema; every upload passes through `media_place`, so a worker must
-run even for kinds without presets. Autoscalers (KEDA) count `{schema}.river_job` rows of `media_video`
-and `media_audio` (available/running/retryable).
+names (`media_ingest`, `media_image`, `media_video`) are fixed within a schema.
+Every accepted upload passes through `media_ingest`, so a worker must run even
+for kinds without presets. Ingest preserves uploaded audio without conversion;
+video processing retains its configured soundtracks. Autoscalers (KEDA) can
+count available/running/retryable rows in these queues in `{schema}.river_job`.
 
 It is never the host's own River schema either: River elects one leader per
 schema, and only the leader enqueues periodic jobs and runs maintenance, from
@@ -1403,17 +1410,16 @@ the host's periodic jobs. The worker migrates its schema itself.
 
 `entities.Store` owns the app's artists, tags, series, characters, channels and
 collections; their kinds come from `kinds.Config.EntityKinds`. Shared and
-version-level associations are replaced independently. Writes refresh timeless
-association facets in the same transaction. Engine jobs keep counts and
-automatic covers (`Recount`, every 5 minutes and after an import) and dated
-associations (`RefreshWindows`, every minute) current in the stored facets;
-direct access decisions apply dated associations at once. Only configured user-owned or permission-scoped entity
-kinds schedule lifecycle recovery. The entity routes remain `/v1/entities…`
-and `/v1/contents/{id}/entities`.
+version-level associations are replaced independently. Writes refresh association
+facets in the same transaction. Entity counts and automatic covers are derived
+on reads, so edits and release times take effect without a recount job.
+Creator-owned or permission-scoped entity changes enqueue exact durable lifecycle
+sync; ordinary staff-managed entities need no lifecycle worker. The entity routes
+remain `/v1/entities…` and `/v1/contents/{id}/entities`.
 
-Keyword documents enrich content with timeless active associations and their
-ancestors. A static entry in a window-enabled rail still contributes keywords;
-a dated entry is queried at runtime and never needs a clock-driven reindex.
+Keyword documents enrich content with active associations and their ancestors.
+Collection associations remain active until explicitly changed; subscription
+and rental expiry belong to the entitlement provider.
 
 Legacy HTTP fields (`group_id`, `groups`, `exclude_groups`, `owner_group_id`),
 access values (`group`, `group_ppv`), billing key namespaces (`:group:`) and
@@ -1524,3 +1530,38 @@ Nothing reads cached facet scores. See
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
+
+Entity lifecycle changes enqueue `contentkit_entity_sync` in the same transaction
+as the entity write, including imports and writes made before local workers start.
+That job provisions or retires channel editor groups and follows channel deletion
+or restoration into its owned content. There is no periodic entity reconciliation
+scan. River retains failed work for explicit retry after its normal attempt limit.
+Standalone entity stores must point `entities.Options.RiverSchema` at migrated
+River tables (by default, `<entity-schema>_river`).
+
+## Post contributors and attribution
+
+A host grants typed capabilities through its AuthKit roles. `ContentCreate`
+permits personal posts outside channels; `EntityContentCreate(kind)` permits
+posting in one channel. `ContentEditOwn` and `EntityContentEditOwn(kind)` permit
+editing and publishing the caller's own posts. A normal contributor role grants
+both create and edit-own. A submission-only role can grant create alone: its
+author can read the submitted draft but cannot edit, publish or upload media.
+Current create or edit-own authority is required for an author's private reads;
+edit-own is required for mutations. Removing those grants applies on the next
+request, even when the account remains recorded as the author.
+
+`ContentWrite` and `EntityContentWrite(kind)` retain broad staff/team-editor
+semantics. Read-restricted auditors can see drafts but are not media editors.
+For a scoped channel, AuthKit's current owner/team roles are authoritative;
+`owner_user_id` metadata does not bypass revoked grants. A host that deliberately
+uses a user-owned kind without an auth scope retains its direct-owner model.
+Site-owned channels can also have an auth scope to delegate settings, media,
+content or comment moderation to a group; site ownership alone doesn't grant
+ordinary users access. Creating site-owned channels stays staff-only.
+
+Personal authority also requires immutable `content_items.created_by`, set from
+the authenticated tenant account. Editable creator credits are display metadata,
+not grants. Imported content without `created_by` remains staff/channel-managed.
+App-level own-post permissions never authorize access to arbitrary channels.
+OpenRails continues to own paid audience entitlements and their expiration.

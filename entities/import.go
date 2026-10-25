@@ -284,10 +284,13 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 	if err := s.markDirty(ctx, q, marks); err != nil {
 		return err
 	}
-	// A deleted entity's scope is retired, an unscoped one provisioned, by the job.
+	// Scope changes and owned-content deletion/restoration are admitted with
+	// the imported entity, even when no workers run in this process.
 	var sync []string
 	for _, g := range marks {
-		if g.State != StateActive && g.AuthScope != "" || provision && slices.Contains(s.unscoped([]Entity{g}), string(g.ID)) {
+		before, exists := stored[string(g.ID)]
+		ownedChanged := s.cfg.EntityKinds[g.Kind].Owner == "user" && (!exists || before.State != g.State)
+		if ownedChanged || g.State != StateActive && g.AuthScope != "" || provision && slices.Contains(s.unscoped([]Entity{g}), string(g.ID)) {
 			sync = append(sync, string(g.ID))
 		}
 	}
@@ -554,15 +557,13 @@ func (s *Store) sameMemberships(f facts, set ContentEntities, stored []Membershi
 		if state == "" {
 			state = MembershipActive
 		}
-		if !ok || h.State != state || !sameTime(h.ActiveFrom, m.ActiveFrom) || !sameTime(h.ActiveUntil, m.ActiveUntil) ||
+		if !ok || h.State != state ||
 			m.Position != nil && (h.Position == nil || *h.Position != *m.Position) {
 			return false
 		}
 	}
 	return true
 }
-
-func sameTime(a, b *time.Time) bool { return (a == nil) == (b == nil) && (a == nil || a.Equal(*b)) }
 
 // ImportDeletes deletes the active entities among ids in q, as DeleteEntities
 // does; deleted and merged ones stay as they are.

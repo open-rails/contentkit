@@ -8,11 +8,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/helpers/notify"
+	"github.com/open-rails/authkit/notify"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/notification"
 )
 
 // commentNotice carries references, never copied comment bodies, private
@@ -70,6 +69,9 @@ func (c *comments) notifyLike(ctx context.Context, tx pgx.Tx, actor access.Actor
 }
 
 func (c *comments) publishNotice(ctx context.Context, tx pgx.Tx, recipient, kind, eventID string, payload commentNotice) error {
+	if c.rt.notifier == nil {
+		return nil
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("content: encode notification: %w", err)
@@ -84,10 +86,10 @@ func (c *comments) publishNotice(ctx context.Context, tx pgx.Tx, recipient, kind
 	if err != nil {
 		return fmt.Errorf("content: record notification identity: %w", err)
 	}
-	err = c.rt.notifier.ApplyTx(ctx, tx, []notify.Mutation{{Input: notify.Input{Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: recipient}, Origin: notify.Origin{System: "contentkit", Scope: c.s.tenant, ID: eventID}, Kind: kind, Data: data, CreatedAt: createdAt}, Revision: revision}})
+	err = c.rt.notifier.Publish(ctx, []notify.Publication{{RecipientID: recipient, ID: eventID, Kind: kind, Data: data, CreatedAt: createdAt, Revision: revision}}, tx)
 	// Erased recipients cannot receive new notices; their old published comments
 	// can remain under host policy without blocking someone else's interaction.
-	if errors.Is(err, notify.ErrRecipientErased) || errors.Is(err, notification.ErrRecipientNotFound) {
+	if errors.Is(err, notify.ErrRecipientErased) {
 		return nil
 	}
 	if err != nil {
@@ -104,6 +106,9 @@ func (c *comments) noticeTable() string {
 // Replies survive parent deletion, but their reply-to-parent notices do not.
 // The caller holds the thread lock and records all withdrawals in its transaction.
 func (c *comments) withdrawNotices(ctx context.Context, tx pgx.Tx, cid string) error {
+	if c.rt.notifier == nil {
+		return nil
+	}
 	for {
 		rows, err := tx.Query(ctx, `WITH selected AS (
 	SELECT tenant_id,recipient,source_id FROM `+c.noticeTable()+`
@@ -117,15 +122,15 @@ func (c *comments) withdrawNotices(ctx context.Context, tx pgx.Tx, cid string) e
 		if err != nil {
 			return err
 		}
-		mutations, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (notify.Mutation, error) {
-			m := notify.Mutation{Input: notify.Input{Recipient: notify.Recipient{Audience: notify.AudienceUser}, Origin: notify.Origin{System: "contentkit", Scope: c.s.tenant}}, Withdrawn: true}
-			err := row.Scan(&m.Recipient.ID, &m.Origin.ID, &m.Revision)
+		withdrawals, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (notify.Withdrawal, error) {
+			var m notify.Withdrawal
+			err := row.Scan(&m.RecipientID, &m.ID, &m.Revision)
 			return m, err
 		})
-		if err != nil || len(mutations) == 0 {
+		if err != nil || len(withdrawals) == 0 {
 			return err
 		}
-		if err := c.rt.notifier.ApplyTx(ctx, tx, mutations); err != nil {
+		if err := c.rt.notifier.Withdraw(ctx, withdrawals, tx); err != nil {
 			return fmt.Errorf("content: withdraw comment notifications: %w", err)
 		}
 	}

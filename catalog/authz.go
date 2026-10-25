@@ -6,6 +6,8 @@ import (
 	"slices"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit/auth"
+	"github.com/open-rails/contentkit/entities"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/gate"
@@ -40,12 +42,17 @@ func (s *Store) staffRights(ctx context.Context, actor access.Actor) (staffRight
 // owner of a user-owned entity, or a holder of access.EntityContentWrite of its
 // kind in its AuthKit scope.
 func (s *Store) entityEditor(ctx context.Context, q Querier, actor access.Actor, entityIDs []string) (map[string]bool, error) {
+	return s.entityAllowed(ctx, q, actor, entityIDs, false)
+}
+
+// entityAllowed keeps narrow creation separate from broad channel editorship.
+func (s *Store) entityAllowed(ctx context.Context, q Querier, actor access.Actor, entityIDs []string, creating bool) (map[string]bool, error) {
 	out := map[string]bool{}
 	if actor.Anonymous || actor.ID == "" || len(entityIDs) == 0 {
 		return out, nil
 	}
 	rows, err := q.Query(ctx, `SELECT id, kind, coalesce(owner_user_id, ''), coalesce(auth_scope, '') FROM `+s.t.entities+`
- WHERE tenant_id = $1 AND id = ANY($2) AND (owner_user_id IS NOT NULL OR auth_scope IS NOT NULL)`, s.tenant, entityIDs)
+ WHERE tenant_id = $1 AND id = ANY($2) AND state = 'active' AND (owner_user_id IS NOT NULL OR auth_scope IS NOT NULL)`, s.tenant, entityIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +72,14 @@ func (s *Store) entityEditor(ctx context.Context, q Querier, actor access.Actor,
 		return nil, err
 	}
 	for id, g := range found {
-		ok, err := gate.EntityEditor(ctx, s.guard.Auth, actor, g.owner, g.scope, access.EntityContentWrite(g.kind))
+		if s.cfg.EntityKinds[g.kind].AuthScope && g.scope == "" {
+			continue
+		}
+		permissions := []string{access.EntityContentWrite(g.kind)}
+		if creating {
+			permissions = append(permissions, access.EntityContentCreate(g.kind))
+		}
+		ok, err := gate.EntityEditor(ctx, s.guard.Auth, actor, g.owner, g.scope, permissions...)
 		if err != nil {
 			return nil, &AuthError{err}
 		}
@@ -96,6 +110,7 @@ type owned struct {
 // hold a connection and row locks while waiting on it. They last one write.
 type grants struct {
 	staff staffRights
+	own   ownAccess
 	// editors are the owner entities the rows named when asked, and whether
 	// the actor edits each.
 	editors map[string]bool
@@ -108,6 +123,9 @@ func (s *Store) grantsFor(ctx context.Context, actor access.Actor, ids []string)
 	var g grants
 	var err error
 	if g.staff, err = s.staffRights(ctx, actor); err != nil || g.staff.write {
+		return g, err
+	}
+	if g.own, err = s.ownAccess(ctx, actor, true); err != nil {
 		return g, err
 	}
 	rows, err := s.pool.Query(ctx, `SELECT DISTINCT owner_entity_id FROM `+s.t.items+`
@@ -124,13 +142,13 @@ func (s *Store) grantsFor(ctx context.Context, actor access.Actor, ids []string)
 }
 
 // authorize locks ids for the write and refuses unless actor edits each: a
-// root:content:write holder, one of its creators or an editor of its owner
+// root:content:write holder, its authenticated author or an editor of its owner
 // entity, by g. An owner entity that changed since g was asked is not in it,
 // so refuses. A missing id is ErrNotFound.
 func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, ids []string, g grants) (map[string]owned, error) {
 	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
 	rows, err := q.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.owner_entity_id, ''), c.published_at IS NOT NULL, c.publish_at IS NOT NULL,
- EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $3 AND $3 <> '')
+ (coalesce(c.created_by, '') = $3 AND $3 <> '')
  FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2) ORDER BY c.id FOR UPDATE`, s.tenant, ids, viewerID(actor))
 	if err != nil {
 		return nil, err
@@ -159,34 +177,40 @@ func (s *Store) authorize(ctx context.Context, q Querier, actor access.Actor, id
 		return out, s.recordBeforeEdit(ctx, q, ids, out)
 	}
 	for id, o := range out {
-		if !creator[id] && !g.editors[o.ownerEntity] {
+		if !(creator[id] && g.own.allows(o.ownerEntity)) && !g.editors[o.ownerEntity] {
 			return nil, ErrForbidden
 		}
 	}
 	return out, s.recordBeforeEdit(ctx, q, ids, out)
 }
 
-// authorizeCreate refuses unless actor may create content in ownerEntity: a
-// root:content:write holder anywhere, an owner entity's editor in it.
+// authorizeCreate admits staff anywhere, personal creation outside channels,
+// or a channel's owner/contributor/editor inside that specific channel.
 func (s *Store) authorizeCreate(ctx context.Context, q Querier, actor access.Actor, ownerEntities []string) error {
 	rights, err := s.staffRights(ctx, actor)
 	if err != nil || rights.write {
 		return err
 	}
-	if !actor.Person() {
+	if !actor.Member() {
 		return ErrForbidden
 	}
-	editors, err := s.entityEditor(ctx, q, actor, ownerEntities)
-	if err != nil {
-		return err
-	}
-	for _, g := range ownerEntities {
-		if !editors[g] {
+	if slices.Contains(ownerEntities, "") {
+		allowed, err := gate.Can(ctx, s.guard.Auth, actor, string(access.ContentCreate))
+		if err != nil {
+			return &AuthError{err}
+		}
+		if !allowed {
 			return ErrForbidden
 		}
 	}
-	if slices.Contains(ownerEntities, "") {
-		return ErrForbidden
+	allowed, err := s.entityAllowed(ctx, q, actor, ownerEntities, true)
+	if err != nil {
+		return err
+	}
+	for _, entity := range ownerEntities {
+		if entity != "" && !allowed[entity] {
+			return ErrForbidden
+		}
 	}
 	return nil
 }
@@ -198,4 +222,47 @@ func viewerID(a access.Actor) string {
 func isAuthErr(err error) bool {
 	var ae *AuthError
 	return errors.As(err, &ae)
+}
+
+// ownAccess is evaluated once per request from current provider grants. The
+// author ID is still required at each content row; it is not itself a grant.
+type ownAccess struct {
+	app      bool
+	entities []string
+}
+
+func (a ownAccess) allows(channel string) bool {
+	if channel == "" {
+		return a.app
+	}
+	return slices.Contains(a.entities, channel)
+}
+func (s *Store) ownAccess(ctx context.Context, actor access.Actor, editing bool) (ownAccess, error) {
+	out := ownAccess{entities: []string{}}
+	if !actor.Member() {
+		return out, nil
+	}
+	var err error
+	out.app, err = gate.Can(ctx, s.guard.Auth, actor, string(access.ContentEditOwn))
+	if err != nil {
+		return out, &AuthError{err}
+	}
+	if !editing && !out.app {
+		out.app, err = gate.Can(ctx, s.guard.Auth, actor, string(access.ContentCreate))
+		if err != nil {
+			return out, &AuthError{err}
+		}
+	}
+	if source, ok := s.entities.(interface {
+		ContentAuthorEntities(context.Context, auth.Authenticator, access.Actor, bool) ([]entities.EntityID, error)
+	}); ok {
+		ids, err := source.ContentAuthorEntities(ctx, s.guard.Auth, actor, editing)
+		if err != nil {
+			return out, &AuthError{err}
+		}
+		for _, id := range ids {
+			out.entities = append(out.entities, string(id))
+		}
+	}
+	return out, nil
 }

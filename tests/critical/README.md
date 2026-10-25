@@ -25,10 +25,17 @@ packages and empty executions all fail qualification. The HTTP inventory is
 checked against the declared API, and both operation and binding inventories
 are checked against the ledger.
 
-The current inventories contain 136 scenarios, 166 HTTP operations and 237
-bindings. `coverage.json` records their review and case mappings;
-`results/go.jsonl` records actual execution. A successful full runner is the
-qualification result, not the review status of an individual ledger entry.
+The scenario, HTTP-operation and binding inventories describe the contracts;
+`coverage.json` maps them to executable cases. `results/go.jsonl` records actual
+execution. A successful full runner is the qualification result, not the review
+status of an individual ledger entry.
+
+The runner reports named Go test results, including parent functions and their
+subtests. One contract can produce many results: the HTTP authentication matrix
+runs each route under several credential and permission profiles. The reported
+total is therefore not a count of independent end-to-end journeys. Use the
+inventories to inspect behavioral coverage and the execution log to inspect what
+actually ran.
 
 CI builds and checks the shipped SDK, public Go modules and native commands
 before running the suite with race detection. It uploads execution results and

@@ -1,7 +1,7 @@
 # Authorization for tenant accounts and app content
 
 `Config.Scope` fixes one canonical tenant and app. The same tenant UUID owns
-its AuthKit accounts and ContentKit shared avatars and inbox; it is not an
+its AuthKit accounts and inbox and ContentKit shared avatars; it is not an
 issuer, schema name or billing merchant ID. Catalogs remain separate per app.
 Scoped engines require `Deps.Authorization`; legacy engines retain their
 existing host authorization contract until explicitly migrated.
@@ -130,15 +130,20 @@ remains retryable after restart. ContentKit does not duplicate that coordinator.
 `EraseAppSubjects` is a privileged app-only erasure boundary. It permanently
 fences local activity and app notices while preserving the tenant inbox,
 avatars and sibling apps. This is not a new account-registration or user
-reset flow. Shared notification tombstones retain both whole-account and
-app-only erasures, and database guards fence older delayed publishers.
+reset flow. Shared account erasure intents are committed before signal,
+content or media cleanup, even with notifications disabled. Explicit full
+account erasure records a tenant-wide intent; app erasure and ordinary account
+anonymization record an app intent. These intents survive completion. Existing
+AuthKit tombstones also remain authoritative, and database guards fence older
+delayed publishers. Historical completion receipts backfill only their recorded
+app's intent because they can also represent ordinary anonymization.
 
 A content-only restore must preserve the shared account store. Normal scoped
-startup refuses `ErrErasureReplayRequired` when shared tombstones are missing
+startup refuses `ErrErasureReplayRequired` when shared intents or tombstones are missing
 their local content fences or completed cleanup receipt. Full account cleanup
 has a separate receipt in the preserved account schema, keyed by tenant, app
-and actor. Only successful `EraseSubjects` writes it; app-only cleanup never
-does. A global tombstone requires both this app's receipt and the avatar
+and actor. Successful `EraseSubjects` or `AnonymizeAccount` writes it;
+`EraseAppSubjects` never does. A global tombstone requires both this app's receipt and the avatar
 primary's receipt, so a secondary cannot discharge failed shared media cleanup.
 A source SQL commit alone does not complete erasure while another plane failed.
 The operator's replay tool opens

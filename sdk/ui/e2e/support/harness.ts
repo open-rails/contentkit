@@ -1,4 +1,3 @@
-import type { Item as NotificationItem } from "../../src/client/generated/wire.js";
 // The harness's test-control surface (/__test, e2e/server/control.go).
 
 export interface TestUser {
@@ -110,20 +109,11 @@ export class Harness {
     return this.call("POST", "/users", o);
   }
 
-  /** Publishes through the host-only fixture into the real notification store. */
-  notification(user: TestUser, input: { kind: string; data?: Record<string, unknown>; status?: "open"; action_requested?: boolean }): Promise<NotificationItem> {
-    return this.call("POST", "/notifications", { ...input, recipient: { audience: "user", id: user.id } });
-  }
-
   /** Registers an item with the host's resolver: owned by owner, locked to viewers when access is "none". */
   item(o: { kind: string; id?: string; owner?: string; access?: "full" | "none"; hidden?: boolean; title?: string }): Promise<Item> {
     return this.call("POST", "/items", o);
   }
 
-  /** Runs the entities' count and automatic cover job now. */
-  recount(): Promise<void> {
-    return this.call("POST", "/recount");
-  }
 
   updateItem(ref: { kind: string; id: string }, o: { access?: "full" | "none"; hidden?: boolean }): Promise<Item> {
     return this.call("PATCH", `/items/${ref.kind}/${ref.id}`, o);

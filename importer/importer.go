@@ -193,12 +193,10 @@ type MembershipSet struct {
 // MembershipRecord places the content item, or one version of it, in a
 // entity.
 type MembershipRecord struct {
-	Entity      Ref        `json:"group"`
-	Version     *Ref       `json:"version,omitempty"`
-	Role        string     `json:"role,omitempty"`
-	Position    *int       `json:"position,omitempty"`
-	ActiveFrom  *time.Time `json:"active_from,omitempty"`
-	ActiveUntil *time.Time `json:"active_until,omitempty"`
+	Entity   Ref    `json:"group"`
+	Version  *Ref   `json:"version,omitempty"`
+	Role     string `json:"role,omitempty"`
+	Position *int   `json:"position,omitempty"`
 	// State is active (the default) or proposed.
 	State string `json:"state,omitempty"`
 }

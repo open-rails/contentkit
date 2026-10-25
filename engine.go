@@ -30,7 +30,6 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/authkit/auth"
-	"github.com/open-rails/authkit/userinfo"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
@@ -51,7 +50,6 @@ import (
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
-	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -78,7 +76,6 @@ type Engine struct {
 	chMu     sync.Mutex
 	ownCH    clickhouse.Conn // opened from Config.ClickHouse
 	content  *content.Runtime
-	notices  *notification.Store
 	entities *entities.Store
 	catalog  *catalog.Store
 	discover *discovery.Service
@@ -184,7 +181,6 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 	if e.content, err = content.New(ctx, e.contentOptions(deps)); err != nil {
 		return nil, err
 	}
-	e.notices = e.content.Notifications
 	if err := e.mount(deps); err != nil {
 		return nil, err
 	}
@@ -299,11 +295,6 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return err
 	}
 	accountSchema, _ := e.accountStorage()
-	for schema := range map[string]bool{e.schema: true, accountSchema: true} {
-		if err := notification.Migrate(ctx, e.pool, schema); err != nil {
-			return err
-		}
-	}
 	if err := migrations.ApplyAccounts(ctx, db, accountSchema); err != nil {
 		return err
 	}
@@ -311,19 +302,21 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if e.scope == nil || !layout.ValidSegment(options.LegacyAccountKey) {
 			return errors.New("contentkit: LegacyAccountKey requires Scope and a valid key")
 		}
-		e.cfg.Notifications.Namespace = options.LegacyAccountKey
+		e.cfg.Accounts.Namespace = options.LegacyAccountKey
 	}
 	if err := e.resolveAccountKey(ctx); err != nil {
 		return err
 	}
-	if options.LegacyAccountKey != "" && e.cfg.Notifications.Namespace != options.LegacyAccountKey {
+	if options.LegacyAccountKey != "" && e.cfg.Accounts.Namespace != options.LegacyAccountKey {
 		return ErrScopeConflict
 	}
 	if err := e.bindScope(ctx); err != nil {
 		return err
 	}
-	if err := e.adoptCommentNoticeIdentities(ctx); err != nil {
-		return err
+	if options.explicit {
+		if err := e.adoptCommentNoticeIdentities(ctx); err != nil {
+			return err
+		}
 	}
 	if err := e.avatarPlacement(ctx, options.explicit); err != nil {
 		return err
@@ -403,7 +396,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 // newCatalog builds the stores media is built over: entities and the catalog, which refreshes facets when entities change.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
-	opts := entities.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.EntityReferences,
+	opts := entities.Options{Pool: e.pool, Schema: e.schema, RiverSchema: e.riverSchema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.EntityReferences,
 		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},
@@ -426,7 +419,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	}
 	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities,
 		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences, PlayableKinds: playable,
-		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx,
+		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
 	if e.catalog, err = catalog.New(ctx, co); err != nil {
 		return err
@@ -605,20 +598,16 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 	}
 	l := in.Limits
 	o := content.Options{
-		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Notifications: e.cfg.Notifications, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
+		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
 		Processor:             deps.Processor,
 		NotificationPublisher: deps.Notifications,
+		EraseAccountReceipts:  e.eraseAccountReceipts,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		Classifier: deps.Classifier, ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
 		Logger: e.log,
-	}
-	if e.scope != nil {
-		o.NotificationAppID = e.scope.AppID.String()
-		o.AccountExists = e.accountExists(deps)
-		o.AccountExistsTx = e.accountExistsTx(deps)
 	}
 	if e.media != nil {
 		o.Media = &content.Media{Namespace: e.media.reg.Namespace(), Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
@@ -627,28 +616,6 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		o.Avatars = e.avatars.urls
 	}
 	return o
-}
-
-type transactionalUserInfo interface {
-	GetTx(context.Context, pgx.Tx, []string) (map[string]userinfo.User, error)
-}
-
-func (e *Engine) accountExistsTx(deps Deps) func(context.Context, pgx.Tx, string) (bool, error) {
-	if e.scope == nil {
-		return nil
-	}
-	return func(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
-		directory, ok := deps.Users.(transactionalUserInfo)
-		if !ok {
-			return false, auth.ErrUnavailable
-		}
-		users, err := directory.GetTx(ctx, tx, []string{id})
-		if err != nil {
-			return false, err
-		}
-		user, found := users[id]
-		return found && user.ID == id, nil
-	}
 }
 
 // accountExists uses only the host's target-tenant directory. Source actor
@@ -674,13 +641,6 @@ func (e *Engine) accountExists(deps Deps) func(context.Context, string) (bool, e
 func (e *Engine) mount(deps Deps) error {
 	var err error
 	e.modules = map[httpapi.Module]http.Handler{httpapi.Content: e.content.Handler()}
-	if deps.Notifications == nil {
-		nh, err := e.notices.Handler(e.auth)
-		if err != nil {
-			return err
-		}
-		e.modules[httpapi.Notifications] = nh
-	}
 	if m := e.media; m != nil {
 		e.modules[httpapi.Upload] = media.UploadHandler(m.uploads, media.UploadHandlerOptions{Auth: e.auth, Logger: e.log})
 		e.modules[httpapi.Media] = m.reader.Handler(media.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit, Events: e.mediaEvents})
@@ -954,6 +914,16 @@ func (e *Engine) eraseSubjects(ctx context.Context, subjects []signal.Subject, a
 			return invalid, err
 		}
 	}
+	var actors []string
+	for _, s := range subjects {
+		if s.Kind() == signal.SubjectKindUser {
+			actors = append(actors, s.Key())
+		}
+	}
+	// Commit intent before any signal, content or media cleanup can run.
+	if err := e.recordAccountErasureIntent(ctx, actors, account); err != nil {
+		return signal.ErasureReport{Remaining: map[string]uint64{"account_plane": 1}}, err
+	}
 	report, signalErr := e.hub.EraseSubjects(ctx, subjects)
 	if errors.Is(signalErr, hub.ErrSignalPlaneDown) {
 		// It still holds their signals.
@@ -964,12 +934,6 @@ func (e *Engine) eraseSubjects(ctx context.Context, subjects []signal.Subject, a
 	}
 	if report.Remaining == nil {
 		report.Remaining = map[string]uint64{}
-	}
-	var actors []string
-	for _, s := range subjects {
-		if s.Kind() == signal.SubjectKindUser {
-			actors = append(actors, s.Key())
-		}
 	}
 	eraseContent := e.content.EraseAppSubjects
 	if account {

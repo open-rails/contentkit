@@ -100,7 +100,7 @@ func previewPageCount(k *media.Kind, d decision, total int) int {
 	return max(0, min(total, d.preview.Pages, spec.First))
 }
 
-// shows reports pages [start, end) shown: released, or to an editor.
+// shows reports released pages, or all pages to an authorized restricted reader.
 func (d decision) shows(end int) bool {
 	return d.res.Visible
 }
@@ -108,13 +108,19 @@ func (d decision) shows(end int) bool {
 // opens reports pages [start, end) open: the version opens, or they lie in
 // its rule's free segments.
 func (d decision) opens(end int) bool {
-	return d.res.Accessible || d.res.Editor
+	return d.res.Accessible || d.res.Editor || d.res.ReadRestricted
 }
 
 // whole reports the whole version open: every segment released and the
 // version open, or to an editor. Its audio and downloads need it.
 func (d decision) whole() bool {
 	return d.res.Visible && (d.res.Editor || d.res.Accessible)
+}
+
+// wholeForRead includes explicit restricted reading without changing the
+// download policy or its editor/watermark distinction.
+func (d decision) wholeForRead() bool {
+	return d.res.Visible && (d.res.ReadRestricted || d.whole())
 }
 
 // decisions use completed publication metadata. Chapter dates select work;
@@ -214,7 +220,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		}
 	}
 	cut := len(snap.Pages)
-	length := d.res.Accessible || d.res.Editor || s.o.Kinds.Kinds[v.Kind].LockedView().Shows(kinds.ShowLength)
+	length := d.res.Accessible || d.res.Editor || d.res.ReadRestricted || s.o.Kinds.Kinds[v.Kind].LockedView().Shows(kinds.ShowLength)
 	plan := &ReaderPlan{Content: t.Content, Version: t.Version, Publication: p.ID, Segments: []PlanSegment{}, Previews: []PlanPreview{}}
 	if err := s.o.Pool.QueryRow(ctx, `SELECT scheduled_at FROM `+s.publicationRequestsTable()+`
  WHERE tenant_id=$1 AND version_id=$2 AND current AND state IN ('pending','waiting','running','failed')`, s.o.Tenant, t.Version).Scan(&plan.NextReleaseAt); err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -297,7 +303,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		}
 	}
 	files := map[string]bool{}
-	if k.Publish.Playback != "" && d.whole() {
+	if k.Publish.Playback != "" && d.wholeForRead() {
 		pb, err := s.current(ctx, s.o.Pool, t, kindPlayback)
 		if err != nil {
 			return nil, err

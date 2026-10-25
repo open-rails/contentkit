@@ -183,6 +183,11 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 		if err := s.checkImport(ctx, &in[i]); err != nil {
 			return err
 		}
+		owner, err := s.fixedOwner(ctx, tx, in[i].Kind, in[i].OwnerEntityID)
+		if err != nil {
+			return err
+		}
+		in[i].OwnerEntityID = owner
 		if slices.Contains(ids, in[i].ID) {
 			return invalid("content %s is imported twice", in[i].ID)
 		}

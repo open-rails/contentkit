@@ -1,6 +1,6 @@
 package access
 
-// Permission is a ContentKit staff permission: a full
+// Permission is a ContentKit application permission: a full
 // root:<resource>:<action> name, held in the root scope of the host's auth
 // (auth.Root) and checked there by the Verified's Can. ContentKit names
 // them; a host declares them in its auth's roles from these constants
@@ -8,6 +8,12 @@ package access
 type Permission string
 
 const (
+	// ContentCreate: a signed-in person may create their own content outside
+	// a channel. Channel posts require that channel's create or write grant.
+	ContentCreate Permission = "root:content:create"
+	// ContentEditOwn: edit and publish content created by this account outside
+	// a channel. Channel posts need the channel edit-own or broad write grant.
+	ContentEditOwn Permission = "root:content:edit-own"
 	// ContentWrite: create, edit, publish, delete and restore any content
 	// item, and see everything.
 	ContentWrite Permission = "root:content:write"
@@ -38,9 +44,9 @@ const (
 	AvatarsWrite Permission = "root:avatars:write"
 )
 
-// Permissions is every staff permission.
+// Permissions is every application permission; hosts choose which roles hold them.
 func Permissions() []Permission {
-	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
+	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
 }
 
 func (p Permission) String() string { return string(p) }
@@ -54,10 +60,17 @@ func Names(ps ...Permission) []string {
 	return out
 }
 
-// Entity-scoped permissions are held in a user-owned entity's AuthKit scope
+// Entity-scoped permissions are held in an entity's AuthKit scope
 // (entities' auth_scope), whose persona is the entity kind:
 // "{kind}:<resource>:<action>". A host's persona of that name declares them
 // (EntityPermissions).
+
+// EntityContentCreate: create personal posts in this channel, without editing
+// other people's posts or managing the channel.
+func EntityContentCreate(kind string) string { return kind + ":content:create" }
+
+// EntityContentEditOwn: edit and publish this account's posts in a channel.
+func EntityContentEditOwn(kind string) string { return kind + ":content:edit-own" }
 
 // EntityContentWrite: create, edit, publish and delete the content the entity
 // owns (owner_entity), and see its drafts.
@@ -77,5 +90,5 @@ func EntityCommentsModerate(kind string) string { return kind + ":comments:moder
 // EntityPermissions is every permission ContentKit checks in an entity kind's
 // AuthKit scopes.
 func EntityPermissions(kind string) []string {
-	return []string{EntityContentWrite(kind), EntitySettingsManage(kind), EntityMediaWrite(kind), EntityCommentsModerate(kind)}
+	return []string{EntityContentCreate(kind), EntityContentEditOwn(kind), EntityContentWrite(kind), EntitySettingsManage(kind), EntityMediaWrite(kind), EntityCommentsModerate(kind)}
 }

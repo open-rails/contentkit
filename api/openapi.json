@@ -4044,7 +4044,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a content item's access, restrictions, attributes or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Edits a content item's access, restrictions, attributes or creators. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -4246,7 +4246,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes its cover, own access policy or state=published to restore it. Publication is durably accepted and remains pending while its media is processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes its cover, own access policy or state=published to restore it. Publication is durably accepted and remains pending while its media is processing. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -4312,7 +4312,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -4364,7 +4364,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.",
+        "summary": "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.",
         "parameters": [
           {
             "name": "state",
@@ -4747,7 +4747,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Creates a content item as a draft, with one version serving its text's languages when it names none. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
+        "summary": "Creates a content item as a draft, with one version serving its text's languages when it names none. Staff with root:content:write may create anywhere. Signed-in people with root:content:create may create their own unowned posts; channel posts require that channel's owner or {kind}:content:create/write grant. Creator credits are attribution, not editorship.",
         "requestBody": {
           "required": true,
           "content": {
@@ -5095,7 +5095,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5146,7 +5146,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Accepts durable publication now, or schedules it for publish_at. Processing and publication may continue in the background; live becomes true only after completed publication. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Accepts durable publication now, or schedules it for publish_at. Processing and publication may continue in the background; live becomes true only after completed publication. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5207,7 +5207,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Returns a published or scheduled content item to a draft. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Returns a published or scheduled content item to a draft. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5258,7 +5258,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Sets a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Sets a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5325,7 +5325,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Removes a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Removes a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5384,7 +5384,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Replaces a content item's creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Replaces a content item's creators. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5444,7 +5444,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5505,7 +5505,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Adds a version after the others, a draft unless state says otherwise. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Adds a version after the others, a draft unless state says otherwise. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5565,7 +5565,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Orders a content item's versions: ids lists each version that is not deleted, first first. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5625,7 +5625,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Replaces a version's chapters: ordered start markers naming virtual manifest files, with optional publication schedules. A chapter becomes released only after its durable publication completes. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Replaces a version's chapters: ordered start markers naming virtual manifest files, with optional publication schedules. A chapter becomes released only after its durable publication completes. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -7891,7 +7891,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Adds contents or versions to a entity, or updates their position, window and state.",
+        "summary": "Adds contents or versions to a entity, or updates their position and state.",
         "parameters": [
           {
             "name": "id",
@@ -8326,313 +8326,6 @@
         ],
         "x-contentkit-error-sets": [
           "module:entities",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/notifications/inbox": {
-      "get": {
-        "tags": [
-          "notifications"
-        ],
-        "summary": "The signed-in person's inbox, newest first.",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "page size: 20 by default, at most 100",
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "the previous page's next_cursor",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "unread",
-            "in": "query",
-            "description": "only unread notices",
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "dismissed",
-            "in": "query",
-            "description": "archived receipts instead of the active inbox",
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Page"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "notifications",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:notifications",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/notifications/{id}/read": {
-      "put": {
-        "tags": [
-          "notifications"
-        ],
-        "summary": "Marks one of the signed-in person's notices read locally.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Item"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "notifications",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:notifications",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "notifications"
-        ],
-        "summary": "Marks one of the signed-in person's notices unread locally.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Item"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "notifications",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:notifications",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/notifications/{id}/dismiss": {
-      "put": {
-        "tags": [
-          "notifications"
-        ],
-        "summary": "Archives this receipt without changing its read or workflow state.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Item"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "notifications",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:notifications",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "notifications"
-        ],
-        "summary": "Restores an archived receipt to this user's inbox.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Item"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "notifications",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:notifications",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/notifications/publish": {
-      "post": {
-        "tags": [
-          "notifications"
-        ],
-        "summary": "Publishes notices in one transaction, each once per origin and recipient; a notice to an erased recipient is dropped.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Publication"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Published"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "notifications",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:notifications:publish",
-        "x-contentkit-errors": [
-          "conflict"
-        ],
-        "x-contentkit-error-sets": [
-          "module:notifications",
           "auth",
           "request"
         ]
@@ -14631,9 +14324,6 @@
           "auth_scope": {
             "type": "boolean"
           },
-          "windows": {
-            "type": "boolean"
-          },
           "membership_scopes": {
             "type": "array",
             "items": {
@@ -14760,6 +14450,21 @@
             "format": "date-time"
           }
         }
+      },
+      "EntityRef": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "slug"
+        ]
       },
       "EntitySummary": {
         "type": "object",
@@ -15608,40 +15313,6 @@
           "url"
         ]
       },
-      "Input": {
-        "type": "object",
-        "properties": {
-          "recipient": {
-            "$ref": "#/components/schemas/Recipient"
-          },
-          "origin": {
-            "$ref": "#/components/schemas/Origin"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "data": {},
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "visibility": {
-            "type": "string"
-          },
-          "app_id": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "action_requested": {
-            "type": "boolean"
-          },
-          "severity": {
-            "type": "string"
-          }
-        }
-      },
       "Interaction": {
         "type": "object",
         "properties": {
@@ -15682,102 +15353,6 @@
         },
         "required": [
           "items"
-        ]
-      },
-      "Item": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "recipient": {
-            "$ref": "#/components/schemas/Recipient"
-          },
-          "origin": {
-            "$ref": "#/components/schemas/Origin"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "data": {},
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "visibility": {
-            "type": "string"
-          },
-          "app_id": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "action_requested": {
-            "type": "boolean"
-          },
-          "severity": {
-            "type": "string"
-          },
-          "read_at": {
-            "oneOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "dismissed_at": {
-            "oneOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "resolved_at": {
-            "oneOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "revision": {
-            "type": "integer"
-          },
-          "producer_revision": {
-            "type": "integer"
-          },
-          "withdrawn": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "recipient",
-          "origin",
-          "kind",
-          "data",
-          "created_at",
-          "read_at",
-          "dismissed_at",
-          "resolved_at",
-          "updated_at",
-          "revision"
         ]
       },
       "Kind": {
@@ -15835,6 +15410,9 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/Attribute"
             }
+          },
+          "owner_entity": {
+            "$ref": "#/components/schemas/EntityRef"
           },
           "sort": {
             "type": "string"
@@ -16111,14 +15689,6 @@
           "position": {
             "type": "integer"
           },
-          "active_from": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "active_until": {
-            "type": "string",
-            "format": "date-time"
-          },
           "state": {
             "type": "string",
             "enum": [
@@ -16142,14 +15712,6 @@
           },
           "position": {
             "type": "integer"
-          },
-          "active_from": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "active_until": {
-            "type": "string",
-            "format": "date-time"
           },
           "state": {
             "type": "string"
@@ -16297,6 +15859,12 @@
           "editor": {
             "type": "boolean"
           },
+          "can_post": {
+            "type": "boolean"
+          },
+          "can_edit_own": {
+            "type": "boolean"
+          },
           "writer": {
             "type": "boolean"
           },
@@ -16318,6 +15886,8 @@
           "created_at",
           "owner",
           "editor",
+          "can_post",
+          "can_edit_own",
           "writer",
           "moderator",
           "member"
@@ -16514,45 +16084,6 @@
             }
           }
         }
-      },
-      "Origin": {
-        "type": "object",
-        "properties": {
-          "system": {
-            "type": "string"
-          },
-          "scope": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "subject": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "system",
-          "scope",
-          "id"
-        ]
-      },
-      "Page": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Item"
-            }
-          },
-          "next_cursor": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "items"
-        ]
       },
       "PageEngagement": {
         "type": "object",
@@ -17435,17 +16966,6 @@
           "username"
         ]
       },
-      "Publication": {
-        "type": "object",
-        "properties": {
-          "notifications": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Input"
-            }
-          }
-        }
-      },
       "PublicationStatus": {
         "type": "object",
         "properties": {
@@ -17481,20 +17001,6 @@
             "format": "date-time"
           }
         }
-      },
-      "Published": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Item"
-            }
-          }
-        },
-        "required": [
-          "items"
-        ]
       },
       "RankingInfo": {
         "type": "object",
@@ -17760,21 +17266,6 @@
         },
         "required": [
           "searches"
-        ]
-      },
-      "Recipient": {
-        "type": "object",
-        "properties": {
-          "audience": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "audience",
-          "id"
         ]
       },
       "RecordFailure": {
@@ -19072,7 +18563,6 @@
     "media": "/v1/media",
     "codes": "/v1/codes",
     "entities": "/v1",
-    "notifications": "/v1/notifications",
     "versions": "/v1",
     "discovery": "/v1",
     "import": "/v1"
@@ -19113,9 +18603,6 @@
       "internal_error"
     ],
     "module:entities": [
-      "internal_error"
-    ],
-    "module:notifications": [
       "internal_error"
     ],
     "module:versions": [

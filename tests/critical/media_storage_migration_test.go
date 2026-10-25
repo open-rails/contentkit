@@ -119,6 +119,10 @@ func TestLegacyMediaStorageMigration(t *testing.T) {
 		auth, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = roles }), authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = w.pool }))
 		cfg := ck.Config{Tenant: "previous-media", Database: ck.DatabaseConfig{Schema: schema, SkipMigrations: true}, Content: kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"article": {Route: "articles", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}}}}, Media: &ck.MediaConfig{Config: media.Config{BaseURL: m.gateway.URL, Kinds: []media.Kind{{Name: "article", KeepOriginals: true, ServeOriginals: true, Uploads: []media.Upload{{Path: "files/{name}", Types: []string{"text/plain"}, MaxBytes: 1024}}}}}, WorkerSchema: schema + "_media_worker", Delivery: ck.DeliveryConfig{Mode: string(media.DeliverURL), SigningKey: m.signing, TTL: time.Hour, Window: time.Second}}}
 		deps := ck.Deps{Postgres: w.pool, Auth: auth.Authenticator(), Store: m.store}
+		must(t, authkit.MigrateNotifications(t.Context(), w.pool, authkit.Config{
+			Database:      authkit.DatabaseConfig{Schema: schema + "_auth"},
+			Notifications: &authkit.NotificationsConfig{Schema: schema},
+		}))
 		must(t, ck.MigratePostgres(t.Context(), w.pool, cfg))
 		unprepared, err := ck.New(t.Context(), cfg, deps)
 		if unprepared != nil || err == nil || !strings.Contains(err.Error(), "MigrateVersionStorage") {

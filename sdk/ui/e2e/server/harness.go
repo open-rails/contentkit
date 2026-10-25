@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -21,7 +22,6 @@ import (
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
@@ -61,7 +61,7 @@ type harness struct {
 	reg        *media.Registry
 	manifests  *media.Manifests
 	ring       token.Ring
-	entities   *entities.Store // runs the recount job on demand
+	users      sync.Map // fixture account ID -> authenticated test user
 	s3Endpoint *url.URL
 	bucket     string
 	origin     string
@@ -72,7 +72,7 @@ type harness struct {
 // blogs, each a content kind whose media live in its versions (kinds.json);
 // comics and movies with traits, segments and every group
 // kind; entity kinds that between them declare roles, attributes, order,
-// parents, scopes, windows and version-level memberships; a tier and a
+// parents, scopes and version-level memberships; a tier and a
 // content filter.
 var site = func() kinds.Config {
 	one := kinds.VersionRules{Languages: "one"}
@@ -98,7 +98,7 @@ var site = func() kinds.Config {
 			"series":      {Route: "series", Ordered: true, Parent: "series"},
 			"character":   {Route: "characters", ScopedBy: "series"},
 			"voice_actor": {Route: "voice-actors", VersionLevel: true},
-			"rail":        {Ordered: true, Windows: true},
+			"rail":        {Ordered: true},
 		}}
 }
 
@@ -191,9 +191,6 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, err
 	}
 	if h.manifests, err = media.NewManifests(h.store, h.reg, media.ManifestOptions{Locker: media.PGLocker(h.pool), Journal: journal}); err != nil {
-		return nil, err
-	}
-	if h.entities, err = entities.New(entities.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: site()}); err != nil {
 		return nil, err
 	}
 	signing, err := token.ParseKey(c.tokenKey)

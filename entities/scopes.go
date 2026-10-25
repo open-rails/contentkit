@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/gate"
@@ -90,17 +91,23 @@ func (s *Store) needsSync() bool {
 	return false
 }
 
-func (s *Store) needsReconcile() bool {
-	return s.needsSync() || s.folders != nil && len(s.userKinds()) > 0
-}
-
-// queueSync queues the sync of ids in the writing transaction, when River
-// is bound.
+// queueSync records exact lifecycle work in the entity write's transaction.
+// An insert-only client makes admission independent of running local workers.
 func (s *Store) queueSync(ctx context.Context, q Querier, ids []string) error {
-	client := s.river.bound()
-	tx, ok := q.(pgx.Tx)
-	if !s.needsSync() || client == nil || !ok || len(ids) == 0 {
+	if !s.needsSync() || len(ids) == 0 {
 		return nil
+	}
+	tx, ok := q.(pgx.Tx)
+	if !ok {
+		return errors.New("entities: lifecycle synchronization requires a transaction")
+	}
+	client := s.river.bound()
+	if client == nil {
+		var err error
+		client, err = river.NewClient(riverpgxv5.New(s.pool), &river.Config{Schema: s.riverSchema})
+		if err != nil {
+			return err
+		}
 	}
 	_, err := client.InsertTx(ctx, tx, syncArgs{Tenant: s.tenant, Entities: ids}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 10})
 	return err
@@ -360,42 +367,6 @@ func (s *Store) checkMediaRestorable(ctx context.Context, tx pgx.Tx, ref Ref) er
 	return nil
 }
 
-// Reconcile syncs every entity what follows from its state does not match
-// yet: those whose job was lost, or whose sync keeps failing. Media retirement
-// belongs to the existing catalog deletion sweep.
-func (s *Store) Reconcile(ctx context.Context) error {
-	var errs []error
-	if s.scopes != nil {
-		var kinds []string
-		for name, gk := range s.cfg.EntityKinds {
-			if gk.AuthScope {
-				kinds = append(kinds, name)
-			}
-		}
-		for after := ""; ; {
-			var ids []EntityID
-			rows, err := s.pool.Query(ctx, fmt.Sprintf(`SELECT id FROM %s WHERE tenant_id = $1 AND id > $3
- AND (state = 'active' AND auth_scope IS NULL AND kind = ANY($2::text[]) OR state <> 'active' AND auth_scope IS NOT NULL)
- ORDER BY id LIMIT %d`, s.table("content_entities"), syncBatch), s.tenant, kinds, after)
-			if err == nil {
-				ids, err = pgx.CollectRows(rows, pgx.RowTo[EntityID])
-			}
-			if err != nil {
-				errs = append(errs, err)
-				break
-			}
-			if len(ids) == 0 {
-				break
-			}
-			if err := s.SyncScopes(ctx, ids); err != nil {
-				errs = append(errs, err)
-			}
-			after = string(ids[len(ids)-1])
-		}
-	}
-	return errors.Join(append(errs, s.followOwned(ctx, nil))...)
-}
-
 // heldScopes is, per live scope of user-owned auth_scope kinds (of kind,
 // when set), the entity permissions the actor can exercise. Directory grants
 // are candidates; scoped requests also retain their credential's ceilings.
@@ -405,7 +376,7 @@ func (s *Store) heldScopes(ctx context.Context, actor access.Actor, kind string)
 	}
 	var kinds []string
 	for name, gk := range s.cfg.EntityKinds {
-		if gk.Owner == "user" && gk.AuthScope && (kind == "" || kind == name) {
+		if gk.AuthScope && (kind == "" || kind == name) {
 			kinds = append(kinds, name)
 		}
 	}

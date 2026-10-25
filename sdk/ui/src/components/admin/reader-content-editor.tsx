@@ -251,7 +251,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     const input = {
       kind: p.kind,
       text: { [l]: { ...before, title } },
-      owner_group_id: p.ownerEntity,
+      owner_group_id: spec.owner_entity ? undefined : p.ownerEntity,
       access: cleanRule(latest.current.details.get().access),
       ...(spec.comment_modes?.length ? { comments: latest.current.details.get().comments } : {}),
     };

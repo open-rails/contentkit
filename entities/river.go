@@ -5,17 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 )
-
-// ReconcileInterval is how often the engine syncs every entity whose scope or
-// owned content does not match its state yet. Media retirement is scheduled
-// only by the existing catalog content-deletion sweep.
-const ReconcileInterval = time.Minute
 
 // DefaultQueue holds the current entity state work.
 const DefaultQueue = "contentkit_entities"
@@ -26,12 +20,6 @@ type syncArgs struct {
 }
 
 func (syncArgs) Kind() string { return "contentkit_entity_sync" }
-
-type reconcileArgs struct {
-	Tenant string `json:"tenant"`
-}
-
-func (reconcileArgs) Kind() string { return "contentkit_entity_reconcile" }
 
 type syncWorker struct {
 	river.WorkerDefaults[syncArgs]
@@ -49,15 +37,6 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[syncArgs]) error {
 	return w.s.Sync(ctx, ids)
 }
 
-type reconcileWorker struct {
-	river.WorkerDefaults[reconcileArgs]
-	s *Store
-}
-
-func (w *reconcileWorker) Work(ctx context.Context, _ *river.Job[reconcileArgs]) error {
-	return w.s.Reconcile(ctx)
-}
-
 // riverBinding is the River client a store's composition bound.
 type riverBinding struct {
 	mu       sync.Mutex
@@ -71,9 +50,9 @@ func (b *riverBinding) bound() *river.Client[pgx.Tx] {
 	return b.client
 }
 
-// RiverJobs contributes the entity sync worker, its queue and the periodic
-// reconcile to the engine's helpers/river composition. It composes once;
-// until bound, writes leave their syncs to the reconcile.
+// RiverJobs contributes the entity sync worker and queue. Writes enqueue
+// exact lifecycle work transactionally even before this worker is bound.
+// Ordinary staff-managed entities contribute no worker or queue.
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	b := s.river
 	claimed := false
@@ -84,24 +63,20 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			return errors.New("entities: River jobs already composed")
 		}
 		b.composed, claimed = true, true
+		if !s.needsSync() {
+			return nil
+		}
 		if _, ok := cfg.Queues[s.queue]; !ok {
 			cfg.Queues[s.queue] = river.QueueConfig{MaxWorkers: 1}
 		}
 		if err := river.AddWorkerSafely(cfg.Workers, &syncWorker{s: s}); err != nil {
 			return err
 		}
-		if err := river.AddWorkerSafely(cfg.Workers, &reconcileWorker{s: s}); err != nil {
-			return err
-		}
-		if s.needsReconcile() {
-			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, ReconcileInterval,
-				func() (river.JobArgs, *river.InsertOpts) {
-					return reconcileArgs{Tenant: s.tenant}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 3,
-						UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: ReconcileInterval}}
-				}, &river.PeriodicJobOpts{ID: "contentkit_entity_reconcile_" + s.tenant, RunOnStart: true}))
-		}
 		return nil
 	}, func(_ context.Context, bd riverhelpers.Binding) error {
+		if bd.Pool != s.pool || bd.Client.Schema() != s.riverSchema {
+			return errors.New("entities: the River fleet must use the configured pool and schema")
+		}
 		b.mu.Lock()
 		b.client = bd.Client
 		b.mu.Unlock()

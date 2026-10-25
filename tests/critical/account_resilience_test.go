@@ -21,21 +21,21 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit/notify"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	medias3 "github.com/open-rails/contentkit/media/s3"
-	"github.com/open-rails/contentkit/notification"
+	notification "github.com/open-rails/contentkit/migration/legacyinbox"
 	"github.com/open-rails/contentkit/signal"
-	"github.com/open-rails/helpers/notify"
 )
 
 func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	lifetime := t
 	w := newWorld(t, func(c *ck.Config) {
-		c.Accounts = &ck.AccountsConfig{Schema: "contentkit_accounts", SharedOrigins: []notify.OriginScope{{System: "critical-shared", Scope: c.Scope.TenantID.String()}}}
+		c.Accounts = &ck.AccountsConfig{Schema: "contentkit_accounts"}
 	})
 	a, sibling := w.apps[0], w.apps[1]
 	configureDiscoverySignals(t, w, a)
@@ -63,7 +63,7 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	_, err = sibling.client(credential).PostContentFavorite(t.Context(), siblingItem.ID, ck.PostContentFavoriteQuery{})
 	must(t, err)
 	for _, app := range []*application{a, sibling} {
-		_, err := app.engine.Client().PostNotificationsPublish(t.Context(), notification.Publication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: user.ID}, Origin: notify.Origin{System: "critical", Scope: app.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "account.private", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"Private account inbox"}`)}}})
+		_, err := app.publishInbox(t.Context(), inboxPublication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: user.ID}, Origin: notify.Origin{System: "critical", Scope: app.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "account.private", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"Private account inbox"}`)}}})
 		must(t, err)
 	}
 	eventID := uuid.NewString()
@@ -115,7 +115,7 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 		_, err := target.app.client(appResetCredential).PostContentFavorite(t.Context(), target.id, ck.PostContentFavoriteQuery{})
 		must(t, err)
 		must(t, target.app.client(appResetCredential).PostSignals(t.Context(), discovery.Signals{Signals: []discovery.SignalInput{{ContentID: target.id, Type: "click", EventID: uuid.NewString(), OccurredAt: time.Now()}}}))
-		_, err = target.app.engine.Client().PostNotificationsPublish(t.Context(), notification.Publication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: appReset.ID}, Origin: notify.Origin{System: "critical", Scope: target.app.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "app.private", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"App receipt"}`)}}})
+		_, err = target.app.publishInbox(t.Context(), inboxPublication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: appReset.ID}, Origin: notify.Origin{System: "critical", Scope: target.app.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "app.private", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"App receipt"}`)}}})
 		must(t, err)
 	}
 	shared, err := notification.New(notification.Options{Pool: w.pool, Schema: w.schema, Tenant: a.cfg.Scope.AppID.String(), AppID: a.cfg.Scope.AppID.String(), Shared: &notification.Config{Schema: "contentkit_accounts", Namespace: (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Partition()}, AccountExists: func(ctx context.Context, id string) (bool, error) {
@@ -165,7 +165,7 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	}
 	t.Run("CK-J23-S06_app_only_replay_preserves_shared_inbox_avatar_and_sibling_data", func(t *testing.T) {
 		for _, app := range []*application{a, sibling} {
-			inbox, err := app.client(appResetCredential).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+			inbox, err := app.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
 			must(t, err)
 			if len(inbox.Items) != 2 {
 				t.Fatalf("shared/app inbox positive controls absent: %+v", inbox)
@@ -184,12 +184,12 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 		if !report.Complete() {
 			t.Fatal("app-only replay did not finish")
 		}
-		inbox, err := a.client(appResetCredential).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+		inbox, err := a.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
 		must(t, err)
 		if len(inbox.Items) != 1 || inbox.Items[0].ID != sharedNotice.ID {
 			t.Fatal("app-only replay erased or duplicated shared account receipt")
 		}
-		inbox, err = sibling.client(appResetCredential).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+		inbox, err = sibling.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
 		must(t, err)
 		if len(inbox.Items) != 2 {
 			t.Fatal("app-only replay changed sibling inbox")
@@ -271,12 +271,12 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		if counts.Count == nil || *counts.Count != 2 {
 			t.Fatal("anonymization lost a retained contribution")
 		}
-		inbox, err := a.client(credential).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+		inbox, err := a.accountInbox(credential).List(t.Context(), inboxQuery{})
 		must(t, err)
 		if len(inbox.Items) != 0 {
 			t.Fatal("app inbox remained after terminal cleanup began")
 		}
-		inbox, err = sibling.client(credential).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+		inbox, err = sibling.accountInbox(credential).List(t.Context(), inboxQuery{})
 		must(t, err)
 		if len(inbox.Items) != 1 {
 			t.Fatal("one app erased the sibling's pending consumer work")
@@ -371,12 +371,12 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		data := imageBytes(t)
 		_, err := a.client(credential).PostMediaUploadPresign(t.Context(), media.PresignBody{Ref: media.RefBody{Kind: "user", ID: user.ID}, Path: "avatar.png", Type: "image/png", Size: int64(len(data)), SHA256: digestBytes(data)})
 		requireError(t, err, 404, "not_found")
-		published, err := a.engine.Client().PostNotificationsPublish(t.Context(), notification.Publication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: user.ID}, Origin: notify.Origin{System: "critical", Scope: a.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "late.notice", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"must remain absent"}`)}}})
+		published, err := a.publishInbox(t.Context(), inboxPublication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: user.ID}, Origin: notify.Origin{System: "critical", Scope: a.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "late.notice", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"must remain absent"}`)}}})
 		must(t, err)
 		if len(published.Items) != 0 {
 			t.Fatal("late notification reattached permanently anonymized account")
 		}
-		inbox, err := a.client(credential).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+		inbox, err := a.accountInbox(credential).List(t.Context(), inboxQuery{})
 		must(t, err)
 		if len(inbox.Items) != 0 || accountObjects() != 0 {
 			t.Fatal("terminal fence lost private-resource erasure")
@@ -419,7 +419,7 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		sibling.engine, err = ck.New(t.Context(), sibling.cfg, sibling.deps)
 		must(t, err)
 		sibling.server = mountEngine(lifetime, sibling.engine)
-		inbox, err := sibling.client(appResetCredential).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+		inbox, err := sibling.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
 		must(t, err)
 		if len(inbox.Items) != 0 {
 			t.Fatal("full replay retained erased shared inbox")

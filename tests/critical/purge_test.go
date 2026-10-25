@@ -267,14 +267,19 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 		restored := makeDeleted("Restore wins")
 		qs := pgx.Identifier{w.schema}.Sanitize()
 		const barrier int64 = 612900086
-		holder, err := w.pool.Acquire(t.Context())
-		must(t, err)
-		_, err = holder.Exec(t.Context(), "SELECT pg_advisory_lock($1)", barrier)
+		// The deliberate pause must not reserve an application connection:
+		// restore and two queued metadata workers already need three of four
+		// CI pool slots. Keep the observer and purger on the application pool.
+		holder, err := pgx.ConnectConfig(t.Context(), w.pool.Config().ConnConfig.Copy())
 		must(t, err)
 		defer func() {
-			_, _ = holder.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", barrier)
-			holder.Release()
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = holder.Exec(cleanup, "SELECT pg_advisory_unlock($1)", barrier)
+			_ = holder.Close(cleanup)
 		}()
+		_, err = holder.Exec(t.Context(), "SELECT pg_advisory_lock($1)", barrier)
+		must(t, err)
 		_, err = w.pool.Exec(t.Context(), fmt.Sprintf(`CREATE FUNCTION %s.critical_pause_restore() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.id=TG_ARGV[0] AND NEW.state='published' THEN PERFORM pg_advisory_xact_lock(%d); END IF; RETURN NEW; END$$;
 CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR EACH ROW EXECUTE FUNCTION %s.critical_pause_restore('%s')`, qs, barrier, qs, qs, restored.Version))
 		must(t, err)

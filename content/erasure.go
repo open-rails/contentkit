@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/versionid"
-	"github.com/open-rails/helpers/notify"
 )
 
 // ProviderDataEraser deletes personal data retained by optional moderator and
@@ -120,13 +119,9 @@ func (rt *Runtime) eraseSubjects(ctx context.Context, actorIDs []string, account
 	// Erase and fence the inbox before content work; retries are idempotent.
 	// Keeping the two fences in separate transactions avoids locking recipients
 	// in the reverse order of a comment producer.
-	for _, id := range ids {
-		erase := rt.Notifications.EraseAppRecipient
-		if account {
-			erase = rt.Notifications.EraseRecipient
-		}
-		if err := erase(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: id}); err != nil {
-			return fmt.Errorf("content: erase notifications: %w", err)
+	if rt.eraseAccountReceipts != nil {
+		if err := rt.eraseAccountReceipts(ctx, ids, account); err != nil {
+			return fmt.Errorf("content: erase account receipts: %w", err)
 		}
 	}
 	tx, err := rt.store.beginMutation(ctx)

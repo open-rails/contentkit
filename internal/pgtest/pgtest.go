@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/migrations"
-	"github.com/open-rails/helpers/notify/postgres"
+	"github.com/open-rails/authkit/notify/postgres"
 )
 
 // Pool connects to CONTENTKIT_TEST_URL or skips; mutate may adjust the config.

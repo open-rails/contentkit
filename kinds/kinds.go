@@ -148,6 +148,11 @@ type Kind struct {
 	// Entities are the entity kinds content of this kind may join.
 	Entities   []string             `json:"entities,omitempty" yaml:"entities"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
+	// OwnerEntity fixes this kind to one site-owned channel, resolved by kind
+	// and slug in the current app. Permissions and access are configured separately.
+	// The referenced channel must be provisioned explicitly before writes.
+	// Omitted preserves caller-selected ownership, including creator channels.
+	OwnerEntity *EntityRef `json:"owner_entity,omitempty" yaml:"owner_entity"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
 	// Locked is what a viewer who does not open its content sees of it;
@@ -344,8 +349,6 @@ type EntityKind struct {
 	// AuthScope entities name an AuthKit group whose permissions govern their
 	// content (OnlyDemo channels).
 	AuthScope bool `json:"auth_scope,omitempty" yaml:"auth_scope"`
-	// Windows lets memberships carry active_from/active_until (rails).
-	Windows bool `json:"windows,omitempty" yaml:"windows"`
 	// MembershipScopes declares where this entity kind can be attached.
 	// Omitted keeps the legacy default: content, or version with VersionLevel.
 	MembershipScopes []MembershipScope `json:"membership_scopes,omitempty" yaml:"membership_scopes"`
@@ -525,6 +528,13 @@ func (c Config) Validate() error {
 		for _, g := range k.Entities {
 			if _, ok := c.EntityKinds[g]; !ok {
 				return fmt.Errorf("%w: kind %s names unknown group kind %q", ErrInvalid, name, g)
+			}
+		}
+		if ref := k.OwnerEntity; ref != nil {
+			owner, ok := c.EntityKinds[ref.Kind]
+			if !ok || strings.TrimSpace(ref.Slug) == "" || strings.TrimSpace(ref.Slug) != ref.Slug ||
+				owner.Owner == "user" || owner.ScopedBy != "" {
+				return fmt.Errorf("%w: kind %s owner_entity must name an unscoped site-owned entity", ErrInvalid, name)
 			}
 		}
 		if e := k.PathEntity; e != "" && (!slices.Contains(k.Entities, e) || !c.EntityKinds[e].AllowsMembership(ContentScope)) {

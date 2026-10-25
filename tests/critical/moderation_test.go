@@ -17,16 +17,16 @@ import (
 	"github.com/open-rails/contentkit/content"
 )
 
-func authoredArticle(t *testing.T, a *application, owner, entity string) catalog.Content {
+func authoredArticle(t *testing.T, a *application, author *ck.Client, entity string) catalog.Content {
 	t.Helper()
 	startPublicationRuntime(t, a)
 	in := catalog.ContentInput{Kind: "article", OwnerEntityID: entity, Text: map[string]catalog.Text{"en": {Title: "Moderated thread", Body: "Readable article"}}}
-	if owner != "" {
-		in.Creators = &[]catalog.Creator{{UserID: owner, Role: "author"}}
+	if author == nil {
+		author = a.engine.Client()
 	}
-	item, err := a.engine.Client().PostContents(t.Context(), in)
+	item, err := author.PostContents(t.Context(), in)
 	must(t, err)
-	item, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+	item, err = author.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
 	awaitEditionPublication(t, a, a.engine.Client(), item.ID, item.Versions[0].ID)
 	return item
@@ -68,7 +68,8 @@ func TestCommentModerationBoundaries(t *testing.T) {
 	t.Run("CK-J20-S01_owner_ban_only_blocks_owned_targets", func(t *testing.T) {
 		owner, ownerToken := w.person(t, 0)
 		writer, token := w.person(t, 0)
-		mine, other := authoredArticle(t, a, owner.ID, ""), publishedArticle(t, a, "Other owner")
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(owner.ID), w.contributor)
+		mine, other := authoredArticle(t, a, a.client(ownerToken), ""), publishedArticle(t, a, "Other owner")
 		client := a.client(token)
 		old := postComment(t, client, mine.ID, "Existing contribution stays")
 		ban, err := a.client(ownerToken).PutCommentBan(t.Context(), writer.ID, content.BanInput{Reason: "Owner boundary"})
@@ -121,7 +122,7 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		authtest.GrantRole(t, w.tenant[0], iam.GroupByID(group), iam.UserSubject(moderator.ID), w.channelModerator)
 		writer, writerToken := w.person(t, 0)
 		client, viewer := a.client(moderatorToken), a.client(writerToken)
-		first, second := authoredArticle(t, a, "", string(one.ID)), authoredArticle(t, a, "", string(two.ID))
+		first, second := authoredArticle(t, a, nil, string(one.ID)), authoredArticle(t, a, nil, string(two.ID))
 		comment := postComment(t, viewer, first.ID, "Scoped moderation target")
 		other := postComment(t, viewer, second.ID, "Unrelated entity comment")
 		must(t, client.PostCommentHold(t.Context(), comment.ID))

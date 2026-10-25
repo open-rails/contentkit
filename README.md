@@ -10,7 +10,8 @@ API key or vector extension. Semantic search belongs entirely to the separate, d
 library; ContentKit has no semantic search configuration or runtime hook.
 
 Design: [open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/DESIGN.md).
-Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md). Migrations:
+Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md).
+Post/channel policies: [docs/posts-and-channels.md](docs/posts-and-channels.md). Migrations:
 [docs/migration.md](docs/migration.md), [docs/restore.md](docs/restore.md).
 
 ## Release policy
@@ -67,7 +68,7 @@ another tenant is an error, never remapped.
 | `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
 | `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and entities; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | Indexed keyword search (exact/alias/substring/prefix/typo, EN/ZH/JA/KO) with eligibility, documents and dirty queue, RRF |
-| `entities` | storage for content entities by kind (`kinds.Config.EntityKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective entities for facets, per-language counts, typeahead documents, `/v1` routes |
+| `entities` | storage for content entities by kind (`kinds.Config.EntityKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles and positions; effective entities for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, entity popularity through the `Catalog` port (`*entities.Store`) |
 | `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; popular and standing orders; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
@@ -117,7 +118,7 @@ for _, r := range routes {
   `Deps.Billing`. Billing supplies authoritative entitlement reads; product
   and price management stays in OpenRails.
 - `Client()` is the HTTP surface as a Go client acting as the host, over an
-  in-process transport (for example `PublishNotifications`,
+  in-process transport (for example `PostContents`,
   `CreateContent`).
 - `Ready` fails until `Start`; `Probes` are the optional dependencies
   (ClickHouse, the bucket, Redis); `EraseSubjects` is account erasure.
@@ -147,7 +148,6 @@ normalization and the editor's reversible [page review](docs/api/uploads.md#page
 | `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, fork, download | `Config.Media` |
 | `CodeRoutes` | `/v1/codes/{code}` | always |
 | `EntityRoutes` | `/v1/entities`, `/v1/contents/{id}/entities`: listings and pages, writes for `root:entities:write` | always |
-| `NotificationRoutes` | `/v1/notifications`: the inbox, and the host's publish route | always |
 | `DiscoveryRoutes` | public lists/search, history and `/v1/me/library` for purchased content | always; purchased access uses `Deps.Billing` |
 
 | Tier | Admits |
@@ -652,7 +652,7 @@ content URLs, React hooks and styled components. See
 ## Entities
 
 Entity kinds come from `kinds.Config.EntityKinds` (ordered, parent, scoped_by,
-owner, sellable, auth_scope, windows, version_level, roles, attributes).
+owner, entitled, auth_scope, version_level, roles, attributes).
 Reader editors use one page per stable version code. Shared entity edits use
 `PUT /contents/{id}/entities/shared`; per-version credits use
 `PUT /contents/{id}/versions/{vid}/entities`. Catalog responses keep the same
@@ -665,20 +665,17 @@ own scope in a transaction, including newly created entity names, and preserve
 sibling versions. The older all-scopes entity replacement remains available
 for imports and callers deliberately replacing the entire work.
 
-Keyword documents include active associations without start or end dates and
-their active ancestors. A static featured rail can contribute keywords;
-scheduled curation is evaluated at read time and is not copied into keyword
-text.
+Keyword documents include active associations and their active ancestors.
+Writes refresh association facets in the same transaction. Entity counts and
+automatic entity covers read current facets and release timestamps; no periodic
+recount or timed-membership job is needed. Manual entity covers remain explicit.
+Likes and favorites keep their existing atomic counters.
 
-Writes are batches in one transaction. Engine jobs keep the rest current:
-`Recount` (every 5 minutes, and after an import) rebuilds per-language content
-counts and automatic covers from the facets, and `RefreshWindows` (every
-minute) applies association windows that opened or closed since a facet was
-written, so listings trail a window by up to a minute and catch up after an
-outage. Direct access decisions apply windows at once. The engine builds
-`entities.Store` from `Config.Content` and serves it as `EntityRoutes`.
-Only user-owned or permission-scoped entity kinds need lifecycle sync and
-recovery jobs; ordinary taxonomy and featured rails schedule neither.
+The engine builds `entities.Store` from `Config.Content` and serves it as
+`EntityRoutes`. Creator channels retain their editor teams and optional billing
+entitlements. Their lifecycle changes enqueue exact durable sync work in the
+writing transaction, including when no local worker is running. Ordinary
+staff-managed tags, series and channels do not need that work.
 
 Go and relational names use entity. Existing HTTP fields such as `group_id`,
 access values `group`/`group_ppv`, and billing keys containing `:group:` retain
@@ -788,4 +785,4 @@ Previously observed backend capabilities (not replacement-suite qualification):
 | Ceph 19.2 / 20.2 standalone `dbstore` RGW | no | no | wrong Range bytes; not representative of RADOS-backed RGW |
 | production Ceph RGW (RADOS, 2026-09-24) | no (`If-Match` yes, `If-None-Match: *` ignored) | no | Range, `response-content-disposition`, versioning, lifecycle (incl. `AbortIncompleteMultipartUpload`) and multipart work; hosts wire `PGLocker` |
 
-User inboxes, native comment events and OpenRails imports use the shared notification library. See [notifications](docs/notifications.md) for APIs, identity mapping, retained-history semantics and erasure.
+AuthKit owns user inboxes and their UI. ContentKit publishes or withdraws native comment notices through its injected two-method publisher. See [notifications](docs/notifications.md) for source identities and the explicit legacy adoption procedure.

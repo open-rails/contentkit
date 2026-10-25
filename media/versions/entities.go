@@ -61,13 +61,13 @@ FROM `+s.t.entities+` WHERE tenant_id = $1 AND kind = $2 AND id = ANY($3)`, s.o.
 			return nil, err
 		}
 	}
-	userOwned := s.o.Kinds.EntityKinds[kind].Owner == "user"
+	scoped := s.o.Kinds.EntityKinds[kind].Owner == "user" || s.o.Kinds.EntityKinds[kind].AuthScope
 	for _, r := range found {
 		right := entityRight{active: r.active, internal: r.internal, staff: staff, owner: r.owner}
 		switch {
 		case staff:
 			right.editor = true
-		case userOwned && !r.internal:
+		case scoped && !r.internal && (!s.o.Kinds.EntityKinds[kind].AuthScope || r.scope != ""):
 			if right.editor, err = gate.EntityEditor(ctx, s.o.Auth, actor, r.owner, r.scope, access.EntityMediaWrite(kind), access.EntitySettingsManage(kind)); err != nil {
 				return nil, err
 			}

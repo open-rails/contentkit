@@ -5,24 +5,21 @@ import (
 	"strings"
 
 	"github.com/open-rails/contentkit/media/layout"
-	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/helpers/notify"
 )
 
 // AccountsConfig selects the shared tenant account storage and avatar service.
-// Catalogs remain app-owned. Schema holds inboxes, erasure fences and the
+// Catalogs remain app-owned. Schema holds account metadata and the
 // tenant avatar journal, allocations and publication metadata. A scoped engine
 // derives the account key or loads its immutable adopted key from the binding.
 type AccountsConfig struct {
 	// Namespace is legacy-only. Scoped engines use MigrationOptions.LegacyAccountKey
 	// once during adoption instead of configuring an independent namespace.
-	Namespace     string               `json:"namespace" yaml:"namespace"`
-	Schema        string               `json:"schema" yaml:"schema"`
-	Avatars       *AvatarsConfig       `json:"avatars,omitempty" yaml:"avatars,omitempty"`
-	SharedOrigins []notify.OriginScope `json:"shared_origins,omitempty" yaml:"shared_origins,omitempty"`
+	Namespace string         `json:"namespace" yaml:"namespace"`
+	Schema    string         `json:"schema" yaml:"schema"`
+	Avatars   *AvatarsConfig `json:"avatars,omitempty" yaml:"avatars,omitempty"`
 }
 
-// withAccounts adapts the shared account declaration to the established inbox
+// withAccounts adapts the shared account declaration to the established account
 // and avatar implementations. It never mutates the caller's configuration.
 func (c Config) withAccounts() (Config, error) {
 	a := c.Accounts
@@ -35,15 +32,17 @@ func (c Config) withAccounts() (Config, error) {
 	if !schemaRE.MatchString(a.Schema) || len(a.Schema) > 63 {
 		return c, fmt.Errorf("contentkit: Accounts.Schema must be a lower-case PostgreSQL identifier")
 	}
-	if c.Notifications != nil {
-		return c, fmt.Errorf("contentkit: configure Accounts or Notifications, not both")
-	}
 	if c.Avatars != nil && a.Avatars != nil {
 		return c, fmt.Errorf("contentkit: configure Accounts.Avatars or Avatars, not both")
 	}
-	c.Notifications = &notification.Config{Schema: a.Schema, Namespace: a.Namespace, SharedOrigins: append([]notify.OriginScope{}, a.SharedOrigins...)}
+	accounts := *a
+	c.Accounts = &accounts
 	if a.Avatars != nil {
 		c.Avatars = a.Avatars
+		// Keep account storage coordinates without carrying a second avatar
+		// declaration into later MediaKinds normalization. The caller's struct
+		// remains untouched, and a genuinely duplicated input is refused above.
+		accounts.Avatars = nil
 	}
 	if c.Avatars != nil {
 		avatars := *c.Avatars
@@ -60,6 +59,5 @@ func (c Config) withAccounts() (Config, error) {
 		avatars.Kind = &kind
 		c.Avatars = &avatars
 	}
-	c.Accounts = nil
 	return c, nil
 }

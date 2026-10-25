@@ -104,7 +104,7 @@ func EntityEditor(ctx context.Context, a auth.Authenticator, actor access.Actor,
 	switch {
 	case actor.Anonymous:
 		return false, nil
-	case owner != "" && actor.Member() && owner == actor.AccountID():
+	case scope == "" && owner != "" && actor.Member() && owner == actor.AccountID():
 		return true, nil
 	case scope == "":
 		return false, nil

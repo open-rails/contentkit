@@ -47,9 +47,6 @@ const (
 	// EntityRoutes: entity listings, pages and writes, and content's
 	// memberships (/v1/entities, /v1/contents/{id}/entities).
 	EntityRoutes
-	// NotificationRoutes: the user inbox and the host's publish route
-	// (/v1/notifications).
-	NotificationRoutes
 	// DiscoveryRoutes: lists, search, typeahead, similar and recommended
 	// contents, release dates, the reader's content filters and history,
 	// signals and exposures (/v1/contents, /v1/search, /v1/me/history, ...).
@@ -59,7 +56,7 @@ const (
 	ImportRoutes
 
 	// AllRoutes is every route group.
-	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | EntityRoutes | NotificationRoutes | DiscoveryRoutes | ImportRoutes
+	AllRoutes = ContentRoutes | UploadRoutes | MediaRoutes | CodeRoutes | EntityRoutes | DiscoveryRoutes | ImportRoutes
 )
 
 var groupModules = []struct {
@@ -72,13 +69,12 @@ var groupModules = []struct {
 	{MediaRoutes, []httpapi.Module{httpapi.Media, httpapi.Versions}, "media"},
 	{CodeRoutes, []httpapi.Module{httpapi.Codes}, "codes"},
 	{EntityRoutes, []httpapi.Module{httpapi.Entities}, "entities"},
-	{NotificationRoutes, []httpapi.Module{httpapi.Notifications}, "notifications"},
 	{DiscoveryRoutes, []httpapi.Module{httpapi.Discovery}, "discovery"},
 	{ImportRoutes, []httpapi.Module{httpapi.Import}, "import"},
 }
 
 // ParseRouteGroups reads route group names ("content", "upload", "media",
-// "codes", "entities", "notifications", "discovery", "import" or "all"), as a server's configuration
+// "codes", "entities", "discovery", "import" or "all"), as a server's configuration
 // lists them.
 func ParseRouteGroups(names []string) (RouteGroups, error) {
 	var out RouteGroups
@@ -131,7 +127,7 @@ func (e *Engine) Routes(selection Routes) ([]Route, error) {
 	return []Route{{Path: prefix + httpapi.Version + "/", Handler: e.dispatch(prefix, modules)}}, nil
 }
 
-var needs = map[RouteGroups]string{UploadRoutes: "Config.Media", MediaRoutes: "Config.Media", NotificationRoutes: "the AuthKit account inbox when Deps.Notifications is configured"}
+var needs = map[RouteGroups]string{UploadRoutes: "Config.Media", MediaRoutes: "Config.Media"}
 
 // RouteGroups is every route group the engine can serve: those whose modules
 // its Config provides.

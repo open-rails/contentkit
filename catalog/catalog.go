@@ -84,6 +84,9 @@ type Options struct {
 	EventRetention time.Duration
 	// OnPurge records required application cleanup in the same transaction.
 	OnPurge func(context.Context, pgx.Tx, []contentref.ContentRef) error
+	// AfterPurge completes durable cross-store cleanup after local deletion.
+	// It runs even when some local deletions failed, and retries via this sweep.
+	AfterPurge func(context.Context) error
 	// PlayableKinds are the kinds whose versions list only once their media
 	// plays (an HLS rendition is out): a new version starts not playable until
 	// media records otherwise. Only kinds media streams belong here.
@@ -116,6 +119,7 @@ type Store struct {
 	retention       time.Duration
 	eventRetention  time.Duration
 	onPurge         func(context.Context, pgx.Tx, []contentref.ContentRef) error
+	afterPurge      func(context.Context) error
 	documents       func(ctx context.Context, q Querier) error
 	references      VersionReferenceOwner
 	playable        []string
@@ -128,6 +132,15 @@ type tables struct {
 	items, text, creators, versions, versionText, segments, facets, events string
 	entities, entityNames, memberships, prefs, counts, docs                string
 	reactions, favorites, comments, accessHistory                          string
+}
+
+func catalogTables(schema string) tables {
+	q := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
+	return tables{items: q("content_items"), text: q("content_text"), creators: q("content_creators"), versions: q("content_versions"),
+		versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), events: q("content_events"),
+		entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
+		prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),
+		reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")}
 }
 
 // New validates opts and checks the schema has the catalog tables.
@@ -144,16 +157,11 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 	if err := gate.Check(opts.Auth, access.ContentWrite, access.ContentViewRestricted); err != nil {
 		return nil, fmt.Errorf("catalog: Auth: %w", err)
 	}
-	q := func(name string) string { return pgx.Identifier{opts.Schema, name}.Sanitize() }
 	s := &Store{
 		pool: opts.Pool, schema: opts.Schema, qs: pgx.Identifier{opts.Schema}.Sanitize(), tenant: opts.Tenant, cfg: opts.Kinds,
-		t: tables{items: q("content_items"), text: q("content_text"), creators: q("content_creators"), versions: q("content_versions"),
-			versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), events: q("content_events"),
-			entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
-			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),
-			reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")},
+		t:     catalogTables(opts.Schema),
 		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities,
-		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, documents: opts.DocumentsChanged, references: opts.References,
+		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, afterPurge: opts.AfterPurge, documents: opts.DocumentsChanged, references: opts.References,
 		playable: slices.Sorted(slices.Values(opts.PlayableKinds)), now: opts.Now, log: opts.Logger,
 	}
 	if s.accessG == nil {

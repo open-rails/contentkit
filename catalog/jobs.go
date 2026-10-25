@@ -97,7 +97,12 @@ const (
 // PurgeDeleted erases content and versions deleted longer than the retention
 // ago, including purchased content. Billing products and purchase history stay;
 // holders lose access to the erased media. It returns the number erased.
-func (s *Store) PurgeDeleted(ctx context.Context) (int, error) {
+func (s *Store) PurgeDeleted(ctx context.Context) (total int, resultErr error) {
+	defer func() {
+		if s.afterPurge != nil {
+			resultErr = errors.Join(resultErr, s.afterPurge(ctx))
+		}
+	}()
 	var cleanupErr error
 	if s.media != nil {
 		_, cleanupErr = s.media.Versions.ResumeDeletes(ctx, purgeBatch)
