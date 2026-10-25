@@ -126,7 +126,7 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 	must(t, err)
 	purge := func(t *testing.T, want rivertype.JobState) {
 		t.Helper()
-		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.Queue, MaxAttempts: 1})
+		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)
 		waitForWithin(t, 45*time.Second, func() bool {
 			current, err := producer.JobGet(t.Context(), job.Job.ID)
@@ -158,6 +158,7 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 		t.Fatal("purge positive control has no durable media")
 	}
 	must(t, admin.DeleteContentVersion(t.Context(), ref.ID, ref.Version))
+	awaitPublicationJobsIdle(t, w, a)
 	deleted, err := admin.GetManage(t.Context(), ck.GetManageQuery{State: "deleted", Ids: []string{ref.ID}})
 	must(t, err)
 	if len(deleted) != 1 || deleted[0].DeletedAt == nil {
@@ -252,7 +253,9 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 			awaitMediaReady(t, admin, ref)
 			_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 			must(t, err)
+			awaitEditionPublication(t, a, admin, ref.ID, ref.Version)
 			must(t, admin.DeleteContentVersion(t.Context(), ref.ID, ref.Version))
+			awaitPublicationJobsIdle(t, w, a)
 			rows, err := admin.GetManage(t.Context(), ck.GetManageQuery{State: "deleted", Ids: []string{ref.ID}})
 			must(t, err)
 			if len(rows) != 1 || rows[0].DeletedAt == nil {
@@ -304,7 +307,7 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 		claimed := makeDeleted("Purge claim wins")
 		fencePath := "/" + m.bucket + "/" + root + claimed.Kind + "/" + claimed.Version + "/public/" + layout.ErasureFenceName
 		pauseErasure.Store(&fencePath)
-		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.Queue, MaxAttempts: 1})
+		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)
 		select {
 		case <-erasureEntered:
