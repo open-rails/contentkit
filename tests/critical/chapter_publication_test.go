@@ -212,8 +212,9 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 	}
 	// Advance the owned River fixture's wakeup, keeping the real worker and
 	// authoritative request due-time check. This avoids waiting one wall hour.
-	_, err = w.pool.Exec(t.Context(), `UPDATE `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+`
- SET scheduled_at=clock_timestamp(),state='available' WHERE kind='contentkit_version_release' AND state IN ('scheduled','retryable')`)
-	must(t, err)
-	awaitPaths("reader/01.webp", "reader/17.webp", "reader/20.webp", "reader/40.webp", "reader/19b.webp")
+	waitForWithin(t, 45*time.Second, func() bool {
+		wakeDuePublicationJobs(t, a)
+		_, paths, err := readPaths()
+		return err == nil && slices.Equal(paths, []string{"reader/01.webp", "reader/17.webp", "reader/20.webp", "reader/40.webp", "reader/19b.webp"})
+	})
 }

@@ -222,6 +222,7 @@ func publishedArticle(t *testing.T, a *application, title string) catalog.Conten
 	must(t, err)
 	var got catalog.Content
 	waitForWithin(t, 45*time.Second, func() bool {
+		wakeDuePublicationJobs(t, a)
 		got, err = a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		return err == nil && got.Live
 	})
