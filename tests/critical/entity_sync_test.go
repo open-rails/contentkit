@@ -1,9 +1,7 @@
 package critical_test
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,7 +12,6 @@ import (
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/kinds"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 )
 
@@ -73,6 +70,9 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 			t.Fatal("offline import did not leave exactly one durable unprocessed scope job")
 		}
 	})
+	// S01 proves admission before any fleet is bound. Publication can now run,
+	// while entity synchronization stays paused until S05 explicitly resumes it.
+	fleet := publicationOnlyFleet(t, a)
 	t.Run("CK-J16-S04_owned_import_state_changes_admit_exact_work", func(t *testing.T) {
 		owner, token := w.person(t, 0)
 		created, err := a.client(token).PostEntities(t.Context(), []entities.EntityInput{{Kind: "collection", Slug: "owned-collection", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Collection without permission group"}}}})
@@ -83,6 +83,7 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 		ownedContent = item.ID
 		_, err = a.client(token).PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
+		awaitEditionPublication(t, a, a.client(token), item.ID, item.Versions[0].ID)
 		result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "offline-lifecycle", Entities: []importer.EntityRecord{{ExternalID: "collection", ID: string(collection.ID), Kind: "collection", Slug: collection.Slug, OwnerUserID: owner.ID, State: "deleted"}}})
 		must(t, err)
 		if len(result.Failed) != 0 {
@@ -97,15 +98,7 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 		}
 	})
 	t.Run("CK-J16-S05_exact_jobs_converge_when_workers_resume", func(t *testing.T) {
-		fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
-		must(t, err)
-		t.Cleanup(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			must(t, fleet.Stop(ctx))
-		})
-		must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
-		must(t, fleet.Start(t.Context()))
+		must(t, fleet.Queues().Add(entities.DefaultQueue, river.QueueConfig{MaxWorkers: 1}))
 		waitFor(t, func() bool {
 			current, err := a.engine.Client().GetManageEntity(t.Context(), string(imported.ID), ck.GetManageEntityQuery{})
 			must(t, err)
