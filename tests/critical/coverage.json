@@ -216,9 +216,16 @@
     {
       "id": "CK-J03-S07",
       "journey": "CK-J03",
-      "behavior": "Owner transfer preserves actor audit and does not fabricate target membership",
-      "status": "pending",
-      "evidence": []
+      "behavior": "Staff-only owner assignment preserves scope identity and cannot fabricate tenant membership",
+      "status": "verified",
+      "evidence": [
+        "An ordinary owner cannot change the staff-only owner field. A trusted imported foreign owner reference leaves the existing group and foreign identity memberships unchanged and cannot authorize tenant operations. Assigning a real tenant owner permits authoring in exactly that entity.",
+        "Executed under the race detector; all recorded cases are required by the strict future qualification runner.",
+        "Public actor-audit events for owner assignment are not an existing contract and are not claimed. Root explicitly approved correcting the speculative prior wording."
+      ],
+      "cases": [
+        "TestEntityOwnerAssignmentBoundary/CK-J03-S07_staff_owner_assignment_does_not_provision_foreign_membership"
+      ]
     },
     {
       "id": "CK-J05-S01",
@@ -474,15 +481,27 @@
       "id": "CK-J08-S02",
       "journey": "CK-J08",
       "behavior": "Deleting final version derives parent tombstone atomically",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Deleting the last hidden edition removes anonymous content visibility and leaves exactly the parent tombstone with a deletion timestamp in management.",
+        "Executed under the race detector; all recorded cases are required by the strict future qualification runner."
+      ],
+      "cases": [
+        "TestVersionDeletionDerivesParent/CK-J08-S02_last_version_also_deletes_parent"
+      ]
     },
     {
       "id": "CK-J08-S03",
       "journey": "CK-J08",
       "behavior": "Restore reopens the permitted edition/derived parent only",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Restoring the last version makes its derived parent live and publicly readable under the same content/version identities, with no deletion timestamp.",
+        "Executed under the race detector; all recorded cases are required by the strict future qualification runner."
+      ],
+      "cases": [
+        "TestVersionDeletionDerivesParent/CK-J08-S03_restore_version_recovers_only_derived_parent"
+      ]
     },
     {
       "id": "CK-J08-S04",
@@ -734,8 +753,14 @@
       "id": "CK-J16-S04",
       "journey": "CK-J16",
       "behavior": "Deleting entity retires authority and owned content visibility",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Deleting an owned entity hides its formerly published content and marks its actual app-bound AuthKit group deleted.",
+        "Executed under the race detector; all recorded cases are required by the strict future qualification runner."
+      ],
+      "cases": [
+        "TestOwnedEntityAuthority/CK-J16-S04_deletion_retires_scope_and_owned_content"
+      ]
     },
     {
       "id": "CK-J16-S05",
@@ -953,8 +978,14 @@
       "id": "CK-J25-S03",
       "journey": "CK-J25",
       "behavior": "Read/unread and archive/restore change receipt state only",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Owner read/archive/unread/restore operations preserve unresolved source status, expose the receipt in the correct active/archive views and retain its identity.",
+        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
+      ],
+      "cases": [
+        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work"
+      ]
     },
     {
       "id": "CK-J25-S04",
@@ -967,8 +998,14 @@
       "id": "CK-J25-S05",
       "journey": "CK-J25",
       "behavior": "Erased recipient rejects delayed or replayed publication",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "An erased recipient cannot be recreated by replaying either its existing source origin or a later new origin; the public inbox remains empty.",
+        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
+      ],
+      "cases": [
+        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
+      ]
     },
     {
       "id": "CK-J25-S06",
@@ -988,29 +1025,53 @@
       "id": "CK-J26-S01",
       "journey": "CK-J26",
       "behavior": "Only committed mutations appear in source order",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A real public content mutation and its retained source fact agree on item, app and type after commit.",
+        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
+      ],
+      "cases": [
+        "TestRetainedLog/CK-J26-S01_committed_domain_effect_and_event_agree"
+      ]
     },
     {
       "id": "CK-J26-S02",
       "journey": "CK-J26",
       "behavior": "Earlier blocked transaction cannot be skipped by later reader cursor",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A deferred PG commit barrier holds the first event while another mutation commits or serializes. The reader cursor before/after release yields exactly both source effects once, with no uncommitted first event.",
+        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
+      ],
+      "cases": [
+        "TestRetainedLog/CK-J26-S02_delayed_commit_cannot_fall_behind_a_reader_cursor"
+      ]
     },
     {
       "id": "CK-J26-S03",
       "journey": "CK-J26",
       "behavior": "Filtered pagination preserves progress without omissions or duplicates",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Filtered one-event pages yield the exact committed content IDs in order, with progressing cursors, no unselected types, gaps or duplicates.",
+        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
+      ],
+      "cases": [
+        "TestRetainedLog/CK-J26-S03_filtered_pagination_has_no_gaps_or_duplicates"
+      ]
     },
     {
       "id": "CK-J26-S04",
       "journey": "CK-J26",
       "behavior": "Reader restart replays from its own saved cursor",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A new authenticated remote reader resumes its previously saved cursor and observes the subsequent real content mutation without source registration.",
+        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
+      ],
+      "cases": [
+        "TestRetainedLog/CK-J26-S04_new_reader_resumes_its_own_cursor"
+      ]
     },
     {
       "id": "CK-J26-S05",
@@ -1023,15 +1084,27 @@
       "id": "CK-J26-S06",
       "journey": "CK-J26",
       "behavior": "Expired/reset/foreign/malformed cursor has explicit stable refusal",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Foreign-app and malformed cursors refuse explicitly; advancing beyond retention returns410 event_cursor_expired instead of skipping the lost interval.",
+        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
+      ],
+      "cases": [
+        "TestRetainedLog/CK-J26-S06_foreign_malformed_and_expired_cursors_are_explicit"
+      ]
     },
     {
       "id": "CK-J26-S07",
       "journey": "CK-J26",
       "behavior": "Repeated due publisher and rolled-back mutation cannot duplicate or invent events",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A deferred real PG constraint rejects commit; public management and retained-log reads show neither the rolled-back content nor any corresponding source event.",
+        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
+      ],
+      "cases": [
+        "TestRetainedLog/CK-J26-S07_rollback_cannot_leave_an_event_without_content"
+      ]
     },
     {
       "id": "CK-J29-S01",
