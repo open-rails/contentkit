@@ -15,11 +15,13 @@ legacy scope, migration versions, advisory locks or receipt IDs.
 1. Stop both host fleets and all billing/content writers. Take a fresh private
    recovery point and restore-verify it. Do not run old writers against the new
    producer/adoption cohort.
-2. Migrate AuthKit's optional inbox and both ContentKit catalog/source ledgers
-   explicitly with the new binaries. ContentKit no longer creates or validates
-   an inbox as part of ordinary catalog startup. Its explicit comment adoption
-   reads an existing legacy inbox only when one exists; it preserves canonical
-   UUID identity, local read/archive state and erasure guards.
+2. Migrate AuthKit's optional inbox first, then both ContentKit catalog/source
+   ledgers explicitly with the new binaries. ContentKit creates no inbox storage;
+   its existing account-erasure safeguards still validate any retained lineage.
+   Explicit comment adoption reads an existing inbox only after AuthKit has
+   migrated it, preserving canonical UUID identity, local read/archive state and
+   erasure guards. A completely absent optional inbox is valid; partial storage
+   is not an implicit opt-out.
 3. Finish the already-established billing event cursor through
    `notification/openrails.Source.Consume` using the explicit
    `migration/legacyinbox` adapter. Receipt import and cursor commit remain
