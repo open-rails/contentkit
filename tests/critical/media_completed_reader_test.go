@@ -46,7 +46,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 	viewer := access.Actor{ID: uuid.NewString()}
 	authority := &completedReaderAuthority{editor: editor.ID}
 	var active string
-	omitIndex, leakPreparation := false, false
+	omitIndex, directIndex, leakPreparation := false, false, false
 	var trackSource, indexSource, publicSource string
 	cfg := media.Config{Scope: layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}, BaseURL: storage.gateway.URL,
 		Kinds: []media.Kind{{Name: "clip", Versions: true, KeepOriginals: true,
@@ -87,6 +87,9 @@ func TestCompletedPublicationReader(t *testing.T) {
 					if f.Track != nil {
 						track := *f.Track
 						track.Index = indexSource // immutable pre-move snapshot reference
+						if directIndex {
+							track.Index = mapping[indexSource]
+						}
 						f.Track = &track
 					}
 					out.Files = append(out.Files, f)
@@ -245,7 +248,18 @@ func TestCompletedPublicationReader(t *testing.T) {
 	if !errors.Is(err, media.ErrNotAllowed) {
 		t.Fatalf("unmapped index was read through application storage: %v", err)
 	}
+	directIndex = true
+	grant, err = reader.Grant(t.Context(), ref, viewer)
+	must(t, err)
+	_, err = grant.MediaPlaylist(t.Context(), "streams/h264.mp4")
+	if !errors.Is(err, media.ErrNotAllowed) {
+		t.Fatalf("served but uncommitted index bypassed the publication projection: %v", err)
+	}
 	omitIndex = false
+	grant, err = reader.Grant(t.Context(), ref, viewer)
+	must(t, err)
+	_, err = grant.MediaPlaylist(t.Context(), "streams/h264.mp4")
+	must(t, err) // already-remapped indexes remain valid when the delivery owns them
 	withoutEditor, err := media.NewManifests(noEditorReadStore{storage.store}, registry, media.ManifestOptions{Locker: media.PGLocker(w.pool), Journal: journal})
 	must(t, err)
 	options.Manifests = withoutEditor

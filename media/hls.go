@@ -311,6 +311,11 @@ func (g *Grant) deliveredBlob(blob string) (string, error) {
 			if !valid || area != layout.AreaPublic && area != layout.AreaPrivate {
 				return "", ErrNotAllowed
 			}
+			if g.Item.Kind().Versions && !slices.ContainsFunc(g.Manifest.Deliveries, func(delivery PublicationDelivery) bool {
+				return delivery.Ready && !delivery.Withdrawn && slices.ContainsFunc(delivery.Files, func(file DeliveryFile) bool { return file.Blob == blob })
+			}) {
+				return "", ErrNotAllowed
+			}
 			return blob, nil
 		}
 		blob = next
