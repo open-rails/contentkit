@@ -68,15 +68,16 @@ type Segment struct {
 }
 
 // SegmentInput authors a chapter by its first virtual filename in the manifest.
-// ID preserves the chapter across title, ordering and marker edits. Start and
-// End remain accepted together for explicit conversion of older numeric ranges.
+// ID preserves the chapter across title, ordering and marker edits. Numeric
+// range authoring is rejected; Start and End exist only on displayed chapters
+// and the separate trusted import model.
 type SegmentInput struct {
 	ID        string     `json:"id,omitempty"`
 	Position  int        `json:"position,omitempty"`
 	Title     string     `json:"title,omitempty"`
 	StartPage string     `json:"start_page,omitempty"`
-	Start     int        `json:"start,omitempty"`
-	End       int        `json:"end,omitempty"`
+	Start     int        `json:"-"` // rejected legacy Go input; never a wire field
+	End       int        `json:"-"` // rejected legacy Go input; never a wire field
 	ReleaseAt *time.Time `json:"release_at,omitempty"`
 	Released  bool       `json:"released,omitempty"` // ignored, retained for older clients
 }

@@ -148,7 +148,7 @@ func (s *Service) setReleasePlanTx(ctx context.Context, tx pgx.Tx, id string, pl
 		return ErrInvalid
 	}
 	tag, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET plan=coalesce(plan,$3::jsonb),state='running',error=NULL,updated_at=clock_timestamp()
- WHERE tenant_id=$1 AND id=$2 AND current AND state NOT IN ('completed','cancelled') AND (plan IS NULL OR plan=$3::jsonb)`, s.o.Tenant, id, []byte(plan))
+ WHERE tenant_id=$1 AND id=$2 AND current AND state NOT IN ('retiring','completed','cancelled') AND (plan IS NULL OR plan=$3::jsonb)`, s.o.Tenant, id, []byte(plan))
 	if err != nil {
 		return err
 	}
@@ -167,7 +167,7 @@ func (s *Service) finishReleaseTx(ctx context.Context, tx pgx.Tx, id string, res
 	}
 	tag, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET result=$3::jsonb,state='completed',error=NULL,
  completed_at=coalesce(completed_at,$4),updated_at=clock_timestamp()
- WHERE tenant_id=$1 AND id=$2 AND current AND plan IS NOT NULL AND state<>'cancelled'
+ WHERE tenant_id=$1 AND id=$2 AND (current OR state='retiring') AND plan IS NOT NULL AND state<>'cancelled'
  AND (state<>'completed' OR result=$3::jsonb)`, s.o.Tenant, id, []byte(result), s.o.Now())
 	if err != nil {
 		return err
@@ -210,7 +210,7 @@ func (w *releaseWorker) Work(ctx context.Context, job *river.Job[releaseArgs]) e
 	var state string
 	err := w.s.o.Pool.QueryRow(ctx, `SELECT scheduled_at,current,state FROM `+w.s.releaseRequestsTable()+`
  WHERE tenant_id=$1 AND id=$2`, w.s.o.Tenant, job.Args.ID).Scan(&due, &current, &state)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && (!current || state == "cancelled") {
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && ((!current && state != "retiring") || state == "cancelled") {
 		return river.JobCancel(errRetired)
 	}
 	if err != nil {
@@ -219,7 +219,7 @@ func (w *releaseWorker) Work(ctx context.Context, job *river.Job[releaseArgs]) e
 	if state == "completed" {
 		return nil
 	}
-	if wait := due.Sub(w.s.o.Now()); wait > 0 {
+	if wait := due.Sub(w.s.o.Now()); state != "retiring" && wait > 0 {
 		return river.JobSnooze(wait)
 	}
 	err = w.s.runRelease(ctx, job.Args.ID)

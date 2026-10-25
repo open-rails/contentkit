@@ -966,9 +966,11 @@ func (s *Store) followOwned(ctx context.Context, query string, entities []string
 // in order.
 func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []VersionPut) ([]string, error) {
 	var segmentVersions []string
+	var chapterTargets []versions.Target
 	for _, p := range in {
 		if p.VersionID != "" && p.Segments != nil {
 			segmentVersions = append(segmentVersions, p.VersionID)
+			chapterTargets = append(chapterTargets, versions.Target{Content: p.ContentID, Version: p.VersionID})
 		}
 	}
 	unlock, err := versions.LockSources(ctx, s.pool, s.tenant, segmentVersions)
@@ -983,79 +985,81 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 		}
 	}
 	out := make([]string, len(in))
-	err = s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{}
-		for i, p := range in {
-			o := got[p.ContentID]
-			k := s.cfg.Kinds[o.kind]
-			if o.state == StateDeleted {
-				var automatic bool
-				if err := tx.QueryRow(ctx, `SELECT c.deleted_without_versions AND (c.owner_entity_id IS NULL OR EXISTS
+	err = s.withChapterLocks(ctx, chapterTargets, func() error {
+		return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+			fx := effects{}
+			for i, p := range in {
+				o := got[p.ContentID]
+				k := s.cfg.Kinds[o.kind]
+				if o.state == StateDeleted {
+					var automatic bool
+					if err := tx.QueryRow(ctx, `SELECT c.deleted_without_versions AND (c.owner_entity_id IS NULL OR EXISTS
  (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id=c.tenant_id AND g.id=c.owner_entity_id AND g.state='active'))
  FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND c.id=$2`, s.tenant, p.ContentID).Scan(&automatic); err != nil {
+						return fx, err
+					}
+					if !automatic {
+						return fx, ErrNotFound
+					}
+				}
+				if k.Versions.Hidden && (p.VersionID == "" || !hiddenVersionEdit(p.VersionInput)) {
+					return fx, invalid("kind %s has one hidden version: only its cover or restoration is edited", o.kind)
+				}
+				if p.Fork != nil {
+					if err := s.checkFork(ctx, tx, p); err != nil {
+						return fx, err
+					}
+				}
+				if p.VersionID == "" {
+					// An added version stays a draft until its editors publish it.
+					in := p.VersionInput
+					if in.State == "" {
+						in.State = StateDraft
+					}
+					vid, err := s.insertVersion(ctx, tx, p.ContentID, o.kind, k, in)
+					if err != nil {
+						return fx, err
+					}
+					out[i] = vid
+					from := ""
+					if f := p.Fork; f != nil {
+						fx.forks = append(fx.forks, versions.Fork{Version: versions.Target{Content: p.ContentID, Version: vid}, From: f.From,
+							Playback: f.Playback, Segments: f.Segments})
+						from = f.From
+					}
+					// A new version starts with its own copy of the body's images
+					// and, forked, of its source's cover selection.
+					if from, err = s.sibling(ctx, tx, p.ContentID, vid, from, in.Cover == nil); err != nil {
+						return fx, err
+					}
+					if from != "" {
+						fx.bodies = append(fx.bodies, versions.BodyCopy{Content: p.ContentID, From: from, To: []string{vid}})
+					}
+					fx.events = append(fx.events, Event{Type: EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
+					if in.State == StatePublished {
+						fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: vid})
+					}
+					continue
+				}
+				if err := s.updateVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionID, p.VersionInput); err != nil {
 					return fx, err
 				}
-				if !automatic {
-					return fx, ErrNotFound
+				if p.Access != nil || p.ClearAccess || p.Segments != nil {
+					fx.republish = append(fx.republish, versions.Target{Content: p.ContentID, Version: p.VersionID})
 				}
+				if p.State != "" || p.PublishAt != nil || p.Access != nil || p.ClearAccess || p.Segments != nil {
+					fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: p.VersionID})
+				}
+				out[i] = p.VersionID
+				fx.events = append(fx.events, Event{Type: EventVersionUpdated, Kind: o.kind, ContentID: p.ContentID, VersionID: p.VersionID})
 			}
-			if k.Versions.Hidden && (p.VersionID == "" || !hiddenVersionEdit(p.VersionInput)) {
-				return fx, invalid("kind %s has one hidden version: only its cover or restoration is edited", o.kind)
-			}
-			if p.Fork != nil {
-				if err := s.checkFork(ctx, tx, p); err != nil {
-					return fx, err
-				}
-			}
-			if p.VersionID == "" {
-				// An added version stays a draft until its editors publish it.
-				in := p.VersionInput
-				if in.State == "" {
-					in.State = StateDraft
-				}
-				vid, err := s.insertVersion(ctx, tx, p.ContentID, o.kind, k, in)
-				if err != nil {
-					return fx, err
-				}
-				out[i] = vid
-				from := ""
-				if f := p.Fork; f != nil {
-					fx.forks = append(fx.forks, versions.Fork{Version: versions.Target{Content: p.ContentID, Version: vid}, From: f.From,
-						Playback: f.Playback, Segments: f.Segments})
-					from = f.From
-				}
-				// A new version starts with its own copy of the body's images
-				// and, forked, of its source's cover selection.
-				if from, err = s.sibling(ctx, tx, p.ContentID, vid, from, in.Cover == nil); err != nil {
-					return fx, err
-				}
-				if from != "" {
-					fx.bodies = append(fx.bodies, versions.BodyCopy{Content: p.ContentID, From: from, To: []string{vid}})
-				}
-				fx.events = append(fx.events, Event{Type: EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
-				if in.State == StatePublished {
-					fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: vid})
-				}
-				continue
-			}
-			if err := s.updateVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionID, p.VersionInput); err != nil {
+			restored, err := s.restoreVersionParents(ctx, tx, ids)
+			if err != nil {
 				return fx, err
 			}
-			if p.Access != nil || p.ClearAccess || p.Segments != nil {
-				fx.republish = append(fx.republish, versions.Target{Content: p.ContentID, Version: p.VersionID})
-			}
-			if p.State != "" || p.PublishAt != nil || p.Access != nil || p.ClearAccess || p.Segments != nil {
-				fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: p.VersionID})
-			}
-			out[i] = p.VersionID
-			fx.events = append(fx.events, Event{Type: EventVersionUpdated, Kind: o.kind, ContentID: p.ContentID, VersionID: p.VersionID})
-		}
-		restored, err := s.restoreVersionParents(ctx, tx, ids)
-		if err != nil {
-			return fx, err
-		}
-		fx.events = append(fx.events, restored...)
-		return fx, nil
+			fx.events = append(fx.events, restored...)
+			return fx, nil
+		})
 	})
 	if err != nil {
 		return nil, err

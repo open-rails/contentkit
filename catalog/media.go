@@ -78,6 +78,21 @@ type chapterStartValidator interface {
 	ValidateChapterStartsTx(context.Context, pgx.Tx, versions.Target, []string) error
 }
 
+type chapterLocker interface {
+	WithChapterLocks(context.Context, []versions.Target, func() error) error
+}
+
+func (s *Store) withChapterLocks(ctx context.Context, targets []versions.Target, write func() error) error {
+	if len(targets) == 0 || s.media == nil {
+		return write()
+	}
+	locker, ok := s.media.Versions.(chapterLocker)
+	if !ok {
+		return errors.New("catalog: chapter writes require recovered manifest locks")
+	}
+	return locker.WithChapterLocks(ctx, targets, write)
+}
+
 func (s *Store) validateChapterStarts(ctx context.Context, tx pgx.Tx, version string, segments []Segment) error {
 	var target versions.Target
 	var kind string

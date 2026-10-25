@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { chapterRanges } from "../../client/chapters.js";
 import { publicationOf, publicationPhase } from "../../client/publication.js";
 import { createPortal } from "react-dom";
-import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Add01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ratio } from "../../client/aspect.js";
@@ -22,8 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { Switch } from "#ckui/ui/switch";
 import { ReaderManifestEditor } from "../admin/reader-manifest.js";
 import { PageNotices } from "../admin/page-notices.js";
-import { ALL_EDITOR_FILES, editorMedia, PagePicker, usePlanMedia } from "../admin/page-picker.js";
-import { useReaderPlan } from "../../react/versions.js";
+import { ALL_EDITOR_FILES, editorMedia, PagePicker } from "../admin/page-picker.js";
 import { VideoMediaEditor, videoPaths } from "../admin/media-item-panel.js";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { MediaFolderEditor } from "../media-folder-editor.js";
@@ -944,16 +943,13 @@ function VersionMedia({ content, version, model, ...p }: Common & { content: Con
   </>;
 }
 
-type Row = { id?: string; title: string; start: string; end: string; release: string };
-const segmentRows=(version:Version):Row[]=>version.segments.map((s)=>({id:"id" in s&&typeof s.id==="string"?s.id:undefined,title:s.title??"",start:String(s.start),end:String(s.end),release:toLocalInput(s.release_at)}));
-
 type SegmentsEditorProps = Common & { content: Content; version: Version; heading?: boolean };
 
 /** Reader chapters use virtual filename start markers in current manifest order. */
 export function SegmentsEditor(p: SegmentsEditorProps) {
   const { spec } = useKind(p.content.kind, p.client);
   if (!spec) return <Skeleton className="h-24 w-full" />;
-  return spec.presentation === "reader" ? <ReaderChaptersEditor {...p} /> : <NumericSegmentsEditor {...p} />;
+  return <ReaderChaptersEditor {...p} />;
 }
 
 type ChapterRow = { id?: string; title: string; startPage: string; release: string };
@@ -1026,93 +1022,6 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
     <ErrorLine error={read.error} />
     <ErrorLine error={save.error} />
   </div>;
-}
-
-/** Numeric ranges for presentations without reader pages. */
-function NumericSegmentsEditor({ content, version, heading = true, ...p }: SegmentsEditorProps) {
-  const { t } = useMessages();
-  const coordinated = useContext(EditorSaveContext) !== null;
-  const client = useContentKitClient(p.client);
-  const fields=useDraft(useMemo(()=>({rows:segmentRows(version)}),[version]));
-  const rows=fields.value.rows;
-  const setRows=(next:SetStateAction<Row[]>)=>fields.edit((old)=>({rows:typeof next==="function"?next(old.rows):next}));
-  const [saved, setSaved] = useState(false);
-  const save = useAction("content.save", p.onError);
-  // Published pages pick ranges by thumbnail; before a publication, numbers.
-  const plan = useReaderPlan(content.id, version.id, { client });
-  const { pages } = usePlanMedia(plan.plan, client);
-  const set = (i: number, patch: Partial<Row>) => {
-    setSaved(false);
-    setRows((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-  };
-  const valid = rows.every((r) => /^\d+$/.test(r.start) && /^\d+$/.test(r.end) && Number(r.end) > Number(r.start));
-  const submit=async()=>{
-    if(!valid)return false;
-    setSaved(false);const settle=fields.checkpoint();
-    const segments:SegmentInput[]=rows.map((r,i)=>({id:r.id,position:i,title:r.title.trim()||undefined,start:Number(r.start),end:Number(r.end),release_at:fromLocalInput(r.release)}));
-    const out=await save.run(()=>client.contents.setSegments(content.id,version.id,segments));
-    if(!out)return false;const clean=settle({rows:segmentRows(out)});setSaved(clean);return clean;
-  };
-  useEditorSaveTask(`segments:${version.id}`,{label:t("contentEditor.segments"),dirty:fields.dirty.length>0,pending:save.pending,valid,save:submit,order:20});
-  return (
-    <div className="grid gap-2" data-ckui="segments-editor">
-      {heading && <h4 className="text-sm font-medium">{t("contentEditor.segments")}</h4>}
-      {rows.length === 0 && <p className="text-muted-foreground">{t("contentEditor.noSegments")}</p>}
-      {rows.map((r, i) => (
-        <div key={i} className="flex flex-wrap items-center gap-2" data-ckui="segment-row">
-          <span className="w-6 text-xs text-muted-foreground tabular-nums">{i + 1}</span>
-          <Input className="h-8 w-40" aria-label={t("contentEditor.segmentTitle", { n: i + 1 })} placeholder={t("contentEditor.segmentTitlePlaceholder")} value={r.title} onChange={(e) => set(i, { title: e.target.value })} />
-          {pages.length ? (
-            <>
-              <PagePicker label={t("contentEditor.segmentStart", { n: i + 1 })} pages={pages} value={pages[Number(r.start)]?.id ?? ""}
-                onChange={(name) => set(i, { start: String(pages.findIndex((x) => x.id === name)) })} />
-              <span aria-hidden>–</span>
-              {/* end is exclusive: the picker names the segment's last page. */}
-              <PagePicker label={t("contentEditor.segmentEnd", { n: i + 1 })} pages={pages} value={pages[Number(r.end) - 1]?.id ?? ""}
-                onChange={(name) => set(i, { end: String(pages.findIndex((x) => x.id === name) + 1) })} />
-            </>
-          ) : (
-            <>
-              <Input className="h-8 w-20" type="number" min={0} aria-label={t("contentEditor.segmentStart", { n: i + 1 })} value={r.start} onChange={(e) => set(i, { start: e.target.value })} />
-              <span aria-hidden>–</span>
-              <Input className="h-8 w-20" type="number" min={1} aria-label={t("contentEditor.segmentEnd", { n: i + 1 })} value={r.end} onChange={(e) => set(i, { end: e.target.value })} />
-            </>
-          )}
-          <Input className="h-8 w-48" type="datetime-local" aria-label={t("contentEditor.segmentRelease", { n: i + 1 })} value={r.release} onChange={(e) => set(i, { release: e.target.value })} />
-          <Button type="button" size="xs" variant="ghost" onClick={() => setRows((x) => x.filter((_, j) => j !== i))}>
-            {t("common.remove")}
-          </Button>
-        </div>
-      ))}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            const last = rows.at(-1);
-            const start = last ? Number(last.end) || 0 : 0;
-            setRows((x) => [...x, { title: "", start: String(start), end: String(start + 1), release: "" }]);
-          }}
-        >
-          {t("contentEditor.addSegment")}
-        </Button>
-        {!coordinated && <>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={save.pending || !valid}
-          onClick={()=>void submit()}
-        >
-          {t("contentEditor.saveSegments")}
-        </Button>
-        <Saved show={saved} />
-        </>}
-      </div>
-      <ErrorLine error={save.error} />
-    </div>
-  );
 }
 
 /** Every editor section of an existing content: details, access and price, versions, groups. */

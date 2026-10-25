@@ -40,7 +40,7 @@ CREATE TABLE content_publication_requests (
     PRIMARY KEY (tenant_id,id),
     FOREIGN KEY (tenant_id,version_id) REFERENCES content_versions(tenant_id,id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id,content_id) REFERENCES content_items(tenant_id,id) ON DELETE CASCADE,
-    CHECK (state IN ('pending','waiting','running','completed','failed','cancelled')),
+    CHECK (state IN ('pending','waiting','running','retiring','completed','failed','cancelled')),
     CHECK (plan IS NULL OR jsonb_typeof(plan)='object'),
     CHECK (result IS NULL OR jsonb_typeof(result)='object')
 );

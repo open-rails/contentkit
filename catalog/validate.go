@@ -359,6 +359,9 @@ func checkSegments(ss []Segment) ([]Segment, error) {
 func checkSegmentInputs(in []SegmentInput) ([]Segment, error) {
 	segments := make([]Segment, len(in))
 	for i, sg := range in {
+		if sg.StartPage == "" || sg.Start != 0 || sg.End != 0 {
+			return nil, invalid("chapter %d: start_page must name a virtual manifest file; numeric ranges are not authored", i+1)
+		}
 		segments[i] = Segment{ID: sg.ID, Position: sg.Position, Title: sg.Title, StartPage: sg.StartPage, Start: sg.Start, End: sg.End, ReleaseAt: sg.ReleaseAt}
 	}
 	return checkSegments(segments)

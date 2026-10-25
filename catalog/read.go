@@ -466,7 +466,8 @@ func (s *Store) readCreators(ctx context.Context, ids []string) (map[string][]Cr
 func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map[string]*Version, error) {
 	q := `SELECT id, code, position, languages, traits, label, state, publish_at, published_at, access, attributes,
  pages, duration_ms, width, height, has_audio, ordinal, coalesce(cover->>'image', ''),
- (SELECT jsonb_build_object('id',r.id,'state',CASE WHEN r.state='completed' AND coalesce((r.result->>'waiting')::boolean,false) THEN 'waiting' ELSE r.state END,
+ (SELECT jsonb_build_object('id',r.id,'state',CASE WHEN r.state='retiring' THEN 'running'
+          WHEN r.state='completed' AND coalesce((r.result->>'waiting')::boolean,false) THEN 'waiting' ELSE r.state END,
           'scheduled_at',r.scheduled_at,'completed_at',r.completed_at,'error',r.error)
   FROM ` + s.qs + `.content_publication_requests r WHERE r.tenant_id=v.tenant_id AND r.version_id=v.id AND r.current)
  FROM ` + s.t.versions + ` v WHERE tenant_id = $1 AND content_id = ANY($2)`
