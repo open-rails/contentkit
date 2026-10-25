@@ -125,6 +125,26 @@ func (m *Manifests) WithLock(ctx context.Context, ref contentref.ContentRef, fn 
 	return fn()
 }
 
+// WithRecoveredLock settles any admitted manifest write before fn runs under
+// the same manifest lock. Catalog marker authoring uses this before acquiring
+// catalog row locks, so it cannot author a marker against bytes a pending
+// accepted removal is about to replace. fn must not mutate this manifest.
+func (m *Manifests) WithRecoveredLock(ctx context.Context, ref contentref.ContentRef, fn func() error) error {
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, _, err := m.recoverLocked(ctx, item); err != nil {
+		return err
+	}
+	return fn()
+}
+
 // Get returns ref's manifest and ETag, or ErrNotFound. Cached copies are
 // revalidated with a conditional GET, so a read is never stale. The
 // manifest is shared: never modify it (Clone it).

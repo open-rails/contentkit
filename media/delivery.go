@@ -133,6 +133,11 @@ func (m *Manifests) PreparePromotion(ctx context.Context, ref contentref.Content
 	if !item.Kind().Versions {
 		return nil, errors.New("media: promotion requires a version-owned content item")
 	}
+	if withdrawn, err := m.deliveryWithdrawn(ctx, item, id); err != nil {
+		return nil, err
+	} else if withdrawn {
+		return nil, ErrDeliveryWithdrawn
+	}
 	seen := map[string]bool{}
 	for _, input := range inputs {
 		if _, valid := layout.BlobDigest(input.Source); !valid || seen[input.Source] ||
@@ -181,6 +186,11 @@ func (m *Manifests) PreparePromotion(ctx context.Context, ref contentref.Content
 	}
 	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	result, err := m.EditExisting(ctx, ref, func(next *Manifest) error {
+		if withdrawn, err := m.deliveryWithdrawn(ctx, item, id); err != nil {
+			return err
+		} else if withdrawn {
+			return ErrDeliveryWithdrawn
+		}
 		if previous := next.delivery(operation); previous != nil {
 			_, err := matchDelivery(previous, d.Fingerprint)
 			return err
@@ -227,6 +237,13 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 		}
 		d := current.delivery(operation)
 		if d == nil {
+			if id, err := uuid.Parse(operation); err == nil {
+				if withdrawn, err := m.deliveryWithdrawn(ctx, item, id); err != nil {
+					return err
+				} else if withdrawn {
+					return ErrDeliveryWithdrawn
+				}
+			}
 			return ErrNotFound
 		}
 		if d.Withdrawn || current.Deleted {
@@ -385,7 +402,22 @@ func (m *Manifests) WithdrawPromotion(ctx context.Context, ref contentref.Conten
 	if err != nil {
 		return err
 	}
-	return m.completeRetirement(ctx, item, retirement)
+	if err := m.completeRetirement(ctx, item, retirement); err != nil {
+		return err
+	}
+	// The applied withdrawal receipt remains in the existing durable journal.
+	// The live manifest only needs active pins, not every past publication.
+	_, err = m.EditExisting(ctx, ref, func(current *Manifest) error {
+		current.Deliveries = slices.DeleteFunc(current.Deliveries, func(d PublicationDelivery) bool { return d.ID == operation && d.Withdrawn })
+		return nil
+	})
+	return err
+}
+
+func (m *Manifests) deliveryWithdrawn(ctx context.Context, item Item, operation uuid.UUID) (bool, error) {
+	withdrawal := uuid.NewSHA1(operation, []byte("withdraw-delivery-pins"))
+	record, err := m.journal.existing(ctx, manifestCommit{ID: withdrawal, Ref: item.Ref(), Folder: item.Prefix(), Fingerprint: sha256.Sum256([]byte(operation.String()))})
+	return record != nil && record.State != "absent", err
 }
 
 // completeRetirement executes the same exact-key intent as the existing purge

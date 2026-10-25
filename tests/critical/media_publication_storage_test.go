@@ -87,10 +87,13 @@ func TestPublicationStorage(t *testing.T) {
 	must(t, err)
 	var snapshot *media.Manifest
 	var original, prepared, cover string
-	waitFor(t, func() bool {
+	waitForWithin(t, 45*time.Second, func() bool {
 		snapshot, _, err = manifests.Get(t.Context(), target)
 		must(t, err)
 		for _, file := range snapshot.Files {
+			if failure := file.Fail(); failure != nil {
+				t.Fatalf("source preparation failed: %+v", failure)
+			}
 			switch file.Path {
 			case "pages/one.png":
 				original = file.Blob
@@ -116,7 +119,7 @@ func TestPublicationStorage(t *testing.T) {
 	}
 	ring, err := token.NewRing(storage.key, nil)
 	must(t, err)
-	itemToken := ring.Sign(strings.TrimSuffix(item.Prefix(), "/"), time.Now().Add(time.Minute))
+	itemToken := ring.Sign(strings.TrimSuffix(item.Prefix(), "/"), time.Now().Add(5*time.Minute))
 	get := func(blob, credential string, want int) []byte {
 		t.Helper()
 		key, err := item.Blob(blob)
@@ -205,7 +208,7 @@ func TestPublicationStorage(t *testing.T) {
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatal("one version's private token opened another version's existing object")
 	}
-	exact := ring.Sign(token.PrivateFileScope(key), time.Now().Add(time.Minute))
+	exact := ring.Sign(token.PrivateFileScope(key), time.Now().Add(5*time.Minute))
 	get(finished.Files[0].Blob, exact, http.StatusOK)
 
 	move := uuid.NewString()
@@ -214,6 +217,16 @@ func TestPublicationStorage(t *testing.T) {
 	moved, err := manifests.Promote(t.Context(), target, move)
 	must(t, err)
 	must(t, manifests.WithdrawPromotion(t.Context(), target, operation))
+	compacted, _, err := manifests.Get(t.Context(), target)
+	must(t, err)
+	for _, delivery := range compacted.Deliveries {
+		if delivery.Withdrawn {
+			t.Fatal("completed withdrawal left historical pins in the live manifest")
+		}
+	}
+	if _, err := manifests.PreparePromotion(t.Context(), target, operation, inputs); !errors.Is(err, media.ErrDeliveryWithdrawn) {
+		t.Fatalf("compacted operation was allowed to publish again: %v", err)
+	}
 	get(finished.Files[0].Blob, itemToken, http.StatusNotFound)
 	get(moved.Files[0].Blob, itemToken, http.StatusNotFound)
 	_, err = manifests.Promote(t.Context(), target, operation)
