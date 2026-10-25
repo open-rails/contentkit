@@ -60,7 +60,7 @@ func Names(ps ...Permission) []string {
 	return out
 }
 
-// Entity-scoped permissions are held in a user-owned entity's AuthKit scope
+// Entity-scoped permissions are held in an entity's AuthKit scope
 // (entities' auth_scope), whose persona is the entity kind:
 // "{kind}:<resource>:<action>". A host's persona of that name declares them
 // (EntityPermissions).

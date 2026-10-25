@@ -45,6 +45,8 @@ ContentKit names its staff permissions, always the full
 
 | Constant | Permission | Holders may |
 |---|---|---|
+| `access.ContentCreate` | `root:content:create` | create and read their own content outside channels |
+| `access.ContentEditOwn` | `root:content:edit-own` | read, edit, publish and manage media of content they created outside channels |
 | `access.ContentWrite` | `root:content:write` | write and publish content, delete and restore its versions, and manage its images |
 | `access.ContentViewRestricted` | `root:content:view-restricted` | see every content item in any state, listing, site or filter |
 | `access.PollsWrite` | `root:polls:write` | write and delete polls, options and images; see inactive ones |
@@ -53,12 +55,16 @@ ContentKit names its staff permissions, always the full
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
 | `access.EntitiesWrite` | `root:entities:write` | create, edit, merge and delete entities, and set memberships |
 
-A user-owned entity kind with `auth_scope` (channels) has its own
+A site-owned or user-owned entity kind with `auth_scope` (channels) has its own
 permissions, held in each entity's AuthKit scope, whose persona declares
-`access.EntityPermissions(kind)`: `{kind}:content:write` (its content),
+`access.EntityPermissions(kind)`: `{kind}:content:create` (own submissions),
+`{kind}:content:edit-own` (own posts), `{kind}:content:write` (all its content),
 `{kind}:settings:manage` (the entity),
 `{kind}:media:write` and `{kind}:comments:moderate` (delete, hold, release
-and ban on the entity's content). The entity's owner holds them all.
+and ban on the entity's content). The host defines roles and assignments. For
+scoped entities, current AuthKit grants determine authority; an owner attribution
+alone grants nothing. See [Posts and channels](docs/posts-and-channels.md) for
+contributor, editor and moderator policies.
 
 Declare them in the auth's roles from the constants, so a rename breaks the
 build instead of drifting:
