@@ -587,7 +587,7 @@ type ownership struct {
 }
 
 func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership, error) {
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, coalesce(c.created_by, ''), coalesce(g.id, ''), coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.comments, CASE WHEN c.owner_entity_id IS NULL THEN coalesce(c.created_by, '') ELSE '' END, coalesce(g.id, ''), coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
  FROM `+s.t.items+` c LEFT JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_entity_id AND g.state = 'active'
  WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {

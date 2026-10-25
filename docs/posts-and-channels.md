@@ -52,6 +52,9 @@ the corresponding app-level create/edit-own permissions apply. An app-level
 contributor cannot post into an arbitrary channel. Permission checks use the
 current credential and grants on each request; revocation does not wait for a
 worker. Read-only staff access does not grant upload or editing authority.
+Personal account comment bans apply to unowned personal posts. Channel posts use
+the channel's moderation scope, so an author's personal block cannot govern a
+community or official blog.
 
 The optional channel lifecycle job provisions/retires the AuthKit group and
 handles channel deletion/restoration. It is exact durable work triggered by a

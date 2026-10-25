@@ -10,6 +10,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/kinds"
@@ -200,6 +201,18 @@ func TestFixedSiteChannelStaffRevocation(t *testing.T) {
 	if visible.Editor || !visible.Decision.Allowed || visible.Body != "Official text" {
 		t.Fatalf("revoked author did not become an ordinary public reader: %+v", visible)
 	}
+	// Personal account blocks must not become moderation grants over the site's channel.
+	reader, readerToken := w.person(t, 0)
+	_, err = writer.PutCommentBan(t.Context(), reader.ID, content.BanInput{Reason: "Personal block"})
+	must(t, err)
+	standing, err := writer.GetContentCanComment(t.Context(), published.ID, ck.GetContentCanCommentQuery{})
+	must(t, err)
+	for _, scope := range standing.BanScopes {
+		if scope == content.BanOwner {
+			t.Fatal("former site author acquired personal moderation over the official channel")
+		}
+	}
+	postComment(t, a.client(readerToken), published.ID, "Channel moderation remains with staff")
 }
 
 // A fixed destination does not dictate which AuthKit roles may publish there.
