@@ -11,10 +11,12 @@
       "status": "verified",
       "evidence": [
         "Fresh random schema is initialized by real New; readiness refuses before Start, succeeds after Start, duplicate Start fails.",
-        "Independent semantic review frozen at f0522d2; exact cases passed in the integrated 293.407-second race aggregate."
+        "Independent semantic review frozen at f0522d2; exact cases passed in the integrated 293.407-second race aggregate.",
+        "Owned publication workers survive cancellation of a successfully completed Start caller; Close stops them and a reopened engine drains their durable obligations."
       ],
       "cases": [
-        "TestHostLifecycle/CK-J01-S01_empty_migration_and_readiness"
+        "TestHostLifecycle/CK-J01-S01_empty_migration_and_readiness",
+        "TestEnginePublicationLifetime"
       ]
     },
     {
