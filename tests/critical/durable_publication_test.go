@@ -107,14 +107,20 @@ func TestDurableTextPublication(t *testing.T) {
 	// The injected catalog clock is now hours ahead of River's wall clock.
 	// Wake the registered worker explicitly for each newly accepted immediate
 	// edit, just as above; do not wait for that synthetic future wall-clock date.
-	_, err = fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
+	deletedJob, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
 	must(t, err)
 	waitFor(t, func() bool {
-		var released bool
-		must(t, w.pool.QueryRow(t.Context(), `SELECT released FROM `+w.schema+`.content_versions WHERE tenant_id=$1 AND id=$2`,
-			a.cfg.Scope.AppID.String(), edition.ID).Scan(&released))
-		return !released
+		row, err := fleet.JobGet(t.Context(), deletedJob.Job.ID)
+		must(t, err)
+		if row.State == rivertype.JobStateDiscarded {
+			t.Fatalf("deleted publication worker failed: %+v", row.Errors)
+		}
+		return row.State == rivertype.JobStateCompleted
 	})
+	// Deletion hides the edition from ordinary readers while retaining its
+	// completed publication for exact-key holders until physical purge.
+	_, err = reader.GetVersion(t.Context(), edition.ID, ck.GetVersionQuery{})
+	requireError(t, err, 404, "not_found")
 	_, err = admin.PatchContentVersion(t.Context(), item.ID, edition.ID, catalog.VersionInput{State: catalog.StatePublished})
 	must(t, err)
 	_, err = fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
