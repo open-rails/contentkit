@@ -13,6 +13,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/internal/jobqueue"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 )
@@ -498,9 +499,11 @@ func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vi
 	return err
 }
 
-// Queue is the River queue of content jobs. Keep its persisted routing name
-// stable so jobs queued before the terminology change continue to run.
+// Queue is the legacy base name. Runtime workers use QueueFor(catalog).
 const Queue = "contentkit_catalog"
+
+// QueueFor isolates workers bound to different catalog/application scopes.
+func QueueFor(catalog string) string { return jobqueue.For(Queue, catalog) }
 
 type publishDueArgs struct {
 	Content string    `json:"content,omitempty"`
@@ -538,15 +541,18 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 // by durable per-request work; this periodic recorder never activates files.
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-content", func(_ context.Context, cfg *river.Config) error {
-		if q, ok := cfg.Queues[Queue]; ok && q.MaxWorkers < 1 {
-			return fmt.Errorf("catalog: queue %q needs workers", Queue)
+		queue := QueueFor(s.tenant)
+		if q, ok := cfg.Queues[queue]; ok && q.MaxWorkers < 1 {
+			return fmt.Errorf("catalog: queue %q needs workers", queue)
 		} else if !ok {
-			cfg.Queues[Queue] = river.QueueConfig{MaxWorkers: 2}
+			cfg.Queues[queue] = river.QueueConfig{MaxWorkers: 2}
 		}
 		periodic := func(id string, every time.Duration, args river.JobArgs) *river.PeriodicJob {
 			return riverhelpers.NewPeriodicJob(cfg, every, func() (river.JobArgs, *river.InsertOpts) {
-				return args, &river.InsertOpts{Queue: Queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
-			}, &river.PeriodicJobOpts{ID: id, RunOnStart: true})
+				unique := media.PendingOnce
+				unique.ByQueue = true
+				return args, &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: unique}
+			}, &river.PeriodicJobOpts{ID: jobqueue.For(id, s.tenant), RunOnStart: true})
 		}
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &jobWorker[publishDueArgs]{run: s.PublishDue}) },

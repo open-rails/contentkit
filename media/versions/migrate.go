@@ -78,7 +78,7 @@ ORDER BY v.id LIMIT 500`, tenant, kinds, after)
 				return err
 			}
 			for _, t := range targets {
-				if _, err := client.InsertTx(ctx, tx, publishArgs{Content: t.Content, Version: t.Version}, &river.InsertOpts{Queue: Queue, UniqueOpts: media.PendingOnce}); err != nil {
+				if _, err := client.InsertTx(ctx, tx, publishArgs{Content: t.Content, Version: t.Version}, &river.InsertOpts{Queue: QueueFor(tenant), UniqueOpts: media.PendingOnce}); err != nil {
 					return err
 				}
 				next = t.Version

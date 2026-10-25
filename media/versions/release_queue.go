@@ -124,7 +124,7 @@ func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target Tar
 	}
 	return media.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 		return client.InsertTx(ctx, tx, args, options)
-	}, releaseArgs{ID: id, Due: at}, river.InsertOpts{Queue: Queue, ScheduledAt: at})
+	}, releaseArgs{ID: id, Due: at}, river.InsertOpts{Queue: QueueFor(s.o.Tenant), ScheduledAt: at})
 }
 
 // releaseRequestTx locks one exact request. It returns pgx.ErrNoRows when the

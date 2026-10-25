@@ -152,7 +152,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := video.SweepTemp(c.TempDir); err != nil {
 		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
 	}
-	publish, err := versions.ProcessingPublisher(c.Pool, c.HostSchema, c.Kinds)
+	publish, err := versions.ProcessingPublisher(c.Pool, c.HostSchema, c.ContentSchema, c.Kinds)
 	if err != nil {
 		return nil, err
 	}

@@ -78,7 +78,7 @@ func (s *Store) scheduleTextPublicationTx(ctx context.Context, tx pgx.Tx, target
 	}
 	for _, request := range requests {
 		_, err := client.InsertTx(ctx, tx, publishDueArgs{Content: request.content, Version: request.version, Due: request.at},
-			&river.InsertOpts{Queue: Queue, ScheduledAt: request.at, UniqueOpts: media.PendingOnce})
+			&river.InsertOpts{Queue: QueueFor(s.tenant), ScheduledAt: request.at, UniqueOpts: media.PendingOnce})
 		if err != nil {
 			return err
 		}
@@ -211,7 +211,7 @@ func (s *Store) CompletePublicationTx(ctx context.Context, tx pgx.Tx, target ver
 				return errors.New("catalog: durable publication jobs are not composed into a River client")
 			}
 			_, err := client.InsertTx(ctx, tx, publishDueArgs{Content: target.Content, Version: target.Version, Due: *next},
-				&river.InsertOpts{Queue: Queue, ScheduledAt: *next, UniqueOpts: media.PendingOnce})
+				&river.InsertOpts{Queue: QueueFor(s.tenant), ScheduledAt: *next, UniqueOpts: media.PendingOnce})
 			return err
 		}
 	}

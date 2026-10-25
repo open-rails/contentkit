@@ -39,7 +39,7 @@ func (s *Service) CopyBodiesTx(ctx context.Context, tx pgx.Tx, copies []BodyCopy
 	for _, cp := range copies {
 		cp.To = slices.DeleteFunc(slices.Clone(cp.To), func(v string) bool { return v == cp.From })
 		if cp.From != "" && len(cp.To) > 0 {
-			params = append(params, river.InsertManyParams{Args: cp, InsertOpts: &river.InsertOpts{Queue: Queue}})
+			params = append(params, river.InsertManyParams{Args: cp, InsertOpts: &river.InsertOpts{Queue: QueueFor(s.o.Tenant)}})
 		}
 	}
 	if len(params) == 0 {

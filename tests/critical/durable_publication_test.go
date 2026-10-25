@@ -60,7 +60,7 @@ func TestDurableTextPublication(t *testing.T) {
 	}
 	// The fixture clock advances independently from River's wall clock. An
 	// immediate run of the real registered worker catches up the overdue work.
-	job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.Queue})
+	job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
 	must(t, err)
 	must(t, fleet.Start(t.Context()))
 	waitFor(t, func() bool {
@@ -111,7 +111,7 @@ func TestDurableTextPublication(t *testing.T) {
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), protected.ID, catalog.PublishInput{})
 	must(t, err)
-	dueJob, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.Queue})
+	dueJob, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
 	must(t, err)
 	waitFor(t, func() bool {
 		row, err := fleet.JobGet(t.Context(), dueJob.Job.ID)

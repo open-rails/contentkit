@@ -70,7 +70,7 @@ func (s *Service) ForkTx(ctx context.Context, tx pgx.Tx, forks []Fork) error {
 	var params []river.InsertManyParams
 	for _, f := range forks {
 		params = append(params, river.InsertManyParams{Args: forkArgs{Content: f.Version.Content, Version: f.Version.Version, From: f.From,
-			Playback: f.Playback, Segments: f.Segments}, InsertOpts: &river.InsertOpts{Queue: Queue, UniqueOpts: media.PendingOnce}})
+			Playback: f.Playback, Segments: f.Segments}, InsertOpts: &river.InsertOpts{Queue: QueueFor(s.o.Tenant), UniqueOpts: media.PendingOnce}})
 	}
 	if len(params) == 0 {
 		return nil
