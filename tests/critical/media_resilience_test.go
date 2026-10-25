@@ -202,6 +202,16 @@ func TestMediaFailureRecovery(t *testing.T) {
 			if strings.Contains(failure.Message, m.schema) || strings.Contains(failure.Message, m.storage.bucket) || strings.Contains(failure.Message, "http://") {
 				t.Fatalf("editor status leaked storage internals: %+v", failure)
 			}
+			// A persisted image failure can precede the job's final transaction.
+			// This case changes worker limits; the separate crash cases deliberately
+			// kill in-flight jobs and exercise their rescue path.
+			queue := m.queue(t)
+			waitFor(t, func() bool {
+				jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.ImageArgs{}).Kind()).States(
+					rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled).First(1))
+				must(t, err)
+				return len(jobs.Jobs) == 0
+			})
 			child.kill(t)
 			m.start(t)
 			_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpRegenerate}}})
@@ -589,7 +599,7 @@ func (m *resilientMedia) start(t *testing.T, configure ...func(*mediaChildConfig
 	must(t, err)
 	t.Cleanup(func() { _ = log.Close() })
 	command := exec.Command(binary, "-test.run=^TestMediaWorkerProcess$", "-test.timeout=4m", "-test.v")
-	command.Env = append(os.Environ(), "CONTENTKIT_CRITICAL_MEDIA_CHILD="+config, "GOMAXPROCS=2")
+	command.Env = append(os.Environ(), "CONTENTKIT_CRITICAL_MEDIA_CHILD="+config, "GOMAXPROCS="+maxProcs())
 	command.Stdout, command.Stderr = log, log
 	must(t, command.Start())
 	child := &mediaChild{command: command, done: make(chan error, 1)}
@@ -613,6 +623,13 @@ func (m *resilientMedia) start(t *testing.T, configure ...func(*mediaChildConfig
 		return err == nil
 	})
 	return child
+}
+
+func maxProcs() string {
+	if value := os.Getenv("GOMAXPROCS"); value != "" {
+		return value
+	}
+	return "2"
 }
 
 func (c *mediaChild) kill(t *testing.T) {

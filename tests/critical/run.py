@@ -138,7 +138,7 @@ def main():
         missing = [name for name in required if not os.getenv(name)]
         if missing:
             raise ValueError("missing real fixture settings: " + ", ".join(missing))
-        env = dict(os.environ, GOWORK="off", GOMAXPROCS="2")
+        env = dict(os.environ, GOWORK="off", GOMAXPROCS=os.getenv("GOMAXPROCS", "2"))
         command = ["go", "test", "-json", "-count=1", "-p", "1", "-timeout=15m"]
         if args.race:
             command.append("-race")

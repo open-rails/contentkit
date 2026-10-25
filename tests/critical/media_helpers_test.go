@@ -2,13 +2,17 @@ package critical_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"image"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
@@ -40,24 +44,35 @@ func galleryRef(t *testing.T, client *ck.Client, title string) media.RefBody {
 
 func awaitMediaReady(t *testing.T, client *ck.Client, ref media.RefBody) media.ReadResult {
 	t.Helper()
-	var ready media.ReadResult
-	waitFor(t, func() bool {
-		var err error
-		ready, err = client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
-		must(t, err)
-		if ready.Status != nil && ready.Status.FailureCount > 0 {
-			t.Fatalf("processing failed: %+v", ready.Status.Failures)
+	readySignal := errors.New("media ready")
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	err := client.WatchMedia(ctx, ref, "", func(update ck.MediaProgress) error {
+		if update.Read == nil || update.Read.Status == nil {
+			return nil
 		}
-		if ready.State != media.StateReady {
-			return false
+		status := update.Read.Status
+		if status.FailureCount > 0 {
+			return fmt.Errorf("processing failed: %+v", status.Failures)
 		}
-		for _, file := range ready.Files {
-			if file.Staged || len(file.Pending) != 0 {
-				return false
-			}
+		if status.State == media.StateReady && status.Uploads.Total > 0 {
+			return readySignal
 		}
-		return len(ready.Files) > 0
+		return nil
 	})
+	if !errors.Is(err, readySignal) {
+		t.Fatalf("await durable media state: %v", err)
+	}
+	ready, err := client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
+	must(t, err)
+	for _, file := range ready.Files {
+		if file.Staged || len(file.Pending) != 0 {
+			t.Fatalf("ready stream preceded settled files: %+v", file)
+		}
+	}
+	if len(ready.Files) == 0 {
+		t.Fatal("ready media contains no files")
+	}
 	return ready
 }
 
