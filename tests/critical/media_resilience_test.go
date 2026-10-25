@@ -672,18 +672,7 @@ func replayMediaJob(t *testing.T, queue *river.Client[pgx.Tx], original *riverty
 	return job.Job.ID
 }
 
-func mediaPaths(t *testing.T, read media.ReadResult) map[string]string {
-	t.Helper()
-	out := map[string]string{}
-	for _, file := range read.Files {
-		uri, err := url.Parse(file.URL)
-		must(t, err)
-		out[file.Path] = uri.Path
-	}
-	return out
-}
-
-func settledMediaWithoutEditorWork(t *testing.T, client *ck.Client, ref media.RefBody) media.ReadResult {
+func settledPreparedOutputs(t *testing.T, m *resilientMedia, client *ck.Client, ref media.RefBody) map[string]string {
 	t.Helper()
 	waitFor(t, func() bool {
 		read, err := client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Status: true})
@@ -692,7 +681,39 @@ func settledMediaWithoutEditorWork(t *testing.T, client *ck.Client, ref media.Re
 	})
 	read, err := client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 	must(t, err)
-	return read
+	if len(read.Files) != 0 {
+		t.Fatal("prepared draft outputs escaped through the ordinary reader")
+	}
+	// Observe the persisted worker checkpoint directly. Editor reads would
+	// request extra render work, while an ordinary reader must not expose drafts.
+	logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+	must(t, err)
+	item, err := m.config.Kinds.Item(logical)
+	must(t, err)
+	journal, err := media.NewPGJournal(m.pool, m.schema, nil)
+	must(t, err)
+	manifests, err := media.NewManifests(m.storage.store, m.config.Kinds, media.ManifestOptions{Locker: media.PGLocker(m.pool), Journal: journal})
+	must(t, err)
+	snapshot, _, err := manifests.Get(t.Context(), logical)
+	must(t, err)
+	out := map[string]string{}
+	for _, file := range snapshot.Files {
+		if file.IsUpload() || file.Blob == "" || file.Gone {
+			continue
+		}
+		key, err := item.Blob(file.Blob)
+		must(t, err)
+		object, err := m.storage.store.Head(t.Context(), key)
+		must(t, err)
+		if object.Size != file.Size || object.ContentType != file.Type {
+			t.Fatalf("checkpoint output %s differs from its actual stored object", file.Path)
+		}
+		out[file.Path] = file.Blob
+	}
+	if out["reader/one.webp"] == "" {
+		t.Fatal("checkpoint contains no persisted reader rendition")
+	}
+	return out
 }
 
 func TestMediaWorkerRecovery(t *testing.T) {
@@ -778,10 +799,7 @@ func TestMediaWorkerRecovery(t *testing.T) {
 		if row.State != rivertype.JobStateRunning {
 			t.Fatalf("checkpoint was not before queue acknowledgement: %s", row.State)
 		}
-		// An editor read deliberately requests an additional editor rendition.
-		// Status and ordinary reads observe this checkpoint without adding work.
-		before := settledMediaWithoutEditorWork(t, client, ref)
-		paths := mediaPaths(t, before)
+		paths := settledPreparedOutputs(t, m, client, ref)
 		m.wire.mu.Lock()
 		writes := m.wire.webpPuts
 		m.wire.mu.Unlock()
@@ -798,9 +816,7 @@ func TestMediaWorkerRecovery(t *testing.T) {
 				return job.State == rivertype.JobStateCompleted
 			})
 		}
-		after := settledMediaWithoutEditorWork(t, client, ref)
-		requireMediaPaths(t, after, "reader/one.webp")
-		got := mediaPaths(t, after)
+		got := settledPreparedOutputs(t, m, client, ref)
 		for path, blob := range paths {
 			if got[path] != blob {
 				t.Fatalf("checkpoint output %s was replaced: %s -> %s", path, blob, got[path])
