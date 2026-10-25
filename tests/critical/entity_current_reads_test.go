@@ -66,11 +66,16 @@ func TestEntityCountsAndCoversWithoutWorkers(t *testing.T) {
 	future, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Future", Body: "Not released"}}})
 	must(t, err)
 	link(future.ID, child.ID)
-	at := time.Now().Add(time.Hour)
+	at := time.Now().Add(time.Second)
 	_, err = admin.PostContentPublish(t.Context(), future.ID, catalog.PublishInput{PublishAt: &at})
 	must(t, err)
 	check(1, one.ID)
 	w.clock.set(at.Add(time.Second))
+	waitFor(t, func() bool {
+		var due bool
+		must(t, w.pool.QueryRow(t.Context(), "SELECT now()>=$1", at).Scan(&due))
+		return due
+	})
 	check(1, one.ID) // The clock alone cannot include the uncompleted release.
 	link(one.ID)
 	check(0, "")
