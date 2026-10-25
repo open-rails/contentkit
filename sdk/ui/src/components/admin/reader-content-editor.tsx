@@ -81,7 +81,7 @@ function CopyFailed({ failure, version, pending, onRetry }: { failure: ForkFailu
 // Without a visible title, label names the section for assistive technology.
 function Panel({ title, label, children, className = "" }: { title?: ReactNode; label?: string; children: ReactNode; className?: string }) {
   return (
-    <section aria-label={title ? undefined : label} className={`grid min-w-0 content-start gap-4 rounded-xl border border-border bg-card p-4 ${className}`}>
+    <section aria-label={title ? undefined : label} className={`grid min-w-0 content-start gap-4 rounded-xl border border-border bg-muted/30 p-4 ${className}`}>
       {title && <h2 className="text-base font-semibold">{title}</h2>}
       {children}
     </section>
@@ -791,7 +791,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
               </Panel>
             )}
             {item && version && spec.versions.traits?.includes("manhwa_style") && (
-              <details className="rounded-xl border border-border bg-card p-4" onToggle={(e) => setToolsExpanded(e.currentTarget.open)}>
+              <details className="rounded-xl border border-border bg-muted/30 p-4" onToggle={(e) => setToolsExpanded(e.currentTarget.open)}>
                 <summary className="cursor-pointer font-medium">{t("readerEditor.readerTools")}</summary>
                 <div hidden={!toolsExpanded} className="mt-4 grid gap-4">
                   <div ref={setVersionReaderTarget} data-ckui="version-reader-settings" />
