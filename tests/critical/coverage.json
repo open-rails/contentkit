@@ -697,11 +697,14 @@
       "status": "verified",
       "evidence": [
         "The existing River purge preserves version and parent at the earliest 30-day equality boundary. Past both deadlines it removes public/managed rows and actual S3 media, retaining only decoded empty deleted manifests and gateway fences. The real Stripe-wire purchase, settled payment amount and billing product still exist.",
-        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5.",
+        "Previously released soft-deleted editions retain exact-item purchased access through the existing purge grace period. Ordinary public reader objects move private, future chapters stay unreleased, and HLS survives deletion and restore; parent and sibling grants remain denied."
       ],
       "cases": [
         "TestDeletedContentPurgeOwnsMedia/CK-J08-S04_CK-J08-S05_retried_same_sweep_erases_media_and_records_but_retains_billing",
-        "TestDeletedContentPurgeOwnsMedia/CK-J08-S04_exact_retention_boundary_preserves_soft_deleted_records_and_media"
+        "TestDeletedContentPurgeOwnsMedia/CK-J08-S04_exact_retention_boundary_preserves_soft_deleted_records_and_media",
+        "TestDeletedEditionRetainsCompletedPublication",
+        "TestDeletedHLSRetainsImmutableIndex"
       ]
     },
     {
