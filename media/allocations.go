@@ -85,11 +85,18 @@ func (m *Manifests) NewBlobs(ctx context.Context, ref contentref.ContentRef, are
 }
 
 func (m *Manifests) allocate(ctx context.Context, item Item, keys []string) error {
-	if _, err := m.ensureIncarnation(ctx, item); err != nil {
-		return err
-	}
 	return m.cleanup(ctx, item, false, func(cur *Manifest, exists bool) (journalEffects, error) {
-		if !exists || cur.Deleted {
+		if !exists {
+			// cleanup has recorded the scoped folder owner under the manifest
+			// lock. Publish the empty root only after that receipt exists, so a
+			// concurrent presign cannot observe an ownerless version manifest.
+			var err error
+			cur, err = m.ensureIncarnation(ctx, item)
+			if err != nil {
+				return journalEffects{}, err
+			}
+		}
+		if cur.Deleted {
 			return journalEffects{}, ErrNotFound
 		}
 		return journalEffects{Allocate: keys, Incarnation: cur.Incarnation}, nil
