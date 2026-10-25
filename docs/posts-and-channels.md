@@ -45,6 +45,9 @@ hold content:write, and a moderator can hold comments:moderate. The host decides
 which memberships to assign. Public subscriptions and billing entitlements do
 not automatically grant any of these authoring permissions. A scoped owner's
 permissions come from their current AuthKit owner role, not an owner-ID shortcut.
+Changing a channel's owner attribution does not transfer AuthKit roles: the host
+must explicitly grant/revoke the corresponding group roles. A required scope that
+has not been provisioned grants no authority while its lifecycle work retries.
 
 Own-post rights require immutable `created_by` plus a current grant in the
 appropriate group. Editable author credits remain attribution. Without a channel,
