@@ -392,7 +392,8 @@
         "TestPublicationWithoutWorkers/CK-J05-S04_public_audience_release_opens_without_a_grant",
         "TestCopiedPageChapterPlacement",
         "TestIndependentChaptersSkipUnreleasedMiddle",
-        "TestCompletedPublicationReader"
+        "TestCompletedPublicationReader",
+        "TestScheduledPolicyPublishesWithoutStorageAreaChange"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -417,12 +418,15 @@
       "behavior": "Concurrent durable publication and queue migration preserve ownership and completion facts",
       "status": "verified",
       "evidence": [
-        "Real registered workers establish availability and deduplicate completion; per-app publication queues isolate shared catalog tables. Explicit queue conversion preserves targets and unrelated or terminal history."
+        "Real registered workers establish availability and deduplicate completion; per-app publication queues isolate shared catalog tables. Explicit queue conversion preserves targets and unrelated or terminal history.",
+        "Superseding a physically copied public attempt with the previous private policy must retire the abandoned public URL before completing; equivalent reader content cannot skip physical reconciliation. Bulk chapter imports refuse unsafe manifest-lock ordering without mutating catalog state."
       ],
       "cases": [
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
         "TestPublicationQueuesIsolateSharedCatalogApps",
-        "TestPublicationQueueMigrationPreservesOwners"
+        "TestPublicationQueueMigrationPreservesOwners",
+        "TestSupersededPublicCopyReturnsToPrivate",
+        "TestImportChaptersRequiresManifestLockingWriter"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
