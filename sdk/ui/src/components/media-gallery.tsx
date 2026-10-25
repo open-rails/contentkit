@@ -144,7 +144,7 @@ function useItemRead(p: MediaGalleryProps): MediaGalleryProps {
   const loader = useMemo(() => {
     if (!baseLoader || !r.read?.inspection) return baseLoader;
     return {
-      segment: baseLoader.segment,
+      segment: (xhr: XMLHttpRequest, address: string) => baseLoader.segment(xhr, address),
       playlist: (address: string, signal?: AbortSignal) => {
         const hashAt = address.indexOf("#");
         const path = hashAt < 0 ? address : address.slice(0, hashAt);
