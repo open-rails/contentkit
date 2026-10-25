@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -123,7 +124,10 @@ func TestEntityConcurrentOwnershipAndStaleScopes(t *testing.T) {
 			t.Fatal("foreign group owner lacked the positive-control permission")
 		}
 		_, err = a.client(foreignToken).PostContents(t.Context(), input)
-		requireError(t, err, 503, "unavailable")
+		// This actor is not a tenant member, so creation is denied before the
+		// unresolved local channel binding is consulted. Its foreign owner grant
+		// above is a positive control, never authority in this app.
+		requireError(t, err, 403, "forbidden")
 		current, err := a.engine.Client().GetContent(t.Context(), created.ID, ck.GetContentQuery{})
 		must(t, err)
 		if current.OwnerEntityID != string(entity.ID) || current.Title != "Before scope retirement" {
@@ -226,20 +230,61 @@ func TestOwnedEntityAuthority(t *testing.T) {
 	})
 	t.Run("CK-J16-S05_restore_does_not_widen_scope_or_change_owner", func(t *testing.T) {
 		owner, token, entity := ownedEntity(t, w, a, "restoration authority")
-		_, err := a.client(token).DeleteEntity(t.Context(), string(entity.ID))
+		id, err := ckauth.EntityScopeID(*a.cfg.Scope, entity.AuthScope)
 		must(t, err)
+		groupRef := iam.GroupByID(id)
+		editor, editorToken := w.person(t, 0)
+		authtest.GrantRole(t, w.tenant[0], groupRef, iam.UserSubject(editor.ID), w.channelWriter)
+		write, err := w.auth.Permission("channel:content:write")
+		must(t, err)
+		canWrite := func(credential string) bool {
+			t.Helper()
+			allowed, err := w.auth.Can(t.Context(), authtest.Identity(t, w.tenant[0], credential), groupRef, write)
+			must(t, err)
+			return allowed
+		}
+		if !canWrite(editorToken) {
+			t.Fatal("old editor lacks positive-control grant before retirement")
+		}
+		_, err = a.client(token).DeleteEntity(t.Context(), string(entity.ID))
+		must(t, err)
+		retired, err := w.auth.Group(t.Context(), groupRef)
+		must(t, err)
+		if retired.DeletedAt == nil || canWrite(token) || canWrite(editorToken) {
+			t.Fatal("deletion did not retire channel authority")
+		}
 		active := entities.State("active")
-		restored, err := a.client(token).PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{State: &active})
+		_, err = a.client(token).PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{State: &active})
+		requireError(t, err, 403, "forbidden")
+		// owner_user_id is attribution, not a grant to resurrect a retired scope.
+		var state, storedOwner, scope string
+		err = w.pool.QueryRow(t.Context(), `SELECT state,coalesce(owner_user_id,''),coalesce(auth_scope,'') FROM `+
+			pgx.Identifier{w.schema, "content_entities"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), string(entity.ID)).Scan(&state, &storedOwner, &scope)
+		must(t, err)
+		if state != "deleted" || storedOwner != owner.ID || scope != "" {
+			t.Fatalf("refused self-restore changed channel state: state=%s owner=%s scope=%s", state, storedOwner, scope)
+		}
+		stillRetired, err := w.auth.Group(t.Context(), groupRef)
+		must(t, err)
+		if stillRetired.DeletedAt == nil || !stillRetired.DeletedAt.Equal(*retired.DeletedAt) {
+			t.Fatal("refused self-restore changed the retired authorization group")
+		}
+		// A still-authorized host explicitly restores the entity and provisions
+		// a fresh owner role; old team grants must not return with it.
+		restored, err := a.engine.Client().PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{State: &active})
 		must(t, err)
 		if restored.OwnerUserID != owner.ID || restored.AuthScope != entity.AuthScope {
 			t.Fatalf("restore changed authority: %+v", restored)
 		}
-		id, err := ckauth.EntityScopeID(*a.cfg.Scope, restored.AuthScope)
+		id, err = ckauth.EntityScopeID(*a.cfg.Scope, restored.AuthScope)
 		must(t, err)
 		group, err := w.auth.Group(t.Context(), iam.GroupByID(id))
 		must(t, err)
 		if group.DeletedAt != nil || group.TenantID.String() != a.cfg.Scope.TenantID.String() {
 			t.Fatalf("restored scope not active in original tenant: %+v", group)
+		}
+		if !canWrite(token) || canWrite(editorToken) {
+			t.Fatal("explicit restore failed to grant the owner or resurrected retired team authority")
 		}
 		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", OwnerEntityID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Restored owner's work"}}})
 		must(t, err)
