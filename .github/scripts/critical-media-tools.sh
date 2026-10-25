@@ -22,7 +22,7 @@ case "${1:-}" in
 #!/usr/bin/env bash
 set -euo pipefail
 state=${CONTENTKIT_MEDIA_TOOLS_DIR:?}
-read -r container < "$state/container.id"
+container=$(cat "$state/container.id")
 tool=${0##*/}
 case "$tool" in ffmpeg|ffprobe) ;; *) exit 64 ;; esac
 pidfile=$(mktemp "$state/tmp/$tool-pid.XXXXXX")
@@ -55,12 +55,12 @@ WRAPPER
     chmod +x "$state/bin/media-tool"
     ln -s media-tool "$state/bin/ffmpeg"
     ln -s media-tool "$state/bin/ffprobe"
-    docker --context default exec "$(cat "$state/container.id")" /usr/bin/ffmpeg -version
+    CONTENTKIT_MEDIA_TOOLS_DIR="$state" "$state/bin/ffmpeg" -version
     ;;
   stop)
     state=${CONTENTKIT_MEDIA_TOOLS_DIR:-}
     test -n "$state" && test -f "$state/container.id" || exit 0
-    read -r container < "$state/container.id"
+    container=$(cat "$state/container.id")
     [[ "$container" =~ ^[a-f0-9]{64}$ ]] || exit 1
     if ! owner=$(docker --context default inspect --format '{{index .Config.Labels "contentkit.critical-media-tools"}}' "$container" 2>/dev/null); then
       # Distinguish an absent owned container from an unavailable daemon.
