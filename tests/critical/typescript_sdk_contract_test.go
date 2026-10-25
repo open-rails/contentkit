@@ -125,7 +125,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 			t.Fatal("real purchased library grant absent")
 		}
 		foreign := publishedArticle(t, w.apps[1], "TypeScriptNeedle foreign app")
-		runTypeScriptContract(t, "discovery_entities", map[string]any{"base": a.server.URL + "/content", "owner": token, "reader": readerToken, "ownerID": owner.ID, "channel": string(channel.ID), "foreign": foreign.ID, "paid": paid.ID}, []string{
+		runTypeScriptContract(t, "discovery_entities", map[string]any{"base": a.server.URL + "/content", "owner": token, "reader": readerToken, "ownerID": owner.ID, "channel": string(channel.ID), "foreign": foreign.ID, "paid": paid.ID, "paidVersion": paid.Versions[0].ID}, []string{
 			"EntitiesClient.create", "EntitiesClient.update", "EntitiesClient.remove", "EntitiesClient.mine", "DiscoveryClient.library", "DiscoveryClient.list", "DiscoveryClient.knownCards", "DiscoveryClient.search", "DiscoveryClient.typeahead", "DiscoveryClient.adminSuggestions", "DiscoveryClient.similar", "DiscoveryClient.recommendations", "DiscoveryClient.releaseDates", "DiscoveryClient.releases",
 		})
 	})

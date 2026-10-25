@@ -296,10 +296,17 @@ export async function runMediaContracts(group, fixture) {
     assert(zip.length > 100);
     assert.deepEqual([...zip.subarray(0, 4)], [80, 75, 3, 4]);
     proved("VersionsClient.download");
-    await owner.contents.update(imageRef.id, {
+    await owner.contents.updateVersion(imageRef.id, imageRef.version, {
       access: { level: "tier", tiers: ["gold"] },
     });
-    const locked = await anonymous.contents.get(imageRef.id);
+    let locked;
+    const privateDeadline = Date.now() + 30_000;
+    do {
+      const edition = await owner.contents.version(imageRef.id, imageRef.version);
+      locked = await anonymous.contents.get(imageRef.id);
+      if (edition.publication?.state === "completed" && !locked.decision.allowed) break;
+      await new Promise((resolve) => setTimeout(resolve, 550));
+    } while (Date.now() < privateDeadline);
     assert.equal(locked.decision.allowed, false);
     assert.equal(locked.body ?? "", "");
     assert.deepEqual(locked.images ?? {}, {});

@@ -607,8 +607,8 @@ if (group === "catalog_publication") {
   assert.equal(library.complete, true);
   assert.equal(library.items.length, 1);
   assert.equal(library.items[0].content_id, fixture.paid);
-  assert.equal(library.items[0].whole, true);
-  assert.equal(library.items[0].version_ids.length, 1);
+  assert.equal(library.items[0].whole, false);
+  assert.deepEqual(library.items[0].version_ids, [fixture.paidVersion]);
   assert.deepEqual((await owner.discovery.library()).items, []);
   await refused(() => anonymous.discovery.library(), 401, "unauthorized");
   proved("DiscoveryClient.library");
