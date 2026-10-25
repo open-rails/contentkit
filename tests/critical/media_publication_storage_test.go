@@ -273,6 +273,14 @@ func TestPublicationStorage(t *testing.T) {
 	must(t, err)
 	legacyBlob := legacyDelivery.Files[0].Blob
 	get(legacyBlob, itemToken, http.StatusOK)
+	unusedOperation := uuid.NewString()
+	_, err = manifests.PreparePromotion(t.Context(), target, unusedOperation, []media.Promotion{{Source: original, Area: layout.AreaPrivate}})
+	must(t, err)
+	unusedDelivery, err := manifests.Promote(t.Context(), target, unusedOperation)
+	must(t, err)
+	unusedBlob := unusedDelivery.Files[0].Blob
+	get(unusedBlob, itemToken, http.StatusOK)
+	must(t, manifests.ValidatePublicationLayoutMigration(t.Context()))
 	must(t, a.engine.Close(t.Context()))
 	storage.cancel()
 	select {
@@ -299,7 +307,10 @@ func TestPublicationStorage(t *testing.T) {
 	must(t, compressed.Close())
 	_, err = storage.store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(encoded.Bytes()), int64(encoded.Len()), media.PutOptions{IfMatch: etag, ContentType: "application/gzip"})
 	must(t, err)
-	legacyKey, err := item.Blob(legacyBlob)
+	if err := manifests.ValidatePublicationLayoutMigration(t.Context()); !errors.Is(err, media.ErrPublicationLayoutRequired) {
+		t.Fatalf("cold-start check accepted old version layout: %v", err)
+	}
+	legacyKey, err := item.Blob(unusedBlob)
 	must(t, err)
 	store.deleteFailure = legacyKey
 	migration := uuid.NewString()
@@ -311,6 +322,9 @@ func TestPublicationStorage(t *testing.T) {
 	if partial.PublicationLayoutReady() {
 		t.Fatal("migration granted readiness before origin retirement")
 	}
+	if err := manifests.ValidatePublicationLayoutMigration(t.Context()); !errors.Is(err, media.ErrPublicationLayoutRequired) {
+		t.Fatalf("cold-start check accepted incomplete origin retirement: %v", err)
+	}
 	must(t, manifests.MigratePublicationLayout(t.Context(), target, migration))
 	converted, _, err := manifests.Get(t.Context(), target)
 	must(t, err)
@@ -318,6 +332,8 @@ func TestPublicationStorage(t *testing.T) {
 		t.Fatal("completed conversion lacks readiness marker")
 	}
 	get(legacyBlob, itemToken, http.StatusNotFound)
+	get(unusedBlob, itemToken, http.StatusNotFound)
+	must(t, manifests.ValidatePublicationLayoutMigration(t.Context()))
 	for _, file := range converted.Files {
 		area, _, valid := layout.SplitBlobRef(file.Blob)
 		want := layout.AreaFuture
