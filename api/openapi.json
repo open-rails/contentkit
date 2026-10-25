@@ -4246,7 +4246,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publishing it on a published item is refused (not_ready) while its media is still processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publication is durably accepted and remains pending while its media is processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -4300,8 +4300,7 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "forbidden",
-          "not_found",
-          "not_ready"
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -5147,7 +5146,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Publishes a content item now, or schedules it for publish_at. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Accepts durable publication now, or schedules it for publish_at. Processing and publication may continue in the background; live becomes true only after completed publication. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -5194,8 +5193,7 @@
         "x-contentkit-errors": [
           "conflict",
           "forbidden",
-          "not_found",
-          "not_ready"
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:contents",
@@ -5627,7 +5625,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Replaces a version's chapters: ordered start markers naming virtual manifest files, with optional publication schedules. A chapter becomes released only after its durable publication completes. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
@@ -6183,7 +6181,7 @@
         "tags": [
           "media"
         ],
-        "summary": "Authorized files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Restricted grants use exact-file URL tokens; whole-item grants may use a cookie. Unreadable files are omitted.",
+        "summary": "Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder; optional restricted integrations use exact-file tokens. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted.",
         "parameters": [
           {
             "name": "kind",
@@ -17421,6 +17419,33 @@
           }
         }
       },
+      "PublicationStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "scheduled_at"
+        ]
+      },
       "PublishInput": {
         "type": "object",
         "properties": {
@@ -17630,6 +17655,10 @@
       "ReaderPlan": {
         "type": "object",
         "properties": {
+          "next_release_at": {
+            "type": "string",
+            "format": "date-time"
+          },
           "content_id": {
             "type": "string"
           },
@@ -18080,6 +18109,9 @@
       "Segment": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string"
+          },
           "position": {
             "type": "integer"
           },
@@ -18099,11 +18131,16 @@
             "type": "string",
             "format": "date-time"
           },
+          "released_at": {
+            "type": "string",
+            "format": "date-time"
+          },
           "released": {
             "type": "boolean"
           }
         },
         "required": [
+          "id",
           "position",
           "start",
           "end",
@@ -18113,6 +18150,9 @@
       "SegmentInput": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string"
+          },
           "position": {
             "type": "integer"
           },
@@ -18121,12 +18161,6 @@
           },
           "start_page": {
             "type": "string"
-          },
-          "start": {
-            "type": "integer"
-          },
-          "end": {
-            "type": "integer"
           },
           "release_at": {
             "type": "string",
@@ -18504,6 +18538,9 @@
           "published_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "publication": {
+            "$ref": "#/components/schemas/PublicationStatus"
           },
           "live": {
             "type": "boolean"

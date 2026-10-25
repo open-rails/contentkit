@@ -1234,7 +1234,7 @@ func (c *Client) PostContentRestore(ctx context.Context, id string) (catalog.Con
 	return out, err
 }
 
-// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentPublish is POST /v1/contents/{id}/publish (public). Accepts durable publication now, or schedules it for publish_at. Processing and publication may continue in the background; live becomes true only after completed publication. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PostContentPublish(ctx context.Context, id string, body catalog.PublishInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/publish", "{id}", url.PathEscape(id)), nil, body, &out)
@@ -1290,7 +1290,7 @@ func (c *Client) PutContentVersionsOrder(ctx context.Context, id string, body ca
 	return out, err
 }
 
-// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publishing it on a published item is refused (not_ready) while its media is still processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publication is durably accepted and remains pending while its media is processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
@@ -1302,7 +1302,7 @@ func (c *Client) DeleteContentVersion(ctx context.Context, id string, vid string
 	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, nil)
 }
 
-// PutContentVersionSegments is PUT /v1/contents/{id}/versions/{vid}/segments (public). Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PutContentVersionSegments is PUT /v1/contents/{id}/versions/{vid}/segments (public). Replaces a version's chapters: ordered start markers naming virtual manifest files, with optional publication schedules. A chapter becomes released only after its durable publication completes. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PutContentVersionSegments(ctx context.Context, id string, vid string, body catalog.SegmentsInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/segments", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
@@ -1456,7 +1456,7 @@ func (q GetMediaQuery) values() url.Values {
 	return v
 }
 
-// GetMedia is GET /v1/media/{kind}/{id} (public). Authorized files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Restricted grants use exact-file URL tokens; whole-item grants may use a cookie. Unreadable files are omitted.
+// GetMedia is GET /v1/media/{kind}/{id} (public). Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder; optional restricted integrations use exact-file tokens. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted.
 func (c *Client) GetMedia(ctx context.Context, kind string, id string, q GetMediaQuery) (media.ReadResult, error) {
 	var out media.ReadResult
 	err := c.call(ctx, http.MethodGet, expand("/v1/media/{kind}/{id}", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), q.values(), nil, &out)

@@ -1632,6 +1632,14 @@ export interface Publication {
   notifications: Input[];
 }
 
+export interface PublicationStatus {
+  id: string;
+  state: string;
+  scheduled_at: string;
+  completed_at?: string;
+  error?: string;
+}
+
 export interface PublishInput {
   publish_at?: string;
 }
@@ -1695,6 +1703,7 @@ export interface ReaderMeta {
 }
 
 export interface ReaderPlan {
+  next_release_at?: string;
   content_id: string;
   version_id: string;
   publication_id: string;
@@ -1819,21 +1828,22 @@ export interface Rule {
 }
 
 export interface Segment {
+  id: string;
   position: number;
   title?: string;
   start_page?: string;
   start: number;
   end: number;
   release_at?: string;
+  released_at?: string;
   released: boolean;
 }
 
 export interface SegmentInput {
+  id?: string;
   position?: number;
   title?: string;
   start_page?: string;
-  start?: number;
-  end?: number;
   release_at?: string;
   released?: boolean;
 }
@@ -1955,6 +1965,7 @@ export interface Version {
   state?: ContentState;
   publish_at?: string;
   published_at?: string;
+  publication?: PublicationStatus;
   live: boolean;
   access?: Rule;
   attributes: Record<string, unknown>;
