@@ -4044,7 +4044,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a content item's access, restrictions, attributes or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Edits a content item's access, restrictions, attributes or creators. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -4246,7 +4246,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publishing it on a published item is refused (not_ready) while its media is still processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publishing it on a published item is refused (not_ready) while its media is still processing. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -4313,7 +4313,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -4365,7 +4365,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.",
+        "summary": "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.",
         "parameters": [
           {
             "name": "state",
@@ -4748,7 +4748,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Creates a content item as a draft, with one version serving its text's languages when it names none. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.",
+        "summary": "Creates a content item as a draft, with one version serving its text's languages when it names none. Staff with root:content:write may create anywhere. Signed-in people with root:content:create may create their own unowned posts; channel posts require that channel's owner or {kind}:content:create/write grant. Creator credits are attribution, not editorship.",
         "requestBody": {
           "required": true,
           "content": {
@@ -5096,7 +5096,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5147,7 +5147,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Publishes a content item now, or schedules it for publish_at. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Publishes a content item now, or schedules it for publish_at. Refused (not_ready) while a published version's media is still processing or being published. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5209,7 +5209,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Returns a published or scheduled content item to a draft. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Returns a published or scheduled content item to a draft. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5260,7 +5260,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Sets a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Sets a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5327,7 +5327,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Removes a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Removes a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5386,7 +5386,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Replaces a content item's creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Replaces a content item's creators. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5446,7 +5446,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5507,7 +5507,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Adds a version after the others, a draft unless state says otherwise. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Adds a version after the others, a draft unless state says otherwise. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5567,7 +5567,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Orders a content item's versions: ids lists each version that is not deleted, first first. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5627,7 +5627,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Replaces a version's segments (chapters): ordered ranges, each released at its time. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -16271,6 +16271,12 @@
           "editor": {
             "type": "boolean"
           },
+          "can_post": {
+            "type": "boolean"
+          },
+          "can_edit_own": {
+            "type": "boolean"
+          },
           "writer": {
             "type": "boolean"
           },
@@ -16292,6 +16298,8 @@
           "created_at",
           "owner",
           "editor",
+          "can_post",
+          "can_edit_own",
           "writer",
           "moderator",
           "member"

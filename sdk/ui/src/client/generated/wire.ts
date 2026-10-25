@@ -1282,6 +1282,8 @@ export interface MyEntity {
   created_at: string;
   owner: boolean;
   editor: boolean;
+  can_post: boolean;
+  can_edit_own: boolean;
   writer: boolean;
   moderator: boolean;
   member: boolean;

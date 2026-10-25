@@ -1099,7 +1099,7 @@ func (q GetManageQuery) values() url.Values {
 	return v
 }
 
-// GetManage is GET /v1/manage (public). Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.
+// GetManage is GET /v1/manage (public). Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.
 func (c *Client) GetManage(ctx context.Context, q GetManageQuery) ([]catalog.Content, error) {
 	var out []catalog.Content
 	err := c.call(ctx, http.MethodGet, "/v1/manage", q.values(), nil, &out)
@@ -1213,96 +1213,96 @@ func (c *Client) GetManageCount(ctx context.Context, kind string, q GetManageCou
 	return out, err
 }
 
-// PostContents is POST /v1/contents (public). Creates a content item as a draft, with one version serving its text's languages when it names none. root:content:write holders, or an owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) in it.
+// PostContents is POST /v1/contents (public). Creates a content item as a draft, with one version serving its text's languages when it names none. Staff with root:content:write may create anywhere. Signed-in people with root:content:create may create their own unowned posts; channel posts require that channel's owner or {kind}:content:create/write grant. Creator credits are attribution, not editorship.
 func (c *Client) PostContents(ctx context.Context, body catalog.ContentInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, "/v1/contents", nil, body, &out)
 	return out, err
 }
 
-// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's access, restrictions, attributes or creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContent is PATCH /v1/contents/{id} (public). Edits a content item's access, restrictions, attributes or creators. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PatchContent(ctx context.Context, id string, body catalog.ContentPatch) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostContentRestore is POST /v1/contents/{id}/restore (public). Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentRestore is POST /v1/contents/{id}/restore (public). Restores an independently deleted content item as it was. A parent deleted with its last version is restored by restoring a version instead. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PostContentRestore(ctx context.Context, id string) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/restore", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at. Refused (not_ready) while a published version's media is still processing or being published. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentPublish is POST /v1/contents/{id}/publish (public). Publishes a content item now, or schedules it for publish_at. Refused (not_ready) while a published version's media is still processing or being published. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PostContentPublish(ctx context.Context, id string, body catalog.PublishInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/publish", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostContentUnpublish is POST /v1/contents/{id}/unpublish (public). Returns a published or scheduled content item to a draft. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentUnpublish is POST /v1/contents/{id}/unpublish (public). Returns a published or scheduled content item to a draft. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PostContentUnpublish(ctx context.Context, id string) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/unpublish", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PutContentText is PUT /v1/contents/{id}/text/{language} (public). Sets a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PutContentText is PUT /v1/contents/{id}/text/{language} (public). Sets a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PutContentText(ctx context.Context, id string, language string, body catalog.Text) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/text/{language}", "{id}", url.PathEscape(id), "{language}", url.PathEscape(language)), nil, body, &out)
 	return out, err
 }
 
-// DeleteContentText is DELETE /v1/contents/{id}/text/{language} (public). Removes a content item's text in one language. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// DeleteContentText is DELETE /v1/contents/{id}/text/{language} (public). Removes a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) DeleteContentText(ctx context.Context, id string, language string) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/text/{language}", "{id}", url.PathEscape(id), "{language}", url.PathEscape(language)), nil, nil, &out)
 	return out, err
 }
 
-// PutContentCreators is PUT /v1/contents/{id}/creators (public). Replaces a content item's creators. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PutContentCreators is PUT /v1/contents/{id}/creators (public). Replaces a content item's creators. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PutContentCreators(ctx context.Context, id string, body catalog.CreatorsInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/creators", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostContentImages is POST /v1/contents/{id}/images (public). Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentImages is POST /v1/contents/{id}/images (public). Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PostContentImages(ctx context.Context, id string, body catalog.BodyImageInput) (catalog.InlineImage, error) {
 	var out catalog.InlineImage
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/images", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PostContentVersions is POST /v1/contents/{id}/versions (public). Adds a version after the others, a draft unless state says otherwise. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PostContentVersions is POST /v1/contents/{id}/versions (public). Adds a version after the others, a draft unless state says otherwise. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PostContentVersions(ctx context.Context, id string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/versions", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PutContentVersionsOrder is PUT /v1/contents/{id}/versions/order (public). Orders a content item's versions: ids lists each version that is not deleted, first first. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PutContentVersionsOrder is PUT /v1/contents/{id}/versions/order (public). Orders a content item's versions: ids lists each version that is not deleted, first first. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PutContentVersionsOrder(ctx context.Context, id string, body catalog.OrderInput) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/order", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publishing it on a published item is refused (not_ready) while its media is still processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publishing it on a published item is refused (not_ready) while its media is still processing. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
 	return out, err
 }
 
-// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) DeleteContentVersion(ctx context.Context, id string, vid string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, nil)
 }
 
-// PutContentVersionSegments is PUT /v1/contents/{id}/versions/{vid}/segments (public). Replaces a version's segments (chapters): ordered ranges, each released at its time. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PutContentVersionSegments is PUT /v1/contents/{id}/versions/{vid}/segments (public). Replaces a version's segments (chapters): ordered ranges, each released at its time. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PutContentVersionSegments(ctx context.Context, id string, vid string, body catalog.SegmentsInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/segments", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
