@@ -12,7 +12,9 @@ jobs:
     name: Critical backend and browser
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Leave room for cold race compilation and artifact collection around the
+    # suite's own bounded Go test timeout.
+    timeout-minutes: 45
     services:
       postgres:
         image: groonga/pgroonga:4.1.0-debian-18
