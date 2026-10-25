@@ -15,8 +15,16 @@
       "id": "CK-J01-S02",
       "journey": "CK-J01",
       "behavior": "Previous released schema migration preserves public identities and reads",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "The actual public v0.125.0 initializer records its module version, creates and publishes content. Current read-only startup refuses its schema, explicit migration preserves item/version IDs, code and body through embedded and HTTP reads, and repeated migration preserves revision.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity",
+        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/anonymous_HTTP",
+        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/embedded_host"
+      ]
     },
     {
       "id": "CK-J01-S03",
@@ -29,15 +37,30 @@
       "id": "CK-J01-S04",
       "journey": "CK-J01",
       "behavior": "Invalid tenant/app/dependency configuration refuses startup",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Zero app scope, mixed legacy/canonical tenant selection and absent PostgreSQL/authentication/authorization dependencies refuse construction without returning an engine.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestHostLifecycle/CK-J01-S04_invalid_scope_refuses_before_serving",
+        "TestHostLifecycle/CK-J01-S04_invalid_scope_refuses_before_serving/authentication",
+        "TestHostLifecycle/CK-J01-S04_invalid_scope_refuses_before_serving/authorization",
+        "TestHostLifecycle/CK-J01-S04_invalid_scope_refuses_before_serving/postgres"
+      ]
     },
     {
       "id": "CK-J01-S05",
       "journey": "CK-J01",
       "behavior": "Selected route groups mount and omitted groups return404",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A parsed content-only route selection serves real model data under its prefix; omitted entity/media groups and wrong prefix404; unknown groups, empty selection and relative mount refuse.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestHostLifecycle/CK-J01-S05_route_selection_is_enforced"
+      ]
     },
     {
       "id": "CK-J01-S06",
@@ -50,8 +73,14 @@
       "id": "CK-J01-S07",
       "journey": "CK-J01",
       "behavior": "Drain rejects new readiness while in-flight requests complete",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A real PostgreSQL table lock proves an accepted HTTP read is in flight. Cancellation changes readiness to503 while the request remains blocked; unlocking returns its exact public content, shutdown completes and the borrowed pool still works.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestStandaloneParityAndDrain/CK-J01-S07_drain_fails_readiness_and_finishes_accepted_HTTP_read"
+      ]
     },
     {
       "id": "CK-J01-S08",
@@ -141,8 +170,14 @@
       "id": "CK-J03-S03",
       "journey": "CK-J03",
       "behavior": "Scoped moderator may moderate but cannot author beyond its role",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A real scoped moderator can hold/release and ban within its entity, but cannot author content or moderate/list/ban the other entity. Public and author-visible states are checked after accepted and refused requests.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity"
+      ]
     },
     {
       "id": "CK-J03-S04",
@@ -162,8 +197,14 @@
       "id": "CK-J03-S06",
       "journey": "CK-J03",
       "behavior": "Deleted or foreign-owned recreated scope does not preserve stale authority",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "An existing editor first creates through a live scope. Deleted and foreign-recreated scopes refuse the same client; the foreign owner has a real native grant but no app authority. Management reads prove no extra writes and unchanged original ownership.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestEntityConcurrentOwnershipAndStaleScopes/CK-J03-S06_CK-J16-S03_deleted_and_rebound_scope_refuses_existing_editor"
+      ]
     },
     {
       "id": "CK-J03-S07",
@@ -190,9 +231,15 @@
       "id": "CK-J05-S03",
       "journey": "CK-J05",
       "behavior": "Version cannot become visible before its parent",
-      "status": "pending",
-      "evidence": [],
-      "contract_change": "Content item moderation removed upstream in PR383; approval subcase retired, parent/version visibility remains selected."
+      "status": "verified",
+      "evidence": [
+        "An earlier published edition remains404 through both direct-version routes before its later parent release; at equality the parent is visible but its paid audience still redacts its body.",
+        "Executed with the race detector in resume-boundaries3; the aggregate failed only the separately corrected commerce outage oracle."
+      ],
+      "contract_change": "Content item moderation removed upstream in PR383; approval subcase retired, parent/version visibility remains selected.",
+      "cases": [
+        "TestPublicationRecorderAndParentBoundary/CK-J05-S03_version_does_not_publish_before_parent"
+      ]
     },
     {
       "id": "CK-J05-S04",
@@ -212,8 +259,14 @@
       "id": "CK-J05-S06",
       "journey": "CK-J05",
       "behavior": "Repeated/concurrent due-recording catches up facts without duplicate releases",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Actual host-composed River workers race four recorder jobs plus startup catch-up after runtime reads already expose the due body. Exactly one content, version and audience fact appears; publication timestamps retain the parent deadline and another job creates no duplicate.",
+        "Executed with the race detector in resume-boundaries3; the aggregate failed only the separately corrected commerce outage oracle."
+      ],
+      "cases": [
+        "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once"
+      ]
     },
     {
       "id": "CK-J06-S01",
@@ -275,50 +328,99 @@
       "id": "CK-J07-S02",
       "journey": "CK-J07",
       "behavior": "Known-ID hydration follows the same visibility rules as discovery",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Known-ID hydration preserves caller order and excludes out-of-domain, draft, future, deleted and locked items under hide mode. Default locked hydration is separately redacted and wide-domain hydration proves excluded data exists.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S02_known_ID_hydration_keeps_visibility_and_order"
+      ]
     },
     {
       "id": "CK-J07-S03",
       "journey": "CK-J07",
       "behavior": "Search/typeahead cannot expose internal entity names or restricted content",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Real worker-populated search and typeahead return allowed controls but omit invisible content. Internal-name search/typeahead are empty while private management suggestions return the actual internal entity.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S03_search_and_typeahead_conceal_internal_names_and_invisible_content"
+      ]
     },
     {
       "id": "CK-J07-S04",
       "journey": "CK-J07",
       "behavior": "Sitemap/calendar/totals honor public-domain scope",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Domain sitemap, release calendar, date counts and totals exclude the real out-of-domain/draft/future/deleted controls. Wider-domain totals prove the extra public item exists; entity sitemap omits internal classifications.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S04_sitemap_calendar_and_totals_apply_domain_scope"
+      ]
     },
     {
       "id": "CK-J07-S05",
       "journey": "CK-J07",
       "behavior": "Reader filters cannot defeat a hard domain requirement",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A real reader successfully hides an optional entity. Required-entity override is refused; normal reads retain that preference, while explicitly requesting the optional entity relaxes only the preference and never the hard domain requirement.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S05_reader_filter_cannot_disable_hard_requirement"
+      ]
     },
     {
       "id": "CK-J07-S06",
       "journey": "CK-J07",
       "behavior": "Version-ID/code aliases cannot fall back to an accessible sibling",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Direct locked version lookup selects only the requested version and hides body; unavailable version-ID lookup404s. Matched live codes resolve exact versions; unavailable code returns the visible parent with empty VersionID and no hidden edition identity. Parent/domain refusal and wide-domain/live-code controls are checked.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S06_code_resolution_retains_parent_and_domain_authority",
+        "TestExactVersionVisibility/CK-J07-S06_locked_version_ID_and_code_never_select_open_sibling"
+      ]
     },
     {
       "id": "CK-J07-S07",
       "journey": "CK-J07",
       "behavior": "Public versus administrative entity views separate internal metadata",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Internal direct entity, public listing, content associations, search/sitemap and code lookups hide identity/name/path. Anonymous, person and host code requests refuse, while management reads and ordinary/public/owner code positives remain available. Runtime code visibility reuses public entity Cards policy.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S07_public_entity_views_omit_internal_identity_and_associations",
+        "TestDiscoveryVisibility/CK-J07-S07_public_entity_views_omit_internal_identity_and_associations/anonymous_internal_code",
+        "TestDiscoveryVisibility/CK-J07-S07_public_entity_views_omit_internal_identity_and_associations/anonymous_public_code",
+        "TestDiscoveryVisibility/CK-J07-S07_public_entity_views_omit_internal_identity_and_associations/host_internal_code",
+        "TestDiscoveryVisibility/CK-J07-S07_public_entity_views_omit_internal_identity_and_associations/host_public_code",
+        "TestDiscoveryVisibility/CK-J07-S07_public_entity_views_omit_internal_identity_and_associations/person_internal_code",
+        "TestDiscoveryVisibility/CK-J07-S07_public_entity_views_omit_internal_identity_and_associations/person_public_code"
+      ]
     },
     {
       "id": "CK-J07-S08",
       "journey": "CK-J07",
       "behavior": "Pagination/similar/recommendations never reintroduce excluded content",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Cursor pagination has exact membership without duplication; real ClickHouse-backed similar and signed-in recommendations retain the same domain/publication/access exclusions and include positive controls.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S08_pagination_similar_and_recommendations_keep_exclusions"
+      ]
     },
     {
       "id": "CK-J08-S01",
@@ -564,15 +666,28 @@
       "id": "CK-J16-S02",
       "journey": "CK-J16",
       "behavior": "Creation limit prevents exceeding max-per-owner atomically",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Four simultaneous owner creates commit exactly one slot; all losers409. Personal listing contains only the winner and the real AuthKit membership list has exactly its one provisioned channel group.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestEntityConcurrentOwnershipAndStaleScopes/CK-J16-S02_concurrent_creation_commits_one_owner_slot",
+        "TestOwnedEntityAuthority/CK-J16-S02_creation_limit_is_enforced_without_extra_entity"
+      ]
     },
     {
       "id": "CK-J16-S03",
       "journey": "CK-J16",
       "behavior": "Foreign/stale entity scope never grants editor authority",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Existing local scope editor succeeds before retirement. Deleted and foreign-recreated provider groups cannot authorize writes, including a foreign group owner with an independently verified native permission.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestEntityConcurrentOwnershipAndStaleScopes/CK-J03-S06_CK-J16-S03_deleted_and_rebound_scope_refuses_existing_editor"
+      ]
     },
     {
       "id": "CK-J16-S04",
@@ -592,43 +707,89 @@
       "id": "CK-J20-S01",
       "journey": "CK-J20",
       "behavior": "Owner ban affects only the owner\u2019s eligible content",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestCommentModerationBoundaries/CK-J20-S01_owner_ban_only_blocks_owned_targets",
+        "TestCommentModerationBoundaries/CK-J20-S01_owner_ban_only_blocks_owned_targets/edit",
+        "TestCommentModerationBoundaries/CK-J20-S01_owner_ban_only_blocks_owned_targets/new",
+        "TestCommentModerationBoundaries/CK-J20-S01_owner_ban_only_blocks_owned_targets/reply"
+      ]
     },
     {
       "id": "CK-J20-S02",
       "journey": "CK-J20",
       "behavior": "Entity moderator ban/hold/release cannot reach another entity",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Entity moderator holds/releases only its own channel comments, sees only its held queue, and entity bans cover both the entity and owned content without reaching another entity. Lift restores writes.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity"
+      ]
     },
     {
       "id": "CK-J20-S03",
       "journey": "CK-J20",
       "behavior": "Global ban applies only inside the target tenant/app policy",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A real app moderator global ban blocks the target app, while the same human can still comment in a sibling app. Private ban reads/listing and lift remain scoped.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestCommentModerationBoundaries/CK-J20-S03_global_ban_remains_inside_app"
+      ]
     },
     {
       "id": "CK-J20-S04",
       "journey": "CK-J20",
       "behavior": "Ban expiry and lift restore eligibility at the documented boundary",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "An owned PostgreSQL query clock pins deadline-1microsecond, exact equality and deadline+1microsecond. Both standing and actual comment writes enforce the boundary; expired metadata and repeated permanent-ban lift are checked.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestCommentModerationBoundaries/CK-J20-S04_expiry_and_lift_restore_eligibility",
+        "TestCommentModerationBoundaries/CK-J20-S04_expiry_and_lift_restore_eligibility/after",
+        "TestCommentModerationBoundaries/CK-J20-S04_expiry_and_lift_restore_eligibility/at",
+        "TestCommentModerationBoundaries/CK-J20-S04_expiry_and_lift_restore_eligibility/before"
+      ]
     },
     {
       "id": "CK-J20-S05",
       "journey": "CK-J20",
       "behavior": "Banned words and normalized IP/CIDR input cannot bypass restrictions",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Real word rules reject case/NFKC/zero-width variants, mask actual comment bytes, and removal restores writes. CIDR and IPv4-mapped inputs bind actual loopback requests; lift works and malformed batch leaves no partial rule.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestCommentModerationBoundaries/CK-J20-S05_normalized_words_and_networks_enforce_rules",
+        "TestCommentModerationBoundaries/CK-J20-S05_normalized_words_and_networks_enforce_rules/0",
+        "TestCommentModerationBoundaries/CK-J20-S05_normalized_words_and_networks_enforce_rules/1",
+        "TestCommentModerationBoundaries/CK-J20-S05_normalized_words_and_networks_enforce_rules/2",
+        "TestCommentModerationBoundaries/CK-J20-S05_normalized_words_and_networks_enforce_rules/3"
+      ]
     },
     {
       "id": "CK-J20-S06",
       "journey": "CK-J20",
       "behavior": "Unauthorized moderation/rule change leaves public and held state unchanged",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Unauthorized hold/release/resolve and rule changes preserve real public/held state. Stale review revision refuses; authorized exact revision approves the same comment and restores public visibility.",
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+      ],
+      "cases": [
+        "TestCommentModerationBoundaries/CK-J20-S06_unauthorized_moderation_preserves_public_and_held_state"
+      ]
     },
     {
       "id": "CK-J23-S01",
@@ -641,8 +802,14 @@
       "id": "CK-J23-S02",
       "journey": "CK-J23",
       "behavior": "Paused pre-erasure writer cannot resurrect visible data",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A real PostgreSQL insertion barrier pauses an accepted public favorite write. Erasure waits on the same subject serialization, then removes the committed write; future writes refuse while an unrelated reader still contributes.",
+        "Executed with the race detector in resume-boundaries3; the aggregate failed only the separately corrected commerce outage oracle."
+      ],
+      "cases": [
+        "TestPausedInteractionWriterErasure/CK-J23-S02_paused_pre_erasure_writer_cannot_resurrect_activity"
+      ]
     },
     {
       "id": "CK-J23-S03",
@@ -655,8 +822,14 @@
       "id": "CK-J23-S04",
       "journey": "CK-J23",
       "behavior": "Restored old app data refuses normal serving until replay completes",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Restore actual pre-erasure app favorite/count/fence rows while keeping the shared account tombstone. Normal New refuses with ErrErasureReplayRequired; explicit recovery replay removes the restored activity and only then allows a new serving engine.",
+        "Executed with the race detector in resume-boundaries3; the aggregate failed only the separately corrected commerce outage oracle."
+      ],
+      "cases": [
+        "TestRestoredErasureFence/CK-J23-S04_restored_app_refuses_serving_until_shared_fence_replay"
+      ]
     },
     {
       "id": "CK-J23-S05",
@@ -4502,105 +4675,194 @@
     {
       "id": "go:NewTenantID",
       "name": "NewTenantID",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip",
+        "TestPublicScopeValues/provisioning_generates_distinct_nonzero_bindings"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:NewAppID",
       "name": "NewAppID",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip",
+        "TestPublicScopeValues/provisioning_generates_distinct_nonzero_bindings"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:TenantID.String",
       "name": "TenantID.String",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:AppID.String",
       "name": "AppID.String",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:TenantID.IsZero",
       "name": "TenantID.IsZero",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip",
+        "TestPublicScopeValues/provisioning_generates_distinct_nonzero_bindings"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:AppID.IsZero",
       "name": "AppID.IsZero",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip",
+        "TestPublicScopeValues/provisioning_generates_distinct_nonzero_bindings"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:ParseTenantID",
       "name": "ParseTenantID",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip",
+        "TestPublicScopeValues/refuse_blank",
+        "TestPublicScopeValues/refuse_braces",
+        "TestPublicScopeValues/refuse_compact",
+        "TestPublicScopeValues/refuse_leading_space",
+        "TestPublicScopeValues/refuse_malformed",
+        "TestPublicScopeValues/refuse_trailing_space",
+        "TestPublicScopeValues/refuse_uppercase",
+        "TestPublicScopeValues/refuse_zero"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:ParseAppID",
       "name": "ParseAppID",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip",
+        "TestPublicScopeValues/refuse_blank",
+        "TestPublicScopeValues/refuse_braces",
+        "TestPublicScopeValues/refuse_compact",
+        "TestPublicScopeValues/refuse_leading_space",
+        "TestPublicScopeValues/refuse_malformed",
+        "TestPublicScopeValues/refuse_trailing_space",
+        "TestPublicScopeValues/refuse_uppercase",
+        "TestPublicScopeValues/refuse_zero"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:TenantID.MarshalText",
       "name": "TenantID.MarshalText",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:AppID.MarshalText",
       "name": "AppID.MarshalText",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:TenantID.UnmarshalText",
       "name": "TenantID.UnmarshalText",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip",
+        "TestPublicScopeValues/refuse_blank",
+        "TestPublicScopeValues/refuse_braces",
+        "TestPublicScopeValues/refuse_compact",
+        "TestPublicScopeValues/refuse_leading_space",
+        "TestPublicScopeValues/refuse_malformed",
+        "TestPublicScopeValues/refuse_trailing_space",
+        "TestPublicScopeValues/refuse_uppercase",
+        "TestPublicScopeValues/refuse_zero"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:AppID.UnmarshalText",
       "name": "AppID.UnmarshalText",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip",
+        "TestPublicScopeValues/refuse_blank",
+        "TestPublicScopeValues/refuse_braces",
+        "TestPublicScopeValues/refuse_compact",
+        "TestPublicScopeValues/refuse_leading_space",
+        "TestPublicScopeValues/refuse_malformed",
+        "TestPublicScopeValues/refuse_trailing_space",
+        "TestPublicScopeValues/refuse_uppercase",
+        "TestPublicScopeValues/refuse_zero"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "go:Scope.Validate",
       "name": "Scope.Validate",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestPublicScopeValues/canonical_config_round_trip",
+        "TestPublicScopeValues/provisioning_generates_distinct_nonzero_bindings"
+      ],
+      "evidence": [
+        "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
@@ -4878,41 +5140,61 @@
     {
       "id": "ts:ContentKitError.refusal",
       "name": "ContentKitError.refusal",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/ContentKitError.refusal"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:ContentKitError.isLimit",
       "name": "ContentKitError.isLimit",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/ContentKitError.isLimit"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:ContentKitError.isCeiling",
       "name": "ContentKitError.isCeiling",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/ContentKitError.isCeiling"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:ContentKitError.blocksQueue",
       "name": "ContentKitError.blocksQueue",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/ContentKitError.blocksQueue"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:ContentKitError.transient",
       "name": "ContentKitError.transient",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/ContentKitError.transient"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
@@ -5286,145 +5568,217 @@
     {
       "id": "ts:imageRef",
       "name": "imageRef",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/imageRef"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:imageRefs",
       "name": "imageRefs",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/imageRefs"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:allowsEntityScope",
       "name": "allowsEntityScope",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/allowsEntityScope"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:isContentKitError",
       "name": "isContentKitError",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/isContentKitError"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:toContentKitError",
       "name": "toContentKitError",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/toContentKitError"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:transportFailure",
       "name": "transportFailure",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/transportFailure"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:readContentKitError",
       "name": "readContentKitError",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/readContentKitError"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:failureError",
       "name": "failureError",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/failureError"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:sha256Hex",
       "name": "sha256Hex",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/sha256Hex"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:isContentId",
       "name": "isContentId",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/isContentId"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:itemKey",
       "name": "itemKey",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/itemKey"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:sameItem",
       "name": "sameItem",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/sameItem"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:checkRef",
       "name": "checkRef",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/checkRef"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:uploadRules",
       "name": "uploadRules",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/uploadRules"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:ruleFor",
       "name": "ruleFor",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/ruleFor"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:filesFor",
       "name": "filesFor",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/filesFor"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:screenFiles",
       "name": "screenFiles",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/screenFiles"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:uniqueName",
       "name": "uniqueName",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/uniqueName"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
@@ -5454,81 +5808,121 @@
     {
       "id": "ts:chunkOffsets",
       "name": "chunkOffsets",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/chunkOffsets"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:mergeReads",
       "name": "mergeReads",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/mergeReads"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:isProcessing",
       "name": "isProcessing",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/isProcessing"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:processing",
       "name": "processing",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/processing"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:statusKind",
       "name": "statusKind",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/statusKind"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:expiryDelay",
       "name": "expiryDelay",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/expiryDelay"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:refreshable",
       "name": "refreshable",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/refreshable"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:publicURL",
       "name": "publicURL",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/publicURL"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:publicRenditions",
       "name": "publicRenditions",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/publicRenditions"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     },
     {
       "id": "ts:isPending",
       "name": "isPending",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/isPending"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ],
       "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
     }
   ]
