@@ -51,6 +51,13 @@ every exact reviewed scenario, operation and public Go/TS binding case name actu
 The HTTP ledger is also checked against the current declared route inventory,
 so missing, duplicate and changed operation records cannot qualify.
 
+`python3 tests/critical/run.py --race --suite sdk` qualifies every selected
+TypeScript binding through its reviewed Go test owner. It runs those owners
+in full, preserving their real-service setup and actor profiles. This fixed CI
+selection differs from local `--focus`: missing review, skipped cases and
+duplicate required executions still fail. The default suite continues to
+require every critical scenario, HTTP contract and Go/TypeScript binding.
+
 Additional required owned-fixture settings:
 
 - `CONTENTKIT_CRITICAL_S3_ENDPOINT`, `CONTENTKIT_CRITICAL_S3_USER`,

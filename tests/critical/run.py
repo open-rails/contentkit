@@ -5,6 +5,7 @@
 contract: every reviewed scenario and operation binding must execute and pass.
 """
 import argparse
+from collections import Counter
 import csv
 import json
 import os
@@ -38,8 +39,20 @@ def check_inventory(ledger):
         raise ValueError("binding ledger omits, duplicates or changes a selected contract")
 
 
-def qualified_cases(ledger):
+def qualified_cases(ledger, suite="all"):
     check_inventory(ledger)
+    if suite == "sdk":
+        with (HERE / "binding_matrix.tsv").open() as source:
+            selected = {row["id"] for row in csv.DictReader(source, delimiter="\t") if row["language"] == "ts"}
+        bindings = [row for row in ledger.get("binding_contracts", []) if row["id"] in selected]
+        if not selected or len(bindings) != len(selected):
+            raise ValueError("reviewed SDK selection is empty or incomplete")
+        expected = set()
+        for row in bindings:
+            if row.get("status") != "verified" or not row.get("cases") or not row.get("evidence"):
+                raise ValueError(f"unqualified public TypeScript binding: {row.get('id')}")
+            expected.update(row["cases"])
+        return expected
     pending = [row["id"] for row in ledger["required"] if row["status"] != "verified"]
     if pending:
         raise ValueError("critical behavior review is incomplete: " + ", ".join(pending))
@@ -68,17 +81,20 @@ def qualified_cases(ledger):
 
 def verify(events, expected):
     started, passed, packages = set(), set(), set()
+    runs, passes = Counter(), Counter()
     for event in events:
         action, name = event.get("Action"), event.get("Test")
         if action == "skip":
             raise ValueError(f"selected execution skipped: {name or event.get('Package')}")
-        if action == "fail":
+        if action in ("fail", "build-fail"):
             raise ValueError(f"selected execution failed: {name or event.get('Package')}")
         if action == "run" and name:
             started.add(name)
+            runs[name] += 1
         if action == "pass":
             if name:
                 passed.add(name)
+                passes[name] += 1
             else:
                 packages.add(event.get("Package"))
     if not started or not packages:
@@ -89,20 +105,26 @@ def verify(events, expected):
     missing = expected - passed
     if missing:
         raise ValueError("selected cases did not execute: " + ", ".join(sorted(missing)))
+    repeated = [name for name in expected if runs[name] != 1 or passes[name] != 1]
+    if repeated:
+        raise ValueError("required cases must each run and pass exactly once: " + ", ".join(sorted(repeated)))
     return len(passed)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--focus", help="local top-level Go test expression; never qualification")
+    parser.add_argument("--suite", choices=("all", "sdk"), default="all", help="reviewed CI suite; SDK selects all critical TypeScript bindings")
     parser.add_argument("--race", action="store_true")
     parser.add_argument("--output", type=Path, default=HERE / "results" / "go.jsonl")
     parser.add_argument("--verify", type=Path, help="verify saved go -json output under the same selection contract")
     args = parser.parse_args()
     if args.focus and (os.getenv("CI") or "/" in args.focus):
         raise ValueError("focused execution is local and must select whole top-level tests")
+    if args.focus and args.suite != "all":
+        raise ValueError("an ad hoc focus cannot be combined with a reviewed suite")
     ledger = json.loads((HERE / "coverage.json").read_text())
-    expected = set() if args.focus else qualified_cases(ledger)
+    expected = set() if args.focus else qualified_cases(ledger, args.suite)
     if args.verify:
         events = [json.loads(line) for line in args.verify.read_text().splitlines() if line.strip()]
     else:
@@ -122,6 +144,11 @@ def main():
             command.append("-race")
         if args.focus:
             command += ["-run", args.focus]
+        elif args.suite == "sdk":
+            # Whole owners preserve setup and all actor/transport profiles.
+            # The case set comes from reviewed source, never observed output.
+            owners = sorted({case.split("/", 1)[0] for case in expected})
+            command += ["-run", "^(?:" + "|".join(re.escape(owner) for owner in owners) + ")$"]
         command.append("./...")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("w") as log:
@@ -138,7 +165,7 @@ def main():
                     print(event["Output"], end="", file=sys.stderr)
             raise ValueError(f"Go critical execution exited {result.returncode}; log: {args.output}")
     count = verify(events, expected)
-    label = "LOCAL PARTIAL EXECUTION; NOT QUALIFICATION" if args.focus else "CRITICAL CONTRACT QUALIFIED"
+    label = "LOCAL PARTIAL EXECUTION; NOT QUALIFICATION" if args.focus else "CRITICAL SDK CONTRACT QUALIFIED" if args.suite == "sdk" else "CRITICAL CONTRACT QUALIFIED"
     print(f"{label}: {count} named tests completed; {args.verify or args.output}")
 
 
