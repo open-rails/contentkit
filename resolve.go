@@ -181,8 +181,11 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 			// Scoped channel threads use group moderation, not personal account blocks.
 			res.Owner = ""
 		}
-		if (cfg.EntityKinds[g.Kind].Owner == "user" || cfg.EntityKinds[g.Kind].AuthScope) && (!cfg.EntityKinds[g.Kind].AuthScope || g.AuthScope != "") {
+		if cfg.EntityKinds[g.Kind].Owner == "user" || cfg.EntityKinds[g.Kind].AuthScope {
 			res.OwnerEntity = &resolve.OwnerEntity{Kind: g.Kind, ID: string(g.ID), Owner: g.OwnerUserID, Scope: g.AuthScope}
+			if cfg.EntityKinds[g.Kind].AuthScope && g.AuthScope == "" {
+				res.OwnerEntity.Owner = ""
+			}
 		}
 		out[ref.Key()] = res
 	}

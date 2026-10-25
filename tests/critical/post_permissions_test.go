@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -289,6 +290,23 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 	_, err = caller.PutCommentBan(t.Context(), commenter.ID, content.BanInput{})
 	must(t, err)
 	_, err = a.client(commentToken).PostEntityComments(t.Context(), id, content.CommentInput{Body: "Personal blocks do not moderate a scoped channel"})
+	must(t, err)
+	// A saved channel ban may outlive an authorization-scope restoration.
+	// Reproduce that durable state without granting the pending owner authority.
+	banned, bannedToken := w.person(t, 0)
+	_, err = w.pool.Exec(t.Context(), "INSERT INTO "+pgx.Identifier{w.schema, "content_comment_bans"}.Sanitize()+
+		" (tenant_id,user_id,scope,reason,banned_by) VALUES($1,$2,$3,$4,$5)", a.cfg.Scope.AppID.String(), banned.ID, content.EntityScope(id), "Retained channel restriction", owner.ID)
+	must(t, err)
+	bannedClient := a.client(bannedToken)
+	_, err = bannedClient.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "Still banned while scope is pending"}, ck.PostContentCommentsQuery{})
+	requireError(t, err, 403, "comment_banned")
+	_, err = bannedClient.PostEntityComments(t.Context(), id, content.CommentInput{Body: "Channel thread keeps the same ban"})
+	requireError(t, err, 403, "comment_banned")
+	err = caller.DeleteEntityCommentBan(t.Context(), id, banned.ID)
+	requireError(t, err, 403, "forbidden")
+	other, err := a.engine.Client().PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: "other-ban-scope", OwnerUserID: owner.ID}})
+	must(t, err)
+	_, err = bannedClient.PostEntityComments(t.Context(), string(other[0].ID), content.CommentInput{Body: "A different channel is unaffected"})
 	must(t, err)
 	_, err = caller.PostContents(t.Context(), input)
 	requireError(t, err, 403, "forbidden")
