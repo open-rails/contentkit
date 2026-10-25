@@ -240,7 +240,7 @@ func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 	must(t, err)
 	_, err = client.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
-	commenter, commentToken := w.person(t, 0)
+	_, commentToken := w.person(t, 0)
 	comment := postComment(t, a.client(commentToken), item.ID, "Moderated site channel")
 	moderator, moderatorToken := w.person(t, 0)
 	authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(moderator.ID), w.channelModerator)
