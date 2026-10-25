@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
@@ -40,6 +42,25 @@ func TestPostAttachmentPolicies(t *testing.T) {
 	must(t, err)
 	ref := media.RefBody{Kind: "article", ID: item.ID, Version: item.Versions[0].ID}
 	payload := imageBytes(t)
+	t.Run("auditor_can_read_draft_but_cannot_allocate_upload", func(t *testing.T) {
+		viewer, token := w.person(t, 0)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(viewer.ID), w.viewer)
+		auditor := a.client(token)
+		draft, err := auditor.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+		must(t, err)
+		if draft.Editor || draft.Body != "A mixed-media post" {
+			t.Fatalf("draft read privilege became edit authority: %+v", draft)
+		}
+		allocations := pgx.Identifier{w.schema, "content_media_allocations"}.Sanitize()
+		var before, after int
+		must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+allocations).Scan(&before))
+		_, err = auditor.PostMediaUploadPresign(t.Context(), media.PresignBody{Ref: ref, Path: "images/auditor.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)})
+		requireError(t, err, 403, "forbidden")
+		must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+allocations).Scan(&after))
+		if after != before {
+			t.Fatal("refused auditor upload allocated media state")
+		}
+	})
 	ops := make([]media.Op, 6)
 	for i := range ops {
 		ops[i] = stageFile(t, client, ref, fmt.Sprintf("images/%d.png", i), payload)
