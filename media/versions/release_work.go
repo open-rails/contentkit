@@ -45,6 +45,26 @@ type publicationCompletion interface {
 
 type releaseMutationContextKey struct{}
 
+// A reader-equivalent revision can still have stale physical copies from an
+// attempt superseded after storage I/O. Never skip their recorded retirement.
+func (p *releasePlan) storageSettled(active *releasePlan) bool {
+	if active.View == nil || len(p.Previous) != len(active.View.Deliveries) {
+		return false
+	}
+	for _, id := range p.Previous {
+		if !slices.ContainsFunc(active.View.Deliveries, func(d media.PublicationDelivery) bool { return d.ID == id && d.Ready && !d.Withdrawn }) {
+			return false
+		}
+	}
+	for _, copy := range p.Copies {
+		area, _, valid := layout.SplitBlobRef(copy.Source)
+		if !valid || area != copy.Area {
+			return false
+		}
+	}
+	return true
+}
+
 // Download-only renditions stay internal. A whole-item reader token must not
 // bypass a host's delayed-download or personalized-watermark policy.
 func downloadOnly(k *media.Kind, f media.File) bool {
@@ -567,7 +587,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err != nil {
 				return err
 			}
-			if active != nil && active.Fingerprint == plan.Fingerprint {
+			if active != nil && active.Fingerprint == plan.Fingerprint && plan.storageSettled(active) {
 				active.Waiting, active.NextAt = plan.Waiting, plan.NextAt
 				body, err := json.Marshal(active)
 				if err != nil {
