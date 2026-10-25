@@ -434,7 +434,7 @@ func (s *Service) chips(ctx context.Context, q *sel, rows []cardRow, kinds []str
 	if len(ids) == 0 {
 		return nil
 	}
-	cards, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: q.display})
+	cards, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: q.display, NamesOnly: true})
 	if err != nil {
 		return err
 	}
