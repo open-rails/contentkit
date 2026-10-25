@@ -341,6 +341,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
+	if err := e.migratePublicationQueues(ctx); err != nil {
+		return err
+	}
 	if err := e.migrateCatalogEvents(ctx); err != nil {
 		return err
 	}
@@ -382,7 +385,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if err := media.MigrateCleanup(ctx, e.pool, reg, journal, e.riverSchema, retention); err != nil {
 			return fmt.Errorf("contentkit: media cleanup migration: %w", err)
 		}
-		publish, err := versions.ProcessingPublisher(e.pool, e.riverSchema, reg)
+		publish, err := versions.ProcessingPublisher(e.pool, e.riverSchema, e.schema, reg)
 		if err != nil {
 			return err
 		}

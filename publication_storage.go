@@ -46,7 +46,7 @@ func MigratePublicationStorage(ctx context.Context, pool *pgxpool.Pool, cfg Conf
 	if err != nil {
 		return report, err
 	}
-	wake, err := versions.ProcessingPublisher(pool, e.riverSchema, registry)
+	wake, err := versions.ProcessingPublisher(pool, e.riverSchema, e.schema, registry)
 	if err != nil {
 		return report, err
 	}

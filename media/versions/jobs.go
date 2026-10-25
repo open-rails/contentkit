@@ -55,13 +55,15 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 				return err
 			}
 		}
-		if _, ok := cfg.Queues[Queue]; !ok {
-			cfg.Queues[Queue] = river.QueueConfig{MaxWorkers: 2}
+		if _, ok := cfg.Queues[QueueFor(s.o.Tenant)]; !ok {
+			cfg.Queues[QueueFor(s.o.Tenant)] = river.QueueConfig{MaxWorkers: 2}
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, 24*time.Hour,
 			func() (river.JobArgs, *river.InsertOpts) {
-				return playableArgs{}, &river.InsertOpts{Queue: Queue, UniqueOpts: media.PendingOnce}
-			}, &river.PeriodicJobOpts{ID: "contentkit_version_playable", RunOnStart: true}))
+				unique := media.PendingOnce
+				unique.ByQueue = true
+				return playableArgs{}, &river.InsertOpts{Queue: QueueFor(s.o.Tenant), UniqueOpts: unique}
+			}, &river.PeriodicJobOpts{ID: "contentkit_version_playable:" + QueueFor(s.o.Tenant), RunOnStart: true}))
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
 		if b.Pool != s.o.Pool {
@@ -97,7 +99,7 @@ func (s *Service) enqueueTx(ctx context.Context, tx pgx.Tx, args media.RerunArgs
 	}
 	return media.InsertOnce(ctx, func(ctx context.Context, a river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 		return c.InsertTx(ctx, tx, a, o)
-	}, args, river.InsertOpts{Queue: Queue})
+	}, args, river.InsertOpts{Queue: QueueFor(s.o.Tenant)})
 }
 
 // outcome maps a job's error to River's: gone cancels, waiting snoozes.

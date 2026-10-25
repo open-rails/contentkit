@@ -176,6 +176,9 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 	if err := riverhelpers.ValidateMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return required(err)
 	}
+	if err := e.validatePublicationQueues(ctx); err != nil {
+		return required(err)
+	}
 	if account, ok := e.accountMediaStorage(); ok {
 		if err := workqueue.Validate(ctx, e.pool, account.WorkerSchema); err != nil {
 			return required(err)
