@@ -6,7 +6,11 @@ COPY go.mod go.sum ./
 COPY adapters/openrails/go.mod adapters/openrails/go.sum adapters/openrails/
 COPY adapters/authkit/go.mod adapters/authkit/go.sum adapters/authkit/
 COPY server/go.mod server/go.sum server/
-RUN cd server && go mod download
+RUN cd server && go mod edit \
+    -replace=github.com/open-rails/contentkit=../ \
+    -replace=github.com/open-rails/contentkit/adapters/openrails=../adapters/openrails \
+    -replace=github.com/open-rails/contentkit/adapters/authkit=../adapters/authkit \
+    && go mod download
 COPY . .
 # Apply checkout replacements after COPY, which includes the replacement-free published go.mod.
 RUN cd server && go mod edit \
