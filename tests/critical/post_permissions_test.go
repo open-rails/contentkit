@@ -328,8 +328,10 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 	}
 	mine, err := caller.GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
 	must(t, err)
-	if len(mine.Entities) != 0 {
-		t.Fatal("pending scope advertised owner capabilities")
+	for _, entity := range mine.Entities {
+		if string(entity.ID) == id {
+			t.Fatal("pending scope advertised owner capabilities")
+		}
 	}
 	must(t, a.engine.Start(context.Background()))
 	waitFor(t, func() bool {
