@@ -12,11 +12,15 @@ import (
 // MyEntity is an entity of the viewer's, with how it is theirs.
 type MyEntity struct {
 	EntityCard
-	// Owner: the viewer owns it.
+	// Owner: the viewer is its recorded owner and retains ownership authority.
 	Owner bool `json:"owner"`
 	// Editor: the viewer holds its kind's access.EntitySettingsManage in its
 	// AuthKit scope.
 	Editor bool `json:"editor"`
+	// CanPost permits new personal posts in this channel.
+	CanPost bool `json:"can_post"`
+	// CanEditOwn permits editing the viewer's own posts, not other authors.
+	CanEditOwn bool `json:"can_edit_own"`
 	// Writer: the viewer holds its kind's access.EntityContentWrite there.
 	Writer bool `json:"writer"`
 	// Moderator: the viewer holds its kind's access.EntityCommentsModerate
@@ -56,7 +60,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyEntityPage, error
 		}
 		joined = filter.Entities()
 	}
-	type mine struct{ owner, editor, writer, moderator, member bool }
+	type mine struct{ owner, editor, writer, moderator, member, canPost, canEditOwn bool }
 	rel := map[EntityID]mine{}
 	err = s.read(ctx, func(q Querier) error {
 		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT id, kind, coalesce(auth_scope, ''), coalesce(owner_user_id, '') = $2, coalesce(id = ANY($4::text[]), false)
@@ -74,9 +78,14 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyEntityPage, error
 				return err
 			}
 			held := scopes[scope]
-			m.editor, m.writer = slices.Contains(held, access.EntitySettingsManage(kind)), slices.Contains(held, access.EntityContentWrite(kind))
-			m.moderator = m.owner || slices.Contains(held, access.EntityCommentsModerate(kind))
-			if m.owner || m.editor || m.writer || m.moderator || m.member {
+			directOwner := m.owner && scope == ""
+			m.owner = m.owner && (directOwner || slices.Contains(held, access.EntitySettingsManage(kind)))
+			m.editor = directOwner || slices.Contains(held, access.EntitySettingsManage(kind))
+			m.writer = directOwner || slices.Contains(held, access.EntityContentWrite(kind))
+			m.canPost = m.writer || slices.Contains(held, access.EntityContentCreate(kind))
+			m.canEditOwn = m.writer || slices.Contains(held, access.EntityContentEditOwn(kind))
+			m.moderator = directOwner || slices.Contains(held, access.EntityCommentsModerate(kind))
+			if m.owner || m.editor || m.writer || m.moderator || m.member || m.canPost || m.canEditOwn {
 				rel[id] = m
 			}
 		}
@@ -110,7 +119,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyEntityPage, error
 	}
 	for _, g := range page.Entities {
 		m := rel[g.ID]
-		out.Entities = append(out.Entities, MyEntity{EntityCard: g, Owner: m.owner, Editor: m.editor, Writer: m.writer, Moderator: m.moderator, Member: m.member})
+		out.Entities = append(out.Entities, MyEntity{EntityCard: g, Owner: m.owner, Editor: m.editor, Writer: m.writer, Moderator: m.moderator, Member: m.member, CanPost: m.canPost, CanEditOwn: m.canEditOwn})
 	}
 	out.NextCursor = page.NextCursor
 	return out, nil

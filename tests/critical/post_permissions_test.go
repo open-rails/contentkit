@@ -82,10 +82,10 @@ func TestPostContributorAuthority(t *testing.T) {
 		requireError(t, err, 403, "forbidden")
 		_, err = caller.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		requireError(t, err, 403, "forbidden")
-		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.ownEditor)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.contributor)
 		_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Current edit grant", Body: "yes"})
 		must(t, err)
-		authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.ownEditor)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
 		own, err := caller.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 		if own.Editor || own.Body != "yes" {
@@ -119,6 +119,11 @@ func TestPostContributorAuthority(t *testing.T) {
 		must(t, err)
 		scope := iam.GroupByID(scopeID)
 		authtest.GrantRole(t, w.tenant[0], scope, iam.UserSubject(alice.ID), w.channelContributor)
+		mine, err := author.GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
+		must(t, err)
+		if len(mine.Entities) != 1 || mine.Entities[0].ID != channel.ID || !mine.Entities[0].CanPost || !mine.Entities[0].CanEditOwn || mine.Entities[0].Writer || mine.Entities[0].Editor || mine.Entities[0].Moderator {
+			t.Fatalf("contributor channel capabilities wrong: %+v", mine.Entities)
+		}
 		own, err := author.PostContents(t.Context(), newPost("Contributor post", string(channel.ID)))
 		must(t, err)
 		_, err = author.PutContentText(t.Context(), own.ID, "en", catalog.Text{Title: "Own edit", Body: "Only this post"})
@@ -147,11 +152,18 @@ func TestPostContributorAuthority(t *testing.T) {
 		must(t, err)
 		persona, err := w.auth.Persona("channel")
 		must(t, err)
+		authtest.GrantRole(t, w.tenant[0], scope, iam.UserSubject(bob.ID), persona.OwnerRole())
 		authtest.RevokeRole(t, w.tenant[0], scope, iam.UserSubject(channelOwner.ID), persona.OwnerRole())
 		_, err = owner.GetContent(t.Context(), existing.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
 		_, err = owner.PostContents(t.Context(), newPost("Owner metadata cannot bypass revocation", string(channel.ID)))
 		requireError(t, err, 403, "forbidden")
+		mine, err = owner.GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
+		must(t, err)
+		if len(mine.Entities) != 0 {
+			t.Fatalf("revoked owner metadata still grants channel capabilities: %+v", mine.Entities)
+		}
+
 	})
 }
 
@@ -162,14 +174,14 @@ func TestPostContributorMediaRevocation(t *testing.T) {
 	attachMedia(t, w, a)
 	person, token := w.person(t, 0)
 	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
-	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.ownEditor)
+	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.contributor)
 	caller := a.client(token)
 	ref := galleryRef(t, caller, "Own media grant")
 	payload := imageBytes(t)
 	request := media.PresignBody{Ref: ref, Path: "pages/one.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)}
 	_, err := caller.PostMediaUploadPresign(t.Context(), request)
 	must(t, err)
-	authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.ownEditor)
+	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
 	_, err = caller.PostMediaUploadPresign(t.Context(), request)
 	requireError(t, err, 403, "forbidden")
 	own, err := caller.GetContent(t.Context(), ref.ID, ck.GetContentQuery{})
