@@ -137,53 +137,37 @@ func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, visit fun
 	for key, value := range sort.args {
 		args[key] = value
 	}
-	sql := fmt.Sprintf(`SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s`,
+	pickSQL := fmt.Sprintf(`SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s`,
 		s.t.facets, q.predicate(), preference)
 	if name, _, _ := strings.Cut(sort.raw, ":"); name == SortPopular {
 		// Popularity is per content: score each content's chosen edition once.
-		sql = fmt.Sprintf(`SELECT f.content_id, f.version_id FROM (
+		pickSQL = fmt.Sprintf(`SELECT f.content_id, f.version_id FROM (
  SELECT DISTINCT ON (f.content_id) f.tenant_id, f.kind, f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s) f %s
 WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	}
-	rows, err := s.o.Pool.Query(ctx, sql, args)
+	// One read of the whole selection; access is then settled a batch at a time.
+	args["summary_tenant"], args["summary_user"] = s.o.Tenant, person(q.reader.Actor)
+	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.entity_ids, coalesce(f.owner_entity_id, ''), f.published_at,
+ @summary_user <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @summary_user)
+ FROM (%[5]s) p
+ JOIN %[3]s v ON v.tenant_id = @summary_tenant AND v.id = p.version_id
+ JOIN %[1]s f ON f.tenant_id = v.tenant_id AND f.version_id = v.id
+ JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id`, s.t.facets, s.t.items, s.t.versions, s.t.creators, pickSQL), args)
 	if err != nil {
 		return false, err
 	}
-	picks, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (pick, error) {
-		var p pick
-		err := r.Scan(&p.content, &p.version)
-		return p, err
+	all, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
+		var c cardRow
+		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.ID, &c.entityIDs, &c.owner, &c.PublishedAt, &c.creator)
+		return c, err
 	})
 	if err != nil {
 		return false, err
 	}
-	// Rows load and settle a batch at a time; only the picks span the selection.
 	const batchSize = 2048
-	lean := fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.entity_ids, coalesce(f.owner_entity_id, ''), f.published_at,
- $3 <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = $3)
- FROM %[3]s v
- JOIN %[1]s f ON f.tenant_id = v.tenant_id AND f.version_id = v.id
- JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
- WHERE v.tenant_id = $1 AND v.id = ANY($2::text[])`, s.t.facets, s.t.items, s.t.versions, s.t.creators)
-	user := person(q.reader.Actor)
 	unknown := false
-	for start := 0; start < len(picks); start += batchSize {
-		vids := make([]string, 0, batchSize)
-		for _, p := range picks[start:min(start+batchSize, len(picks))] {
-			vids = append(vids, p.version)
-		}
-		rows, err := s.o.Pool.Query(ctx, lean, s.o.Tenant, vids, user)
-		if err != nil {
-			return false, err
-		}
-		batch, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
-			var c cardRow
-			err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.ID, &c.entityIDs, &c.owner, &c.PublishedAt, &c.creator)
-			return c, err
-		})
-		if err != nil {
-			return false, err
-		}
+	for start := 0; start < len(all); start += batchSize {
+		batch := all[start:min(start+batchSize, len(all))]
 		if err := s.settle(ctx, q, batch); err != nil {
 			return false, err
 		}

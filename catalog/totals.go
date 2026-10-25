@@ -220,7 +220,7 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Domain, kindNames []
 		named[k] = v
 	}
 	rows, err := s.pool.Query(ctx, `SELECT a.kind, coalesce(a.language, ''), GROUPING(a.language) = 1, a.audience, count(DISTINCT a.content_id) FROM (
- SELECT DISTINCT f.kind, f.content_id, l.language, au.audience FROM `+s.t.currentFacets+` f
+ SELECT DISTINCT f.kind, f.content_id, l.language, au.audience FROM `+s.t.facets+` f
  CROSS JOIN LATERAL unnest(f.languages) AS l(language)
  CROSS JOIN LATERAL unnest(`+audiences+`) AS au(audience)
  WHERE f.tenant_id = @tenant AND f.kind = ANY(@kinds) AND NOT f.deleted AND NOT f.unplayable AND f.live_from <= @now
