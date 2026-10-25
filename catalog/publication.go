@@ -48,7 +48,7 @@ func (s *Store) scheduleTextPublicationTx(ctx context.Context, tx pgx.Tx, target
 		contents[i], ids[i] = target.Content, target.Version
 	}
 	rows, err := tx.Query(ctx, `SELECT DISTINCT v.content_id,v.id,
- CASE WHEN c.state='published' AND v.state='published'
+ CASE WHEN NOT v.released AND c.state='published' AND v.state='published'
       THEN greatest(coalesce(c.publish_at,$4),coalesce(v.publish_at,$4)) ELSE $4 END
  FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
  JOIN unnest($2::text[],$3::text[]) AS target(content_id,version_id)
@@ -95,8 +95,9 @@ func (s *Store) publishTextDue(ctx context.Context) (int, error) {
 	at := s.now()
 	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c
  WHERE c.tenant_id=$1 AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
- AND ((NOT v.released AND c.state='published' AND v.state='published'
-       AND coalesce(c.publish_at,$2)<=$2 AND coalesce(v.publish_at,$2)<=$2)
+ AND ((c.state='published' AND v.state='published' AND (
+       (NOT v.released AND coalesce(c.publish_at,$2)<=$2 AND coalesce(v.publish_at,$2)<=$2)
+       OR (v.released AND v.released_access IS DISTINCT FROM `+s.qs+`.content_frozen_access(v.access,$2))))
    OR (v.released AND (c.state='draft' OR v.state='draft'))))
  ORDER BY c.id LIMIT 200 FOR UPDATE SKIP LOCKED`, s.tenant, at)
 	if err != nil {
@@ -109,8 +110,9 @@ func (s *Store) publishTextDue(ctx context.Context) (int, error) {
 	rows, err = tx.Query(ctx, `SELECT v.content_id,v.id,c.state='published' AND v.state='published'
  FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
  WHERE v.tenant_id=$1 AND v.content_id=ANY($2)
- AND ((NOT v.released AND c.state='published' AND v.state='published'
-       AND coalesce(c.publish_at,$3)<=$3 AND coalesce(v.publish_at,$3)<=$3)
+ AND ((c.state='published' AND v.state='published' AND (
+       (NOT v.released AND coalesce(c.publish_at,$3)<=$3 AND coalesce(v.publish_at,$3)<=$3)
+       OR (v.released AND v.released_access IS DISTINCT FROM `+s.qs+`.content_frozen_access(v.access,$3))))
    OR (v.released AND (c.state='draft' OR v.state='draft')))
  ORDER BY v.content_id,v.id FOR UPDATE OF v`, s.tenant, parents, at)
 	if err != nil {
@@ -150,20 +152,27 @@ func (s *Store) CompletePublicationTx(ctx context.Context, tx pgx.Tx, target ver
 		return invalid("publication completion needs a transaction, version and actual completion time")
 	}
 	var kind, parentState, state string
+	var released bool
 	var parentAt, versionAt, parentPublished, versionPublished *time.Time
 	if err := tx.QueryRow(ctx, `SELECT kind,state,publish_at,published_at FROM `+s.t.items+`
  WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, s.tenant, target.Content).
 		Scan(&kind, &parentState, &parentAt, &parentPublished); err != nil {
 		return missing(err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT state,publish_at,published_at FROM `+s.t.versions+`
+	if err := tx.QueryRow(ctx, `SELECT state,publish_at,published_at,released FROM `+s.t.versions+`
  WHERE tenant_id=$1 AND content_id=$2 AND id=$3 FOR UPDATE`, s.tenant, target.Content, target.Version).
-		Scan(&state, &versionAt, &versionPublished); err != nil {
+		Scan(&state, &versionAt, &versionPublished, &released); err != nil {
 		return missing(err)
 	}
 	if parentState != StatePublished || state != StatePublished ||
-		parentAt != nil && parentAt.After(at) || versionAt != nil && versionAt.After(at) {
+		!released && (parentAt != nil && parentAt.After(at) || versionAt != nil && versionAt.After(at)) {
 		return ErrConflict
+	}
+	if s.media == nil {
+		if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET released_access=`+s.qs+`.content_frozen_access(access,$4)
+ WHERE tenant_id=$1 AND content_id=$2 AND id=$3`, s.tenant, target.Content, target.Version, at); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET released=true,published_at=coalesce(published_at,$4),
  revision=revision+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND content_id=$2 AND id=$3`,
@@ -184,7 +193,29 @@ func (s *Store) CompletePublicationTx(ctx context.Context, tx pgx.Tx, target ver
 	if err := s.emit(ctx, tx, events...); err != nil {
 		return err
 	}
-	return s.RefreshFacets(ctx, tx, []string{target.Content})
+	if err := s.RefreshFacets(ctx, tx, []string{target.Content}); err != nil {
+		return err
+	}
+	if s.media == nil {
+		var next *time.Time
+		if err := tx.QueryRow(ctx, `SELECT min((release->>'at')::timestamptz) FROM `+s.t.versions+` v,
+ LATERAL jsonb_array_elements(coalesce(v.access->'releases','[]'::jsonb)) release
+ WHERE v.tenant_id=$1 AND v.id=$2 AND (release->>'at')::timestamptz>$3`, s.tenant, target.Version, at).Scan(&next); err != nil {
+			return err
+		}
+		if next != nil {
+			s.publicationMu.RLock()
+			client := s.publicationJobs
+			s.publicationMu.RUnlock()
+			if client == nil {
+				return errors.New("catalog: durable publication jobs are not composed into a River client")
+			}
+			_, err := client.InsertTx(ctx, tx, publishDueArgs{Content: target.Content, Version: target.Version, Due: *next},
+				&river.InsertOpts{Queue: Queue, ScheduledAt: *next, UniqueOpts: media.PendingOnce})
+			return err
+		}
+	}
+	return nil
 }
 
 // WithdrawPublicationTx updates current availability after the publisher has

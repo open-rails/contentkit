@@ -358,7 +358,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
  AND (m.version_id IS NULL OR m.version_id = f.version_id) AND (m.active_from IS NOT NULL OR m.active_until IS NOT NULL))
  THEN ` + s.qs + `.content_current_entity_ids(f.tenant_id, f.content_id, f.version_id) ELSE f.entity_ids END`
 	rows, err := s.pool.Query(ctx, `SELECT f.content_id, f.version_id, f.kind, f.live_from, c.state = 'deleted', ver.state = 'deleted',
- f.languages, c.access, ver.access, f.restrictions, `+currentEntityIDs+`, coalesce(f.owner_entity_id, ''), f.position,
+ f.languages, c.access, CASE WHEN ver.released THEN ver.released_access ELSE ver.access END, f.restrictions, `+currentEntityIDs+`, coalesce(f.owner_entity_id, ''), f.position,
  EXISTS (SELECT 1 FROM `+s.t.creators+` cc WHERE cc.tenant_id = f.tenant_id AND cc.content_id = f.content_id AND cc.user_id = $3 AND $3 <> '')
  FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
  JOIN `+s.t.versions+` ver ON ver.tenant_id = f.tenant_id AND ver.id = f.version_id

@@ -120,6 +120,9 @@ type Version struct {
 	State       string     `json:"state,omitempty"`
 	PublishAt   *time.Time `json:"publish_at,omitempty"`
 	PublishedAt *time.Time `json:"published_at,omitempty"`
+	// Publication is editor-only durable work status. A pending update does
+	// not replace the edition's already released reader state.
+	Publication *PublicationStatus `json:"publication,omitempty"`
 	// Live reports a completed release under the current publication state.
 	Live bool `json:"live"`
 	// Access is the version's own rule. Noneditors do not receive this field.
@@ -142,6 +145,16 @@ type Version struct {
 	Text map[string]VersionText `json:"text,omitempty"`
 	// Viewer is the signed-in reader's standing with the version.
 	Viewer *ViewerState `json:"viewer,omitempty"`
+}
+
+// PublicationStatus is the latest accepted edition publication operation.
+// Its state describes work; Version.Live describes current reader availability.
+type PublicationStatus struct {
+	ID          string     `json:"id"`
+	State       string     `json:"state"`
+	ScheduledAt time.Time  `json:"scheduled_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	Error       string     `json:"error,omitempty"`
 }
 
 // ViewerState is a signed-in reader's own standing with a content item or

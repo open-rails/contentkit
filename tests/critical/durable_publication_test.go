@@ -103,4 +103,34 @@ func TestDurableTextPublication(t *testing.T) {
 	if added.Access == nil || added.Access.Level != access.TierLevel {
 		t.Fatalf("new edition did not copy its creation default: %+v", added.Access)
 	}
+	publicAt := actual.Add(time.Hour)
+	protected, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery",
+		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: publicAt, Level: access.Public}}},
+		Text:   map[string]catalog.Text{"en": {Title: "Audience promotion", Body: "Still protected until publication work completes"}},
+	})
+	must(t, err)
+	_, err = admin.PostContentPublish(t.Context(), protected.ID, catalog.PublishInput{})
+	must(t, err)
+	dueJob, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.Queue})
+	must(t, err)
+	waitFor(t, func() bool {
+		row, err := fleet.JobGet(t.Context(), dueJob.Job.ID)
+		must(t, err)
+		if row.State == rivertype.JobStateDiscarded {
+			t.Fatalf("protected publication worker failed: %+v", row.Errors)
+		}
+		return row.State == rivertype.JobStateCompleted
+	})
+	locked, err := reader.GetContent(t.Context(), protected.ID, ck.GetContentQuery{})
+	must(t, err)
+	if !locked.Live || locked.Decision.Allowed || locked.Body != "" {
+		t.Fatalf("initial protected publication is incorrect: %+v", locked)
+	}
+	must(t, fleet.Stop(t.Context()))
+	w.clock.set(publicAt.Add(time.Second))
+	locked, err = reader.GetContent(t.Context(), protected.ID, ck.GetContentQuery{})
+	must(t, err)
+	if locked.Decision.Allowed || locked.Body != "" {
+		t.Fatal("reader clock opened a future audience without its publication worker")
+	}
 }

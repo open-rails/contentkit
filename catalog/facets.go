@@ -29,7 +29,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := q.Query(ctx, `SELECT v.id, c.access, v.access FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
+	rows, err := q.Query(ctx, `SELECT v.id, c.access, CASE WHEN v.released THEN v.released_access ELSE v.access END FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
  WHERE v.tenant_id = $1 AND v.content_id = ANY($2) ORDER BY v.id`, s.tenant, ids)
 	if err != nil {
 		return err
