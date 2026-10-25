@@ -21,6 +21,11 @@ func TestEnginePublicationLifetime(t *testing.T) {
 	if err := a.engine.Start(cancelled); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled startup accepted workers: %v", err)
 	}
+	expired, cancelExpired := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+	if err := a.engine.Start(expired); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired startup lost its deadline error: %v", err)
+	}
 	startup, cancelStartup := context.WithCancel(t.Context())
 	must(t, a.engine.Start(startup))
 	cancelStartup()

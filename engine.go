@@ -817,8 +817,8 @@ func (e *Engine) Start(ctx context.Context, opts ...StartOption) error {
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	stopStartupCancellation := context.AfterFunc(ctx, cancel)
 	err = own.Start(runCtx)
-	if !stopStartupCancellation() && err == nil {
-		err = ctx.Err()
+	if !stopStartupCancellation() {
+		err = errors.Join(err, ctx.Err())
 	}
 	if err != nil {
 		cancel()
