@@ -755,11 +755,14 @@ func TestEffectiveEntities(t *testing.T) {
 	if facets := f.facetEntities(); !slices.Equal(facets[vid(1, 0)], ids(sub, tag, now)) || len(facets[vid(2, 0)]) != 0 {
 		t.Fatalf("after delete %v", facets)
 	}
-	// A window that opened during a long outage is visible without a worker.
+	// A window that opened after the facets were written applies on the next windows run.
 	f.exec(`UPDATE {s}.content_memberships SET active_from = now() - interval '2 days' WHERE entity_id = $1`, string(later.ID))
-	var current []string
-	if err := f.pool.QueryRow(f.ctx, `SELECT entity_ids FROM `+f.s.table("content_current_facets")+` WHERE tenant_id=$1 AND version_id=$2`, tenant, vid(1, 0)).Scan(&current); err != nil || !slices.Contains(current, string(later.ID)) {
-		t.Fatalf("opened window %v: %v", current, err)
+	f.exec(`UPDATE {s}.content_facets SET updated_at = now() - interval '3 days'`)
+	if err := f.s.RefreshWindows(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if current := f.facetEntities()[vid(1, 0)]; !slices.Contains(current, string(later.ID)) {
+		t.Fatalf("opened window %v", current)
 	}
 	// The popularity catalog sees the same entities, per content and kind.
 	byContent, err := f.s.Memberships(f.ctx, tenant, "gallery", "rail", []string{cid(1), cid(2)})
@@ -952,7 +955,7 @@ func TestMerge(t *testing.T) {
 // language ("" for all), descendants included; the automatic cover is the
 // most-favorited live member anyone sees the cover of, a selected cover
 // stays.
-func TestRuntimeCountsAndCovers(t *testing.T) {
+func TestRecount(t *testing.T) {
 	f := newFixture(t)
 	f.content("gallery", 1, live("en"), live("es"))
 	f.content("gallery", 2, live("en"), version{languages: []string{"ja"}})
@@ -966,6 +969,9 @@ func TestRuntimeCountsAndCovers(t *testing.T) {
 	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,content_version_id,favorites) VALUES ($1,'gallery',$2,$3,50)`, tenant, cid(2), vid(2, 1))
 	f.add(Membership{EntityID: child.ID, ContentID: cid(1)}, Membership{EntityID: parent.ID, ContentID: cid(2)}, Membership{EntityID: parent.ID, ContentID: cid(3)},
 		Membership{EntityID: tag.ID, ContentID: cid(1)}, Membership{EntityID: tag.ID, ContentID: cid(4)}, Membership{EntityID: picked.ID, ContentID: cid(2)})
+	if err := f.s.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
 	counts := func(id EntityID) string {
 		d, err := f.s.Detail(f.ctx, id, "")
 		if err != nil {
@@ -989,6 +995,9 @@ func TestRuntimeCountsAndCovers(t *testing.T) {
 	}
 	// Videos' locked view hides covers: a premium video's is no entity's.
 	f.exec(`UPDATE {s}.content_facets SET access_level = 'tier' WHERE content_id = $1`, cid(4))
+	if err := f.s.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
 	if got, _ := f.s.Entities(f.ctx, []EntityID{tag.ID}); got[0].Cover == nil || got[0].Cover.ContentID != cid(1) {
 		t.Fatalf("auto cover of a premium video %+v", got[0].Cover)
 	}
@@ -1005,19 +1014,25 @@ func TestRuntimeCountsAndCovers(t *testing.T) {
 	if err := f.s.RemoveMemberships(f.ctx, []Membership{{EntityID: tag.ID, ContentID: cid(4)}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.s.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
 	if got := counts(parent.ID); got != "gallery/=1 gallery/en=1 " {
 		t.Fatalf("parent after %s", got)
 	}
 	if got := counts(tag.ID); got != "gallery/=1 gallery/en=1 gallery/es=1 " {
 		t.Fatalf("tag after %s", got)
 	}
-
+	var n int
+	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM `+f.s.table("content_entity_counts")+` WHERE entity_id = $1`, string(child.ID)).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("deleted entity keeps %d counts %v", n, err)
+	}
 }
 
 // A entity counts the content it owns as well as its members, each item once
 // per language it serves and once overall, never once per version or twice
 // for being both.
-func TestRuntimeCountsOwnedContent(t *testing.T) {
+func TestRecountOwnedContent(t *testing.T) {
 	f := newFixture(t)
 	ch := f.create(EntityInput{Kind: "channel", Slug: "studio", OwnerUserID: "owner"})[0]
 	f.content("video", 1, live("en"), live("es"))
@@ -1029,6 +1044,9 @@ func TestRuntimeCountsOwnedContent(t *testing.T) {
 	f.content("video", 4, live("en"))
 	f.exec(`UPDATE {s}.content_facets SET owner_entity_id = $1 WHERE content_id = $2`, string(solo.ID), cid(4))
 	f.exec(`INSERT INTO {s}.content_interaction_counts (tenant_id,content_kind,content_id,favorites) VALUES ($1,'video',$2,5)`, tenant, cid(1))
+	if err := f.s.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
 	// Automatic covers pick from owned content too: a channel with no members has one.
 	covers, err := f.s.Entities(f.ctx, []EntityID{ch.ID, solo.ID})
 	if err != nil {
@@ -1070,6 +1088,9 @@ func TestList(t *testing.T) {
 	in = append(in, EntityInput{Kind: "tag", Slug: "spanish", Names: []Name{canonical("es", "Zeta")}, Text: []Text{{Language: "en", SortKey: "aaa"}}})
 	tags := f.create(in...)
 	f.add(Membership{EntityID: tags[0].ID, ContentID: cid(1)}, Membership{EntityID: tags[0].ID, ContentID: cid(2)}, Membership{EntityID: tags[4].ID, ContentID: cid(2)})
+	if err := f.s.Recount(f.ctx); err != nil {
+		t.Fatal(err)
+	}
 	walk := func(opts ListOptions) []string {
 		t.Helper()
 		var out []string

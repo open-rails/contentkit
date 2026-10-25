@@ -9,7 +9,8 @@ import (
 )
 
 // These are exact prior producer envelopes in this Engine's owned River
-// schema. Explicitly scoped foreign-tenant work and terminal history stay put.
+// schema. The newer stored-count projection retains real work under its
+// canonical name. Foreign-tenant work and terminal history stay put.
 const obsoleteEntityJobs = `(kind='contentkit_groups' AND queue=$1 AND coalesce(args->>'tenant',$2)=$2)
  OR (kind IN ('contentkit_group_sync','contentkit_group_reconcile','contentkit_entity_sync','contentkit_entity_reconcile')
  AND args->>'tenant'=$2 AND (kind IN ('contentkit_group_sync','contentkit_group_reconcile') OR queue='contentkit_groups'))`
@@ -22,7 +23,7 @@ func (e *Engine) migrateEntityJobsTx(ctx context.Context, tx pgx.Tx, jobs string
 	if running {
 		return fmt.Errorf("contentkit: stop old entity workers before migrating their jobs")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE `+jobs+` SET state='cancelled',finalized_at=clock_timestamp() WHERE state IN ('available','pending','retryable','scheduled') AND kind='contentkit_groups' AND (`+obsoleteEntityJobs+`)`, QueueContentKit, e.cfg.Tenant); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE `+jobs+` SET kind='contentkit_entity_projection',unique_key=NULL WHERE state IN ('available','pending','retryable','scheduled') AND kind='contentkit_groups' AND (`+obsoleteEntityJobs+`)`, QueueContentKit, e.cfg.Tenant); err != nil {
 		return err
 	}
 	_, err := tx.Exec(ctx, `UPDATE `+jobs+` SET kind=CASE kind WHEN 'contentkit_group_sync' THEN 'contentkit_entity_sync' WHEN 'contentkit_group_reconcile' THEN 'contentkit_entity_reconcile' ELSE kind END,

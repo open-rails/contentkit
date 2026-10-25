@@ -43,15 +43,14 @@ describe("groups against the real ContentKit", () => {
     const abaco = await create("series", `abaco-${r}`, [name("en", `Ábaco ${r}`)], under);
     const beta = await create("series", `beta-${r}`, [name("en", `Beta ${r}`)], under);
     const digits = await create("series", `3x3-${r}`, [name("en", `3x3 ${r}`)], under);
-    // Beta has two live contents, Alpha one: count order is immediate without workers.
+    // Beta has two live contents, Alpha one: count order after the job runs.
     for (const [g, n] of [[beta, 2], [alpha, 1]] as const) {
       for (let i = 0; i < n; i++) {
         const [c] = await seedContents(staff, [{ kind: "comic", titles: { en: `Member ${r} ${i}` }, versions: [{ languages: ["en"] }] }]);
         await staff.entities.addMembers(g.id, [{ content_id: c!.id }]);
       }
     }
-
-
+    await h.recount();
     const c = client(h, cfg, null);
     const { result, rerender } = renderHook((f: EntityFilter) => useEntities(f), {
       wrapper: wrap(c, "en"),
@@ -117,6 +116,7 @@ describe("groups against the real ContentKit", () => {
     await act(() => result.current.update({ cover: { content_id: member!.id } }));
     await waitFor(() => expect(result.current.entity?.cover).toEqual({ content_id: member!.id }), wait);
     await act(() => result.current.update({ cover: {} }));
+    await h.recount();
 
     act(() => result.current.reload());
     await waitFor(() => expect(result.current.entity?.cover).toEqual({ content_id: member!.id, auto: true }), wait);
