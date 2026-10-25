@@ -58,12 +58,19 @@ func TestNotificationReceiptBoundaries(t *testing.T) {
 		if len(published.Items) != 1 {
 			t.Fatal("receipt fixture missing")
 		}
+		own, err := a.accountInbox(ownerToken).Get(t.Context(), published.Items[0].ID)
+		must(t, err)
+		if own.ID != published.Items[0].ID || own.Recipient.ID != owner.ID {
+			t.Fatal("the native item route did not return the owner's receipt")
+		}
 		client := a.accountInbox(stranger)
 		inbox, err := client.List(t.Context(), inboxQuery{})
 		must(t, err)
 		if len(inbox.Items) != 0 {
 			t.Fatal("another account received private notification data")
 		}
+		_, err = client.Get(t.Context(), published.Items[0].ID)
+		requireError(t, err, 404, "not_found")
 		_, err = client.SetRead(t.Context(), published.Items[0].ID, true)
 		requireError(t, err, 404, "not_found")
 		_, err = client.SetDismissed(t.Context(), published.Items[0].ID, true)
@@ -116,33 +123,63 @@ func TestNotificationReceiptBoundaries(t *testing.T) {
 		}
 	})
 	t.Run("CK-J25-S04_foreign_or_unknown_recipient_is_refused", func(t *testing.T) {
-		foreign, _ := w.person(t, 1)
+		foreign, foreignToken := w.person(t, 1)
 		local, token := w.person(t, 0)
-		for _, recipient := range []string{foreign.ID, uuid.NewString()} {
-			batch := publication(local.ID)
-			batch.Notifications = append(batch.Notifications, publication(recipient).Notifications...)
-			_, err := a.publishInbox(t.Context(), batch)
-			if !invalidInboxPublication(err) {
-				t.Fatalf("invalid recipient batch accepted: %v", err)
-			}
+		publisher, err := a.inbox.Notifications("application")
+		must(t, err)
+		scope, err := a.inbox.NotificationScope()
+		must(t, err)
+		// Native publication accepts eligible recipients and terminally drops
+		// accounts outside this tenant. A subsequent read is not publication.
+		for index, recipient := range []string{foreign.ID, uuid.NewString()} {
+			valid := publication(local.ID).Notifications[0]
+			invalid := publication(recipient).Notifications[0]
+			must(t, publisher.Publish(t.Context(), []notify.Publication{publicationFrom(valid, 1), publicationFrom(invalid, 1)}))
 			inbox, err := a.accountInbox(token).List(t.Context(), inboxQuery{})
 			must(t, err)
-			if len(inbox.Items) != 0 {
-				t.Fatal("invalid recipient batch partially published the preceding valid receipt")
+			if len(inbox.Items) != index+1 || inbox.Items[0].Origin.ID != valid.Origin.ID {
+				t.Fatal("native publication did not deliver the valid tenant recipient")
 			}
+			var stored int
+			must(t, w.pool.QueryRow(t.Context(), `SELECT
+ (SELECT count(*) FROM contentkit_accounts.notify_items WHERE scope=$1 AND recipient=$2) +
+ (SELECT count(*) FROM contentkit_accounts.notify_recipients WHERE scope=$1 AND recipient=$2)`, scope, recipient).Scan(&stored))
+			if stored != 0 {
+				t.Fatal("foreign or unknown recipient acquired inbox storage in this tenant")
+			}
+		}
+		foreignInbox, err := w.apps[2].accountInbox(foreignToken).List(t.Context(), inboxQuery{})
+		must(t, err)
+		if len(foreignInbox.Items) != 0 {
+			t.Fatal("foreign tenant received this app's private notice")
+		}
+		// Malformed mutations, unlike terminal non-delivery, refuse the entire
+		// batch before the preceding valid mutation can take effect.
+		fresh, freshToken := w.person(t, 0)
+		valid := publication(fresh.ID).Notifications[0]
+		invalid := publication("not-an-account-id").Notifications[0]
+		err = publisher.Publish(t.Context(), []notify.Publication{publicationFrom(valid, 1), publicationFrom(invalid, 1)})
+		if !errors.Is(err, notify.ErrInvalid) {
+			t.Fatalf("malformed recipient batch accepted: %v", err)
+		}
+		inbox, err := a.accountInbox(freshToken).List(t.Context(), inboxQuery{})
+		must(t, err)
+		if len(inbox.Items) != 0 {
+			t.Fatal("malformed batch partially published the preceding valid receipt")
 		}
 	})
 	t.Run("CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish", func(t *testing.T) {
 		user, token := w.person(t, 0)
 		in := publication(user.ID)
-		_, err := a.publishInbox(t.Context(), in)
+		initial, err := a.publishInbox(t.Context(), in)
 		must(t, err)
+		if len(initial.Items) != 1 {
+			t.Fatal("pre-erasure receipt fixture missing")
+		}
 		must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
 		for _, delayed := range []inboxPublication{in, publication(user.ID)} {
 			got, err := a.publishInbox(t.Context(), delayed)
-			if !errors.Is(err, notify.ErrRecipientErased) {
-				t.Fatalf("erased recipient publication: %v", err)
-			}
+			must(t, err) // Native publication acknowledges terminal non-delivery.
 			if len(got.Items) != 0 {
 				t.Fatal("erased recipient acquired a delayed receipt")
 			}
@@ -151,6 +188,15 @@ func TestNotificationReceiptBoundaries(t *testing.T) {
 		must(t, err)
 		if len(inbox.Items) != 0 {
 			t.Fatal("erased inbox became visible again")
+		}
+		scope, err := a.inbox.NotificationScope()
+		must(t, err)
+		var receipts, fences int
+		must(t, w.pool.QueryRow(t.Context(), `SELECT
+ (SELECT count(*) FROM contentkit_accounts.notify_items WHERE scope=$1 AND recipient=$2 AND app_id=$3),
+ (SELECT count(*) FROM contentkit_accounts.notify_app_erasures WHERE scope=$1 AND recipient=$2 AND app_id=$3)`, scope, user.ID, a.cfg.Scope.AppID.String()).Scan(&receipts, &fences))
+		if receipts != 0 || fences != 1 {
+			t.Fatalf("delayed publication recreated erased storage or lost its fence: receipts=%d fences=%d", receipts, fences)
 		}
 	})
 }

@@ -3,13 +3,12 @@ package critical_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/open-rails/authkit/authtest"
+	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/notify"
 	ck "github.com/open-rails/contentkit"
 )
@@ -70,11 +69,11 @@ func (c *accountInboxClient) call(ctx context.Context, method, path string, out 
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		var body struct{ Code, Error string }
+		var body iam.ErrorEnvelope
 		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 			return fmt.Errorf("AuthKit notification response %d: %w", response.StatusCode, err)
 		}
-		return &ck.Error{Status: response.StatusCode, Code: body.Code, Message: body.Error}
+		return &ck.Error{Status: response.StatusCode, Code: body.Error.Code, Message: body.Error.Message}
 	}
 	return json.NewDecoder(response.Body).Decode(out)
 }
@@ -93,6 +92,12 @@ func (c *accountInboxClient) SetRead(ctx context.Context, id string, read bool) 
 	return c.mutate(ctx, id, "read", read)
 }
 
+func (c *accountInboxClient) Get(ctx context.Context, id string) (notify.Item, error) {
+	var out notify.Item
+	err := c.call(ctx, http.MethodGet, "/"+url.PathEscape(id), &out)
+	return out, err
+}
+
 func (c *accountInboxClient) SetDismissed(ctx context.Context, id string, dismissed bool) (notify.Item, error) {
 	return c.mutate(ctx, id, "dismiss", dismissed)
 }
@@ -105,10 +110,6 @@ func (c *accountInboxClient) mutate(ctx context.Context, id, action string, enab
 	var out notify.Item
 	err := c.call(ctx, method, "/"+url.PathEscape(id)+"/"+action, &out)
 	return out, err
-}
-
-func invalidInboxPublication(err error) bool {
-	return errors.Is(err, notify.ErrInvalid) || err != nil && strings.Contains(err.Error(), "recipient")
 }
 
 func publicationFrom(input notify.Input, revision int64) notify.Publication {

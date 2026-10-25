@@ -47,7 +47,7 @@ if (group === "catalog_publication") {
   assert.deepEqual(kinds.languages, ["en", "de"]);
   proved("ContentKitClient.kinds");
   assert.equal(owner.url("contents"), fixture.base + "/v1");
-  assert.equal(owner.url("notifications"), fixture.base + "/v1/notifications");
+  assert.equal(owner.url("codes"), fixture.base + "/v1/codes");
   proved("ContentKitClient.url");
   const before = await owner.catalog.listEvents({
     types: ["content.published"],

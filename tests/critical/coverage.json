@@ -1480,11 +1480,11 @@
     {
       "id": "CK-J25-S02",
       "journey": "CK-J25",
-      "behavior": "Another user/app cannot read or mutate a private receipt",
+      "behavior": "Another account cannot read or mutate a private receipt",
       "status": "verified",
       "evidence": [
-        "A stranger cannot list, read or dismiss another receipt; an owner readback proves the refused mutations did not change read/dismissed state.",
-        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+        "The real AuthKit item route first returns the owner receipt; a stranger cannot list, get, mark read or dismiss it. The owner readback retains unread/unarchived state after every refusal. Native ErrorEnvelope decoding preserves status and code.",
+        "Updated for the AuthKit-owned inbox. Exact focused execution and final integrated CI are required; earlier ContentKit-route receipts do not qualify this adapter."
       ],
       "cases": [
         "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt"
@@ -1506,11 +1506,11 @@
     {
       "id": "CK-J25-S04",
       "journey": "CK-J25",
-      "behavior": "Publishing to nonmember/foreign tenant recipient refuses",
+      "behavior": "Foreign or unknown recipients receive no notice; malformed mutation batches refuse atomically",
       "status": "verified",
       "evidence": [
-        "A batch whose first recipient is valid and later recipient is unknown or foreign fails400; the local positive-control inbox stays empty, proving no partial publication.",
-        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+        "AuthKit 1.39 native Publisher terminally suppresses absent or foreign-tenant accounts while delivering valid recipients in the same batch. Real owner and foreign inbox reads plus exact scope/recipient storage checks prove no foreign receipt or guard is created.",
+        "A separate malformed-account-ID batch fails with notify.ErrInvalid and leaves the preceding valid recipient inbox empty. This tests atomic mutation validation independently from terminal non-delivery."
       ],
       "cases": [
         "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused"
@@ -1519,11 +1519,11 @@
     {
       "id": "CK-J25-S05",
       "journey": "CK-J25",
-      "behavior": "Erased recipient rejects delayed or replayed publication",
+      "behavior": "Erased recipient cannot regain receipt storage through delayed or replayed publication",
       "status": "verified",
       "evidence": [
-        "An erased recipient cannot be recreated by replaying either its existing source origin or a later new origin; the public inbox remains empty.",
-        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
+        "A real receipt exists before app anonymization. The native publisher acknowledges terminal non-delivery for both replayed and new origins; the HTTP inbox remains empty, stored app receipts remain zero and the same app erasure fence remains present.",
+        "Updated for the AuthKit-owned Publisher contract; exact focused execution and final integrated CI are required."
       ],
       "cases": [
         "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"

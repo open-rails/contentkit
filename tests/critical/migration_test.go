@@ -57,6 +57,11 @@ func TestPreviousReleaseMigration(t *testing.T) {
 		if unprepared != nil || !errors.Is(err, ck.ErrMigrationsRequired) {
 			t.Fatalf("old schema served before explicit migration: %v", err)
 		}
+		// The account owner prepares its optional inbox before content adoption.
+		must(t, authkit.MigrateNotifications(t.Context(), w.pool, authkit.Config{
+			Database:      authkit.DatabaseConfig{Schema: schema + "_auth"},
+			Notifications: &authkit.NotificationsConfig{Schema: schema},
+		}))
 		must(t, ck.MigratePostgres(t.Context(), w.pool, cfg))
 		engine, err := ck.New(t.Context(), cfg, deps)
 		must(t, err)
