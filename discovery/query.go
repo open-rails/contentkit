@@ -48,6 +48,9 @@ type Filter struct {
 	// browsing leaves out: a reader's own history, favorites, reactions and
 	// known cards.
 	keepUnplayable bool
+	// named are entities a search names; the reader's content filters do not
+	// hide them.
+	named []string
 	// IDs bounds a public hydration read; normal visibility/domain rules apply.
 	IDs []string
 	// Entities are all required (effective on the card's version); a position
@@ -194,7 +197,7 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 	// A channel's feed shows its editors the channel's drafts too.
 	if v == nil {
 		v, err = s.o.Visibility.Viewer(ctx, catalog.ViewerOptions{Actor: r.Actor, Host: r.Host, Language: r.Language, Mode: r.Mode, EditorEntities: owners,
-			Requested: required})
+			Requested: append(required, f.named...)})
 		if err != nil {
 			if errors.Is(err, catalog.ErrInvalid) {
 				return nil, fmt.Errorf("%w: %s", ErrInvalid, err)

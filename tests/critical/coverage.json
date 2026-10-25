@@ -644,6 +644,18 @@
       ]
     },
     {
+      "id": "CK-J07-S10",
+      "journey": "CK-J07",
+      "behavior": "A search naming an entity the reader's filters hide shows that entity's contents",
+      "status": "verified",
+      "evidence": [
+        "A reader hiding an optional tag finds its work when searching the tag's alias, still within the domain; the same reader's search that does not name the tag keeps the work hidden."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S10_search_naming_a_hidden_entity_shows_its_contents"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
