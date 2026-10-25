@@ -39,6 +39,10 @@ func (c Config) withAccounts() (Config, error) {
 	c.Accounts = &accounts
 	if a.Avatars != nil {
 		c.Avatars = a.Avatars
+		// Keep account storage coordinates without carrying a second avatar
+		// declaration into later MediaKinds normalization. The caller's struct
+		// remains untouched, and a genuinely duplicated input is refused above.
+		accounts.Avatars = nil
 	}
 	if c.Avatars != nil {
 		avatars := *c.Avatars
