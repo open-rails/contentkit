@@ -297,6 +297,7 @@ func (e *Encoder) muxMP4(ctx context.Context, w runWork, presets []*media.Privat
 	}
 	var blob string
 	var size int64
+	var err error
 	if !w.item.Kind().Versions {
 		blob, size, err = e.put(ctx, w.item, area, out, "video/mp4", fp)
 		if err != nil {
