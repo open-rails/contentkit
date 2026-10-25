@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/helpers/notify"
+	"github.com/open-rails/authkit/notify"
+	notification "github.com/open-rails/contentkit/migration/legacyinbox"
 )
 
 // RecipientMapper resolves verified source coordinates to a local account.

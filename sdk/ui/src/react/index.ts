@@ -188,7 +188,6 @@ export {
 export type { PlaybackProgress, ProgressReason } from "./player.js";
 export { HOVER_DELAY, InlinePreviewContext, useInlinePreview, useReducedMotion, type InlinePreviewOptions } from "./inline-preview.js";
 
-export { useNotifications, useNotificationUnread, type UseNotifications, type UseNotificationsOptions } from "./notifications.js";
 
 export { useReadingEngagement, type ReadingEngagement, type ReadingEngagementOptions } from "./use-engagement.js";
 export { usePostReading, usePostReads, type PostReadingOptions, type PostReads } from "./post-reads.js";

@@ -59,8 +59,8 @@ that a release or deployment contains all of it.
 | --- | --- | --- |
 | [`config.go`](../../config.go), [`engine.go`](../../engine.go) | `Config.Tenant` pins a catalog, access gate, signal scope and media setup | Its current value is a legacy **app** key, not the new business tenant |
 | [`scope.go`](../../scope.go) | Local typed tenant/app scope and immutable app/account-storage claims | Establishes compatible ownership metadata; it does not grant app permissions |
-| [`accounts.go`](../../accounts.go) | Scoped `AccountsConfig{Schema, Avatars, SharedOrigins}` derives the tenant account root; legacy `Namespace` remains a migration input | Preserve the working feature while replacing public sharing vocabulary |
-| [`notification/store.go`](../../notification/store.go), [`notification/shared_test.go`](../../notification/shared_test.go) | Shared receipt store with explicit tenant/app visibility, filtered list/get/mutations and common erasure fence | Legacy origins remain explicit compatibility inputs; origin is not visibility |
+| [`accounts.go`](../../accounts.go) | Scoped `AccountsConfig{Schema, Avatars}` derives the tenant account root; legacy `Namespace` remains a migration input | Shared account/avatar coordinates do not configure an inbox |
+| [`account_erasure_receipts.go`](../../account_erasure_receipts.go), [`migration/legacyinbox`](../../migration/legacyinbox) | Existing account-erasure fences and explicit legacy receipt adoption use AuthKit-owned storage | Normal notification publication uses only AuthKit's publisher; ContentKit has no inbox reader or fallback store |
 | [`account-notifications.md`](../account-notifications.md), [`notification/openrails`](../../notification/openrails) | AuthKit-owned inbox with an injected transactional publisher; the former billing inbox poller is removed and its adapter remains only for explicit legacy handoff | Keep general event logs independent; OpenRails owns selected billing notices and their resolution |
 | [`avatars.go`](../../avatars.go), [`media/avatar`](../../media/avatar) | One avatar writer; secondary app forwards authenticated self-only edits | Keep one canonical manifest and processing flow |
 | [`discovery/stats.go`](../../discovery/stats.go), [`adapters/openrails/tenure.go`](../../adapters/openrails/tenure.go) | App comments/completions plus a thin adapter to OpenRails' native access-tenure query | Keep counters app-scoped; expose billing-derived tenure through ContentKit |
@@ -342,7 +342,7 @@ The owner specified an explicit migration boundary on 2026-10-14:
 migrations against those running services before starting Air and Vite.
 Server and worker startup validate the required schemas without applying
 migrations. This includes embedded AuthKit, OpenRails and ContentKit, their
-River schemas, the shared inbox, and ContentKit's ClickHouse signal tables.
+River schemas, the AuthKit-owned shared inbox, and ContentKit's ClickHouse signal tables.
 Missing migrations must produce an actionable error, not an automatic
 upgrade. Explicit migration commands remain available outside development.
 Local library compatibility modes and both host integrations implement this
@@ -429,7 +429,7 @@ rollback to legacy mappings. A healthy container alone is not media evidence.
 Use the same tenant/app model and domain operations in an optional
 `contentkit-saas` wrapper. The wrapper owns provisioning, authenticated app
 credentials, routing, deployment/storage selection, quotas, export and
-operations. The ContentKit libraries keep catalog/account/inbox behavior and
+operations. The ContentKit libraries keep content/account-media behavior and
 equivalent embedded/remote operations. Do not add microservices, a second
 identity directory or a second notification pipeline to anticipate hosting.
 

@@ -11,8 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
+	"github.com/open-rails/authkit/notify"
 	"github.com/open-rails/authkit/userinfo"
-	notifypg "github.com/open-rails/helpers/notify/postgres"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"
@@ -25,7 +25,6 @@ import (
 	"github.com/open-rails/contentkit/media/avatar"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -69,9 +68,7 @@ type Config struct {
 	// Accounts declares one shared account space for inboxes and avatars.
 	// It does not combine this site's content catalog with any other site's.
 	Accounts *AccountsConfig `json:"accounts,omitempty" yaml:"accounts,omitempty"`
-	// Notifications optionally puts this site's inbox in a shared account store.
-	// Content and social event origin remain scoped to Tenant.
-	Notifications *notification.Config `json:"notifications,omitempty" yaml:"notifications,omitempty"`
+
 	// Jobs sizes the engine's River queue.
 	Jobs JobsConfig `yaml:"jobs" json:"jobs"`
 	// EventRetention keeps catalog facts independently of readers; zero is ninety days.
@@ -79,7 +76,7 @@ type Config struct {
 }
 
 // DatabaseConfig names the Postgres schemas New validates or migrates; the
-// pool's role owns them. Notifications may use their separately configured schema.
+// pool's role owns them. Shared account metadata may use its separately configured schema.
 type DatabaseConfig struct {
 	// SkipMigrations makes New validate storage read-only. Hosts then run
 	// MigratePostgres/MigrateClickHouse from their explicit migration command.
@@ -223,8 +220,8 @@ func (c Config) MediaKinds() (media.Config, error) {
 		kind, preset := a.kind()
 		if c.Media.LegacyLayout {
 			kind.Account = false
-			if c.Notifications != nil {
-				kind.Namespace = c.Notifications.Namespace
+			if c.Accounts != nil {
+				kind.Namespace = c.Accounts.Namespace
 			}
 		} else if !mc.Scope.IsZero() {
 			kind.Namespace = ""
@@ -321,16 +318,15 @@ type Deps struct {
 	Authorization Authorization
 	// Users is the directory (authkit/userinfo; AuthKit's ak.UserInfo()):
 	// authors' names. In scoped mode it must be restricted to Scope.TenantID
-	// (AuthKit's ForTenant client); it also verifies privileged avatar and
-	// notification recipients. Nil shows authors by id and refuses scoped
-	// avatar edits and user notification publication.
-	// Transactional notification publication additionally needs GetTx so this
-	// lookup uses the domain transaction, never another pool connection.
+	// (AuthKit's ForTenant client); it also verifies privileged avatar targets.
+	// Nil shows authors by id and refuses scoped avatar edits. The notification
+	// publisher independently validates recipient ownership in its transaction.
 	Users userinfo.Lookup
 	// Notifications publishes native notices through the account inbox owner.
 	// The publisher joins each content transaction, including remote delivery
-	// obligations. Nil retains the legacy local inbox during explicit adoption.
-	Notifications notifypg.TxSink
+	// obligations. Nil disables notification publication; ContentKit creates no
+	// fallback inbox, receipt tables or inbox HTTP routes.
+	Notifications notify.Publisher
 	// Billing is the site's OpenRails merchant (adapters/openrails.Billing
 	// over an embedded engine or the remote client): held entitlement keys
 	// and prices, free grants. Nil holds no keys and sells nothing.

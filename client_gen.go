@@ -18,8 +18,6 @@ import (
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/helpers/notify"
 )
 
 // GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.
@@ -2035,77 +2033,6 @@ func (q PutContentVersionEntitiesQuery) values() url.Values {
 func (c *Client) PutContentVersionEntities(ctx context.Context, id string, vid string, body entities.ContentEntities, q PutContentVersionEntitiesQuery) (entities.ContentMemberships, error) {
 	var out entities.ContentMemberships
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/entities", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), q.values(), body, &out)
-	return out, err
-}
-
-// GetNotificationsInboxQuery is the query of GetNotificationsInbox.
-type GetNotificationsInboxQuery struct {
-	// page size: 20 by default, at most 100
-	Limit int
-	// the previous page's next_cursor
-	Cursor string
-	// only unread notices
-	Unread *bool
-	// archived receipts instead of the active inbox
-	Dismissed *bool
-}
-
-func (q GetNotificationsInboxQuery) values() url.Values {
-	v := url.Values{}
-	if q.Limit != 0 {
-		v.Set("limit", fmt.Sprint(q.Limit))
-	}
-	if q.Cursor != "" {
-		v.Set("cursor", q.Cursor)
-	}
-	if q.Unread != nil {
-		v.Set("unread", fmt.Sprint(*q.Unread))
-	}
-	if q.Dismissed != nil {
-		v.Set("dismissed", fmt.Sprint(*q.Dismissed))
-	}
-	return v
-}
-
-// GetNotificationsInbox is GET /v1/notifications/inbox (user). The signed-in person's inbox, newest first.
-func (c *Client) GetNotificationsInbox(ctx context.Context, q GetNotificationsInboxQuery) (notify.Page, error) {
-	var out notify.Page
-	err := c.call(ctx, http.MethodGet, "/v1/notifications/inbox", q.values(), nil, &out)
-	return out, err
-}
-
-// PutNotificationRead is PUT /v1/notifications/{id}/read (user). Marks one of the signed-in person's notices read locally.
-func (c *Client) PutNotificationRead(ctx context.Context, id string) (notify.Item, error) {
-	var out notify.Item
-	err := c.call(ctx, http.MethodPut, expand("/v1/notifications/{id}/read", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// DeleteNotificationRead is DELETE /v1/notifications/{id}/read (user). Marks one of the signed-in person's notices unread locally.
-func (c *Client) DeleteNotificationRead(ctx context.Context, id string) (notify.Item, error) {
-	var out notify.Item
-	err := c.call(ctx, http.MethodDelete, expand("/v1/notifications/{id}/read", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// PutNotificationDismiss is PUT /v1/notifications/{id}/dismiss (user). Archives this receipt without changing its read or workflow state.
-func (c *Client) PutNotificationDismiss(ctx context.Context, id string) (notify.Item, error) {
-	var out notify.Item
-	err := c.call(ctx, http.MethodPut, expand("/v1/notifications/{id}/dismiss", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// DeleteNotificationDismiss is DELETE /v1/notifications/{id}/dismiss (user). Restores an archived receipt to this user's inbox.
-func (c *Client) DeleteNotificationDismiss(ctx context.Context, id string) (notify.Item, error) {
-	var out notify.Item
-	err := c.call(ctx, http.MethodDelete, expand("/v1/notifications/{id}/dismiss", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// PostNotificationsPublish is POST /v1/notifications/publish (staff). Publishes notices in one transaction, each once per origin and recipient; a notice to an erased recipient is dropped.
-func (c *Client) PostNotificationsPublish(ctx context.Context, body notification.Publication) (notification.Published, error) {
-	var out notification.Published
-	err := c.call(ctx, http.MethodPost, "/v1/notifications/publish", nil, body, &out)
 	return out, err
 }
 

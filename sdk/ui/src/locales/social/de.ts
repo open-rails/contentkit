@@ -1,61 +1,6 @@
 import type { social as en } from "./en.js";
 
 export const social: typeof en = {
-  billingNotifications: {
-    "paymentMethodRequiredTitle": "Zahlungsmethode aktualisieren",
-    "authenticationRequiredTitle": "Zahlungsauthentifizierung erforderlich",
-    "collectionStoppedTitle": "Automatische Zahlungen gestoppt",
-
-    "paymentFailed": "Zahlung fehlgeschlagen",
-    "membershipEnded": "Premium-Mitgliedschaft beendet",
-    "membershipDowngraded": "Mitgliedschaft herabgestuft",
-    "retryScheduled": "Bei Erstellung dieser Mitteilung war ein weiterer Zahlungsversuch für {date} geplant.",
-    "paymentMethodRequired": "Vor einem weiteren Zahlungsversuch war eine neue Zahlungsmethode erforderlich.",
-    "retryStopped": "Es war kein weiterer automatischer Zahlungsversuch geplant.",
-    "retryUnknown": "Bei Erstellung dieser Mitteilung lag kein Wiederholungsplan vor.",
-    "endedAt": "Dein Premium-Zugang endete am {date}.",
-    "ended": "Dein Premium-Zugang ist beendet.",
-    "downgradedTo": "Deine Mitgliedschaft wurde von {from} auf {to} geändert.",
-    "downgraded": "Die geplante Herabstufung deiner Mitgliedschaft ist erfolgt.",
-    "instructions": {
-        "update_payment_method": "Aktualisiere deine Zahlungsmethode und prüfe den aktuellen Zahlungsstatus auf der Abrechnungsseite.",
-        "resubscribe": "Wähle eine Mitgliedschaft, um den Zugang wiederherzustellen. Prüfe vor dem Abschluss die Abrechnungsseite.",
-        "authenticate_payment": "Schließe die Zahlungsauthentifizierung auf der Abrechnungsseite ab.",
-        "contact_support": "Wende dich wegen dieser Zahlung an den Support.",
-        "manage_billing": "Prüfe auf der Abrechnungsseite den aktuellen Zahlungsstatus und die nächsten Schritte."
-    },
-    "actions": {
-        "update_payment_method": "Zahlungsmethode aktualisieren",
-        "resubscribe": "Mitgliedschaft wählen",
-        "authenticate_payment": "Authentifizierung abschließen",
-        "contact_support": "Support kontaktieren",
-        "manage_billing": "Abrechnung ansehen"
-    }
-},
-  notifications: {
-    "archived": "Archiviert",
-    "dismiss": "Archivieren",
-    "restore": "In den Posteingang verschieben",
-    "dismissed": "Verworfen",
-      "title": "Benachrichtigungen",
-      "filter": "Benachrichtigungsfilter",
-      "all": "Alle",
-      "unread": "Ungelesen",
-      "refresh": "Benachrichtigungen aktualisieren",
-      "signInHint": "Melde dich an, um deine Benachrichtigungen zu sehen.",
-      "signIn": "Anmelden",
-      "loadFailed": "Benachrichtigungen konnten nicht geladen werden.",
-      "loading": "Benachrichtigungen werden geladen…",
-      "empty": "Noch keine Benachrichtigungen.",
-      "emptyUnread": "Du bist auf dem neuesten Stand.",
-      "loadMore": "Mehr anzeigen",
-      "open": "Aktion erforderlich",
-      "resolved": "Erledigt",
-      "markRead": "Als gelesen markieren",
-      "markUnread": "Als ungelesen markieren",
-      "unreadLabel": "Benachrichtigungen, ungelesene Einträge"
-  },
-
   comments: {
     title: "Kommentare",
     count_one: "{count} Kommentar",

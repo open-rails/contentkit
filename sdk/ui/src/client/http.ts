@@ -1,7 +1,7 @@
 import { ContentKitError, readContentKitError, requestFailure } from "./errors.js";
 import type { ContentChange } from "./content/types.js";
 import { CONTENTKIT_MODULES } from "./generated/routes.js";
-import type { FileInfo, Item, RefBody } from "./generated/wire.js";
+import type { FileInfo, RefBody } from "./generated/wire.js";
 import { browserReaderPreferences, type BrowserReaderPreferences, type GuestReaderPreferences } from "./browser-reader-preferences.js";
 
 /** A module's base URL, or one per item (a host that splits uploads by kind). */
@@ -27,8 +27,6 @@ export interface ContentKitMounts {
   entities?: string;
   /** The site's content model. Default `{baseUrl}/v1`. */
   kinds?: string;
-  /** User inbox. Default `{baseUrl}/v1/notifications`. */
-  notifications?: string;
   /** Content versions: reader plans, reader metadata, forks, downloads. Default `{baseUrl}/v1`. */
   versions?: string;
   /** Discovery: lists, search, typeahead, similar, recommendations, history, signals. Default `{baseUrl}/v1`. */
@@ -45,8 +43,6 @@ export type ContentKitChange =
   | { type: "media.committed"; ref: RefBody; files: FileInfo[] }
   /** An upload finished processing, as an editor read returns it. */
   | { type: "media.processed"; ref: RefBody; file: FileInfo }
-  | { type: "notifications.changed" }
-  | { type: "notifications.updated"; item: Item }
   | ContentChange;
 
 export type TokenSource = () => string | null | undefined | Promise<string | null | undefined>;

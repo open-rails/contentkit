@@ -1,14 +1,13 @@
-// Package notification adapts the shared helpers/notify inbox to ContentKit's
-// authenticated user API. Persistence and lifecycle belong to helpers/notify;
-// hosts own rendering and application-specific actions.
-package notification
+// Package legacyinbox is the explicit one-time migration adapter for receipts
+// created by older ContentKit releases. AuthKit owns canonical persistence;
+// this package starts no runtime and mounts no user or publisher API.
+package legacyinbox
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,8 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
-	"github.com/open-rails/helpers/notify"
-	"github.com/open-rails/helpers/notify/postgres"
+	"github.com/open-rails/authkit/notify"
+	"github.com/open-rails/authkit/notify/postgres"
 )
 
 // Config shares an account inbox without sharing a site's content catalog.
@@ -51,8 +50,8 @@ type Options struct {
 	AccountExistsTx func(context.Context, pgx.Tx, string) (bool, error)
 }
 
-// Store mounts a shared notification store as one ContentKit tenant's inbox.
-// Embedded methods accept trusted host inputs; HTTP derives the user identity.
+// Store is a one-time legacy handoff adapter over AuthKit-owned persistence.
+// It is never constructed by ContentKit runtime and mounts no HTTP endpoints.
 type Store struct {
 	*postgres.Store
 	pool              *pgxpool.Pool
@@ -67,7 +66,8 @@ type Store struct {
 	view              atomic.Pointer[postgres.Store]
 }
 
-// New constructs the adapter over tables contentkit.New installs.
+// New constructs the handoff adapter over explicitly prepared legacy tables.
+// AuthKit migrations own receipt storage; this constructor applies no DDL.
 func New(opts Options) (*Store, error) {
 	if strings.TrimSpace(opts.Tenant) == "" {
 		return nil, fmt.Errorf("notification: Tenant is required")
@@ -189,9 +189,8 @@ func (s *Store) checkRecipient(ctx context.Context, tx pgx.Tx, recipient notify.
 	return nil
 }
 
-// Publish defaults native/host authored notices to this app. Tenant-wide
-// publication is reserved for trusted in-process integrations; the HTTP route
-// does not accept that authority from an app client.
+// Publish seeds explicitly authorized legacy receipts during maintenance.
+// Runtime producers use the scoped AuthKit publisher instead.
 func (s *Store) Publish(ctx context.Context, in notify.Input) (notify.Item, error) {
 	in, err := s.publication(in)
 	if err != nil {
@@ -211,46 +210,4 @@ func (s *Store) PublishTx(ctx context.Context, tx pgx.Tx, in notify.Input) (noti
 		return notify.Item{}, err
 	}
 	return s.view.Load().PublishTx(ctx, tx, in)
-}
-
-// Apply joins the legacy local store during explicit account-inbox adoption.
-// New hosts inject AuthKit's publisher into ContentKit instead.
-func (s *Store) Apply(ctx context.Context, mutations []notify.Mutation) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error { return s.ApplyTx(ctx, tx, mutations) })
-}
-
-func (s *Store) ApplyTx(ctx context.Context, tx pgx.Tx, mutations []notify.Mutation) error {
-	if len(mutations) > notify.MaxMutations {
-		return fmt.Errorf("%w: too many notification mutations", notify.ErrInvalid)
-	}
-	prepared := make([]notify.Mutation, 0, len(mutations))
-	for _, mutation := range mutations {
-		var err error
-		mutation.Input, err = s.publication(mutation.Input)
-		if err != nil {
-			return err
-		}
-		if err := s.checkRecipient(ctx, tx, mutation.Recipient); errors.Is(err, ErrRecipientNotFound) {
-			continue
-		} else if err != nil {
-			return err
-		}
-		prepared = append(prepared, mutation)
-	}
-	// A savepoint per recipient lets terminal recipient erasure drop that
-	// recipient's notice without dropping another recipient's mutation.
-	slices.SortStableFunc(prepared, func(a, b notify.Mutation) int {
-		if d := strings.Compare(string(a.Recipient.Audience), string(b.Recipient.Audience)); d != 0 {
-			return d
-		}
-		return strings.Compare(a.Recipient.ID, b.Recipient.ID)
-	})
-	return pgx.BeginFunc(ctx, tx, func(batch pgx.Tx) error {
-		for _, mutation := range prepared {
-			if err := s.view.Load().ApplyTx(ctx, batch, []notify.Mutation{mutation}); err != nil && !errors.Is(err, notify.ErrRecipientErased) {
-				return err
-			}
-		}
-		return nil
-	})
 }

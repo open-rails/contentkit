@@ -124,12 +124,6 @@ CK-API-122	GET	/v1/contents/{id}/entities	staff	root:entities:write	partial-secu
 CK-API-123	PUT	/v1/contents/{id}/entities	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
 CK-API-124	PUT	/v1/contents/{id}/entities/shared	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
 CK-API-125	PUT	/v1/contents/{id}/versions/{vid}/entities	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
-CK-API-126	GET	/v1/notifications/inbox	user		included-critical functionality and security
-CK-API-127	PUT	/v1/notifications/{id}/read	user		included-critical functionality and security
-CK-API-128	DELETE	/v1/notifications/{id}/read	user		included-critical functionality and security
-CK-API-129	PUT	/v1/notifications/{id}/dismiss	user		included-critical functionality and security
-CK-API-130	DELETE	/v1/notifications/{id}/dismiss	user		included-critical functionality and security
-CK-API-131	POST	/v1/notifications/publish	staff	root:notifications:publish	included-critical functionality and security
 CK-API-132	GET	/v1/contents/{id}/versions/{version}/page-notices	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
 CK-API-133	POST	/v1/contents/{id}/versions/{version}/page-notices/{notice}/dismiss	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
 CK-API-134	POST	/v1/contents/{id}/versions/{version}/page-notices/{notice}/restore	editor	root:content:write	partial-security-only; positive/full functionality deferred P1

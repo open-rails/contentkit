@@ -48,12 +48,6 @@ go:Client.DeleteEntity	go	Go generated Client route	Client.DeleteEntity	client_g
 go:Client.GetManageEntities	go	Go generated Client route	Client.GetManageEntities	client_gen.go	included-critical
 go:Client.GetManageEntity	go	Go generated Client route	Client.GetManageEntity	client_gen.go	included-critical
 go:Client.GetMeEntities	go	Go generated Client route	Client.GetMeEntities	client_gen.go	included-critical
-go:Client.GetNotificationsInbox	go	Go generated Client route	Client.GetNotificationsInbox	client_gen.go	included-critical
-go:Client.PutNotificationRead	go	Go generated Client route	Client.PutNotificationRead	client_gen.go	included-critical
-go:Client.DeleteNotificationRead	go	Go generated Client route	Client.DeleteNotificationRead	client_gen.go	included-critical
-go:Client.PutNotificationDismiss	go	Go generated Client route	Client.PutNotificationDismiss	client_gen.go	included-critical
-go:Client.DeleteNotificationDismiss	go	Go generated Client route	Client.DeleteNotificationDismiss	client_gen.go	included-critical
-go:Client.PostNotificationsPublish	go	Go generated Client route	Client.PostNotificationsPublish	client_gen.go	included-critical
 go:Client.GetContentVersionDownload	go	Go generated Client route	Client.GetContentVersionDownload	client_gen.go	included-critical
 go:Client.GetContentVersionArchive	go	Go generated Client route	Client.GetContentVersionArchive	client_gen.go	included-critical
 go:Client.GetMeLibrary	go	Go generated Client route	Client.GetMeLibrary	client_gen.go	included-critical
@@ -185,10 +179,6 @@ ts:ItemUploadQueue.start	ts	TS class member	ItemUploadQueue.start	sdk/ui/src/cli
 ts:ItemUploadQueue.pause	ts	TS class member	ItemUploadQueue.pause	sdk/ui/src/client/media/queue.ts	included-critical
 ts:ItemUploadQueue.commit	ts	TS class member	ItemUploadQueue.commit	sdk/ui/src/client/media/queue.ts	included-critical
 ts:ItemUploadQueue.dispose	ts	TS class member	ItemUploadQueue.dispose	sdk/ui/src/client/media/queue.ts	included-critical
-ts:NotificationsClient.list	ts	TS class member	NotificationsClient.list	sdk/ui/src/client/notifications.ts	included-critical
-ts:NotificationsClient.refresh	ts	TS class member	NotificationsClient.refresh	sdk/ui/src/client/notifications.ts	included-critical
-ts:NotificationsClient.setRead	ts	TS class member	NotificationsClient.setRead	sdk/ui/src/client/notifications.ts	included-critical
-ts:NotificationsClient.setDismissed	ts	TS class member	NotificationsClient.setDismissed	sdk/ui/src/client/notifications.ts	included-critical
 ts:VersionsClient.download	ts	TS class member	VersionsClient.download	sdk/ui/src/client/versions.ts	included-critical
 ts:ContentKitClient.config	ts	TS root factory method	ContentKitClient.config	sdk/ui/src/client/client.ts	included-critical
 ts:ContentKitClient.kinds	ts	TS root factory method	ContentKitClient.kinds	sdk/ui/src/client/client.ts	included-critical
@@ -233,7 +223,5 @@ ts:MediaApi.watch	ts	TS client streaming method	MediaApi.watch	sdk/ui/src/client
 ts:MediaClient.watch	ts	TS client streaming method	MediaClient.watch	sdk/ui/src/client/media/client.ts	included-critical media247 streaming/UI acceptance
 ts:ContentUpload	ts	TS exported component	ContentUpload	sdk/ui/src/components/admin/content-upload.tsx	included-critical media247 streaming/UI acceptance
 ts:MediaProcessingPanel	ts	TS exported component	MediaProcessingPanel	sdk/ui/src/components/media-processing-panel.tsx	included-critical media247 streaming/UI acceptance
-ts:ContentKitClientOptions.notifications	ts	TypeScript injected account inbox transport	ContentKitClientOptions.notifications	sdk/ui/src/client/notifications.ts	included-critical
-ts:NotificationTransport	ts	TypeScript injected account inbox transport	NotificationTransport	sdk/ui/src/client/notifications.ts	included-critical
 go:Source.RetireInboxSync	go	Go explicit migration method	Source.RetireInboxSync	notification/openrails/retire.go	included-critical
 go:contentkit.MigrateFixedOwners	go	Go embedded migration	contentkit.MigrateFixedOwners	fixed_owners.go	included-critical

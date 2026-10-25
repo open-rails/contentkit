@@ -991,32 +991,16 @@ published `v*` release. For a UI-only patch, publish an `sdk/ui/vX.Y.Z` release;
 this uses the same checks and trusted npm publication without tagging the Go modules.
 
 
-## Notifications
+## Account notifications
 
-`NotificationInbox` and `NotificationBell` use the authenticated ContentKit inbox.
-The host supplies `renderItem(item)` for its own kinds and optional
-`renderActions(item)` for domain links/actions. The components supply cursor
-pagination, All/Unread/Archived filters, read/unread, archive/restore, errors and
-retries, and actual tracked-work status. Reading or archiving never resolves
-work or acknowledges a producer event stream.
-
-```tsx
-import { NotificationBell, NotificationInbox } from "@openrails/contentkit-ui";
-import { ContentKitProvider } from "@openrails/contentkit-ui/react";
-
-<ContentKitProvider client={client} viewer={user.id} accessRevision={user.accessRevision}>
-  <NotificationBell renderItem={renderNotification} />
-  <NotificationInbox renderItem={renderNotification} renderActions={renderActions} />
-</ContentKitProvider>
-```
-
-Handle unknown kinds in the renderer. No billing-specific content is copied into
-these components. The bell uses an unread-present dot and polls while visible
-(default 30s, `unreadRefreshInterval={false}` disables it). Inbox pages do not
-poll by default. Call `client.notifications.refresh()` when your application's
-event channel announces new data. `useNotifications` and `useNotificationUnread`
-are available from `/react` for a custom presentation. Keep provider viewer and
-access revision current; signed-out viewers do not fetch an inbox.
+AuthKit owns the user inbox and provides `NotificationInbox` and
+`NotificationBell` from `@openrails/auth-ui`. Render them under the normal
+AuthKit provider; they use its authenticated client directly. ContentKit no
+longer exports notification components, hooks, a client or a transport adapter.
+Its backend accepts a scoped AuthKit publisher for comment notifications.
+Billing-specific messages and actions are available from
+`@openrails/billing-ui`; hosts may supply them through AuthKit's optional
+`renderItem` callback. See [the notification guide](../../docs/notifications.md).
 
 ### Reader header controls
 

@@ -16,7 +16,6 @@ import { VersionsClient } from "./versions.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
 import { MediaClient, type ContentFolders, type MediaOptions } from "./media/client.js";
 import { call } from "./route.js";
-import { NotificationsClient, type NotificationTransport } from "./notifications.js";
 import { ReaderPreferencesClient } from "./reader-preferences.js";
 
 export interface ContentKitClientOptions extends HttpOptions {
@@ -25,7 +24,6 @@ export interface ContentKitClientOptions extends HttpOptions {
   /** The media kind of poll folders, when the host renamed it (content.Media). */
   folders?: ContentFolders;
   /** Reuse account inbox presentation with the AuthKit-owned transport. */
-  notifications?: NotificationTransport;
 }
 
 /**
@@ -62,7 +60,6 @@ export interface ContentKitClient {
   /** Staff activity and rankings; the signed-in reader's own statistics. */
   readonly stats: StatsClient;
   /** The signed-in person's account inbox; transport may be supplied by AuthKit. */
-  readonly notifications: NotificationsClient;
   /** Browser guest preferences and explicit registration inheritance. */
   readonly preferences: ReaderPreferencesClient;
   /** Browser-owned guest reading progress, isolated to this catalog mount. */
@@ -83,11 +80,9 @@ export interface ContentKitClient {
 }
 
 export function createContentKitClient(options: ContentKitClientOptions): ContentKitClient {
-  const { media: mediaOptions, folders, notifications, ...http } = options;
+  const { media: mediaOptions, folders, ...http } = options;
   const h = new Http(http);
   const media = new MediaClient(h, mediaOptions, folders);
-  let subscribers = 0;
-  let stopNotifications: (() => void) | undefined;
   return {
     media,
     contents: new ContentsClient(h),
@@ -103,7 +98,6 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     versions: new VersionsClient(h),
     codes: new CodesClient(h),
     stats: new StatsClient(h),
-    notifications: new NotificationsClient(h, notifications),
     preferences: new ReaderPreferencesClient(h),
     guestHistory: guestReadingHistory(h.mount("discovery")),
     config: (signal) => call(h, "GET", "/config", { signal }),
@@ -111,18 +105,6 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     import: (batch) => call(h, "POST", "/import", { body: batch }),
     url: (module, ref) => h.mount(module, ref),
     setReadScope: (scope) => h.setReadScope(scope),
-    subscribe: (listener) => {
-      const stop = h.subscribe(listener);
-      if (++subscribers === 1 && notifications) {
-        stopNotifications = notifications.subscribe(() => h.captureChanges()({ type: "notifications.changed" }));
-      }
-      let active = true;
-      return () => {
-        if (!active) return;
-        active = false;
-        stop();
-        if (--subscribers === 0) { stopNotifications?.(); stopNotifications = undefined; }
-      };
-    },
+    subscribe: (listener) => h.subscribe(listener),
   };
 }

@@ -19,8 +19,8 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.38.0-notifications.1.0.20261025040938-4d2ea5f94e65
-	github.com/open-rails/helpers v1.16.2-0.20261025033036-8c93ee4139d4
+	github.com/open-rails/authkit v1.39.0
+	github.com/open-rails/helpers v1.18.0
 	github.com/open-rails/migratekit v1.11.2
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.23.0

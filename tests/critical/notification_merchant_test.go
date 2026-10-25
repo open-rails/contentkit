@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/open-rails/authkit/notify"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/media/layout"
-	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/helpers/notify"
+	notification "github.com/open-rails/contentkit/migration/legacyinbox"
 )
 
 func TestLegacyNotificationMerchantBinding(t *testing.T) {

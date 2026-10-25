@@ -20,26 +20,26 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/authtest"
+	"github.com/open-rails/authkit/notify"
 	"github.com/open-rails/authkit/userinfo"
 	ck "github.com/open-rails/contentkit"
 	ckbilling "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/media/layout"
-	"github.com/open-rails/contentkit/notification"
+	notification "github.com/open-rails/contentkit/migration/legacyinbox"
 	notice "github.com/open-rails/contentkit/notification/openrails"
-	"github.com/open-rails/helpers/notify"
 	"github.com/open-rails/openrails/billing"
 	"github.com/open-rails/openrails/openrailstest/stripemock"
 )
 
 type billingInboxWorld struct {
-	w             *world
-	a             *application
-	b             *realBilling
-	source        *notice.Source
-	mapper        notice.RecipientMapper
-	store         *notification.Store
-	schema, token string
-	page          *billing.EventPage
+	w                        *world
+	a                        *application
+	b                        *realBilling
+	source                   *notice.Source
+	mapper                   notice.RecipientMapper
+	store                    *notification.Store
+	schema, token, recipient string
+	page                     *billing.EventPage
 }
 
 func newBillingInboxWorld(t *testing.T) *billingInboxWorld {
@@ -59,7 +59,8 @@ func newBillingInboxWorld(t *testing.T) *billingInboxWorld {
 	i.w = newWorld(t, func(c *ck.Config) { c.Accounts = &ck.AccountsConfig{Schema: i.schema} })
 	i.a = i.w.apps[0]
 	i.b = attachBilling(t, i.w, i.a)
-	_, i.token = i.w.person(t, 0)
+	user, token := i.w.person(t, 0)
+	i.token, i.recipient = token, user.ID
 	product, err := i.b.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: "inbox-purchase", DisplayName: "Inbox purchase"})
 	must(t, err)
 	price, err := i.b.merchant.CreatePrice(t.Context(), billing.CreatePriceParams{ProductID: product.ID, UnitAmount: 10_000_000, Currency: "USD"})
@@ -102,14 +103,14 @@ func newBillingInboxWorld(t *testing.T) *billingInboxWorld {
 	i.mapper = ckbilling.SameAccounts(i.a.deps.Users, authtest.Issuer)
 	// This profile exists only to qualify the explicit legacy handoff. Runtime
 	// billing publication no longer attaches a ContentKit polling worker.
-	accounts := *i.a.cfg.Accounts
-	accounts.SharedOrigins = append(accounts.SharedOrigins, i.source.Origin())
-	i.a.cfg.Accounts = &accounts
 	i.a.server.Close()
 	must(t, i.a.engine.Close(t.Context()))
 	i.a.engine, err = ck.New(t.Context(), i.a.cfg, i.a.deps)
 	must(t, err)
 	i.a.server = mountEngine(t, i.a.engine)
+	// Prepare legacy cursor storage before any fault proxy is installed. The
+	// commit-loss scenario must interrupt the import transaction, not DDL setup.
+	must(t, notification.Migrate(t.Context(), i.w.pool, i.schema))
 	i.store = i.newStore(t, i.w.pool)
 	must(t, i.store.BindMerchant(t.Context(), i.a.cfg.Scope.TenantID.String(), i.source.Origin()))
 	return i
@@ -140,7 +141,7 @@ func inboxConsumeOptions() notice.ConsumeOptions {
 
 func (i *billingInboxWorld) receipts(t *testing.T) []notify.Item {
 	t.Helper()
-	page, err := i.a.client(i.token).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+	page, err := i.store.List(t.Context(), notify.Recipient{Audience: notify.AudienceUser, ID: i.recipient}, notify.ListOptions{})
 	must(t, err)
 	return page.Items
 }

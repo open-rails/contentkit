@@ -1083,19 +1083,6 @@ export interface InlineImage {
   url: string | null;
 }
 
-export interface Input {
-  recipient: Recipient;
-  origin: Origin;
-  kind: string;
-  data: unknown;
-  created_at: string;
-  visibility?: string;
-  app_id?: string;
-  status?: string;
-  action_requested?: boolean;
-  severity?: string;
-}
-
 export interface Interaction {
   content?: Card;
   entity?: EntityCard;
@@ -1107,27 +1094,6 @@ export interface InteractionPage {
   items: Interaction[];
   next_cursor?: string;
   summary?: ListingSummary;
-}
-
-export interface Item {
-  id: string;
-  recipient: Recipient;
-  origin: Origin;
-  kind: string;
-  data: unknown;
-  created_at: string;
-  visibility?: string;
-  app_id?: string;
-  status?: string;
-  action_requested?: boolean;
-  severity?: string;
-  read_at: string | null;
-  dismissed_at: string | null;
-  resolved_at: string | null;
-  updated_at: string;
-  revision: number;
-  producer_revision?: number;
-  withdrawn?: boolean;
 }
 
 export interface Kind {
@@ -1349,18 +1315,6 @@ export interface Order {
 
 export interface OrderInput {
   ids: string[];
-}
-
-export interface Origin {
-  system: string;
-  scope: string;
-  id: string;
-  subject?: string;
-}
-
-export interface Page {
-  items: Item[];
-  next_cursor?: string;
 }
 
 export interface PageEngagement {
@@ -1631,16 +1585,8 @@ export interface PublicUser {
   avatar_srcset?: string;
 }
 
-export interface Publication {
-  notifications: Input[];
-}
-
 export interface PublishInput {
   publish_at?: string;
-}
-
-export interface Published {
-  items: Item[];
 }
 
 export interface RankingInfo {
@@ -1717,11 +1663,6 @@ export interface RecentSearch {
 
 export interface RecentSearches {
   searches: RecentSearch[];
-}
-
-export interface Recipient {
-  audience: string;
-  id: string;
 }
 
 export interface RecordFailure {

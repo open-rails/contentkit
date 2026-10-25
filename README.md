@@ -118,7 +118,7 @@ for _, r := range routes {
   `Deps.Billing`. Billing supplies authoritative entitlement reads; product
   and price management stays in OpenRails.
 - `Client()` is the HTTP surface as a Go client acting as the host, over an
-  in-process transport (for example `PublishNotifications`,
+  in-process transport (for example `PostContents`,
   `CreateContent`).
 - `Ready` fails until `Start`; `Probes` are the optional dependencies
   (ClickHouse, the bucket, Redis); `EraseSubjects` is account erasure.
@@ -148,7 +148,6 @@ normalization and the editor's reversible [page review](docs/api/uploads.md#page
 | `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, fork, download | `Config.Media` |
 | `CodeRoutes` | `/v1/codes/{code}` | always |
 | `EntityRoutes` | `/v1/entities`, `/v1/contents/{id}/entities`: listings and pages, writes for `root:entities:write` | always |
-| `NotificationRoutes` | `/v1/notifications`: the inbox, and the host's publish route | always |
 | `DiscoveryRoutes` | public lists/search, history and `/v1/me/library` for purchased content | always; purchased access uses `Deps.Billing` |
 
 | Tier | Admits |
@@ -786,4 +785,4 @@ Previously observed backend capabilities (not replacement-suite qualification):
 | Ceph 19.2 / 20.2 standalone `dbstore` RGW | no | no | wrong Range bytes; not representative of RADOS-backed RGW |
 | production Ceph RGW (RADOS, 2026-09-24) | no (`If-Match` yes, `If-None-Match: *` ignored) | no | Range, `response-content-disposition`, versioning, lifecycle (incl. `AbortIncompleteMultipartUpload`) and multipart work; hosts wire `PGLocker` |
 
-User inboxes, native comment events and OpenRails imports use the shared notification library. See [notifications](docs/notifications.md) for APIs, identity mapping, retained-history semantics and erasure.
+AuthKit owns user inboxes and their UI. ContentKit publishes or withdraws native comment notices through its injected two-method publisher. See [notifications](docs/notifications.md) for source identities and the explicit legacy adoption procedure.

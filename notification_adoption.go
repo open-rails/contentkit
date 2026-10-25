@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/helpers/notify"
-	notifypg "github.com/open-rails/helpers/notify/postgres"
+	"github.com/open-rails/authkit/notify"
+	notifypg "github.com/open-rails/authkit/notify/postgres"
 )
 
 // adoptCommentNoticeIdentities runs in the explicit migration step. The old
@@ -19,6 +19,13 @@ import (
 // No payload or user read state is copied into the source ledger.
 func (e *Engine) adoptCommentNoticeIdentities(ctx context.Context) error {
 	schema, namespace := e.accountStorage()
+	available, err := e.accountErasureAvailable(ctx)
+	if err != nil {
+		return fmt.Errorf("contentkit: prepare the AuthKit account inbox with authkit.MigrateNotifications before adopting comment receipts: %w", err)
+	}
+	if !available {
+		return nil
+	}
 	identities := pgx.Identifier{e.schema, "content_comment_notifications"}.Sanitize()
 	comments := pgx.Identifier{e.schema, "content_comments"}.Sanitize()
 	inbox := pgx.Identifier{schema, "notify_items"}.Sanitize()
