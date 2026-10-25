@@ -636,13 +636,22 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	}
 	defer func() {
 		if resultErr != nil && ctx.Err() == nil {
-			_, _ = s.o.Pool.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state=CASE WHEN state='retiring' THEN state ELSE 'failed' END,error=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid AND (current OR state='retiring') AND state<>'completed'`, s.o.Tenant, id, resultErr.Error())
+			_ = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+				if err := s.lockTarget(ctx, tx, t); err != nil {
+					return err
+				}
+				_, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state=CASE WHEN state='retiring' THEN state ELSE 'failed' END,error=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid AND (current OR state='retiring') AND state<>'completed'`, s.o.Tenant, id, resultErr.Error())
+				return err
+			})
 		}
 	}()
 	var plan *releasePlan
 	current, retiring := false, false
 	err = s.m.Manifests.WithRecoveredLock(mutationCtx, ref, func() error {
 		return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+			if err := s.lockTarget(ctx, tx, t); err != nil {
+				return err
+			}
 			var raw []byte
 			var due time.Time
 			var state string
@@ -822,6 +831,9 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 		}
 	}
 	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+		if err := s.lockTarget(ctx, tx, plan.Target); err != nil {
+			return err
+		}
 		var current bool
 		var state string
 		if err := tx.QueryRow(ctx, `SELECT current,state FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state); err != nil {

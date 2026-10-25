@@ -55,6 +55,14 @@ func (s *Service) SchedulePublicationTx(ctx context.Context, tx pgx.Tx, targets 
 	if err != nil {
 		return err
 	}
+	// Catalog writers hold parent/version rows before touching requests.
+	// Metadata scheduling enters with no catalog locks, so acquire every
+	// resolved target in the same deterministic order before any request.
+	for _, target := range resolved {
+		if err := s.lockTarget(ctx, tx, target); err != nil {
+			return err
+		}
+	}
 	for _, target := range resolved {
 		at, err := s.releaseDueTx(ctx, tx, target)
 		if err != nil {
@@ -78,6 +86,9 @@ func (s *Service) SchedulePublicationTx(ctx context.Context, tx pgx.Tx, targets 
 func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target Target, at time.Time) error {
 	if tx == nil || target.Content == "" || target.Version == "" || at.IsZero() {
 		return errors.New("versions: publication needs a transaction, edition and due time")
+	}
+	if err := s.lockTarget(ctx, tx, target); err != nil {
+		return err
 	}
 	client, err := s.bound()
 	if err != nil {
