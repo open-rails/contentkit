@@ -148,6 +148,7 @@ export const admin: typeof en = {
     empty: "該当する投票はありません。",
     goesLive: "{date} に公開",
     wentLive: "{date} から公開中",
+    closedOn: "{date} に終了",
   },
   contentManager: {
     switchLanguage: "言語を切り替えますか？",

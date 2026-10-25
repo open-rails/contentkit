@@ -63,6 +63,11 @@ function Polls({ basePath, navigation, ...p }: Inner) {
   const loc = useAdminLocation(basePath, navigation);
   const access = usePollManagerAccess({ client: p.client });
   const languageName = useLanguageName();
+  // The new poll's editor replaces the create form, so the manager says it was created.
+  const [created, setCreated] = useState<string | null>(null);
+  useEffect(() => {
+    if (created && loc.view !== created && loc.view !== "new") setCreated(null);
+  }, [created, loc.view]);
   if (access.loading) return <Rows />;
   if (!access.allowed.polls) return <NoAccess>{t("pollManager.noAccess")}</NoAccess>;
   if (!loc.view) return <List {...p} loc={loc} />;
@@ -82,10 +87,20 @@ function Polls({ basePath, navigation, ...p }: Inner) {
           maxOptions={p.maxOptions}
           client={p.client}
           onError={p.onError}
-          onCreated={(poll) => loc.go(poll.id, undefined, { replace: true })}
+          onCreated={(poll) => {
+            setCreated(poll.id);
+            loc.go(poll.id, undefined, { replace: true });
+          }}
         />
       ) : (
-        <PollEditor key={loc.view} poll={loc.view} maxOptions={p.maxOptions} client={p.client} onError={p.onError} onDeleted={() => loc.go("", undefined, { replace: true })} />
+        <>
+          {created === loc.view && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {t("pollEditor.created")}
+            </p>
+          )}
+          <PollEditor key={loc.view} poll={loc.view} maxOptions={p.maxOptions} client={p.client} onError={p.onError} onDeleted={() => loc.go("", undefined, { replace: true })} />
+        </>
       )}
     </>
   );
@@ -208,10 +223,16 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
                   </button>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     <Badge variant={s === "live" || s === "inactive" ? "outline" : "secondary"} className={s === "live" ? "border-success/45 bg-success/15 text-foreground" : undefined}>{t(`pollManager.${s}`)}</Badge>
-                    <span>{poll.language}</span>
+                    <span>{languageName(poll.language)}</span>
                     {poll.kind === "free_text" && <span>{t("pollEditor.freeText")}</span>}
-                    <span>{t(s === "scheduled" ? "pollManager.goesLive" : "pollManager.wentLive", { date: formatDate(m, poll.live_at) })}</span>
-                    {poll.closes_at && <span>{t("poll.closes", { date: formatDate(m, poll.closes_at) })}</span>}
+                    {s === "closed" && poll.closes_at ? (
+                      <span>{t("pollManager.closedOn", { date: formatDate(m, poll.closes_at) })}</span>
+                    ) : (
+                      <>
+                        <span>{t(s === "scheduled" ? "pollManager.goesLive" : "pollManager.wentLive", { date: formatDate(m, poll.live_at) })}</span>
+                        {poll.closes_at && <span>{t("poll.closes", { date: formatDate(m, poll.closes_at) })}</span>}
+                      </>
+                    )}
                     <span>{poll.kind === "free_text" ? m.plural("poll.answers", poll.answer_count ?? 0) : m.plural("poll.votes", poll.total_votes)}</span>
                   </div>
                 </div>

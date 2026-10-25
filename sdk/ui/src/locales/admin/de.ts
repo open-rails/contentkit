@@ -148,6 +148,7 @@ export const admin: typeof en = {
     empty: "Keine passenden Umfragen.",
     goesLive: "Geht am {date} live",
     wentLive: "Live seit {date}",
+    closedOn: "Beendet am {date}",
   },
   contentManager: {
     switchLanguage: "Sprache wechseln?",

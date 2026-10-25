@@ -147,6 +147,7 @@ export const admin = {
     empty: "No polls match.",
     goesLive: "Goes live {date}",
     wentLive: "Live since {date}",
+    closedOn: "Closed {date}",
   },
   contentManager: {
     switchLanguage: "Switch language?",

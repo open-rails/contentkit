@@ -44,7 +44,8 @@ type accessHistoryRow struct {
 
 // Availability returns only immutable catalog history. It never treats a
 // current rule as evidence of how content was accessible before adoption.
-func (s *Service) Availability(ctx context.Context, kind string, window signal.Window, scope signal.ActivityScope) (signal.Availability, error) {
+// Non-nil contents bound it to those contents of the kind.
+func (s *Service) Availability(ctx context.Context, kind string, window signal.Window, scope signal.ActivityScope, contents []string) (signal.Availability, error) {
 	out := signal.Availability{}
 	if err := window.Validate(); err != nil {
 		return out, err
@@ -71,17 +72,17 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
 	}
 	out.From, out.Until, out.Known = from, until, true
 	rows, err := s.o.Pool.Query(ctx, `WITH candidates AS (
- SELECT DISTINCT version_id FROM `+history+` WHERE tenant_id=$1 AND snapshot->>'kind'=$2
+ SELECT DISTINCT content_id,version_id FROM `+history+` WHERE tenant_id=$1 AND snapshot->>'kind'=$2 AND ($6::text[] IS NULL OR content_id=ANY($6))
 ), prior AS (
  SELECT DISTINCT ON (h.version_id) h.id,h.content_id,h.version_id,h.occurred_at,h.snapshot
- FROM `+history+` h JOIN candidates c USING(version_id)
+ FROM `+history+` h JOIN candidates c USING(content_id,version_id)
  WHERE h.tenant_id=$1 AND h.occurred_at<=$3 ORDER BY h.version_id,h.occurred_at DESC,h.id DESC
 ), recent AS (
- SELECT h.id,h.content_id,h.version_id,h.occurred_at,h.snapshot FROM `+history+` h JOIN candidates c USING(version_id)
+ SELECT h.id,h.content_id,h.version_id,h.occurred_at,h.snapshot FROM `+history+` h JOIN candidates c USING(content_id,version_id)
  WHERE h.tenant_id=$1 AND h.occurred_at>$3 AND h.occurred_at<$4
 ) SELECT id::text,content_id,version_id,occurred_at,snapshot FROM (
  SELECT * FROM prior UNION ALL SELECT * FROM recent
-) states ORDER BY states.version_id,states.occurred_at,states.id LIMIT $5`, s.o.Tenant, kind, from, until, maxAccessHistory+1)
+) states ORDER BY states.version_id,states.occurred_at,states.id LIMIT $5`, s.o.Tenant, kind, from, until, maxAccessHistory+1, contents)
 	if err != nil {
 		return out, err
 	}

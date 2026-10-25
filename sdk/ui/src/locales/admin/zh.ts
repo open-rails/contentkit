@@ -148,6 +148,7 @@ export const admin: typeof en = {
     empty: "没有匹配的投票。",
     goesLive: "{date} 上线",
     wentLive: "自 {date} 起进行中",
+    closedOn: "已于 {date} 结束",
   },
   contentManager: {
     switchLanguage: "切换语言？",

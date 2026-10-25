@@ -148,6 +148,7 @@ export const admin: typeof en = {
     empty: "Ninguna encuesta coincide.",
     goesLive: "Se publica el {date}",
     wentLive: "Activa desde el {date}",
+    closedOn: "Cerrada el {date}",
   },
   contentManager: {
     switchLanguage: "¿Cambiar de idioma?",
