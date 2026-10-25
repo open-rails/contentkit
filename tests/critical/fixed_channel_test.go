@@ -4,6 +4,7 @@ import (
 	"maps"
 	"testing"
 
+	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
@@ -157,5 +158,45 @@ func TestFixedSiteChannelMigration(t *testing.T) {
 	must(t, err)
 	if changed != 0 || again.Revision != after.Revision || again.Body != after.Body {
 		t.Fatal("idempotent migration changed retained content")
+	}
+}
+
+// A staff author's credit and immutable creator identity must not become a
+// personal editing grant after the staff role is revoked.
+func TestFixedSiteChannelStaffRevocation(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) {
+		cfg.Content.EntityKinds["official"] = kinds.EntityKind{Route: "official", Owner: "site"}
+		kind := cfg.Content.Kinds["article"]
+		kind.OwnerEntity = &kinds.EntityRef{Kind: "official", Slug: "blog"}
+		kind.AccessLevels = []string{"public"}
+		cfg.Content.Kinds["article"] = kind
+	})
+	a := w.apps[0]
+	_, err := ck.MigrateFixedOwners(t.Context(), w.pool, a.cfg, []entities.EntityInput{{Kind: "official", Slug: "blog", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Official blog"}}}})
+	must(t, err)
+	author, token := w.person(t, 0)
+	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(author.ID), w.writer)
+	writer := a.client(token)
+	input := catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Staff authored", Body: "Official text"}}}
+	draft, err := writer.PostContents(t.Context(), input)
+	must(t, err)
+	published, err := writer.PostContents(t.Context(), input)
+	must(t, err)
+	published, err = writer.PostContentPublish(t.Context(), published.ID, catalog.PublishInput{})
+	must(t, err)
+	if len(draft.Creators) != 1 || draft.Creators[0].UserID != author.ID {
+		t.Fatalf("fixture lacks author credit: %+v", draft.Creators)
+	}
+	authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(author.ID), w.writer)
+	_, err = writer.GetContent(t.Context(), draft.ID, ck.GetContentQuery{})
+	requireError(t, err, 404, "not_found")
+	_, err = writer.PatchContent(t.Context(), published.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.Public}})
+	requireError(t, err, 403, "forbidden")
+	err = writer.DeleteContentVersion(t.Context(), published.ID, published.Versions[0].ID)
+	requireError(t, err, 403, "forbidden")
+	visible, err := writer.GetContent(t.Context(), published.ID, ck.GetContentQuery{})
+	must(t, err)
+	if visible.Editor || !visible.Decision.Allowed || visible.Body != "Official text" {
+		t.Fatalf("revoked author did not become an ordinary public reader: %+v", visible)
 	}
 }
