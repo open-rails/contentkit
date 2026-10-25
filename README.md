@@ -652,7 +652,7 @@ content URLs, React hooks and styled components. See
 ## Entities
 
 Entity kinds come from `kinds.Config.EntityKinds` (ordered, parent, scoped_by,
-owner, sellable, auth_scope, windows, version_level, roles, attributes).
+owner, entitled, auth_scope, version_level, roles, attributes).
 Reader editors use one page per stable version code. Shared entity edits use
 `PUT /contents/{id}/entities/shared`; per-version credits use
 `PUT /contents/{id}/versions/{vid}/entities`. Catalog responses keep the same

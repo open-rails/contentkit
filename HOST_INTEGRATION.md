@@ -1410,9 +1410,9 @@ Creator-owned or permission-scoped entity changes enqueue exact durable lifecycl
 sync; ordinary staff-managed entities need no lifecycle worker. The entity routes
 remain `/v1/entities…` and `/v1/contents/{id}/entities`.
 
-Keyword documents enrich content with timeless active associations and their
-ancestors. A static entry in a window-enabled rail still contributes keywords;
-a dated entry is queried at runtime and never needs a clock-driven reindex.
+Keyword documents enrich content with active associations and their ancestors.
+Collection associations remain active until explicitly changed; subscription
+and rental expiry belong to the entitlement provider.
 
 Legacy HTTP fields (`group_id`, `groups`, `exclude_groups`, `owner_group_id`),
 access values (`group`, `group_ppv`), billing key namespaces (`:group:`) and
