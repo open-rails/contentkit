@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 
 	"github.com/google/uuid"
@@ -27,10 +26,26 @@ type Promotion struct {
 // DeliveryFile records the exact source and destination of one storage copy.
 // Blob is an item-relative reference, never an arbitrary bucket key.
 type DeliveryFile struct {
-	Source string `json:"source"`
-	Blob   string `json:"blob"`
-	Type   string `json:"type"`
-	Size   int64  `json:"size"`
+	Source  string `json:"source"`
+	Blob    string `json:"blob"`
+	Type    string `json:"type"`
+	Size    int64  `json:"size"`
+	Receipt string `json:"receipt,omitempty"`
+}
+
+const copyReceiptMetadata = "contentkit-copy-receipt"
+
+func copyReceipt(operation string, f DeliveryFile) string {
+	body, _ := json.Marshal(struct {
+		Operation, Source, Destination, Type string
+		Size                                 int64
+	}{operation, f.Source, f.Blob, f.Type, f.Size})
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func copyOptions(source Object, f DeliveryFile) CopyOptions {
+	return CopyOptions{IfMatch: source.ETag, Metadata: map[string]string{copyReceiptMetadata: f.Receipt}}
 }
 
 // PublicationDelivery pins a durable publication operation's objects. It contains no
@@ -39,6 +54,7 @@ type PublicationDelivery struct {
 	ID          string         `json:"id"`
 	Fingerprint string         `json:"fingerprint"`
 	Files       []DeliveryFile `json:"files"`
+	Adopted     bool           `json:"adopted,omitempty"`
 	Ready       bool           `json:"ready,omitempty"`
 	Withdrawn   bool           `json:"withdrawn,omitempty"`
 }
@@ -93,7 +109,7 @@ func validateDeliveries(deliveries []PublicationDelivery) error {
 			area, _, _ := layout.SplitBlobRef(f.Blob)
 			if !sourceOK || !destinationOK || !bytes.Equal(source, destination) ||
 				area != layout.AreaPublic && area != layout.AreaPrivate && area != layout.AreaFuture ||
-				f.Type == "" || f.Size < 0 {
+				f.Type == "" || f.Size < 0 || f.Receipt != copyReceipt(d.ID, f) {
 				return errors.New("media: invalid delivery object")
 			}
 		}
@@ -161,6 +177,7 @@ func (m *Manifests) PreparePromotion(ctx context.Context, ref contentref.Content
 			blob = blobs[0]
 		}
 		d.Files[i] = DeliveryFile{Source: input.Source, Blob: blob, Type: object.ContentType, Size: object.Size}
+		d.Files[i].Receipt = copyReceipt(operation, d.Files[i])
 	}
 	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	result, err := m.EditExisting(ctx, ref, func(next *Manifest) error {
@@ -216,7 +233,7 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 			return ErrDeliveryWithdrawn
 		}
 		prepared = d.clone()
-		if d.Ready {
+		if d.Ready || d.Adopted {
 			return nil
 		}
 		for _, f := range d.Files {
@@ -237,7 +254,7 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 			if object.Size != f.Size || object.ContentType != f.Type {
 				return ErrCommitIdentity
 			}
-			if _, err := m.store.Copy(ctx, source, destination, CopyOptions{IfMatch: object.ETag}); err != nil {
+			if _, err := m.store.Copy(ctx, source, destination, copyOptions(object, f)); err != nil {
 				return err
 			}
 			if err := m.verifyDelivery(ctx, destination, f); err != nil {
@@ -250,7 +267,13 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 		return prepared, err
 	}
 	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
-	result, err := m.EditExisting(ctx, ref, func(current *Manifest) error {
+	id, err := uuid.Parse(operation)
+	if err != nil {
+		return nil, ErrCommitIdentity
+	}
+	adoption := uuid.NewSHA1(id, []byte("adopt-delivery"))
+	mutation := &manifestMutation{commit: manifestCommit{ID: adoption, Fingerprint: sha256.Sum256([]byte(prepared.Fingerprint))}}
+	_, err = m.editOperation(ctx, ref, true, bound{}, mutation, func(current *Manifest) error {
 		d := current.delivery(operation)
 		if d == nil || d.Fingerprint != prepared.Fingerprint {
 			return ErrCommitIdentity
@@ -258,7 +281,7 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 		if d.Withdrawn {
 			return ErrDeliveryWithdrawn
 		}
-		if d.Ready {
+		if d.Ready || d.Adopted {
 			return nil
 		}
 		mapping := make(map[string]string, len(d.Files))
@@ -289,6 +312,23 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 				}
 			}
 		}
+		d.Adopted = true
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := m.completeRetirement(ctx, item, adoption); err != nil {
+		return nil, err
+	}
+	result, err := m.EditExisting(ctx, ref, func(current *Manifest) error {
+		d := current.delivery(operation)
+		if d == nil || d.Fingerprint != prepared.Fingerprint || !d.Adopted {
+			return ErrCommitIdentity
+		}
+		if d.Withdrawn {
+			return ErrDeliveryWithdrawn
+		}
 		d.Ready = true
 		return nil
 	})
@@ -308,21 +348,12 @@ func (m *Manifests) verifyDelivery(ctx context.Context, key string, f DeliveryFi
 		len(object.ChecksumSHA256) > 0 && !bytes.Equal(object.ChecksumSHA256, sum) {
 		return ErrChecksumMismatch
 	}
-	if len(object.ChecksumSHA256) > 0 {
-		return nil
-	}
-	reader, _, err := m.store.Get(ctx, key, GetOptions{})
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-	hash := sha256.New()
-	size, err := io.Copy(hash, io.LimitReader(reader, f.Size+1))
-	if err != nil {
-		return err
-	}
-	if size != f.Size || !bytes.Equal(hash.Sum(nil), sum) {
-		return ErrChecksumMismatch
+	// Sources were hashed during admission/processing. S3 copies those exact
+	// immutable bytes conditionally, attaching this receipt atomically to the
+	// destination. Retry verification therefore needs no application GET of
+	// multi-gigabyte outputs when a backend omits a full-object SHA-256 header.
+	if f.Source != f.Blob && (f.Receipt == "" || object.Metadata[copyReceiptMetadata] != f.Receipt) {
+		return ErrCommitIdentity
 	}
 	return nil
 }

@@ -85,6 +85,8 @@ type journalEffects struct {
 	Settlement            Settlement                `json:"settlement"`
 	Cancel                bool                      `json:"cancel,omitempty"`
 	Process               *ProcessJob               `json:"process,omitempty"`
+	Renames               map[string]string         `json:"renames,omitempty"`
+	RemovedPaths          []string                  `json:"removed_paths,omitempty"`
 	Public                []string                  `json:"public,omitempty"`  // exact retired public names, selected before PUT
 	Mirror                []Mirror                  `json:"mirror,omitempty"`  // Stable presets' new current files, copied to their logical names
 	Private               []string                  `json:"private,omitempty"` // exact takedown targets, selected before PUT
@@ -481,7 +483,7 @@ SELECT (SELECT count(*) FROM a) = (SELECT count(*) FROM k)`, c.Ref.TenantID, c.F
 // or after recovery has fenced S3. Database effects and the outcome commit
 // together, so a crash or failed enqueue leaves the original receipt pending.
 // proj, the authoritative manifest's publications, is written with them.
-func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, proj *projection) error {
+func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, proj *projection, pathsChanged func(context.Context, pgx.Tx, contentref.ContentRef, map[string]string, []string) error) error {
 	j = j.forTenant(c.Ref.TenantID)
 	return pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
@@ -496,6 +498,14 @@ func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, 
 		}
 		if applied && (found.Effects.Cancel || found.Effects.Process != nil) && j.queue == nil {
 			return errors.New("media: commit processing requires a transactional queue")
+		}
+		if applied && found.Ref.Version() != "" && pathsChanged == nil && (len(found.Effects.Renames) > 0 || len(found.Effects.RemovedPaths) > 0) {
+			return errors.New("media: virtual-name settlement requires the content path hook")
+		}
+		if applied && pathsChanged != nil && (len(found.Effects.Renames) > 0 || len(found.Effects.RemovedPaths) > 0) {
+			if err := pathsChanged(ctx, tx, found.Ref, found.Effects.Renames, found.Effects.RemovedPaths); err != nil {
+				return err
+			}
 		}
 		s := found.Effects.Settlement
 		if applied {

@@ -359,7 +359,7 @@ func (m *Manifest) Blobs() []string {
 	for _, d := range m.Deliveries {
 		if !d.Withdrawn {
 			for _, f := range d.Files {
-				if !d.Ready {
+				if !d.Ready && !d.Adopted {
 					out = append(out, f.Source)
 				}
 				out = append(out, f.Blob)

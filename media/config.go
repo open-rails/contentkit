@@ -70,6 +70,7 @@ type Kind struct {
 	Publish *Publish `json:"publish,omitempty"`
 	Uploads []Upload `json:"uploads"`
 	// KeepOriginals keeps an upload's blob once its private outputs exist;
+	// version-owned content always retains its originals independently of this flag.
 	// otherwise it is dropped (File.Gone). Public presets' sources are
 	// always kept, so unhiding can render them again, as are body images,
 	// which new versions copy.
@@ -319,6 +320,12 @@ type Hooks struct {
 	// metadata projection only: the gateway still authorizes one item's folder.
 	// Editors use the current authoring manifest without this projection.
 	ReaderManifest func(ctx context.Context, ref contentref.ContentRef, actor access.Actor, current *Manifest) (*Manifest, error)
+	// ValidatePathsChanged validates virtual-name mutations before the manifest
+	// write while its lock is held. It must perform reads only.
+	ValidatePathsChanged func(ctx context.Context, ref contentref.ContentRef, renames map[string]string, removed []string) error
+	// PathsChanged applies accepted virtual-name changes in the journal's
+	// settlement transaction. Failure retries the same recorded mapping.
+	PathsChanged func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, renames map[string]string, removed []string) error
 	// CanUpload says who may write which upload path.
 	CanUpload UploadAuthorizer
 	// ItemReady reports an item whose processing settled (ready, or failed

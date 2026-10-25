@@ -311,7 +311,7 @@ func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, sel
 	}
 	defer func() {
 		if c.State == "open" {
-			err = errors.Join(err, m.journal.finish(context.WithoutCancel(ctx), c, false, nil))
+			err = errors.Join(err, m.journal.finish(context.WithoutCancel(ctx), c, false, nil, nil))
 		}
 	}()
 	cur, _, err := m.get(ctx, item.ManifestKey())
@@ -530,7 +530,7 @@ func (m *Manifests) editOperation(ctx context.Context, ref contentref.ContentRef
 		if err == nil {
 			proj = projectionOf(item, out) // unchanged and read under the lock
 		}
-		err = errors.Join(err, m.journal.finish(ctx, mutation.commit, err == nil, proj))
+		err = errors.Join(err, m.journal.finish(ctx, mutation.commit, err == nil, proj, m.reg.cfg.Hooks.PathsChanged))
 	}
 	return out, err
 }
@@ -638,6 +638,11 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	}
 	if err != nil {
 		return nil, false, err
+	}
+	if hook := m.reg.cfg.Hooks.ValidatePathsChanged; hook != nil && (len(mutation.effects.Renames) > 0 || len(mutation.effects.RemovedPaths) > 0) {
+		if err := hook(ctx, item.Ref(), mutation.effects.Renames, mutation.effects.RemovedPaths); err != nil {
+			return nil, false, err
+		}
 	}
 	if err := m.journal.prepare(ctx, &mutation.commit, mutation.effects, mutation.quota, body, next.Incarnation, mutation.lifecycle && next.Deleted); err != nil {
 		return nil, false, err
@@ -814,7 +819,7 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 		}
 
 	}
-	return m.journal.finish(ctx, commit, applied, proj)
+	return m.journal.finish(ctx, commit, applied, proj, m.reg.cfg.Hooks.PathsChanged)
 }
 
 // A failed integration leaves the journal pending and every source intact.

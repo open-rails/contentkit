@@ -64,6 +64,9 @@ type GetOptions struct {
 type CopyOptions struct {
 	IfMatch     string
 	ContentType string
+	// Metadata merges trusted operation receipts into the copied object's
+	// existing metadata as part of the server-side copy itself.
+	Metadata map[string]string
 }
 
 // PresignedRequest is a request a browser sends as is, with exactly Header.

@@ -144,7 +144,7 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'applied',$10) ON CONFLICT(tenant_id,operation
 				if err != nil {
 					return err
 				}
-				if _, err := m.store.Copy(ctx, source, destination, CopyOptions{IfMatch: object.ETag}); err != nil {
+				if _, err := m.store.Copy(ctx, source, destination, copyOptions(object, copy)); err != nil {
 					return err
 				}
 				if err := m.verifyDelivery(ctx, destination, copy); err != nil {
@@ -285,7 +285,9 @@ func (m *Manifests) planPublicationLayout(ctx context.Context, item Item, operat
 		allocation := uuid.NewSHA1(operation, []byte(identity)).String()
 		target := layout.BlobRef(area, layout.BlobName(sum, allocation))
 		known[identity] = target
-		plan.Copies = append(plan.Copies, DeliveryFile{Source: sourceRef, Blob: target, Type: object.ContentType, Size: object.Size})
+		copy := DeliveryFile{Source: sourceRef, Blob: target, Type: object.ContentType, Size: object.Size}
+		copy.Receipt = copyReceipt(operation.String(), copy)
+		plan.Copies = append(plan.Copies, copy)
 		plan.Retired = append(plan.Retired, key)
 		return target, nil
 	}

@@ -22,10 +22,18 @@ import (
 
 type uncertainPublicationCopy struct {
 	media.Store
-	mu            sync.Mutex
-	fail          bool
-	calls         int
-	deleteFailure string
+	mu              sync.Mutex
+	fail            bool
+	calls           int
+	deleteFailure   string
+	forbidDataReads bool
+}
+
+func (s *uncertainPublicationCopy) Get(ctx context.Context, key string, options media.GetOptions) (io.ReadCloser, media.Object, error) {
+	if s.forbidDataReads && !strings.HasSuffix(key, "/manifest.json") {
+		return nil, media.Object{}, errors.New("test: publication must not relay file bytes through the application")
+	}
+	return s.Store.Get(ctx, key, options)
 }
 
 func (s *uncertainPublicationCopy) Delete(ctx context.Context, key string) error {
@@ -132,6 +140,7 @@ func TestPublicationStorage(t *testing.T) {
 	get(cover, itemToken, http.StatusNotFound)
 
 	operation := uuid.NewString()
+	store.forbidDataReads = true
 	inputs := []media.Promotion{{Source: prepared, Area: layout.AreaPrivate}, {Source: cover, Area: layout.AreaPublic}}
 	plan, err := manifests.PreparePromotion(t.Context(), target, operation, inputs)
 	must(t, err)
@@ -148,10 +157,26 @@ func TestPublicationStorage(t *testing.T) {
 	if _, err := manifests.Promote(t.Context(), target, operation); err == nil {
 		t.Fatal("injected lost copy response did not interrupt publication")
 	}
+	preparedKey, err := item.Blob(prepared)
+	must(t, err)
+	store.deleteFailure = preparedKey
+	if _, err := manifests.Promote(t.Context(), target, operation); err == nil {
+		t.Fatal("publication completed despite failed future-source removal")
+	}
+	unfinished, _, err := manifests.Get(t.Context(), target)
+	must(t, err)
+	for _, delivery := range unfinished.Deliveries {
+		if delivery.ID == operation && (!delivery.Adopted || delivery.Ready) {
+			t.Fatal("failed move did not retain adopted-but-incomplete state")
+		}
+	}
 	finished, err := manifests.Promote(t.Context(), target, operation)
 	must(t, err)
 	if !finished.Ready || store.calls != len(inputs) {
 		t.Fatalf("resume recopied a verified destination: ready=%v calls=%d", finished.Ready, store.calls)
+	}
+	if _, err := storage.store.Head(t.Context(), preparedKey); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("completed move retained an unreferenced future source: %v", err)
 	}
 	unchanged := uuid.NewString()
 	_, err = manifests.PreparePromotion(t.Context(), target, unchanged, []media.Promotion{

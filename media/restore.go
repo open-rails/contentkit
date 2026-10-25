@@ -110,7 +110,10 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 	mutation := &manifestMutation{lifecycle: true, commit: manifestCommit{ID: operation, Ref: snap.Ref,
 		Folder: item.Prefix(), Fingerprint: sha256.Sum256(input)}}
 	if current, found, err := j.manifests.replayCommit(ctx, item, mutation.commit); found || err != nil {
-		return current, err
+		if err != nil {
+			return current, err
+		}
+		return j.finishPublicationRestore(ctx, item, mutation.commit, current)
 	}
 	copier, ok := j.cfg.Store.(VersionCopier)
 	if !ok {
@@ -128,6 +131,9 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 	out, err := j.manifests.editOperation(ctx, snap.Ref, false, bound{}, mutation, func(cur *Manifest) error {
 		next := snap.Manifest.Clone()
 		next.Incarnation, next.Deleted, next.Full, next.Deficit = uuid.NewString(), false, false, 0
+		if item.Kind().Versions {
+			next.PublicationLayout = 0 // origin retirement must complete before item grants resume
+		}
 		next.Receipt = nil
 		next.Hidden = false
 		// Select old targets before reserving the new ones. Include allocations
@@ -248,7 +254,41 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 	if err != nil {
 		return nil, err
 	}
-	return out, j.manifests.notifyCommit(ctx, mutation.commit)
+	return j.finishPublicationRestore(ctx, item, mutation.commit, out)
+}
+
+func (j *Jobs) finishPublicationRestore(ctx context.Context, item Item, commit manifestCommit, current *Manifest) (*Manifest, error) {
+	if item.Kind().Versions {
+		if err := j.manifests.completeRetirement(ctx, item, commit.ID); err != nil {
+			return nil, err
+		}
+		var err error
+		ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
+		current, err = j.manifests.EditExisting(ctx, item.Ref(), func(next *Manifest) error {
+			if next.PublicationLayout == PublicationLayoutVersion {
+				return nil
+			}
+			for _, file := range next.Files {
+				if file.Gone || file.Staged != "" {
+					continue
+				}
+				area, _, valid := layout.SplitBlobRef(file.Blob)
+				want := layout.AreaFuture
+				if file.IsUpload() {
+					want = layout.AreaOriginals
+				}
+				if !valid || area != want {
+					return ErrPublicationLayoutRequired
+				}
+			}
+			next.PublicationLayout = PublicationLayoutVersion
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return current, j.manifests.notifyCommit(ctx, commit)
 }
 
 // Ownership precedes historical copies. Recovery may invalidate this open lease

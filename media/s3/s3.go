@@ -238,23 +238,32 @@ func (s *Store) Copy(ctx context.Context, src, dst string, o media.CopyOptions) 
 		return media.Object{}, fmt.Errorf("%w: s3 copy %s: source changed", media.ErrPreconditionFailed, src)
 	}
 	source := s.bucket + "/" + src
-	return s.copy(ctx, source, dst, head, o.ContentType)
+	return s.copy(ctx, source, dst, head, o.ContentType, o.Metadata)
 }
 
-func (s *Store) copy(ctx context.Context, source, dst string, head media.Object, contentType string) (media.Object, error) {
+func (s *Store) copy(ctx context.Context, source, dst string, head media.Object, contentType string, additional ...map[string]string) (media.Object, error) {
 	src := head.Key
 	ifMatch := optional(head.ETag)
 	typ := cmp.Or(contentType, head.ContentType)
+	metadata := make(map[string]string, len(head.Metadata))
+	for key, value := range head.Metadata {
+		metadata[key] = value
+	}
+	for _, values := range additional {
+		for key, value := range values {
+			metadata[key] = value
+		}
+	}
 	if head.Size <= s.part {
 		in := &s3.CopyObjectInput{Bucket: &s.bucket, Key: &dst, CopySource: &source, CopySourceIfMatch: ifMatch}
 		// Temporary upload tags must never survive promotion to retained media.
 		// Select tags from the destination for both copy implementations.
 		in.TaggingDirective = types.TaggingDirectiveReplace
 		in.Tagging = temporaryTagging(dst)
-		if typ != head.ContentType {
+		if typ != head.ContentType || len(additional) > 0 && len(additional[0]) > 0 {
 			// REPLACE drops whatever it is not given.
 			in.MetadataDirective, in.ContentType = types.MetadataDirectiveReplace, &typ
-			in.CacheControl, in.Metadata = optional(head.CacheControl), head.Metadata
+			in.CacheControl, in.Metadata = optional(head.CacheControl), metadata
 		}
 		out, err := s.client.CopyObject(ctx, in)
 		if err != nil {
@@ -270,7 +279,7 @@ func (s *Store) copy(ctx context.Context, source, dst string, head media.Object,
 		return media.Object{Key: dst, Size: head.Size, ETag: etag, ContentType: typ, CacheControl: head.CacheControl}, nil
 	}
 	up, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: &s.bucket, Key: &dst,
-		ContentType: optional(typ), CacheControl: optional(head.CacheControl), Metadata: head.Metadata,
+		ContentType: optional(typ), CacheControl: optional(head.CacheControl), Metadata: metadata,
 		Tagging: temporaryTagging(dst)})
 	if err != nil {
 		return media.Object{}, mapErr("copy", dst, err)

@@ -294,6 +294,14 @@ func (k *Kind) previewNames(m *Manifest) []string {
 		for _, path := range k.firsts(m, p) {
 			if f, _ := m.Get(path); rendered(f, p) {
 				if pub, ok := k.Current(m, f, p); ok {
+					if k.Versions {
+						for _, blob := range pub.Blobs {
+							if area, name, valid := layout.SplitBlobRef(blob); valid && area == layout.AreaPublic {
+								out = append(out, name)
+							}
+						}
+						continue
+					}
 					out = append(out, pub.NamesOnDisk()...)
 				}
 			}
