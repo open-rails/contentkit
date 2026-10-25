@@ -58,7 +58,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 	admin := a.engine.Client()
 	tags, err := admin.PostEntities(t.Context(), []entities.EntityInput{
 		{Kind: "tag", Slug: "required", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Required public tag"}, {Language: "en", Kind: "alias", Name: "MandatoryAliasNeedle"}}},
-		{Kind: "tag", Slug: "choice", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Optional public tag"}}},
+		{Kind: "tag", Slug: "choice", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Optional public tag"}, {Language: "en", Kind: "alias", Name: "ChoiceNeedle"}}},
 		{Kind: "tag", Slug: "internal", Internal: true, Names: []entities.Name{{Language: "en", Kind: "name", Name: "HiddenClassificationNeedle"}}},
 		{Kind: "tag", Slug: "elsewhere", Names: []entities.Name{{Language: "en", Kind: "name", Name: "ElsewhereOnlyNeedle"}}},
 	})
@@ -283,6 +283,19 @@ func TestDiscoveryVisibility(t *testing.T) {
 		selected, err := filterReader.GetContents(t.Context(), ck.GetContentsQuery{Entities: []string{string(optional.ID)}, Mode: "hide"})
 		must(t, err)
 		assertCards(t, selected, two.ID)
+	})
+	t.Run("CK-J07-S10_search_naming_a_hidden_entity_shows_its_contents", func(t *testing.T) {
+		_, token := w.person(t, 0)
+		filterReader := reader("restricted.invalid", token)
+		hide := false
+		_, err := filterReader.PatchMeContentFilters(t.Context(), discovery.ContentFiltersUpdate{Filters: []discovery.GuestFilterSetting{{EntityID: string(optional.ID), Visible: &hide}}}, ck.PatchMeContentFiltersQuery{})
+		must(t, err)
+		named, err := filterReader.GetSearch(t.Context(), ck.GetSearchQuery{Q: "ChoiceNeedle", Kind: "article", Mode: "hide"})
+		must(t, err)
+		assertCards(t, named.ContentPage, two.ID)
+		unnamed, err := filterReader.GetSearch(t.Context(), ck.GetSearchQuery{Q: "CriticalVis", Kind: "article", Mode: "hide"})
+		must(t, err)
+		assertCards(t, unnamed.ContentPage, one.ID)
 	})
 	t.Run("CK-J07-S06_code_resolution_retains_parent_and_domain_authority", func(t *testing.T) {
 		resolved, err := public.GetCode(t.Context(), one.Code, ck.GetCodeQuery{V: one.Versions[0].Code})
