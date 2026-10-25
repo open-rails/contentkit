@@ -26,13 +26,15 @@
         "The actual public v0.125.0 initializer records its module version, creates and publishes content. Current read-only startup refuses its schema, explicit migration preserves item/version IDs, code and body through embedded and HTTP reads, and repeated migration preserves revision.",
         "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification.",
         "A pinned publicv0.112.1 executable writes actual legacy nested media; current public migration copies real bytes once while preserving content/version/blob identities. Existingv0.125 text migration remains an independent profile.",
-        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required.",
+        "Pinned public0.126.1 initializer seeds the actual deployed schema and obsolete jobs/timed associations. Upgrade refuses unsafe work before DDL, requires explicit resolution, preserves identities and all old migration receipts, then succeeds idempotently. Focused run passed75.617s; exact hosted aggregate still required."
       ],
       "cases": [
         "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity",
         "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity",
         "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/anonymous_HTTP",
-        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/embedded_host"
+        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/embedded_host",
+        "TestReleasedEntityJobUpgrade"
       ]
     },
     {
