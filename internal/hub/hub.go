@@ -409,6 +409,15 @@ func (h *Hub) PopulationCoverage(ctx context.Context, kind string, scope signal.
 	return store.PopulationCoverage(ctx, h.tenant, kind, scope, window)
 }
 
+// ReadContent returns the contents of kind read in the window.
+func (h *Hub) ReadContent(ctx context.Context, kind string, window signal.Window) ([]string, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.ReadContent(ctx, h.tenant, kind, window)
+}
+
 // --- Discovery plane ---
 
 func (h *Hub) History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error) {

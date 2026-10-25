@@ -11,9 +11,14 @@ import (
 )
 
 // AvailabilityProvider supplies immutable publication and access history for a
-// common covered portion of a requested activity window.
+// common covered portion of a requested activity window, for the given
+// contents of the kind, or for all of them when contents is nil.
 type AvailabilityProvider interface {
-	Availability(context.Context, string, signal.Window, signal.ActivityScope) (signal.Availability, error)
+	Availability(ctx context.Context, kind string, window signal.Window, scope signal.ActivityScope, contents []string) (signal.Availability, error)
+}
+
+type readContent interface {
+	ReadContent(context.Context, string, signal.Window) ([]string, error)
 }
 
 type populationCoverage interface {
@@ -68,7 +73,14 @@ func (r *Ranker) query(ctx context.Context, kind string, window signal.Window) (
 	if r.availability == nil {
 		return unavailable()
 	}
-	a, err := r.availability.Availability(ctx, kind, window, r.scope)
+	var contents []string
+	if provider, ok := r.source.(readContent); ok {
+		var err error
+		if contents, err = provider.ReadContent(ctx, kind, window); err != nil {
+			return nil, window, info, err
+		}
+	}
+	a, err := r.availability.Availability(ctx, kind, window, r.scope, contents)
 	if err != nil {
 		return nil, window, info, err
 	}
