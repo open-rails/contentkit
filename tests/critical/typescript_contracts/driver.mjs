@@ -1,196 +1,669 @@
 import assert from "node:assert/strict";
 import { runMediaContracts } from "./media.mjs";
-import { createContentKitClient, ContentKitError } from "../../../sdk/ui/dist/client.js";
+import {
+  createContentKitClient,
+  ContentKitError,
+} from "../../../sdk/ui/dist/client.js";
 
-const fixture=JSON.parse(process.env.CONTENTKIT_TYPESCRIPT_FIXTURE);
-const group=process.argv[2];
-const owner=createContentKitClient({baseUrl:fixture.base,token:()=>fixture.owner});
-const reader=createContentKitClient({baseUrl:fixture.base,token:()=>fixture.reader});
-const anonymous=createContentKitClient({baseUrl:fixture.base});
-const bindings=[];
-function proved(...names){for(const name of names){assert(!bindings.includes(name),`duplicate semantic receipt ${name}`);bindings.push(name);}}
-async function refused(action,status,code){await assert.rejects(action,error=>error instanceof ContentKitError&&error.status===status&&error.code===code);}
+const fixture = JSON.parse(process.env.CONTENTKIT_TYPESCRIPT_FIXTURE);
+const group = process.argv[2];
+const owner = createContentKitClient({
+  baseUrl: fixture.base,
+  token: () => fixture.owner,
+});
+const reader = createContentKitClient({
+  baseUrl: fixture.base,
+  token: () => fixture.reader,
+});
+const anonymous = createContentKitClient({ baseUrl: fixture.base });
+const bindings = [];
+function proved(...names) {
+  for (const name of names) {
+    assert(!bindings.includes(name), `duplicate semantic receipt ${name}`);
+    bindings.push(name);
+  }
+}
+async function refused(action, status, code) {
+  await assert.rejects(
+    action,
+    (error) =>
+      error instanceof ContentKitError &&
+      error.status === status &&
+      error.code === code,
+  );
+}
 
-if(group==="catalog_publication"){
- const config=await anonymous.config();
- assert.equal(config.comment_max_length,2200);
- assert.deepEqual(config.anonymous,{comments:false,reactions:false,votes:false});
- proved("ContentKitClient.config");
- const kinds=await anonymous.kinds();
- assert.deepEqual(Object.keys(kinds.kinds).sort(),["article","gallery"]);
- assert.deepEqual(kinds.languages,["en","de"]);
- proved("ContentKitClient.kinds");
- assert.equal(owner.url("contents"),fixture.base+"/v1");
- assert.equal(owner.url("notifications"),fixture.base+"/v1/notifications");
- proved("ContentKitClient.url");
- const before=await owner.catalog.listEvents({types:["content.published"],limit:1});
- assert.equal(typeof before.next_cursor,"string");assert(before.next_cursor.length>0);
- const draft=await owner.contents.create({kind:"article",text:{en:{title:"TS Unicode Straße / ?",body:"Exact TypeScript source body"}}});
- await refused(()=>anonymous.contents.get(draft.id),404,"not_found");
- await refused(()=>reader.contents.publish(draft.id),403,"forbidden");
- assert.equal((await owner.contents.get(draft.id)).state,"draft");
- const published=await owner.contents.publish(draft.id);
- assert.equal(published.id,draft.id);assert.equal(published.live,true);
- assert.equal((await anonymous.contents.get(draft.id)).body,"Exact TypeScript source body");
- proved("ContentsClient.publish");
- const second=await owner.contents.create({kind:"article",text:{en:{title:"Second TypeScript article",body:"Ready without media"}}});
- const ready=await owner.contents.publishWhenReady(second.id,undefined,0);
- assert.equal(ready.id,second.id);assert.equal(ready.live,true);
- await refused(()=>reader.contents.publishWhenReady(second.id,undefined,0),403,"forbidden");
- assert.equal((await anonymous.contents.get(second.id)).body,"Ready without media");
- proved("ContentsClient.publishWhenReady");
- const facts=[];let cursor=before.next_cursor;
- for(let i=0;i<4;i++){
-  const page=await owner.catalog.listEvents({after:cursor,types:["content.published"],limit:1});
-  assert(page.events.length<=1);
-  for(const fact of page.events){assert.equal(fact.type,"content.published");assert.equal(fact.scope,fixture.app);assert.match(fact.id,/^\d+$/);facts.push(fact);}
-  cursor=page.next_cursor;if(!page.has_more)break;
- }
- assert.deepEqual(facts.map(x=>x.content_id),[draft.id,second.id]);
- assert.equal(new Set(facts.map(x=>x.id)).size,2);
- assert.equal((await owner.catalog.listEvents({after:cursor,types:["content.published"]})).events.length,0);
- await refused(()=>anonymous.catalog.listEvents(),401,"unauthorized");
- proved("CatalogClient.listEvents");
- const hidden=await owner.contents.unpublish(draft.id);assert.equal(hidden.id,draft.id);assert.equal(hidden.live,false);
- await refused(()=>anonymous.contents.get(draft.id),404,"not_found");
- await owner.contents.publish(draft.id);
- assert.equal((await anonymous.contents.get(draft.id)).body,"Exact TypeScript source body");
- proved("ContentsClient.unpublish");
- await refused(()=>anonymous.contents.get(fixture.legacy),404,"not_found");
- const restored=await owner.contents.restore(fixture.legacy);
- assert.equal(restored.id,fixture.legacy);assert.equal(restored.live,true);
- assert.equal((await anonymous.contents.get(fixture.legacy)).body,"Retained historical body");
- proved("ContentsClient.restore");
- const totals=await anonymous.catalog.totals({kinds:["article"],languages:["en"]});
- assert.deepEqual(Object.keys(totals.kinds),["article"]);assert.equal(totals.kinds.article.public,3);
- assert.equal(totals.kinds.article.languages.en.public,3);
- proved("CatalogClient.totals");
- await owner.contents.removeVersion(draft.id,draft.versions[0].id);
- await refused(()=>anonymous.contents.get(draft.id),404,"not_found");
- const retired=await owner.contents.manage({ids:[draft.id],state:"deleted"});
- assert.equal(retired.length,1);assert.equal(retired[0].id,draft.id);assert.equal(retired[0].state,"deleted");
- await refused(()=>owner.contents.restore(draft.id),409,"conflict");
- assert.equal((await anonymous.contents.get(second.id)).id,second.id);
- proved("ContentsClient.removeVersion");
-}else if(group==="moderation_bans"){
- const item=await owner.contents.create({kind:"article",text:{en:{title:"TypeScript owned thread",body:"Owned public body"}}});await owner.contents.publish(item.id);
- const target={type:"contents",id:item.id},other={type:"contents",id:fixture.other};
- const prior=await reader.comments.create(target,{body:"Original retained comment"});assert.equal(prior.body,"Original retained comment");
- assert.equal(await owner.bans.get("global",fixture.readerID),null);
- const ownerBan=await owner.bans.ban("owner",fixture.readerID,{reason:"Owner-only control"});
- assert.equal(ownerBan.scope,"owner:"+fixture.ownerID);assert.equal(ownerBan.user_id,fixture.readerID);assert.equal(ownerBan.banned_by,fixture.ownerID);
- assert.deepEqual((await owner.bans.list("owner")).map(x=>x.user_id),[fixture.readerID]);
- await refused(()=>reader.comments.create(target,{body:"Must not be accepted"}),403,"comment_banned");
- assert.equal((await anonymous.comments.list(target)).length,1);
- const otherComment=await reader.comments.create(other,{body:"Other owner is unaffected"});assert.equal(otherComment.body,"Other owner is unaffected");
- await owner.bans.lift("owner",fixture.readerID);assert.deepEqual(await owner.bans.list("owner"),[]);
- const afterLift=await reader.comments.create(target,{body:"Owner lift permits writing"});assert.equal(afterLift.body,"Owner lift permits writing");
- const global=await owner.bans.ban("global",fixture.readerID,{reason:"App-wide control"});assert.equal(global.scope,"global");
- assert.equal((await owner.bans.get("global",fixture.readerID)).reason,"App-wide control");
- assert.deepEqual((await owner.bans.list("global")).map(x=>x.user_id),[fixture.readerID]);
- await refused(()=>reader.bans.lift("global",fixture.readerID),403,"forbidden");
- await refused(()=>reader.bans.get("global",fixture.readerID),403,"forbidden");
- assert.equal((await owner.bans.get("global",fixture.readerID)).reason,"App-wide control");
- await refused(()=>reader.comments.create(other,{body:"App ban applies here too"}),403,"comment_banned");
- await owner.bans.lift("global",fixture.readerID);await owner.bans.lift("global",fixture.readerID);
- assert.equal(await owner.bans.get("global",fixture.readerID),null);assert.deepEqual(await owner.bans.list("global"),[]);
- proved("BansClient.list","BansClient.get","BansClient.ban","BansClient.lift");
- const rules=await owner.moderation.banWords([{word:"ＦＯＲＢＩＤＤＥＮ",action:"reject"},{word:"Masked",action:"mask"}]);
- assert.equal(rules.length,2);
- assert.deepEqual((await owner.moderation.bannedWords()).map(x=>[x.word,x.action]).sort(),[["forbidden","reject"],["masked","mask"]]);
- const count=(await anonymous.comments.list(target)).length;
- await refused(()=>reader.comments.create(target,{body:"forbidden"}),422,"moderation_rejected");
- await refused(()=>reader.moderation.unbanWords(["forbidden"]),403,"forbidden");
- assert.equal((await anonymous.comments.list(target)).length,count);
- assert.equal((await reader.comments.create(target,{body:"A MASKED word"})).body,"A ****** word");
- await owner.moderation.unbanWords(["forbidden","masked"]);assert.deepEqual(await owner.moderation.bannedWords(),[]);
- assert.equal((await reader.comments.create(target,{body:"forbidden"})).body,"forbidden");
- proved("ModerationClient.bannedWords","ModerationClient.banWords","ModerationClient.unbanWords");
- const networks=await owner.moderation.banIPs([{network:"127.0.0.99/24",reason:"Local wire"}]);
- assert.deepEqual(networks.map(x=>x.network),["127.0.0.0/24"]);
- assert.deepEqual((await owner.moderation.ipBans()).map(x=>x.network),["127.0.0.0/24"]);
- await refused(()=>reader.comments.create(target,{body:"Network must refuse"}),403,"comment_banned");
- await refused(()=>reader.moderation.liftIPBans(["127.0.0.0/24"]),403,"forbidden");
- assert.equal((await owner.moderation.ipBans()).length,1);
- await owner.moderation.liftIPBans(["127.0.0.45/24"]);assert.deepEqual(await owner.moderation.ipBans(),[]);
- assert.equal((await reader.comments.create(target,{body:"Network lift permits writing"})).body,"Network lift permits writing");
- proved("ModerationClient.ipBans","ModerationClient.banIPs","ModerationClient.liftIPBans");
- const holdReply=await fetch(fixture.base+"/v1/comments/"+prior.id+"/hold",{method:"POST",headers:{Authorization:"Bearer "+fixture.owner}});
- assert.equal(holdReply.status,204);
- assert(!(await anonymous.comments.list(target)).some(x=>x.id===prior.id));
- const held=await owner.moderation.held({kind:"comment",limit:1});assert.equal(held.items.length,1);
- assert.equal(held.items[0].id,prior.id);assert.equal(held.items[0].body,"Original retained comment");assert(held.items[0].revision>0);
- await refused(()=>reader.moderation.resolve(held.items[0],"approve"),403,"forbidden");
- await refused(()=>owner.moderation.resolve({...held.items[0],revision:held.items[0].revision-1},"approve"),404,"not_found");
- assert(!(await anonymous.comments.list(target)).some(x=>x.id===prior.id));
- const approved=await owner.moderation.resolve(held.items[0],"approve","Reviewed original text");assert.equal(approved.decision,"approve");
- assert((await anonymous.comments.list(target)).some(x=>x.id===prior.id&&x.body==="Original retained comment"));
- assert.equal((await owner.moderation.held({kind:"comment"})).items.length,0);
- proved("ModerationClient.held","ModerationClient.resolve");
-}else if(group==="discovery_entities"){
- const tags=await owner.entities.create([{kind:"tag",slug:"ts-shared-tag",names:[{language:"en",kind:"name",name:"TypeScript shared classification"}]},{kind:"tag",slug:"ts-removable-tag",names:[{language:"en",kind:"name",name:"Temporary classification"}]}]);
- assert.equal(tags.length,2);assert.notEqual(tags[0].id,tags[1].id);assert(tags.every(x=>x.kind==="tag"));
- await refused(()=>reader.entities.create([{kind:"tag",slug:"unauthorized-tag"}]),403,"forbidden");
- const updated=await owner.entities.update(tags[0].id,{names:[{language:"en",kind:"name",name:"Renamed TypeScript classification"}]});
- assert.equal(updated.id,tags[0].id);assert.equal((await anonymous.entities.get(tags[0].id)).name,"Renamed TypeScript classification");
- await refused(()=>reader.entities.remove(tags[0].id),403,"forbidden");assert.equal((await anonymous.entities.get(tags[0].id)).id,tags[0].id);
- const removed=await owner.entities.remove(tags[1].id);assert.equal(removed.id,tags[1].id);assert.equal(removed.state,"deleted");
- await refused(()=>anonymous.entities.get(tags[1].id),404,"not_found");
- const mine=await owner.entities.mine({kind:"channel"});assert.deepEqual(mine.entities.map(x=>x.id),[fixture.channel]);
- assert.deepEqual((await reader.entities.mine({kind:"channel"})).entities,[]);
- proved("EntitiesClient.create","EntitiesClient.update","EntitiesClient.remove","EntitiesClient.mine");
- const secret=(await owner.entities.create([{kind:"tag",slug:"private-ts-tag",internal:true,names:[{language:"en",kind:"name",name:"InternalTypeScriptSecret"}]}]))[0];
- const make=async(name,publish=true,locked=false)=>{
-  const item=await owner.contents.create({kind:"article",...(locked?{access:{level:"tier",tiers:["gold"]}}:{}),text:{en:{title:"TypeScriptNeedle "+name,body:"Body "+name}}});
-  await owner.entities.setSharedOfContent(item.id,{memberships:[{group_id:tags[0].id}]});
-  if(publish)await owner.contents.publish(item.id);
-  return item;
- };
- const one=await make("Alpha"),two=await make("Beta"),draft=await make("Draft",false),locked=await make("Locked",true,true);
- const query={kind:"article",groups:[tags[0].id],mode:"hide",language:"en"};
- const ids=p=>p.contents.map(x=>x.id);
- const expected=[one.id,two.id].sort();
- const listing=await anonymous.discovery.list({...query,limit:1});assert.equal(listing.contents.length,1);assert(listing.next_cursor);
- const next=await anonymous.discovery.list({...query,limit:1,cursor:listing.next_cursor});assert.deepEqual([...ids(listing),...ids(next)].sort(),expected);
- proved("DiscoveryClient.list");
- const known=await anonymous.discovery.knownCards({kind:"article",mode:"hide",ids:[two.id,fixture.foreign,draft.id,locked.id,one.id]});
- assert.deepEqual(ids(known),[two.id,one.id]);proved("DiscoveryClient.knownCards");
- const deadline=Date.now()+30_000;
- let found;
- do{found=await anonymous.discovery.search({...query,q:"TypeScriptNeedle"});if(ids(found).length===2)break;await new Promise(resolve=>setTimeout(resolve,50));}while(Date.now()<deadline);
- assert.deepEqual(ids(found).sort(),expected);proved("DiscoveryClient.search");
- const ahead=await anonymous.discovery.typeahead({q:"TypeScriptNeedle",kind:"article",mode:"hide"});assert.deepEqual(ahead.contents.map(x=>x.id).sort(),expected);
- assert.equal((await anonymous.discovery.typeahead({q:"InternalTypeScriptSecret",entity_kinds:["tag"]})).entities.length,0);proved("DiscoveryClient.typeahead");
- const adminQuery={q:"InternalTypeScriptSecret",include_contents:false,include_entities:true,entity_kinds:["tag"]};
- assert.deepEqual((await owner.discovery.adminSuggestions(adminQuery)).entities.map(x=>x.id),[secret.id]);
- await refused(()=>anonymous.discovery.adminSuggestions(adminQuery),401,"unauthorized");
- await refused(()=>reader.discovery.adminSuggestions(adminQuery),403,"forbidden");proved("DiscoveryClient.adminSuggestions");
- assert.deepEqual(ids(await anonymous.discovery.similar(one.id,query)),[two.id]);proved("DiscoveryClient.similar");
- assert.deepEqual(ids(await reader.discovery.recommendations(query)).sort(),expected);proved("DiscoveryClient.recommendations");
- const dates=await anonymous.discovery.releaseDates({...query,by:"day"});assert.equal(dates.dates.length,1);assert.equal(dates.dates[0].count,2);proved("DiscoveryClient.releaseDates");
- const releases=await anonymous.discovery.releases({...query,days:1});assert.deepEqual(releases.days.flatMap(day=>day.contents.map(x=>x.id)).sort(),expected);proved("DiscoveryClient.releases");
- const library=await reader.discovery.library({language:"en",limit:1});assert.equal(library.complete,true);assert.equal(library.items.length,1);assert.equal(library.items[0].content_id,fixture.paid);assert.equal(library.items[0].whole,true);assert.equal(library.items[0].version_ids.length,1);
- assert.deepEqual((await owner.discovery.library()).items,[]);await refused(()=>anonymous.discovery.library(),401,"unauthorized");proved("DiscoveryClient.library");
-}else if(group==="notification_receipts"){
- const page=await owner.notifications.list({limit:1});assert.equal(page.items.length,1);assert.equal(page.items[0].id,fixture.second);assert.equal(page.items[0].data.message,"Private second");assert(page.next_cursor);
- const next=await owner.notifications.list({limit:1,cursor:page.next_cursor});assert.deepEqual(next.items.map(x=>x.id),[fixture.first]);assert.equal(next.items[0].recipient.id,fixture.recipient);
- assert.deepEqual((await reader.notifications.list()).items.map(x=>x.id),[fixture.other]);
- await refused(()=>anonymous.notifications.list(),401,"unauthorized");
- await refused(()=>reader.notifications.setRead(fixture.first),404,"not_found");
- await refused(()=>reader.notifications.setDismissed(fixture.first),404,"not_found");
- const before=(await owner.notifications.list()).items.find(x=>x.id===fixture.first);assert.equal(before.read_at,null);assert.equal(before.dismissed_at,null);
- proved("NotificationsClient.list");
- owner.setReadScope("notification-owner");const changes=[];const stop=owner.subscribe((change,scope)=>changes.push({change,scope}));
- owner.notifications.refresh();assert.deepEqual(changes,[{change:{type:"notifications.changed"},scope:"notification-owner"}]);
- stop();owner.notifications.refresh();assert.equal(changes.length,1);proved("NotificationsClient.refresh");
- const read=await owner.notifications.setRead(fixture.first);assert.equal(read.id,fixture.first);assert.equal(typeof read.read_at,"string");assert(read.revision>before.revision);assert.equal(read.status,"open");assert.equal(read.resolved_at,null);
- assert.deepEqual((await owner.notifications.list({unread:true})).items.map(x=>x.id),[fixture.second]);
- const unread=await owner.notifications.setRead(fixture.first,false);assert.equal(unread.id,fixture.first);assert.equal(unread.read_at,null);assert.equal(unread.status,"open");assert.equal(unread.resolved_at,null);
- assert.equal((await owner.notifications.list({unread:true})).items.length,2);proved("NotificationsClient.setRead");
- const dismissed=await owner.notifications.setDismissed(fixture.first);assert.equal(dismissed.id,fixture.first);assert.equal(typeof dismissed.dismissed_at,"string");assert.equal(dismissed.status,"open");assert.equal(dismissed.resolved_at,null);
- assert.deepEqual((await owner.notifications.list()).items.map(x=>x.id),[fixture.second]);
- assert.deepEqual((await owner.notifications.list({dismissed:true})).items.map(x=>x.id),[fixture.first]);
- const restored=await owner.notifications.setDismissed(fixture.first,false);assert.equal(restored.id,fixture.first);assert.equal(restored.dismissed_at,null);assert.equal(restored.status,"open");assert.equal(restored.resolved_at,null);
- assert.deepEqual((await owner.notifications.list()).items.map(x=>x.id),[fixture.second,fixture.first]);proved("NotificationsClient.setDismissed");
-}else if(group.startsWith("media_")){bindings.push(...await runMediaContracts(group,fixture));}else throw new Error(`Unknown contract group ${group}`);
-console.log(JSON.stringify({group,bindings,passed:true}));
+if (group === "catalog_publication") {
+  const config = await anonymous.config();
+  assert.equal(config.comment_max_length, 2200);
+  assert.deepEqual(config.anonymous, {
+    comments: false,
+    reactions: false,
+    votes: false,
+  });
+  proved("ContentKitClient.config");
+  const kinds = await anonymous.kinds();
+  assert.deepEqual(Object.keys(kinds.kinds).sort(), ["article", "gallery"]);
+  assert.deepEqual(kinds.languages, ["en", "de"]);
+  proved("ContentKitClient.kinds");
+  assert.equal(owner.url("contents"), fixture.base + "/v1");
+  assert.equal(owner.url("notifications"), fixture.base + "/v1/notifications");
+  proved("ContentKitClient.url");
+  const before = await owner.catalog.listEvents({
+    types: ["content.published"],
+    limit: 1,
+  });
+  assert.equal(typeof before.next_cursor, "string");
+  assert(before.next_cursor.length > 0);
+  const draft = await owner.contents.create({
+    kind: "article",
+    text: {
+      en: {
+        title: "TS Unicode Straße / ?",
+        body: "Exact TypeScript source body",
+      },
+    },
+  });
+  await refused(() => anonymous.contents.get(draft.id), 404, "not_found");
+  await refused(() => reader.contents.publish(draft.id), 403, "forbidden");
+  assert.equal((await owner.contents.get(draft.id)).state, "draft");
+  const published = await owner.contents.publish(draft.id);
+  assert.equal(published.id, draft.id);
+  assert.equal(published.live, true);
+  assert.equal(
+    (await anonymous.contents.get(draft.id)).body,
+    "Exact TypeScript source body",
+  );
+  proved("ContentsClient.publish");
+  const second = await owner.contents.create({
+    kind: "article",
+    text: {
+      en: { title: "Second TypeScript article", body: "Ready without media" },
+    },
+  });
+  const ready = await owner.contents.publishWhenReady(second.id, undefined, 0);
+  assert.equal(ready.id, second.id);
+  assert.equal(ready.live, true);
+  await refused(
+    () => reader.contents.publishWhenReady(second.id, undefined, 0),
+    403,
+    "forbidden",
+  );
+  assert.equal(
+    (await anonymous.contents.get(second.id)).body,
+    "Ready without media",
+  );
+  proved("ContentsClient.publishWhenReady");
+  const facts = [];
+  let cursor = before.next_cursor;
+  for (let i = 0; i < 4; i++) {
+    const page = await owner.catalog.listEvents({
+      after: cursor,
+      types: ["content.published"],
+      limit: 1,
+    });
+    assert(page.events.length <= 1);
+    for (const fact of page.events) {
+      assert.equal(fact.type, "content.published");
+      assert.equal(fact.scope, fixture.app);
+      assert.match(fact.id, /^\d+$/);
+      facts.push(fact);
+    }
+    cursor = page.next_cursor;
+    if (!page.has_more) break;
+  }
+  assert.deepEqual(
+    facts.map((x) => x.content_id),
+    [draft.id, second.id],
+  );
+  assert.equal(new Set(facts.map((x) => x.id)).size, 2);
+  assert.equal(
+    (
+      await owner.catalog.listEvents({
+        after: cursor,
+        types: ["content.published"],
+      })
+    ).events.length,
+    0,
+  );
+  await refused(() => anonymous.catalog.listEvents(), 401, "unauthorized");
+  proved("CatalogClient.listEvents");
+  const hidden = await owner.contents.unpublish(draft.id);
+  assert.equal(hidden.id, draft.id);
+  assert.equal(hidden.live, false);
+  await refused(() => anonymous.contents.get(draft.id), 404, "not_found");
+  await owner.contents.publish(draft.id);
+  assert.equal(
+    (await anonymous.contents.get(draft.id)).body,
+    "Exact TypeScript source body",
+  );
+  proved("ContentsClient.unpublish");
+  await refused(() => anonymous.contents.get(fixture.legacy), 404, "not_found");
+  const restored = await owner.contents.restore(fixture.legacy);
+  assert.equal(restored.id, fixture.legacy);
+  assert.equal(restored.live, true);
+  assert.equal(
+    (await anonymous.contents.get(fixture.legacy)).body,
+    "Retained historical body",
+  );
+  proved("ContentsClient.restore");
+  const totals = await anonymous.catalog.totals({
+    kinds: ["article"],
+    languages: ["en"],
+  });
+  assert.deepEqual(Object.keys(totals.kinds), ["article"]);
+  assert.equal(totals.kinds.article.public, 3);
+  assert.equal(totals.kinds.article.languages.en.public, 3);
+  proved("CatalogClient.totals");
+  await owner.contents.removeVersion(draft.id, draft.versions[0].id);
+  await refused(() => anonymous.contents.get(draft.id), 404, "not_found");
+  const retired = await owner.contents.manage({
+    ids: [draft.id],
+    state: "deleted",
+  });
+  assert.equal(retired.length, 1);
+  assert.equal(retired[0].id, draft.id);
+  assert.equal(retired[0].state, "deleted");
+  await refused(() => owner.contents.restore(draft.id), 409, "conflict");
+  assert.equal((await anonymous.contents.get(second.id)).id, second.id);
+  proved("ContentsClient.removeVersion");
+} else if (group === "moderation_bans") {
+  const item = await owner.contents.create({
+    kind: "article",
+    text: {
+      en: { title: "TypeScript owned thread", body: "Owned public body" },
+    },
+  });
+  await owner.contents.publish(item.id);
+  const target = { type: "contents", id: item.id },
+    other = { type: "contents", id: fixture.other };
+  const prior = await reader.comments.create(target, {
+    body: "Original retained comment",
+  });
+  assert.equal(prior.body, "Original retained comment");
+  assert.equal(await owner.bans.get("global", fixture.readerID), null);
+  const ownerBan = await owner.bans.ban("owner", fixture.readerID, {
+    reason: "Owner-only control",
+  });
+  assert.equal(ownerBan.scope, "owner:" + fixture.ownerID);
+  assert.equal(ownerBan.user_id, fixture.readerID);
+  assert.equal(ownerBan.banned_by, fixture.ownerID);
+  assert.deepEqual(
+    (await owner.bans.list("owner")).map((x) => x.user_id),
+    [fixture.readerID],
+  );
+  await refused(
+    () => reader.comments.create(target, { body: "Must not be accepted" }),
+    403,
+    "comment_banned",
+  );
+  assert.equal((await anonymous.comments.list(target)).length, 1);
+  const otherComment = await reader.comments.create(other, {
+    body: "Other owner is unaffected",
+  });
+  assert.equal(otherComment.body, "Other owner is unaffected");
+  await owner.bans.lift("owner", fixture.readerID);
+  assert.deepEqual(await owner.bans.list("owner"), []);
+  const afterLift = await reader.comments.create(target, {
+    body: "Owner lift permits writing",
+  });
+  assert.equal(afterLift.body, "Owner lift permits writing");
+  const global = await owner.bans.ban("global", fixture.readerID, {
+    reason: "App-wide control",
+  });
+  assert.equal(global.scope, "global");
+  assert.equal(
+    (await owner.bans.get("global", fixture.readerID)).reason,
+    "App-wide control",
+  );
+  assert.deepEqual(
+    (await owner.bans.list("global")).map((x) => x.user_id),
+    [fixture.readerID],
+  );
+  await refused(
+    () => reader.bans.lift("global", fixture.readerID),
+    403,
+    "forbidden",
+  );
+  await refused(
+    () => reader.bans.get("global", fixture.readerID),
+    403,
+    "forbidden",
+  );
+  assert.equal(
+    (await owner.bans.get("global", fixture.readerID)).reason,
+    "App-wide control",
+  );
+  await refused(
+    () => reader.comments.create(other, { body: "App ban applies here too" }),
+    403,
+    "comment_banned",
+  );
+  await owner.bans.lift("global", fixture.readerID);
+  await owner.bans.lift("global", fixture.readerID);
+  assert.equal(await owner.bans.get("global", fixture.readerID), null);
+  assert.deepEqual(await owner.bans.list("global"), []);
+  proved(
+    "BansClient.list",
+    "BansClient.get",
+    "BansClient.ban",
+    "BansClient.lift",
+  );
+  const rules = await owner.moderation.banWords([
+    { word: "ＦＯＲＢＩＤＤＥＮ", action: "reject" },
+    { word: "Masked", action: "mask" },
+  ]);
+  assert.equal(rules.length, 2);
+  assert.deepEqual(
+    (await owner.moderation.bannedWords())
+      .map((x) => [x.word, x.action])
+      .sort(),
+    [
+      ["forbidden", "reject"],
+      ["masked", "mask"],
+    ],
+  );
+  const count = (await anonymous.comments.list(target)).length;
+  await refused(
+    () => reader.comments.create(target, { body: "forbidden" }),
+    422,
+    "moderation_rejected",
+  );
+  await refused(
+    () => reader.moderation.unbanWords(["forbidden"]),
+    403,
+    "forbidden",
+  );
+  assert.equal((await anonymous.comments.list(target)).length, count);
+  assert.equal(
+    (await reader.comments.create(target, { body: "A MASKED word" })).body,
+    "A ****** word",
+  );
+  await owner.moderation.unbanWords(["forbidden", "masked"]);
+  assert.deepEqual(await owner.moderation.bannedWords(), []);
+  assert.equal(
+    (await reader.comments.create(target, { body: "forbidden" })).body,
+    "forbidden",
+  );
+  proved(
+    "ModerationClient.bannedWords",
+    "ModerationClient.banWords",
+    "ModerationClient.unbanWords",
+  );
+  const networks = await owner.moderation.banIPs([
+    { network: "127.0.0.99/24", reason: "Local wire" },
+  ]);
+  assert.deepEqual(
+    networks.map((x) => x.network),
+    ["127.0.0.0/24"],
+  );
+  assert.deepEqual(
+    (await owner.moderation.ipBans()).map((x) => x.network),
+    ["127.0.0.0/24"],
+  );
+  await refused(
+    () => reader.comments.create(target, { body: "Network must refuse" }),
+    403,
+    "comment_banned",
+  );
+  await refused(
+    () => reader.moderation.liftIPBans(["127.0.0.0/24"]),
+    403,
+    "forbidden",
+  );
+  assert.equal((await owner.moderation.ipBans()).length, 1);
+  await owner.moderation.liftIPBans(["127.0.0.45/24"]);
+  assert.deepEqual(await owner.moderation.ipBans(), []);
+  assert.equal(
+    (
+      await reader.comments.create(target, {
+        body: "Network lift permits writing",
+      })
+    ).body,
+    "Network lift permits writing",
+  );
+  proved(
+    "ModerationClient.ipBans",
+    "ModerationClient.banIPs",
+    "ModerationClient.liftIPBans",
+  );
+  const holdReply = await fetch(
+    fixture.base + "/v1/comments/" + prior.id + "/hold",
+    { method: "POST", headers: { Authorization: "Bearer " + fixture.owner } },
+  );
+  assert.equal(holdReply.status, 204);
+  assert(
+    !(await anonymous.comments.list(target)).some((x) => x.id === prior.id),
+  );
+  const held = await owner.moderation.held({ kind: "comment", limit: 1 });
+  assert.equal(held.items.length, 1);
+  assert.equal(held.items[0].id, prior.id);
+  assert.equal(held.items[0].body, "Original retained comment");
+  assert(held.items[0].revision > 0);
+  await refused(
+    () => reader.moderation.resolve(held.items[0], "approve"),
+    403,
+    "forbidden",
+  );
+  await refused(
+    () =>
+      owner.moderation.resolve(
+        { ...held.items[0], revision: held.items[0].revision - 1 },
+        "approve",
+      ),
+    404,
+    "not_found",
+  );
+  assert(
+    !(await anonymous.comments.list(target)).some((x) => x.id === prior.id),
+  );
+  const approved = await owner.moderation.resolve(
+    held.items[0],
+    "approve",
+    "Reviewed original text",
+  );
+  assert.equal(approved.decision, "approve");
+  assert(
+    (await anonymous.comments.list(target)).some(
+      (x) => x.id === prior.id && x.body === "Original retained comment",
+    ),
+  );
+  assert.equal(
+    (await owner.moderation.held({ kind: "comment" })).items.length,
+    0,
+  );
+  proved("ModerationClient.held", "ModerationClient.resolve");
+} else if (group === "discovery_entities") {
+  const tags = await owner.entities.create([
+    {
+      kind: "tag",
+      slug: "ts-shared-tag",
+      names: [
+        {
+          language: "en",
+          kind: "name",
+          name: "TypeScript shared classification",
+        },
+      ],
+    },
+    {
+      kind: "tag",
+      slug: "ts-removable-tag",
+      names: [
+        { language: "en", kind: "name", name: "Temporary classification" },
+      ],
+    },
+  ]);
+  assert.equal(tags.length, 2);
+  assert.notEqual(tags[0].id, tags[1].id);
+  assert(tags.every((x) => x.kind === "tag"));
+  await refused(
+    () => reader.entities.create([{ kind: "tag", slug: "unauthorized-tag" }]),
+    403,
+    "forbidden",
+  );
+  const updated = await owner.entities.update(tags[0].id, {
+    names: [
+      {
+        language: "en",
+        kind: "name",
+        name: "Renamed TypeScript classification",
+      },
+    ],
+  });
+  assert.equal(updated.id, tags[0].id);
+  assert.equal(
+    (await anonymous.entities.get(tags[0].id)).name,
+    "Renamed TypeScript classification",
+  );
+  await refused(() => reader.entities.remove(tags[0].id), 403, "forbidden");
+  assert.equal((await anonymous.entities.get(tags[0].id)).id, tags[0].id);
+  const removed = await owner.entities.remove(tags[1].id);
+  assert.equal(removed.id, tags[1].id);
+  assert.equal(removed.state, "deleted");
+  await refused(() => anonymous.entities.get(tags[1].id), 404, "not_found");
+  const mine = await owner.entities.mine({ kind: "channel" });
+  assert.deepEqual(
+    mine.entities.map((x) => x.id),
+    [fixture.channel],
+  );
+  assert.deepEqual(
+    (await reader.entities.mine({ kind: "channel" })).entities,
+    [],
+  );
+  proved(
+    "EntitiesClient.create",
+    "EntitiesClient.update",
+    "EntitiesClient.remove",
+    "EntitiesClient.mine",
+  );
+  const secret = (
+    await owner.entities.create([
+      {
+        kind: "tag",
+        slug: "private-ts-tag",
+        internal: true,
+        names: [
+          { language: "en", kind: "name", name: "InternalTypeScriptSecret" },
+        ],
+      },
+    ])
+  )[0];
+  const make = async (name, publish = true, locked = false) => {
+    const item = await owner.contents.create({
+      kind: "article",
+      ...(locked ? { access: { level: "tier", tiers: ["gold"] } } : {}),
+      text: { en: { title: "TypeScriptNeedle " + name, body: "Body " + name } },
+    });
+    await owner.entities.setSharedOfContent(item.id, {
+      memberships: [{ group_id: tags[0].id }],
+    });
+    if (publish) await owner.contents.publish(item.id);
+    return item;
+  };
+  const one = await make("Alpha"),
+    two = await make("Beta"),
+    draft = await make("Draft", false),
+    locked = await make("Locked", true, true);
+  const query = {
+    kind: "article",
+    groups: [tags[0].id],
+    mode: "hide",
+    language: "en",
+  };
+  const ids = (p) => p.contents.map((x) => x.id);
+  const expected = [one.id, two.id].sort();
+  const listing = await anonymous.discovery.list({ ...query, limit: 1 });
+  assert.equal(listing.contents.length, 1);
+  assert(listing.next_cursor);
+  const next = await anonymous.discovery.list({
+    ...query,
+    limit: 1,
+    cursor: listing.next_cursor,
+  });
+  assert.deepEqual([...ids(listing), ...ids(next)].sort(), expected);
+  proved("DiscoveryClient.list");
+  const known = await anonymous.discovery.knownCards({
+    kind: "article",
+    mode: "hide",
+    ids: [two.id, fixture.foreign, draft.id, locked.id, one.id],
+  });
+  assert.deepEqual(ids(known), [two.id, one.id]);
+  proved("DiscoveryClient.knownCards");
+  const deadline = Date.now() + 30_000;
+  let found;
+  do {
+    found = await anonymous.discovery.search({
+      ...query,
+      q: "TypeScriptNeedle",
+    });
+    if (ids(found).length === 2) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < deadline);
+  assert.deepEqual(ids(found).sort(), expected);
+  proved("DiscoveryClient.search");
+  const ahead = await anonymous.discovery.typeahead({
+    q: "TypeScriptNeedle",
+    kind: "article",
+    mode: "hide",
+  });
+  assert.deepEqual(ahead.contents.map((x) => x.id).sort(), expected);
+  assert.equal(
+    (
+      await anonymous.discovery.typeahead({
+        q: "InternalTypeScriptSecret",
+        entity_kinds: ["tag"],
+      })
+    ).entities.length,
+    0,
+  );
+  proved("DiscoveryClient.typeahead");
+  const adminQuery = {
+    q: "InternalTypeScriptSecret",
+    include_contents: false,
+    include_entities: true,
+    entity_kinds: ["tag"],
+  };
+  assert.deepEqual(
+    (await owner.discovery.adminSuggestions(adminQuery)).entities.map(
+      (x) => x.id,
+    ),
+    [secret.id],
+  );
+  await refused(
+    () => anonymous.discovery.adminSuggestions(adminQuery),
+    401,
+    "unauthorized",
+  );
+  await refused(
+    () => reader.discovery.adminSuggestions(adminQuery),
+    403,
+    "forbidden",
+  );
+  proved("DiscoveryClient.adminSuggestions");
+  assert.deepEqual(ids(await anonymous.discovery.similar(one.id, query)), [
+    two.id,
+  ]);
+  proved("DiscoveryClient.similar");
+  assert.deepEqual(
+    ids(await reader.discovery.recommendations(query)).sort(),
+    expected,
+  );
+  proved("DiscoveryClient.recommendations");
+  const dates = await anonymous.discovery.releaseDates({ ...query, by: "day" });
+  assert.equal(dates.dates.length, 1);
+  assert.equal(dates.dates[0].count, 2);
+  proved("DiscoveryClient.releaseDates");
+  const releases = await anonymous.discovery.releases({ ...query, days: 1 });
+  assert.deepEqual(
+    releases.days.flatMap((day) => day.contents.map((x) => x.id)).sort(),
+    expected,
+  );
+  proved("DiscoveryClient.releases");
+  const library = await reader.discovery.library({ language: "en", limit: 1 });
+  assert.equal(library.complete, true);
+  assert.equal(library.items.length, 1);
+  assert.equal(library.items[0].content_id, fixture.paid);
+  assert.equal(library.items[0].whole, true);
+  assert.equal(library.items[0].version_ids.length, 1);
+  assert.deepEqual((await owner.discovery.library()).items, []);
+  await refused(() => anonymous.discovery.library(), 401, "unauthorized");
+  proved("DiscoveryClient.library");
+} else if (group === "notification_receipts") {
+  const page = await owner.notifications.list({ limit: 1 });
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].id, fixture.second);
+  assert.equal(page.items[0].data.message, "Private second");
+  assert(page.next_cursor);
+  const next = await owner.notifications.list({
+    limit: 1,
+    cursor: page.next_cursor,
+  });
+  assert.deepEqual(
+    next.items.map((x) => x.id),
+    [fixture.first],
+  );
+  assert.equal(next.items[0].recipient.id, fixture.recipient);
+  assert.deepEqual(
+    (await reader.notifications.list()).items.map((x) => x.id),
+    [fixture.other],
+  );
+  await refused(() => anonymous.notifications.list(), 401, "unauthorized");
+  await refused(
+    () => reader.notifications.setRead(fixture.first),
+    404,
+    "not_found",
+  );
+  await refused(
+    () => reader.notifications.setDismissed(fixture.first),
+    404,
+    "not_found",
+  );
+  const before = (await owner.notifications.list()).items.find(
+    (x) => x.id === fixture.first,
+  );
+  assert.equal(before.read_at, null);
+  assert.equal(before.dismissed_at, null);
+  proved("NotificationsClient.list");
+  owner.setReadScope("notification-owner");
+  const changes = [];
+  const stop = owner.subscribe((change, scope) =>
+    changes.push({ change, scope }),
+  );
+  owner.notifications.refresh();
+  assert.deepEqual(changes, [
+    { change: { type: "notifications.changed" }, scope: "notification-owner" },
+  ]);
+  stop();
+  owner.notifications.refresh();
+  assert.equal(changes.length, 1);
+  proved("NotificationsClient.refresh");
+  const read = await owner.notifications.setRead(fixture.first);
+  assert.equal(read.id, fixture.first);
+  assert.equal(typeof read.read_at, "string");
+  assert(read.revision > before.revision);
+  assert.equal(read.status, "open");
+  assert.equal(read.resolved_at, null);
+  assert.deepEqual(
+    (await owner.notifications.list({ unread: true })).items.map((x) => x.id),
+    [fixture.second],
+  );
+  const unread = await owner.notifications.setRead(fixture.first, false);
+  assert.equal(unread.id, fixture.first);
+  assert.equal(unread.read_at, null);
+  assert.equal(unread.status, "open");
+  assert.equal(unread.resolved_at, null);
+  assert.equal(
+    (await owner.notifications.list({ unread: true })).items.length,
+    2,
+  );
+  proved("NotificationsClient.setRead");
+  const dismissed = await owner.notifications.setDismissed(fixture.first);
+  assert.equal(dismissed.id, fixture.first);
+  assert.equal(typeof dismissed.dismissed_at, "string");
+  assert.equal(dismissed.status, "open");
+  assert.equal(dismissed.resolved_at, null);
+  assert.deepEqual(
+    (await owner.notifications.list()).items.map((x) => x.id),
+    [fixture.second],
+  );
+  assert.deepEqual(
+    (await owner.notifications.list({ dismissed: true })).items.map(
+      (x) => x.id,
+    ),
+    [fixture.first],
+  );
+  const restored = await owner.notifications.setDismissed(fixture.first, false);
+  assert.equal(restored.id, fixture.first);
+  assert.equal(restored.dismissed_at, null);
+  assert.equal(restored.status, "open");
+  assert.equal(restored.resolved_at, null);
+  assert.deepEqual(
+    (await owner.notifications.list()).items.map((x) => x.id),
+    [fixture.second, fixture.first],
+  );
+  proved("NotificationsClient.setDismissed");
+} else if (group.startsWith("media_")) {
+  bindings.push(...(await runMediaContracts(group, fixture)));
+} else throw new Error(`Unknown contract group ${group}`);
+console.log(JSON.stringify({ group, bindings, passed: true }));
