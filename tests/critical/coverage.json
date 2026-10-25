@@ -656,6 +656,18 @@
       ]
     },
     {
+      "id": "CK-J07-S11",
+      "journey": "CK-J07",
+      "behavior": "Popular lists read access history only for contents read in their window",
+      "status": "verified",
+      "evidence": [
+        "A catalog with more than 100,000 unread access-history intervals still serves a popular list instead of failing on the history bound, and returns none of the unread contents."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S11_popular_list_reads_history_of_read_contents_only"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",

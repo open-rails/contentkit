@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
@@ -296,6 +297,28 @@ func TestDiscoveryVisibility(t *testing.T) {
 		unnamed, err := filterReader.GetSearch(t.Context(), ck.GetSearchQuery{Q: "CriticalVis", Kind: "article", Mode: "hide"})
 		must(t, err)
 		assertCards(t, unnamed.ContentPage, one.ID)
+	})
+	t.Run("CK-J07-S11_popular_list_reads_history_of_read_contents_only", func(t *testing.T) {
+		history := pgx.Identifier{w.schema, "content_access_history"}.Sanitize()
+		_, err := w.pool.Exec(t.Context(), `INSERT INTO `+history+` (tenant_id, content_id, version_id, occurred_at, snapshot)
+ SELECT h.tenant_id, 'unread-' || n, 'unread-' || n, now() - interval '1 day',
+  jsonb_build_object('kind', 'article', 'live_from', now() - interval '2 days', 'languages', jsonb_build_array('en'), 'level', 'public')
+ FROM (SELECT tenant_id FROM `+history+` WHERE content_id = $1 LIMIT 1) h, generate_series(1, 100001) n`, one.ID)
+		must(t, err)
+		t.Cleanup(func() {
+			_, err := w.pool.Exec(context.Background(), `DELETE FROM `+history+` WHERE content_id LIKE 'unread-%'`)
+			must(t, err)
+		})
+		before := w.clock.now()
+		w.clock.set(before.Add(time.Hour))
+		t.Cleanup(func() { w.clock.set(before) })
+		page, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular:7d", Mode: "hide"})
+		must(t, err)
+		for _, card := range page.Contents {
+			if strings.HasPrefix(card.ID, "unread-") {
+				t.Fatalf("popular list returned an unread synthetic content: %s", card.ID)
+			}
+		}
 	})
 	t.Run("CK-J07-S06_code_resolution_retains_parent_and_domain_authority", func(t *testing.T) {
 		resolved, err := public.GetCode(t.Context(), one.Code, ck.GetCodeQuery{V: one.Versions[0].Code})
