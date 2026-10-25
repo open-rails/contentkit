@@ -53,6 +53,7 @@ type Viewer struct {
 	mode           access.Mode
 	now            time.Time
 	staff          bool
+	staffWrite     bool
 	management     bool
 	filter         *access.Filter
 	policies       domainpolicy.Policies
@@ -86,6 +87,7 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 		s.log.WarnContext(ctx, "catalog: staff check failed; reading as a non-staff viewer", "err", err)
 	}
 	v.staff = rights.view || rights.write
+	v.staffWrite = rights.write
 	f, err := s.accessG.Filter(ctx, o.Actor)
 	if err != nil && !errors.Is(err, access.ErrUnavailable) {
 		return nil, err
@@ -439,7 +441,8 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	for id, rs := range byID {
 		iv := &itemView{found: true, decisions: map[string]Decision{}}
 		out[id] = iv
-		if iv.editor = known(id) || editors[rs[0].ownerEntity]; iv.editor {
+		iv.editor = v.staffWrite || creator[id] || v.editable(rs[0].ownerEntity) || editors[rs[0].ownerEntity]
+		if v.staff || iv.editor {
 			for _, r := range rs {
 				if !v.management && !v.inScope(r) {
 					continue
