@@ -12,8 +12,12 @@ import (
 
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
+	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/importer"
+	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/openrails/billing"
 )
 
 func runTypeScriptContract(t *testing.T, group string, fixture map[string]any, want []string) {
@@ -62,4 +66,63 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 			"CatalogClient.listEvents", "CatalogClient.totals", "ContentsClient.publish", "ContentsClient.publishWhenReady", "ContentsClient.unpublish", "ContentsClient.restore", "ContentsClient.removeVersion", "ContentKitClient.config", "ContentKitClient.kinds", "ContentKitClient.url",
 		})
 	})
+	t.Run("moderation_bans", func(t *testing.T) {
+		w := newWorld(t, func(c *ck.Config) { c.Interactions.Limits.Disabled = true })
+		a := w.apps[0]
+		owner, token := w.person(t, 0)
+		reader, readerToken := w.person(t, 0)
+		persona, err := w.auth.Persona("app")
+		must(t, err)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(owner.ID), persona.OwnerRole())
+		other := publishedArticle(t, a, "A thread with a different owner")
+		runTypeScriptContract(t, "moderation_bans", map[string]any{"base": a.server.URL + "/content", "owner": token, "reader": readerToken, "ownerID": owner.ID, "readerID": reader.ID, "other": other.ID}, []string{
+			"BansClient.list", "BansClient.get", "BansClient.ban", "BansClient.lift", "ModerationClient.held", "ModerationClient.resolve", "ModerationClient.bannedWords", "ModerationClient.banWords", "ModerationClient.unbanWords", "ModerationClient.ipBans", "ModerationClient.banIPs", "ModerationClient.liftIPBans",
+		})
+	})
+
+	t.Run("discovery_entities", func(t *testing.T) {
+		w := newWorld(t, func(c *ck.Config) {
+			c.Content.EntityKinds["tag"] = kinds.EntityKind{Route: "tags", MembershipScopes: []kinds.MembershipScope{kinds.ContentScope}}
+			kind := c.Content.Kinds["article"]
+			kind.Entities = []string{"tag"}
+			c.Content.Kinds["article"] = kind
+		})
+		a := w.apps[0]
+		commerce := attachBilling(t, w, a)
+		configureDiscoverySignals(t, w, a)
+		a.server.Close()
+		must(t, a.engine.Close(t.Context()))
+		var err error
+		a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+		must(t, err)
+		a.server = mountEngine(t, a.engine)
+		owner, token, channel := ownedEntity(t, w, a, "TypeScript owned channel")
+		reader, readerToken := w.person(t, 0)
+		persona, err := w.auth.Persona("app")
+		must(t, err)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(owner.ID), persona.OwnerRole())
+		paid, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &access.Rule{Level: access.PPV}, Text: map[string]catalog.Text{"en": {Title: "Purchased TypeScript library", Body: "Granted body"}}})
+		must(t, err)
+		_, err = a.engine.Client().PostContentPublish(t.Context(), paid.ID, catalog.PublishInput{})
+		must(t, err)
+		key, err := access.ContentKey(a.cfg.Scope.AppID.String(), paid.ID)
+		must(t, err)
+		product, err := commerce.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: "typescript-library", DisplayName: "Library", Entitlements: []string{key.String()}})
+		must(t, err)
+		customer, err := billing.ParseCustomerID(reader.ID)
+		must(t, err)
+		_, err = commerce.merchant.UpdateCustomer(t.Context(), customer, billing.UpdateCustomerParams{})
+		must(t, err)
+		grants, err := commerce.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{IdempotencyKey: "typescript-access", Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}}})
+		must(t, err)
+		if len(grants) != 1 {
+			t.Fatal("real purchased library grant absent")
+		}
+		foreign := publishedArticle(t, w.apps[1], "TypeScriptNeedle foreign app")
+		must(t, a.engine.Start(t.Context()))
+		runTypeScriptContract(t, "discovery_entities", map[string]any{"base": a.server.URL + "/content", "owner": token, "reader": readerToken, "ownerID": owner.ID, "channel": string(channel.ID), "foreign": foreign.ID, "paid": paid.ID}, []string{
+			"EntitiesClient.create", "EntitiesClient.update", "EntitiesClient.remove", "EntitiesClient.mine", "DiscoveryClient.library", "DiscoveryClient.list", "DiscoveryClient.knownCards", "DiscoveryClient.search", "DiscoveryClient.typeahead", "DiscoveryClient.adminSuggestions", "DiscoveryClient.similar", "DiscoveryClient.recommendations", "DiscoveryClient.releaseDates", "DiscoveryClient.releases",
+		})
+	})
+
 }
