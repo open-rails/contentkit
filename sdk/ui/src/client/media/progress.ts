@@ -16,7 +16,8 @@ export async function readProgress(response: Response, receive: (update: MediaPr
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let pending = "", data = "", event = "", cursor = "";
-  const cancel = () => { void reader.cancel(); };
+  // Fetch abort may reject cancellation too; the read loop owns the outcome.
+  const cancel = () => { void reader.cancel().catch(() => {}); };
   let heartbeat: ReturnType<typeof setTimeout> | undefined;
   signal.addEventListener("abort", cancel, { once: true });
   try {
