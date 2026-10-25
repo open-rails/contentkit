@@ -1209,6 +1209,7 @@ func hiddenVersionEdit(v VersionInput) bool {
 		v.State = ""
 	}
 	v.Cover = nil
+	v.Access, v.ClearAccess = nil, false
 	return reflect.DeepEqual(v, VersionInput{})
 }
 

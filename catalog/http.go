@@ -129,7 +129,7 @@ var routes = []httpapi.Route[*Store]{
 		Request: OrderInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleOrderVersions)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publication is durably accepted and remains pending while its media is processing." + editorsDoc,
+		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes its cover, own access policy or state=published to restore it. Publication is durably accepted and remains pending while its media is processing." + editorsDoc,
 		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleUpdateVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,

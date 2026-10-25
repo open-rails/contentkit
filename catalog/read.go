@@ -140,6 +140,10 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			if !iv.editor {
 				out.Text, out.State, out.Access = nil, "", nil
 				out.Publication = nil
+				out.Segments = append([]Segment{}, out.readerSegments...)
+				for i := range out.Segments {
+					out.Segments[i].StartPage = ""
+				}
 			}
 			out.Segments = released(out.Segments)
 			s.lockVersion(it.kind, &out)
@@ -469,7 +473,9 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
  (SELECT jsonb_build_object('id',r.id,'state',CASE WHEN r.state='retiring' THEN 'running'
           WHEN r.state='completed' AND coalesce((r.result->>'waiting')::boolean,false) THEN 'waiting' ELSE r.state END,
           'scheduled_at',r.scheduled_at,'completed_at',r.completed_at,'error',r.error)
-  FROM ` + s.qs + `.content_publication_requests r WHERE r.tenant_id=v.tenant_id AND r.version_id=v.id AND r.current)
+  FROM ` + s.qs + `.content_publication_requests r WHERE r.tenant_id=v.tenant_id AND r.version_id=v.id AND r.current),
+ (SELECT r.result#>'{pages,segments}' FROM ` + s.qs + `.content_publication_requests r
+  WHERE r.tenant_id=v.tenant_id AND r.id=v.release_id AND r.version_id=v.id AND r.state IN ('retiring','completed'))
  FROM ` + s.t.versions + ` v WHERE tenant_id = $1 AND content_id = ANY($2)`
 	args := []any{s.tenant, ids}
 	if vid != "" {
@@ -485,9 +491,9 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
 	var vids []string
 	for rows.Next() {
 		v := &Version{Segments: []Segment{}, Cover: &Cover{}}
-		var access, attrs, publication []byte
+		var access, attrs, publication, readerSegments []byte
 		if err := rows.Scan(&v.ID, &v.Code, &v.Position, &v.Languages, &v.Traits, &v.Label, &v.State, &v.PublishAt, &v.PublishedAt, &access, &attrs,
-			&v.Pages, &v.DurationMS, &v.Width, &v.Height, &v.HasAudio, &v.Ordinal, &v.Cover.Image, &publication); err != nil {
+			&v.Pages, &v.DurationMS, &v.Width, &v.Height, &v.HasAudio, &v.Ordinal, &v.Cover.Image, &publication, &readerSegments); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -499,6 +505,12 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
 		}
 		if publication != nil {
 			if err := json.Unmarshal(publication, &v.Publication); err != nil {
+				rows.Close()
+				return nil, err
+			}
+		}
+		if readerSegments != nil {
+			if err := json.Unmarshal(readerSegments, &v.readerSegments); err != nil {
 				rows.Close()
 				return nil, err
 			}

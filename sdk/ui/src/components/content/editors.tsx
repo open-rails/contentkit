@@ -968,7 +968,7 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
   })), [pages]);
   const fields = useDraft(useMemo(() => ({ rows: rowsOf(version) }), [rowsOf, version]));
   const rows = fields.value.rows;
-  const { ranges, problem } = chapterRanges(pages.map((page) => page.id), rows.map((row) => row.startPage));
+  const { ranges, order, problem } = chapterRanges(pages.map((page) => page.id), rows.map((row) => row.startPage));
   const valid = problem === null;
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
@@ -980,7 +980,10 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
     if (!valid) return false;
     setSaved(false);
     const settle = fields.checkpoint();
-    const segments: SegmentInput[] = rows.map((row, i) => ({ id: row.id, position: i, title: row.title.trim() || undefined, start_page: row.startPage, release_at: fromLocalInput(row.release) }));
+    const segments: SegmentInput[] = order.map((index, position) => {
+      const row = rows[index]!;
+      return { id: row.id, position, title: row.title.trim() || undefined, start_page: row.startPage, release_at: fromLocalInput(row.release) };
+    });
     const out = await save.run(() => client.contents.setSegments(content.id, version.id, segments));
     if (!out) return false;
     const clean = settle({ rows: rowsOf(out) });
@@ -993,24 +996,25 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
     {heading && <h4 className="text-sm font-medium">{t("contentEditor.segments")}</h4>}
     <p className="text-sm text-muted-foreground">{t("contentEditor.chapterMarkersHint")}</p>
     {rows.length === 0 && <p className="text-muted-foreground">{t("contentEditor.noSegments")}</p>}
-    {rows.map((row, i) => {
+    {order.map((i, position) => {
+      const row = rows[i]!;
       const { start, end } = ranges[i]!;
       return <div key={row.id ?? i} className="flex flex-wrap items-center gap-2" data-ckui="segment-row">
-        <span className="w-6 text-xs tabular-nums text-muted-foreground">{i + 1}</span>
-        <Input className="h-8 w-40" aria-label={t("contentEditor.segmentTitle", { n: i + 1 })} placeholder={t("contentEditor.segmentTitlePlaceholder")} value={row.title} onChange={(e) => edit(i, { title: e.target.value })} />
-        <PagePicker label={t("contentEditor.segmentStart", { n: i + 1 })} pages={pages} value={row.startPage} onChange={(startPage) => edit(i, { startPage })} />
+        <span className="w-6 text-xs tabular-nums text-muted-foreground">{position + 1}</span>
+        <Input className="h-8 w-40" aria-label={t("contentEditor.segmentTitle", { n: position + 1 })} placeholder={t("contentEditor.segmentTitlePlaceholder")} value={row.title} onChange={(e) => edit(i, { title: e.target.value })} />
+        <PagePicker label={t("contentEditor.segmentStart", { n: position + 1 })} pages={pages} value={row.startPage} onChange={(startPage) => edit(i, { startPage })} />
         <output className="text-sm tabular-nums text-muted-foreground" data-ckui="chapter-range">{start >= 0 && end > start ? t("contentEditor.chapterRange", { from: start + 1, to: end }) : "—"}</output>
-        <Input className="h-8 w-48" type="datetime-local" aria-label={t("contentEditor.segmentRelease", { n: i + 1 })} value={row.release} onChange={(e) => edit(i, { release: e.target.value })} />
+        <Input className="h-8 w-48" type="datetime-local" aria-label={t("contentEditor.segmentRelease", { n: position + 1 })} value={row.release} onChange={(e) => edit(i, { release: e.target.value })} />
         <Button type="button" size="xs" variant="ghost" onClick={() => { setSaved(false); fields.edit((previous) => ({ rows: previous.rows.filter((_, j) => j !== i) })); }}>{t("common.remove")}</Button>
       </div>;
     })}
     {problem === "unselected" && <ErrorLine>{t("contentEditor.chapterStartRequired")}</ErrorLine>}
     {problem === "missing" && <ErrorLine>{t("contentEditor.chapterStartMissing")}</ErrorLine>}
     {problem === "duplicate" && <ErrorLine>{t("contentEditor.chapterStartAmbiguous")}</ErrorLine>}
-    {problem === "order" && <ErrorLine>{t("contentEditor.chapterStartsOrdered")}</ErrorLine>}
     <div className="flex flex-wrap items-center gap-2">
       <Button type="button" size="sm" variant="outline" onClick={() => {
-        const next = ranges.length ? ranges[ranges.length - 1]!.start + 1 : 0;
+        const last = order.at(-1);
+        const next = last === undefined ? 0 : ranges[last]!.start + 1;
         setSaved(false);
         fields.edit((previous) => ({ rows: [...previous.rows, { title: "", startPage: pages[next]?.id ?? "", release: "" }] }));
       }}>{t("contentEditor.addSegment")}</Button>

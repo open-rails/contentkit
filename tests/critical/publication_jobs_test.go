@@ -21,6 +21,15 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	admin, reader := a.engine.Client(), a.client("")
+	fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
+	must(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		must(t, fleet.Stop(ctx))
+	})
+	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
+	queue := catalog.QueueFor(a.cfg.Scope.AppID.String())
 	base := w.clock.now()
 	versionAt, parentAt, audienceAt := base.Add(30*time.Minute), base.Add(time.Hour), base.Add(2*time.Hour)
 	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery",
@@ -39,19 +48,21 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 			requireError(t, err, 404, "not_found")
 		}
 		w.clock.set(parentAt)
-		locked, err := reader.GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
+		_, err := reader.GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
+		// Reschedule before execution. A previously queued date must never
+		// publish against the newer accepted parent boundary.
+		later := parentAt.Add(30 * time.Minute)
+		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: &later})
 		must(t, err)
-		if !locked.Live || locked.Body != "" || locked.Decision.Allowed {
-			t.Fatalf("parent boundary exposed wrong state: %+v", locked)
-		}
+		_, err = reader.GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
 	})
 	t.Run("CK-J05-S06_concurrent_recorders_catch_up_each_fact_once", func(t *testing.T) {
-		w.clock.set(audienceAt)
-		open, err := reader.GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
-		must(t, err)
-		if !open.Decision.Allowed || open.Body != "Embargoed edition" {
-			t.Fatal("reader required a recorder to expose the matured release")
-		}
+		actual := audienceAt.Add(time.Hour)
+		w.clock.set(actual)
+		_, err := reader.GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
 		before, err := admin.ListEvents(t.Context(), catalog.EventQuery{})
 		must(t, err)
 		for _, event := range before.Events {
@@ -59,19 +70,11 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 				t.Fatalf("unstarted recorder already caught up: %+v", event)
 			}
 		}
-		fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
-		must(t, err)
-		t.Cleanup(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			must(t, fleet.Stop(ctx))
-		})
-		must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 		// Insert several real jobs before starting their two-worker queue. The
 		// schedule's own startup job may race them; all share the same recorder.
 		ids := []int64{}
 		for range 4 {
-			job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.Queue})
+			job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: queue})
 			must(t, err)
 			ids = append(ids, job.Job.ID)
 		}
@@ -89,6 +92,11 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 			}
 			return true
 		})
+		open, err := reader.GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
+		must(t, err)
+		if !open.Live || !open.Decision.Allowed || open.Body != "Embargoed edition" {
+			t.Fatal("completed publication did not open the due audience")
+		}
 		check := func() {
 			t.Helper()
 			page, err := admin.ListEvents(t.Context(), catalog.EventQuery{After: before.NextCursor})
@@ -99,8 +107,8 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 					continue
 				}
 				counts[event.Type]++
-				if (event.Type == "content.published" || event.Type == "version.published") && !event.OccurredAt.Equal(parentAt) {
-					t.Fatalf("recorder changed effective publication instant: %+v", event)
+				if (event.Type == "content.published" || event.Type == "version.published") && !event.OccurredAt.Equal(actual) {
+					t.Fatalf("publication did not record actual completed instant: %+v", event)
 				}
 			}
 			if counts["content.published"] != 1 || counts["version.published"] != 1 || counts["version.audience_released"] != 1 {
@@ -108,7 +116,7 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 			}
 		}
 		check()
-		job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.Queue})
+		job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: queue})
 		must(t, err)
 		waitFor(t, func() bool {
 			row, err := fleet.JobGet(t.Context(), job.Job.ID)

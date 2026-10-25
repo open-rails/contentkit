@@ -1249,8 +1249,9 @@ Manifest order determines each chapter's files up to the next marker or the
 end. Inserting `017c.jpg` or `019b.jpg` before `020.jpg` includes those files in
 chapter 1 automatically. Hashes and original names remain file metadata; they
 are not chapter membership lists. Preserve a returned chapter `id` when editing
-its marker or title. Missing or reordered markers require correction instead
-of silently selecting another file.
+its marker or title. Reordering files moves chapters with their markers; titles
+and schedules follow the marker. Missing or duplicate markers require correction
+instead of silently selecting another file.
 
 Every chapter shares its version's access policy. Publication moves the selected
 files from that version's `future` area into `public` or `private`; one item

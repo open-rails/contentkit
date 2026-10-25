@@ -19,10 +19,19 @@ test("inserted pages follow manifest order up to the next chapter marker", () =>
   assert.deepEqual(reordered.slice(moved.ranges[1]!.start, moved.ranges[1]!.end), ["pages/020.jpg", "pages/017c.jpg"]);
 });
 
-test("missing, duplicate and reordered start markers cannot silently retarget a chapter", () => {
+test("chapter titles and schedules follow their marker when manifest order crosses markers", () => {
+  const before = ["pages/001.jpg", "pages/020.jpg", "pages/041.jpg"];
+  const after = ["pages/020.jpg", "pages/021.jpg", "pages/001.jpg", "pages/041.jpg"];
+  const chapters = [{ marker: before[0]!, title: "One" }, { marker: before[1]!, title: "Two" }, { marker: before[2]!, title: "Three" }];
+  const result = chapterRanges(after, chapters.map((chapter) => chapter.marker));
+  assert.equal(result.problem, null);
+  assert.deepEqual(result.order.map((index) => chapters[index]!.title), ["Two", "One", "Three"]);
+  assert.deepEqual(after.slice(result.ranges[1]!.start, result.ranges[1]!.end), ["pages/020.jpg", "pages/021.jpg"]);
+});
+
+test("missing and duplicate start markers cannot silently retarget a chapter", () => {
   assert.equal(chapterRanges(["pages/001.jpg", "pages/020.jpg"], ["pages/missing.jpg"]).problem, "missing");
-  assert.equal(chapterRanges(["pages/001.jpg", "pages/020.jpg"], ["pages/020.jpg", "pages/001.jpg"]).problem, "order");
-  assert.equal(chapterRanges(["pages/001.jpg", "pages/020.jpg"], ["pages/001.jpg", "pages/001.jpg"]).problem, "order");
+  assert.equal(chapterRanges(["pages/001.jpg", "pages/020.jpg"], ["pages/001.jpg", "pages/001.jpg"]).problem, "duplicate");
   assert.equal(chapterRanges(["pages/001.jpg", "pages/001.jpg"], ["pages/001.jpg"]).problem, "duplicate");
   assert.equal(chapterRanges(["pages/001.jpg"], [""]).problem, "unselected");
 });
