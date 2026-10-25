@@ -12,6 +12,28 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
+// The public media read API is rate limited. Observe publication at under two
+// requests per second rather than turning a storage wait into a 429 burst.
+func waitForChapterPublication(t *testing.T, ready func() bool) {
+	t.Helper()
+	deadline := time.NewTimer(45 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(550 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if ready() {
+			return
+		}
+		select {
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		case <-deadline.C:
+			t.Fatal("publication did not reach the expected state within 45 seconds")
+		case <-tick.C:
+		}
+	}
+}
+
 func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
@@ -34,7 +56,7 @@ func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
 	var oldURL string
-	waitForWithin(t, 45*time.Second, func() bool {
+	waitForChapterPublication(t, func() bool {
 		view, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 		if err != nil {
 			return false
@@ -56,7 +78,7 @@ func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 	if updated.Segments[1].ReleasedAt != nil || updated.Segments[1].ID != chapters.Segments[1].ID {
 		t.Fatalf("future date did not withdraw the same chapter intent: %+v", updated.Segments[1])
 	}
-	waitForWithin(t, 45*time.Second, func() bool {
+	waitForChapterPublication(t, func() bool {
 		view, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 		if err != nil {
 			return false
@@ -70,7 +92,7 @@ func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 		}
 		return first
 	})
-	waitForWithin(t, 45*time.Second, func() bool {
+	waitForChapterPublication(t, func() bool {
 		response, err := http.Get(oldURL)
 		if err != nil {
 			return false
@@ -85,7 +107,7 @@ func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 	w.clock.set(future.Add(time.Second))
 	_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, input)
 	must(t, err)
-	waitForWithin(t, 45*time.Second, func() bool {
+	waitForChapterPublication(t, func() bool {
 		view, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 		if err != nil {
 			return false
@@ -124,7 +146,7 @@ func TestIndependentChaptersSkipUnreleasedMiddle(t *testing.T) {
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
-	waitForWithin(t, 45*time.Second, func() bool {
+	waitForChapterPublication(t, func() bool {
 		view, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 		if err != nil {
 			return false
