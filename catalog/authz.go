@@ -72,6 +72,9 @@ func (s *Store) entityAllowed(ctx context.Context, q Querier, actor access.Actor
 		return nil, err
 	}
 	for id, g := range found {
+		if s.cfg.EntityKinds[g.kind].AuthScope && g.scope == "" {
+			continue
+		}
 		permissions := []string{access.EntityContentWrite(g.kind)}
 		if creating {
 			permissions = append(permissions, access.EntityContentCreate(g.kind))

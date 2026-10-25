@@ -177,7 +177,7 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 			continue
 		}
 		res := resolve.Resolution{Ref: contentref.New(t.e.cfg.Tenant, g.Kind, string(g.ID)), Visible: true, Accessible: true, Owner: g.OwnerUserID}
-		if cfg.EntityKinds[g.Kind].Owner == "user" || cfg.EntityKinds[g.Kind].AuthScope {
+		if (cfg.EntityKinds[g.Kind].Owner == "user" || cfg.EntityKinds[g.Kind].AuthScope) && (!cfg.EntityKinds[g.Kind].AuthScope || g.AuthScope != "") {
 			res.OwnerEntity = &resolve.OwnerEntity{Kind: g.Kind, ID: string(g.ID), Owner: g.OwnerUserID, Scope: g.AuthScope}
 		}
 		out[ref.Key()] = res

@@ -54,7 +54,7 @@ func (s *Store) staff(ctx context.Context) (bool, error) {
 
 // edits reports whether the non-staff writer edits g.
 func (w *writer) edits(ctx context.Context, s *Store, g Entity) (bool, error) {
-	if g.Internal || (s.cfg.EntityKinds[g.Kind].Owner != "user" && !s.cfg.EntityKinds[g.Kind].AuthScope) {
+	if g.Internal || (s.cfg.EntityKinds[g.Kind].AuthScope && g.AuthScope == "") || (s.cfg.EntityKinds[g.Kind].Owner != "user" && !s.cfg.EntityKinds[g.Kind].AuthScope) {
 		return false, nil
 	}
 	return gate.EntityEditor(ctx, w.auth, w.actor, g.OwnerUserID, g.AuthScope, access.EntitySettingsManage(g.Kind))

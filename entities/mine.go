@@ -78,7 +78,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyEntityPage, error
 				return err
 			}
 			held := scopes[scope]
-			directOwner := m.owner && scope == ""
+			directOwner := m.owner && scope == "" && !s.cfg.EntityKinds[kind].AuthScope
 			m.owner = m.owner && (directOwner || slices.Contains(held, access.EntitySettingsManage(kind)))
 			m.editor = directOwner || slices.Contains(held, access.EntitySettingsManage(kind))
 			m.writer = directOwner || slices.Contains(held, access.EntityContentWrite(kind))

@@ -128,7 +128,7 @@ func (s *Store) contentEditors(ctx context.Context, ids []string) map[string]boo
 			if err := rows.Scan(&g.id, &g.kind, &owner, &g.scope); err != nil {
 				return err
 			}
-			if out[g.id] = owner && g.scope == ""; g.scope != "" {
+			if out[g.id] = owner && g.scope == "" && !s.cfg.EntityKinds[g.kind].AuthScope; g.scope != "" {
 				scoped = append(scoped, g)
 			}
 		}

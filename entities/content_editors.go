@@ -56,7 +56,7 @@ func (s *Store) contentAuthorityEntities(ctx context.Context, a auth.Authenticat
 			if err := rows.Scan(&id, &kind, &scope, &owner); err != nil {
 				return err
 			}
-			if scope == "" && owner || slices.ContainsFunc(permissions(kind), func(permission string) bool { return slices.Contains(held[scope], permission) }) {
+			if scope == "" && owner && !s.cfg.EntityKinds[kind].AuthScope || slices.ContainsFunc(permissions(kind), func(permission string) bool { return slices.Contains(held[scope], permission) }) {
 				out = append(out, id)
 			}
 		}

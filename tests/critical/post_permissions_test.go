@@ -1,6 +1,7 @@
 package critical_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/open-rails/authkit/authtest"
@@ -8,7 +9,9 @@ import (
 	ck "github.com/open-rails/contentkit"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -244,4 +247,80 @@ func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 	authtest.RevokeRole(t, w.tenant[0], group, iam.UserSubject(moderator.ID), w.channelModerator)
 	err = a.client(moderatorToken).PostCommentHold(t.Context(), comment.ID)
 	requireError(t, err, 403, "forbidden")
+}
+
+// Offline imports must not turn a not-yet-provisioned authorization scope into
+// the intentionally unscoped direct-owner model.
+func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	attachMedia(t, w, a)
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine) // no engine workers until the final phase.
+	owner := authtest.NewUser(t, a.tenant)
+	owner.TOTP = authtest.EnrollTOTP(t, a.tenant, owner)
+	token := authtest.SignIn(t, a.tenant, owner).AccessToken
+	caller := a.client(token)
+	id := contentref.NewID()
+	result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "pending-channel-scope", ProvisionScopes: true, Entities: []importer.EntityRecord{{ExternalID: "pending", ID: id, Kind: "channel", Slug: "pending-scope", OwnerUserID: owner.ID}}})
+	must(t, err)
+	if len(result.Failed) != 0 {
+		t.Fatalf("pending scope fixture: %+v", result.Failed)
+	}
+	channel, err := a.engine.Client().GetManageEntity(t.Context(), id, ck.GetManageEntityQuery{})
+	must(t, err)
+	if channel.AuthScope != "" {
+		t.Fatal("fixture processed scope before the checks")
+	}
+	input := catalog.ContentInput{Kind: "article", OwnerEntityID: id, Text: map[string]catalog.Text{"en": {Title: "Pending channel", Body: "Public content remains public"}}}
+	item, err := a.engine.Client().PostContents(t.Context(), input)
+	must(t, err)
+	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+	must(t, err)
+	gallery, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", OwnerEntityID: id, Text: map[string]catalog.Text{"en": {Title: "Pending gallery"}}})
+	must(t, err)
+	_, commentToken := w.person(t, 0)
+	comment := postComment(t, a.client(commentToken), item.ID, "Not moderated by metadata")
+	_, err = caller.PostContents(t.Context(), input)
+	requireError(t, err, 403, "forbidden")
+	_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Forbidden", Body: "no"})
+	requireError(t, err, 403, "forbidden")
+	update := entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Team updated"}}}
+	_, err = caller.PatchEntity(t.Context(), id, update)
+	requireError(t, err, 403, "forbidden")
+	err = caller.PostCommentHold(t.Context(), comment.ID)
+	requireError(t, err, 403, "forbidden")
+	payload := imageBytes(t)
+	requests := []media.PresignBody{
+		{Ref: media.RefBody{Kind: "channel", ID: id}, Path: "cover/probe.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)},
+		{Ref: media.RefBody{Kind: "gallery", ID: gallery.ID, Version: gallery.Versions[0].ID}, Path: "pages/probe.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)},
+	}
+	for _, request := range requests {
+		_, err = caller.PostMediaUploadPresign(t.Context(), request)
+		requireError(t, err, 403, "forbidden")
+	}
+	mine, err := caller.GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
+	must(t, err)
+	if len(mine.Entities) != 0 {
+		t.Fatal("pending scope advertised owner capabilities")
+	}
+	must(t, a.engine.Start(context.Background()))
+	waitFor(t, func() bool {
+		current, err := a.engine.Client().GetManageEntity(t.Context(), id, ck.GetManageEntityQuery{})
+		must(t, err)
+		return current.AuthScope != ""
+	})
+	_, err = caller.PostContents(t.Context(), input)
+	must(t, err)
+	_, err = caller.PatchEntity(t.Context(), id, update)
+	must(t, err)
+	must(t, caller.PostCommentHold(t.Context(), comment.ID))
+	for _, request := range requests {
+		_, err = caller.PostMediaUploadPresign(t.Context(), request)
+		must(t, err)
+	}
 }

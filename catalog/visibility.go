@@ -602,7 +602,7 @@ func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership,
 		if err := rows.Scan(&id, &o.comments, &o.creator, &g.ID, &g.Kind, &g.Owner, &g.Scope); err != nil {
 			return nil, err
 		}
-		if g.ID != "" && (s.cfg.EntityKinds[g.Kind].Owner == "user" || s.cfg.EntityKinds[g.Kind].AuthScope) {
+		if g.ID != "" && (s.cfg.EntityKinds[g.Kind].Owner == "user" || s.cfg.EntityKinds[g.Kind].AuthScope) && (!s.cfg.EntityKinds[g.Kind].AuthScope || g.Scope != "") {
 			o.entity = &g
 		}
 		out[id] = o
