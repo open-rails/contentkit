@@ -3,7 +3,9 @@ package versions
 import (
 	"context"
 	"encoding/json"
-	"math"
+	"errors"
+
+	"github.com/jackc/pgx/v5"
 	"slices"
 	"time"
 
@@ -17,15 +19,16 @@ import (
 // spans select existing files in the same canonical version; their URLs are
 // signed on demand. Locked previews sign only their permitted renditions.
 type ReaderPlan struct {
-	Content     string        `json:"content_id"`
-	Version     string        `json:"version_id"`
-	Publication string        `json:"publication_id"`
-	Pages       *int          `json:"pages,omitempty"`
-	Segments    []PlanSegment `json:"segments"`
-	Previews    []PlanPreview `json:"previews"`
-	Playback    *PlanPlayback `json:"playback,omitempty"`
-	Reader      *ReaderMeta   `json:"reader,omitempty"`
-	Expires     int64         `json:"expires,omitempty"` // signed preview URL expiry, Unix seconds
+	NextReleaseAt *time.Time    `json:"next_release_at,omitempty"`
+	Content       string        `json:"content_id"`
+	Version       string        `json:"version_id"`
+	Publication   string        `json:"publication_id"`
+	Pages         *int          `json:"pages,omitempty"`
+	Segments      []PlanSegment `json:"segments"`
+	Previews      []PlanPreview `json:"previews"`
+	Playback      *PlanPlayback `json:"playback,omitempty"`
+	Reader        *ReaderMeta   `json:"reader,omitempty"`
+	Expires       int64         `json:"expires,omitempty"` // signed preview URL expiry, Unix seconds
 }
 
 // PlanSegment is one span of pages: a segment's (Position set) or pages
@@ -99,61 +102,43 @@ func previewPageCount(k *media.Kind, d decision, total int) int {
 
 // shows reports pages [start, end) shown: released, or to an editor.
 func (d decision) shows(end int) bool {
-	return d.res.Visible && (d.res.Editor || end <= released(d.segs, d.pages, d.now))
+	return d.res.Visible
 }
 
 // opens reports pages [start, end) open: the version opens, or they lie in
 // its rule's free segments.
 func (d decision) opens(end int) bool {
-	return d.res.Accessible || d.res.Editor || end <= freeEnd(d.segs, d.preview.Segments, d.pages)
+	return d.res.Accessible || d.res.Editor
 }
 
 // whole reports the whole version open: every segment released and the
 // version open, or to an editor. Its audio and downloads need it.
 func (d decision) whole() bool {
-	return d.res.Visible && (d.res.Editor || d.res.Accessible && released(d.segs, math.MaxInt, d.now) == math.MaxInt)
+	return d.res.Visible && (d.res.Editor || d.res.Accessible)
 }
 
-// decisions are actor's decisions on versions of kind, each over pages.
+// decisions use completed publication metadata. Chapter dates select work;
+// they never independently authorize or expose prepared media.
 func (s *Service) decisions(ctx context.Context, actor access.Actor, kind string, vs []Target, snapshots map[Target]pagesSnapshot) (map[Target]decision, error) {
 	res, err := s.decide(ctx, actor, kind, vs)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, len(vs))
-	for i, v := range vs {
-		ids[i] = v.Version
-	}
-	previews, err := s.previews(ctx, s.o.Pool, ids)
-	if err != nil {
-		return nil, err
-	}
-	segs, err := s.segments(ctx, s.o.Pool, ids)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[Target]decision, len(vs))
+	out := map[Target]decision{}
 	for _, v := range vs {
-		chapters := segs[v.Version]
-		anchored := slices.ContainsFunc(chapters, func(g segment) bool { return g.StartPage != "" })
-		snap, haveSnapshot := snapshots[v]
-		if anchored && !haveSnapshot {
+		snap, ok := snapshots[v]
+		if !ok {
 			p, err := s.current(ctx, s.o.Pool, v, kindPages)
 			if err != nil {
 				return nil, err
 			}
-			if p == nil {
-				return nil, ErrNotReady
-			}
-			if err := json.Unmarshal(p.Source, &snap); err != nil {
-				return nil, err
+			if p != nil {
+				if err := json.Unmarshal(p.Source, &snap); err != nil {
+					return nil, err
+				}
 			}
 		}
-		chapters, err = resolveChapterStarts(chapters, snap.Pages)
-		if err != nil {
-			return nil, err
-		}
-		out[v] = decision{res: res[v], preview: previews[v.Version], segs: chapters, pages: len(snap.Pages), anchored: anchored, now: s.o.Now()}
+		out[v] = decision{res: res[v], segs: snap.Segments, pages: len(snap.Pages), anchored: true, now: s.o.Now()}
 	}
 	return out, nil
 }
@@ -200,6 +185,11 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 	if err != nil {
 		return nil, err
 	}
+	if active, err := s.activeRelease(ctx, s.o.Pool, t); err != nil {
+		return nil, err
+	} else if active != nil && active.View != nil {
+		m = active.View
+	}
 	paths := map[string]string{}
 	for _, f := range m.Files {
 		if f.Blob != "" && !f.Gone {
@@ -218,9 +208,13 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 			}
 		}
 	}
-	cut := released(d.segs, len(snap.Pages), d.now)
+	cut := len(snap.Pages)
 	length := d.res.Accessible || d.res.Editor || s.o.Kinds.Kinds[v.Kind].LockedView().Shows(kinds.ShowLength)
 	plan := &ReaderPlan{Content: t.Content, Version: t.Version, Publication: p.ID, Segments: []PlanSegment{}, Previews: []PlanPreview{}}
+	if err := s.o.Pool.QueryRow(ctx, `SELECT scheduled_at FROM `+s.publicationRequestsTable()+`
+ WHERE tenant_id=$1 AND version_id=$2 AND current AND state IN ('pending','waiting','running','failed')`, s.o.Tenant, t.Version).Scan(&plan.NextReleaseAt); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
 	if length {
 		n := len(snap.Pages)
 		plan.Pages = &n

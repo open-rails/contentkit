@@ -30,7 +30,8 @@ const pageCount = `CASE jsonb_typeof(source->'pages') WHEN 'array' THEN jsonb_ar
 
 // pagesSnapshot is a version's pages as a publication freezes them.
 type pagesSnapshot struct {
-	Pages []page `json:"pages"`
+	Pages    []page    `json:"pages"`
+	Segments []segment `json:"segments,omitempty"`
 }
 
 type page struct {

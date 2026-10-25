@@ -604,6 +604,8 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 			}
 		}
 		item.Kind().syncPreviews(prior, m)
+		mutation.effects.Renames = o.renames
+		mutation.effects.RemovedPaths = o.removed
 		if n := m.uploads(); n > MaxUploads && n > uploads {
 			return tooManyFiles(MaxUploads, "an item holds at most %d uploads", MaxUploads)
 		}

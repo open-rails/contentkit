@@ -104,6 +104,13 @@ func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *media.Kind, v T
 	} else if err != nil {
 		return err
 	}
+	// Prepared future media is editor state. Reader counts and playability
+	// follow the active storage view once any publication has committed.
+	if active, err := s.activeRelease(ctx, tx, v); err != nil {
+		return err
+	} else if active != nil && active.View != nil {
+		m = active.View
+	}
 	f := factsOf(k, m, s.player(k.Name))
 	err = tx.QueryRow(ctx, `UPDATE `+s.t.versions+` SET pages = $4, duration_ms = $5, width = $6, height = $7, has_audio = $8, playable = $9, updated_at = now()
 WHERE tenant_id = $1 AND id = $2 AND content_id = $3

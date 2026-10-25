@@ -152,9 +152,11 @@ func (op Op) metaLimit() int {
 
 // opRun applies commit ops to a manifest of kind k.
 type opRun struct {
-	k   *Kind
-	m   *Manifest
-	ref contentref.ContentRef
+	renames map[string]string
+	removed []string
+	k       *Kind
+	m       *Manifest
+	ref     contentref.ContentRef
 	// objects are the put names, HEAD-checked in the item's folder.
 	objects map[string]Object
 	// copies are each copy op's source upload and outputs (by op index),
@@ -288,6 +290,7 @@ func (o *opRun) dropUploads(paths []string) {
 	if len(paths) == 0 {
 		return
 	}
+	o.removed = append(o.removed, paths...)
 	o.m.Files = slices.DeleteFunc(o.m.Files, func(file File) bool {
 		return slices.Contains(paths, file.Path) || !file.IsUpload() && slices.Contains(paths, file.From)
 	})
@@ -737,6 +740,15 @@ func (o *opRun) rename(f File, to string) error {
 	if k.Uploads[g].Named {
 		return uploadErr(CodeInvalid, "named uploads keep their name")
 	}
+	if o.renames == nil {
+		o.renames = map[string]string{}
+	}
+	for before, after := range o.renames {
+		if after == f.Path {
+			o.renames[before] = to
+		}
+	}
+	o.renames[f.Path] = to
 	for j := range m.Files {
 		x := &m.Files[j]
 		switch {

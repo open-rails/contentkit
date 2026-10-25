@@ -16,12 +16,14 @@ import (
 // segment is one of a version's segments (content_segments): an ordered
 // page range with its own release time; none releases with its version.
 type segment struct {
-	Position  int        `json:"position"`
-	Title     string     `json:"title,omitempty"`
-	StartPage string     `json:"start_page,omitempty"`
-	Start     int        `json:"start"`
-	End       int        `json:"end"`
-	ReleaseAt *time.Time `json:"release_at,omitempty"`
+	ID         string     `json:"id,omitempty"`
+	Position   int        `json:"position"`
+	Title      string     `json:"title,omitempty"`
+	StartPage  string     `json:"start_page,omitempty"`
+	Start      int        `json:"start"`
+	End        int        `json:"end"`
+	ReleaseAt  *time.Time `json:"release_at,omitempty"`
+	ReleasedAt *time.Time `json:"released_at,omitempty"`
 }
 
 func legacyPageRanges(segs []segment) bool {
@@ -30,7 +32,7 @@ func legacyPageRanges(segs []segment) bool {
 
 // segments loads each version's segments in page order.
 func (s *Service) segments(ctx context.Context, q querier, versions []string) (map[string][]segment, error) {
-	rows, err := q.Query(ctx, `SELECT version_id, position, title, coalesce(start_index, 0), coalesce(end_index, 0), release_at, coalesce(start_page, '') FROM `+s.t.segments+`
+	rows, err := q.Query(ctx, `SELECT version_id, position, title, coalesce(start_index, 0), coalesce(end_index, 0), release_at, coalesce(start_page, ''),id,released_at FROM `+s.t.segments+`
 WHERE tenant_id = $1 AND version_id = ANY($2) ORDER BY version_id, coalesce(start_index, position), position`, s.o.Tenant, versions)
 	if err != nil {
 		return nil, err
@@ -40,7 +42,7 @@ WHERE tenant_id = $1 AND version_id = ANY($2) ORDER BY version_id, coalesce(star
 	for rows.Next() {
 		var v string
 		var g segment
-		if err := rows.Scan(&v, &g.Position, &g.Title, &g.Start, &g.End, &g.ReleaseAt, &g.StartPage); err != nil {
+		if err := rows.Scan(&v, &g.Position, &g.Title, &g.Start, &g.End, &g.ReleaseAt, &g.StartPage, &g.ID, &g.ReleasedAt); err != nil {
 			return nil, err
 		}
 		out[v] = append(out[v], g)
@@ -56,7 +58,7 @@ func resolveChapterStarts(segs []segment, pages []page) ([]segment, error) {
 	}
 	positions := make(map[string][]int, len(pages))
 	for i, page := range pages {
-		id := sourcePageHash(page)
+		id := page.Path
 		if id != "" {
 			positions[id] = append(positions[id], i)
 		}

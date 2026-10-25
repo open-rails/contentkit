@@ -14,10 +14,8 @@ import (
 // (every version's item) or one version.
 
 // RepublishTx queues versions' publication after their segments changed.
-func (s *Service) RepublishTx(context.Context, pgx.Tx, []Target) error {
-	// Access and chapters are queried live. They do not alter the immutable
-	// ready-file snapshot or require media processing.
-	return nil
+func (s *Service) RepublishTx(ctx context.Context, tx pgx.Tx, targets []Target) error {
+	return s.SchedulePublicationTx(ctx, tx, targets)
 }
 
 // DeleteTx permanently fences targets while their catalog rows are locked.

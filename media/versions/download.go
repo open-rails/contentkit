@@ -355,20 +355,13 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	return &FileDownload{URL: u, Name: name, Type: f.Type, Size: f.Size, ExpiresAt: exp}, nil
 }
 
-// downloadablePages is a contiguous released prefix. Image-only previews do
-// not grant downloads; free chapters do. Editors retain their explicit access.
+// downloadablePages counts the completed reader snapshot, including later
+// chapters released independently. The item policy opens all those files.
 func downloadablePages(d decision, total int) int {
-	if !d.res.Visible {
+	if !d.res.Visible || !d.res.Accessible && !d.res.Editor {
 		return 0
 	}
-	if d.res.Editor {
-		return total
-	}
-	end := released(d.segs, total, d.now)
-	if !d.res.Accessible {
-		end = min(end, freeEnd(d.segs, d.preview.Segments, total))
-	}
-	return max(0, min(end, total))
+	return total
 }
 
 // Archive opens the archive a Download granted. The ticket binds its viewer,
@@ -513,20 +506,6 @@ func (s *Service) downloadSnapshot(ctx context.Context, k *media.Kind, t Target,
 	if err := json.Unmarshal(p.Source, &snap); err != nil {
 		return nil, err
 	}
-	var selected []media.File
-	for _, f := range m.Files {
-		if k.IsPageUpload(f) && !f.Unattached && !f.Gone && media.PageIncluded(f) {
-			selected = append(selected, f)
-		}
-	}
-	if len(selected) != len(snap.Pages) {
-		return nil, ErrNotReady
-	}
-	for i, f := range selected {
-		if f.Path != snap.Pages[i].Path || f.Key() != snap.Pages[i].Source {
-			return nil, ErrNotReady
-		}
-	}
 	return map[Target]pagesSnapshot{t: snap}, nil
 }
 
@@ -555,7 +534,7 @@ func (s *Service) ask(ctx context.Context, actor access.Actor, v version, title 
 	var content access.Rule
 	var override *access.Rule
 	var released *time.Time
-	if err := s.o.Pool.QueryRow(ctx, `SELECT c.access, v.access,
+	if err := s.o.Pool.QueryRow(ctx, `SELECT c.access, coalesce(v.released_access,v.access),
 GREATEST(coalesce(c.published_at,c.publish_at), coalesce(v.published_at,v.publish_at))
 FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
 WHERE v.tenant_id = $1 AND v.content_id = $2 AND v.id = $3`, s.o.Tenant, v.Content, v.Version).Scan(&content, &override, &released); err != nil {
@@ -680,10 +659,17 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 	} else if err != nil {
 		return media.Item{}, nil, err
 	}
-	if m.Meta[forkMeta] != nil {
+	if m.Meta[forkMeta] != nil || !m.PublicationLayoutReady() {
 		return media.Item{}, nil, ErrNotReady
 	}
-	return item, m, nil
+	active, err := s.activeRelease(ctx, s.o.Pool, t)
+	if err != nil {
+		return media.Item{}, nil, err
+	}
+	if active == nil || active.View == nil {
+		return media.Item{}, nil, ErrNotReady
+	}
+	return item, active.View.Clone(), nil
 }
 
 // zipPages are the files the archive zips, in manifest order: each page's
@@ -698,10 +684,11 @@ func zipPages(k *media.Kind, z *media.Private, m *media.Manifest) ([]media.File,
 		if f.Fail() != nil {
 			return nil, ErrNoDownload
 		}
-		if f.Blob == "" {
-			return nil, ErrNotReady
-		}
 		if strings.HasPrefix(f.Path, z.Zip) {
+			area, _, ok := layout.SplitBlobRef(f.Blob)
+			if !ok || area != layout.AreaPublic && area != layout.AreaPrivate {
+				return nil, ErrNoDownload
+			}
 			out = append(out, f)
 			continue
 		}

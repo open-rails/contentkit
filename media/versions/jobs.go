@@ -3,7 +3,6 @@ package versions
 import (
 	"context"
 	"errors"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -47,6 +46,7 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-versions", func(_ context.Context, cfg *river.Config) error {
 		for _, add := range []func(*river.Workers) error{
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &publishWorker{s: s}) },
+			s.addReleaseWorker,
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &forkWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &bodyCopyWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &playableWorker{s: s}) },
@@ -131,7 +131,8 @@ func (w *publishWorker) Work(ctx context.Context, job *river.Job[publishArgs]) e
 	return outcome(err)
 }
 
-// publish records ready-file snapshots and the independent cover teaser.
+// publish refreshes prepared metadata and schedules durable placement. Preparing
+// media alone never replaces the completed reader snapshot.
 func (s *Service) publish(ctx context.Context, t Target) error {
 	v, err := s.one(ctx, t)
 	if err != nil {
@@ -141,46 +142,17 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 	if err != nil {
 		return err
 	}
-	// Metadata facts and facet refresh belong to this existing metadata worker,
-	// including player versions that have no reader snapshot configuration.
 	if err := s.refreshMediaFacts(ctx, v.Kind, t); err != nil {
 		return err
 	}
-	if k.Publish == nil {
-		return nil
+	if k.Publish != nil {
+		if err := s.preparePageSelection(ctx, k, t); err != nil && !errors.Is(err, media.ErrNotFound) {
+			return err
+		}
 	}
-	// The first presign creates the manifest before any upload; publishing it
-	// would answer readers an empty plan. That upload's commit queues the next pass.
-	m, err := s.manifest(ctx, k, t)
-	if err != nil {
-		return err
-	}
-	if !slices.ContainsFunc(m.Files, func(f media.File) bool { return f.IsUpload() && !f.Unattached }) {
-		return nil
-	}
-	if err := s.preparePageSelection(ctx, k, t); err != nil && !errors.Is(err, media.ErrNotFound) {
-		return err
-	}
-	ready, err := s.publishPages(ctx, k, t)
-	if err != nil {
-		return err
-	}
-	if !ready {
-		return ErrNotReady
-	}
-	if err := s.applyCover(ctx, k, t); err != nil {
-		return err
-	}
-	if k.Publish.Playback == "" {
-		return nil
-	}
-	if ready, err = s.publishPlayback(ctx, k, t); err != nil {
-		return err
-	}
-	if !ready {
-		return ErrNotReady
-	}
-	return nil
+	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+		return s.SchedulePublicationTx(ctx, tx, []Target{t})
+	})
 }
 
 type forkWorker struct {

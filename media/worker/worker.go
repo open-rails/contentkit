@@ -186,6 +186,9 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	// synchronous catalog barrier as embedded writers before any DELETE.
 	registryConfig := c.Kinds.Config()
 	registryConfig.Hooks.BeforeRetire = versions.RetirementBarrier(c.Pool, c.ContentSchema, c.Kinds)
+	paths := versions.ChapterPathHooks(c.Pool, c.ContentSchema, c.Kinds, publish)
+	registryConfig.Hooks.ValidatePathsChanged = paths.ValidatePathsChanged
+	registryConfig.Hooks.PathsChanged = paths.PathsChanged
 	c.Kinds, err = media.NewRegistry(registryConfig)
 	if err != nil {
 		return nil, err

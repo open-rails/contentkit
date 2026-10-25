@@ -119,15 +119,8 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 		if !r.Visible {
 			continue
 		}
-		k, _ := s.reg.Kind(ref.ContentKind)
 		rr := resolve.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner, Accessible: r.Accessible}
-		if k.Publish != nil && !r.Editor {
-			files, err := s.readerFiles(ctx, actor, k, found[ref.Key()])
-			if err != nil {
-				return err
-			}
-			rr.MediaFiles = files
-		}
+
 		out[ref.Key()] = rr
 	}
 	return nil
@@ -268,9 +261,6 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
 		return err
 	}
-	if k.Publish == nil {
-		return nil
-	}
 	return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
 
 }
@@ -296,16 +286,18 @@ func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.
 	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
 		return err
 	}
-	if k.Publish != nil {
-		return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
-	}
-	return nil
+	return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
 }
 
 // beforeRetire serializes snapshot invalidation with publishers. A publisher
 // that already holds the version row finishes first and is then invalidated;
 // one that follows reads the newly committed manifest. No media lock is taken.
 func (s *Service) beforeRetire(ctx context.Context, ref contentref.ContentRef, current *media.Manifest) error {
+	if ctx.Value(releaseMutationContextKey{}) == true || current.PublicationLayoutReady() {
+		// The completed delivery owns exact reader allocations until the
+		// publisher commits its replacement and retires the old delivery.
+		return nil
+	}
 	k, err := s.reg.Kind(ref.ContentKind)
 	if err != nil || !k.Versions || ref.Version() == "" || k.Publish == nil {
 		return nil
@@ -324,6 +316,9 @@ func (s *Service) beforeRetire(ctx context.Context, ref contentref.ContentRef, c
 // publications at once when an edit removed or replaced what they show, and
 // queues its publication.
 func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) error {
+	if ctx.Value(releaseMutationContextKey{}) == true {
+		return nil
+	}
 	k, err := s.reg.Kind(ref.ContentKind)
 	if err != nil || !k.Versions || ref.Version() == "" {
 		return nil
@@ -345,11 +340,10 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 		if err := s.recordFacts(ctx, tx, vk, v, m); err != nil {
 			return err
 		}
-		if vk.Publish == nil {
-			return nil
-		}
-		if withdraw, err = s.withdrawStaleTx(ctx, tx, vk, v, m); err != nil {
-			return err
+		if !m.PublicationLayoutReady() && vk.Publish != nil {
+			if withdraw, err = s.withdrawStaleTx(ctx, tx, vk, v, m); err != nil {
+				return err
+			}
 		}
 		return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
 	})
