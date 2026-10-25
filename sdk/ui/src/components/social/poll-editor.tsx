@@ -63,7 +63,7 @@ export function PollEditor(p: PollEditorProps) {
   const { t } = m;
   const ed = usePollEditor(p.poll ?? null, { client: p.client });
   const report = useErrorReporter(p.onError);
-  const [error, setError] = useState<ContentKitError | string | null>(null);
+  const [error, setError] = useState<ContentKitError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const fail = (e: unknown) => {
@@ -96,7 +96,7 @@ export function PollEditor(p: PollEditorProps) {
           maxOptions={p.maxOptions ?? 10}
           editor={ed}
           onError={fail}
-          onInvalid={(msg) => setError(msg)}
+          onAttempt={() => setError(null)}
           onSaved={(poll) => {
             setError(null);
             setNotice(t("pollEditor.saved"));
@@ -110,7 +110,7 @@ export function PollEditor(p: PollEditorProps) {
           defaultLanguage={p.defaultLanguage}
           freeText={!!p.freeText}
           maxOptions={p.maxOptions ?? 10}
-          onInvalid={(msg) => setError(msg)}
+          onAttempt={() => setError(null)}
           onCreate={async (input, images) => {
             setError(null);
             try {
@@ -124,7 +124,7 @@ export function PollEditor(p: PollEditorProps) {
           }}
         />
       )}
-      {error && <ErrorLine>{typeof error === "string" ? error : contentError(m, error)}</ErrorLine>}
+      {error && <ErrorLine>{contentError(m, error)}</ErrorLine>}
       {notice && !error && (
         <p role="status" className="text-sm text-muted-foreground">
           {notice}
@@ -161,7 +161,7 @@ function CreateFields(p: {
   defaultLanguage?: string;
   freeText: boolean;
   maxOptions: number;
-  onInvalid: (message: string) => void;
+  onAttempt: () => void;
   onCreate: (input: Parameters<ReturnType<typeof usePollEditor>["create"]>[0], images: { question: File | null; options: (File | null)[] }) => Promise<void>;
 }) {
   const { t } = useMessages();
@@ -175,6 +175,8 @@ function CreateFields(p: {
   const [closesAt, setClosesAt] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [options, setOptions] = useState<Draft[]>(() => [draft(), draft()]);
+  const [tried, setTried] = useState(false);
+  const questionRef = useRef<HTMLTextAreaElement>(null);
   const set = (key: string, patch: Partial<Draft>) => setOptions((os) => os.map((o) => (o.key === key ? { ...o, ...patch } : o)));
   const move = (from: number, to: number) =>
     setOptions((os) => {
@@ -182,14 +184,18 @@ function CreateFields(p: {
       next.splice(to, 0, ...next.splice(from, 1));
       return next;
     });
+  const choice = kind === "multiple_choice";
+  const kept = options.filter((o) => o.label.trim() || o.image);
+  // Shown after the first Create and gone as soon as the field is fixed.
+  const questionError = tried && !question.trim() ? t("pollEditor.questionRequired") : null;
+  const unlabelled = kept.some((o) => !o.label.trim());
+  const tooFew = !unlabelled && kept.length < 2;
+  const optionsError = !tried || !choice ? null : unlabelled ? t("pollEditor.optionRequired") : tooFew ? t("pollEditor.minOptions") : null;
   const submit = () => {
-    if (!question.trim()) return p.onInvalid(t("pollEditor.questionRequired"));
-    const kept = options.filter((o) => o.label.trim() || o.image);
-    if (kind === "multiple_choice") {
-      if (kept.some((o) => !o.label.trim())) return p.onInvalid(t("pollEditor.optionRequired"));
-      if (kept.length < 2) return p.onInvalid(t("pollEditor.minOptions"));
-    }
-    const choice = kind === "multiple_choice";
+    p.onAttempt();
+    setTried(true);
+    if (!question.trim()) return questionRef.current?.focus();
+    if (choice && (unlabelled || tooFew)) return;
     void p.onCreate(
       {
         kind,
@@ -210,8 +216,17 @@ function CreateFields(p: {
         submit();
       }}
     >
-      <Field id={`${ids}-q`} label={t("pollEditor.question")}>
-        <Textarea id={`${ids}-q`} rows={2} value={question} placeholder={t("pollEditor.questionPlaceholder")} onChange={(e) => setQuestion(e.target.value)} />
+      <Field id={`${ids}-q`} label={t("pollEditor.question")} error={questionError}>
+        <Textarea
+          ref={questionRef}
+          id={`${ids}-q`}
+          rows={2}
+          value={question}
+          placeholder={t("pollEditor.questionPlaceholder")}
+          aria-invalid={!!questionError || undefined}
+          aria-describedby={questionError ? `${ids}-q-error` : undefined}
+          onChange={(e) => setQuestion(e.target.value)}
+        />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field id={`${ids}-lang`} label={t("pollEditor.language")}>
@@ -255,7 +270,7 @@ function CreateFields(p: {
       {kind === "free_text" ? (
         <p className="text-muted-foreground">{t("pollEditor.freeTextHelp")}</p>
       ) : (
-        <fieldset className="grid gap-2">
+        <fieldset className="grid gap-2" aria-describedby={optionsError ? `${ids}-options-error` : undefined}>
           <legend className="mb-1.5 text-sm font-medium">{t("pollEditor.options")}</legend>
           <SortableList
             items={options}
@@ -272,6 +287,7 @@ function CreateFields(p: {
                 index={i}
                 label={o.label}
                 image={o.image}
+                invalid={!!optionsError && !o.label.trim() && (tooFew || !!o.image)}
                 onLabel={(label) => set(o.key, { label })}
                 onImage={(image) => set(o.key, { image })}
                 onRemove={options.length > 2 ? () => setOptions((os) => os.filter((x) => x.key !== o.key)) : undefined}
@@ -284,6 +300,11 @@ function CreateFields(p: {
             </Button>
           ) : (
             <p className="text-xs text-muted-foreground">{t("pollEditor.maxOptions", { max: p.maxOptions })}</p>
+          )}
+          {optionsError && (
+            <FieldError id={`${ids}-options-error`} alert>
+              {optionsError}
+            </FieldError>
           )}
         </fieldset>
       )}
@@ -300,7 +321,7 @@ function EditFields(p: {
   maxOptions: number;
   editor: ReturnType<typeof usePollEditor>;
   onError: (e: unknown) => void;
-  onInvalid: (message: string) => void;
+  onAttempt: () => void;
   onSaved: (poll: Poll) => void;
 }) {
   const m = useMessages();
@@ -313,6 +334,9 @@ function EditFields(p: {
   const [active, setActive] = useState(poll.is_active);
   const [added, setAdded] = useState("");
   const [removing, setRemoving] = useState<PollOption | null>(null);
+  const [tried, setTried] = useState(false);
+  const questionRef = useRef<HTMLTextAreaElement>(null);
+  const languageName = useLanguageName();
   const options = [...poll.options].sort((a, b) => a.position - b.position);
   const patch: PollUpdate = {};
   if (question.trim() !== poll.question) patch.question = question.trim();
@@ -322,19 +346,34 @@ function EditFields(p: {
   if (active !== poll.is_active) patch.is_active = active;
   const dirty = Object.keys(patch).length > 0;
   const act = (fn: () => Promise<unknown>) => void fn().catch(p.onError);
+  const questionError = tried && !question.trim() ? t("pollEditor.questionRequired") : null;
   return (
     <div className="grid gap-4">
       <form
         className="grid gap-4"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!question.trim()) return p.onInvalid(t("pollEditor.questionRequired"));
+          p.onAttempt();
+          setTried(true);
+          if (!question.trim()) return questionRef.current?.focus();
           if (dirty) act(async () => p.onSaved(await editor.update(patch)));
         }}
       >
-        <Field id={`${ids}-q`} label={t("pollEditor.question")}>
-          <Textarea id={`${ids}-q`} rows={2} value={question} onChange={(e) => setQuestion(e.target.value)} />
+        <Field id={`${ids}-q`} label={t("pollEditor.question")} error={questionError}>
+          <Textarea
+            ref={questionRef}
+            id={`${ids}-q`}
+            rows={2}
+            value={question}
+            aria-invalid={!!questionError || undefined}
+            aria-describedby={questionError ? `${ids}-q-error` : undefined}
+            onChange={(e) => setQuestion(e.target.value)}
+          />
         </Field>
+        <div className="grid gap-1.5">
+          <span className="text-sm font-medium">{t("pollEditor.language")}</span>
+          <span className="text-muted-foreground">{languageName(poll.language)}</span>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field id={`${ids}-live`} label={t("pollEditor.liveAt")}>
             <Input id={`${ids}-live`} type="datetime-local" value={liveAt} onChange={(e) => setLiveAt(e.target.value)} />
@@ -430,6 +469,7 @@ function OptionRow(p: {
   url?: string;
   votes?: number;
   disabled?: boolean;
+  invalid?: boolean;
   /** A new poll's label as typed. */
   onLabel?: (label: string) => void;
   /** An existing option's label, on blur or Enter. */
@@ -450,6 +490,7 @@ function OptionRow(p: {
         className="min-w-40 flex-1"
         value={label}
         aria-label={name}
+        aria-invalid={p.invalid || undefined}
         placeholder={name}
         disabled={p.disabled && !p.onLabel}
         onChange={(e) => {
@@ -535,12 +576,21 @@ function ImageField(p: { label: string; url?: string | null; compact?: boolean; 
   );
 }
 
-function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+function Field({ id, label, error, children }: { id: string; label: string; error?: string | null; children: ReactNode }) {
   return (
     <div className="grid gap-1.5">
       <Label htmlFor={id}>{label}</Label>
       {children}
+      {error && <FieldError id={`${id}-error`}>{error}</FieldError>}
     </div>
+  );
+}
+
+function FieldError({ id, alert, children }: { id: string; alert?: boolean; children: ReactNode }) {
+  return (
+    <p id={id} role={alert ? "alert" : undefined} className="text-xs text-destructive">
+      {children}
+    </p>
   );
 }
 
