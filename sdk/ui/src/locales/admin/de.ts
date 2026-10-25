@@ -149,6 +149,9 @@ export const admin: typeof en = {
     goesLive: "Geht am {date} live",
     wentLive: "Live seit {date}",
     closedOn: "Beendet am {date}",
+    question: "Frage",
+    votes: "Stimmen",
+    none: "Noch keine Umfragen.",
   },
   contentManager: {
     switchLanguage: "Sprache wechseln?",
