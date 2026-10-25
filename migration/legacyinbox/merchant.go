@@ -1,4 +1,4 @@
-package notification
+package legacyinbox
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/helpers/notify"
+	"github.com/open-rails/authkit/notify"
 )
 
 // ErrMerchantBinding rejects a source that is not the tenant's verified billing

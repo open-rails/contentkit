@@ -51,7 +51,6 @@ import (
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
-	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -78,7 +77,6 @@ type Engine struct {
 	chMu     sync.Mutex
 	ownCH    clickhouse.Conn // opened from Config.ClickHouse
 	content  *content.Runtime
-	notices  *notification.Store
 	entities *entities.Store
 	catalog  *catalog.Store
 	discover *discovery.Service
@@ -183,7 +181,6 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 	if e.content, err = content.New(ctx, e.contentOptions(deps)); err != nil {
 		return nil, err
 	}
-	e.notices = e.content.Notifications
 	if err := e.mount(deps); err != nil {
 		return nil, err
 	}
@@ -298,11 +295,6 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return err
 	}
 	accountSchema, _ := e.accountStorage()
-	for schema := range map[string]bool{e.schema: true, accountSchema: true} {
-		if err := notification.Migrate(ctx, e.pool, schema); err != nil {
-			return err
-		}
-	}
 	if err := migrations.ApplyAccounts(ctx, db, accountSchema); err != nil {
 		return err
 	}
@@ -310,19 +302,21 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if e.scope == nil || !layout.ValidSegment(options.LegacyAccountKey) {
 			return errors.New("contentkit: LegacyAccountKey requires Scope and a valid key")
 		}
-		e.cfg.Notifications.Namespace = options.LegacyAccountKey
+		e.cfg.Accounts.Namespace = options.LegacyAccountKey
 	}
 	if err := e.resolveAccountKey(ctx); err != nil {
 		return err
 	}
-	if options.LegacyAccountKey != "" && e.cfg.Notifications.Namespace != options.LegacyAccountKey {
+	if options.LegacyAccountKey != "" && e.cfg.Accounts.Namespace != options.LegacyAccountKey {
 		return ErrScopeConflict
 	}
 	if err := e.bindScope(ctx); err != nil {
 		return err
 	}
-	if err := e.adoptCommentNoticeIdentities(ctx); err != nil {
-		return err
+	if options.explicit {
+		if err := e.adoptCommentNoticeIdentities(ctx); err != nil {
+			return err
+		}
 	}
 	if err := e.avatarPlacement(ctx, options.explicit); err != nil {
 		return err
@@ -598,20 +592,16 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 	}
 	l := in.Limits
 	o := content.Options{
-		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Notifications: e.cfg.Notifications, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
+		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
 		Processor:             deps.Processor,
 		NotificationPublisher: deps.Notifications,
+		EraseAccountReceipts:  e.eraseAccountReceipts,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		Classifier: deps.Classifier, ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
 		Logger: e.log,
-	}
-	if e.scope != nil {
-		o.NotificationAppID = e.scope.AppID.String()
-		o.AccountExists = e.accountExists(deps)
-		o.AccountExistsTx = e.accountExistsTx(deps)
 	}
 	if e.media != nil {
 		o.Media = &content.Media{Namespace: e.media.reg.Namespace(), Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
@@ -667,13 +657,6 @@ func (e *Engine) accountExists(deps Deps) func(context.Context, string) (bool, e
 func (e *Engine) mount(deps Deps) error {
 	var err error
 	e.modules = map[httpapi.Module]http.Handler{httpapi.Content: e.content.Handler()}
-	if deps.Notifications == nil {
-		nh, err := e.notices.Handler(e.auth)
-		if err != nil {
-			return err
-		}
-		e.modules[httpapi.Notifications] = nh
-	}
 	if m := e.media; m != nil {
 		e.modules[httpapi.Upload] = media.UploadHandler(m.uploads, media.UploadHandlerOptions{Auth: e.auth, Logger: e.log})
 		e.modules[httpapi.Media] = m.reader.Handler(media.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit, Events: e.mediaEvents})

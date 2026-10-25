@@ -1,11 +1,11 @@
-package notification
+package legacyinbox
 
 import (
 	"context"
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/helpers/notify/postgres"
+	"github.com/open-rails/authkit/notify/postgres"
 	"strings"
 )
 

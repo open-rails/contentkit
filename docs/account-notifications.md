@@ -1,72 +1,53 @@
-# Account notification producer adoption
+# Account notification adoption
 
-ContentKit accepts `Deps.Notifications` (`helpers/notify/postgres.TxSink`) supplied
-by the optional AuthKit account inbox. The host owns construction; ContentKit owns
-comment notice meaning. General retained event logs and preference syncing remain
-independent. No wildcard IDs, range deletion or generic dependency graph exists.
+ContentKit accepts `Deps.Notifications` as `authkit/notify.Publisher`, created by
+AuthKit's client for one configured producer. It exposes exactly `Publish` and
+`Withdraw`, each accepting a batch and optionally the source `pgx.Tx`. AuthKit
+owns persistence, receiver authorization, local receipt state, queued remote
+delivery, the authenticated HTTP API and browser UI. ContentKit owns only the
+comment/reaction decisions and durable source IDs/revisions. Nil disables this
+channel without changing general platform events or recommendations.
 
-## Publication and withdrawal
+Existing deployments must perform one coordinated stopped-writer upgrade.
+Changing Go package ownership does not rename the existing notification tables,
+legacy scope, migration versions, advisory locks or receipt IDs.
 
-Approved replies use `comment.reply:<reply ID>`; likes preserve their existing
-`comment.liked:<reaction revision>` identities. A source-owned
-`content_comment_notifications` table retains only exact emitted identities,
-recipient, comment association, source revision/state and original time. It does
-not contain inbox payloads, read state or delivery cursors. The source metadata is
-needed to withdraw historical like-transition IDs that the current reaction row
-no longer retains. Explicit migration backfills known legacy identities without
-changing their chosen receipt IDs or read/archive state. Known old uppercase reply
-identities are adopted to their canonical UUID spelling; an existing canonical
-receipt wins collisions, and old aliases become hidden tombstones. Scoped adoption
-classifies the known native source to its owning app before revisioned writes.
-Only pre-revision legacy rows may acquire classification; already-versioned
-unclassified rows require explicit source-state adoption rather than hash rewriting.
-The migration also withdraws receipts whose comment or parent was already deleted
-or hidden before the upgrade.
+1. Stop both host fleets and all billing/content writers. Take a fresh private
+   recovery point and restore-verify it. Do not run old writers against the new
+   producer/adoption cohort.
+2. Migrate AuthKit's optional inbox and both ContentKit catalog/source ledgers
+   explicitly with the new binaries. ContentKit no longer creates or validates
+   an inbox as part of ordinary catalog startup. Its explicit comment adoption
+   reads an existing legacy inbox only when one exists; it preserves canonical
+   UUID identity, local read/archive state and erasure guards.
+3. Finish the already-established billing event cursor through
+   `notification/openrails.Source.Consume` using the explicit
+   `migration/legacyinbox` adapter. Receipt import and cursor commit remain
+   atomic. No source event is ACKed or deleted, and cursor expiry requires
+   explicit recovery rather than silently skipping an interval.
+4. Export exact billing notification identity/order adoption from OpenRails.
+   Persist the new private snapshot and its directory before applying it through
+   AuthKit. The host command uses a new exclusive snapshot path, no automatic
+   retry with that path, and retains it with the database recovery point.
+5. Adopt receipts in bounded batches, preserving chosen IDs, read/archive state,
+   canonical source identities and hidden revision fences. Restore source
+   ordering alongside any later financial archive restoration.
+6. Retire only this legacy source's unfinished
+   `contentkit_openrails_inbox_sync` jobs in both host River schemas. Running
+   jobs or remaining source events refuse retirement. Other jobs, histories and
+   general event readers are preserved.
+7. Resume the matching new host and frontend cohort. Verify AuthKit inbox
+   list/read/unread/dismiss/restore, cross-user/app denial, unseen withdrawal,
+   stale delivery rejection and newer unread reopening. Verify no old polling
+   importer or ContentKit notification routes remain.
 
-Deleting reply B withdraws B's notices. Deleting parent A withdraws notices for A
-and the reply-to-A notices for its replies while keeping those replies intact.
-Moderation hiding does the same; restoration reopens visible reply notices under
-the same exact identity with newer revisions. The producer never lists an inbox.
-A recreated/reopened notice becomes unread; editing an active notice preserves
-read state. Source mutation plus publish/withdraw obligation shares one transaction.
+`content_comment_notifications` keeps only the exact emitted comment/reply/like
+identity and producer revision. It never copies notification payloads or user
+read state. Deleting a parent preserves the thread and withdraws each exact
+reply-to-parent notice; deleting a reply withdraws its own notice. The existing
+parent locks, rollback behavior and moderation/restoration rules remain.
 
-The publisher either writes into the account owner's inbox in that transaction,
-or durably queues remote delivery in the source transaction. An acknowledgment
-loss/retry preserves identity. A late lower revision cannot undo a withdrawal.
-Terminal account erasure drops subsequent notices through the account owner's
-fences; temporary directory/database failures remain errors.
-
-## Host wiring and frontend
-
-Supply the AuthKit scoped publisher as `contentkit.Deps.Notifications` and mount
-`engine.RouteGroups()` rather than requesting the legacy notification routes.
-AuthKit exposes the account inbox. ContentKit keeps existing required account/app
-cleanup and restore fences using the adopted shared scope during transition.
-
-The browser client accepts an injected `NotificationTransport`:
-
-```ts
-const content = createContentKitClient({
-  baseUrl: "/api/v1/contentkit",
-  notifications: authClient.notifications,
-});
-```
-
-The existing NotificationBell/NotificationInbox/BillingNotification presentation
-uses that transport. Account refresh/read/archive changes invalidate the shared
-ContentKit notification resources; content HTTP is not used for inbox operations.
-
-## Retiring billing inbox polling
-
-The runtime `contentkit_openrails_inbox_sync` job and `OpenRailsNotifications`
-construction method are removed. Existing general `ListEvents` readers remain
-available for host behavior. The legacy Source.Consume adapter remains solely for
-explicit data handoff. Stop old writers, drain accepted legacy work, apply exact
-OpenRails-to-AuthKit receipt adoption, and invoke Source.RetireInboxSync. It verifies
-source progress before cancelling only that source's waiting polling jobs, refuses
-running jobs, and preserves history/other sources. Never perform this cutover as
-an implicit application-start mutation.
-
-The full cross-repository design is tracked in AuthKit #470 and ContentKit #248
-in open-rails/tracker. Source implementation is separate from package release and
-controlled deployment.
+`Accounts.Schema`/the adopted account namespace still select shared account and
+avatar metadata. They no longer configure a ContentKit-owned inbox. Existing
+canonical account/app erasure read guards and source cleanup replay remain
+separate from notification publication; they are not an inbox fallback.

@@ -94,9 +94,6 @@ func (c Config) withScope() (Config, *Scope, error) {
 		}
 		return c, nil, nil
 	}
-	if c.Notifications != nil {
-		return c, nil, errors.New("contentkit: scoped engines use Accounts rather than legacy Notifications configuration")
-	}
 	if c.Tenant != "" {
 		return c, nil, errors.New("contentkit: configure Scope or legacy Tenant, not both; use LegacyCatalogKey with Scope")
 	}
@@ -111,7 +108,7 @@ func (c Config) withScope() (Config, *Scope, error) {
 	if strings.TrimSpace(key) != key || !access.ValidTenant(key) {
 		return c, nil, errors.New("contentkit: LegacyCatalogKey must match [a-z0-9_-]{1,64}")
 	}
-	if c.Accounts == nil && c.Notifications == nil {
+	if c.Accounts == nil {
 		c.Accounts = &AccountsConfig{Schema: "contentkit_accounts"}
 	}
 	if c.Accounts != nil {
@@ -155,7 +152,7 @@ func (e *Engine) Scope() (Scope, bool) {
 }
 
 func (e *Engine) accountStorage() (schema, namespace string) {
-	if n := e.cfg.Notifications; n != nil {
+	if n := e.cfg.Accounts; n != nil {
 		return n.Schema, n.Namespace
 	}
 	return e.schema, e.cfg.Tenant
@@ -270,6 +267,6 @@ func (e *Engine) resolveAccountKey(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.cfg.Notifications.Namespace = key
+	e.cfg.Accounts.Namespace = key
 	return nil
 }

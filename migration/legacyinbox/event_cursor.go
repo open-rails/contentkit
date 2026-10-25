@@ -1,4 +1,4 @@
-package notification
+package legacyinbox
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/helpers/notify"
+	"github.com/open-rails/authkit/notify"
 )
 
 // ErrEventCursorChanged means another replica committed this source page first.

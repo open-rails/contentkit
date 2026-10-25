@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/authtest"
 	notice "github.com/open-rails/contentkit/notification/openrails"
-	"github.com/open-rails/helpers/notify"
+	"github.com/open-rails/authkit/notify"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/open-rails/openrails/billing"
 	"github.com/open-rails/openrails/openrailstest/stripemock"

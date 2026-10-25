@@ -241,7 +241,7 @@
     {
       "id": "CK-J03-S01",
       "journey": "CK-J03",
-      "behavior": "Creator writes own content but not another creator\u2019s",
+      "behavior": "Creator writes own content but not another creator’s",
       "status": "verified",
       "evidence": [
         "Real creator edits its own item after role removal and exact readback proves persistence; another creator item remains unchanged after403 and sibling-app/tenant targets refuse.",
@@ -1197,7 +1197,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner\u2019s eligible content",
+      "behavior": "Owner ban affects only the owner’s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
@@ -1751,18 +1751,6 @@
       ],
       "cases": [
         "TestBillingInboxRetirement/CK-J25-S08_exact_handoff_retirement_and_no_runtime_worker"
-      ]
-    },
-    {
-      "id": "CK-J25-S09",
-      "journey": "CK-J25",
-      "behavior": "Injected account inbox transport delegates requests and updates with captured account scope and shared subscription cleanup",
-      "status": "verified",
-      "evidence": [
-        "Built shipped TypeScript client with a controlled injected transport; unexpected ContentKit HTTP throws, request options and signals round-trip, read/archive and refresh reach subscribers, identity switching preserves in-flight scope, final unsubscribe releases the account subscription. This is transport-boundary evidence, not backend authorization."
-      ],
-      "cases": [
-        "TestShippedNotificationTransport/CK-J25-S09_injected_transport_delegates_and_preserves_request_scope"
       ]
     },
     {
@@ -5568,208 +5556,6 @@
       "qualified_scope": "phase1 security-only; not full route functionality"
     },
     {
-      "id": "CK-API-126",
-      "method": "GET",
-      "path": "/v1/notifications/inbox",
-      "selection": "included-critical functionality and security",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/inherited_HEAD_credential_gate",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/wrong_issuer",
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-126_GET_/v1/notifications/inbox/inherited_HEAD_credential_gate"
-      ],
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "CK-API-127",
-      "method": "PUT",
-      "path": "/v1/notifications/{id}/read",
-      "selection": "included-critical functionality and security",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/wrong_issuer",
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-127_PUT_/v1/notifications/{id}/read/anonymous_protected_operation"
-      ],
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "CK-API-128",
-      "method": "DELETE",
-      "path": "/v1/notifications/{id}/read",
-      "selection": "included-critical functionality and security",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/wrong_issuer",
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-128_DELETE_/v1/notifications/{id}/read/anonymous_protected_operation"
-      ],
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "CK-API-129",
-      "method": "PUT",
-      "path": "/v1/notifications/{id}/dismiss",
-      "selection": "included-critical functionality and security",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/wrong_issuer",
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-129_PUT_/v1/notifications/{id}/dismiss/anonymous_protected_operation"
-      ],
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "CK-API-130",
-      "method": "DELETE",
-      "path": "/v1/notifications/{id}/dismiss",
-      "selection": "included-critical functionality and security",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/wrong_issuer",
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-130_DELETE_/v1/notifications/{id}/dismiss/anonymous_protected_operation"
-      ],
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "CK-API-131",
-      "method": "POST",
-      "path": "/v1/notifications/publish",
-      "selection": "included-critical functionality and security",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/member_without_named_permission",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/wrong_issuer",
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-131_POST_/v1/notifications/publish/member_without_named_permission"
-      ],
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
       "id": "CK-API-132",
       "method": "GET",
       "path": "/v1/contents/{id}/versions/{version}/page-notices",
@@ -7418,102 +7204,6 @@
       ]
     },
     {
-      "id": "go:Client.GetNotificationsInbox",
-      "name": "Client.GetNotificationsInbox",
-      "status": "verified",
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "go:Client.PutNotificationRead",
-      "name": "Client.PutNotificationRead",
-      "status": "verified",
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "go:Client.DeleteNotificationRead",
-      "name": "Client.DeleteNotificationRead",
-      "status": "verified",
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "go:Client.PutNotificationDismiss",
-      "name": "Client.PutNotificationDismiss",
-      "status": "verified",
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "go:Client.DeleteNotificationDismiss",
-      "name": "Client.DeleteNotificationDismiss",
-      "status": "verified",
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "go:Client.PostNotificationsPublish",
-      "name": "Client.PostNotificationsPublish",
-      "status": "verified",
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate",
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt",
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work",
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused",
-        "TestNotificationReceiptBoundaries/CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish"
-      ],
-      "evidence": [
-        "Real recipient deduplication/ownership, read/archive/restore without source resolution, atomic invalid-recipient rejection and terminal-recipient fence.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
       "id": "go:Client.GetContentVersionDownload",
       "name": "Client.GetContentVersionDownload",
       "status": "verified",
@@ -9083,50 +8773,6 @@
       ]
     },
     {
-      "id": "ts:NotificationsClient.list",
-      "name": "NotificationsClient.list",
-      "status": "verified",
-      "cases": [
-        "TestTypeScriptPublicContracts/notification_receipts"
-      ],
-      "evidence": [
-        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
-      ]
-    },
-    {
-      "id": "ts:NotificationsClient.refresh",
-      "name": "NotificationsClient.refresh",
-      "status": "verified",
-      "cases": [
-        "TestTypeScriptPublicContracts/notification_receipts"
-      ],
-      "evidence": [
-        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
-      ]
-    },
-    {
-      "id": "ts:NotificationsClient.setRead",
-      "name": "NotificationsClient.setRead",
-      "status": "verified",
-      "cases": [
-        "TestTypeScriptPublicContracts/notification_receipts"
-      ],
-      "evidence": [
-        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
-      ]
-    },
-    {
-      "id": "ts:NotificationsClient.setDismissed",
-      "name": "NotificationsClient.setDismissed",
-      "status": "verified",
-      "cases": [
-        "TestTypeScriptPublicContracts/notification_receipts"
-      ],
-      "evidence": [
-        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
-      ]
-    },
-    {
       "id": "ts:VersionsClient.download",
       "name": "VersionsClient.download",
       "status": "verified",
@@ -9629,28 +9275,6 @@
       "evidence": [
         "Executed by the real25-image upload/browser and authenticated processing stream journey: transfer bytes, incremental loaded thumbnails, editor reopen, durable completion, scope refusals and fresh authentication after expiry. The shipped browser facade delegates through its actual MediaApi transport; no progress mock or polling fallback is present.",
         "Focused execution passed127.081s on the combined source with the fixed AuthKit verifier. The strict final gate reruns these exact cases."
-      ]
-    },
-    {
-      "id": "ts:ContentKitClientOptions.notifications",
-      "name": "ContentKitClientOptions.notifications",
-      "status": "verified",
-      "cases": [
-        "TestShippedNotificationTransport/CK-J25-S09_injected_transport_delegates_and_preserves_request_scope"
-      ],
-      "evidence": [
-        "Built shipped TypeScript client with a controlled injected transport; unexpected ContentKit HTTP throws, request options and signals round-trip, read/archive and refresh reach subscribers, identity switching preserves in-flight scope, final unsubscribe releases the account subscription. This is transport-boundary evidence, not backend authorization."
-      ]
-    },
-    {
-      "id": "ts:NotificationTransport",
-      "name": "NotificationTransport",
-      "status": "verified",
-      "cases": [
-        "TestShippedNotificationTransport/CK-J25-S09_injected_transport_delegates_and_preserves_request_scope"
-      ],
-      "evidence": [
-        "Built shipped TypeScript client with a controlled injected transport; unexpected ContentKit HTTP throws, request options and signals round-trip, read/archive and refresh reach subscribers, identity switching preserves in-flight scope, final unsubscribe releases the account subscription. This is transport-boundary evidence, not backend authorization."
       ]
     },
     {

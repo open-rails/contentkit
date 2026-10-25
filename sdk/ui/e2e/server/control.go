@@ -15,13 +15,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/helpers/notify"
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/notification"
 )
 
 // mount serves an engine's route groups under prefix.
@@ -54,7 +52,6 @@ func (h *harness) routes(static string) http.Handler {
 
 	mux.HandleFunc("GET /__test/config", h.config)
 	mux.HandleFunc("POST /__test/users", h.createUser)
-	mux.HandleFunc("POST /__test/notifications", h.createNotification)
 	mux.HandleFunc("POST /__test/items", h.createItem)
 	mux.HandleFunc("PATCH /__test/items/{kind}/{id}", h.updateItem)
 	mux.HandleFunc("GET /__test/object", h.object)
@@ -343,7 +340,6 @@ func (h *harness) fileKey(ctx context.Context, it media.Item, p string) (string,
 	return "", fmt.Errorf("no file %q", p)
 }
 
-// createNotification is host-only fixture publication, not a product API.
 func (h *harness) createNotification(w http.ResponseWriter, r *http.Request) {
 	var in notify.Input
 	if err := decode(r, &in); err != nil {

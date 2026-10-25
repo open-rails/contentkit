@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
-	notifypg "github.com/open-rails/helpers/notify/postgres"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/open-rails/migratekit"
 	"github.com/open-rails/migratekit/chmigrate"
@@ -19,7 +18,6 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
-	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -58,9 +56,9 @@ func (e *Engine) configureStorage() error {
 			return fmt.Errorf("contentkit: schema %q is not a lower-case identifier", schema)
 		}
 	}
-	if n := c.Notifications; n != nil {
+	if n := c.Accounts; n != nil {
 		if !schemaRE.MatchString(n.Schema) || len(n.Schema) > 63 || strings.TrimSpace(n.Namespace) == "" {
-			return errors.New("contentkit: notifications require a valid schema and namespace")
+			return errors.New("contentkit: accounts require a valid schema and namespace")
 		}
 	}
 	if c.Media != nil {
@@ -164,14 +162,6 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 	accountSchema, _ := e.accountStorage()
 	if err := migrations.ValidateAccounts(ctx, db, accountSchema); err != nil {
 		return required(err)
-	}
-	for schema := range map[string]bool{e.schema: true, accountSchema: true} {
-		if err := notifypg.Validate(ctx, e.pool, schema); err != nil {
-			return required(err)
-		}
-		if err := notification.ValidateEventCursors(ctx, e.pool, schema); err != nil {
-			return required(err)
-		}
 	}
 	if err := riverhelpers.ValidateMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return required(err)

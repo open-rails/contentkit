@@ -15,6 +15,9 @@ var ErrErasureReplayRequired = errors.New("contentkit: erasure replay required; 
 // mean a pre-erasure catalog restore or a still-pending normal deletion. Both
 // fail closed; the operator can retry or explicitly finish erasure replay.
 func (e *Engine) checkErasureReplay(ctx context.Context) error {
+	if available, err := e.accountErasureAvailable(ctx); err != nil || !available {
+		return err
+	}
 	if e.scope == nil {
 		return nil
 	}
@@ -50,7 +53,7 @@ func (e *Engine) ReplayErasureFences(ctx context.Context) (signal.ErasureReport,
 		}
 	}
 	for after := ""; ; {
-		recipients, err := e.notices.ErasedRecipients(ctx, after, min(1000, signal.MaxErasureSubjects))
+		recipients, err := e.erasedAccountRecipients(ctx, after, min(1000, signal.MaxErasureSubjects))
 		if err != nil {
 			return report, err
 		}
@@ -83,6 +86,9 @@ func (e *Engine) ReplayErasureFences(ctx context.Context) (signal.ErasureReport,
 // The avatar primary must finish before a secondary can declare recovery done.
 func (e *Engine) ReplayAccountErasures(ctx context.Context) (signal.ErasureReport, error) {
 	report := signal.ErasureReport{Remaining: map[string]uint64{}}
+	if available, err := e.accountErasureAvailable(ctx); err != nil || !available {
+		return report, err
+	}
 	if e.scope == nil {
 		return report, errors.New("contentkit: account erasure replay requires Scope")
 	}
@@ -136,6 +142,9 @@ ORDER BY r.recipient LIMIT $5`, "contentkit:"+namespace, after, e.scope.TenantID
 // Both this app and the configured avatar primary have independent durable
 // obligations; the primary's receipt gates every app exposing shared avatars.
 func (e *Engine) checkAccountErasureCompletion(ctx context.Context) error {
+	if available, err := e.accountErasureAvailable(ctx); err != nil || !available {
+		return err
+	}
 	if e.scope == nil {
 		return nil
 	}

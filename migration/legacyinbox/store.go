@@ -1,7 +1,7 @@
-// Package notification adapts the shared helpers/notify inbox to ContentKit's
-// authenticated user API. Persistence and lifecycle belong to helpers/notify;
-// hosts own rendering and application-specific actions.
-package notification
+// Package legacyinbox is the explicit one-time migration adapter for receipts
+// created by older ContentKit releases. AuthKit owns canonical persistence;
+// this package starts no runtime and mounts no user or publisher API.
+package legacyinbox
 
 import (
 	"context"
@@ -17,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
-	"github.com/open-rails/helpers/notify"
-	"github.com/open-rails/helpers/notify/postgres"
+	"github.com/open-rails/authkit/notify"
+	"github.com/open-rails/authkit/notify/postgres"
 )
 
 // Config shares an account inbox without sharing a site's content catalog.

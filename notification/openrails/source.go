@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/open-rails/helpers/notify"
+	"github.com/open-rails/authkit/notify"
 )
 
 // Backend reads a merchant-bound log without changing source state. Expired

@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
+	"github.com/open-rails/authkit/notify"
 	"github.com/open-rails/authkit/userinfo"
-	notifypg "github.com/open-rails/helpers/notify/postgres"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -20,7 +20,6 @@ import (
 	"github.com/open-rails/contentkit/internal/ratelimit"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/notification"
 )
 
 // KindComment is the reserved content kind of comments: reactions on comments
@@ -97,18 +96,12 @@ type Options struct {
 	// default DefaultCommentMaxLength.
 	CommentMaxLength int
 
-	// Notifications optionally shares an account inbox while retaining Tenant social origin.
-	Notifications *notification.Config
-	// NotificationPublisher is the account owner's transactional channel.
-	// Nil uses the legacy local store during inbox adoption.
-	NotificationPublisher notifypg.TxSink
-	// NotificationAppID is the immutable owning app supplied by the engine.
-	NotificationAppID string
-	// AccountExists must use a directory fixed to this account tenant. Scoped
-	// notifications cannot publish to user recipients without this proof.
-	AccountExists func(context.Context, string) (bool, error)
-	// AccountExistsTx joins notification publication's transaction.
-	AccountExistsTx func(context.Context, pgx.Tx, string) (bool, error)
+	// NotificationPublisher is AuthKit's scoped account channel. Nil disables
+	// user notifications; ContentKit never constructs its own inbox.
+	NotificationPublisher notify.Publisher
+	// EraseAccountReceipts connects the existing account cleanup lifecycle.
+	// Nil is used by standalone content runtimes without shared account storage.
+	EraseAccountReceipts func(context.Context, []string, bool) error
 
 	// Logger receives the access log: each request at DEBUG, a 500 at ERROR
 	// with its cause. nil -> slog.Default().
@@ -118,28 +111,27 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
-	// Notifications is this tenant's user inbox.
-	Notifications  *notification.Store
-	notifier       notifypg.TxSink
-	store          *store
-	schema         string
-	tenant         string
-	guard          *gate.Gate
-	userInfo       userinfo.Lookup
-	avatars        Avatars
-	resolver       resolve.Resolver
-	media          *Media
-	processor      ContentProcessor
-	moderator      ContentModerator
-	breaker        *moderatorBreaker
-	classifier     AnswerClassifier
-	providerEraser ProviderDataEraser
-	anonymous      Anonymous
-	commentMax     int
-	log            *slog.Logger
-	cfg            kinds.Config
-	rules          *rules
-	limiters       map[Action]*ratelimit.Limiter
+	notifier             notify.Publisher
+	eraseAccountReceipts func(context.Context, []string, bool) error
+	store                *store
+	schema               string
+	tenant               string
+	guard                *gate.Gate
+	userInfo             userinfo.Lookup
+	avatars              Avatars
+	resolver             resolve.Resolver
+	media                *Media
+	processor            ContentProcessor
+	moderator            ContentModerator
+	breaker              *moderatorBreaker
+	classifier           AnswerClassifier
+	providerEraser       ProviderDataEraser
+	anonymous            Anonymous
+	commentMax           int
+	log                  *slog.Logger
+	cfg                  kinds.Config
+	rules                *rules
+	limiters             map[Action]*ratelimit.Limiter
 
 	preferences *preferences
 	reactions   *reactions
@@ -207,15 +199,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		cfg:            opts.Kinds,
 		limiters:       limiters,
 	}
-	notices, err := notification.New(notification.Options{Pool: opts.Pool, Schema: opts.Schema, Tenant: opts.Tenant, Logger: log, Shared: opts.Notifications, AppID: opts.NotificationAppID, AccountExists: opts.AccountExists, AccountExistsTx: opts.AccountExistsTx})
-	if err != nil {
-		return nil, err
-	}
-	rt.Notifications = notices
 	rt.notifier = opts.NotificationPublisher
-	if rt.notifier == nil {
-		rt.notifier = notices
-	}
+	rt.eraseAccountReceipts = opts.EraseAccountReceipts
 	rt.guard = &gate.Gate{Auth: opts.Auth, Log: log}
 	rt.rules = newRules(rt)
 	if err := rt.checkSchema(ctx); err != nil {

@@ -40,8 +40,8 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 		kind.Namespace = ""
 		kind.Account = true
 	}
-	if e.cfg.Media.LegacyLayout && e.cfg.Notifications != nil {
-		kind.Namespace = e.cfg.Notifications.Namespace
+	if e.cfg.Media.LegacyLayout && e.cfg.Accounts != nil {
+		kind.Namespace = e.cfg.Accounts.Namespace
 		kind.Account = false
 	}
 	out := &engineAvatars{urls: e.media.reg}

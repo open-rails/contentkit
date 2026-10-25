@@ -29,7 +29,6 @@ import (
 	_ "github.com/open-rails/contentkit/internal/kindsroute"
 	_ "github.com/open-rails/contentkit/media"
 	_ "github.com/open-rails/contentkit/media/versions"
-	_ "github.com/open-rails/contentkit/notification"
 )
 
 // Where each generated file lives, relative to the repository.
