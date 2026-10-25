@@ -183,9 +183,9 @@ type Options struct {
 	// and lists a person's. Optional: without it auth_scope is whatever staff
 	// set.
 	Scopes Scopes
-	// Folders hides a deleted entity's media and shows it again on restore,
-	// in the writing transaction, and purges a user-owned entity's once it
-	// stayed deleted for DeletedRetention: media/versions.Service.EntityFolders.
+	// Folders retires a user-owned entity's media after DeletedRetention and
+	// confirms physical erasure before marking it purged. Irreversible claims
+	// refuse restoration: media/versions.Service.EntityFolders.
 	// Optional.
 	Folders Folders
 	// DeletedRetention is how long a deleted user-owned entity keeps its media
@@ -194,7 +194,7 @@ type Options struct {
 	// Owned deletes the content a deleted user-owned entity owns
 	// (owner_entity) and restores it with the entity: the catalog. Optional.
 	Owned OwnedContent
-	// Queue is the River queue of entity syncs; contentkit_groups when empty.
+	// Queue is the River queue of entity syncs; DefaultQueue when empty.
 	Queue string
 	// Logger receives the HTTP API's failures. nil -> slog.Default().
 	Logger *slog.Logger
@@ -266,7 +266,7 @@ func New(opts Options) (*Store, error) {
 	}
 	queue := opts.Queue
 	if queue == "" {
-		queue = "contentkit_groups"
+		queue = DefaultQueue
 	}
 	keep := opts.DeletedRetention
 	if keep <= 0 {

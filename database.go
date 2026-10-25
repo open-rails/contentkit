@@ -192,6 +192,9 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 		if err := media.ValidateCleanupMigration(ctx, e.pool, reg, journal, e.riverSchema); err != nil {
 			return required(err)
 		}
+		if err := media.ValidateProcessingMigration(ctx, e.pool, reg, e.riverSchema); err != nil {
+			return required(err)
+		}
 	}
 	if err := e.avatarPlacement(ctx, false); err != nil {
 		if errors.Is(err, ErrAvatarPlacement) {

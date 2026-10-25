@@ -27,7 +27,7 @@ const ManifestVersion = 3
 // Readers never re-sort it. Public publications belong to their source upload.
 type Manifest struct {
 	V           int    `json:"v"`
-	Hidden      bool   `json:"hidden,omitempty"`      // set by Expose; public files are then absent
+	Hidden      bool   `json:"hidden,omitempty"`      // legacy visibility flag; ignored by processing and public storage
 	Incarnation string `json:"incarnation,omitempty"` // changes only on explicit reset
 	Deleted     bool   `json:"deleted,omitempty"`     // retained S3 tombstone; ordinary edits cannot recreate it
 	// Full: a producer could not record its outputs within the bound, so

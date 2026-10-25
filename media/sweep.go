@@ -24,18 +24,23 @@ type SweepResult struct {
 	Wait    time.Duration
 }
 
-// Sweep retires expired allocations recorded before storage writes. Unknown
+// Sweep explicitly executes one item's content-purge storage work. Unknown
 // bucket objects are never discovered or deleted by this operation.
 func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResult, error) {
+	ctx = context.WithValue(ctx, purgeContextKey{}, true)
 	item, err := j.cfg.Registry.Item(ref)
 	if err != nil {
 		return SweepResult{}, err
 	}
-	return j.sweep(ctx, item.Prefix())
+	result, err := j.sweep(ctx, item.Prefix())
+	if err == nil {
+		_, err = j.cleanupFolder(ctx, item, nil)
+	}
+	return result, err
 }
 
-// SweepAll sweeps every item folder of the registry's kinds: the periodic
-// backstop for missed schedules and abandoned uploads.
+// SweepAll is an explicit repair command over the registry's item folders.
+// Ordinary cleanup is owned by the content-deletion sweep.
 func (j *Jobs) SweepAll(ctx context.Context) error {
 	var errs []error
 	for _, k := range j.cfg.Registry.all {
@@ -45,7 +50,7 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 			}
 			item, err := j.cfg.Registry.Item(ref)
 			if err == nil {
-				_, err = j.sweep(ctx, item.Prefix())
+				_, err = j.Sweep(ctx, item.Ref())
 			}
 			if err != nil {
 				errs = append(errs, err)

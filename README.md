@@ -55,7 +55,7 @@ another tenant is an error, never remapped.
 | `contenturl` | uniform content URLs `/{lang}/{route}/{CODE}[/{slug}][?v={version}]`: permanent 9-character codes per tenant, 4-character version codes, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`); the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access](#access-access)) |
 | `adapters/openrails` | `access.Billing` over the OpenRails client (its own module) |
-| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and due cleanup, immediate deletion, `Expose` and relays as River jobs |
+| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and due cleanup, immediate deletion and interrupted-commit recovery as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
 | `media/token` | media access tokens, shared by hosts and the media gateway |
@@ -429,9 +429,9 @@ reading only `*/private/*`, `*/download/*` and `*/public/*`, `MEDIA_GATEWAY_TOKE
 worker River schema (`media/workqueue`, `MEDIA_WORKER_SCHEMA`, per host:
 hosts sharing a database never share one): images, zips, public presets and
 editor views (`media/image`, libvips) and HLS, MP4, subtitles and
-frames (`media/video`, ffmpeg). The host presigns, commits, exposes and reads,
-and links only `media/workqueue`. The worker hands readiness
-(`Hooks.ItemReady`) back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), so the stock build
+frames (`media/video`, ffmpeg). The host presigns, commits and reads,
+and links only `media/workqueue`. The processor appends a retained event and
+directly enqueues version metadata work in `MEDIA_HOST_RIVER_SCHEMA`, so the stock build
 (`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`)
 needs only the registry as JSON (`MEDIA_KINDS_FILE`): an engine's is
 `Config.MediaKinds()`, which `contentkit media-config -config contentkit.yaml`
@@ -579,19 +579,21 @@ original downloads. The browser reads their duration when metadata loads.
 Existing generated M4A files remain readable for older uploads. Audio tracks
 inside a movie still belong to its video conversion.
 
-**Cleanup**: a manifest edit records the exact source, rendition, staging and
-public keys it removes in its durable journal. After the conditional manifest
-write commits, it withdraws stale published snapshots and deletes those keys.
-Shared references and retained originals remain intact. Failed deletes leave
-the operation pending for recovery; reordering alone never deletes files.
+**Commit ownership**: before a conditional manifest PUT, PostgreSQL commits the
+exact accepted manifest, quota admission and an operation-specific ingest job
+in one transaction. The request attempts the write immediately; that same ingest
+job finishes it after an interrupted request. Retrying an operation does not
+reapply old edits to newer input or charge twice. Editor status observes the
+admitted work even before its S3 manifest lands. Image and video jobs finish
+their own interrupted writes before processing further.
 
-Each catalog/account schema also stores one `content_media_cleanup` record per
-storage prefix. One daily `contentkit_media_cleanup_due` job processes bounded
-batches of recorded allocation and deletion deadlines. It does not list the
-bucket to discover unreferenced objects. A bounded retry of exact retired keys
-catches writes authorized before retirement. Unknown objects are an integrity
-error to investigate, not routine garbage. A prefix is a media item or version's
-folder, not necessarily a gallery.
+**Cleanup**: edits record exact retired source, rendition, staging and public
+keys and withdraw stale reader snapshots. The existing content-deletion sweep
+performs physical deletion, including live-item discarded allocations, entity
+and poll folders, account assets and bounded late-write retries. It retains each
+intent through storage failure and never discovers garbage by listing the
+bucket. Shared references and new incarnations remain intact. Version media and
+catalog retirement stay in that same sweep after the normal retention period.
 
 Completed temporary uploads and optional ZIP caches expire after seven days;
 unfinished uploads past that deadline must restart. The S3 adapter tags only
@@ -605,15 +607,18 @@ versions expire after one day; permanent noncurrent versions retain the host's
 configured restore window. Lifecycle execution is asynchronous. Backends that
 do not implement multipart-abort lifecycle rules need equivalent server settings.
 
-The immediate `contentkit_media_delete_folder` job still performs storage I/O
-and releases quota after a host deletion commits. Its late-upload pass is a
-database deadline, not another delayed River job. Media rendering, `Expose`
-and readiness/cache relays remain asynchronous.
+Media has three processing jobs: ingest, image and video. Ingest validates an
+entire ZIP before attaching pages in bounded, replayable batches; image work
+commits bounded source batches. Those processors append retained progress facts
+directly after their commits and complete with real version metadata work.
+Declared public files stay public independently of publication and billing.
 
 For upgrades from the old per-folder timers, stop old media hosts and workers,
 run the host's normal `MigratePostgres` command, then start the new cohort. The
-migration atomically transfers pending sweep/final-deletion timers and cancels
-them; running old cleanup jobs block migration. Read-only startup rejects
+migration atomically transfers queued folder deletions to the deletion ledger
+and cancels obsolete timers; running old jobs block migration. Old uncertain
+manifest writes must first be settled by the previous release, because their
+original accepted input was not stored. Read-only startup rejects
 unmigrated timers. Standalone media hosts call `media.MigrateCleanup` with their
 registry, routed journal and River schema. `SweepAll` and `SweepOrphans` remain
 explicit repair tools, rather than periodic bucket-wide work. Neither is
@@ -684,7 +689,7 @@ their encodings so saved policies, grants and purchases keep working.
 `catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
 Writes are batches; each transaction keeps `content_facets` current (rules
 through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
-documents dirty, queues `content_events` and calls media (expose, republish,
+documents dirty, queues `content_events` and calls media (republish,
 fork, delete). Content edits do not rename or reprice billing products. Published with a
 future `publish_at` becomes visible when that time arrives; the periodic job
 records publication and runs its side effects. A deleted item

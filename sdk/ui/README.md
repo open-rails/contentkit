@@ -116,8 +116,9 @@ operation. This does not change the operation's result or its authentication.
   `polls.uploadOptionImage` do both steps. Reads resolve references: a
   content's `body` shows its images' signed URLs (the opened version's
   private files) and `images` maps each name to its URL. `folders` renames
-  the poll media kind. Public image files exist only while the item is live;
-  `useContent` shows an unpublished item's images to its editors (below).
+  the poll media kind. Declared-public covers and previews stay public regardless
+  of release visibility; private body images require signed access. `useContent`
+  shows an unpublished item's private images to its editors (below).
 - **`client.config()`** says what the content module allows: which
   interactions signed-out visitors may make (`content.Options.Anonymous`,
   none by default) and the longest comment (`CommentMaxLength`, 2,200 by
@@ -198,8 +199,8 @@ const { read, loading, error, processing, reload, refresh, set } =
 ```
 
 One read per item and options, shared by every hook showing it. It reads
-again shortly before the URLs expire, waits out `rate_limited`, polls while
-uploads process (editor reads, every 2.5 s; `poll`), and reloads after any
+again shortly before the URLs expire, waits out `rate_limited`, observes SSE
+while uploads process (one authenticated stream per item and account), and reloads after any
 commit through the same client. `window` splits a long item into reads of
 `chunk` files (default 50) merged into one result. Only the requested windows
 stay active and refresh. Leaving a window releases its subscription, timer and
@@ -1231,9 +1232,53 @@ is scoped to the API mount and the provider's explicit viewer ID; without a
 known viewer, retries remain in memory only. Switching accounts aborts and
 clears the visible queue, without resuming the other account's work.
 
-`MediaReadinessNotice` uses the existing shared `useMediaRead` poller with an
+`MediaReadinessNotice` uses shared `useMediaRead` SSE observation with an
 editor-only status read, without signing image URLs. It shows ZIP extraction,
-per-preset completion counts, encoding progress and failures. Polling stops
+per-preset completion counts, encoding progress and failures. Observation stops
 when the item is ready or storage capacity blocks progress. Reopening the
 editor reads current server state; browser upload records are not processing
-state.
+state. Account or item changes and unmount cancel the stream. A disconnect
+reconnects up to three times with its cursor; retention expiry explicitly sends
+a fresh `resync` snapshot. Exhausted reconnects show a retry action. There is no
+processing poll option; signed URL expiry refresh remains independent.
+
+`client.media.watch(ref, receive, signal, after?)` uses the client's normal
+fetch, headers, token and credentials. It delivers `snapshot`, `progress`,
+`resync` and `heartbeat` events; the latter carries only a cursor. It makes one
+connection, leaving reconnect ownership with its caller. Upload `waitFor` and
+`editorView` also use these updates, with their existing timeout and retry limits.
+
+### ZIP upload at an admin entrypoint
+
+`ContentUpload` is the same model-driven upload form used by the content
+manager's bulk uploader. A host supplies its content kind, labels, defaults and
+navigation; ContentKit creates drafts and chooses upload paths from that kind's
+rules. It does not publish on completion.
+
+```tsx
+<ContentUpload
+  client={contentkit}
+  kind={galleryKind}
+  labels={labels}
+  defaults={{ language: currentLanguage, format: preferredFormat }}
+  onOpen={(draft) => navigate(galleryEditorURL(draft))}
+/>
+```
+
+The transfer stage shows actual callback bytes, such as `5 MB / 30 MB`.
+After durable commit, retained processing snapshots supply ZIP extraction and
+separately labelled rendition counts; unrelated presets are never summed into
+an overall image count. Completed thumbnail derivatives appear while remaining
+sources show placeholders. A bounded preview requests URLs for at most twelve
+sources.
+
+`MediaProcessingPanel` can also be mounted for an existing content/version ref:
+
+```tsx
+<MediaProcessingPanel client={contentkit} item={versionRef} />
+```
+
+This panel and the reader/gallery editor recover their counts and thumbnails
+from the server after reopening. Browser storage is used only to resume an
+unfinished transfer or retry its exact commit, not as processing state. The
+host's regular editor retains the explicit Publish action.

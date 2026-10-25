@@ -73,7 +73,7 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section className={cn("rounded-lg border border-border bg-card p-4 grid gap-4", className)} data-ckui={ckui}>
+    <section className={cn("rounded-lg border border-border bg-muted/30 p-4 grid gap-4", className)} data-ckui={ckui}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="grid gap-1">
           <h3 className="text-sm font-medium">{title}</h3>

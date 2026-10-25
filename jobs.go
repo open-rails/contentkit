@@ -74,10 +74,10 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		}
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &entitiesWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &entitiesWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &forgetContentsWorker{e: e}) },
 		} {
@@ -121,7 +121,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 	})
 	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs(), e.entities.RiverJobs()}
 	if e.media != nil {
-		parts = append(parts, e.media.jobs.RiverJobs(), e.media.versions.RiverJobs())
+		parts = append(parts, e.media.versions.RiverJobs())
 	}
 	return riverhelpers.Group(parts...)
 }
@@ -186,7 +186,7 @@ type entitiesArgs struct {
 	Windows bool `json:"windows,omitempty"`
 }
 
-func (entitiesArgs) Kind() string { return "contentkit_groups" }
+func (entitiesArgs) Kind() string { return "contentkit_entity_projection" }
 
 // entitiesWorker keeps entities' stored counts, covers and windowed facets
 // current.

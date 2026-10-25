@@ -39,6 +39,8 @@ export interface Fault {
   fault: "no-cors" | "rate-limit" | "expired" | "missing" | "drop" | "hold" | "api";
   /** api: a substring of the request path, and its method. */
   path?: string;
+  /** Optional exact Content-Type for real source-write fault checkpoints. */
+  content_type?: string;
   method?: string;
   status?: number;
   code?: string;

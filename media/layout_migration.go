@@ -187,7 +187,7 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 			if digestManifest(cur) != digestManifest(e.Manifest) {
 				// A failed first PUT is recovered by writing an empty fence.
 				// Only this exact migration's absent attempt may replace it.
-				empty := &Manifest{V: ManifestVersion, Hidden: true, Incarnation: layoutRecoveryIncarnation(commit.ID), Files: []File{}}
+				empty := &Manifest{V: ManifestVersion, Incarnation: layoutRecoveryIncarnation(commit.ID), Files: []File{}}
 				if prior == nil || prior.State != "absent" || cur.Receipt != nil || digestManifest(cur) != digestManifest(empty) {
 					return fmt.Errorf("%w: destination %s", ErrLayoutChanged, to.Prefix())
 				}

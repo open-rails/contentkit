@@ -90,6 +90,8 @@ export const es: ContentKitUiMessageBundle = {
     },
   },
   readiness: {
+    ready: "Archivos listos",
+    previews: "Vistas previas de páginas",
     archivePages: "Páginas del ZIP",
     full: "Procesamiento multimedia en pausa",
     fullHint: "Se alcanzó el límite de almacenamiento. Elimina archivos sin usar o aumenta el límite.",

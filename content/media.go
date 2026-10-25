@@ -47,11 +47,10 @@ type MediaReader interface {
 	Read(ctx context.Context, ref contentref.ContentRef, actor access.Actor, o media.ReadOptions) (*media.ReadResult, error)
 }
 
-// MediaFolders queues visibility changes and folder deletions in the content
-// transaction; *media.Jobs implements it.
+// MediaFolders records exact retirement intents in the poll mutation
+// transaction; the existing content-deletion sweep performs storage erasure.
 type MediaFolders interface {
-	ExposeTx(ctx context.Context, tx pgx.Tx, refs ...contentref.ContentRef) error
-	DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...media.Deletion) error
+	RetireItemsTx(ctx context.Context, tx pgx.Tx, items ...media.Deletion) error
 }
 
 var errMediaNotConfigured = errors.New("content: Options.Media is not configured")
@@ -77,12 +76,12 @@ const pollFolder folder = 0
 
 func (m *Media) kind(folder) string { return m.PollKind }
 
-// deleteMediaTx queues a media folder's deletion with the row.
+// deleteMediaTx commits a retirement intent with the poll tombstone.
 func (rt *Runtime) deleteMediaTx(ctx context.Context, tx pgx.Tx, f folder, id string) error {
 	if rt.media == nil {
 		return nil
 	}
-	return rt.media.Folders.DeleteItemsTx(ctx, tx, media.Deletion{Ref: rt.mediaRef(rt.media.kind(f), id)})
+	return rt.media.Folders.RetireItemsTx(ctx, tx, media.Deletion{Ref: rt.mediaRef(rt.media.kind(f), id)})
 }
 
 // CanUpload is media's UploadAuthorizer for poll items: the actor holds

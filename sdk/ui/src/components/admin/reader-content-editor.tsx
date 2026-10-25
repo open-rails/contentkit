@@ -1,3 +1,4 @@
+import { MediaReadinessNotice } from "../media-readiness-notice.js";
 import { ImageAdd01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
@@ -81,7 +82,7 @@ function CopyFailed({ failure, version, pending, onRetry }: { failure: ForkFailu
 // Without a visible title, label names the section for assistive technology.
 function Panel({ title, label, children, className = "" }: { title?: ReactNode; label?: string; children: ReactNode; className?: string }) {
   return (
-    <section aria-label={title ? undefined : label} className={`grid min-w-0 content-start gap-4 rounded-xl border border-border bg-card p-4 ${className}`}>
+    <section aria-label={title ? undefined : label} className={`grid min-w-0 content-start gap-4 rounded-xl border border-border bg-muted/30 p-4 ${className}`}>
       {title && <h2 className="text-base font-semibold">{title}</h2>}
       {children}
     </section>
@@ -354,7 +355,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   }, [copyingFrom, refreshFiles, reloadFiles, reloadContent]);
   const notices = usePageNotices(item?.id, version?.id, { client });
   const reloadNotices = notices.reload;
-  // A ZIP's pages appear after its commit. Media polling alone does not
+  // A ZIP's pages appear after its commit. Media updates alone do not
   // refresh the notices when extraction changes the manifest.
   const mediaKey = ref && folder.read.read ? JSON.stringify([ref.id, ref.version,
     files.filter((file) => file.upload).map((file) => [file.path, file.size, file.staged, file.pending, file.failed]),
@@ -758,6 +759,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                   </span>
                 </div>
               )}
+              {ref && <MediaReadinessNotice item={ref} client={client} />}
               <MediaFolderEditor
                 folder={{ ...folder, add }}
                 confirmRemove={false}
@@ -791,7 +793,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
               </Panel>
             )}
             {item && version && spec.versions.traits?.includes("manhwa_style") && (
-              <details className="rounded-xl border border-border bg-card p-4" onToggle={(e) => setToolsExpanded(e.currentTarget.open)}>
+              <details className="rounded-xl border border-border bg-muted/30 p-4" onToggle={(e) => setToolsExpanded(e.currentTarget.open)}>
                 <summary className="cursor-pointer font-medium">{t("readerEditor.readerTools")}</summary>
                 <div hidden={!toolsExpanded} className="mt-4 grid gap-4">
                   <div ref={setVersionReaderTarget} data-ckui="version-reader-settings" />
