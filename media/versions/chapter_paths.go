@@ -92,9 +92,31 @@ func applyChapterPaths(ctx context.Context, tx pgx.Tx, table, tenant, version st
 	for i, path := range from {
 		to[i] = renames[path]
 	}
-	_, err := tx.Exec(ctx, `UPDATE `+table+` c SET start_page=r.new_path
- FROM unnest($3::text[],$4::text[]) AS r(old_path,new_path)
- WHERE c.tenant_id=$1 AND c.version_id=$2 AND c.start_page=r.old_path`, tenant, version, from, to)
+	rows, err := tx.Query(ctx, `SELECT c.id,r.new_path FROM `+table+` c
+ JOIN unnest($3::text[],$4::text[]) AS r(old_path,new_path) ON c.start_page=r.old_path
+ WHERE c.tenant_id=$1 AND c.version_id=$2 FOR UPDATE OF c`, tenant, version, from, to)
+	if err != nil {
+		return err
+	}
+	type marker struct{ ID, Path string }
+	markers, err := pgx.CollectRows(rows, pgx.RowToStructByPos[marker])
+	if err != nil || len(markers) == 0 {
+		return err
+	}
+	ids, paths := make([]string, len(markers)), make([]string, len(markers))
+	for i, m := range markers {
+		ids[i], paths[i] = m.ID, m.Path
+	}
+	// Release marker-name uniqueness within this transaction so a batch can
+	// swap names without creating a transient duplicate. Numeric bounds are
+	// only a temporary valid storage shape; authored markers remain paths.
+	if _, err := tx.Exec(ctx, `UPDATE `+table+` SET start_page=NULL,start_index=0,end_index=1
+ WHERE tenant_id=$1 AND version_id=$2 AND id=ANY($3)`, tenant, version, ids); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE `+table+` c SET start_page=r.path,start_index=NULL,end_index=NULL
+ FROM unnest($3::text[],$4::text[]) AS r(id,path)
+ WHERE c.tenant_id=$1 AND c.version_id=$2 AND c.id=r.id`, tenant, version, ids, paths)
 	return err
 }
 

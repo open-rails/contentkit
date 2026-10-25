@@ -1,10 +1,13 @@
 # Public media and processing events
 
-Public/private storage is a property of the declared media preset. Public
-covers and previews remain public before release and after unpublishing.
-Private originals and reader pages continue to require scoped tokens.
-Publication, billing and access changes do not copy, hide or regenerate media.
-Explicit replacement/removal and permanent purge still retire obsolete files.
+Each gallery edition owns one media folder and one audience access decision.
+Original uploads remain in `originals`; prepared reader outputs wait in `future`.
+The durable publication worker moves released files into `public` or `private`,
+verifies them and retires obsolete locations in that same job. Public presets
+of an unpublished edition are prepared without exposing reader URLs. A private
+token opens the exact edition's whole private folder, never a sibling edition.
+See [chapter publication](chapter-publication.md) for ordered chapter markers,
+automatic placement reconciliation and non-atomic copy semantics.
 
 The processor records meaningful progress and completion in the retained event
 log before its processing job completes. Current status remains available
@@ -12,17 +15,17 @@ through the existing media HTTP and Go interfaces. Observers own their cursors;
 retention expiry requires a fresh current-state read.
 
 Completion also wakes the existing version metadata worker in the same database
-transaction. That worker records media facts, refreshes listing facets, builds
-immutable reader snapshots and applies the selected cover. It performs real
-metadata work, including before unrelated processing finishes. There is no
-readiness delivery job or source-managed event consumer.
+transaction. That worker records preparation progress and wakes accepted
+publication work. Only completed storage delivery activates reader snapshots
+and release-dependent catalog state. Processing remains independent of an
+editor's publication instruction. There is no source-managed event consumer.
 
 This change requires a stopped-writer upgrade: stop older hosts and media
 workers before applying the new migrations and restart the matching release.
 Published migration files must not be rewritten. The upgrade must retire old
 waiting exposure/readiness jobs without losing pending metadata work.
 
-Implementation and verification are tracked in ContentKit #247.
+Processing events originated in ContentKit #247; the publication model is #250.
 
 ## Observation interfaces
 
@@ -43,9 +46,10 @@ survive log expiry.
 Custom embedded `Hooks.ItemReady` and `Hooks.ItemProgressed` run synchronously in
 the processor's completion transaction. They must be idempotent transactional
 extensions. Stock external workers need no hooks: completion directly queues
-`contentkit_version_publish`, whose real metadata work updates facts/facets,
-reader snapshots and the selected cover. If an earlier publisher is running,
-its normal follow-up job preserves the wakeup.
+`contentkit_version_publish`, whose metadata work wakes the durable
+`contentkit_version_release` operation. If an earlier publisher is running,
+its normal follow-up preserves the wakeup. Queues are scoped to the exact
+catalog key, including when several apps share one River schema.
 
 Removed interfaces: `media.Jobs.Expose`, `ExposeTx` on media/version/entity
 folders, `media.HostQueue`, `worker.Config.HostQueue` and `MEDIA_HOST_QUEUE`.

@@ -185,10 +185,15 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 	if err != nil {
 		return nil, err
 	}
+	if !m.PublicationLayoutReady() {
+		return nil, ErrNotReady
+	}
 	if active, err := s.activeRelease(ctx, s.o.Pool, t); err != nil {
 		return nil, err
 	} else if active != nil && active.View != nil {
 		m = active.View
+	} else {
+		return nil, ErrNotReady
 	}
 	paths := map[string]string{}
 	for _, f := range m.Files {

@@ -38,6 +38,7 @@ type releasePlan struct {
 type publicationCompletion interface {
 	CompletePublicationTx(context.Context, pgx.Tx, Target, time.Time) error
 	WithdrawPublicationTx(context.Context, pgx.Tx, Target, bool) error
+	PublicationCompletedTx(context.Context, pgx.Tx, Target, string, []string, bool, time.Time) error
 }
 
 type releaseMutationContextKey struct{}
@@ -663,8 +664,25 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 	}
 	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 		var current bool
-		if err := tx.QueryRow(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='completed',completed_at=coalesce(completed_at,$3),error=NULL,updated_at=clock_timestamp()
- WHERE tenant_id=$1 AND id=$2::uuid AND state IN ('retiring','completed') RETURNING current`, s.o.Tenant, id, s.o.Now()).Scan(&current); err != nil {
+		var state string
+		if err := tx.QueryRow(ctx, `SELECT current,state FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state); err != nil {
+			return err
+		}
+		if state == "completed" {
+			return nil
+		}
+		if state != "retiring" {
+			return errRetired
+		}
+		at := s.o.Now()
+		if _, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='completed',completed_at=$3,error=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, at); err != nil {
+			return err
+		}
+		completion, ok := s.o.Facets.(publicationCompletion)
+		if !ok {
+			return errors.New("versions: catalog publication completion is not configured")
+		}
+		if err := completion.PublicationCompletedTx(ctx, tx, plan.Target, id, plan.Chapters, plan.Released, at); err != nil {
 			return err
 		}
 		if current && plan.NextAt != nil {

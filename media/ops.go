@@ -414,6 +414,16 @@ func (o *opRun) put(op Op) error {
 			f.Meta = pageCollisionMeta(f.Meta, k.NameOf(f.Path))
 		}
 	}
+	// Keep the supplied source basename for every upload, including ZIP,
+	// audio and video. The virtual path is cleaned independently and physical
+	// object names never use this metadata. A rename retains this value.
+	f.Meta = maps.Clone(f.Meta)
+	if f.Meta == nil {
+		f.Meta = map[string]any{}
+	}
+	if op.SourceName != "" || f.Meta["source_name"] == nil {
+		f.Meta["source_name"] = path.Base(strings.ReplaceAll(source, "\\", "/"))
+	}
 	if f.Meta[MetaAutoCover] != nil {
 		f.Meta = maps.Clone(f.Meta)
 		delete(f.Meta, MetaAutoCover)

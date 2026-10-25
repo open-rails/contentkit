@@ -50,8 +50,8 @@ WHERE tenant_id = $1 AND version_id = ANY($2) ORDER BY version_id, coalesce(star
 	return out, rows.Err()
 }
 
-// resolveChapterStarts derives ranges against this exact source/publication
-// snapshot. A missing or reordered marker requires repair; never retarget it.
+// resolveChapterStarts derives ranges from current source-file order. Chapter
+// titles, schedules and IDs travel with their markers when files are reordered.
 func resolveChapterStarts(segs []segment, pages []page) ([]segment, error) {
 	if !slices.ContainsFunc(segs, func(s segment) bool { return s.StartPage != "" }) {
 		return segs, nil
@@ -64,7 +64,6 @@ func resolveChapterStarts(segs []segment, pages []page) ([]segment, error) {
 		}
 	}
 	out := slices.Clone(segs)
-	previous := -1
 	for i := range out {
 		g := &out[i]
 		matches := positions[g.StartPage]
@@ -74,15 +73,17 @@ func resolveChapterStarts(segs []segment, pages []page) ([]segment, error) {
 		if len(matches) != 1 {
 			return nil, fmt.Errorf("%w: chapter %d's start page appears more than once; choose another page", ErrInvalid, g.Position+1)
 		}
-		at := matches[0]
-		if at <= previous {
-			return nil, fmt.Errorf("%w: chapter %d must start after the chapter before it", ErrInvalid, g.Position+1)
-		}
-		g.Start, g.End = at, len(pages)
+		g.Start, g.End = matches[0], len(pages)
+	}
+	slices.SortFunc(out, func(a, b segment) int { return a.Start - b.Start })
+	for i := range out {
+		out[i].Position = i
 		if i > 0 {
-			out[i-1].End = at
+			if out[i-1].Start == out[i].Start {
+				return nil, fmt.Errorf("%w: chapter start %q is repeated", ErrInvalid, out[i].StartPage)
+			}
+			out[i-1].End = out[i].Start
 		}
-		previous = at
 	}
 	return out, nil
 }
