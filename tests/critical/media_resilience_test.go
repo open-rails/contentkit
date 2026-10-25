@@ -340,6 +340,9 @@ func TestMediaClientResumption(t *testing.T) {
 			if cause == nil || cause != unconfirmed.Err || !errors.Is(err, cause) {
 				t.Fatalf("real ingest error lost wrapped cause: %v", err)
 			}
+			if !strings.Contains(unconfirmed.Error(), "media commit was not confirmed") || !strings.Contains(unconfirmed.Error(), cause.Error()) {
+				t.Fatal("uncertain ingest error lost its actionable message or original cause")
+			}
 			if unconfirmed.Commit.OperationID != operation || unconfirmed.Commit.Ref != ref || len(unconfirmed.Commit.Ops) != 1 {
 				t.Fatalf("retry identity changed: %+v", unconfirmed.Commit)
 			}

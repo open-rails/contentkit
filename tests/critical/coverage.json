@@ -1,8 +1,8 @@
 {
   "source_plan": "open-rails/tracker#1290",
   "candidate_base": "7ab8fdef",
-  "status": "IN_PROGRESS_NOT_QUALIFIED",
-  "note": "Names are coverage obligations, not assertions. Required scenarios remain pending until their actual behavior and selected operation cases are reviewed and executed. Landed P0 purge scenarios are selected; P1 audio remains deferred.",
+  "status": "IN_PROGRESS_MEDIA_247_INTEGRATION_NOT_QUALIFIED",
+  "note": "Earlier scenario/binding reviews refer to the pre-SSE checkpoint. Media247 has been integrated; post-integration execution and six new public streaming/UI bindings are required. Do not restore retired polling options or workers. HTTP identities remain166;98 rows select phase1 security-only coverage.",
   "required": [
     {
       "id": "CK-J01-S01",
@@ -24,9 +24,12 @@
       "status": "verified",
       "evidence": [
         "The actual public v0.125.0 initializer records its module version, creates and publishes content. Current read-only startup refuses its schema, explicit migration preserves item/version IDs, code and body through embedded and HTTP reads, and repeated migration preserves revision.",
-        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification.",
+        "A pinned publicv0.112.1 executable writes actual legacy nested media; current public migration copies real bytes once while preserving content/version/blob identities. Existingv0.125 text migration remains an independent profile.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
       ],
       "cases": [
+        "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity",
         "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity",
         "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/anonymous_HTTP",
         "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/embedded_host"
@@ -106,8 +109,15 @@
       "id": "CK-J01-S08",
       "journey": "CK-J01",
       "behavior": "Restart and Close preserve borrowed stores and pending jobs",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "The host engine closes and reopens while its accepted media work is stopped before checkpoint; the same durable operation resumes after a real worker process restart. Existing lifecycle profile separately preserves borrowed stores.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestHostLifecycle/CK-J01-S08_reopen_preserves_data_and_borrowed_pool",
+        "TestMediaWorkerRecovery/CK-J11-S04_process_death_before_output_checkpoint_retries_one_visible_rendition"
+      ]
     },
     {
       "id": "CK-J02-S01",
@@ -511,8 +521,15 @@
       "id": "CK-J07-S01",
       "journey": "CK-J07",
       "behavior": "Locked detail hides body/media and restricted counts",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Real built SDK requests and backend readbacks verify this selected contract, including body-image redaction and immutable named/inline edits or exact route/body/query behavior as applicable.",
+        "Signed TS child952c2395: eight grouped realHTTP workflows and62 bindings passed race57.961s; existing Go/browser profiles also remain required."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S01_locked_detail_hides_body_and_real_interaction_counts",
+        "TestTypeScriptMediaContracts/media_named_inline"
+      ]
     },
     {
       "id": "CK-J07-S02",
@@ -725,8 +742,15 @@
       "id": "CK-J09-S03",
       "journey": "CK-J09",
       "behavior": "Foreign owner/app/version allocation cannot be committed",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Two independently authorized app runtimes share the same real S3 bucket and PostgreSQL tables, yet cannot adopt each other's staged allocations; both own-app positive controls work.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestMediaAdmissionBoundaries/CK-J09-S03_two_apps_share_storage_without_sharing_upload_allocations",
+        "TestUploadAcceptanceAndRetry/CK-J09-S03_foreign_owner_and_version_cannot_adopt_staged_bytes"
+      ]
     },
     {
       "id": "CK-J09-S04",
@@ -749,15 +773,29 @@
       "id": "CK-J09-S05",
       "journey": "CK-J09",
       "behavior": "Quota and file-count limits reject before excess adoption",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "The actually supported entity-owned media quota enforces its64KiB budget atomically, rejects without effect, refunds removal exactly once and leaves another owner independent. Existing version file-count boundary remains required.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestMediaAdmissionBoundaries/CK-J09-S05_entity_owner_quota_is_atomic_and_removal_refunds_once",
+        "TestUploadAcceptanceAndRetry/CK-J09-S05_file_count_rejection_is_atomic"
+      ]
     },
     {
       "id": "CK-J09-S06",
       "journey": "CK-J09",
       "behavior": "Named/inline image edit preserves published access and immutable source bytes",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Real built SDK requests and backend readbacks verify this selected contract, including body-image redaction and immutable named/inline edits or exact route/body/query behavior as applicable.",
+        "Signed TS child952c2395: eight grouped realHTTP workflows and62 bindings passed race57.961s; existing Go/browser profiles also remain required."
+      ],
+      "cases": [
+        "TestUploadAcceptanceAndRetry/CK-J09-S06_image_edit_preserves_published_access_and_source_bytes",
+        "TestTypeScriptMediaContracts/media_named_inline"
+      ]
     },
     {
       "id": "CK-J10-S01",
@@ -803,8 +841,15 @@
       "id": "CK-J10-S04",
       "journey": "CK-J10",
       "behavior": "Foreign or expired multipart ticket is refused",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A coherently signed but expired real multipart ticket cannot list, complete, abort or presign parts. The original live ticket still works, proving no destructive side effect.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestMediaAdmissionBoundaries/CK-J10-S04_expired_issuer_ticket_cannot_read_complete_abort_or_presign_parts",
+        "TestMultipartUpload/CK-J10-S04_foreign_actor_cannot_reuse_ticket"
+      ]
     },
     {
       "id": "CK-J10-S05",
@@ -862,36 +907,98 @@
       "id": "CK-J11-S03",
       "journey": "CK-J11",
       "behavior": "Concurrent revision edit cannot overwrite the winner",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A real late stale manifest edit cannot overwrite the committed winner.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestMediaConcurrentRevision/CK-J11-S03_a_late_stale_manifest_cannot_overwrite_the_committed_winner"
+      ]
     },
     {
       "id": "CK-J11-S04",
       "journey": "CK-J11",
       "behavior": "Worker crash before checkpoint retries without visible duplicate",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "SIGKILL interrupts the actual owned media worker before its output checkpoint; accepted work survives host reopening and yields one visible rendition after worker restart.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestMediaWorkerRecovery/CK-J11-S04_process_death_before_output_checkpoint_retries_one_visible_rendition"
+      ]
     },
     {
       "id": "CK-J11-S05",
       "journey": "CK-J11",
       "behavior": "Worker crash after checkpoint resumes rather than repeating accepted publication",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Process death after the output checkpoint resumes immutable accepted output without reencoding it.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestMediaWorkerRecovery/CK-J11-S05_process_death_after_checkpoint_preserves_immutable_output_without_reencoding"
+      ]
     },
     {
       "id": "CK-J11-S06",
       "journey": "CK-J11",
       "behavior": "Storage/database settlement failure remains observable and recoverable",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Actual storage refusal, database settlement abort and resource failure stay observable; retry/regeneration recovers durable state without pretending prior completion.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestMediaFailureRecovery/CK-J11-S06",
+        "TestMediaFailureRecovery/CK-J11-S06/database-settlement-abort",
+        "TestMediaFailureRecovery/CK-J11-S06/resource-failure-is-visible-and-regeneration-recovers",
+        "TestMediaFailureRecovery/CK-J11-S06/storage-refusal"
+      ]
     },
     {
       "id": "CK-J11-S07",
       "journey": "CK-J11",
       "behavior": "Browser queue pause/retry/remove and Go ingest resume preserve one operation identity",
+      "status": "verified",
+      "evidence": [
+        "The real Go lost-response path retains the immutable retry batch/cause; actual browser queue pause/retry/remove/order/commit and multipart resume preserve one operation identity and real65MiB integrity.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07",
+        "TestMediaClientResumption/CK-J11-S07/Go_ingest_retains_its_exact_accepted_batch_and_wrapped_cause",
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ]
+    },
+    {
+      "id": "CK-J11-S08",
+      "journey": "CK-J11",
+      "behavior": "Real 25-image ZIP upload reports durable SSE progress, thumbnails and reopen state while remaining draft",
       "status": "pending",
-      "evidence": []
+      "evidence": [],
+      "cases": [],
+      "remaining": "Coordinated media247 acceptance on committed combined source; no old jobs or polling."
+    },
+    {
+      "id": "CK-J11-S09",
+      "journey": "CK-J11",
+      "behavior": "Authorized processing streams enforce snapshot/replay/resync, revocation, cancellation and bounded output",
+      "status": "pending",
+      "evidence": [],
+      "cases": [],
+      "remaining": "Coordinated media247 acceptance on committed combined source; no old jobs or polling."
+    },
+    {
+      "id": "CK-J12-S01",
+      "journey": "CK-J12",
+      "behavior": "Real video produces playable configured AV1 and H264 renditions with its soundtrack",
+      "status": "pending",
+      "evidence": [],
+      "cases": [],
+      "remaining": "Coordinated media247 acceptance on committed combined source; no old jobs or polling."
     },
     {
       "id": "CK-J13-S01",
@@ -977,8 +1084,18 @@
       "id": "CK-J13-S07",
       "journey": "CK-J13",
       "behavior": "HLS child playlists and archive download cannot bypass parent/segment access",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Actual H264 master/child playlists and byte-range segments remain bound to their content, version and capabilities, including after unpublish. Combine with the real ZIP prefix, signed-page-count and entitlement tests.",
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+      ],
+      "cases": [
+        "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
+        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access",
+        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/expire",
+        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/revoke",
+        "TestMediaHLSAuthorization/CK-J13-S07_HLS_children_and_segment_capabilities_remain_content_scoped"
+      ]
     },
     {
       "id": "CK-J13-S08",
@@ -1396,15 +1513,28 @@
       "id": "CK-J25-S06",
       "journey": "CK-J25",
       "behavior": "Billing log replay commits receipt and consumer cursor together",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Actual retained OpenRails source with destination-owned receipts/cursor; real before-commit backend termination and lost post-commit acknowledgement recover through recreated public Source/Store. Source pages remain unchanged.",
+        "Signed child60bf08c1: race64.510s, zero skips/failures. This qualifies atomic replay, not yet the registered River contribution bindings."
+      ],
+      "cases": [
+        "TestBillingInboxAtomicReplay/CK-J25-S06_two_consumers_commit_one_receipt_and_cursor"
+      ]
     },
     {
       "id": "CK-J25-S07",
       "journey": "CK-J25",
       "behavior": "Consumer crash before/after commit cannot skip or duplicate source event effect",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Actual retained OpenRails source with destination-owned receipts/cursor; real before-commit backend termination and lost post-commit acknowledgement recover through recreated public Source/Store. Source pages remain unchanged.",
+        "Signed child60bf08c1: race64.510s, zero skips/failures. This qualifies atomic replay, not yet the registered River contribution bindings."
+      ],
+      "cases": [
+        "TestBillingInboxCommitFailure/CK-J25-S07/before-commit",
+        "TestBillingInboxCommitFailure/CK-J25-S07/after-commit-before-ack"
+      ]
     },
     {
       "id": "CK-J26-S01",
@@ -1514,8 +1644,16 @@
       "id": "CK-J29-S02",
       "journey": "CK-J29",
       "behavior": "Shipped TS method encodes the intended route/body/query and stable error",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Real built SDK requests and backend readbacks verify this selected contract, including body-image redaction and immutable named/inline edits or exact route/body/query behavior as applicable.",
+        "Signed TS child952c2395: eight grouped realHTTP workflows and62 bindings passed race57.961s; existing Go/browser profiles also remain required."
+      ],
+      "cases": [
+        "TestShippedBrowserClient/CK-J29-S02",
+        "TestTypeScriptPublicContracts/catalog_publication",
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ]
     },
     {
       "id": "CK-J29-S03",
@@ -1595,7 +1733,8 @@
     "erasure": "A real ClickHouse connection cut leaves erasure incomplete; recovery clears only the target subject; late signals remain fenced. Restored app backups, paused writers, shared avatars and inboxes, and sibling app retries remain.",
     "qualification": "All123 scenario statuses remain pending semantic and operation review. The default runner intentionally refuses qualification; focused execution is explicitly partial.",
     "upstream": "Normal signed merge of8377f8b3 preserved media runtime. HTTP identities remain166. POST content publish and PUT text no longer advertise202 or moderation_rejected; comment moderation remains current. P0 purge CK-J08-S05/S06 activated; P1 audio deferred.",
-    "bindings": "binding_matrix.tsv freezes the selected public contract:115Go and115TypeScript bindings (230total). Every binding remains pending; invocation alone does not establish functional, error, alias or transport coverage."
+    "bindings": "binding_matrix.tsv freezes the selected public contract:115Go and115TypeScript bindings (230total). Every binding remains pending; invocation alone does not establish functional, error, alias or transport coverage.",
+    "media_247": "Adds CK-J11-S08/S09 and promotes existing CK-J12-S01. Advanced audio-language/subtitle selection in CK-J12-S02 remains P1; a single AAC soundtrack does not qualify it. External media owner retains ZIP/SSE and codec acceptance files. Six new streaming/UI bindings are pending."
   },
   "operation_contracts": [
     {
@@ -6092,10 +6231,13 @@
     {
       "id": "go:Client.GetMediaHls",
       "name": "Client.GetMediaHls",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaHLSAuthorization/CK-J13-S07_HLS_children_and_segment_capabilities_remain_content_scoped"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "go:Client.GetMediaVersion",
@@ -6108,10 +6250,13 @@
     {
       "id": "go:Client.GetMediaVersionHls",
       "name": "Client.GetMediaVersionHls",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaHLSAuthorization/CK-J13-S07_HLS_children_and_segment_capabilities_remain_content_scoped"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "go:Client.PostEntities",
@@ -6405,10 +6550,13 @@
     {
       "id": "go:Client.IngestMedia",
       "name": "Client.IngestMedia",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/Go_ingest_retains_its_exact_accepted_batch_and_wrapped_cause"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "go:Engine.Start",
@@ -6602,10 +6750,13 @@
     {
       "id": "go:MediaCommitError.Unwrap",
       "name": "MediaCommitError.Unwrap",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/Go_ingest_retains_its_exact_accepted_batch_and_wrapped_cause"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "go:Config.MediaKinds",
@@ -6618,10 +6769,13 @@
     {
       "id": "go:MigratePostgres",
       "name": "MigratePostgres",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "go:MigrateClickHouse",
@@ -6858,274 +7012,378 @@
     {
       "id": "go:MigrateVersionStorage",
       "name": "MigrateVersionStorage",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:CatalogClient.listEvents",
       "name": "CatalogClient.listEvents",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:CatalogClient.totals",
       "name": "CatalogClient.totals",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:BansClient.list",
       "name": "BansClient.list",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:BansClient.get",
       "name": "BansClient.get",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:BansClient.ban",
       "name": "BansClient.ban",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:BansClient.lift",
       "name": "BansClient.lift",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ModerationClient.held",
       "name": "ModerationClient.held",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ModerationClient.resolve",
       "name": "ModerationClient.resolve",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ModerationClient.bannedWords",
       "name": "ModerationClient.bannedWords",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ModerationClient.banWords",
       "name": "ModerationClient.banWords",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ModerationClient.unbanWords",
       "name": "ModerationClient.unbanWords",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ModerationClient.ipBans",
       "name": "ModerationClient.ipBans",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ModerationClient.banIPs",
       "name": "ModerationClient.banIPs",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ModerationClient.liftIPBans",
       "name": "ModerationClient.liftIPBans",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/moderation_bans"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentsClient.publish",
       "name": "ContentsClient.publish",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentsClient.publishWhenReady",
       "name": "ContentsClient.publishWhenReady",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity",
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions.",
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentsClient.unpublish",
       "name": "ContentsClient.unpublish",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentsClient.restore",
       "name": "ContentsClient.restore",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentsClient.removeVersion",
       "name": "ContentsClient.removeVersion",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.library",
       "name": "DiscoveryClient.library",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.list",
       "name": "DiscoveryClient.list",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.knownCards",
       "name": "DiscoveryClient.knownCards",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.search",
       "name": "DiscoveryClient.search",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.typeahead",
       "name": "DiscoveryClient.typeahead",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.adminSuggestions",
       "name": "DiscoveryClient.adminSuggestions",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.similar",
       "name": "DiscoveryClient.similar",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.recommendations",
       "name": "DiscoveryClient.recommendations",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.releaseDates",
       "name": "DiscoveryClient.releaseDates",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:DiscoveryClient.releases",
       "name": "DiscoveryClient.releases",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:EntitiesClient.create",
       "name": "EntitiesClient.create",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:EntitiesClient.update",
       "name": "EntitiesClient.update",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:EntitiesClient.remove",
       "name": "EntitiesClient.remove",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:EntitiesClient.mine",
       "name": "EntitiesClient.mine",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentKitError.refusal",
@@ -7198,42 +7456,57 @@
     {
       "id": "ts:MediaApi.parts",
       "name": "MediaApi.parts",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaApi.listParts",
       "name": "MediaApi.listParts",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaApi.complete",
       "name": "MediaApi.complete",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaApi.abort",
       "name": "MediaApi.abort",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_abort"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaApi.commit",
       "name": "MediaApi.commit",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaApi.read",
@@ -7250,42 +7523,57 @@
     {
       "id": "ts:MediaApi.presets",
       "name": "MediaApi.presets",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaApi.itemURL",
       "name": "MediaApi.itemURL",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.upload",
       "name": "MediaClient.upload",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.put",
       "name": "MediaClient.put",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.commit",
       "name": "MediaClient.commit",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.read",
@@ -7302,242 +7590,332 @@
     {
       "id": "ts:MediaClient.waitFor",
       "name": "MediaClient.waitFor",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.editorView",
       "name": "MediaClient.editorView",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.presets",
       "name": "MediaClient.presets",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.getFrame",
       "name": "MediaClient.getFrame",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptVideoContracts/media_hls_transport"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.hlsBase",
       "name": "MediaClient.hlsBase",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptVideoContracts/media_hls_transport"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.hls",
       "name": "MediaClient.hls",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptVideoContracts/media_hls_transport"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.uploadNamed",
       "name": "MediaClient.uploadNamed",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_named_inline"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.uploadInline",
       "name": "MediaClient.uploadInline",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_named_inline"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.presetPath",
       "name": "MediaClient.presetPath",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.pollRef",
       "name": "MediaClient.pollRef",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:MediaClient.discard",
       "name": "MediaClient.discard",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_abort"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.subscribe",
       "name": "ItemUploadQueue.subscribe",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.getSnapshot",
       "name": "ItemUploadQueue.getSnapshot",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.add",
       "name": "ItemUploadQueue.add",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.move",
       "name": "ItemUploadQueue.move",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.update",
       "name": "ItemUploadQueue.update",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.remove",
       "name": "ItemUploadQueue.remove",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.retry",
       "name": "ItemUploadQueue.retry",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.start",
       "name": "ItemUploadQueue.start",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.pause",
       "name": "ItemUploadQueue.pause",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.commit",
       "name": "ItemUploadQueue.commit",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ItemUploadQueue.dispose",
       "name": "ItemUploadQueue.dispose",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestMediaClientResumption/CK-J11-S07/browser_queue_controls_multipart_resume_and_commit_identity"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:NotificationsClient.list",
       "name": "NotificationsClient.list",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/notification_receipts"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:NotificationsClient.refresh",
       "name": "NotificationsClient.refresh",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/notification_receipts"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:NotificationsClient.setRead",
       "name": "NotificationsClient.setRead",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/notification_receipts"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:NotificationsClient.setDismissed",
       "name": "NotificationsClient.setDismissed",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/notification_receipts"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:VersionsClient.download",
       "name": "VersionsClient.download",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_named_inline"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentKitClient.config",
       "name": "ContentKitClient.config",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentKitClient.kinds",
       "name": "ContentKitClient.kinds",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentKitClient.url",
       "name": "ContentKitClient.url",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/catalog_publication"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:ContentKitClient.setReadScope",
@@ -7782,26 +8160,35 @@
     {
       "id": "ts:defaultTransport",
       "name": "defaultTransport",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:xhrTransport",
       "name": "xhrTransport",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptVideoContracts/media_hls_transport"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:fetchTransport",
       "name": "fetchTransport",
-      "status": "pending",
-      "cases": [],
-      "evidence": [],
-      "remaining": "Review real public behavior, value/error vectors and selected aliases or branches before qualification."
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptMediaContracts/media_image_io"
+      ],
+      "evidence": [
+        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+      ]
     },
     {
       "id": "ts:chunkOffsets",
@@ -7912,6 +8299,54 @@
       "evidence": [
         "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
       ]
+    },
+    {
+      "id": "go:Client.WatchMedia",
+      "name": "Client.WatchMedia",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "go:Engine.AccountMediaEvents",
+      "name": "Engine.AccountMediaEvents",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "ts:MediaApi.watch",
+      "name": "MediaApi.watch",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "ts:MediaClient.watch",
+      "name": "MediaClient.watch",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "ts:ContentUpload",
+      "name": "ContentUpload",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
+    },
+    {
+      "id": "ts:MediaProcessingPanel",
+      "name": "MediaProcessingPanel",
+      "status": "pending",
+      "cases": [],
+      "evidence": [],
+      "remaining": "Media source247 requires real retained stream or browser component acceptance; owned by the coordinated media test lane."
     }
   ]
 }

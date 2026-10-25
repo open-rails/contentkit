@@ -87,7 +87,6 @@ export async function runMediaContracts(group, fixture) {
     proved("MediaClient.commit");
     const processed = await owner.media.waitFor(ref, "pages/one.png", {
       timeout: 30_000,
-      interval: 50,
     });
     assert.equal(processed.path, "pages/one.png");
     assert.equal(processed.w, 96);
@@ -104,7 +103,6 @@ export async function runMediaContracts(group, fixture) {
     assert.equal(hash(Buffer.from(await stored.arrayBuffer())), fixture.sha256);
     const editor = await owner.media.editorView(ref, "pages/one.png", {
       timeout: 30_000,
-      interval: 50,
     });
     assert.equal(editor.width, 96);
     assert.equal(editor.height, 64);
@@ -159,7 +157,7 @@ export async function runMediaContracts(group, fixture) {
     const attachment = await owner.media.waitFor(
       ref,
       "attachments/transport.txt",
-      { timeout: 30_000, interval: 50 },
+      { timeout: 30_000 },
     );
     assert.equal(attachment.size, text.size);
     const listing = await owner.media.read(ref, {
@@ -203,7 +201,6 @@ export async function runMediaContracts(group, fixture) {
     assert(edited.some((x) => x.path === named.path && x.edit?.rotate === 90));
     await owner.media.waitFor(imageRef, named.path, {
       timeout: 30_000,
-      interval: 50,
     });
     const rotated = (
       await owner.media.read(imageRef, {
@@ -248,7 +245,6 @@ export async function runMediaContracts(group, fixture) {
     ]);
     await owner.media.waitFor(imageRef, inline.path, {
       timeout: 30_000,
-      interval: 50,
     });
     const bodyRendition = (
       await owner.media.read(imageRef, { editor: true, prefix: "body-reader/" })

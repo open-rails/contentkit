@@ -128,6 +128,10 @@ if (group === "catalog_publication") {
   );
   await refused(() => anonymous.catalog.listEvents(), 401, "unauthorized");
   proved("CatalogClient.listEvents");
+  await refused(() => reader.contents.unpublish(draft.id), 403, "forbidden");
+  const preservedPublication = await owner.contents.get(draft.id);
+  assert.equal(preservedPublication.live, true);
+  assert.equal(preservedPublication.body, "Exact TypeScript source body");
   const hidden = await owner.contents.unpublish(draft.id);
   assert.equal(hidden.id, draft.id);
   assert.equal(hidden.live, false);
@@ -139,6 +143,18 @@ if (group === "catalog_publication") {
   );
   proved("ContentsClient.unpublish");
   await refused(() => anonymous.contents.get(fixture.legacy), 404, "not_found");
+  await refused(
+    () => reader.contents.restore(fixture.legacy),
+    403,
+    "forbidden",
+  );
+  const preservedDeletion = await owner.contents.manage({
+    ids: [fixture.legacy],
+    state: "deleted",
+  });
+  assert.equal(preservedDeletion.length, 1);
+  assert.equal(preservedDeletion[0].id, fixture.legacy);
+  assert.equal(preservedDeletion[0].state, "deleted");
   const restored = await owner.contents.restore(fixture.legacy);
   assert.equal(restored.id, fixture.legacy);
   assert.equal(restored.live, true);
@@ -155,6 +171,18 @@ if (group === "catalog_publication") {
   assert.equal(totals.kinds.article.public, 3);
   assert.equal(totals.kinds.article.languages.en.public, 3);
   proved("CatalogClient.totals");
+  await refused(
+    () => reader.contents.removeVersion(draft.id, draft.versions[0].id),
+    403,
+    "forbidden",
+  );
+  const preservedVersion = await owner.contents.version(
+    draft.id,
+    draft.versions[0].id,
+  );
+  assert.equal(preservedVersion.id, draft.versions[0].id);
+  assert.equal(preservedVersion.state, "published");
+  assert.equal((await owner.contents.get(draft.id)).live, true);
   await owner.contents.removeVersion(draft.id, draft.versions[0].id);
   await refused(() => anonymous.contents.get(draft.id), 404, "not_found");
   const retired = await owner.contents.manage({
