@@ -199,6 +199,7 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		requireError(t, err, 403, "forbidden")
 		_, err = w.apps[2].client(stranger).GetContent(t.Context(), created.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.contributor)
 		authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.writer)
 		ownTitle := "Creator may edit this"
 		_, err = a.client(token).PatchContent(t.Context(), created.ID, catalog.ContentPatch{OriginalTitle: &ownTitle})

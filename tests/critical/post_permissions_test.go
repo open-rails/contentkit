@@ -9,6 +9,7 @@ import (
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/media"
 )
 
 func TestPostContributorAuthority(t *testing.T) {
@@ -46,7 +47,8 @@ func TestPostContributorAuthority(t *testing.T) {
 		if len(managed) != 0 {
 			t.Fatal("attribution exposed a management draft")
 		}
-		suggestions, err := credited.GetManageSearchSuggestions(t.Context(), ck.GetManageSearchSuggestionsQuery{Q: "Personal contributor", ContentKinds: []string{"article"}})
+		includeContents := true
+		suggestions, err := credited.GetManageSearchSuggestions(t.Context(), ck.GetManageSearchSuggestionsQuery{Q: "Personal contributor", IncludeContents: &includeContents, ContentKinds: []string{"article"}})
 		must(t, err)
 		if len(suggestions.Contents) != 0 {
 			t.Fatal("attribution exposed a management suggestion")
@@ -67,8 +69,47 @@ func TestPostContributorAuthority(t *testing.T) {
 		_, err = credited.PostContents(t.Context(), newPost("No create grant", ""))
 		requireError(t, err, 403, "forbidden")
 	})
+	t.Run("CK-J03-S05_current_app_grants_control_own_draft_and_mutations", func(t *testing.T) {
+		person, token := w.person(t, 0)
+		caller := a.client(token)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
+		item, err := caller.PostContents(t.Context(), newPost("Create-only submission", ""))
+		must(t, err)
+		if item.Editor {
+			t.Fatal("create-only grant conferred editing")
+		}
+		_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Must refuse", Body: "no"})
+		requireError(t, err, 403, "forbidden")
+		_, err = caller.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+		requireError(t, err, 403, "forbidden")
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.ownEditor)
+		_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Current edit grant", Body: "yes"})
+		must(t, err)
+		authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.ownEditor)
+		own, err := caller.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+		must(t, err)
+		if own.Editor || own.Body != "yes" {
+			t.Fatal("create-only draft read was lost or retained write")
+		}
+		_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Revoked", Body: "no"})
+		requireError(t, err, 403, "forbidden")
+		authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
+		_, err = caller.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		ownList, err := caller.GetManage(t.Context(), ck.GetManageQuery{})
+		must(t, err)
+		if len(ownList) != 0 {
+			t.Fatal("revoked author still has a management listing")
+		}
+		include := true
+		suggestions, err := caller.GetManageSearchSuggestions(t.Context(), ck.GetManageSearchSuggestionsQuery{Q: "Current edit", IncludeContents: &include})
+		must(t, err)
+		if len(suggestions.Contents) != 0 {
+			t.Fatal("revoked author still has a management suggestion")
+		}
+	})
 	t.Run("CK-J03-S01_channel_contributor_cannot_edit_other_posts_or_channel", func(t *testing.T) {
-		_, ownerToken, channel := ownedEntity(t, w, a, "Community")
+		channelOwner, ownerToken, channel := ownedEntity(t, w, a, "Community")
 		owner := a.client(ownerToken)
 		existing, err := owner.PostContents(t.Context(), newPost("Owner private draft", string(channel.ID)))
 		must(t, err)
@@ -94,8 +135,101 @@ func TestPostContributorAuthority(t *testing.T) {
 		requireError(t, err, 403, "forbidden")
 		_, err = author.PostContentPublish(t.Context(), own.ID, catalog.PublishInput{})
 		must(t, err)
+		draft, err := author.PostContents(t.Context(), newPost("Channel grant revocation", string(channel.ID)))
+		must(t, err)
+		authtest.RevokeRole(t, w.tenant[0], scope, iam.UserSubject(alice.ID), w.channelContributor)
+		_, err = author.GetContent(t.Context(), draft.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		_, err = author.PutContentText(t.Context(), own.ID, "en", catalog.Text{Title: "Cannot use app grant here", Body: "no"})
+		requireError(t, err, 403, "forbidden")
 		authtest.GrantRole(t, w.tenant[0], scope, iam.UserSubject(bob.ID), w.channelWriter)
 		_, err = credited.PutContentText(t.Context(), existing.ID, "en", catalog.Text{Title: "Team editor still works", Body: "Team edit"})
 		must(t, err)
+		persona, err := w.auth.Persona("channel")
+		must(t, err)
+		authtest.RevokeRole(t, w.tenant[0], scope, iam.UserSubject(channelOwner.ID), persona.OwnerRole())
+		_, err = owner.GetContent(t.Context(), existing.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		_, err = owner.PostContents(t.Context(), newPost("Owner metadata cannot bypass revocation", string(channel.ID)))
+		requireError(t, err, 403, "forbidden")
 	})
+}
+
+// Presigning is a real media mutation, not just an editor flag in a JSON response.
+func TestPostContributorMediaRevocation(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	attachMedia(t, w, a)
+	person, token := w.person(t, 0)
+	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
+	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.ownEditor)
+	caller := a.client(token)
+	ref := galleryRef(t, caller, "Own media grant")
+	payload := imageBytes(t)
+	request := media.PresignBody{Ref: ref, Path: "pages/one.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)}
+	_, err := caller.PostMediaUploadPresign(t.Context(), request)
+	must(t, err)
+	authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.ownEditor)
+	_, err = caller.PostMediaUploadPresign(t.Context(), request)
+	requireError(t, err, 403, "forbidden")
+	own, err := caller.GetContent(t.Context(), ref.ID, ck.GetContentQuery{})
+	must(t, err)
+	if own.Editor {
+		t.Fatal("create-only account retained media editorship")
+	}
+	authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
+	_, err = caller.GetContent(t.Context(), ref.ID, ck.GetContentQuery{})
+	requireError(t, err, 404, "not_found")
+}
+
+// A community can belong to the site while AuthKit groups delegate its team.
+func TestSiteChannelDelegatedCapabilities(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) {
+		kind := cfg.Content.EntityKinds["channel"]
+		kind.Owner = "site"
+		kind.MaxPerOwner = 0
+		cfg.Content.EntityKinds["channel"] = kind
+	})
+	a := w.apps[0]
+	attachMedia(t, w, a)
+	rows, err := a.engine.Client().PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: "official", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Official community"}}}})
+	must(t, err)
+	channel := rows[0]
+	if channel.OwnerUserID != "" || channel.AuthScope == "" {
+		t.Fatal("site channel fixture has wrong ownership")
+	}
+	id, err := ckauth.EntityScopeID(*a.cfg.Scope, channel.AuthScope)
+	must(t, err)
+	group := iam.GroupByID(id)
+	manager, token := w.person(t, 0)
+	client := a.client(token)
+	authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(manager.ID), w.channelManager)
+	_, err = client.PatchEntity(t.Context(), string(channel.ID), entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Renamed by manager"}}})
+	must(t, err)
+	_, err = client.PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: "not-authorized"}})
+	requireError(t, err, 403, "forbidden")
+	payload := imageBytes(t)
+	ref := media.RefBody{Kind: "channel", ID: string(channel.ID)}
+	presign := media.PresignBody{Ref: ref, Path: "cover/new.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)}
+	_, err = client.PostMediaUploadPresign(t.Context(), presign)
+	must(t, err)
+	authtest.RevokeRole(t, w.tenant[0], group, iam.UserSubject(manager.ID), w.channelManager)
+	_, err = client.PostMediaUploadPresign(t.Context(), presign)
+	requireError(t, err, 403, "forbidden")
+	_, err = client.PatchEntity(t.Context(), string(channel.ID), entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Revoked manager"}}})
+	requireError(t, err, 403, "forbidden")
+	authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(manager.ID), w.channelWriter)
+	input := catalog.ContentInput{Kind: "article", OwnerEntityID: string(channel.ID), Text: map[string]catalog.Text{"en": {Title: "Official post", Body: "Public"}}}
+	item, err := client.PostContents(t.Context(), input)
+	must(t, err)
+	_, err = client.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+	must(t, err)
+	_, commentToken := w.person(t, 0)
+	comment := postComment(t, a.client(commentToken), item.ID, "Moderated site channel")
+	moderator, moderatorToken := w.person(t, 0)
+	authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(moderator.ID), w.channelModerator)
+	must(t, a.client(moderatorToken).PostCommentHold(t.Context(), comment.ID))
+	authtest.RevokeRole(t, w.tenant[0], group, iam.UserSubject(moderator.ID), w.channelModerator)
+	err = a.client(moderatorToken).PostCommentHold(t.Context(), comment.ID)
+	requireError(t, err, 403, "forbidden")
 }

@@ -11,6 +11,9 @@ const (
 	// ContentCreate: a signed-in person may create their own content outside
 	// a channel. Channel posts require that channel's create or write grant.
 	ContentCreate Permission = "root:content:create"
+	// ContentEditOwn: edit and publish content created by this account outside
+	// a channel. Channel posts need the channel edit-own or broad write grant.
+	ContentEditOwn Permission = "root:content:edit-own"
 	// ContentWrite: create, edit, publish, delete and restore any content
 	// item, and see everything.
 	ContentWrite Permission = "root:content:write"
@@ -43,7 +46,7 @@ const (
 
 // Permissions is every application permission; hosts choose which roles hold them.
 func Permissions() []Permission {
-	return []Permission{ContentCreate, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
+	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
 }
 
 func (p Permission) String() string { return string(p) }
@@ -66,6 +69,9 @@ func Names(ps ...Permission) []string {
 // other people's posts or managing the channel.
 func EntityContentCreate(kind string) string { return kind + ":content:create" }
 
+// EntityContentEditOwn: edit and publish this account's posts in a channel.
+func EntityContentEditOwn(kind string) string { return kind + ":content:edit-own" }
+
 // EntityContentWrite: create, edit, publish and delete the content the entity
 // owns (owner_entity), and see its drafts.
 func EntityContentWrite(kind string) string { return kind + ":content:write" }
@@ -84,5 +90,5 @@ func EntityCommentsModerate(kind string) string { return kind + ":comments:moder
 // EntityPermissions is every permission ContentKit checks in an entity kind's
 // AuthKit scopes.
 func EntityPermissions(kind string) []string {
-	return []string{EntityContentCreate(kind), EntityContentWrite(kind), EntitySettingsManage(kind), EntityMediaWrite(kind), EntityCommentsModerate(kind)}
+	return []string{EntityContentCreate(kind), EntityContentEditOwn(kind), EntityContentWrite(kind), EntitySettingsManage(kind), EntityMediaWrite(kind), EntityCommentsModerate(kind)}
 }

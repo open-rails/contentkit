@@ -40,13 +40,18 @@ type world struct {
 	roles              *authkit.Roles
 	writer             iam.Role
 	contributor        iam.Role
+	submitter          iam.Role
+	ownEditor          iam.Role
 	viewer             iam.Role
 	moderator          iam.Role
 	commentManager     iam.Role
 	globalReviewer     iam.Role
 	channelWriter      iam.Role
 	channelContributor iam.Role
+	channelSubmitter   iam.Role
+	channelOwnEditor   iam.Role
 	channelModerator   iam.Role
+	channelManager     iam.Role
 	tenant             [2]*authkit.Client
 	apps               []*application
 	clock              *clock
@@ -91,7 +96,9 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 	write := permissions[access.ContentWrite]
 	moderate := permissions[access.CommentsModerate]
 	w.writer = appPersona.Role("writer", write)
-	w.contributor = appPersona.Role("contributor", permissions[access.ContentCreate])
+	w.contributor = appPersona.Role("contributor", permissions[access.ContentCreate], permissions[access.ContentEditOwn])
+	w.submitter = appPersona.Role("submitter", permissions[access.ContentCreate])
+	w.ownEditor = appPersona.Role("own-editor", permissions[access.ContentEditOwn])
 	w.viewer = appPersona.Role("auditor", permissions[access.ContentViewRestricted])
 	w.moderator = appPersona.Role("moderator", moderate)
 	w.commentManager = appPersona.Role("comment-manager", moderate, permissions[access.CommentsBan], permissions[access.ModerationReview])
@@ -102,8 +109,11 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 		channelPermissions[permission] = channel.Declare(permission)[0]
 	}
 	w.channelWriter = channel.Role("writer", channelPermissions["channel:content:write"])
-	w.channelContributor = channel.Role("contributor", channelPermissions["channel:content:create"])
+	w.channelContributor = channel.Role("contributor", channelPermissions["channel:content:create"], channelPermissions["channel:content:edit-own"])
+	w.channelSubmitter = channel.Role("submitter", channelPermissions["channel:content:create"])
+	w.channelOwnEditor = channel.Role("own-editor", channelPermissions["channel:content:edit-own"])
 	w.channelModerator = channel.Role("moderator", channelPermissions["channel:comments:moderate"])
+	w.channelManager = channel.Role("manager", channelPermissions["channel:settings:manage"], channelPermissions["channel:media:write"])
 	w.auth, _ = authtest.New(t,
 		authtest.WithConfig(func(c *authkit.Config) {
 			c.Roles = w.roles

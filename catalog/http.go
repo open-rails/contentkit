@@ -795,6 +795,10 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	if err != nil {
 		return "", nil, err
 	}
+	own, err := s.ownAccess(ctx, actor, false)
+	if err != nil {
+		return "", nil, err
+	}
 	entity := false
 	if q.OwnerEntity != "" && !rights.write {
 		editors, err := s.entityEditor(ctx, s.pool, actor, []string{q.OwnerEntity})
@@ -845,7 +849,7 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	state += cond
 	return `SELECT c.id FROM ` + s.t.items + ` c WHERE c.tenant_id = $1 AND ` + state + `
  AND ($2 = '' OR c.kind = $2) AND ($3 = '' OR c.owner_entity_id = $3)
- AND ($4 OR $5 OR (c.created_by=$6 AND $6<>''))
+ AND ($4 OR $5 OR (c.created_by=$6 AND $6<>'' AND ((c.owner_entity_id IS NULL AND $12::boolean) OR c.owner_entity_id=ANY($13::text[]))))
  AND ($7 = '' OR strpos(lower(coalesce(c.original_title,'')),lower($7))>0 OR EXISTS (
  SELECT 1 FROM ` + s.t.versions + ` v JOIN ` + s.t.versionText + ` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
  WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND strpos(lower(t.title),lower($7))>0)
@@ -853,7 +857,7 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
   AND (strpos(lower(t.title), lower($7)) > 0 OR strpos(lower(t.description), lower($7)) > 0 OR strpos(lower(t.body), lower($7)) > 0)))
  AND ($10 = '' OR EXISTS (SELECT 1 FROM ` + s.qs + `.content_codes k WHERE k.tenant_id = c.tenant_id AND k.content_kind = c.kind AND k.content_id = c.id AND k.code = $10))
  AND (cardinality($11::text[]) = 0 OR c.id = ANY($11::text[]))`,
-		[]any{s.tenant, q.Kind, q.OwnerEntity, rights.write, entity, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs)}, nil
+		[]any{s.tenant, q.Kind, q.OwnerEntity, rights.write, entity, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs), own.app, own.entities}, nil
 }
 
 // ManageCount is how many items a manage listing selects.

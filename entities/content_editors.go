@@ -13,6 +13,22 @@ import (
 // entities. The scope directory is narrowed to this app and credential ceilings
 // by heldScopes, as it is for Mine. It never enumerates catalog content.
 func (s *Store) ContentEditorEntities(ctx context.Context, a auth.Authenticator, actor access.Actor) ([]EntityID, error) {
+	return s.contentAuthorityEntities(ctx, a, actor, func(kind string) []string { return []string{access.EntityContentWrite(kind)} })
+}
+
+// ContentAuthorEntities returns channels where the current credential may read
+// or edit its own posts. This does not confer authority over other authors.
+func (s *Store) ContentAuthorEntities(ctx context.Context, a auth.Authenticator, actor access.Actor, editing bool) ([]EntityID, error) {
+	return s.contentAuthorityEntities(ctx, a, actor, func(kind string) []string {
+		permissions := []string{access.EntityContentEditOwn(kind), access.EntityContentWrite(kind)}
+		if !editing {
+			permissions = append(permissions, access.EntityContentCreate(kind))
+		}
+		return permissions
+	})
+}
+
+func (s *Store) contentAuthorityEntities(ctx context.Context, a auth.Authenticator, actor access.Actor, permissions func(string) []string) ([]EntityID, error) {
 	out := []EntityID{}
 	if !actor.Member() {
 		return out, nil
@@ -40,7 +56,7 @@ func (s *Store) ContentEditorEntities(ctx context.Context, a auth.Authenticator,
 			if err := rows.Scan(&id, &kind, &scope, &owner); err != nil {
 				return err
 			}
-			if owner || slices.Contains(held[scope], access.EntityContentWrite(kind)) {
+			if scope == "" && owner || slices.ContainsFunc(permissions(kind), func(permission string) bool { return slices.Contains(held[scope], permission) }) {
 				out = append(out, id)
 			}
 		}

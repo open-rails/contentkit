@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
@@ -54,6 +55,9 @@ func TestEntityOwnerAssignmentBoundary(t *testing.T) {
 		local, localToken := w.person(t, 0)
 		_, err = a.engine.Client().PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{OwnerUserID: &local.ID})
 		must(t, err)
+		_, err = a.client(localToken).PostContents(t.Context(), catalog.ContentInput{Kind: "article", OwnerEntityID: string(entity.ID)})
+		requireError(t, err, 403, "forbidden") // metadata is not a scoped permission grant.
+		authtest.GrantRole(t, w.tenant[0], iam.GroupByID(groupID), iam.UserSubject(local.ID), w.channelWriter)
 		item, err := a.client(localToken).PostContents(t.Context(), catalog.ContentInput{Kind: "article", OwnerEntityID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Accepted tenant owner"}}})
 		must(t, err)
 		if item.OwnerEntityID != string(entity.ID) {

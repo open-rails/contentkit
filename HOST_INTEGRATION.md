@@ -1534,18 +1534,27 @@ River tables (by default, `<entity-schema>_river`).
 
 ## Post contributors and attribution
 
-A host can grant `access.ContentCreate` to registered accounts for personal posts
-outside a channel. Inside a channel, grant `access.EntityContentCreate(kind)` in
-that channel's scope. These permissions let the authenticated author create,
-edit and publish their own posts; they grant no channel-management authority or
-access to other authors' drafts. `ContentWrite` and `EntityContentWrite(kind)`
-retain their broad staff/team-editor semantics. Site blogs need only staff grants;
-creator platforms can allow channel owners, and community feeds can add narrowly
-scoped contributors.
+A host grants typed capabilities through its AuthKit roles. `ContentCreate`
+permits personal posts outside channels; `EntityContentCreate(kind)` permits
+posting in one channel. `ContentEditOwn` and `EntityContentEditOwn(kind)` permit
+editing and publishing the caller's own posts. A normal contributor role grants
+both create and edit-own. A submission-only role can grant create alone: its
+author can read the submitted draft but cannot edit, publish or upload media.
+Current create or edit-own authority is required for an author's private reads;
+edit-own is required for mutations. Removing those grants applies on the next
+request, even when the account remains recorded as the author.
 
-Personal authority follows the existing immutable `content_items.created_by`,
-set from the authenticated tenant account. Editable creator credits are display
-metadata and never delegate editing, private reads or moderation ownership.
-Imported content without `created_by` stays under staff/channel control; changing
-attribution cannot manufacture personal ownership. No entitlement is implied by
-posting permissions: paid readership is still checked through OpenRails.
+`ContentWrite` and `EntityContentWrite(kind)` retain broad staff/team-editor
+semantics. Read-restricted auditors can see drafts but are not media editors.
+For a scoped channel, AuthKit's current owner/team roles are authoritative;
+`owner_user_id` metadata does not bypass revoked grants. A host that deliberately
+uses a user-owned kind without an auth scope retains its direct-owner model.
+Site-owned channels can also have an auth scope to delegate settings, media,
+content or comment moderation to a group; site ownership alone doesn't grant
+ordinary users access. Creating site-owned channels stays staff-only.
+
+Personal authority also requires immutable `content_items.created_by`, set from
+the authenticated tenant account. Editable creator credits are display metadata,
+not grants. Imported content without `created_by` remains staff/channel-managed.
+App-level own-post permissions never authorize access to arbitrary channels.
+OpenRails continues to own paid audience entitlements and their expiration.

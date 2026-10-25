@@ -54,6 +54,8 @@ type Viewer struct {
 	now            time.Time
 	staff          bool
 	staffWrite     bool
+	ownRead        ownAccess
+	ownWrite       ownAccess
 	management     bool
 	filter         *access.Filter
 	policies       domainpolicy.Policies
@@ -88,6 +90,18 @@ func (s *Store) Viewer(ctx context.Context, o ViewerOptions) (*Viewer, error) {
 	}
 	v.staff = rights.view || rights.write
 	v.staffWrite = rights.write
+	if !v.staffWrite {
+		v.ownRead, err = s.ownAccess(ctx, o.Actor, false)
+		if err != nil {
+			s.log.WarnContext(ctx, "catalog: own-read authority unavailable", "err", err)
+			v.ownRead = ownAccess{}
+		}
+		v.ownWrite, err = s.ownAccess(ctx, o.Actor, true)
+		if err != nil {
+			s.log.WarnContext(ctx, "catalog: own-edit authority unavailable", "err", err)
+			v.ownWrite = ownAccess{}
+		}
+	}
 	f, err := s.accessG.Filter(ctx, o.Actor)
 	if err != nil && !errors.Is(err, access.ErrUnavailable) {
 		return nil, err
@@ -163,7 +177,7 @@ func (v *Viewer) Editors(ctx context.Context, entities []string) map[string]bool
 	for _, g := range entities {
 		switch {
 		case g == "":
-		case v.staff || v.editable(g):
+		case v.staffWrite || v.editable(g):
 			out[g] = true
 		case v.asked != nil && v.asked[g]:
 			out[g] = true
@@ -247,7 +261,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	args := pgx.NamedArgs{"cv_now": v.now,
 		"cv_language": v.language, "cv_owned": v.filter.Contents(), "cv_owned_versions": versions,
 		"cv_owned_candidates": !v.filter.Complete() && !v.filter.Unknown(), "cv_user": viewerID(v.actor), "cv_editors": v.editorEntities,
-		"cv_include_deleted": v.includeDeleted}
+		"cv_include_deleted": v.includeDeleted, "cv_own_app": v.ownRead.app, "cv_own_channels": v.ownRead.entities}
 	for k, a := range accessArgs {
 		args[k] = a
 	}
@@ -283,7 +297,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 // viewer edits or whose content they created.
 func (v *Viewer) privileged(alias string) string {
 	return "(" + alias + ".owner_entity_id = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.items +
-		" authored WHERE authored.tenant_id = " + alias + ".tenant_id AND authored.id = " + alias + ".content_id AND authored.created_by = @cv_user)))"
+		" authored WHERE authored.tenant_id = " + alias + ".tenant_id AND authored.id = " + alias + ".content_id AND authored.created_by = @cv_user AND ((authored.owner_entity_id IS NULL AND @cv_own_app::boolean) OR authored.owner_entity_id=ANY(@cv_own_channels::text[])))))"
 }
 
 // Playable is a boolean SQL predicate over the content_facets row aliased
@@ -383,7 +397,16 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	}
 	// Live versions are decided by their rule; deleted ones that were live
 	// open only to holders of their own content or version key.
-	known := func(id string) bool { return v.staff || creator[id] || v.editable(byID[id][0].ownerEntity) }
+	personal := func(id string, write bool) bool {
+		if !creator[id] {
+			return false
+		}
+		if write {
+			return v.ownWrite.allows(byID[id][0].ownerEntity)
+		}
+		return v.ownRead.allows(byID[id][0].ownerEntity)
+	}
+	known := func(id string) bool { return v.staff || personal(id, false) || v.editable(byID[id][0].ownerEntity) }
 	var live, held []facetRow
 	for id, rs := range byID {
 		if known(id) {
@@ -441,8 +464,8 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	for id, rs := range byID {
 		iv := &itemView{found: true, decisions: map[string]Decision{}}
 		out[id] = iv
-		iv.editor = v.staffWrite || creator[id] || v.editable(rs[0].ownerEntity) || editors[rs[0].ownerEntity]
-		if v.staff || iv.editor {
+		iv.editor = v.staffWrite || personal(id, true) || v.editable(rs[0].ownerEntity) || editors[rs[0].ownerEntity]
+		if known(id) || editors[rs[0].ownerEntity] {
 			for _, r := range rs {
 				if !v.management && !v.inScope(r) {
 					continue
@@ -578,7 +601,7 @@ func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership,
 		if err := rows.Scan(&id, &o.comments, &o.creator, &g.ID, &g.Kind, &g.Owner, &g.Scope); err != nil {
 			return nil, err
 		}
-		if g.ID != "" && s.cfg.EntityKinds[g.Kind].Owner == "user" {
+		if g.ID != "" && (s.cfg.EntityKinds[g.Kind].Owner == "user" || s.cfg.EntityKinds[g.Kind].AuthScope) {
 			o.entity = &g
 		}
 		out[id] = o

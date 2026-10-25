@@ -376,7 +376,7 @@ func (s *Store) heldScopes(ctx context.Context, actor access.Actor, kind string)
 	}
 	var kinds []string
 	for name, gk := range s.cfg.EntityKinds {
-		if gk.Owner == "user" && gk.AuthScope && (kind == "" || kind == name) {
+		if gk.AuthScope && (kind == "" || kind == name) {
 			kinds = append(kinds, name)
 		}
 	}
