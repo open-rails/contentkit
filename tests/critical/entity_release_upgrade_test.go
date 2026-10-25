@@ -61,6 +61,18 @@ func TestReleasedEntityJobUpgrade(t *testing.T) {
 	if old.Version != "v0.126.1" || len(old.Contents) != 3 || len(old.Entities) != 3 {
 		t.Fatalf("fixture did not execute the pinned deployed release: %+v", old)
 	}
+	var inboxVersion int
+	must(t, w.pool.QueryRow(t.Context(), "SELECT max(version) FROM "+pgx.Identifier{schema, "notify_migrations"}.Sanitize()).Scan(&inboxVersion))
+	if inboxVersion != 5 {
+		t.Fatalf("released fixture has inbox migration %d, want 5", inboxVersion)
+	}
+	// The host prepares AuthKit's optional inbox before ContentKit adopts its
+	// receipts. This legacy fixture is unbound: keep its account/catalog schemas
+	// and content tenant unchanged instead of inventing an account tenant.
+	must(t, authkit.MigrateNotifications(t.Context(), w.pool, authkit.Config{
+		Database:      authkit.DatabaseConfig{Schema: schema + "_auth"},
+		Notifications: &authkit.NotificationsConfig{Schema: schema},
+	}))
 	roles := authkit.NewRoles()
 	roles.Root.Declare(access.Names(access.Permissions()...)...)
 	auth, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = roles }), authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = w.pool }))
