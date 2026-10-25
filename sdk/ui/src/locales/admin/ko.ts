@@ -148,6 +148,7 @@ export const admin: typeof en = {
     empty: "일치하는 투표가 없습니다.",
     goesLive: "{date}에 공개",
     wentLive: "{date}부터 진행 중",
+    closedOn: "{date}에 마감됨",
   },
   contentManager: {
     switchLanguage: "언어를 바꿀까요?",
