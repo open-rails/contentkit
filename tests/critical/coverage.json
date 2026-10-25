@@ -1872,6 +1872,109 @@
       "cases": [
         "TestAccountNotificationScreening/CK-J25-S17_held_creation_edit_and_reapproval_publish_exactly_once"
       ]
+    },
+    {
+      "id": "CK-J08-S07",
+      "journey": "CK-J08",
+      "behavior": "Content purge durably retries ClickHouse erasure through the same sweep after outages and restart",
+      "status": "verified",
+      "evidence": [
+        "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
+      ],
+      "cases": [
+        "TestContentPurgeRetriesSignalCleanup",
+        "TestContentSignalPurgeJobMigration"
+      ]
+    },
+    {
+      "id": "CK-J16-S06",
+      "journey": "CK-J16",
+      "behavior": "Entity counts and covers reflect writes without workers or stale periodic projections",
+      "status": "verified",
+      "evidence": [
+        "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
+      ],
+      "cases": [
+        "TestEntityCountsAndCoversWithoutWorkers"
+      ]
+    },
+    {
+      "id": "CK-J16-S07",
+      "journey": "CK-J16",
+      "behavior": "Ordinary ordered associations stay stable and removed timer fields are refused",
+      "status": "verified",
+      "evidence": [
+        "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
+      ],
+      "cases": [
+        "TestEntityMembershipsWithoutTimers"
+      ]
+    },
+    {
+      "id": "CK-J16-S08",
+      "journey": "CK-J16",
+      "behavior": "Entity lifecycle writes persist exact work and legacy retirement preserves foreign history",
+      "status": "verified",
+      "evidence": [
+        "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
+      ],
+      "cases": [
+        "TestEntityLifecycleWithoutReconciliation",
+        "TestEntityJobMigration"
+      ]
+    },
+    {
+      "id": "CK-J03-S08",
+      "journey": "CK-J03",
+      "behavior": "Fixed official channel policy preserves host-defined roles, public access and atomic migration",
+      "status": "verified",
+      "evidence": [
+        "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
+      ],
+      "cases": [
+        "TestFixedSiteChannelPolicy",
+        "TestFixedSiteChannelMigration",
+        "TestFixedSiteChannelStaffRevocation",
+        "TestFixedSiteChannelAuthorizationScope"
+      ]
+    },
+    {
+      "id": "CK-J03-S09",
+      "journey": "CK-J03",
+      "behavior": "Personal post capabilities depend on current group grants and immutable author identity",
+      "status": "verified",
+      "evidence": [
+        "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
+      ],
+      "cases": [
+        "TestPostContributorAuthority",
+        "TestPostContributorMediaRevocation",
+        "TestSiteChannelDelegatedCapabilities"
+      ]
+    },
+    {
+      "id": "CK-J03-S10",
+      "journey": "CK-J03",
+      "behavior": "Restricted readers may view unreleased media without editor or upload authority",
+      "status": "verified",
+      "evidence": [
+        "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
+      ],
+      "cases": [
+        "TestRestrictedMediaReadIsNotEditAuthority"
+      ]
+    },
+    {
+      "id": "CK-J04-S11",
+      "journey": "CK-J04",
+      "behavior": "Independent image and video ceilings remain enforced across concurrent app instances",
+      "status": "verified",
+      "evidence": [
+        "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
+      ],
+      "cases": [
+        "TestPostAttachmentPolicies"
+      ]
     }
   ],
   "review_notes": {
@@ -9662,6 +9765,18 @@
       ],
       "evidence": [
         "Public real billing access-loss event, actual persisted inbox cursor/receipt, missing/idle/discarded/running River states, preserved foreign-source/history rows and size-one pool; real worker registry refuses the retired kind. These executable assertions require a fresh successful strict run."
+      ]
+    },
+    {
+      "id": "go:contentkit.MigrateFixedOwners",
+      "name": "contentkit.MigrateFixedOwners",
+      "status": "verified",
+      "cases": [
+        "TestFixedSiteChannelMigration",
+        "TestFixedSiteChannelAuthorizationScope"
+      ],
+      "evidence": [
+        "Public migration helper uses the normalized app scope, atomic seed/bind/access checks and idempotence. Scoped channel creation remains explicitly AuthKit-backed. Exact combined execution is required."
       ]
     }
   ]

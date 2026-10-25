@@ -236,3 +236,4 @@ ts:MediaProcessingPanel	ts	TS exported component	MediaProcessingPanel	sdk/ui/src
 ts:ContentKitClientOptions.notifications	ts	TypeScript injected account inbox transport	ContentKitClientOptions.notifications	sdk/ui/src/client/notifications.ts	included-critical
 ts:NotificationTransport	ts	TypeScript injected account inbox transport	NotificationTransport	sdk/ui/src/client/notifications.ts	included-critical
 go:Source.RetireInboxSync	go	Go explicit migration method	Source.RetireInboxSync	notification/openrails/retire.go	included-critical
+go:contentkit.MigrateFixedOwners	go	Go embedded migration	contentkit.MigrateFixedOwners	fixed_owners.go	included-critical
