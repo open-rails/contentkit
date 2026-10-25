@@ -669,7 +669,31 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 	if active == nil || active.View == nil {
 		return media.Item{}, nil, ErrNotReady
 	}
-	return item, active.View.Clone(), nil
+	view := active.View.Clone()
+	// Download policy is evaluated by the caller. Resolve only the exact
+	// committed source pages into the internal prepared download renditions;
+	// these bytes never enter the ordinary private-folder token scope.
+	for _, page := range active.Pages.Pages {
+		source, ok := m.Get(page.Path)
+		if !ok || source.Key() != page.Source {
+			return media.Item{}, nil, ErrNotReady
+		}
+		for i := range view.Files {
+			if view.Files[i].Path == source.Path && view.Files[i].IsUpload() {
+				if view.Files[i].Blob == "" {
+					view.Files[i] = source
+				} else {
+					view.Files[i].Pending = source.Pending
+				}
+			}
+		}
+		for _, file := range m.Files {
+			if file.From == source.Path && downloadOnly(k, file) {
+				view.Files = append(view.Files, file)
+			}
+		}
+	}
+	return item, view, nil
 }
 
 // zipPages are the files the archive zips, in manifest order: each page's

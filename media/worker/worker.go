@@ -197,6 +197,9 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := manifests.ValidatePublicationLayoutMigration(ctx); err != nil {
+		return nil, fmt.Errorf("media/worker: publication layout migration required: %w", err)
+	}
 	var observeEncode func(video.EncodeObservation)
 	if c.Metrics != nil {
 		observeEncode = c.Metrics.ObserveEncode

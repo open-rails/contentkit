@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,6 +25,7 @@ type releasePlan struct {
 	Target
 	Kind        string            `json:"kind"`
 	Fingerprint string            `json:"fingerprint"`
+	Sources     map[string]string `json:"sources,omitempty"` // virtual paths -> existing immutable source references
 	View        *media.Manifest   `json:"view"`
 	Pages       pagesSnapshot     `json:"pages"`
 	Playback    playbackSnapshot  `json:"playback"`
@@ -42,6 +44,13 @@ type publicationCompletion interface {
 }
 
 type releaseMutationContextKey struct{}
+
+// Download-only renditions stay internal. A whole-item reader token must not
+// bypass a host's delayed-download or personalized-watermark policy.
+func downloadOnly(k *media.Kind, f media.File) bool {
+	z := private(k, k.Download)
+	return z != nil && z.HostOnly && z.Zip != "" && strings.HasPrefix(f.Path, z.Zip)
+}
 
 func (s *Service) publicationRequestsTable() string {
 	return pgxIdent(s.o.Schema, "content_publication_requests")
@@ -151,7 +160,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 		}
 	}
 	live := state == "published" && parentState == "published" && !m.Deleted && !itemDue.After(now)
-	plan := &releasePlan{Target: t, Kind: kind, View: m.Clone(), Pages: pagesSnapshot{Pages: []page{}}, Playback: playbackSnapshot{Tracks: []track{}}}
+	plan := &releasePlan{Target: t, Kind: kind, View: m.Clone(), Sources: map[string]string{}, Pages: pagesSnapshot{Pages: []page{}}, Playback: playbackSnapshot{Tracks: []track{}}}
 	plan.EffectiveAccess = rule
 	plan.EffectiveAccess.Releases = nil
 	for _, release := range rule.Releases {
@@ -284,6 +293,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 	var identity []any
 	for _, f := range m.Files {
 		if f.IsUpload() && !f.Unattached {
+			plan.Sources[f.Path] = f.Key()
 			identity = append(identity, []any{f.Path, f.Key(), f.Staged, f.Gone, served[f.Path]})
 		}
 	}
@@ -334,9 +344,22 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 			if served[f.Path] {
 				// Uploaded originals stay internal; only declared audio is
 				// copied for direct reader playback.
-				if k.AudioUpload(f) {
+				if k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
 					if previous, ok := m.Delivered(f.Blob, area); ok {
 						f.Blob = previous
+					} else if prior != nil && prior.View != nil {
+						for path, source := range prior.Sources {
+							if source != file.Key() {
+								continue
+							}
+							if previous, ok := prior.View.Get(path); ok {
+								previousArea, _, valid := layout.SplitBlobRef(previous.Blob)
+								if valid && previousArea == area {
+									f.Blob = previous.Blob
+									break
+								}
+							}
+						}
 					}
 					if err := add(f.Blob, area); err != nil {
 						return nil, err
@@ -349,7 +372,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 			continue
 		}
 		destination := layout.AreaFuture
-		if served[f.From] && f.Fail() == nil {
+		if served[f.From] && f.Fail() == nil && !downloadOnly(k, f) {
 			if spec := private(k, f.Preset); spec != nil && spec.HostOnly {
 				continue
 			}

@@ -56,6 +56,9 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
 	readPaths := func() (media.ReadResult, []string, error) {
+		// Exercise the real read limiter instead of overwhelming it with the
+		// generic 50ms async-condition poll interval.
+		time.Sleep(550 * time.Millisecond)
 		read, err := viewer.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 		var paths []string
 		for _, f := range read.Files {
@@ -116,6 +119,15 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 		return response.StatusCode == http.StatusNotFound
 	})
 	// Advancing the application clock alone cannot publish the chapter.
+	// First drain the real follow-ups from the preceding move, so an already
+	// executing worker cannot legitimately observe the new clock mid-attempt.
+	waitForWithin(t, 45*time.Second, func() bool {
+		var pending int
+		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+`
+ WHERE kind IN ('contentkit_version_publish','contentkit_version_release')
+ AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&pending))
+		return pending == 0
+	})
 	w.clock.set(future)
 	_, paths, err := readPaths()
 	must(t, err)

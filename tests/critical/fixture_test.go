@@ -215,14 +215,32 @@ func must(t testing.TB, err error) {
 
 func publishedArticle(t *testing.T, a *application, title string) catalog.Content {
 	t.Helper()
+	startPublicationRuntime(t, a)
 	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: title, Body: "Published body: " + title}}})
 	must(t, err)
 	item, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
-	got, err := a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
-	must(t, err)
+	var got catalog.Content
+	waitForWithin(t, 45*time.Second, func() bool {
+		got, err = a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+		return err == nil && got.Live
+	})
 	if got.ID != item.ID || got.Body != "Published body: "+title || !got.Decision.Allowed {
 		t.Fatalf("fixture was not publicly readable: %+v", got)
 	}
+	item, err = a.engine.Client().GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+	must(t, err)
 	return item
+}
+
+// Tests that request a published fixture exercise its real durable workers.
+// newWorld itself remains unstarted for lifecycle and clock-only refusal tests.
+func startPublicationRuntime(t *testing.T, a *application) {
+	t.Helper()
+	if err := a.engine.Ready(t.Context()); err != nil {
+		if err.Error() != "contentkit: not started" {
+			t.Fatal(err)
+		}
+		must(t, a.engine.Start(t.Context()))
+	}
 }
