@@ -319,8 +319,8 @@ func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects jour
 	// Existing jobs own their writes. A request admits ingest in the same
 	// transaction as quota and the exact mutation, before any storage write.
 	_, ownerErr := river.ClientFromContextSafely[pgx.Tx](ctx)
-	purging, _ := ctx.Value(purgeContextKey{}).(bool)
-	effects.Ingest = !lifecycle && !purging && ownerErr != nil
+	owned, _ := ctx.Value(synchronousMutationOwnerKey{}).(bool)
+	effects.Ingest = !lifecycle && !owned && ownerErr != nil
 	if effects.Ingest && j.queue == nil {
 		return errors.New("media: manifest mutation needs a durable ingest queue")
 	}

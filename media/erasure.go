@@ -77,7 +77,7 @@ func (j *Jobs) fenceErasure(ctx context.Context, item Item) error {
 // after the first deletion. Its deadline commits with the deletion journal,
 // so erasure does not need a running or bound River client.
 func (j *Jobs) Erase(ctx context.Context, d Deletion) error {
-	ctx = context.WithValue(ctx, purgeContextKey{}, true)
+	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	item, err := j.cfg.Registry.Item(d.Ref)
 	if err != nil {
 		return err

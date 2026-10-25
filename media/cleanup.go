@@ -33,8 +33,6 @@ revision = gen_random_uuid()`, ref.TenantID, prefix, ref.ContentKind, due, opera
 	return err
 }
 
-type purgeContextKey struct{}
-
 type cleanupRecord struct {
 	tenant     string
 	journal    *PGJournal
@@ -50,7 +48,7 @@ type cleanupRecord struct {
 // failures, and never exceeds limit. Failed revisions rotate behind this pass
 // so persistent storage failures cannot starve later folders or namespaces.
 func (j *Jobs) PurgeRetired(ctx context.Context, limit int) (int, error) {
-	ctx = context.WithValue(ctx, purgeContextKey{}, true)
+	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	if limit <= 0 {
 		return 0, errors.New("media: purge limit must be positive")
 	}

@@ -27,7 +27,7 @@ type SweepResult struct {
 // Sweep explicitly executes one item's content-purge storage work. Unknown
 // bucket objects are never discovered or deleted by this operation.
 func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResult, error) {
-	ctx = context.WithValue(ctx, purgeContextKey{}, true)
+	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	item, err := j.cfg.Registry.Item(ref)
 	if err != nil {
 		return SweepResult{}, err

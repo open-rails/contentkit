@@ -444,6 +444,10 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 	return m.editOperation(ctx, ref, existing, b, nil, fn)
 }
 
+// Synchronous deletion and explicit migration operations own their durable
+// journal retries themselves, without a runtime processing job.
+type synchronousMutationOwnerKey struct{}
+
 type manifestMutation struct {
 	lifecycle  bool // only deletion, explicit reset and restore may edit a tombstone
 	layoutCopy bool // a verified storage migration preserves the raw snapshot, including historical file order
