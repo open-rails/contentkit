@@ -67,7 +67,9 @@ jobs:
         docker logs critical-clickhouse
         exit 1
     - name: Install native processing dependencies
-      run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh libvips-dev ffmpeg
+      run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh libvips-dev
+    - name: Start the media worker's FFmpeg runtime
+      run: bash .github/scripts/critical-media-tools.sh start
     - uses: pnpm/action-setup@v4
       with:
         package_json_file: sdk/ui/package.json
@@ -108,3 +110,6 @@ jobs:
     - name: Stop only this job's stores
       if: always()
       run: docker rm -f critical-minio critical-clickhouse
+    - name: Stop only this job's media tools
+      if: always()
+      run: bash .github/scripts/critical-media-tools.sh stop
