@@ -1122,6 +1122,8 @@ export interface Item {
   resolved_at: string | null;
   updated_at: string;
   revision: number;
+  producer_revision?: number;
+  withdrawn?: boolean;
 }
 
 export interface Kind {

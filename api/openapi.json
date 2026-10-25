@@ -15717,6 +15717,12 @@
           },
           "revision": {
             "type": "integer"
+          },
+          "producer_revision": {
+            "type": "integer"
+          },
+          "withdrawn": {
+            "type": "boolean"
           }
         },
         "required": [

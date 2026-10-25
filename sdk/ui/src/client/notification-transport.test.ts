@@ -9,6 +9,7 @@ it("shares account inbox changes without issuing ContentKit notification request
     origin: { system: "contentkit", scope: "app", id: "comment.reply:B" },
     kind: "comment.reply", data: {}, created_at: "2026-10-24T00:00:00Z",
     updated_at: "2026-10-24T00:00:00Z", revision: 1,
+    read_at: null, dismissed_at: null, resolved_at: null,
   };
   const listeners = new Set<() => void>();
   const transport: NotificationTransport = {
