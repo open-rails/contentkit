@@ -102,6 +102,7 @@ export const admin: typeof en = {
     noAccess: "댓글을 관리할 권한이 없습니다.",
     ban: "사이트 전체 댓글 금지",
     notBanned: "금지되지 않았습니다. 댓글을 쓸 수 있습니다.",
+    banned: "댓글 금지됨",
     banLoadFailed: "금지 정보를 불러오지 못했습니다.",
     comments: "최근 댓글",
     noComments: "댓글이 없습니다.",

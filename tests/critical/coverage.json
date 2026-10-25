@@ -656,6 +656,18 @@
       ]
     },
     {
+      "id": "CK-J07-S09",
+      "journey": "CK-J07",
+      "behavior": "Search finds works by their entities' aliases and offers matching entities only where the reader sees their works",
+      "status": "verified",
+      "evidence": [
+        "A tag alias finds the tag's visible works, and the first page offers that tag but later pages offer none. A tag whose only work is outside the reader's domain is not offered, while the wide domain offers it with its work as the positive control."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S09_search_finds_works_by_entity_alias_and_offers_visible_matching_entities"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",

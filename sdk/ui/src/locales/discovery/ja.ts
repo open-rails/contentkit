@@ -45,6 +45,7 @@ export const discovery: typeof en = {
     lockedShow_other: "ロック中の{count}件を表示",
     lockedHide: "ロック中の項目を隠す",
     noResults: "「{q}」に一致するものはありません。",
+    matchingEntities: "一致するタグと名前",
     historySignedOut: "履歴を見るにはサインインしてください。",
     clearHistory: "履歴を消去",
     historyEmpty: "履歴はありません。",

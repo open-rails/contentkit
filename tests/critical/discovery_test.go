@@ -57,15 +57,16 @@ func TestDiscoveryVisibility(t *testing.T) {
 	a := w.apps[0]
 	admin := a.engine.Client()
 	tags, err := admin.PostEntities(t.Context(), []entities.EntityInput{
-		{Kind: "tag", Slug: "required", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Required public tag"}}},
+		{Kind: "tag", Slug: "required", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Required public tag"}, {Language: "en", Kind: "alias", Name: "MandatoryAliasNeedle"}}},
 		{Kind: "tag", Slug: "choice", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Optional public tag"}}},
 		{Kind: "tag", Slug: "internal", Internal: true, Names: []entities.Name{{Language: "en", Kind: "name", Name: "HiddenClassificationNeedle"}}},
+		{Kind: "tag", Slug: "elsewhere", Names: []entities.Name{{Language: "en", Kind: "name", Name: "ElsewhereOnlyNeedle"}}},
 	})
 	must(t, err)
-	if len(tags) != 3 {
+	if len(tags) != 4 {
 		t.Fatal("classification fixture incomplete")
 	}
-	required, optional, internal := tags[0], tags[1], tags[2]
+	required, optional, internal, elsewhere := tags[0], tags[1], tags[2], tags[3]
 	a.server.Close()
 	must(t, a.engine.Close(t.Context()))
 	a.cfg.Content.ContentFilters = kinds.ContentFilters{AppliesTo: []string{"article"}, Domains: []kinds.Domain{
@@ -119,7 +120,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 	}
 	one := create("allowed one", []entities.EntityID{required.ID, internal.ID}, nil, true)
 	two := create("allowed two", []entities.EntityID{required.ID, optional.ID}, nil, true)
-	excluded := create("outside domain", []entities.EntityID{optional.ID}, nil, true)
+	excluded := create("outside domain", []entities.EntityID{optional.ID, elsewhere.ID}, nil, true)
 	draft := create("unpublished", []entities.EntityID{required.ID}, nil, false)
 	futureAt := w.clock.now().Add(time.Hour)
 	future := create("future", []entities.EntityID{required.ID}, &futureAt, true)
@@ -191,7 +192,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 	t.Run("CK-J07-S03_search_and_typeahead_conceal_internal_names_and_invisible_content", func(t *testing.T) {
 		found, err := public.GetSearch(t.Context(), ck.GetSearchQuery{Q: "CriticalVis", Kind: "article", Mode: "hide"})
 		must(t, err)
-		assertCards(t, found, one.ID, two.ID)
+		assertCards(t, found.ContentPage, one.ID, two.ID)
 		typeahead, err := public.GetTypeahead(t.Context(), ck.GetTypeaheadQuery{Q: "CriticalVis", Kind: "article", Mode: "hide"})
 		must(t, err)
 		assertCards(t, discovery.ContentPage{Contents: typeahead.Contents}, one.ID, two.ID)
@@ -213,6 +214,30 @@ func TestDiscoveryVisibility(t *testing.T) {
 		}
 		_, err = public.GetManageSearchSuggestions(t.Context(), ck.GetManageSearchSuggestionsQuery{Q: "HiddenClassificationNeedle", IncludeEntities: &include, EntityKinds: []string{"tag"}})
 		requireError(t, err, 401, "unauthorized")
+	})
+	t.Run("CK-J07-S09_search_finds_works_by_entity_alias_and_offers_visible_matching_entities", func(t *testing.T) {
+		found, err := public.GetSearch(t.Context(), ck.GetSearchQuery{Q: "MandatoryAliasNeedle", Kind: "article", Mode: "hide"})
+		must(t, err)
+		assertCards(t, found.ContentPage, one.ID, two.ID)
+		if len(found.Entities) != 1 || found.Entities[0].ID != required.ID {
+			t.Fatalf("search did not offer the tag matching its alias: %+v", found.Entities)
+		}
+		later, err := public.GetSearch(t.Context(), ck.GetSearchQuery{Q: "MandatoryAliasNeedle", Kind: "article", Mode: "hide", Page: 2})
+		must(t, err)
+		if len(later.Entities) != 0 {
+			t.Fatalf("search offered entities past the first page: %+v", later.Entities)
+		}
+		hidden, err := public.GetSearch(t.Context(), ck.GetSearchQuery{Q: "ElsewhereOnlyNeedle", Kind: "article", Mode: "hide"})
+		must(t, err)
+		if len(hidden.Entities) != 0 || len(hidden.Contents) != 0 {
+			t.Fatalf("search offered a tag whose only work is outside the domain: %+v", hidden)
+		}
+		control, err := wide.GetSearch(t.Context(), ck.GetSearchQuery{Q: "ElsewhereOnlyNeedle", Kind: "article", Mode: "hide"})
+		must(t, err)
+		assertCards(t, control.ContentPage, excluded.ID)
+		if len(control.Entities) != 1 || control.Entities[0].ID != elsewhere.ID {
+			t.Fatalf("wide domain did not offer the tag of its visible work: %+v", control.Entities)
+		}
 	})
 	t.Run("CK-J07-S04_sitemap_calendar_and_totals_apply_domain_scope", func(t *testing.T) {
 		page, err := public.GetSitemapContents(t.Context(), ck.GetSitemapContentsQuery{Kind: "article"})

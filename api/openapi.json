@@ -9790,7 +9790,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContentPage"
+                  "$ref": "#/components/schemas/SearchPage"
                 }
               }
             }
@@ -17649,6 +17649,35 @@
         },
         "required": [
           "level"
+        ]
+      },
+      "SearchPage": {
+        "type": "object",
+        "properties": {
+          "contents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Card"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ListingSummary"
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "ranking": {
+            "$ref": "#/components/schemas/RankingInfo"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityCard"
+            }
+          }
+        },
+        "required": [
+          "contents"
         ]
       },
       "Segment": {

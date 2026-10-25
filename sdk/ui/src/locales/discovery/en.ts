@@ -44,6 +44,7 @@ export const discovery = {
     lockedShow_other: "Show {count} locked items",
     lockedHide: "Hide locked items",
     noResults: "Nothing matches “{q}”.",
+    matchingEntities: "Matching tags and names",
     historySignedOut: "Sign in to see your history.",
     clearHistory: "Clear history",
     historyEmpty: "Your history is empty.",

@@ -102,6 +102,7 @@ export const admin: typeof en = {
     noAccess: "Du hast keine Berechtigung, Kommentare zu verwalten.",
     ban: "Kommentarsperre für die ganze Website",
     notBanned: "Nicht gesperrt: Diese Person darf kommentieren.",
+    banned: "Vom Kommentieren gesperrt",
     banLoadFailed: "Die Sperre konnte nicht geladen werden.",
     comments: "Neueste Kommentare",
     noComments: "Keine Kommentare.",
