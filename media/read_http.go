@@ -243,7 +243,7 @@ func (g *Grant) logIssued(req *http.Request, log *slog.Logger) {
 	access := AccessNone
 	if g.Full() {
 		access = AccessFull
-	} else if len(g.files) > 0 {
+	} else if len(g.files) > 0 || g.inspectionRead {
 		access = AccessPartial
 	}
 	attrs := []any{"viewer", g.actor.ID, "anonymous", g.actor.Anonymous, "ref", g.Item.Ref().String(),

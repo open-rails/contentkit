@@ -104,7 +104,7 @@ export function useSegmentPages(segment: PlanSegment | null | undefined, renditi
   const start = Math.max(0, o.window?.start ?? 0);
   const selected = (segment?.pages ?? []).slice(start, Math.max(start, o.window?.end ?? 50));
   const paths = selected.flatMap((p) => p.files[rendition] ? [p.files[rendition]!] : []);
-  const read = useMediaRead(item ?? { kind: "", id: "" }, { paths, read: item && paths.length ? undefined : null, client: o.client });
+  const read = useMediaRead(item ?? { kind: "", id: "" }, { paths, editor: segment?.inspection || undefined, read: item && paths.length ? undefined : null, client: o.client });
   const pages = useMemo(() => {
     const urls = new Map((read.read?.files ?? []).flatMap((f) => (f.url ? [[f.path, f.url] as const] : [])));
     return (segment?.pages ?? []).map((p) => {

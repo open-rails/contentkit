@@ -8,6 +8,15 @@ Each gallery edition is an independently identified content item. Its exact
 grants access to another edition of the gallery. Public files need no token;
 reader tokens cannot open `tmp`, `originals`, `future` or manifest files.
 
+An explicitly authorized read-only auditor can request administrative
+inspection of ready reader derivatives before release. These requests return
+short-lived exact preview URLs, never a folder cookie, editing controls,
+original uploads or `HostOnly` outputs. Reader-plan inspection segments carry
+an explicit flag so media fetches repeat the same permission check. Inspection
+does not create publication records or change release state. Draft source-audio
+pass-through and HLS playback are outside this derivative-preview mode; editor
+source access and ordinary published playback retain their existing paths.
+
 Chapters are start markers in the manifest's ordered source files. A chapter
 covers `[its start, next start)`; the last chapter continues to the end. Markers
 use existing virtual filenames. Inserting `17c.jpg` before the next chapter's

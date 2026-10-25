@@ -47,11 +47,11 @@ export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient):
     const pages = new Map<string, string>(),
       audio = new Map<string, string>();
     const reads: (() => Promise<void>)[] = [];
-    const enqueue = (item: RefBody, paths: string[], apply: (read: ReadResult) => void) => {
+    const enqueue = (item: RefBody, paths: string[], apply: (read: ReadResult) => void, inspection = false) => {
       const unique = [...new Set(paths)];
       for (let i = 0; i < unique.length; i += 64) {
         const batch = unique.slice(i, i + 64);
-        reads.push(async () => apply(await client.media.read(item, { paths: batch, signal: ctrl.signal })));
+        reads.push(async () => apply(await client.media.read(item, { paths: batch, editor: inspection || undefined, signal: ctrl.signal })));
       }
     };
     for (const s of plan.segments) {
@@ -62,7 +62,7 @@ export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient):
             const url = byPath.get(thumbOf(p.files) ?? "");
             if (url) pages.set(p.id, url);
           }
-      });
+      }, s.inspection);
     }
     const playback = plan.playback;
     if (playback?.tracks.length)

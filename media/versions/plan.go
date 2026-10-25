@@ -34,15 +34,16 @@ type ReaderPlan struct {
 // PlanSegment is one span of pages: a segment's (Position set) or pages
 // outside every segment.
 type PlanSegment struct {
-	Position  *int           `json:"position,omitempty"`
-	Title     string         `json:"title,omitempty"`
-	Start     int            `json:"start"`
-	End       int            `json:"end"`
-	Released  bool           `json:"released"`
-	ReleaseAt *time.Time     `json:"release_at,omitempty"`
-	Locked    bool           `json:"locked"`
-	Item      *media.RefBody `json:"item,omitempty"` // read it at GET /media/{kind}/{id}
-	Pages     []PlanPage     `json:"pages,omitempty"`
+	Position   *int           `json:"position,omitempty"`
+	Title      string         `json:"title,omitempty"`
+	Start      int            `json:"start"`
+	End        int            `json:"end"`
+	Released   bool           `json:"released"`
+	ReleaseAt  *time.Time     `json:"release_at,omitempty"`
+	Locked     bool           `json:"locked"`
+	Inspection bool           `json:"inspection,omitempty"` // authorized prepared derivatives; fetch with explicit management read
+	Item       *media.RefBody `json:"item,omitempty"`       // read it at GET /media/{kind}/{id}
+	Pages      []PlanPage     `json:"pages,omitempty"`
 }
 
 // PlanPage is one page of an open segment: its name, reading size and the
@@ -159,6 +160,13 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 	k, err := s.published(v)
 	if err != nil {
 		return nil, err
+	}
+	resolved, err := s.decide(ctx, actor, v.Kind, []Target{t})
+	if err != nil {
+		return nil, err
+	}
+	if verdict := resolved[t]; verdict.Visible && verdict.ReadRestricted && !verdict.Editor {
+		return s.inspectionPlan(ctx, actor, k, t)
 	}
 	p, err := s.current(ctx, s.o.Pool, t, kindPages)
 	if err != nil {

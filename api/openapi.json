@@ -16350,6 +16350,9 @@
           "locked": {
             "type": "boolean"
           },
+          "inspection": {
+            "type": "boolean"
+          },
           "item": {
             "$ref": "#/components/schemas/RefBody"
           },

@@ -1402,6 +1402,7 @@ export interface PlanSegment {
   released: boolean;
   release_at?: string;
   locked: boolean;
+  inspection?: boolean;
   item?: RefBody;
   pages?: PlanPage[];
 }

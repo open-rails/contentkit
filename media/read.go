@@ -147,16 +147,17 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 // Grant is one viewer's resolved access to one item: reads and playlists
 // sign every URL through it.
 type Grant struct {
-	Item       Item
-	Resolution resolve.Resolution
-	Manifest   *Manifest
-	Expires    time.Time
-	item       string          // whole-item token only; never issued for a restricted grant
-	files      map[string]bool // exact private blob allowlist, nil for whole-item grants
-	actor      access.Actor
-	editorRead bool // explicit management read, after current editor authorization
-	ctx        context.Context
-	r          *Reader
+	Item           Item
+	Resolution     resolve.Resolution
+	Manifest       *Manifest
+	Expires        time.Time
+	item           string          // whole-item token only; never issued for a restricted grant
+	files          map[string]bool // exact private blob allowlist, nil for whole-item grants
+	actor          access.Actor
+	editorRead     bool // explicit management read, after current editor authorization
+	inspectionRead bool // explicit management read of ready derivatives by a read-only auditor
+	ctx            context.Context
+	r              *Reader
 }
 
 // Grant resolves ref for actor exactly once and loads its manifest. A
@@ -179,6 +180,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	}
 	scope := strings.TrimSuffix(item.Prefix(), "/")
 	editorRead := res.Editor && resolve.EditorRead(ctx)
+	inspectionRead := !res.Editor && res.ReadRestricted && resolve.EditorRead(ctx)
 	restricted := !res.Editor && !res.ReadRestricted && res.MediaFiles != nil
 	if res.Full() || res.Editor || res.ReadRestricted || len(res.MediaFiles) > 0 {
 		if err := r.issue.allow(ctx, actor, res.Editor, scope); err != nil {
@@ -195,6 +197,8 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 		if !man.PublicationLayoutReady() {
 			return nil, ErrPublicationLayoutRequired
 		}
+	}
+	if item.Kind().Versions && !editorRead && !inspectionRead {
 		if r.reg.cfg.Hooks.ReaderManifest == nil {
 			return nil, fmt.Errorf("%w: version reader manifest is not configured", ErrResolve)
 		}
@@ -206,13 +210,18 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 			return nil, ErrNotVisible
 		}
 	}
-	g := &Grant{Item: item, Resolution: res, Manifest: man, actor: actor, editorRead: editorRead, ctx: ctx, r: r,
+	g := &Grant{Item: item, Resolution: res, Manifest: man, actor: actor, editorRead: editorRead, inspectionRead: inspectionRead, ctx: ctx, r: r,
 		Expires: token.Expiry(r.o.Now(), r.o.Delivery.TTL, r.o.Delivery.Window)}
-	if editorRead {
+	if editorRead || inspectionRead {
 		if limit := r.o.Now().Add(5 * time.Minute); limit.Before(g.Expires) {
 			g.Expires = limit
 		}
 		g.Expires = g.Expires.Truncate(time.Second)
+	}
+	if inspectionRead {
+		// Inspection issues only exact, short-lived derivative previews. It
+		// never becomes an editor grant or a reusable private-folder cookie.
+		return g, nil
 	}
 	if restricted {
 		g.files = make(map[string]bool)
@@ -250,6 +259,9 @@ func (g *Grant) Allowed(f File) bool {
 	if g.editorRead {
 		return true
 	}
+	if g.inspectionRead {
+		return g.inspectionFile(f)
+	}
 	if area != layout.AreaPublic && area != layout.AreaPrivate {
 		return false
 	}
@@ -260,6 +272,22 @@ func (g *Grant) Allowed(f File) bool {
 		return g.files[f.Blob] && g.restrictedFile(f)
 	}
 	return g.Full() && f.Blob != "" && g.listed(f)
+}
+
+func (g *Grant) inspectionFile(f File) bool {
+	if f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil {
+		return false
+	}
+	area, _, valid := layout.SplitBlobRef(f.Blob)
+	if !valid || area != layout.AreaFuture && area != layout.AreaPrivate && area != layout.AreaPublic {
+		return false
+	}
+	preset := g.Item.Kind().private(f.Preset)
+	if preset == nil || preset.HostOnly || preset.Zip != "" {
+		return false
+	}
+	source, exists := g.Manifest.Get(f.From)
+	return exists && source.IsUpload() && !source.Unattached && !source.Gone && source.Fail() == nil && !slices.Contains(source.Pending, f.Preset)
 }
 
 func (g *Grant) restrictedFile(f File) bool {
@@ -289,6 +317,13 @@ func (g *Grant) Cookie() *http.Cookie {
 func (g *Grant) URL(f File, dl bool) (string, error) {
 	if !g.Allowed(f) {
 		return "", ErrNotAllowed
+	}
+	if g.inspectionRead {
+		key, err := g.Item.Blob(f.Blob)
+		if err != nil {
+			return "", err
+		}
+		return g.previewObjectURL(key)
 	}
 	return g.url(f.Blob, f.Download, dl, g.cookie())
 }
@@ -326,6 +361,15 @@ func (g *Grant) editorURL(blob string) (string, error) {
 
 func (g *Grant) editorObjectURL(key string) (string, error) {
 	if !g.editorRead {
+		return "", ErrNotAllowed
+	}
+	return g.previewObjectURL(key)
+}
+
+// previewObjectURL is reached only after an editor source check or the
+// derivative-only inspection predicate. The store never decides authority.
+func (g *Grant) previewObjectURL(key string) (string, error) {
+	if !g.editorRead && !g.inspectionRead {
 		return "", ErrNotAllowed
 	}
 	store, ok := g.r.o.Manifests.store.(EditorReadStore)
@@ -575,7 +619,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	out := &ReadResult{Access: AccessNone, Offset: o.Offset, Limit: o.Limit, Expires: g.Expires.Unix(), Files: []FileInfo{}, Cookie: g.Cookie()}
 	if g.Full() {
 		out.Access, out.Meta = AccessFull, g.Manifest.Meta
-	} else if len(g.files) > 0 {
+	} else if len(g.files) > 0 || g.inspectionRead {
 		out.Access = AccessPartial
 	}
 	k := g.Item.Kind()
@@ -646,7 +690,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 				return nil, nil, err
 			}
 		}
-		if f.Track != nil && (f.Track.Kind == TrackVideo || f.Track.Kind == TrackAudio) && g.Allowed(f) {
+		if !g.inspectionRead && f.Track != nil && (f.Track.Kind == TrackVideo || f.Track.Kind == TrackAudio) && g.Allowed(f) {
 			if dir := path.Dir(f.Path) + "/"; len(out.HLS) == 0 || out.HLS[len(out.HLS)-1] != dir {
 				out.HLS = append(out.HLS, dir)
 			}
