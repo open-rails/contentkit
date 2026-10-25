@@ -50,6 +50,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 	t.Run("catalog_publication", func(t *testing.T) {
 		w := newWorld(t)
 		a := w.apps[0]
+		startPublicationRuntime(t, a)
 		owner, token := w.person(t, 0)
 		_, readerToken := w.person(t, 0)
 		persona, err := w.auth.Persona("app")
@@ -108,7 +109,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		must(t, err)
 		_, err = a.engine.Client().PostContentPublish(t.Context(), paid.ID, catalog.PublishInput{})
 		must(t, err)
-		key, err := access.ContentKey(a.cfg.Scope.AppID.String(), paid.ID)
+		key, err := access.VersionKey(a.cfg.Scope.AppID.String(), paid.ID, paid.Versions[0].ID)
 		must(t, err)
 		product, err := commerce.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: "typescript-library", DisplayName: "Library", Entitlements: []string{key.String()}})
 		must(t, err)

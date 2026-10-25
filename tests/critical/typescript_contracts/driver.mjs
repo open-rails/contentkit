@@ -33,6 +33,16 @@ async function refused(action, status, code) {
   );
 }
 
+async function released(id) {
+  const deadline = Date.now() + 60_000;
+  do {
+    const item = await owner.contents.get(id);
+    if (item.live) return item;
+    await new Promise((resolve) => setTimeout(resolve, 550));
+  } while (Date.now() < deadline);
+  assert.fail(`durable publication did not complete for ${id}`);
+}
+
 if (group === "catalog_publication") {
   const config = await anonymous.config();
   assert.equal(config.comment_max_length, 2200);
@@ -69,7 +79,7 @@ if (group === "catalog_publication") {
   assert.equal((await owner.contents.get(draft.id)).state, "draft");
   const published = await owner.contents.publish(draft.id);
   assert.equal(published.id, draft.id);
-  assert.equal(published.live, true);
+  assert.equal((await released(draft.id)).live, true);
   assert.equal(
     (await anonymous.contents.get(draft.id)).body,
     "Exact TypeScript source body",
@@ -81,7 +91,7 @@ if (group === "catalog_publication") {
       en: { title: "Second TypeScript article", body: "Ready without media" },
     },
   });
-  const ready = await owner.contents.publishWhenReady(second.id, undefined, 0);
+  const ready = await owner.contents.publishWhenReady(second.id, undefined, 60_000);
   assert.equal(ready.id, second.id);
   assert.equal(ready.live, true);
   await refused(
@@ -137,6 +147,7 @@ if (group === "catalog_publication") {
   assert.equal(hidden.live, false);
   await refused(() => anonymous.contents.get(draft.id), 404, "not_found");
   await owner.contents.publish(draft.id);
+  await released(draft.id);
   assert.equal(
     (await anonymous.contents.get(draft.id)).body,
     "Exact TypeScript source body",
@@ -157,7 +168,7 @@ if (group === "catalog_publication") {
   assert.equal(preservedDeletion[0].state, "deleted");
   const restored = await owner.contents.restore(fixture.legacy);
   assert.equal(restored.id, fixture.legacy);
-  assert.equal(restored.live, true);
+  assert.equal((await released(fixture.legacy)).live, true);
   assert.equal(
     (await anonymous.contents.get(fixture.legacy)).body,
     "Retained historical body",
@@ -203,6 +214,7 @@ if (group === "catalog_publication") {
     },
   });
   await owner.contents.publish(item.id);
+  await released(item.id);
   const target = { type: "contents", id: item.id },
     other = { type: "contents", id: fixture.other };
   const prior = await reader.comments.create(target, {
@@ -486,7 +498,10 @@ if (group === "catalog_publication") {
     await owner.entities.setSharedOfContent(item.id, {
       memberships: [{ group_id: tags[0].id }],
     });
-    if (publish) await owner.contents.publish(item.id);
+    if (publish) {
+      await owner.contents.publish(item.id);
+      await released(item.id);
+    }
     return item;
   };
   const one = await make("Alpha"),
