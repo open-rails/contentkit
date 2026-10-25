@@ -208,34 +208,57 @@ func (s scopes) HoldingScopes(ctx context.Context, user string, kinds, ids []str
 		return s.Holding(ctx, user, kinds)
 	}
 	out := map[string][]string{}
-	for _, id := range ids {
-		providerID, err := s.providerID(id)
-		if err != nil {
-			return nil, err
-		}
-		group, err := s.c.Group(ctx, iam.GroupByID(providerID))
-		if errors.Is(err, iam.ErrGroupNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if group.DeletedAt != nil || !slices.Contains(kinds, group.Persona.String()) || group.TenantID.String() != s.app.TenantID.String() {
-			continue
-		}
-		for _, name := range access.EntityPermissions(group.Persona.String()) {
-			perm, err := s.c.Permission(name)
+	// Query current effective grants in bounded batches. Visiting every local
+	// channel with Can once per capability makes an ordinary member's reads
+	// proportional to every channel in the app, even when they hold no grants.
+	// EffectivePermissions includes inherited authority; membership-only filtering
+	// would incorrectly lose those grants. The entity store still intersects
+	// these user candidates with the request's original verified credential.
+	const batchSize = 1000
+	for len(ids) > 0 {
+		n := min(len(ids), batchSize)
+		refs := make([]iam.GroupRef, 0, n)
+		localIDs := make(map[string]string, n)
+		for _, id := range ids[:n] {
+			providerID, err := s.providerID(id)
 			if err != nil {
 				return nil, err
 			}
-			allowed, err := s.c.(effectiveScopeClient).Can(ctx, iam.UserIdentity(user), iam.GroupByID(providerID), perm)
+			if _, duplicate := localIDs[providerID]; !duplicate {
+				refs = append(refs, iam.GroupByID(providerID))
+				localIDs[providerID] = id
+			}
+		}
+		grants, err := s.c.EffectivePermissions(ctx, iam.UserIdentity(user), refs)
+		if err != nil {
+			return nil, err
+		}
+		for providerID, permissions := range grants {
+			id, asked := localIDs[providerID]
+			if !asked || len(permissions) == 0 {
+				continue
+			}
+			group, err := s.c.Group(ctx, iam.GroupByID(providerID))
+			if errors.Is(err, iam.ErrGroupNotFound) {
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}
-			if allowed {
-				out[id] = append(out[id], name)
+			if group.DeletedAt != nil || !slices.Contains(kinds, group.Persona.String()) || group.TenantID.String() != s.app.TenantID.String() {
+				continue
+			}
+			for _, name := range access.EntityPermissions(group.Persona.String()) {
+				perm, err := s.c.Permission(name)
+				if err != nil {
+					return nil, err
+				}
+				if slices.ContainsFunc(permissions, perm.Matches) {
+					out[id] = append(out[id], name)
+				}
 			}
 		}
+		ids = ids[n:]
 	}
 	return out, nil
 }
