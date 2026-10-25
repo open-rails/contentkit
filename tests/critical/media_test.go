@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -12,6 +13,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +23,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
@@ -118,6 +122,22 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	for _, apply := range configure {
 		apply(&a.cfg)
 	}
+	accountStorage, accountPrimary, err := a.cfg.AccountMedia()
+	must(t, err)
+	if accountPrimary {
+		m.gatewayConfig.Routes = append(m.gatewayConfig.Routes, gateway.Route{Host: "127.0.0.1", Scope: layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}, Bucket: m.bucket})
+		handler, err := gateway.New(m.gatewayConfig)
+		must(t, err)
+		m.gateway.Close()
+		m.gateway = httptest.NewServer(handler)
+		a.cfg.Media.BaseURL = m.gateway.URL
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_, err := w.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{accountStorage.WorkerSchema}.Sanitize()+" CASCADE")
+			must(t, err)
+		})
+	}
 	a.deps.Store = m.store
 	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
 	a.cfg.Database.SkipMigrations = true
@@ -134,7 +154,11 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	must(t, err)
 	registry, err := media.NewRegistry(config)
 	must(t, err)
-	m.worker, err = worker.New(t.Context(), worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, ImageWorkers: 1, ImageSources: 1, VideoWorkers: 1, ShutdownGrace: time.Second})
+	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, ImageWorkers: 1, ImageSources: 1, VideoWorkers: 1, ShutdownGrace: time.Second}
+	if accountPrimary {
+		workerConfig.AccountSchema, workerConfig.AccountWorkerSchema = accountStorage.Schema, accountStorage.WorkerSchema
+	}
+	m.worker, err = worker.New(t.Context(), workerConfig)
 	must(t, err)
 	run, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
@@ -177,8 +201,30 @@ func imageBytes(t testing.TB) []byte {
 func TestRealMediaIngest(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
-	attachMedia(t, w, a)
+	m := attachMedia(t, w, a)
 	admin := a.engine.Client()
+	t.Run("public_presets_show_registered_renditions_without_signing_secrets", func(t *testing.T) {
+		presets, err := a.client("").GetMediaPresets(t.Context())
+		must(t, err)
+		found := 0
+		for _, preset := range presets {
+			if preset.Kind != "gallery" || preset.Name != "cover" {
+				continue
+			}
+			found++
+			if preset.From != "cover" || preset.To != "cover-{w}.webp" || !slices.Equal(preset.Widths, []int{16, 32}) || preset.Base != m.gateway.URL || preset.Root != "tenant/"+a.cfg.Scope.TenantID.String()+"/app/"+a.cfg.Scope.AppID.String()+"/" {
+				t.Fatalf("public cover preset changed ownership or rendering: %+v", preset)
+			}
+		}
+		if found != 1 {
+			t.Fatalf("public presets have %d gallery covers", found)
+		}
+		body, err := json.Marshal(presets)
+		must(t, err)
+		if strings.Contains(string(body), m.signing) {
+			t.Fatal("public presets disclosed the private signing key")
+		}
+	})
 	t.Run("CK-J09-S01_real_image_upload_produces_a_readable_rendition", func(t *testing.T) {
 		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Image processing"}}})
 		must(t, err)
