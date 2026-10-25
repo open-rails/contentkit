@@ -230,6 +230,10 @@ func (e *Engine) preflightCatalogEventMigration(ctx context.Context) error {
 	if !exists {
 		return nil
 	}
+	if err := e.preflightEntityJobs(ctx, e.pool, jobs); err != nil {
+		return err
+	}
+
 	var running bool
 	if err := e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jobs+` WHERE kind=ANY($1) AND state='running')`, []string{"contentkit_catalog_deliver_events", "contentkit_openrails_notifications"}).Scan(&running); err != nil {
 		return err

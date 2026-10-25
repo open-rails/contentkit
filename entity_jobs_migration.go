@@ -20,18 +20,8 @@ const obsoleteEntityJobs = `args->>'tenant'=$2 AND (
 const ambiguousEntityJobs = `kind IN ('contentkit_groups','contentkit_entity_projection') AND queue=$1 AND coalesce(args->>'tenant','')=''`
 
 func (e *Engine) migrateEntityJobsTx(ctx context.Context, tx pgx.Tx, jobs string) error {
-	var ambiguous, running bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jobs+` WHERE state IN ('available','pending','retryable','scheduled','running') AND (`+ambiguousEntityJobs+`))`, QueueContentKit).Scan(&ambiguous); err != nil {
+	if err := e.preflightEntityJobs(ctx, tx, jobs); err != nil {
 		return err
-	}
-	if ambiguous {
-		return fmt.Errorf("contentkit: stop the shared worker fleet and retire its tenantless entity projection jobs explicitly; their app ownership is ambiguous")
-	}
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jobs+` WHERE state='running' AND (`+obsoleteEntityJobs+`))`, QueueContentKit, e.cfg.Tenant).Scan(&running); err != nil {
-		return err
-	}
-	if running {
-		return fmt.Errorf("contentkit: stop old entity workers before migrating their jobs")
 	}
 	if err := e.admitPendingEntityLifecycles(ctx, tx); err != nil {
 		return err
@@ -102,6 +92,27 @@ func (e *Engine) validateEntityJobHandoff(ctx context.Context, jobs string) erro
 	}
 	if pending {
 		return fmt.Errorf("contentkit: obsolete entity jobs require the explicit stopped-writer migration")
+	}
+	return nil
+}
+
+// Refuse incompatible active or unattributable work before dropping old schema.
+// The transaction-held handoff repeats this check; old writers must stay stopped.
+func (e *Engine) preflightEntityJobs(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, jobs string) error {
+	var ambiguous, running bool
+	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jobs+` WHERE state IN ('available','pending','retryable','scheduled','running') AND (`+ambiguousEntityJobs+`))`, QueueContentKit).Scan(&ambiguous); err != nil {
+		return err
+	}
+	if ambiguous {
+		return fmt.Errorf("contentkit: stop the shared worker fleet and retire its tenantless entity projection jobs explicitly; their app ownership is ambiguous")
+	}
+	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jobs+` WHERE state='running' AND (`+obsoleteEntityJobs+`))`, QueueContentKit, e.cfg.Tenant).Scan(&running); err != nil {
+		return err
+	}
+	if running {
+		return fmt.Errorf("contentkit: stop old entity workers before migrating their jobs")
 	}
 	return nil
 }
