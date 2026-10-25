@@ -84,16 +84,17 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 	proxy := httputil.NewSingleHostReverseProxy(endpoint)
 	var failDelete atomic.Bool
 	var deletes atomic.Int64
-	var pauseDelete atomic.Bool
-	deleteEntered, releaseDelete := make(chan struct{}), make(chan struct{})
+	var pauseErasure atomic.Pointer[string]
+	erasureEntered, releaseErasure := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
-	defer releaseOnce.Do(func() { close(releaseDelete) })
 	wire := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		deletion := r.Method == http.MethodDelete || r.Method == http.MethodPost && r.URL.Query().Has("delete")
-		if deletion && pauseDelete.CompareAndSwap(true, false) {
-			close(deleteEntered)
+		// Earlier purges can still have recorded late-write cleanup due. Only
+		// this version's erasure fence proves its own durable claim committed.
+		if target := pauseErasure.Load(); target != nil && r.Method == http.MethodPut && r.URL.Path == *target && pauseErasure.CompareAndSwap(target, nil) {
+			close(erasureEntered)
 			select {
-			case <-releaseDelete:
+			case <-releaseErasure:
 			case <-r.Context().Done():
 				return
 			}
@@ -105,7 +106,11 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 		}
 		proxy.ServeHTTP(w, r)
 	}))
-	defer wire.Close()
+	defer func() {
+		// A failed assertion must release the handler before Close waits for it.
+		releaseOnce.Do(func() { close(releaseErasure) })
+		wire.Close()
+	}()
 	store, err := medias3.New(medias3.Config{Bucket: m.bucket, Endpoint: wire.URL, PublicEndpoint: endpoint.String(), AccessKeyID: os.Getenv("CONTENTKIT_CRITICAL_S3_USER"), SecretAccessKey: os.Getenv("CONTENTKIT_CRITICAL_S3_PASSWORD"), UsePathStyle: true})
 	must(t, err)
 	a.server.Close()
@@ -296,17 +301,18 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 			t.Fatal("purger erased media of the winning restore")
 		}
 		claimed := makeDeleted("Purge claim wins")
-		pauseDelete.Store(true)
+		fencePath := "/" + m.bucket + "/" + root + claimed.Kind + "/" + claimed.Version + "/public/" + layout.ErasureFenceName
+		pauseErasure.Store(&fencePath)
 		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.Queue, MaxAttempts: 1})
 		must(t, err)
 		select {
-		case <-deleteEntered:
+		case <-erasureEntered:
 		case <-time.After(30 * time.Second):
 			t.Fatal("purge never reached the physical storage boundary")
 		}
 		_, err = admin.PatchContentVersion(t.Context(), claimed.ID, claimed.Version, catalog.VersionInput{State: "published"})
 		requireError(t, err, 409, "conflict")
-		releaseOnce.Do(func() { close(releaseDelete) })
+		releaseOnce.Do(func() { close(releaseErasure) })
 		waitForWithin(t, 30*time.Second, func() bool {
 			row, err := producer.JobGet(t.Context(), job.Job.ID)
 			must(t, err)
