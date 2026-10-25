@@ -340,6 +340,20 @@ func (s *Store) PresignGet(ctx context.Context, key string, ttl time.Duration) (
 	return s.presign(ctx, s.internal, http.MethodGet, key, nil, nil, -1, ttl)
 }
 
+// PresignEditorGet uses the browser endpoint for an already-authorized exact
+// editor preview. The signed cache override prevents shared-cache retention.
+func (s *Store) PresignEditorGet(ctx context.Context, key string, ttl time.Duration) (media.PresignedRequest, error) {
+	if ttl <= 0 || ttl > 5*time.Minute {
+		return media.PresignedRequest{}, errors.New("s3: editor preview ttl must be in (0, 5m]")
+	}
+	parsed, valid := layout.Parse(key)
+	if !valid || parsed.Area == layout.AreaManifest {
+		return media.PresignedRequest{}, errors.New("s3: invalid editor preview object")
+	}
+	query := url.Values{"response-cache-control": {"private, no-store"}}
+	return s.presign(ctx, s.public, http.MethodGet, key, query, nil, -1, ttl)
+}
+
 func (s *Store) CreateMultipart(ctx context.Context, key, contentType string) (string, error) {
 	out, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: &s.bucket, Key: &key,
 		ContentType: optional(contentType), ChecksumAlgorithm: types.ChecksumAlgorithmSha256, Tagging: temporaryTagging(key)})

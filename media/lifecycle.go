@@ -33,6 +33,9 @@ func (m *Manifests) ensureIncarnation(ctx context.Context, item Item) (*Manifest
 			return nil, err
 		}
 		cur = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Files: []File{}}
+		if item.Kind().Versions {
+			cur.PublicationLayout = PublicationLayoutVersion
+		}
 		body, err := encodeManifest(cur)
 		if err != nil {
 			return nil, err

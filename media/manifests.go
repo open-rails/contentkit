@@ -543,6 +543,9 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 		return nil, false, err
 	case errors.Is(err, ErrNotFound):
 		cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Files: []File{}}, ""
+		if item.Kind().Versions {
+			cur.PublicationLayout = PublicationLayoutVersion
+		}
 	case errors.Is(err, ErrManifestUnreadable) && mutation.lifecycle:
 		cur = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Files: []File{}}
 	case err != nil:
@@ -598,7 +601,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	slices.Sort(mutation.effects.Public)
 	mutation.effects.Public = slices.Compact(mutation.effects.Public)
 	mutation.effects.Mirror = item.kind.mirrors(item, cur, next)
-	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.Incarnation == cur.Incarnation && next.Deleted == cur.Deleted && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) && reflect.DeepEqual(next.Deliveries, cur.Deliveries) {
+	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.PublicationLayout == cur.PublicationLayout && next.Incarnation == cur.Incarnation && next.Deleted == cur.Deleted && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) && reflect.DeepEqual(next.Deliveries, cur.Deliveries) {
 		return cur, false, nil
 	}
 	if etag == "" && !mutation.lifecycle {

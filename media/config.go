@@ -315,6 +315,10 @@ type Hooks struct {
 	// Resolver authorizes media reads. Declared public presets do not depend
 	// on publication visibility.
 	Resolver resolve.Resolver
+	// ReaderManifest supplies the catalog's completed reader snapshot. It is a
+	// metadata projection only: the gateway still authorizes one item's folder.
+	// Editors use the current authoring manifest without this projection.
+	ReaderManifest func(ctx context.Context, ref contentref.ContentRef, actor access.Actor, current *Manifest) (*Manifest, error)
 	// CanUpload says who may write which upload path.
 	CanUpload UploadAuthorizer
 	// ItemReady reports an item whose processing settled (ready, or failed

@@ -20,16 +20,21 @@ import (
 // ManifestVersion is the manifest format.
 const ManifestVersion = 3
 
+// PublicationLayoutVersion marks explicit separation of retained sources,
+// prepared files and served files in a version-owned item.
+const PublicationLayoutVersion = 1
+
 // Manifest is an item's manifest.json: an ordered, app-defined virtual file
 // system over the item's private blobs. Files is in an explicit,
 // deterministic order: each Upload's files by name by default (reordered by
 // commit ops), then each private preset's outputs in their uploads' order.
 // Readers never re-sort it. Public publications belong to their source upload.
 type Manifest struct {
-	V           int    `json:"v"`
-	Hidden      bool   `json:"hidden,omitempty"`      // legacy visibility flag; ignored by processing and public storage
-	Incarnation string `json:"incarnation,omitempty"` // changes only on explicit reset
-	Deleted     bool   `json:"deleted,omitempty"`     // retained S3 tombstone; ordinary edits cannot recreate it
+	V                 int    `json:"v"`
+	PublicationLayout int    `json:"publication_layout,omitempty"`
+	Hidden            bool   `json:"hidden,omitempty"`      // legacy visibility flag; ignored by processing and public storage
+	Incarnation       string `json:"incarnation,omitempty"` // changes only on explicit reset
+	Deleted           bool   `json:"deleted,omitempty"`     // retained S3 tombstone; ordinary edits cannot recreate it
 	// Full: a producer could not record its outputs within the bound, so
 	// private outputs stop until a commit frees Deficit bytes (in the
 	// manifest and in what its uploads would still add): how far past the

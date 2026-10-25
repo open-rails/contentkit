@@ -74,6 +74,13 @@ type PresignedRequest struct {
 	Expires time.Time
 }
 
+// EditorReadStore optionally signs an exact editor preview using a
+// browser-reachable storage endpoint. Callers must establish current editor
+// authority before issuance; this is never an audience delivery capability.
+type EditorReadStore interface {
+	PresignEditorGet(ctx context.Context, key string, ttl time.Duration) (PresignedRequest, error)
+}
+
 // PresignPut binds a direct upload to its exact type, length and SHA-256.
 type PresignPut struct {
 	ContentType string

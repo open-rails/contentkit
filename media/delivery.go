@@ -93,7 +93,7 @@ func validateDeliveries(deliveries []PublicationDelivery) error {
 			area, _, _ := layout.SplitBlobRef(f.Blob)
 			if !sourceOK || !destinationOK || !bytes.Equal(source, destination) ||
 				area != layout.AreaPublic && area != layout.AreaPrivate && area != layout.AreaFuture ||
-				f.Source == f.Blob || f.Type == "" || f.Size < 0 {
+				f.Type == "" || f.Size < 0 {
 				return errors.New("media: invalid delivery object")
 			}
 		}
@@ -152,11 +152,15 @@ func (m *Manifests) PreparePromotion(ctx context.Context, ref contentref.Content
 		if len(object.ChecksumSHA256) > 0 && !bytes.Equal(object.ChecksumSHA256, sum) {
 			return nil, ErrChecksumMismatch
 		}
-		blobs, err := m.newBlobs(ctx, ref, input.Area, [][]byte{sum})
-		if err != nil {
-			return nil, err
+		blob := input.Source
+		if area, _, _ := layout.SplitBlobRef(input.Source); area != input.Area {
+			blobs, err := m.newBlobs(ctx, ref, input.Area, [][]byte{sum})
+			if err != nil {
+				return nil, err
+			}
+			blob = blobs[0]
 		}
-		d.Files[i] = DeliveryFile{Source: input.Source, Blob: blobs[0], Type: object.ContentType, Size: object.Size}
+		d.Files[i] = DeliveryFile{Source: input.Source, Blob: blob, Type: object.ContentType, Size: object.Size}
 	}
 	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	result, err := m.EditExisting(ctx, ref, func(next *Manifest) error {
@@ -328,8 +332,18 @@ func (m *Manifests) verifyDelivery(ctx context.Context, key string, f DeliveryFi
 // To withdraw readable bytes, first Promote their desired future placement,
 // commit that reader state, then release obsolete operation pins with this call.
 func (m *Manifests) WithdrawPromotion(ctx context.Context, ref contentref.ContentRef, operation string) error {
+	id, err := uuid.Parse(operation)
+	if err != nil || id == uuid.Nil || id.String() != operation {
+		return ErrCommitIdentity
+	}
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	retirement := uuid.NewSHA1(id, []byte("withdraw-delivery-pins"))
+	mutation := &manifestMutation{commit: manifestCommit{ID: retirement, Fingerprint: sha256.Sum256([]byte(operation))}}
 	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
-	_, err := m.EditExisting(ctx, ref, func(current *Manifest) error {
+	_, err = m.editOperation(ctx, ref, true, bound{}, mutation, func(current *Manifest) error {
 		d := current.delivery(operation)
 		if d == nil {
 			return ErrNotFound
@@ -337,5 +351,16 @@ func (m *Manifests) WithdrawPromotion(ctx context.Context, ref contentref.Conten
 		d.Withdrawn = true
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return m.completeRetirement(ctx, item, retirement)
+}
+
+// completeRetirement executes the same exact-key intent as the existing purge
+// owner. Publication withdrawal cannot wait for its periodic late-write sweep.
+// The retained intent still lets that sweep catch delayed writes afterward.
+func (m *Manifests) completeRetirement(ctx context.Context, item Item, operation uuid.UUID) error {
+	jobs := &Jobs{cfg: JobsConfig{Store: m.store, Registry: m.reg, Locker: m.locker, Journal: m.journal}, manifests: m}
+	return jobs.repeatDeletion(ctx, item, operation)
 }

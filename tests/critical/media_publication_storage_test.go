@@ -2,7 +2,9 @@ package critical_test
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -20,9 +22,23 @@ import (
 
 type uncertainPublicationCopy struct {
 	media.Store
-	mu    sync.Mutex
-	fail  bool
-	calls int
+	mu            sync.Mutex
+	fail          bool
+	calls         int
+	deleteFailure string
+}
+
+func (s *uncertainPublicationCopy) Delete(ctx context.Context, key string) error {
+	s.mu.Lock()
+	fail := s.deleteFailure == key
+	if fail {
+		s.deleteFailure = ""
+	}
+	s.mu.Unlock()
+	if fail {
+		return errors.New("test: old served object deletion failed")
+	}
+	return s.Store.Delete(ctx, key)
 }
 
 func (s *uncertainPublicationCopy) Copy(ctx context.Context, source, destination string, options media.CopyOptions) (media.Object, error) {
@@ -137,6 +153,19 @@ func TestPublicationStorage(t *testing.T) {
 	if !finished.Ready || store.calls != len(inputs) {
 		t.Fatalf("resume recopied a verified destination: ready=%v calls=%d", finished.Ready, store.calls)
 	}
+	unchanged := uuid.NewString()
+	_, err = manifests.PreparePromotion(t.Context(), target, unchanged, []media.Promotion{
+		{Source: finished.Files[0].Blob, Area: layout.AreaPrivate},
+		{Source: finished.Files[1].Blob, Area: layout.AreaPublic},
+	})
+	must(t, err)
+	adopted, err := manifests.Promote(t.Context(), target, unchanged)
+	must(t, err)
+	if store.calls != len(inputs) || adopted.Files[0].Blob != finished.Files[0].Blob || adopted.Files[1].Blob != finished.Files[1].Blob {
+		t.Fatal("same-area publication copied or renamed unchanged bytes")
+	}
+	must(t, manifests.WithdrawPromotion(t.Context(), target, operation))
+	operation, finished = unchanged, adopted
 	pageBytes := get(finished.Files[0].Blob, itemToken, http.StatusOK)
 	get(finished.Files[0].Blob, "", http.StatusNotFound)
 	get(finished.Files[1].Blob, "", http.StatusOK)
@@ -182,4 +211,88 @@ func TestPublicationStorage(t *testing.T) {
 	must(t, err)
 	_, err = storage.store.Head(t.Context(), originalKey)
 	must(t, err)
+	preview, err := storage.store.PresignEditorGet(t.Context(), originalKey, time.Minute)
+	must(t, err)
+	previewResponse, err := http.Get(preview.URL)
+	must(t, err)
+	previewBody, err := io.ReadAll(previewResponse.Body)
+	previewResponse.Body.Close()
+	must(t, err)
+	if previewResponse.StatusCode != http.StatusOK || previewResponse.Header.Get("Cache-Control") != "private, no-store" || !bytes.Equal(previewBody, imageBytes(t)) {
+		t.Fatal("authorized editor preview changed original bytes or allowed cache retention")
+	}
+	if _, err := storage.store.PresignEditorGet(t.Context(), originalKey, 6*time.Minute); err == nil {
+		t.Fatal("editor preview accepted a lifetime beyond five minutes")
+	}
+
+	// Establish an actual legacy storage hazard: the retained original is in
+	// private and a valid item token can read it. Only this owned fixture is
+	// rewritten directly; the converter itself uses its public durable API.
+	legacyOperation := uuid.NewString()
+	_, err = manifests.PreparePromotion(t.Context(), target, legacyOperation, []media.Promotion{{Source: original, Area: layout.AreaPrivate}})
+	must(t, err)
+	legacyDelivery, err := manifests.Promote(t.Context(), target, legacyOperation)
+	must(t, err)
+	legacyBlob := legacyDelivery.Files[0].Blob
+	get(legacyBlob, itemToken, http.StatusOK)
+	must(t, a.engine.Close(t.Context()))
+	storage.cancel()
+	select {
+	case workerErr := <-storage.workerDone:
+		must(t, workerErr)
+		storage.workerDone <- workerErr // attachMedia's cleanup still owns this receipt
+	case <-time.After(20 * time.Second):
+		t.Fatal("fixture worker did not stop before legacy conversion")
+	}
+	legacy, etag, err := manifests.Get(t.Context(), target)
+	must(t, err)
+	legacy = legacy.Clone()
+	legacy.PublicationLayout = 0
+	legacy.Deliveries = nil
+	for i := range legacy.Files {
+		if legacy.Files[i].Path == "pages/one.png" {
+			legacy.Files[i].Blob = legacyBlob
+		}
+	}
+	must(t, legacy.Validate())
+	var encoded bytes.Buffer
+	compressed := gzip.NewWriter(&encoded)
+	must(t, json.NewEncoder(compressed).Encode(legacy))
+	must(t, compressed.Close())
+	_, err = storage.store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(encoded.Bytes()), int64(encoded.Len()), media.PutOptions{IfMatch: etag, ContentType: "application/gzip"})
+	must(t, err)
+	legacyKey, err := item.Blob(legacyBlob)
+	must(t, err)
+	store.deleteFailure = legacyKey
+	migration := uuid.NewString()
+	if err := manifests.MigratePublicationLayout(t.Context(), target, migration); err == nil {
+		t.Fatal("migration reported completion despite failed old private-object deletion")
+	}
+	partial, _, err := manifests.Get(t.Context(), target)
+	must(t, err)
+	if partial.PublicationLayoutReady() {
+		t.Fatal("migration granted readiness before origin retirement")
+	}
+	must(t, manifests.MigratePublicationLayout(t.Context(), target, migration))
+	converted, _, err := manifests.Get(t.Context(), target)
+	must(t, err)
+	if !converted.PublicationLayoutReady() {
+		t.Fatal("completed conversion lacks readiness marker")
+	}
+	get(legacyBlob, itemToken, http.StatusNotFound)
+	for _, file := range converted.Files {
+		area, _, valid := layout.SplitBlobRef(file.Blob)
+		want := layout.AreaFuture
+		if file.IsUpload() {
+			want = layout.AreaOriginals
+		}
+		if !valid || area != want {
+			t.Fatalf("migration left %s in %s", file.Path, area)
+		}
+	}
+	beforeRetry := store.calls
+	must(t, manifests.MigratePublicationLayout(t.Context(), target, migration))
+	if store.calls != beforeRetry {
+		t.Fatal("completed migration copied again")
+	}
 }
