@@ -120,8 +120,8 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 			continue
 		}
 		k, _ := s.reg.Kind(ref.ContentKind)
-		rr := resolve.Resolution{Visible: true, Editor: r.Editor, Owner: r.Owner, Accessible: r.Accessible}
-		if k.Publish != nil && !r.Editor {
+		rr := resolve.Resolution{Visible: true, Editor: r.Editor, ReadRestricted: r.ReadRestricted, Owner: r.Owner, Accessible: r.Accessible}
+		if k.Publish != nil && !r.Editor && !r.ReadRestricted {
 			files, err := s.readerFiles(ctx, actor, k, found[ref.Key()])
 			if err != nil {
 				return err
@@ -165,7 +165,7 @@ func (s *Service) readerFiles(ctx context.Context, actor access.Actor, k *media.
 			allowed[pg.Files[0].Blob] = true
 		}
 	}
-	if k.Publish.Playback != "" && d.whole() {
+	if k.Publish.Playback != "" && d.wholeForRead() {
 		pb, err := s.current(ctx, s.o.Pool, target, kindPlayback)
 		if err != nil {
 			return nil, err

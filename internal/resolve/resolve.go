@@ -23,10 +23,14 @@ type Resolution struct {
 	// Accessible = the actor opens the content. MediaFiles may further limit
 	// which immutable private objects a media read can expose.
 	Accessible bool
+	// ReadRestricted allows private reads before publication or chapter release.
+	// It is granted by the content authority; it never permits uploads or edits.
+	ReadRestricted bool
 	// MediaFiles limits private media to these exact immutable blob references
 	// from the published snapshot. Nil leaves ordinary whole-item access
 	// unchanged; a non-nil empty map denies every private file. Publishing
-	// kinds require this allowlist for non-editors even when Accessible is true.
+	// kinds require this allowlist without Editor/ReadRestricted authority, even
+	// when Accessible is true.
 	// This is filled only by trusted resolvers, never a read request.
 	MediaFiles map[string]bool
 	// Editor = the actor may edit the item (staff, its creators, its owner

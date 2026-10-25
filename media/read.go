@@ -173,8 +173,8 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 		return nil, ErrNotVisible
 	}
 	scope := strings.TrimSuffix(item.Prefix(), "/")
-	restricted := !res.Editor && (res.MediaFiles != nil || item.Kind().Versions && item.Kind().Publish != nil)
-	if res.Full() || res.Editor || len(res.MediaFiles) > 0 {
+	restricted := !res.Editor && !res.ReadRestricted && (res.MediaFiles != nil || item.Kind().Versions && item.Kind().Publish != nil)
+	if res.Full() || res.Editor || res.ReadRestricted || len(res.MediaFiles) > 0 {
 		if err := r.issue.allow(ctx, actor, res.Editor, scope); err != nil {
 			return nil, err
 		}
@@ -195,7 +195,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 				g.files[f.Blob] = true
 			}
 		}
-	} else if res.Full() || res.Editor {
+	} else if res.Full() || res.Editor || res.ReadRestricted {
 		g.item = r.ring.Sign(scope, g.Expires)
 	}
 	return g, nil

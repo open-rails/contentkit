@@ -343,7 +343,7 @@ func (v *Viewer) inScope(r facetRow) bool { return v.policies.Allows(r.kind, r.e
 
 // itemView is the rule's verdict on one content item for the viewer.
 type itemView struct {
-	found, visible, editor bool
+	found, visible, editor, readRestricted bool
 	// versions are the visible versions in position order, each with its
 	// access decision.
 	versions  []facetRow
@@ -465,7 +465,8 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		iv := &itemView{found: true, decisions: map[string]Decision{}}
 		out[id] = iv
 		iv.editor = v.staffWrite || personal(id, true) || v.editable(rs[0].ownerEntity) || editors[rs[0].ownerEntity]
-		if known(id) || editors[rs[0].ownerEntity] {
+		iv.readRestricted = known(id) || editors[rs[0].ownerEntity]
+		if iv.readRestricted {
 			for _, r := range rs {
 				if !v.management && !v.inScope(r) {
 					continue
@@ -564,7 +565,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 			continue
 		}
 		o := owners[ref.ContentID]
-		res := resolve.Resolution{Ref: ref, Editor: iv.editor, Owner: o.creator, Comments: o.comments, OwnerEntity: o.entity}
+		res := resolve.Resolution{Ref: ref, Editor: iv.editor, ReadRestricted: iv.readRestricted, Owner: o.creator, Comments: o.comments, OwnerEntity: o.entity}
 		for _, ver := range iv.versions {
 			if want := ref.Version(); want == "" || ver.versionID == want {
 				res.Visible = true
