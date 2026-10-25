@@ -17,8 +17,8 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// A publication is an immutable metadata snapshot of ready files in the
-// version's own manifest. Chapters never create storage items or copy files.
+// A publication is an immutable reader snapshot of completed file delivery.
+// The item publisher reconciles storage before replacing this snapshot.
 const (
 	kindPages    = "pages"
 	kindPlayback = "playback"
@@ -320,16 +320,6 @@ func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Tar
 	return err == nil, err
 }
 
-// snapshotPages records only ready source renditions, not chapter boundaries.
-func (s *Service) snapshotPages(ctx context.Context, _ querier, k *media.Kind, v Target) (pagesSnapshot, error) {
-	m, err := s.manifest(ctx, k, v)
-	if err != nil {
-		return pagesSnapshot{}, err
-	}
-	pages, err := pagesOf(k, m)
-	return pagesSnapshot{Pages: pages}, err
-}
-
 // manifest is v's item's manifest; an empty one before its first upload.
 func (s *Service) manifest(ctx context.Context, k *media.Kind, v Target) (*media.Manifest, error) {
 	ref, err := s.ref(k.Name, v)
@@ -341,60 +331,6 @@ func (s *Service) manifest(ctx context.Context, k *media.Kind, v Target) (*media
 		return &media.Manifest{V: media.ManifestVersion}, nil
 	}
 	return m, err
-}
-
-// publishPages snapshots existing ready files. It performs no object writes.
-func (s *Service) publishPages(ctx context.Context, k *media.Kind, v Target) (bool, error) {
-	_, ok, err := s.underSource(ctx, v, func(tx pgx.Tx) (string, bool, error) {
-		snap, err := s.snapshotPages(ctx, tx, k, v)
-		if err != nil {
-			return "", false, err
-		}
-		id, current, err := s.prepareTx(ctx, tx, k, v, kindPages, snap)
-		if err != nil || current {
-			return id, current, err
-		}
-		current, err = s.promoteTx(ctx, tx, k, v, kindPages, id)
-		return id, current, err
-	})
-	return ok, err
-}
-
-func (s *Service) publishPlayback(ctx context.Context, k *media.Kind, v Target) (bool, error) {
-	_, ok, err := s.underSource(ctx, v, func(tx pgx.Tx) (string, bool, error) {
-		m, err := s.manifest(ctx, k, v)
-		if err != nil {
-			return "", false, err
-		}
-		tracks, err := tracksOf(k, m)
-		if err != nil {
-			return "", false, err
-		}
-		id, current, err := s.prepareTx(ctx, tx, k, v, kindPlayback, playbackSnapshot{Tracks: tracks})
-		if err != nil || current {
-			return id, current, err
-		}
-		current, err = s.promoteTx(ctx, tx, k, v, kindPlayback, id)
-		return id, current, err
-	})
-	return ok, err
-}
-
-// underSource runs fn in a transaction holding v's source lock and row.
-func (s *Service) underSource(ctx context.Context, v Target, fn func(pgx.Tx) (string, bool, error)) (id string, ok bool, err error) {
-	unlock, err := s.lockSource(ctx, v)
-	if err != nil {
-		return "", false, err
-	}
-	defer unlock()
-	err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-		if err := s.lockVersion(ctx, tx, v); err != nil {
-			return err
-		}
-		id, ok, err = fn(tx)
-		return err
-	})
-	return id, ok, err
 }
 
 func sameJSON(a, b any) bool {

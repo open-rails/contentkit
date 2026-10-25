@@ -517,6 +517,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				return err
 			}
 			if active != nil && active.Fingerprint == plan.Fingerprint {
+				active.Waiting, active.NextAt = plan.Waiting, plan.NextAt
 				body, err := json.Marshal(active)
 				if err != nil {
 					return err

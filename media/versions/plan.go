@@ -97,7 +97,7 @@ func previewPageCount(k *media.Kind, d decision, total int) int {
 	if spec == nil {
 		return 0
 	}
-	return max(0, min(total, released(d.segs, total, d.now), d.preview.Pages, spec.First))
+	return max(0, min(total, d.preview.Pages, spec.First))
 }
 
 // shows reports pages [start, end) shown: released, or to an editor.

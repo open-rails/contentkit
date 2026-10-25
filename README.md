@@ -250,7 +250,7 @@ interpreting their syntax:
 
 | Key | Opens |
 |---|---|
-| `access.ContentKey` → `<tenant>:content:<id>` | every version of a content item |
+| `access.ContentKey` → `<tenant>:content:<id>` | legacy audit/migration only; grants no edition access |
 | `access.VersionKey` → `<tenant>:content:<id>/<version>` | one version |
 | `access.EntityKey` → `<tenant>:group:<id>` | associated content whose rules permit that entity entitlement |
 | `access.TierKey` → `premium` | versions whose rule names that tier |
@@ -265,10 +265,10 @@ For example, after creating a ContentKit item, its authoring flow can create a
 native OpenRails product and price with the OpenRails Go client:
 
 ```go
-key, err := access.ContentKey(tenant, contentID)
+key, err := access.VersionKey(tenant, contentID, versionID)
 if err != nil { return err }
 product, err := billingClient.CreateProduct(ctx, billing.CreateProductParams{
-    Key: "content-" + contentID, DisplayName: title,
+    Key: "edition-" + versionID, DisplayName: title,
     Entitlements: []string{key.String()},
 })
 if err != nil { return err }

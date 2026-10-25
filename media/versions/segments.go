@@ -116,7 +116,11 @@ func (s *Service) ValidateChapterStartsTx(ctx context.Context, tx pgx.Tx, target
 	if err != nil {
 		return err
 	}
-	m, err := s.manifest(ctx, k, target)
+	ref, err := s.ref(k.Name, target)
+	if err != nil {
+		return err
+	}
+	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
 	if err != nil {
 		return err
 	}
@@ -132,28 +136,6 @@ func (s *Service) ValidateChapterStartsTx(ctx context.Context, tx pgx.Tx, target
 	}
 	_, err = resolveChapterStarts(segs, pages)
 	return err
-}
-
-// released is how many leading pages are released: up to the first
-// unreleased segment's start.
-func released(segs []segment, total int, now time.Time) int {
-	for _, g := range segs {
-		if g.ReleaseAt != nil && g.ReleaseAt.After(now) {
-			return min(max(g.Start, 0), total)
-		}
-	}
-	return total
-}
-
-// freeEnd is where the leading n segments' pages end.
-func freeEnd(segs []segment, n, total int) int {
-	if n <= 0 {
-		return 0
-	}
-	if n > len(segs) {
-		return total
-	}
-	return min(segs[n-1].End, total)
 }
 
 // span is one published item's pages: a segment's, or (Segment nil) pages

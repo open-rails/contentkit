@@ -742,13 +742,17 @@ func (o *opRun) rename(f File, to string) error {
 	}
 	if o.renames == nil {
 		o.renames = map[string]string{}
+		for _, file := range m.Files {
+			if file.IsUpload() {
+				o.renames[file.Path] = file.Path
+			}
+		}
 	}
 	for before, after := range o.renames {
 		if after == f.Path {
 			o.renames[before] = to
 		}
 	}
-	o.renames[f.Path] = to
 	for j := range m.Files {
 		x := &m.Files[j]
 		switch {

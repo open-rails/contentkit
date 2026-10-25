@@ -2,7 +2,6 @@ package versions
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -124,56 +123,6 @@ func (s *Service) resolveOwned(ctx context.Context, refs []contentref.ContentRef
 		out[ref.Key()] = rr
 	}
 	return nil
-}
-
-// readerFiles grants immutable blobs from the ready version snapshot. Chapter
-// metadata changes only this selection; it never copies or rearranges storage.
-func (s *Service) readerFiles(ctx context.Context, actor access.Actor, k *media.Kind, target Target) (map[string]bool, error) {
-	allowed := map[string]bool{}
-	p, err := s.current(ctx, s.o.Pool, target, kindPages)
-	if err != nil || p == nil {
-		return allowed, err
-	}
-	var snap pagesSnapshot
-	if err := json.Unmarshal(p.Source, &snap); err != nil {
-		return nil, err
-	}
-	ds, err := s.decisions(ctx, actor, k.Name, []Target{target}, map[Target]pagesSnapshot{target: snap})
-	if err != nil {
-		return nil, err
-	}
-	d := ds[target]
-	cut := released(d.segs, len(snap.Pages), d.now)
-	free := freeEnd(d.segs, d.preview.Segments, len(snap.Pages))
-	preview := previewPageCount(k, d, len(snap.Pages))
-	for i, pg := range snap.Pages {
-		if i >= cut {
-			break
-		}
-		if d.res.Accessible || i < free {
-			for _, r := range pg.Files {
-				allowed[r.Blob] = true
-			}
-		} else if i < preview && len(pg.Files) > 0 {
-			allowed[pg.Files[0].Blob] = true
-		}
-	}
-	if k.Publish.Playback != "" && d.whole() {
-		pb, err := s.current(ctx, s.o.Pool, target, kindPlayback)
-		if err != nil {
-			return nil, err
-		}
-		if pb != nil {
-			var playback playbackSnapshot
-			if err := json.Unmarshal(pb.Source, &playback); err != nil {
-				return nil, err
-			}
-			for _, tr := range playback.Tracks {
-				allowed[tr.File.Blob] = true
-			}
-		}
-	}
-	return allowed, nil
 }
 
 type uploads struct{ s *Service }

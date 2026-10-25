@@ -508,6 +508,12 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 		}
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt, trusted: trusted}
+		o.renames = map[string]string{}
+		for _, file := range prior.Files {
+			if file.IsUpload() {
+				o.renames[file.Path] = file.Path
+			}
+		}
 		o.archiveAllowed = func(source, destination string) error {
 			stem, _ := splitExt(source)
 			delegated, err := u.authorize(editCtx, actor, UploadTarget{Ref: ref, Path: stem})
@@ -604,7 +610,12 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 			}
 		}
 		item.Kind().syncPreviews(prior, m)
-		mutation.effects.Renames = o.renames
+		mutation.effects.Renames = map[string]string{}
+		for before, after := range o.renames {
+			if before != after {
+				mutation.effects.Renames[before] = after
+			}
+		}
 		mutation.effects.RemovedPaths = o.removed
 		if n := m.uploads(); n > MaxUploads && n > uploads {
 			return tooManyFiles(MaxUploads, "an item holds at most %d uploads", MaxUploads)
