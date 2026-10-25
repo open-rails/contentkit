@@ -90,7 +90,7 @@ func TestScheduledPolicyPublishesWithoutStorageAreaChange(t *testing.T) {
 	goldReader, anonymous := a.client(credential), a.client("")
 	check := func(client *ck.Client, item catalog.Content, allowed bool) {
 		t.Helper()
-		got, err := client.GetContentVersion(t.Context(), item.ID, item.Versions[0].ID, ck.GetContentVersionQuery{})
+		got, err := client.GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
 		must(t, err)
 		if got.Decision.Allowed != allowed || allowed && got.Body != "Released policy body" || !allowed && got.Body != "" {
 			t.Fatalf("completed audience access=%v, want %v: %+v", got.Decision.Allowed, allowed, got.Decision)
