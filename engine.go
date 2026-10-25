@@ -889,6 +889,16 @@ func (e *Engine) eraseSubjects(ctx context.Context, subjects []signal.Subject, a
 			return invalid, err
 		}
 	}
+	var actors []string
+	for _, s := range subjects {
+		if s.Kind() == signal.SubjectKindUser {
+			actors = append(actors, s.Key())
+		}
+	}
+	// Commit intent before any signal, content or media cleanup can run.
+	if err := e.recordAccountErasureIntent(ctx, actors, account); err != nil {
+		return signal.ErasureReport{Remaining: map[string]uint64{"account_plane": 1}}, err
+	}
 	report, signalErr := e.hub.EraseSubjects(ctx, subjects)
 	if errors.Is(signalErr, hub.ErrSignalPlaneDown) {
 		// It still holds their signals.
@@ -899,12 +909,6 @@ func (e *Engine) eraseSubjects(ctx context.Context, subjects []signal.Subject, a
 	}
 	if report.Remaining == nil {
 		report.Remaining = map[string]uint64{}
-	}
-	var actors []string
-	for _, s := range subjects {
-		if s.Kind() == signal.SubjectKindUser {
-			actors = append(actors, s.Key())
-		}
 	}
 	eraseContent := e.content.EraseAppSubjects
 	if account {

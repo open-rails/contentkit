@@ -1886,6 +1886,44 @@
       "cases": [
         "TestAccountNotificationsOptional/CK-J25-S19_partial_account_erasure_storage_fails_closed"
       ]
+    },
+    {
+      "id": "CK-J25-S20",
+      "journey": "CK-J25",
+      "behavior": "Erasure intent survives a catalog restore with notifications omitted",
+      "status": "verified",
+      "evidence": [
+        "Real pre-erasure favorite/count/local-fence rows are restored while the shared account store stays current. App-only and whole-account erasures refuse normal startup, explicit replay removes restored activity, future writes remain fenced, and the app-only intent preserves sibling app startup and activity. The pre-fix regression failed both variants with engine=true, error=nil and one restored favorite."
+      ],
+      "cases": [
+        "TestOptionalInboxRestoreErasure/app_only",
+        "TestOptionalInboxRestoreErasure/whole_account"
+      ]
+    },
+    {
+      "id": "CK-J25-S21",
+      "journey": "CK-J25",
+      "behavior": "Failed cleanup retains intent and cannot discharge the full account obligation",
+      "status": "verified",
+      "evidence": [
+        "An owned PostgreSQL delete trigger rolls back the content cleanup. The shared intent remains, local fences are absent, startup refuses, and recovery finishes only after the fault is removed. Local replay cannot discharge a missing full-account completion receipt."
+      ],
+      "cases": [
+        "TestOptionalInboxFailedErasure/app_only",
+        "TestOptionalInboxFailedErasure/whole_account"
+      ]
+    },
+    {
+      "id": "CK-J25-S22",
+      "journey": "CK-J25",
+      "behavior": "Optional inbox anonymization preserves contributions and blocks restored attribution",
+      "status": "verified",
+      "evidence": [
+        "The public AnonymizeAccount API is retried with no notification storage. Anonymous favorite counts and published discussion remain; restoring pre-anonymization attribution and local fences then refuses normal startup."
+      ],
+      "cases": [
+        "TestOptionalInboxAnonymizationRestore"
+      ]
     }
   ],
   "review_notes": {

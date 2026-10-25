@@ -15,7 +15,8 @@ var ErrErasureReplayRequired = errors.New("contentkit: erasure replay required; 
 // mean a pre-erasure catalog restore or a still-pending normal deletion. Both
 // fail closed; the operator can retry or explicitly finish erasure replay.
 func (e *Engine) checkErasureReplay(ctx context.Context) error {
-	if available, err := e.accountErasureAvailable(ctx); err != nil || !available {
+	query, args, err := e.accountErasureSubjectsQuery(ctx, false)
+	if err != nil {
 		return err
 	}
 	if e.scope == nil {
@@ -24,13 +25,10 @@ func (e *Engine) checkErasureReplay(ctx context.Context) error {
 	if err := e.checkAccountErasureCompletion(ctx); err != nil {
 		return err
 	}
-	schema, namespace := e.accountStorage()
 	var pending bool
-	err := e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "notify_recipients"}.Sanitize()+` r
-WHERE r.scope=$1 AND r.audience='user' AND (r.erased_at IS NOT NULL OR EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "notify_app_erasures"}.Sanitize()+` x
-WHERE x.scope=r.scope AND x.audience=r.audience AND x.recipient=r.recipient AND ((x.app_id<>'' AND x.app_id=$2) OR (x.source='contentkit' AND x.source_scope=$3))))
-AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_erased_subjects"}.Sanitize()+` f WHERE f.tenant_id=$3 AND f.actor_id=r.recipient AND f.engine_cleanup_complete)
-AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$3 AND a.actor_id=r.recipient AND a.state='purging'))`, "contentkit:"+namespace, e.scope.AppID.String(), e.cfg.Tenant).Scan(&pending)
+	err = e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (`+query+`) r
+WHERE NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_erased_subjects"}.Sanitize()+` f WHERE f.tenant_id=$4 AND f.actor_id=r.actor_id AND f.engine_cleanup_complete)
+AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$4 AND a.actor_id=r.actor_id AND a.state='purging'))`, args...).Scan(&pending)
 	if err != nil {
 		return fmt.Errorf("contentkit: check erasure replay: %w", err)
 	}
@@ -86,9 +84,6 @@ func (e *Engine) ReplayErasureFences(ctx context.Context) (signal.ErasureReport,
 // The avatar primary must finish before a secondary can declare recovery done.
 func (e *Engine) ReplayAccountErasures(ctx context.Context) (signal.ErasureReport, error) {
 	report := signal.ErasureReport{Remaining: map[string]uint64{}}
-	if available, err := e.accountErasureAvailable(ctx); err != nil || !available {
-		return report, err
-	}
 	if e.scope == nil {
 		return report, errors.New("contentkit: account erasure replay requires Scope")
 	}
@@ -97,12 +92,15 @@ func (e *Engine) ReplayAccountErasures(ctx context.Context) (signal.ErasureRepor
 			e.signals.attempt(ctx)
 		}
 	}
-	schema, namespace := e.accountStorage()
+	query, args, err := e.accountErasureSubjectsQuery(ctx, true)
+	if err != nil {
+		return report, err
+	}
+	schema, _ := e.accountStorage()
 	for after := ""; ; {
-		rows, err := e.pool.Query(ctx, `SELECT r.recipient FROM `+pgx.Identifier{schema, "notify_recipients"}.Sanitize()+` r
-WHERE r.scope=$1 AND r.audience='user' AND r.erased_at IS NOT NULL AND r.recipient>$2
-AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize()+` c WHERE c.tenant_id=$3 AND c.app_id=$4 AND c.actor_id=r.recipient)
-ORDER BY r.recipient LIMIT $5`, "contentkit:"+namespace, after, e.scope.TenantID.String(), e.scope.AppID.String(), min(1000, signal.MaxErasureSubjects))
+		rows, err := e.pool.Query(ctx, `SELECT r.actor_id FROM (`+query+`) r
+WHERE r.actor_id>$5 AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize()+` c WHERE c.tenant_id=$1 AND c.app_id=$2::uuid AND c.actor_id=r.actor_id)
+ORDER BY r.actor_id LIMIT $6`, append(args, after, min(1000, signal.MaxErasureSubjects))...)
 		if err != nil {
 			return report, err
 		}
@@ -142,19 +140,19 @@ ORDER BY r.recipient LIMIT $5`, "contentkit:"+namespace, after, e.scope.TenantID
 // Both this app and the configured avatar primary have independent durable
 // obligations; the primary's receipt gates every app exposing shared avatars.
 func (e *Engine) checkAccountErasureCompletion(ctx context.Context) error {
-	if available, err := e.accountErasureAvailable(ctx); err != nil || !available {
+	query, args, err := e.accountErasureSubjectsQuery(ctx, true)
+	if err != nil {
 		return err
 	}
 	if e.scope == nil {
 		return nil
 	}
-	schema, namespace := e.accountStorage()
+	schema, _ := e.accountStorage()
 	var missing string
-	err := e.pool.QueryRow(ctx, `SELECT required.app_id::text FROM `+pgx.Identifier{schema, "notify_recipients"}.Sanitize()+` r
-CROSS JOIN (SELECT $3::uuid AS app_id UNION SELECT primary_app_id FROM `+pgx.Identifier{schema, "content_account_avatar_placement"}.Sanitize()+` WHERE tenant_id=$2) required
-WHERE r.scope=$1 AND r.audience='user' AND r.erased_at IS NOT NULL
-AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize()+` c WHERE c.tenant_id=$2 AND c.app_id=required.app_id AND c.actor_id=r.recipient)
-LIMIT 1`, "contentkit:"+namespace, e.scope.TenantID.String(), e.scope.AppID.String()).Scan(&missing)
+	err = e.pool.QueryRow(ctx, `SELECT required.app_id::text FROM (`+query+`) r
+CROSS JOIN (SELECT $2::uuid AS app_id UNION SELECT primary_app_id FROM `+pgx.Identifier{schema, "content_account_avatar_placement"}.Sanitize()+` WHERE tenant_id=$1) required
+WHERE NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize()+` c WHERE c.tenant_id=$1 AND c.app_id=required.app_id AND c.actor_id=r.actor_id)
+LIMIT 1`, args...).Scan(&missing)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
