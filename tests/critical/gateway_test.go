@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
+	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
@@ -23,9 +24,7 @@ import (
 // Gateway fixtures are real objects and public signing APIs. Each refused
 // target exists, so a 404 cannot pass merely because a fixture was absent.
 func TestGatewayCapabilities(t *testing.T) {
-	w := newWorld(t)
-	a := w.apps[0]
-	m := attachMedia(t, w, a)
+	m := newMediaStorage(t, ck.Scope{TenantID: ck.NewTenantID(), AppID: ck.NewAppID()})
 	ring, err := token.NewRing(m.key, nil)
 	must(t, err)
 	scope := m.gatewayConfig.Routes[0].Scope

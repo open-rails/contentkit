@@ -36,6 +36,7 @@ type mediaWorld struct {
 	bucket        string
 	gateway       *httptest.Server
 	key           token.Key
+	signing       string
 	worker        *worker.Worker
 	cancel        context.CancelFunc
 	workerDone    chan error
@@ -43,7 +44,7 @@ type mediaWorld struct {
 	gatewayConfig gateway.Config
 }
 
-func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
+func newMediaStorage(t *testing.T, scope ck.Scope) *mediaWorld {
 	t.Helper()
 	endpoint := os.Getenv("CONTENTKIT_CRITICAL_S3_ENDPOINT")
 	if endpoint == "" {
@@ -64,22 +65,56 @@ func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
 	_, err = rand.Read(secret)
 	must(t, err)
 	signing := "critical:" + base64.StdEncoding.EncodeToString(secret)
+	m.signing = signing
 	m.key, err = token.ParseKey(signing)
 	must(t, err)
 	ring, err := token.NewRing(m.key, nil)
 	must(t, err)
 	m.gatewayConfig = gateway.Config{Endpoint: endpoint, AccessKeyID: user, SecretAccessKey: password, Ring: ring,
-		Routes: []gateway.Route{{Host: "127.0.0.1", Scope: layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}, Bucket: m.bucket, Origins: []string{"https://critical.invalid"}}}}
+		Routes: []gateway.Route{{Host: "127.0.0.1", Scope: layout.Scope{TenantID: scope.TenantID.String(), AppID: scope.AppID.String()}, Bucket: m.bucket, Origins: []string{"https://critical.invalid"}}}}
 	handler, err := gateway.New(m.gatewayConfig)
 	must(t, err)
 	m.gateway = httptest.NewServer(handler)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		m.gateway.Close()
+		for {
+			objects, err := management.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{Bucket: &m.bucket})
+			if err != nil {
+				t.Errorf("list owned media cleanup: %v", err)
+				return
+			}
+			if len(objects.Contents) == 0 {
+				break
+			}
+			keys := []types.ObjectIdentifier{}
+			for _, object := range objects.Contents {
+				keys = append(keys, types.ObjectIdentifier{Key: object.Key})
+			}
+			if _, err := management.DeleteObjects(ctx, &awss3.DeleteObjectsInput{Bucket: &m.bucket, Delete: &types.Delete{Objects: keys}}); err != nil {
+				t.Errorf("delete owned media: %v", err)
+				return
+			}
+		}
+		if _, err := management.DeleteBucket(ctx, &awss3.DeleteBucketInput{Bucket: &m.bucket}); err != nil {
+			t.Errorf("delete owned bucket: %v", err)
+		}
+	})
+	return m
+}
+
+func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
+	t.Helper()
+	m := newMediaStorage(t, *a.cfg.Scope)
+	var err error
 	a.server.Close()
 	must(t, a.engine.Close(t.Context()))
 	a.cfg.Media = &ck.MediaConfig{Config: media.Config{BaseURL: m.gateway.URL, Kinds: []media.Kind{{Name: "gallery", KeepOriginals: true,
 		Uploads: []media.Upload{{Path: "pages/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Max: 4}, {Path: "cover", Types: []string{"image/png"}, MaxBytes: 1 << 20}, {Path: "attachments/{name}", Types: []string{"text/plain"}, MaxBytes: 80 << 20, Max: 2}},
 		Private: []media.Private{{Name: "reader", From: "pages/{name}", To: "reader/{name}.webp", Image: &media.Image{Width: 48, Height: 48}}},
 		Public:  []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{16, 32}, Image: media.Image{Aspect: media.Square}}},
-	}}}, WorkerSchema: w.schema + "_media_worker", Delivery: ck.DeliveryConfig{Mode: string(media.DeliverURL), SigningKey: signing, TTL: time.Minute, Window: time.Second}}
+	}}}, WorkerSchema: w.schema + "_media_worker", Delivery: ck.DeliveryConfig{Mode: string(media.DeliverURL), SigningKey: m.signing, TTL: time.Minute, Window: time.Second}}
 	a.deps.Store = m.store
 	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
 	a.cfg.Database.SkipMigrations = true
@@ -118,28 +153,6 @@ func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
 			}
 		case <-time.After(15 * time.Second):
 			t.Error("owned media worker failed to stop")
-		}
-		m.gateway.Close()
-		for {
-			objects, err := management.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{Bucket: &m.bucket})
-			if err != nil {
-				t.Errorf("list owned media cleanup: %v", err)
-				return
-			}
-			if len(objects.Contents) == 0 {
-				break
-			}
-			keys := []types.ObjectIdentifier{}
-			for _, object := range objects.Contents {
-				keys = append(keys, types.ObjectIdentifier{Key: object.Key})
-			}
-			if _, err := management.DeleteObjects(ctx, &awss3.DeleteObjectsInput{Bucket: &m.bucket, Delete: &types.Delete{Objects: keys}}); err != nil {
-				t.Errorf("delete owned media: %v", err)
-				return
-			}
-		}
-		if _, err := management.DeleteBucket(ctx, &awss3.DeleteBucketInput{Bucket: &m.bucket}); err != nil {
-			t.Errorf("delete owned bucket: %v", err)
 		}
 	})
 	return m
