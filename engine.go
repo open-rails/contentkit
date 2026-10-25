@@ -94,6 +94,7 @@ type Engine struct {
 	requested bool // RiverJobs was handed to a host fleet
 	fleet     *river.Client[pgx.Tx]
 	own       *river.Client[pgx.Tx]
+	ownCancel context.CancelFunc
 	started   bool
 	closed    bool
 }
@@ -775,6 +776,9 @@ func WithRiverClient(fleet *river.Client[pgx.Tx]) StartOption {
 // fleet. It runs no DDL; ctx ending stops nothing: Close stops what Start
 // started. Call it once, before serving.
 func (e *Engine) Start(ctx context.Context, opts ...StartOption) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if e.erasureRecovery {
 		return ErrErasureReplayRequired
 	}
@@ -807,10 +811,22 @@ func (e *Engine) Start(ctx context.Context, opts ...StartOption) error {
 	if err != nil {
 		return err
 	}
-	if err := own.Start(ctx); err != nil {
-		return fmt.Errorf("contentkit: start River: %w", err)
+	// The caller bounds startup, not the lifetime of the successfully started
+	// workers. Keep cancellation connected only until startup returns; Close
+	// owns the detached runtime and still allows graceful job completion.
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stopStartupCancellation := context.AfterFunc(ctx, cancel)
+	err = own.Start(runCtx)
+	if !stopStartupCancellation() && err == nil {
+		err = ctx.Err()
 	}
-	e.own, e.started = own, true
+	if err != nil {
+		cancel()
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cleanupCancel()
+		return errors.Join(fmt.Errorf("contentkit: start River: %w", err), own.StopAndCancel(cleanupCtx))
+	}
+	e.own, e.ownCancel, e.started = own, cancel, true
 	return nil
 }
 
@@ -837,6 +853,9 @@ func (e *Engine) Close(ctx context.Context) error {
 			errs = append(errs, err, e.own.StopAndCancel(hard))
 			cancel()
 		}
+	}
+	if e.ownCancel != nil {
+		e.ownCancel()
 	}
 	e.chMu.Lock()
 	if e.ownCH != nil {
