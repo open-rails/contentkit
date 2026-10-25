@@ -26,7 +26,7 @@ var totalsPath = httpapi.Contents.Prefix() + "/catalog/totals"
 
 func init() { httpapi.Register(httpapi.Contents, routes) }
 
-const editorsDoc = " The authenticated author, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only."
+const editorsDoc = " The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority."
 
 var languageParam = httpapi.Text("language", "the language to show text in; the site's first language, then any, when it has none")
 
@@ -56,7 +56,7 @@ var routes = []httpapi.Route[*Store]{
 		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleGetVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage", Resource: "contents", Auth: httpapi.Public,
-		Doc: "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. root:content:write holders see all; others what they created, or an owner group's they edit.",
+		Doc: "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.",
 		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published (live) or deleted; every state but deleted by default"),
 			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
 			httpapi.Text("access", "only items whose own rule has this level: public, tier, group, ppv or group_ppv"), httpapi.Text("tier", "only items whose rule names this configured tier"),

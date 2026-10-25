@@ -33,11 +33,11 @@ type Resolution struct {
 	// when Accessible is true.
 	// This is filled only by trusted resolvers, never a read request.
 	MediaFiles map[string]bool
-	// Editor = the actor may edit the item (staff, its creators, its owner
+	// Editor = the actor may edit the item (current staff, authorized authors, its owner
 	// group's editors): media gives a visible item's editor its private files
 	// whatever Accessible says.
 	Editor bool
-	// Owner is the user that owns the item (its first creator, a group's
+	// Owner is the account that authored the item (immutable created_by, an entity's
 	// owner), "" when none does. A comment ban in that owner's scope applies
 	// to it.
 	Owner string
