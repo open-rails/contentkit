@@ -59,8 +59,8 @@ func InitializeFixedOwners(ctx context.Context, pool *pgxpool.Pool, schema, tena
 			}
 			var id, state string
 			var valid bool
-			err := tx.QueryRow(ctx, `SELECT id,state,owner_user_id IS NULL AND auth_scope IS NULL AND NOT internal FROM `+s.t.entities+`
- WHERE tenant_id=$1 AND kind=$2 AND slug=$3 AND scope_id='' ORDER BY state='active' DESC,id LIMIT 1 FOR UPDATE`, tenant, in.Kind, in.Slug).Scan(&id, &state, &valid)
+			err := tx.QueryRow(ctx, `SELECT id,state,owner_user_id IS NULL AND NOT internal AND (NOT $4::boolean OR auth_scope IS NOT NULL) FROM `+s.t.entities+`
+ WHERE tenant_id=$1 AND kind=$2 AND slug=$3 AND scope_id='' ORDER BY state='active' DESC,id LIMIT 1 FOR UPDATE`, tenant, in.Kind, in.Slug, model.EntityKinds[in.Kind].AuthScope).Scan(&id, &state, &valid)
 			if err == nil {
 				if state != "active" || !valid || in.ID != "" && string(in.ID) != id {
 					return invalid("configured site channel %s/%s conflicts with stored ownership or state", in.Kind, in.Slug)
@@ -69,6 +69,9 @@ func InitializeFixedOwners(ctx context.Context, pool *pgxpool.Pool, schema, tena
 			}
 			if !errors.Is(err, pgx.ErrNoRows) {
 				return err
+			}
+			if model.EntityKinds[in.Kind].AuthScope {
+				return invalid("configured site channel %s/%s must be provisioned with its authorization scope before ownership migration", in.Kind, in.Slug)
 			}
 			if in.ID == "" {
 				in.ID = entities.EntityID(contentref.NewID())

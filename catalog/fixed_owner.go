@@ -21,8 +21,9 @@ func (s *Store) fixedOwner(ctx context.Context, q Querier, kind, supplied string
 	var id string
 	err := q.QueryRow(ctx, `SELECT id FROM `+s.t.entities+`
  WHERE tenant_id=$1 AND kind=$2 AND slug=$3 AND state='active'
- AND scope_id = '' AND owner_user_id IS NULL AND auth_scope IS NULL AND NOT internal
- FOR SHARE`, s.tenant, ref.Kind, ref.Slug).Scan(&id)
+ AND scope_id = '' AND owner_user_id IS NULL AND NOT internal
+ AND (NOT $4::boolean OR auth_scope IS NOT NULL)
+ FOR SHARE`, s.tenant, ref.Kind, ref.Slug, s.cfg.EntityKinds[ref.Kind].AuthScope).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("%w: kind %s needs its configured site-owned entity %s/%s", errFixedOwnerUnavailable, kind, ref.Kind, ref.Slug)
 	}

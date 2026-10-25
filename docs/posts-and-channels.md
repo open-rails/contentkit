@@ -38,8 +38,12 @@ entity_kinds:
   channel: {route: channels, owner: site}
 ```
 
-This channel has no user owner, delegated editor scope or billing entitlement.
-Normal app content editors manage the posts. `owner_entity` is enforced by the
+This example channel has no user owner, delegated editor scope or billing
+entitlement; normal app content editors manage its posts. Those are host policy
+choices. A fixed site channel may instead use `auth_scope: true` and host-defined
+AuthKit roles, or `entitled: true` with an appropriate post access policy.
+`owner_entity` chooses a destination; it does not grant permissions or force
+public access. It is enforced by the
 server for ordinary creation and imports: an omitted owner is filled, and a
 conflicting owner is rejected. A channel in another app cannot satisfy the
 reference, even with an identical slug. The referenced channel must be seeded
@@ -60,6 +64,11 @@ channel and binds unowned existing posts atomically. Existing names, titles,
 author credits and access rules remain unchanged. A conflicting channel owner or
 a post/version access rule outside current policy rejects the transaction; the
 operator must resolve that explicitly. Repeating the migration is harmless.
+
+The database-only helper can create channels without an authorization scope.
+For `auth_scope: true`, provision the channel through the normal AuthKit-backed
+entity API first, then call the helper to bind existing posts. The helper refuses
+a missing or unprovisioned scope; it never invents permissions or boots AuthKit.
 
 Omit `owner_entity` for creator-selected channels, as OnlyDemo does. Channel
 ownership and optional editor teams then use the existing channel permissions.

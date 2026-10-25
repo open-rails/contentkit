@@ -8,6 +8,7 @@ import (
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
+	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
@@ -198,5 +199,65 @@ func TestFixedSiteChannelStaffRevocation(t *testing.T) {
 	must(t, err)
 	if visible.Editor || !visible.Decision.Allowed || visible.Body != "Official text" {
 		t.Fatalf("revoked author did not become an ordinary public reader: %+v", visible)
+	}
+}
+
+// A fixed destination does not dictate which AuthKit roles may publish there.
+func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) {
+		cfg.Content.EntityKinds["channel"] = kinds.EntityKind{Route: "channels", Owner: "site", AuthScope: true, Entitled: true}
+		kind := cfg.Content.Kinds["article"]
+		kind.OwnerEntity = &kinds.EntityRef{Kind: "channel", Slug: "blog"}
+		kind.AccessLevels = []string{"public"}
+		cfg.Content.Kinds["article"] = kind
+	})
+	a := w.apps[0]
+	seeds := []entities.EntityInput{{Kind: "channel", Slug: "blog", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Official channel"}}}}
+	if _, err := ck.MigrateFixedOwners(t.Context(), w.pool, a.cfg, seeds); err == nil {
+		t.Fatal("database-only migration provisioned an authorization scope")
+	}
+	channels, err := a.engine.Client().GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+	must(t, err)
+	if len(channels.Entities) != 0 {
+		t.Fatal("refused scope provisioning left a channel")
+	}
+	create := func(app *application) entities.Entity {
+		made, err := app.engine.Client().PostEntities(t.Context(), seeds)
+		must(t, err)
+		if len(made) != 1 || made[0].AuthScope == "" || made[0].OwnerUserID != "" {
+			t.Fatalf("site scope not provisioned through AuthKit: %+v", made)
+		}
+		return made[0]
+	}
+	channel, foreign := create(a), create(w.apps[1])
+	scope, err := ckauth.EntityScopeID(*a.cfg.Scope, channel.AuthScope)
+	must(t, err)
+	foreignScope, err := ckauth.EntityScopeID(*w.apps[1].cfg.Scope, foreign.AuthScope)
+	must(t, err)
+	if scope == foreignScope {
+		t.Fatal("separate apps share an authorization group")
+	}
+	_, err = ck.MigrateFixedOwners(t.Context(), w.pool, a.cfg, seeds)
+	must(t, err)
+	member, token := w.person(t, 0)
+	writer := a.client(token)
+	input := catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Scoped official post", Body: "Host roles decide who posts"}}}
+	_, err = writer.PostContents(t.Context(), input)
+	requireError(t, err, 403, "forbidden")
+	authtest.GrantRole(t, w.tenant[0], iam.GroupByID(foreignScope), iam.UserSubject(member.ID), w.channelWriter)
+	_, err = writer.PostContents(t.Context(), input)
+	requireError(t, err, 403, "forbidden")
+	authtest.GrantRole(t, w.tenant[0], iam.GroupByID(scope), iam.UserSubject(member.ID), w.channelWriter)
+	post, err := writer.PostContents(t.Context(), input)
+	must(t, err)
+	if post.OwnerEntityID != string(channel.ID) {
+		t.Fatal("channel-scoped writer escaped the fixed destination")
+	}
+	_, err = writer.PostContentPublish(t.Context(), post.ID, catalog.PublishInput{})
+	must(t, err)
+	public, err := a.client("").GetContent(t.Context(), post.ID, ck.GetContentQuery{})
+	must(t, err)
+	if !public.Decision.Allowed || public.Body != input.Text["en"].Body {
+		t.Fatal("channel entitlement metadata overrode public post policy")
 	}
 }
