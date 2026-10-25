@@ -499,7 +499,7 @@ export function VersionsEditor({ content, media = true, activeVersion, ...p }: C
     return (
       <Section title={t("contentEditor.media")} ckui="version-media">
         {spec.segments && <SegmentsEditor content={content} version={only} {...p} />}
-        {media && <VersionMedia content={content} version={only} model={model} {...p} />}
+        {media && <VersionMedia content={content} version={only} model={model} bare {...p} />}
       </Section>
     );
   }
@@ -930,7 +930,8 @@ export function VersionCover({ content, version: v, ...p }: Common & { content: 
  * upload rules), else its upload folders. Uploads to a version that is not
  * live are added as they finish; a live one's wait for "Add".
  */
-function VersionMedia({ content, version, model, ...p }: Common & { content: Content; version: Version; model: ContentModel | null }) {
+// bare: inside a card that already says "Media", so the folder adds no heading of its own.
+function VersionMedia({ content, version, model, bare, ...p }: Common & { content: Content; version: Version; model: ContentModel | null; bare?: boolean }) {
   const { t } = useMessages();
   const languageName = useLanguageName();
   const item = useMemo(() => ({ kind: content.kind, id: content.id, version: version.id }), [content.kind, content.id, version.id]);
@@ -939,7 +940,7 @@ function VersionMedia({ content, version, model, ...p }: Common & { content: Con
   if (!r.read && r.loading) return <Skeleton className="h-24 w-full" />;
   if (r.read?.uploads && videoPaths(r.read.uploads).source) return <VideoMediaEditor item={item} languages={languages} client={p.client} onError={p.onError} />;
   return <>
-    <MediaFolderEditor item={item} commit={version.live ? "manual" : "auto"} label={t("contentEditor.media")} client={p.client} onError={p.onError} />
+    <MediaFolderEditor item={item} commit={version.live ? "manual" : "auto"} label={bare ? false : t("contentEditor.media")} client={p.client} onError={p.onError} />
     {model?.kinds[content.kind]?.presentation === "reader" && <PageNotices content={content.id} version={version.id} client={p.client} onError={p.onError} />}
   </>;
 }

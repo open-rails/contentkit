@@ -133,17 +133,30 @@ function Contents({ basePath, navigation, ...p }: Inner) {
   }
   return (
     <>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="-ms-2 gap-1.5 text-muted-foreground hover:text-foreground justify-self-start h-8 px-2"
-        onClick={() => void (async () => {
-          if ((await leaveGuard.current?.()) ?? true) loc.go("");
-        })()}
-      >
-        <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} data-icon="inline-start" />
-        {p.noun?.other ? t("contentManager.backToNoun", { noun: p.noun.other }) : t("contentManager.back")}
-      </Button>
+      {loc.view === "new" ? (
+        <nav aria-label={t("entityEditor.breadcrumb")} className="flex items-center gap-1.5 text-sm text-muted-foreground" data-ckui="content-breadcrumb">
+          <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} className="size-4" />
+          <button type="button" className="underline-offset-4 first-letter:uppercase hover:text-foreground hover:underline" onClick={() => loc.go("")}>
+            {p.noun?.other ?? t("contentManager.title")}
+          </button>
+          <span aria-hidden>/</span>
+          <span aria-current="page" className="text-foreground first-letter:uppercase">
+            {p.noun?.one ? t("contentManager.newNamed", { one: p.noun.one }) : t("contentManager.newTitle")}
+          </span>
+        </nav>
+      ) : (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ms-2 gap-1.5 text-muted-foreground hover:text-foreground justify-self-start h-8 px-2"
+          onClick={() => void (async () => {
+            if ((await leaveGuard.current?.()) ?? true) loc.go("");
+          })()}
+        >
+          <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} data-icon="inline-start" />
+          {p.noun?.other ? t("contentManager.backToNoun", { noun: p.noun.other }) : t("contentManager.back")}
+        </Button>
+      )}
       <ContentEditor
         management
         {...p}
@@ -161,6 +174,7 @@ function Contents({ basePath, navigation, ...p }: Inner) {
         entities={entities}
         onCreated={(c) => open(c, true)}
         onDeleted={() => loc.go("", undefined, { replace: true })}
+        onCancel={loc.view === "new" ? () => loc.go("") : undefined}
         onLeaveGuard={registerLeaveGuard}
       />
     </>
@@ -690,6 +704,8 @@ export interface ContentEditorProps {
   /** After create: show the new item (the editor goes on editing it). */
   onCreated?: (content: Content) => void;
   onDeleted?: (content: Content) => void;
+  /** Leaves a new item's form; with it, the form offers Cancel. */
+  onCancel?: () => void;
   client?: ContentKitClient;
   onError?: ContentKitErrorHandler;
   /** The kind's name, localized by the host (e.g. video, videos). */
@@ -723,7 +739,7 @@ export function ContentEditor(p:ContentEditorProps){
   return <StandardContentEditor key={boundary.key} {...props}/>;
 }
 
-function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerEntity, entities, onCreated, onDeleted, onError, management, noun }: ContentEditorProps) {
+function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerEntity, entities, onCreated, onDeleted, onCancel, onError, management, noun }: ContentEditorProps) {
   const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
@@ -865,27 +881,18 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
             {/* Header */}
             <header className="grid gap-2" data-ckui="content-head">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight" title={typeof storedTitle === "string" && storedTitle ? storedTitle : undefined}>
-                  {headingTitle}
-                </h2>
+                {item ? (
+                  <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight" title={typeof storedTitle === "string" && storedTitle ? storedTitle : undefined}>
+                    {headingTitle}
+                  </h2>
+                ) : (
+                  // A new item reads like the other create pages: a large title and what happens next.
+                  <div className="grid gap-1">
+                    <h2 className="text-2xl font-semibold tracking-tight">{headingTitle}</h2>
+                    <p className="text-sm text-muted-foreground">{t("contentManager.imagesAfterCreate")}</p>
+                  </div>
+                )}
                 <div className="flex flex-wrap items-center gap-2">
-                  {!item && (
-                    <Button
-                      type="submit"
-                      size="sm"
-                      variant="default"
-                      disabled={ed.saving}
-                    >
-                      {ed.saving ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <Spinner />
-                          <span>{t("common.saving")}</span>
-                        </span>
-                      ) : (
-                        t("contentManager.createDraft")
-                      )}
-                    </Button>
-                  )}
                   {item && !item.live && (
                     <>
                       <Button
@@ -1032,6 +1039,10 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                 <div className="grid gap-1.5">
                   <Label htmlFor={`${ids}-title`}>
                     {t("contentManager.itemTitle")}
+                    <span aria-hidden className="text-destructive">
+                      {" "}
+                      *
+                    </span>
                   </Label>
                   <Input
                     id={`${ids}-title`}
@@ -1076,7 +1087,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
             </div>
 
             {/* Media / Cover */}
-            {(hidden || !item) && (
+            {hidden && item && (
               <Cover item={item} src={ed.coverSrc} saving={ed.saving} onFile={(file) => void ed.setCover(file).catch(fail)} />
             )}
 
@@ -1086,11 +1097,6 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                 <h3 className="text-sm font-medium">
                   {t("contentManager.body")}
                 </h3>
-                {!item && (
-                  <p className="text-xs text-muted-foreground">
-                    {t("contentManager.imagesAfterCreate")}
-                  </p>
-                )}
               </div>
               <div>
                 {renderEditor ? (
@@ -1114,6 +1120,22 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                 {notice}
               </p>
             )}
+            {!item && (
+              <div className="flex flex-wrap items-center justify-end gap-3" data-ckui="content-create-footer">
+                <p className="me-auto text-xs text-muted-foreground">
+                  <span className="text-destructive">*</span> {t("entityEditor.required")}
+                </p>
+                {onCancel && (
+                  <Button type="button" variant="outline" disabled={ed.saving} onClick={onCancel}>
+                    {t("common.cancel")}
+                  </Button>
+                )}
+                <Button type="submit" disabled={ed.saving}>
+                  {ed.saving ? <Spinner /> : <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />}
+                  {ed.saving ? t("common.saving") : t("contentManager.createDraft")}
+                </Button>
+              </div>
+            )}
           </form>
 
           {/* Versions Container (outside form for HTML5 valid nesting) */}
@@ -1126,6 +1148,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
 
         {/* Aside Column */}
         <aside className="grid gap-6">
+          {!item && <CreatePreview title={f.title} description={f.description} publishAt={f.publishAt} placeholder={newHeading} />}
           {item && <ContentDetailsEditor content={item} client={client} onError={onError} labels={labels} />}
           {item && offersAccessChoice(model?.kinds[kind]) && (
             <AccessEditor content={item} client={client} onError={onError} labels={labels} />
@@ -1147,6 +1170,32 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
       </div>
       {dialog}
     </>
+  );
+}
+
+/** How a new item will be listed, as it is typed: a cover slot, its title and summary, and when it goes live. */
+function CreatePreview({ title, description, publishAt, placeholder }: { title: string; description: string; publishAt: string; placeholder: ReactNode }) {
+  const m = useMessages();
+  const { t } = m;
+  return (
+    <div className="hidden lg:sticky lg:top-[calc(var(--ckui-sticky-top,0px)+1rem)] lg:block" aria-label={t("entityEditor.preview")} data-ckui="content-create-preview">
+      <div className="overflow-hidden rounded-lg border border-border bg-muted/30">
+        <div className="flex items-center justify-between gap-2 border-b border-border px-5 py-3">
+          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{t("entityEditor.preview")}</p>
+          <span className="text-xs">
+            <StatusDot status="draft" />
+          </span>
+        </div>
+        <div className="grid gap-3 p-5">
+          <div aria-hidden className="grid aspect-video w-full place-items-center rounded-md border border-dashed border-border text-muted-foreground/60">
+            <HugeiconsIcon icon={Image01Icon} strokeWidth={2} className="size-6" />
+          </div>
+          <p className={cn("font-semibold break-words", !title.trim() && "text-muted-foreground")}>{title.trim() || placeholder}</p>
+          {description.trim() && <p className="line-clamp-3 text-sm text-muted-foreground">{description.trim()}</p>}
+          {publishAt && <p className="text-xs text-muted-foreground">{t("pollManager.goesLive", { date: formatDate(m, new Date(publishAt).toISOString()) })}</p>}
+        </div>
+      </div>
+    </div>
   );
 }
 
