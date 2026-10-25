@@ -225,12 +225,6 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	if err := s.checkVersionCodes(ctx, tx, b.versions); err != nil {
 		return err
 	}
-	var republish []versions.Target
-	if s.media != nil {
-		if republish, err = s.republishImported(ctx, tx, stored, b); err != nil {
-			return err
-		}
-	}
 	if _, err := s.recordReleases(ctx, tx, ids); err != nil {
 		return err
 	}
@@ -288,11 +282,6 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	}
 	if err := s.RefreshFacets(ctx, tx, written); err != nil {
 		return err
-	}
-	if s.media != nil {
-		if err := s.media.Versions.RepublishTx(ctx, tx, republish); err != nil {
-			return err
-		}
 	}
 	if err := s.schedulePublicationTx(ctx, tx, contentTargets(written)); err != nil {
 		return err

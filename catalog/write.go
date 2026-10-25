@@ -190,12 +190,7 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
 		return err
 	}
-	if s.media != nil && len(fx.republish) > 0 {
-		if err := s.media.Versions.RepublishTx(ctx, tx, fx.republish); err != nil {
-			return err
-		}
-		fx.publish = append(fx.publish, fx.republish...)
-	}
+	fx.publish = append(fx.publish, fx.republish...)
 	if len(fx.forks) > 0 {
 		if s.media == nil {
 			return errMediaNotConfigured

@@ -18,13 +18,34 @@ type publicationScheduler interface {
 	SchedulePublicationTx(context.Context, pgx.Tx, []versions.Target) error
 }
 
+// Media binding is application-wide, but storage is declared per kind. A text
+// kind in the same application still uses the catalog's durable text worker.
+// A declared media kind never falls back after a processing/storage error.
+func (s *Store) mediaPublicationKind(kind string) bool {
+	if s.media == nil {
+		return false
+	}
+	if s.media.Registry == nil {
+		return true // legacy/custom bindings do not declare a text-only boundary
+	}
+	_, err := s.media.Registry.Kind(kind)
+	return !errors.Is(err, media.ErrUnknownKind)
+}
+
+func (s *Store) textPublicationKinds() []string {
+	kinds := []string{}
+	for kind := range s.cfg.Kinds {
+		if !s.mediaPublicationKind(kind) {
+			kinds = append(kinds, kind)
+		}
+	}
+	slices.Sort(kinds)
+	return kinds
+}
+
 func (s *Store) schedulePublicationTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error {
 	if s.media == nil {
 		return s.scheduleTextPublicationTx(ctx, tx, targets)
-	}
-	scheduler, ok := s.media.Versions.(publicationScheduler)
-	if !ok {
-		return errors.New("catalog: media does not support durable publication")
 	}
 	targets = slices.CompactFunc(slices.SortedFunc(slices.Values(targets), func(a, b versions.Target) int {
 		if a.Content < b.Content || a.Content == b.Content && a.Version < b.Version {
@@ -35,7 +56,51 @@ func (s *Store) schedulePublicationTx(ctx context.Context, tx pgx.Tx, targets []
 		}
 		return 1
 	}), func(a, b versions.Target) bool { return a == b })
-	return scheduler.SchedulePublicationTx(ctx, tx, targets)
+	ids := make([]string, len(targets))
+	for i, target := range targets {
+		ids[i] = target.Content
+	}
+	rows, err := tx.Query(ctx, `SELECT id,kind FROM `+s.t.items+` WHERE tenant_id=$1 AND id=ANY($2)`, s.tenant, ids)
+	if err != nil {
+		return err
+	}
+	kinds := map[string]string{}
+	for rows.Next() {
+		var id, kind string
+		if err := rows.Scan(&id, &kind); err != nil {
+			rows.Close()
+			return err
+		}
+		kinds[id] = kind
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var text, stored []versions.Target
+	for _, target := range targets {
+		kind, exists := kinds[target.Content]
+		if !exists {
+			continue
+		}
+		if s.mediaPublicationKind(kind) {
+			stored = append(stored, target)
+		} else {
+			text = append(text, target)
+		}
+	}
+	if len(text) > 0 {
+		if err := s.scheduleTextPublicationTx(ctx, tx, text); err != nil {
+			return err
+		}
+	}
+	if len(stored) == 0 {
+		return nil
+	}
+	scheduler, ok := s.media.Versions.(publicationScheduler)
+	if !ok {
+		return errors.New("catalog: media does not support durable publication")
+	}
+	return scheduler.SchedulePublicationTx(ctx, tx, stored)
 }
 
 // Text-only catalogs use the existing publication worker. Intent and a
@@ -88,6 +153,10 @@ func (s *Store) scheduleTextPublicationTx(ctx context.Context, tx pgx.Tx, target
 }
 
 func (s *Store) publishTextDue(ctx context.Context) (int, error) {
+	kinds := s.textPublicationKinds()
+	if len(kinds) == 0 {
+		return 0, nil
+	}
 	tx, err := s.begin(ctx)
 	if err != nil {
 		return 0, err
@@ -95,12 +164,12 @@ func (s *Store) publishTextDue(ctx context.Context) (int, error) {
 	defer tx.Rollback(ctx)
 	at := s.now()
 	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c
- WHERE c.tenant_id=$1 AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
+ WHERE c.tenant_id=$1 AND c.kind=ANY($3) AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
  AND ((c.state='published' AND v.state='published' AND (
        (NOT v.released AND coalesce(c.publish_at,$2)<=$2 AND coalesce(v.publish_at,$2)<=$2)
        OR (v.released AND v.released_access IS DISTINCT FROM `+s.qs+`.content_frozen_access(v.access,$2))))
    OR (v.released AND (c.state<>'published' OR v.state<>'published'))))
- ORDER BY c.id LIMIT 200 FOR UPDATE SKIP LOCKED`, s.tenant, at)
+ ORDER BY c.id LIMIT 200 FOR UPDATE SKIP LOCKED`, s.tenant, at, kinds)
 	if err != nil {
 		return 0, err
 	}
@@ -169,7 +238,7 @@ func (s *Store) CompletePublicationTx(ctx context.Context, tx pgx.Tx, target ver
 		!released && (parentAt != nil && parentAt.After(at) || versionAt != nil && versionAt.After(at)) {
 		return ErrConflict
 	}
-	if s.media == nil {
+	if !s.mediaPublicationKind(kind) {
 		if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET released_access=`+s.qs+`.content_frozen_access(access,$4)
  WHERE tenant_id=$1 AND content_id=$2 AND id=$3`, s.tenant, target.Content, target.Version, at); err != nil {
 			return err
@@ -197,7 +266,7 @@ func (s *Store) CompletePublicationTx(ctx context.Context, tx pgx.Tx, target ver
 	if err := s.RefreshFacets(ctx, tx, []string{target.Content}); err != nil {
 		return err
 	}
-	if s.media == nil {
+	if !s.mediaPublicationKind(kind) {
 		var next *time.Time
 		if err := tx.QueryRow(ctx, `SELECT min((release->>'at')::timestamptz) FROM `+s.t.versions+` v,
  LATERAL jsonb_array_elements(coalesce(v.access->'releases','[]'::jsonb)) release

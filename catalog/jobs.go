@@ -23,16 +23,14 @@ import (
 func (s *Store) PublishDue(ctx context.Context) (int, error) {
 	total := 0
 	deadline := time.Now().Add(purgeBudget)
-	if s.media == nil {
-		for {
-			n, err := s.publishTextDue(ctx)
-			total += n
-			if err != nil {
-				return total, err
-			}
-			if n < 200 || time.Now().After(deadline) {
-				break
-			}
+	for {
+		n, err := s.publishTextDue(ctx)
+		total += n
+		if err != nil {
+			return total, err
+		}
+		if n < 200 || time.Now().After(deadline) {
+			break
 		}
 	}
 	for {
