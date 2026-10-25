@@ -19,6 +19,10 @@ func TestHostLifecycle(t *testing.T) {
 	a := w.apps[0]
 	appLifetime := t.Context()
 	t.Run("CK-J01-S01_empty_migration_and_readiness", func(t *testing.T) {
+		scope, bound := a.engine.Scope()
+		if !bound || scope != *a.cfg.Scope {
+			t.Fatal("engine reported another immutable app ownership binding")
+		}
 		if err := a.engine.Ready(t.Context()); err == nil {
 			t.Fatal("unstarted engine reported ready")
 		}

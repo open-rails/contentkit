@@ -150,5 +150,10 @@ func TestMultipartUpload(t *testing.T) {
 		requireError(t, err, 404, "not_found")
 		_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}})
 		requireError(t, err, 409, "not_uploaded")
+		read, err := client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
+		must(t, err)
+		if len(read.Files) != 0 {
+			t.Fatal("aborted multipart was still adopted into the version")
+		}
 	})
 }

@@ -213,10 +213,15 @@ func TestUploadAcceptanceAndRetry(t *testing.T) {
 		_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpEdit, Path: "pages/one.png", Edit: &media.Edit{Rotate: 90}}}})
 		must(t, err)
 		after := awaitMediaReady(t, client, ref)
+		rotated := false
 		for _, file := range after.Files {
 			if file.Path == "reader/one.webp" {
 				assertImage(t, file.URL, 32, 48)
+				rotated = true
 			}
+		}
+		if !rotated {
+			t.Fatal("accepted edit did not produce its rotated reader rendition")
 		}
 		res, err := http.Get(source)
 		must(t, err)

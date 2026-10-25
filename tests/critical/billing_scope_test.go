@@ -167,6 +167,33 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		}
 		assertVersion(t, reader, one, 0, true)
 	})
+	t.Run("CK-J05-S05_unpublish_and_reschedule_preserve_purchased_rights", func(t *testing.T) {
+		reader, customer := newReader(t)
+		window := grant(t, customer, products["content"], nil)
+		assertVersion(t, reader, one, 0, true)
+		_, err := admin.PostContentUnpublish(t.Context(), one.ID)
+		must(t, err)
+		_, err = reader.GetContent(t.Context(), one.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		at := b.clock.Now().Add(time.Hour)
+		_, err = admin.PostContentPublish(t.Context(), one.ID, catalog.PublishInput{PublishAt: &at})
+		must(t, err)
+		_, err = reader.GetContent(t.Context(), one.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		rows, err := b.merchant.ListProductAccess(t.Context(), billing.ProductAccessListParams{IDs: []billing.ProductAccessID{window.ID}})
+		must(t, err)
+		if len(rows.Items) != 1 || rows.Items[0].RevokedAt != nil || rows.Items[0].ProductID != products["content"].ID {
+			t.Fatal("unpublishing revoked or replaced the independent purchase right")
+		}
+		b.clock.Advance(at.Sub(b.clock.Now()))
+		w.clock.set(at)
+		assertVersion(t, reader, one, 0, true)
+		rows, err = b.merchant.ListProductAccess(t.Context(), billing.ProductAccessListParams{IDs: []billing.ProductAccessID{window.ID}})
+		must(t, err)
+		if len(rows.Items) != 1 || rows.Items[0].ID != window.ID {
+			t.Fatal("runtime re-release replaced the customer's existing grant")
+		}
+	})
 	t.Run("CK-J06-S06_library_respects_app_and_domain_even_when_both_are_purchased", func(t *testing.T) {
 		user, credential := w.person(t, 0)
 		customer, err := billing.ParseCustomerID(user.ID)
