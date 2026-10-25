@@ -129,7 +129,7 @@ var routes = []httpapi.Route[*Store]{
 		Request: OrderInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleOrderVersions)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publishing it on a published item is refused (not_ready) while its media is still processing." + editorsDoc,
+		Doc:     "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publication is durably accepted and remains pending while its media is processing." + editorsDoc,
 		Request: VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, "not_ready"}},
 		Serve: httpapi.H((*Store).handleUpdateVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
@@ -137,7 +137,7 @@ var routes = []httpapi.Route[*Store]{
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleDeleteVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/versions/{vid}/segments", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Replaces a version's segments (chapters): ordered ranges, each released at its time." + editorsDoc,
+		Doc:     "Replaces a version's chapters: ordered start markers naming virtual manifest files, with optional publication schedules. A chapter becomes released only after its durable publication completes." + editorsDoc,
 		Request: SegmentsInput{}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handlePutSegments)},
 }
@@ -821,6 +821,7 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 		}
 	}
 	var state string
+	active := "EXISTS (SELECT 1 FROM " + s.t.versions + " v WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released)"
 	switch q.State {
 	case "":
 		state = "c.state <> 'deleted'"
@@ -830,9 +831,9 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	case StateDraft, StateDeleted:
 		state = "c.state = '" + q.State + "'"
 	case "scheduled":
-		state = "c.state = 'published' AND c.published_at IS NULL"
+		state = "c.state = 'published' AND NOT " + active
 	case StatePublished:
-		state = "c.state = 'published' AND c.published_at IS NOT NULL"
+		state = "c.state = 'published' AND " + active
 	default:
 		return "", nil, invalid("state %q must be draft, scheduled, published or deleted", q.State)
 	}

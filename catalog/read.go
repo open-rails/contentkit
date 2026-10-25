@@ -140,7 +140,7 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			if !iv.editor {
 				out.Text, out.State, out.Access = nil, "", nil
 			}
-			out.Segments = released(out.Segments, v.now)
+			out.Segments = released(out.Segments)
 			s.lockVersion(it.kind, &out)
 			c.Versions = append(c.Versions, out)
 		}
@@ -349,14 +349,12 @@ func (c *Content) images() map[string]string {
 	return c.Images
 }
 
-// released marks each segment released while it and every earlier one are
-// past their release time.
-func released(ss []Segment, now time.Time) []Segment {
+// released projects durable completion. Chapters release independently; the
+// clock never grants access while their storage publication is unfinished.
+func released(ss []Segment) []Segment {
 	out := make([]Segment, len(ss))
-	open := true
 	for i, sg := range ss {
-		open = open && (sg.ReleaseAt == nil || !sg.ReleaseAt.After(now))
-		sg.Released = open
+		sg.Released = sg.ReleasedAt != nil
 		out[i] = sg
 	}
 	return out
@@ -525,7 +523,7 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows, err = s.pool.Query(ctx, `SELECT version_id, position, title, coalesce(start_index, 0), coalesce(end_index, 0), release_at, coalesce(start_page, '') FROM `+s.t.segments+`
+	rows, err = s.pool.Query(ctx, `SELECT version_id, id, position, title, coalesce(start_index, 0), coalesce(end_index, 0), release_at, coalesce(start_page, ''), released_at FROM `+s.t.segments+`
  WHERE tenant_id = $1 AND version_id = ANY($2) ORDER BY version_id, position`, s.tenant, vids)
 	if err != nil {
 		return nil, err
@@ -534,7 +532,7 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
 	for rows.Next() {
 		var vid string
 		var sg Segment
-		if err := rows.Scan(&vid, &sg.Position, &sg.Title, &sg.Start, &sg.End, &sg.ReleaseAt, &sg.StartPage); err != nil {
+		if err := rows.Scan(&vid, &sg.ID, &sg.Position, &sg.Title, &sg.Start, &sg.End, &sg.ReleaseAt, &sg.StartPage, &sg.ReleasedAt); err != nil {
 			return nil, err
 		}
 		out[vid].Segments = append(out[vid].Segments, sg)

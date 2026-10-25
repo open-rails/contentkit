@@ -2,13 +2,15 @@ package catalog
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
@@ -319,13 +321,20 @@ func checkSegments(ss []Segment) ([]Segment, error) {
 	out := make([]Segment, len(ss))
 	anchored := len(ss) > 0 && ss[0].StartPage != ""
 	seen := map[string]bool{}
+	ids := map[string]bool{}
 	for i, sg := range ss {
+		if sg.ID != "" {
+			id, err := uuid.Parse(sg.ID)
+			if err != nil || id == uuid.Nil || id.String() != sg.ID || ids[sg.ID] {
+				return nil, invalid("chapter %d: invalid or duplicate id", i+1)
+			}
+			ids[sg.ID] = true
+		}
 		if (sg.StartPage != "") != anchored {
 			return nil, invalid("chapters cannot mix page starts and numeric ranges")
 		}
 		if anchored {
-			digest, err := hex.DecodeString(sg.StartPage)
-			if seen[sg.StartPage] || err != nil || len(digest) != 32 || strings.ToLower(sg.StartPage) != sg.StartPage {
+			if seen[sg.StartPage] || !validChapterPath(sg.StartPage) {
 				return nil, invalid("chapter %d: invalid or duplicate starting page", i+1)
 			}
 			seen[sg.StartPage] = true
@@ -341,7 +350,7 @@ func checkSegments(ss []Segment) ([]Segment, error) {
 		if utf8.RuneCountInString(sg.Title) > maxTitle {
 			return nil, invalid("segment %d: title too long", i)
 		}
-		sg.Position, sg.Released = i, false
+		sg.Position, sg.Released, sg.ReleasedAt = i, false, nil
 		out[i] = sg
 	}
 	return out, nil
@@ -350,7 +359,14 @@ func checkSegments(ss []Segment) ([]Segment, error) {
 func checkSegmentInputs(in []SegmentInput) ([]Segment, error) {
 	segments := make([]Segment, len(in))
 	for i, sg := range in {
-		segments[i] = Segment{Position: sg.Position, Title: sg.Title, StartPage: sg.StartPage, Start: sg.Start, End: sg.End, ReleaseAt: sg.ReleaseAt}
+		segments[i] = Segment{ID: sg.ID, Position: sg.Position, Title: sg.Title, StartPage: sg.StartPage, Start: sg.Start, End: sg.End, ReleaseAt: sg.ReleaseAt}
 	}
 	return checkSegments(segments)
+}
+
+func validChapterPath(p string) bool {
+	return p != "" && p != "." && len(p) <= 1024 && utf8.ValidString(p) &&
+		path.Clean(p) == p && !strings.HasPrefix(p, "/") &&
+		p != ".." && !strings.HasPrefix(p, "../") &&
+		!strings.Contains(p, "\\") && strings.IndexFunc(p, unicode.IsControl) < 0
 }

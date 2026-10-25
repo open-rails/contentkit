@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/helpers/cache"
+	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
@@ -97,27 +99,29 @@ type Options struct {
 
 // Store is one tenant's catalog.
 type Store struct {
-	pool           *pgxpool.Pool
-	schema         string
-	qs             string
-	tenant         string
-	cfg            kinds.Config
-	t              tables
-	guard          *gate.Gate
-	accessG        *access.Gate
-	entities       Entities
-	body           Sanitizer
-	media          *Media
-	standing       Standing
-	retention      time.Duration
-	eventRetention time.Duration
-	onPurge        func(context.Context, pgx.Tx, []contentref.ContentRef) error
-	documents      func(ctx context.Context, q Querier) error
-	references     VersionReferenceOwner
-	playable       []string
-	now            func() time.Time
-	log            *slog.Logger
-	totals         *cache.Cache[totalsKey, Total]
+	pool            *pgxpool.Pool
+	schema          string
+	qs              string
+	tenant          string
+	cfg             kinds.Config
+	t               tables
+	guard           *gate.Gate
+	accessG         *access.Gate
+	entities        Entities
+	body            Sanitizer
+	media           *Media
+	publicationMu   sync.RWMutex
+	publicationJobs *river.Client[pgx.Tx]
+	standing        Standing
+	retention       time.Duration
+	eventRetention  time.Duration
+	onPurge         func(context.Context, pgx.Tx, []contentref.ContentRef) error
+	documents       func(ctx context.Context, q Querier) error
+	references      VersionReferenceOwner
+	playable        []string
+	now             func() time.Time
+	log             *slog.Logger
+	totals          *cache.Cache[totalsKey, Total]
 }
 
 type tables struct {

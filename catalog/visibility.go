@@ -242,8 +242,12 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		opens, accessArgs = "false", nil
 	}
 	versions := slices.Sorted(maps.Keys(v.filter.Versions()))
+	contents := make([]string, len(versions))
+	for i, version := range versions {
+		contents[i] = v.filter.Versions()[version]
+	}
 	args := pgx.NamedArgs{"cv_now": v.now,
-		"cv_language": v.language, "cv_owned": v.filter.Contents(), "cv_owned_versions": versions,
+		"cv_language": v.language, "cv_owned_contents": contents, "cv_owned_versions": versions,
 		"cv_owned_candidates": !v.filter.Complete() && !v.filter.Unknown(), "cv_user": viewerID(v.actor), "cv_editors": v.editorEntities,
 		"cv_include_deleted": v.includeDeleted}
 	for k, a := range accessArgs {
@@ -272,8 +276,9 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	if language {
 		public = "(" + public + " AND (@cv_language = '' OR @cv_language = ANY(" + f("languages") + ")))"
 	}
-	held := "(" + f("deleted") + " AND @cv_include_deleted::boolean AND " + live + " AND (" + f("content_id") + " = ANY(@cv_owned::text[]) OR " +
-		f("version_id") + " = ANY(@cv_owned_versions::text[]) OR @cv_owned_candidates::boolean))"
+	held := "(" + f("deleted") + " AND @cv_include_deleted::boolean AND " + live + " AND (EXISTS (" +
+		"SELECT 1 FROM unnest(@cv_owned_contents::text[], @cv_owned_versions::text[]) AS owned(content_id,version_id) WHERE owned.content_id=" +
+		f("content_id") + " AND owned.version_id=" + f("version_id") + ") OR @cv_owned_candidates::boolean))"
 	return "(" + scope + " AND (" + public + " OR " + held + " OR " + v.privileged(alias) + "))", args
 }
 

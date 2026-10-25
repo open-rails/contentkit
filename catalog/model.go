@@ -52,24 +52,26 @@ type Creator struct {
 	Position int    `json:"position"`
 }
 
-// Segment is an ordered, individually released range of a version (a
-// chapter): items [Start, End). A segment is released once it and every
-// earlier one are past ReleaseAt.
+// Segment is a chapter of one version. StartPage names its first file in
+// manifest order; the next chapter's marker or the end of the manifest ends it.
+// ReleaseAt is intent. ReleasedAt is set only after durable publication.
 type Segment struct {
-	Position  int        `json:"position"`
-	Title     string     `json:"title,omitempty"`
-	StartPage string     `json:"start_page,omitempty"`
-	Start     int        `json:"start"`
-	End       int        `json:"end"`
-	ReleaseAt *time.Time `json:"release_at,omitempty"`
-	// Released is computed on reads.
-	Released bool `json:"released"`
+	ID         string     `json:"id"`
+	Position   int        `json:"position"`
+	Title      string     `json:"title,omitempty"`
+	StartPage  string     `json:"start_page,omitempty"`
+	Start      int        `json:"start"`
+	End        int        `json:"end"`
+	ReleaseAt  *time.Time `json:"release_at,omitempty"`
+	ReleasedAt *time.Time `json:"released_at,omitempty"`
+	Released   bool       `json:"released"`
 }
 
-// SegmentInput authors a chapter by its stable source page identity. Start and
-// End remain accepted together for older range-based clients. Anchored writes
-// omit both indices; the next start or the final page determines the end.
+// SegmentInput authors a chapter by its first virtual filename in the manifest.
+// ID preserves the chapter across title, ordering and marker edits. Start and
+// End remain accepted together for explicit conversion of older numeric ranges.
 type SegmentInput struct {
+	ID        string     `json:"id,omitempty"`
 	Position  int        `json:"position,omitempty"`
 	Title     string     `json:"title,omitempty"`
 	StartPage string     `json:"start_page,omitempty"`
@@ -118,9 +120,9 @@ type Version struct {
 	State       string     `json:"state,omitempty"`
 	PublishAt   *time.Time `json:"publish_at,omitempty"`
 	PublishedAt *time.Time `json:"published_at,omitempty"`
-	// Live: published, past PublishAt, its content live.
+	// Live reports a completed release under the current publication state.
 	Live bool `json:"live"`
-	// Access is the version's own rule; nil inherits the content's.
+	// Access is the version's own rule. Noneditors do not receive this field.
 	Access     *access.Rule   `json:"access,omitempty"`
 	Attributes map[string]any `json:"attributes"`
 	// Entities are entities attached specifically to this version. Combine them

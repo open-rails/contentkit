@@ -17,128 +17,30 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// PublishDue records due publication and audience-release facts and refreshes
-// their projections. Reads use publication and audience timestamps directly;
-// this recorder never determines when a viewer gains access. The return value
-// counts the publication stamps and separately caught-up audience releases.
+// PublishDue catches up retained audience-release facts. Publication itself is
+// completed only by the durable publisher after its storage effects succeed.
 func (s *Store) PublishDue(ctx context.Context) (int, error) {
 	total := 0
 	deadline := time.Now().Add(purgeBudget)
-	for after := ""; ; {
-		n, next, err := s.publishDue(ctx, after)
-		total += n
-		if err == nil && next == "" && n >= 500 && time.Now().Before(deadline) {
-			after = ""
-			continue
-		}
-		if err != nil || next == "" || time.Now().After(deadline) {
+	if s.media == nil {
+		for {
+			n, err := s.publishTextDue(ctx)
+			total += n
 			if err != nil {
 				return total, err
 			}
-			for {
-				n, err := s.recordDueReleases(ctx)
-				total += n
-				if err != nil || n < releaseBatch || time.Now().After(deadline) {
-					return total, err
-				}
+			if n < 200 || time.Now().After(deadline) {
+				break
 			}
 		}
-		after = next
 	}
-}
-
-func (s *Store) publishDue(ctx context.Context, after string) (int, string, error) {
-	tx, err := s.begin(ctx)
-	if err != nil {
-		return 0, "", err
-	}
-	defer tx.Rollback(ctx)
-	now := s.now()
-	var events []Event
-	var ids []string
-	var rows pgx.Rows
-	// Continue only the version-parent scan after an empty, contended batch;
-	// content promotion keeps its original one-batch bound for this job run.
-	if after == "" {
-		rows, err = tx.Query(ctx, `UPDATE `+s.t.items+` SET published_at = publish_at, updated_at = clock_timestamp(), revision = revision + 1
- WHERE id IN (SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL AND publish_at <= $2
-  ORDER BY publish_at LIMIT 500 FOR UPDATE SKIP LOCKED) AND tenant_id = $1 RETURNING id, kind, published_at`, s.tenant, now)
-		if err != nil {
-			return 0, "", err
-		}
-		for rows.Next() {
-			var id, kind string
-			var at time.Time
-			if err := rows.Scan(&id, &kind, &at); err != nil {
-				rows.Close()
-				return 0, "", err
-			}
-			ids = append(ids, id)
-			events = append(events, Event{Type: EventContentPublished, Kind: kind, ContentID: id, OccurredAt: at})
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return 0, "", err
+	for {
+		n, err := s.recordDueReleases(ctx)
+		total += n
+		if err != nil || n < releaseBatch || time.Now().After(deadline) {
+			return total, err
 		}
 	}
-	// Access edits and version mutations take the parent before any version.
-	// Claim parents first so deriving facets cannot overwrite a later access
-	// edit, and skip parents another writer already owns rather than waiting
-	// while this batch holds other item/version locks.
-	rows, err = tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id > $3
- AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id
-  AND v.state = 'published' AND v.published_at IS NULL AND v.publish_at <= $2)
- ORDER BY c.id LIMIT 500 FOR UPDATE OF c SKIP LOCKED`, s.tenant, now, after)
-	if err != nil {
-		return 0, "", err
-	}
-	parents, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return 0, "", err
-	}
-	rows, err = tx.Query(ctx, `UPDATE `+s.t.versions+` v SET published_at = greatest(v.publish_at,coalesce(c.published_at,c.publish_at)), updated_at = clock_timestamp(), revision = v.revision + 1
- FROM `+s.t.items+` c WHERE v.id IN (SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND state = 'published' AND published_at IS NULL
-  AND content_id = ANY($3) AND publish_at <= $2 ORDER BY publish_at, id LIMIT 500 FOR UPDATE SKIP LOCKED)
- AND v.tenant_id = $1 AND c.tenant_id = v.tenant_id AND c.id = v.content_id
- AND c.state='published' AND c.published_at IS NOT NULL AND coalesce(c.published_at,c.publish_at)<=$2
- RETURNING v.content_id, v.id, c.kind,v.published_at`, s.tenant, now, parents)
-	if err != nil {
-		return 0, "", err
-	}
-	versionCount := 0
-	for rows.Next() {
-		var id, vid, kind string
-		var at time.Time
-		if err := rows.Scan(&id, &vid, &kind, &at); err != nil {
-			rows.Close()
-			return 0, "", err
-		}
-		if !slices.Contains(ids, id) {
-			ids = append(ids, id)
-		}
-		events = append(events, Event{Type: EventVersionPublished, Kind: kind, ContentID: id, VersionID: vid, OccurredAt: at})
-		versionCount++
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, "", err
-	}
-	next := ""
-	if versionCount == 0 && len(parents) == 500 {
-		// Version-only locks must not hide work in later parents. Release this
-		// bounded set of parent locks before continuing with a fresh snapshot.
-		next = parents[len(parents)-1]
-	}
-	if len(ids) == 0 {
-		return 0, next, tx.Commit(ctx)
-	}
-	if err := s.emit(ctx, tx, events...); err != nil {
-		return 0, "", err
-	}
-	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
-		return 0, "", err
-	}
-	return len(events), next, tx.Commit(ctx)
 }
 
 // ReconcileFacets explicitly refreshes every item's facets and search-document
@@ -600,7 +502,11 @@ func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vi
 // stable so jobs queued before the terminology change continue to run.
 const Queue = "contentkit_catalog"
 
-type publishDueArgs struct{}
+type publishDueArgs struct {
+	Content string    `json:"content,omitempty"`
+	Version string    `json:"version,omitempty"`
+	Due     time.Time `json:"due,omitempty"`
+}
 
 func (publishDueArgs) Kind() string { return "contentkit_content_publish_due" }
 
@@ -627,9 +533,9 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 }
 
 // RiverJobs contributes content's periodic jobs to the engine's River
-// client: publication and audience-release facts (every 5m), event
-// log retention and permanent purging of deleted content (4h). Restarts only
-// catch up overdue work; reads enforce release times independently of this job.
+// client: retained audience-release facts (every 5m), event log retention
+// and permanent purging of deleted content (4h). Actual publication is owned
+// by durable per-request work; this periodic recorder never activates files.
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-content", func(_ context.Context, cfg *river.Config) error {
 		if q, ok := cfg.Queues[Queue]; ok && q.MaxWorkers < 1 {
@@ -656,5 +562,18 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			periodic("contentkit_content_publish_due", 5*time.Minute, publishDueArgs{}),
 			periodic("contentkit_content_purge_deleted", 4*time.Hour, purgeDeletedArgs{}))
 		return nil
-	}, nil, nil)
+	}, func(_ context.Context, binding riverhelpers.Binding) error {
+		if binding.Pool != s.pool {
+			return errors.New("catalog: River must use the catalog pool")
+		}
+		s.publicationMu.Lock()
+		s.publicationJobs = binding.Client
+		s.publicationMu.Unlock()
+		return nil
+	}, func() error {
+		s.publicationMu.Lock()
+		s.publicationJobs = nil
+		s.publicationMu.Unlock()
+		return nil
+	})
 }

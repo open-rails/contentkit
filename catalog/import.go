@@ -75,6 +75,7 @@ type ImportVersion struct {
 // stamped is a stored item's or version's state and times.
 type stamped struct {
 	kind, contentID, state string
+	access                 json.RawMessage
 	publishAt, publishedAt *time.Time
 	deletedAt              *time.Time
 	createdAt              time.Time
@@ -138,6 +139,7 @@ type importVersionTextRow struct {
 }
 
 type importSegmentRow struct {
+	ID        string     `json:"id"`
 	VersionID string     `json:"version_id"`
 	Position  int        `json:"position"`
 	Title     string     `json:"title"`
@@ -189,7 +191,7 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 			vids = append(vids, v.ID)
 		}
 	}
-	items, err := s.lockStamped(ctx, tx, `SELECT id, kind, '', state, publish_at, published_at, deleted_at, created_at FROM `+s.t.items+`
+	items, err := s.lockStamped(ctx, tx, `SELECT id, kind, '', state, publish_at, published_at, deleted_at, created_at, access FROM `+s.t.items+`
  WHERE tenant_id = $1 AND id = ANY($2) ORDER BY id FOR UPDATE`, ids)
 	if err != nil {
 		return err
@@ -201,7 +203,7 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	for _, v := range hidden {
 		vids = append(vids, v)
 	}
-	stored, err := s.lockStamped(ctx, tx, `SELECT v.id, c.kind, v.content_id, v.state, v.publish_at, v.published_at, v.deleted_at, v.created_at
+	stored, err := s.lockStamped(ctx, tx, `SELECT v.id, c.kind, v.content_id, v.state, v.publish_at, v.published_at, v.deleted_at, v.created_at, v.access
  FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
  WHERE v.tenant_id = $1 AND v.id = ANY($2) ORDER BY v.id FOR UPDATE OF v`, vids)
 	if err != nil {
@@ -289,6 +291,9 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 			return err
 		}
 	}
+	if err := s.schedulePublicationTx(ctx, tx, contentTargets(written)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -375,6 +380,10 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 			if v.Access != nil {
 				vr.Access, _ = json.Marshal(v.Access)
 				rules = append(rules, v.Access)
+			} else if had && len(op.access) > 0 {
+				vr.Access = op.access
+			} else {
+				vr.Access, _ = json.Marshal(c.Access)
 			}
 			vr.CreatedAt, vr.UpdatedAt = importStamps(v.CreatedAt, v.UpdatedAt, op, now)
 			vr.Playable = s.startsUnplayable(c.Kind)
@@ -388,7 +397,7 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 			if v.Segments != nil {
 				b.segIDs = append(b.segIDs, v.ID)
 				for _, sg := range v.Segments {
-					row := importSegmentRow{VersionID: v.ID, Position: sg.Position, Title: sg.Title, Start: &sg.Start, End: &sg.End, ReleaseAt: sg.ReleaseAt}
+					row := importSegmentRow{ID: sg.ID, VersionID: v.ID, Position: sg.Position, Title: sg.Title, Start: &sg.Start, End: &sg.End, ReleaseAt: sg.ReleaseAt}
 					if sg.StartPage != "" {
 						row.Start, row.End, row.StartPage = nil, nil, &sg.StartPage
 					}
@@ -502,19 +511,32 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 		}
 	}
 	if len(b.segIDs) > 0 {
-		if err := run(content(`DELETE FROM `+s.t.segments+` g WHERE g.tenant_id = $1 AND g.version_id = ANY($2) AND NOT EXISTS (
- SELECT 1 FROM jsonb_to_recordset($3::jsonb) AS r(version_id text, position int) WHERE r.version_id = g.version_id AND r.position = g.position)`),
-			s.tenant, b.segIDs, data(b.segments)); err != nil {
-			return nil, err
-		}
-		if err := run(content(`INSERT INTO `+s.t.segments+` AS g (tenant_id, version_id, position, title, start_index, end_index, release_at, start_page)
- SELECT $1, r.version_id, r.position, coalesce(r.title, ''), r.start_index, r.end_index, r.release_at, r.start_page
- FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, position int, title text, start_index int, end_index int, release_at timestamptz, start_page text)
- ON CONFLICT (tenant_id, version_id, position) DO UPDATE SET title = EXCLUDED.title, start_index = EXCLUDED.start_index, end_index = EXCLUDED.end_index,
-  release_at = EXCLUDED.release_at, start_page = EXCLUDED.start_page
- WHERE (g.title, g.start_index, g.end_index, g.release_at, g.start_page) IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.start_index, EXCLUDED.end_index, EXCLUDED.release_at, EXCLUDED.start_page)`),
-			s.tenant, data(b.segments)); err != nil {
-			return nil, err
+		for _, version := range b.segIDs {
+			var chapters []Segment
+			for _, row := range b.segments {
+				if row.VersionID != version {
+					continue
+				}
+				chapter := Segment{ID: row.ID, Position: row.Position, Title: row.Title, ReleaseAt: row.ReleaseAt}
+				if row.StartPage != nil {
+					chapter.StartPage = *row.StartPage
+				} else if row.Start != nil && row.End != nil {
+					chapter.Start, chapter.End = *row.Start, *row.End
+				}
+				chapters = append(chapters, chapter)
+			}
+			updated, err := s.writeChaptersTx(ctx, tx, version, chapters)
+			if err != nil {
+				return nil, err
+			}
+			if updated {
+				for _, row := range b.versions {
+					if row.ID == version {
+						changed[row.ContentID] = true
+						break
+					}
+				}
+			}
 		}
 	}
 	return changed, nil
@@ -806,7 +828,7 @@ func (s *Store) checkImportVersion(kind string, parentDeleted bool, v *ImportVer
 }
 
 // lockStamped locks the rows sql reads (id, kind, content_id, state,
-// publish_at, published_at, deleted_at, created_at for $2's ids), by id.
+// publish_at, published_at, deleted_at, created_at, access for $2's ids), by id.
 func (s *Store) lockStamped(ctx context.Context, tx pgx.Tx, sql string, ids []string) (map[string]stamped, error) {
 	out := map[string]stamped{}
 	if len(ids) == 0 {
@@ -820,7 +842,7 @@ func (s *Store) lockStamped(ctx context.Context, tx pgx.Tx, sql string, ids []st
 	for rows.Next() {
 		var id string
 		var r stamped
-		if err := rows.Scan(&id, &r.kind, &r.contentID, &r.state, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt); err != nil {
+		if err := rows.Scan(&id, &r.kind, &r.contentID, &r.state, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.access); err != nil {
 			return nil, err
 		}
 		out[id] = r

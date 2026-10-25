@@ -66,12 +66,13 @@ type VersionInput struct {
 	Languages []string  `json:"languages,omitempty"`
 	Traits    *[]string `json:"traits,omitempty"`
 	Label     *string   `json:"label,omitempty"`
-	// State is draft or published: a published version is live once its
-	// content is and PublishAt passed. A version created with its item
-	// defaults to published, one added later to draft.
+	// State is draft or published intent. A version becomes live only when its
+	// durable publication completes. A version created with its gallery
+	// defaults to published intent, one added later to draft.
 	State     string     `json:"state,omitempty"`
 	PublishAt *time.Time `json:"publish_at,omitempty"`
-	// Access overrides the content's rule; ClearAccess inherits it again.
+	// Access is this edition's rule. ClearAccess copies the current gallery
+	// creation default once; subsequent gallery edits never change it.
 	Access      *access.Rule           `json:"access,omitempty"`
 	ClearAccess bool                   `json:"clear_access,omitempty"`
 	Attributes  map[string]any         `json:"attributes,omitempty"` // replaces all
@@ -128,6 +129,8 @@ type VersionKey struct{ ContentID, VersionID string }
 type effects struct {
 	events []Event
 	codes  bool // slugs may have changed
+	// publish records durable release/withdrawal work after intent changes.
+	publish []versions.Target
 	// republish are versions whose effective rule or segments changed.
 	republish []versions.Target
 	forks     []versions.Fork
@@ -180,6 +183,7 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 		if err := s.media.Versions.RepublishTx(ctx, tx, fx.republish); err != nil {
 			return err
 		}
+		fx.publish = append(fx.publish, fx.republish...)
 	}
 	if len(fx.forks) > 0 {
 		if s.media == nil {
@@ -191,6 +195,11 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 	}
 	if s.media != nil && len(fx.bodies) > 0 {
 		if err := s.media.Versions.CopyBodiesTx(ctx, tx, fx.bodies); err != nil {
+			return err
+		}
+	}
+	if len(fx.publish) > 0 {
+		if err := s.schedulePublicationTx(ctx, tx, fx.publish); err != nil {
 			return err
 		}
 	}
@@ -700,8 +709,8 @@ func (s *Store) syncHiddenVersion(ctx context.Context, tx pgx.Tx, id, kind strin
 	return err
 }
 
-// Publish publishes content items now, or schedules those with a future At.
-// Rescheduling a scheduled item moves its time; a live item is left as it is.
+// Publish accepts durable publication now, or schedules it for a future At.
+// Already released files stay available while any new publication is pending.
 func (s *Store) Publish(ctx context.Context, actor access.Actor, in []Publish) error {
 	return s.PublishChecked(ctx, actor, in, nil)
 }
@@ -725,28 +734,13 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 		if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
 			return fx, err
 		}
-		// A scheduled item goes live at its time without another check, so
-		// scheduling needs ready media too.
-		var going []string
-		for _, p := range in {
-			if o := got[p.ContentID]; o.state != StateDeleted && !(o.state == StatePublished && o.publishedAt) {
-				going = append(going, p.ContentID)
-			}
-		}
-		targets, err := s.publishedVersions(ctx, tx, going)
-		if err != nil {
-			return fx, err
-		}
-		if err := s.readyTx(ctx, tx, targets); err != nil {
-			return fx, err
-		}
+		// Publication acceptance is durable even while media is processing.
+		// The scheduled worker, not this write or the clock, makes it live.
 		for _, p := range in {
 			o := got[p.ContentID]
 			switch {
 			case o.state == StateDeleted:
 				return fx, ErrNotFound
-			case o.state == StatePublished && o.publishedAt:
-				continue
 			}
 			var titled, versioned bool
 			originalAndVersion := s.cfg.Kinds[o.kind].TitlePolicy == kinds.TitleOriginalAndVersion
@@ -765,17 +759,12 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 			if p.At != nil && p.At.After(now) {
 				at = *p.At
 			}
-			var live bool
-			if err := tx.QueryRow(ctx, `UPDATE `+s.t.items+` SET state = 'published', publish_at = $3::timestamptz,
- published_at = CASE WHEN $3::timestamptz <= $4::timestamptz THEN $4::timestamptz END
- WHERE tenant_id = $1 AND id = $2 RETURNING published_at IS NOT NULL`, s.tenant, p.ContentID, at, now).Scan(&live); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'published', publish_at = $3::timestamptz
+ WHERE tenant_id = $1 AND id = $2`, s.tenant, p.ContentID, at); err != nil {
 				return fx, err
 			}
-			typ := EventContentScheduled
-			if live {
-				typ = EventContentPublished
-			}
-			fx.events = append(fx.events, Event{Type: typ, Kind: o.kind, ContentID: p.ContentID})
+			fx.events = append(fx.events, Event{Type: EventContentScheduled, Kind: o.kind, ContentID: p.ContentID})
+			fx.publish = append(fx.publish, versions.Target{Content: p.ContentID})
 		}
 		return fx, nil
 	})
@@ -790,10 +779,11 @@ func (s *Store) Unpublish(ctx context.Context, actor access.Actor, ids []string)
 			if o.state != StatePublished {
 				return fx, errors.Join(ErrConflict, errors.New("only a published item can be unpublished"))
 			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'draft', publish_at = NULL, published_at = NULL WHERE tenant_id = $1 AND id = $2`, s.tenant, id); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'draft', publish_at = NULL WHERE tenant_id = $1 AND id = $2`, s.tenant, id); err != nil {
 				return fx, err
 			}
 			fx.events = append(fx.events, Event{Type: EventContentUnpublished, Kind: o.kind, ContentID: id})
+			fx.publish = append(fx.publish, versions.Target{Content: id})
 		}
 		return fx, nil
 	})
@@ -1043,25 +1033,19 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 					fx.bodies = append(fx.bodies, versions.BodyCopy{Content: p.ContentID, From: from, To: []string{vid}})
 				}
 				fx.events = append(fx.events, Event{Type: EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
+				if in.State == StatePublished {
+					fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: vid})
+				}
 				continue
-			}
-			if (o.state == StatePublished || o.state == StateDeleted && (o.publishedAt || o.publishAt)) && (p.State == StatePublished || p.State == "" && p.PublishAt != nil) {
-				var was string
-				if err := tx.QueryRow(ctx, `SELECT state FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND id = $3`,
-					s.tenant, p.ContentID, p.VersionID).Scan(&was); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-					return fx, err
-				}
-				if (p.State == StatePublished || was == StatePublished) && (was != StatePublished || p.PublishAt != nil) {
-					if err := s.readyTx(ctx, tx, []versions.Target{{Content: p.ContentID, Version: p.VersionID}}); err != nil {
-						return fx, err
-					}
-				}
 			}
 			if err := s.updateVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionID, p.VersionInput); err != nil {
 				return fx, err
 			}
 			if p.Access != nil || p.ClearAccess || p.Segments != nil {
 				fx.republish = append(fx.republish, versions.Target{Content: p.ContentID, Version: p.VersionID})
+			}
+			if p.State != "" || p.PublishAt != nil || p.Access != nil || p.ClearAccess || p.Segments != nil {
+				fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: p.VersionID})
 			}
 			out[i] = p.VersionID
 			fx.events = append(fx.events, Event{Type: EventVersionUpdated, Kind: o.kind, ContentID: p.ContentID, VersionID: p.VersionID})
@@ -1174,6 +1158,11 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	if err != nil {
 		return "", err
 	}
+	if r.access == nil {
+		if err := tx.QueryRow(ctx, `SELECT access FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, contentID).Scan(&r.access); err != nil {
+			return "", err
+		}
+	}
 	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
 		return "", err
 	}
@@ -1187,8 +1176,8 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versions+` (tenant_id, id, content_id, position, languages, traits, label, state, publish_at, published_at, access, attributes,
  ordinal, cover, playable)
  SELECT $1, $2, $3, coalesce((SELECT max(position) + 1 FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $3), 0), $4, $5, $6, $7, $8,
-  CASE WHEN $7 = 'published' AND ($8::timestamptz IS NULL OR $8 <= $12) THEN coalesce($8, $12) END, $9, $10, $11, $13, $14`,
-		s.tenant, id, contentID, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, s.now(), r.cover,
+  NULL, $9, $10, $11, $12, $13`,
+		s.tenant, id, contentID, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, r.cover,
 		s.startsUnplayable(kind)); err != nil {
 		return "", err
 	}
@@ -1278,17 +1267,23 @@ func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	if err != nil {
 		return err
 	}
+	// ClearAccess copies the current creation default once. An edition never
+	// inherits later gallery-parent policy edits dynamically.
+	if r.access == nil {
+		if err := tx.QueryRow(ctx, `SELECT access FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, contentID).Scan(&r.access); err != nil {
+			return err
+		}
+	}
 	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
 		return err
 	}
-	// A state or schedule change restarts the publication clock.
-	restart := r.state != was || v.PublishAt != nil
+	// Scheduling changes intent only. A prior completed release remains
+	// available until the publisher commits its replacement or withdrawal.
 	if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET languages = $4, traits = $5, label = $6, state = $7, publish_at = $8,
- published_at = CASE WHEN NOT $12 THEN published_at WHEN $7 = 'published' AND ($8::timestamptz IS NULL OR $8 <= $13) THEN coalesce($8, $13) END,
- deleted_at = CASE WHEN $7 = 'deleted' THEN deleted_at END, access = $9, attributes = $10, ordinal = $11, cover = $14, updated_at = clock_timestamp(),
+ deleted_at = CASE WHEN $7 = 'deleted' THEN deleted_at END, access = $9, attributes = $10, ordinal = $11, cover = $12, updated_at = clock_timestamp(),
  revision = revision + 1
  WHERE tenant_id = $1 AND content_id = $2 AND id = $3`,
-		s.tenant, contentID, id, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, restart, s.now(), r.cover); err != nil {
+		s.tenant, contentID, id, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, r.cover); err != nil {
 		return err
 	}
 	return s.writeVersionExtras(ctx, tx, id, v)
@@ -1323,19 +1318,8 @@ func (s *Store) writeVersionExtras(ctx context.Context, tx pgx.Tx, id string, v 
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.segments+` WHERE tenant_id = $1 AND version_id = $2`, s.tenant, id); err != nil {
+		if _, err := s.writeChaptersTx(ctx, tx, id, segs); err != nil {
 			return err
-		}
-		for _, sg := range segs {
-			var start, end any = sg.Start, sg.End
-			var startPage any
-			if sg.StartPage != "" {
-				start, end, startPage = nil, nil, sg.StartPage
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.segments+` (tenant_id, version_id, position, title, start_index, end_index, release_at, start_page) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-				s.tenant, id, sg.Position, strings.TrimSpace(sg.Title), start, end, sg.ReleaseAt, startPage); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -1363,6 +1347,7 @@ func (s *Store) DeleteVersions(ctx context.Context, actor access.Actor, keys []V
 				return fx, ErrNotFound
 			}
 			fx.events = append(fx.events, Event{Type: EventVersionDeleted, Kind: o.kind, ContentID: k.ContentID, VersionID: k.VersionID})
+			fx.publish = append(fx.publish, versions.Target{Content: k.ContentID, Version: k.VersionID})
 		}
 		deleted, err := s.deleteEmptyParents(ctx, tx, ids)
 		if err != nil {

@@ -16,7 +16,7 @@ import (
 
 // RefreshFacets rewrites the content_facets rows of every version of the
 // content items, and queues their search documents, in q's transaction.
-// live_from is when a version went (or goes) live, kept through deletion so
+// live_from is when a version's release completed, kept through deletion so
 // holders of a deleted item still read what was live; deleted marks either
 // deletion; unplayable marks a gated player version whose media does not
 // play yet (playable false; unknown lists).
@@ -87,9 +87,10 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
  SELECT c.tenant_id, c.id, v.id, c.kind,
   CASE WHEN (c.state = 'published' OR (c.state = 'deleted' AND c.published_at IS NOT NULL))
    AND (v.state = 'published' OR (v.state = 'deleted' AND v.published_at IS NOT NULL))
-   THEN greatest(coalesce(c.published_at, c.publish_at), coalesce(v.published_at, v.publish_at)) END,
+   AND v.released AND c.published_at IS NOT NULL AND v.published_at IS NOT NULL
+   THEN greatest(c.published_at, v.published_at) END,
   c.state = 'deleted' OR v.state = 'deleted', c.kind = ANY($4::text[]) AND v.playable IS FALSE, v.languages,
-  a.level, a.tiers, a.entity_id, coalesce(a.releases, '[]'::jsonb), c.restrictions, a.entities, v.traits, c.owner_entity_id, v.position, coalesce(c.published_at, c.publish_at),
+  a.level, a.tiers, a.entity_id, coalesce(a.releases, '[]'::jsonb), c.restrictions, a.entities, v.traits, c.owner_entity_id, v.position, c.published_at,
   c.attributes || v.attributes, now()
  FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], entity_id text, releases jsonb, entities text[])
  JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = a.version_id
