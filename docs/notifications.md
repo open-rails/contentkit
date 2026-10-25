@@ -11,13 +11,14 @@ routes. The local store and HTTP adapter remain compatibility/recovery facilitie
 for explicit staged adoption and existing account erasure fences. Native content
 mutations use the injected publisher exclusively; they do not duplicate receipts.
 
-## Native and host-authored events
+## Native and host-authored notices
 
 ContentKit automatically publishes:
 
 - `comment.reply`: an approved reply to another registered person's published
   comment, including first publication through editing or moderator approval.
-  Reapproval of the same reply does not notify twice.
+  Replaying the same approval does not duplicate the receipt. Restoring a hidden
+  reply reopens its exact identity at a newer producer revision, unread.
 - `comment.liked`: another signed-in person's actual transition to a like on a
   published comment. Retrying the same like does not notify twice; a later
   unlike and like creates a new event. Self and anonymous likes do not notify.
@@ -27,31 +28,58 @@ contain content/comment/actor references, never copied comment bodies or
 anonymous IPs. Resolve references through current content access checks when
 displaying or following them; retained history does not grant access.
 
-Hosts publish their own selected kinds through the engine's client (`POST
-/v1/notifications/publish`, `root:notifications:publish`, in one transaction):
+Hosts publish their own selected kinds through an explicitly configured AuthKit
+producer. Its binding fixes the account tenant, source namespace and app visibility:
 
 ```go
-_, err := ck.Client().PublishNotifications(ctx, []notify.Input{{
-    Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: userID},
-    Origin: notify.Origin{System: "host-app", Scope: tenant, ID: stableEventID},
-    Kind: "export.ready",
-    Data: json.RawMessage(`{"export_id":"..."}`),
-    CreatedAt: occurredAt,
+publisher, err := accounts.Notifications("application")
+if err != nil { return err }
+err = publisher.ApplyTx(ctx, sourceTx, []notify.Mutation{{
+    Input: notify.Input{
+        Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: userID},
+        Origin: notify.Origin{ID: stableIssueID},
+        Kind: "export.ready",
+        Data: json.RawMessage(`{"export_id":"..."}`),
+        CreatedAt: occurredAt,
+    },
+    Revision: sourceRevision,
 }})
 ```
 
-An origin identifies the producer deployment, namespace and stable source event.
-Its optional `Subject` preserves the original recipient when the host maps that
-account to a local user. Replaying an origin for the same local recipient keeps
-the original payload and local receipt/workflow state. Hosts must authorize
-recipient IDs; matching email addresses is not an account association. Data is
-a user-visible JSON object without credentials or private operator details.
+Commit `sourceTx` only after this succeeds. Local publication joins that database
+transaction; a configured remote publisher records its durable delivery obligation
+there. `Apply` instead acknowledges durable destination acceptance when there is
+no source transaction to join. Resolve an obsolete notice with the same identity,
+a higher source revision and `Withdrawn: true`; never list the inbox to discover
+producer IDs. Batches contain at most `notify.MaxMutations` entries.
+
+An origin identifies the producer and stable source issue or event. Same-revision
+replays are idempotent; conflicting same-revision content is rejected. An older
+delivery cannot undo a withdrawal. Newer active updates preserve local read/archive
+state; an explicit newer publish after withdrawal reopens the receipt unread.
+Use verified account IDs and issuer/directory association, never matching email
+addresses. Payloads are user-visible JSON without credentials or operator details.
 
 ## Inbox and frontend
 
-The notification route group serves these person-only routes. Every recipient
-comes from the authenticated subject; query parameters cannot select another
-user, tenant or operator audience. Only the host's service publishes.
+AuthKit serves the enabled account inbox through its authenticated personal API.
+Use `authClient.notifications` for list/detail, read/unread and dismiss/restore.
+Every recipient comes from the verified account and application context; query
+parameters cannot select another user or tenant. Only configured trusted producers
+can publish. Supply this transport to the existing ContentKit presentation:
+
+```ts
+const client = createContentKitClient({
+  baseUrl: "/api/v1/contentkit",
+  notifications: authClient.notifications,
+});
+```
+
+For deployments completing an explicit migration, the **legacy ContentKit fallback**
+still provides the following routes under its configured API mount. They are absent
+when `Deps.Notifications` is injected. Its trusted `PublishNotifications`/
+`POST /v1/notifications/publish` and workflow transition operations are compatibility
+facilities; new host producers use the revisioned AuthKit publisher above.
 
 | Method and path | Behavior |
 | --- | --- |
@@ -66,10 +94,10 @@ Mutations return the canonical `Item` with server timestamps and revision.
 Reading or archiving changes only the receipt. A tracked item with
 `status: "open"` remains open after either operation. The API exposes no generic
 browser action that claims to repair a billing problem or complete source work.
-Trusted hosts perform their domain action and then use shared
-`Transition`/`TransitionTx` when they actually own a tracked workflow.
+Producers resolve the domain issue and withdraw the exact notice in the same source
+transaction. Reading or dismissing it is never evidence that a payment succeeded.
 
-The browser SDK exposes `client.notifications.list()`, `.setRead()` and
+With the injected transport, the browser SDK exposes `client.notifications.list()`, `.setRead()` and
 `.setDismissed()`. The React package provides `useNotifications` and
 `useNotificationUnread`. Styled `NotificationInbox` and `NotificationBell`
 components provide filters, pagination, error/retry states, read/archive/restore
@@ -94,6 +122,8 @@ English, German, Spanish, Japanese, Korean and Chinese. Keep `viewer` and
 `accessRevision` current so cached data is cleared when identity/access changes.
 Signed-out viewers do not fetch inboxes. Local mutations synchronize mounted
 views; an older in-flight refresh cannot overwrite a successful receipt change.
+Refreshing one inbox also refreshes mounted unread indicators, so a resolved
+notice cannot leave a stale dot on the bell.
 
 The bell checks unread presence every 30 seconds while the page is visible;
 `unreadRefreshInterval={false}` disables that. Inbox pages do not poll by default,
@@ -131,14 +161,24 @@ Do not copy a whole audit payload into a user notice. Select safe fields and
 verify the recipient against the current tenant directory. User-initiated
 actions need no inbox notice unless the application has a specific reason.
 
-`Engine.EraseSubjects` removes and permanently fences the inbox before other
-content cleanup. Delayed imports cannot recreate it. Required account cleanup
-remains separate from optional event readers.
+AuthKit's required account lifecycle removes and fences its inbox. ContentKit's
+required cleanup handles its source identities, interactions and legacy store;
+it does not own a separately configured AuthKit inbox. During adoption the shared
+physical schema retains existing erasure fences. Neither cleanup depends on an
+optional general event reader, and delayed delivery cannot recreate erased receipts.
 
 ## Shared account inboxes
 
-Sites sharing verified account IDs can keep separate catalogs and share only
-notification storage. Configure the same notification schema and namespace:
+Sites sharing an AuthKit account directory can keep separate catalogs and use one
+AuthKit inbox. Configure the AuthKit add-on against its account database, declare
+tenant/app producer bindings, and inject the relevant publisher into each module.
+AuthKit enforces tenant-wide versus app-specific visibility. Shared billing
+read/archive state belongs to the same receipt in both sites.
+
+Existing installations can adopt their physical schema and logical scope in place.
+The following **legacy ContentKit storage declaration** remains for staged
+migration, account cleanup and avatar sharing; it does not transfer inbox API
+ownership back to ContentKit when the publisher is injected:
 
 ```go
 cfg.Accounts = &contentkit.AccountsConfig{
@@ -150,17 +190,14 @@ cfg.Accounts = &contentkit.AccountsConfig{
 }
 ```
 
-The engine migrates the dedicated schema and writes all account receipts into
-`contentkit:accounts`. Native social notices retain `Origin{System:
-"contentkit", Scope: cfg.Tenant}`. Every site's authenticated API restricts
-reads, unread pages, pagination and receipt mutations to that site's native
-origin plus explicitly admitted shared origins. An ID from another site is
-not readable or writable through this site's API. Shared billing read/archive
-state is the same receipt on both sites. Erasing an account fences all origins
-in its shared inbox. Omitting `Config.Accounts` and `Config.Notifications` preserves the existing
-per-tenant store and unrestricted trusted producer selection. The older
-`Config.Notifications` spelling remains available for inbox-only sharing. Do not
-configure it together with `Config.Accounts`.
+The legacy `Namespace: "accounts"` corresponds to `contentkit:accounts`.
+Scoped engines derive their namespace from the verified tenant unless an explicit
+migration adopts an older scope. AuthKit's tenant-to-scope configuration must match
+the adopted value. Native social origins retain ContentKit's app identity; source
+provenance is separate from visibility. Omitting the injected publisher preserves
+the old local/fallback behavior for staged migration. The older
+`Config.Notifications` spelling remains available for inbox-only compatibility;
+do not configure it together with `Config.Accounts`.
 
 Configure the AuthKit account inbox against the existing shared schema and
 explicitly map the account tenant to its adopted logical scope. Pass a scoped
