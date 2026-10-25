@@ -342,7 +342,7 @@ The owner specified an explicit migration boundary on 2026-10-14:
 migrations against those running services before starting Air and Vite.
 Server and worker startup validate the required schemas without applying
 migrations. This includes embedded AuthKit, OpenRails and ContentKit, their
-River schemas, the shared inbox, and ContentKit's ClickHouse signal tables.
+River schemas, the AuthKit-owned shared inbox, and ContentKit's ClickHouse signal tables.
 Missing migrations must produce an actionable error, not an automatic
 upgrade. Explicit migration commands remain available outside development.
 Local library compatibility modes and both host integrations implement this
@@ -429,7 +429,7 @@ rollback to legacy mappings. A healthy container alone is not media evidence.
 Use the same tenant/app model and domain operations in an optional
 `contentkit-saas` wrapper. The wrapper owns provisioning, authenticated app
 credentials, routing, deployment/storage selection, quotas, export and
-operations. The ContentKit libraries keep catalog/account/inbox behavior and
+operations. The ContentKit libraries keep content/account-media behavior and
 equivalent embedded/remote operations. Do not add microservices, a second
 identity directory or a second notification pipeline to anticipate hosting.
 

@@ -241,7 +241,7 @@
     {
       "id": "CK-J03-S01",
       "journey": "CK-J03",
-      "behavior": "Creator writes own content but not another creator’s",
+      "behavior": "Creator writes own content but not another creator\u2019s",
       "status": "verified",
       "evidence": [
         "Real creator edits its own item after role removal and exact readback proves persistence; another creator item remains unchanged after403 and sibling-app/tenant targets refuse.",
@@ -1197,7 +1197,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner’s eligible content",
+      "behavior": "Owner ban affects only the owner\u2019s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
@@ -1859,6 +1859,32 @@
       ],
       "cases": [
         "TestAccountNotificationScreening/CK-J25-S17_held_creation_edit_and_reapproval_publish_exactly_once"
+      ]
+    },
+    {
+      "id": "CK-J25-S18",
+      "journey": "CK-J25",
+      "behavior": "Omitted publisher disables notifications without constructing an inbox or affecting content mutation and erasure",
+      "status": "verified",
+      "evidence": [
+        "Fresh distinct account/catalog schemas, actual authenticated reply mutation and account erasure, no notify tables before/after, retired inbox route HTTP404; requires exact execution before qualification.",
+        "Both exact cases passed against real PostgreSQL in contentkit-optional-inbox-final.jsonl (package4.386s), after the ledger-only partial-lineage defect was reproduced and fixed; final exhaustive CI remains required."
+      ],
+      "cases": [
+        "TestAccountNotificationsOptional/CK-J25-S18_omitted_publisher_has_no_inbox_storage_or_routes"
+      ]
+    },
+    {
+      "id": "CK-J25-S19",
+      "journey": "CK-J25",
+      "behavior": "Partially restored account erasure storage fails closed even when publication is disabled",
+      "status": "verified",
+      "evidence": [
+        "Real partial shared-account lineage and a retained ledger with all erasure tables lost are rejected during public constructor startup; fully absent optional storage remains covered separately.",
+        "Both exact cases passed against real PostgreSQL in contentkit-optional-inbox-final.jsonl (package4.386s), after the ledger-only partial-lineage defect was reproduced and fixed; final exhaustive CI remains required."
+      ],
+      "cases": [
+        "TestAccountNotificationsOptional/CK-J25-S19_partial_account_erasure_storage_fails_closed"
       ]
     }
   ],

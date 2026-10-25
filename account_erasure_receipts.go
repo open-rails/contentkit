@@ -15,17 +15,18 @@ import (
 func (e *Engine) accountErasureAvailable(ctx context.Context) (bool, error) {
 	schema, _ := e.accountStorage()
 	var present int
-	err := e.pool.QueryRow(ctx, `SELECT (to_regclass($1) IS NOT NULL)::int + (to_regclass($2) IS NOT NULL)::int + (to_regclass($3) IS NOT NULL)::int`,
+	err := e.pool.QueryRow(ctx, `SELECT (to_regclass($1) IS NOT NULL)::int + (to_regclass($2) IS NOT NULL)::int + (to_regclass($3) IS NOT NULL)::int + (to_regclass($4) IS NOT NULL)::int`,
 		pgx.Identifier{schema, "notify_recipients"}.Sanitize(),
 		pgx.Identifier{schema, "notify_app_erasures"}.Sanitize(),
-		pgx.Identifier{schema, "notify_items"}.Sanitize()).Scan(&present)
+		pgx.Identifier{schema, "notify_items"}.Sanitize(),
+		pgx.Identifier{schema, "notify_migrations"}.Sanitize()).Scan(&present)
 	if err != nil {
 		return false, err
 	}
 	if present == 0 {
 		return false, nil // A fresh account directory may have no optional inbox.
 	}
-	if present != 3 {
+	if present != 4 {
 		return false, fmt.Errorf("contentkit: incomplete AuthKit account erasure storage")
 	}
 	return true, postgres.Validate(ctx, e.pool, schema)

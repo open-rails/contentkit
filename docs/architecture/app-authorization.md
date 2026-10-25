@@ -1,7 +1,7 @@
 # Authorization for tenant accounts and app content
 
 `Config.Scope` fixes one canonical tenant and app. The same tenant UUID owns
-its AuthKit accounts and ContentKit shared avatars and inbox; it is not an
+its AuthKit accounts and inbox and ContentKit shared avatars; it is not an
 issuer, schema name or billing merchant ID. Catalogs remain separate per app.
 Scoped engines require `Deps.Authorization`; legacy engines retain their
 existing host authorization contract until explicitly migrated.

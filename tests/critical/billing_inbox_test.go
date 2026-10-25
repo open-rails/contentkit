@@ -108,6 +108,9 @@ func newBillingInboxWorld(t *testing.T) *billingInboxWorld {
 	i.a.engine, err = ck.New(t.Context(), i.a.cfg, i.a.deps)
 	must(t, err)
 	i.a.server = mountEngine(t, i.a.engine)
+	// Prepare legacy cursor storage before any fault proxy is installed. The
+	// commit-loss scenario must interrupt the import transaction, not DDL setup.
+	must(t, notification.Migrate(t.Context(), i.w.pool, i.schema))
 	i.store = i.newStore(t, i.w.pool)
 	must(t, i.store.BindMerchant(t.Context(), i.a.cfg.Scope.TenantID.String(), i.source.Origin()))
 	return i
@@ -115,7 +118,6 @@ func newBillingInboxWorld(t *testing.T) *billingInboxWorld {
 
 func (i *billingInboxWorld) newStore(t *testing.T, pool *pgxpool.Pool) *notification.Store {
 	t.Helper()
-	must(t, notification.Migrate(t.Context(), pool, i.schema))
 	directory, ok := i.a.deps.Users.(interface {
 		GetTx(context.Context, pgx.Tx, []string) (map[string]userinfo.User, error)
 	})

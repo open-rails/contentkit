@@ -82,14 +82,18 @@ func TestNotificationReceiptBoundaries(t *testing.T) {
 			t.Fatal("receipt fixture missing")
 		}
 		id, client := published.Items[0].ID, a.accountInbox(token)
+		status := published.Items[0].Status
+		if !published.Items[0].ActionRequested {
+			t.Fatal("actionable notice lost producer intent")
+		}
 		read, err := client.SetRead(t.Context(), id, true)
 		must(t, err)
-		if read.ReadAt == nil || read.Status != "open" || read.ResolvedAt != nil {
+		if read.ReadAt == nil || read.Status != status || read.ResolvedAt != nil {
 			t.Fatal("reading resolved source work")
 		}
 		dismissed, err := client.SetDismissed(t.Context(), id, true)
 		must(t, err)
-		if dismissed.DismissedAt == nil || dismissed.Status != "open" || dismissed.ResolvedAt != nil {
+		if dismissed.DismissedAt == nil || dismissed.Status != status || dismissed.ResolvedAt != nil {
 			t.Fatal("archiving resolved source work")
 		}
 		active, err := client.List(t.Context(), inboxQuery{})
@@ -107,7 +111,7 @@ func TestNotificationReceiptBoundaries(t *testing.T) {
 		must(t, err)
 		unread, err := client.SetRead(t.Context(), id, false)
 		must(t, err)
-		if unread.ReadAt != nil || unread.DismissedAt != nil || unread.Status != "open" || unread.ResolvedAt != nil {
+		if unread.ReadAt != nil || unread.DismissedAt != nil || unread.Status != status || unread.ResolvedAt != nil {
 			t.Fatal("restore/unread changed the source workflow")
 		}
 	})

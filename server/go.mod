@@ -5,11 +5,11 @@ go 1.26.10
 require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.38.0
+	github.com/open-rails/authkit v1.39.0
 	github.com/open-rails/contentkit v0.127.0
 	github.com/open-rails/contentkit/adapters/openrails v0.10.0
-	github.com/open-rails/helpers v1.17.0
-	github.com/open-rails/openrails v0.265.0
+	github.com/open-rails/helpers v1.18.0
+	github.com/open-rails/openrails v0.266.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/riverqueue/river v0.49.0
 )
