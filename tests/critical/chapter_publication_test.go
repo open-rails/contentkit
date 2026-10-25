@@ -50,6 +50,16 @@ func TestCopiedPageChapterPlacement(t *testing.T) {
 	must(t, err)
 	ready := awaitMediaReady(t, admin, ref)
 	requireMediaPaths(t, ready, "pages/01.png", "pages/20.png", "pages/30.png", "reader/01.webp", "reader/20.webp", "reader/30.webp")
+	// The existing page-quality policy excludes duplicate images by default.
+	// Explicitly retain them through the editor API before assigning chapters.
+	notices, err := admin.GetContentVersionPageNotices(t.Context(), ref.ID, ref.Version)
+	must(t, err)
+	for _, notice := range notices.Notices {
+		if notice.Kind == "removed" {
+			_, err = admin.PostContentVersionPageNoticeRestore(t.Context(), ref.ID, ref.Version, notice.ID)
+			must(t, err)
+		}
+	}
 	future := w.clock.now().Add(time.Hour)
 	_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, catalog.SegmentsInput{Segments: []catalog.SegmentInput{
 		{Position: 0, StartPage: "pages/01.png"},
