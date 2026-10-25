@@ -300,6 +300,22 @@ func TestPublicationStorage(t *testing.T) {
 			legacy.Files[i].Blob = legacyBlob
 		}
 	}
+	// The old same-item copy operation shared immutable derived blobs. Keep
+	// that real manifest shape: two virtual source paths and their reader
+	// outputs, with equal bytes but independently movable chapter membership.
+	aliasSource, found := legacy.Get("pages/one.png")
+	if !found {
+		t.Fatal("legacy source fixture missing")
+	}
+	aliasSource.Path = "pages/alias.png"
+	aliasSource.Meta = map[string]any{"page": map[string]any{"name": "alias", "source_name": "alias.png"}}
+	aliasSource.Public, aliasSource.Editor = nil, nil
+	aliasOutput, found := legacy.Get("reader/one.webp")
+	if !found {
+		t.Fatal("legacy reader fixture missing")
+	}
+	aliasOutput.Path, aliasOutput.From = "reader/alias.webp", "pages/alias.png"
+	legacy.Files = append(legacy.Files, aliasSource, aliasOutput)
 	must(t, legacy.Validate())
 	var encoded bytes.Buffer
 	compressed := gzip.NewWriter(&encoded)
@@ -348,5 +364,35 @@ func TestPublicationStorage(t *testing.T) {
 	must(t, manifests.MigratePublicationLayout(t.Context(), target, migration))
 	if store.calls != beforeRetry {
 		t.Fatal("completed migration copied again")
+	}
+	firstOriginal, _ := converted.Get("pages/one.png")
+	secondOriginal, _ := converted.Get("pages/alias.png")
+	if firstOriginal.Blob != secondOriginal.Blob {
+		t.Fatal("migration unnecessarily duplicated retained original bytes")
+	}
+	firstOutput, _ := converted.Get("reader/one.webp")
+	secondOutput, _ := converted.Get("reader/alias.webp")
+	if firstOutput.Blob == secondOutput.Blob {
+		t.Fatal("legacy virtual copies still share one chapter-placement allocation")
+	}
+	firstDigest, _ := layout.BlobDigest(firstOutput.Blob)
+	secondDigest, _ := layout.BlobDigest(secondOutput.Blob)
+	if !bytes.Equal(firstDigest, secondDigest) {
+		t.Fatal("splitting legacy output ownership changed bytes")
+	}
+	split := uuid.NewString()
+	_, err = manifests.PreparePromotion(t.Context(), target, split, []media.Promotion{
+		{Source: firstOutput.Blob, Area: layout.AreaPrivate},
+		{Source: secondOutput.Blob, Area: layout.AreaFuture},
+	})
+	must(t, err)
+	separated, err := manifests.Promote(t.Context(), target, split)
+	must(t, err)
+	if !bytes.Equal(get(separated.Files[0].Blob, itemToken, http.StatusOK), pageBytes) {
+		t.Fatal("released legacy copy has wrong reader bytes")
+	}
+	get(separated.Files[1].Blob, itemToken, http.StatusNotFound)
+	if separated.Files[1].Blob != secondOutput.Blob {
+		t.Fatal("future sibling was needlessly recopied")
 	}
 }

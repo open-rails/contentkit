@@ -254,7 +254,7 @@ func (m *Manifests) planPublicationLayout(ctx context.Context, item Item, operat
 	plan.Manifest.Receipt = nil
 	plan.Manifest.Deliveries = nil
 	known := map[string]string{}
-	copyRef := func(ref, area string) (string, error) {
+	copyRef := func(ref, area, occurrence string) (string, error) {
 		if ref == "" {
 			return "", nil
 		}
@@ -264,6 +264,12 @@ func (m *Manifests) planPublicationLayout(ctx context.Context, item Item, operat
 		}
 		sourceRef := fromArea + "/" + name
 		identity := sourceRef + ":" + area
+		if area == layout.AreaFuture {
+			// Legacy copies could share a derived blob across virtual files.
+			// Their chapter membership can now diverge, so prepared outputs
+			// need independent allocation lifetimes keyed by existing paths.
+			identity += "\x00" + occurrence
+		}
 		if target, ok := known[identity]; ok {
 			return target, nil
 		}
@@ -310,17 +316,17 @@ func (m *Manifests) planPublicationLayout(ctx context.Context, item Item, operat
 			if file.IsUpload() {
 				area = layout.AreaOriginals
 			}
-			if file.Blob, err = copyRef(file.Blob, area); err != nil {
+			if file.Blob, err = copyRef(file.Blob, area, "file:"+file.Path); err != nil {
 				return nil, err
 			}
 		}
 		if file.Editor != nil {
-			if file.Editor.Blob, err = copyRef(file.Editor.Blob, layout.AreaFuture); err != nil {
+			if file.Editor.Blob, err = copyRef(file.Editor.Blob, layout.AreaFuture, "editor:"+file.Path); err != nil {
 				return nil, err
 			}
 		}
 		if file.Track != nil {
-			if file.Track.Index, err = copyRef(file.Track.Index, layout.AreaFuture); err != nil {
+			if file.Track.Index, err = copyRef(file.Track.Index, layout.AreaFuture, "track:"+file.Path); err != nil {
 				return nil, err
 			}
 		}
@@ -339,7 +345,7 @@ func (m *Manifests) planPublicationLayout(ctx context.Context, item Item, operat
 				if len(previous) == len(publication.Names) {
 					ref = previous[index]
 				}
-				if publication.Blobs[index], err = copyRef(ref, layout.AreaFuture); err != nil {
+				if publication.Blobs[index], err = copyRef(ref, layout.AreaFuture, "public:"+file.Path+"\x00"+publication.Preset+"\x00"+name); err != nil {
 					return nil, err
 				}
 			}
