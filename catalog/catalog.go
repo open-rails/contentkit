@@ -82,6 +82,9 @@ type Options struct {
 	EventRetention time.Duration
 	// OnPurge records required application cleanup in the same transaction.
 	OnPurge func(context.Context, pgx.Tx, []contentref.ContentRef) error
+	// AfterPurge completes durable cross-store cleanup after local deletion.
+	// It runs even when some local deletions failed, and retries via this sweep.
+	AfterPurge func(context.Context) error
 	// PlayableKinds are the kinds whose versions list only once their media
 	// plays (an HLS rendition is out): a new version starts not playable until
 	// media records otherwise. Only kinds media streams belong here.
@@ -112,6 +115,7 @@ type Store struct {
 	retention      time.Duration
 	eventRetention time.Duration
 	onPurge        func(context.Context, pgx.Tx, []contentref.ContentRef) error
+	afterPurge     func(context.Context) error
 	documents      func(ctx context.Context, q Querier) error
 	references     VersionReferenceOwner
 	playable       []string
@@ -149,7 +153,7 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),
 			reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")},
 		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities,
-		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, documents: opts.DocumentsChanged, references: opts.References,
+		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, afterPurge: opts.AfterPurge, documents: opts.DocumentsChanged, references: opts.References,
 		playable: slices.Sorted(slices.Values(opts.PlayableKinds)), now: opts.Now, log: opts.Logger,
 	}
 	if s.accessG == nil {

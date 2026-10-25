@@ -76,7 +76,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &forgetContentsWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err

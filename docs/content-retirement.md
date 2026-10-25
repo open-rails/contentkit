@@ -34,14 +34,24 @@ due for the content purge's own retry/cadence and does not prevent unrelated
 expired content from progressing. There is no separate version-media reaper
 or per-version folder-deletion job.
 
-Other media lifecycles remain distinct:
+Entity, poll and account media retirement also record exact deletion intents;
+the same sweep drains that shared retirement journal. Account avatar erasure
+performs its required synchronous erasure first, with any recorded late-write
+cleanup retained for the sweep. No folder-deletion or media-reaper worker is
+needed.
 
-- Entity and poll deletion still use their existing transactional folder-deletion
-  jobs; those callers do not use the version retention model.
-- Account avatar erasure already performs synchronous verified storage erasure.
-  Its late-write cleanup remains with the account media lifecycle.
-- Resets and overwritten allocations retain their existing manifest-journal
-  recovery and cleanup behavior.
+The same sweep erases the purged content's ClickHouse engagement and history
+records. Its exact cleanup references are committed with the PostgreSQL purge
+and survive removal of the content rows. A ClickHouse outage leaves those
+references pending without holding back unrelated PostgreSQL or media deletion.
+After ClickHouse acknowledges the deletion, the sweep removes the references;
+a lost acknowledgment is safe to retry. There is no separate
+`contentkit_forget_contents` worker or timer. During upgrades, the explicit
+stopped-writer migration transfers owned pending old jobs into these records
+and preserves terminal history and other apps' work. Discarded jobs also retain
+outstanding erasure obligations; migration copies those obligations without
+rewriting their failed history. A later explicit migration may replay them,
+which is safe because deletion is idempotent.
 
 Purge never mutates OpenRails products, prices, purchases or payment history.
 The host manages product archival directly through OpenRails; those billing
