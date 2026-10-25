@@ -12,6 +12,7 @@ import (
 func TestVersionDeletionDerivesParent(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
+	startPublicationRuntime(t, a)
 	admin := a.engine.Client()
 	t.Run("CK-J08-S01_deleting_one_version_preserves_siblings_and_parent", func(t *testing.T) {
 		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Two editions"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}}})
@@ -21,6 +22,9 @@ func TestVersionDeletionDerivesParent(t *testing.T) {
 		}
 		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
+		for _, version := range item.Versions {
+			awaitEditionPublication(t, a, admin, item.ID, version.ID)
+		}
 		_, err = a.client("").GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
 		must(t, err)
 		must(t, admin.DeleteContentVersion(t.Context(), item.ID, item.Versions[0].ID))
@@ -64,6 +68,7 @@ func TestVersionDeletionDerivesParent(t *testing.T) {
 		must(t, admin.DeleteContentVersion(t.Context(), item.ID, version))
 		_, err := admin.PatchContentVersion(t.Context(), item.ID, version, catalog.VersionInput{State: "published"})
 		must(t, err)
+		awaitEditionPublication(t, a, admin, item.ID, version)
 		got, err := a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 		if !got.Live || got.DeletedAt != nil || got.ID != item.ID || got.SelectedVersionID != version {
@@ -87,6 +92,9 @@ func TestVersionDeletionDerivesParent(t *testing.T) {
 		requireError(t, err, 404, "not_found")
 		restored, err := admin.PostContentRestore(t.Context(), id)
 		must(t, err)
+		for _, version := range restored.Versions {
+			awaitEditionPublication(t, a, admin, id, version.ID)
+		}
 		visible, err := a.client("").GetContent(t.Context(), id, ck.GetContentQuery{})
 		must(t, err)
 		if restored.ID != id || !visible.Live || visible.Body != "Preserved imported manuscript" {

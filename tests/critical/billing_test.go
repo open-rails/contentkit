@@ -120,12 +120,14 @@ func TestCommerceControlsContentAccess(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	b := attachBilling(t, w, a)
+	startPublicationRuntime(t, a)
 	user, credential := w.person(t, 0)
 	viewer := a.client(credential)
 	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}, Text: map[string]catalog.Text{"en": {Title: "Purchased article", Body: "Purchased body"}}})
 	must(t, err)
 	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, a, a.engine.Client(), item.ID, item.Versions[0].ID)
 	product, err := b.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: "gold", DisplayName: "Gold access", Entitlements: []string{"gold"}})
 	must(t, err)
 	t.Run("CK-J06-S03_paid_through_cancellation_preserves_access_until_expiry", func(t *testing.T) {

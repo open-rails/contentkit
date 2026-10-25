@@ -19,6 +19,7 @@ import (
 
 func authoredArticle(t *testing.T, a *application, owner, entity string) catalog.Content {
 	t.Helper()
+	startPublicationRuntime(t, a)
 	in := catalog.ContentInput{Kind: "article", OwnerEntityID: entity, Text: map[string]catalog.Text{"en": {Title: "Moderated thread", Body: "Readable article"}}}
 	if owner != "" {
 		in.Creators = &[]catalog.Creator{{UserID: owner, Role: "author"}}
@@ -27,6 +28,7 @@ func authoredArticle(t *testing.T, a *application, owner, entity string) catalog
 	must(t, err)
 	item, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, a, a.engine.Client(), item.ID, item.Versions[0].ID)
 	return item
 }
 

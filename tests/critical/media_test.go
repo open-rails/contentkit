@@ -235,26 +235,17 @@ func TestRealMediaIngest(t *testing.T) {
 		payload := imageBytes(t)
 		_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(payload)}, {Path: "cover.png", Type: "image/png", Body: bytes.NewReader(payload)}})
 		must(t, err)
-		var ready media.ReadResult
-		waitFor(t, func() bool {
-			ready, err = admin.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
-			must(t, err)
-			for _, file := range ready.Files {
-				if file.Path == "reader/one.webp" && file.URL != "" {
-					return true
-				}
-			}
-			return false
-		})
+		awaitMediaReady(t, admin, ref)
 		_, err = a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
 		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
-		waitFor(t, func() bool {
-			ready, err = admin.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
-			must(t, err)
-			return len(ready.Public) == 1 && len(ready.Public[0].Renditions) == 2 && ready.State == media.StateReady
-		})
+		awaitEditionPublication(t, a, admin, ref.ID, ref.Version)
+		ready, err := a.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+		must(t, err)
+		if ready.Access != media.AccessFull || len(ready.Files) != 1 || ready.Files[0].Path != "reader/one.webp" {
+			t.Fatalf("completed reader publication missing: %+v", ready)
+		}
 		if len(ready.Public) != 1 || len(ready.Public[0].Renditions) != 2 {
 			t.Fatalf("cover renditions incomplete: %+v", ready.Public)
 		}

@@ -77,6 +77,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
 	a.server = mountEngine(t, a.engine)
+	startPublicationRuntime(t, a)
 	admin = a.engine.Client()
 	reader := func(host, token string) *ck.Client {
 		return ck.NewClient(a.server.URL+"/content", &http.Client{Transport: domainTransport{host, token}})
@@ -94,6 +95,11 @@ func TestDiscoveryVisibility(t *testing.T) {
 		if publish {
 			item, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: publishAt})
 			must(t, err)
+			if publishAt == nil || !publishAt.After(w.clock.now()) {
+				for _, version := range item.Versions {
+					awaitEditionPublication(t, a, admin, item.ID, version.ID)
+				}
+			}
 		}
 		return item
 	}
@@ -120,13 +126,18 @@ func TestDiscoveryVisibility(t *testing.T) {
 	if standing.Count == nil || *standing.Count != 1 {
 		t.Fatalf("restricted-count positive control absent: %+v", standing)
 	}
-	_, err = admin.PatchContent(t.Context(), locked.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}})
+	_, err = admin.PatchContentVersion(t.Context(), locked.ID, locked.Versions[0].ID, catalog.VersionInput{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}})
 	must(t, err)
-	must(t, a.engine.Start(t.Context()))
+	waitForWithin(t, 45*time.Second, func() bool {
+		wakeDuePublicationJobs(t, a)
+		time.Sleep(550 * time.Millisecond)
+		current, err := public.GetContent(t.Context(), locked.ID, ck.GetContentQuery{})
+		return err == nil && !current.Decision.Allowed
+	})
 	waitForWithin(t, 45*time.Second, func() bool {
 		found, err := public.GetSearch(t.Context(), ck.GetSearchQuery{Q: "CriticalVis", Kind: "article", Mode: "hide"})
 		must(t, err)
-		return len(found.Contents) != 0
+		return len(found.Contents) == 2
 	})
 	t.Run("CK-J07-S01_locked_detail_hides_body_and_real_interaction_counts", func(t *testing.T) {
 		got, err := public.GetContent(t.Context(), locked.ID, ck.GetContentQuery{})
@@ -404,6 +415,7 @@ func TestExactVersionVisibility(t *testing.T) {
 	futureAt := w.clock.now().Add(time.Hour)
 	locked, err := admin.PostContentVersions(t.Context(), item.ID, catalog.VersionInput{Languages: []string{"de"}, State: catalog.StatePublished, Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}})
 	must(t, err)
+	awaitEditionPublication(t, a, admin, item.ID, locked.ID)
 	future, err := admin.PostContentVersions(t.Context(), item.ID, catalog.VersionInput{Languages: []string{"en"}, State: catalog.StatePublished, PublishAt: &futureAt})
 	must(t, err)
 	t.Run("CK-J07-S06_locked_version_ID_and_code_never_select_open_sibling", func(t *testing.T) {

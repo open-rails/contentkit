@@ -133,6 +133,7 @@ func TestMediaModernFallbackAndSoundtrack(t *testing.T) {
 	}
 	_, err = client.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, m.app, client, ref.ID, ref.Version)
 	master, err := m.app.client("").GetMediaVersionHls(t.Context(), ref.Kind, ref.ID, ref.Version, "streams/master.m3u8", ck.GetMediaVersionHlsQuery{})
 	must(t, err)
 	for _, marker := range []string{"av01", "avc1", "mp4a.40.2", "TYPE=AUDIO", "AUDIO="} {

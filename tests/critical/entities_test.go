@@ -207,11 +207,15 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		}
 	})
 	t.Run("CK-J16-S04_deletion_retires_scope_and_owned_content", func(t *testing.T) {
+		startPublicationRuntime(t, a)
 		_, token, entity := ownedEntity(t, w, a, "retirement")
 		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", OwnerEntityID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Channel article"}}})
 		must(t, err)
 		_, err = a.client(token).PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
+		awaitEditionPublication(t, a, a.engine.Client(), item.ID, item.Versions[0].ID)
+		_, err = a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+		must(t, err) // deletion must hide content that was actually published
 		_, err = a.client(token).DeleteEntity(t.Context(), string(entity.ID))
 		must(t, err)
 		_, err = a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})

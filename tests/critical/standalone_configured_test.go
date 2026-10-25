@@ -31,6 +31,7 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 	awaitMediaReady(t, a.engine.Client(), ref)
 	_, err = a.engine.Client().PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, a, a.engine.Client(), ref.ID, ref.Version)
 	var authConfig authkit.Config
 	authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) { authConfig = *c }))
 	cfg := server.Config{Engine: a.cfg, Auth: authConfig, Authorization: &server.AuthorizationConfig{Issuer: authtest.Issuer, AppGroupID: a.cfg.Scope.AppID.String()}, Prefix: "/configured", DrainDelay: time.Millisecond, ShutdownTimeout: 5 * time.Second,

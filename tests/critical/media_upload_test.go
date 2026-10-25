@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/authtest"
@@ -201,6 +202,7 @@ func TestUploadAcceptanceAndRetry(t *testing.T) {
 		_, err = client.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 		must(t, err)
 		before := awaitMediaReady(t, client, ref)
+		awaitEditionPublication(t, a, client, ref.ID, ref.Version)
 		var source string
 		for _, file := range before.Files {
 			if file.Path == "pages/one.png" {
@@ -212,17 +214,15 @@ func TestUploadAcceptanceAndRetry(t *testing.T) {
 		}
 		_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpEdit, Path: "pages/one.png", Edit: &media.Edit{Rotate: 90}}}})
 		must(t, err)
-		after := awaitMediaReady(t, client, ref)
-		rotated := false
-		for _, file := range after.Files {
-			if file.Path == "reader/one.webp" {
-				assertImage(t, file.URL, 32, 48)
-				rotated = true
-			}
-		}
-		if !rotated {
-			t.Fatal("accepted edit did not produce its rotated reader rendition")
-		}
+		awaitMediaReady(t, client, ref)
+		var read media.ReadResult
+		waitForWithin(t, 45*time.Second, func() bool {
+			wakeDuePublicationJobs(t, a)
+			time.Sleep(550 * time.Millisecond)
+			read, err = a.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+			return err == nil && len(read.Files) == 1 && read.Files[0].Path == "reader/one.webp" && read.Files[0].W == 32 && read.Files[0].H == 48
+		})
+		assertImage(t, read.Files[0].URL, 32, 48)
 		res, err := http.Get(source)
 		must(t, err)
 		original, err := io.ReadAll(res.Body)
@@ -231,8 +231,6 @@ func TestUploadAcceptanceAndRetry(t *testing.T) {
 		if res.StatusCode != 200 || !bytes.Equal(original, payload) {
 			t.Fatal("editing changed or revoked the immutable source bytes")
 		}
-		read, err := a.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
-		must(t, err)
 		if read.Access != media.AccessFull {
 			t.Fatalf("edit changed published access: %+v", read)
 		}
