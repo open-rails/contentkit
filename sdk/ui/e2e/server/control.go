@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -338,28 +337,4 @@ func (h *harness) fileKey(ctx context.Context, it media.Item, p string) (string,
 		}
 	}
 	return "", fmt.Errorf("no file %q", p)
-}
-
-func (h *harness) createNotification(w http.ResponseWriter, r *http.Request) {
-	var in notify.Input
-	if err := decode(r, &in); err != nil {
-		fail(w, http.StatusBadRequest, err)
-		return
-	}
-	if in.CreatedAt.IsZero() {
-		in.CreatedAt = time.Now().UTC()
-	}
-	if in.Origin.System == "" {
-		in.Origin = notify.Origin{System: "fixture-host", Scope: tenant, ID: uuid.NewString()}
-	}
-	published, err := h.ck.Client().PostNotificationsPublish(r.Context(), notification.Publication{Notifications: []notify.Input{in}})
-	items := published.Items
-	if err == nil && len(items) == 0 {
-		err = errors.New("the recipient was erased")
-	}
-	if err != nil {
-		fail(w, http.StatusBadRequest, err)
-		return
-	}
-	reply(w, http.StatusCreated, items[0])
 }

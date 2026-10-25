@@ -318,15 +318,14 @@ type Deps struct {
 	Authorization Authorization
 	// Users is the directory (authkit/userinfo; AuthKit's ak.UserInfo()):
 	// authors' names. In scoped mode it must be restricted to Scope.TenantID
-	// (AuthKit's ForTenant client); it also verifies privileged avatar and
-	// notification recipients. Nil shows authors by id and refuses scoped
-	// avatar edits and user notification publication.
-	// Transactional notification publication additionally needs GetTx so this
-	// lookup uses the domain transaction, never another pool connection.
+	// (AuthKit's ForTenant client); it also verifies privileged avatar targets.
+	// Nil shows authors by id and refuses scoped avatar edits. The notification
+	// publisher independently validates recipient ownership in its transaction.
 	Users userinfo.Lookup
 	// Notifications publishes native notices through the account inbox owner.
 	// The publisher joins each content transaction, including remote delivery
-	// obligations. Nil retains the legacy local inbox during explicit adoption.
+	// obligations. Nil disables notification publication; ContentKit creates no
+	// fallback inbox, receipt tables or inbox HTTP routes.
 	Notifications notify.Publisher
 	// Billing is the site's OpenRails merchant (adapters/openrails.Billing
 	// over an embedded engine or the remote client): held entitlement keys

@@ -91,6 +91,8 @@ type MigrationOptions struct {
 // before New with Database.SkipMigrations=true. The flag never skips this
 // explicit operation. No runtime authorization or object-store dependencies are
 // constructed, and the caller retains ownership of pool.
+// When adopting an existing account inbox, run authkit.MigrateNotifications
+// first. ContentKit validates and adopts that storage but never migrates it.
 func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, options ...MigrationOptions) error {
 	if ctx == nil {
 		return errors.New("contentkit: migration context is required")

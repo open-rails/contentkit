@@ -19,11 +19,11 @@ import (
 // No payload or user read state is copied into the source ledger.
 func (e *Engine) adoptCommentNoticeIdentities(ctx context.Context) error {
 	schema, namespace := e.accountStorage()
-	var exists bool
-	if err := e.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, pgx.Identifier{schema, "notify_items"}.Sanitize()).Scan(&exists); err != nil {
-		return err
+	available, err := e.accountErasureAvailable(ctx)
+	if err != nil {
+		return fmt.Errorf("contentkit: prepare the AuthKit account inbox with authkit.MigrateNotifications before adopting comment receipts: %w", err)
 	}
-	if !exists {
+	if !available {
 		return nil
 	}
 	identities := pgx.Identifier{e.schema, "content_comment_notifications"}.Sanitize()

@@ -30,7 +30,6 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/authkit/auth"
-	"github.com/open-rails/authkit/userinfo"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
@@ -610,28 +609,6 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		o.Avatars = e.avatars.urls
 	}
 	return o
-}
-
-type transactionalUserInfo interface {
-	GetTx(context.Context, pgx.Tx, []string) (map[string]userinfo.User, error)
-}
-
-func (e *Engine) accountExistsTx(deps Deps) func(context.Context, pgx.Tx, string) (bool, error) {
-	if e.scope == nil {
-		return nil
-	}
-	return func(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
-		directory, ok := deps.Users.(transactionalUserInfo)
-		if !ok {
-			return false, auth.ErrUnavailable
-		}
-		users, err := directory.GetTx(ctx, tx, []string{id})
-		if err != nil {
-			return false, err
-		}
-		user, found := users[id]
-		return found && user.ID == id, nil
-	}
 }
 
 // accountExists uses only the host's target-tenant directory. Source actor
