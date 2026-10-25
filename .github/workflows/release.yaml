@@ -8,6 +8,7 @@ name: Release
     types: [published]
 permissions:
   contents: read
+  actions: read
 env:
   TAG: ${{ github.event.release.tag_name }}
 jobs:
@@ -34,10 +35,31 @@ jobs:
         ref: ${{ env.TAG }}
         persist-credentials: false
         fetch-depth: 0
-    - name: Verify release source belongs to master
+    - name: Verify release source
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PRERELEASE: ${{ github.event.release.prerelease }}
       run: |
-        git merge-base --is-ancestor HEAD origin/master
-        printf 'Release source: `%s`\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+        source="$(git rev-parse HEAD)"
+        if [[ "$PRERELEASE" == true && "$TAG" =~ ^sdk/ui/v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]]; then
+          # UI prereleases can qualify an unmerged consumer integration. Require
+          # successful source CI at this exact commit before publishing it.
+          runs="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yaml/runs" \
+            -f head_sha="$source" -f status=success -f per_page=100 \
+            --jq '.workflow_runs[] | select(.event == "pull_request" or .event == "workflow_dispatch") | .id')"
+          qualified=false
+          for run in $runs; do
+            # Draft PR runs can succeed with every suite skipped; they do not
+            # qualify a release. The real gate requires all selected suites.
+            gate="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+              --jq '.jobs[] | select(.name == "CI Gate" and .conclusion == "success") | .id')"
+            if [[ -n "$gate" ]]; then qualified=true; break; fi
+          done
+          [[ "$qualified" == true ]] || { echo 'UI prerelease source has no successful CI Gate.' >&2; exit 1; }
+        else
+          git merge-base --is-ancestor HEAD origin/master
+        fi
+        printf 'Release source: `%s`\n' "$source" >> "$GITHUB_STEP_SUMMARY"
     - uses: pnpm/action-setup@v4
       with:
         package_json_file: sdk/ui/package.json
