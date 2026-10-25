@@ -178,7 +178,7 @@ it("reports an upload the worker fails after the editor opened, once", async () 
   try {
     const up = await c.media.upload(garbage("new.png", "image/png", 22), { ref, path: "images/new.png" });
     await c.media.commit(ref, [{ op: "put", path: up.path, blob: up.blob }]);
-    const { container } = render(<MediaFolderEditor client={c} item={ref} poll={100} onError={onError} />);
+    const { container } = render(<MediaFolderEditor client={c} item={ref} onError={onError} />);
     await waitFor(() => expect(container.querySelectorAll("[data-ckui=upload-row]")).toHaveLength(2), wait);
     expect(screen.getByText("Processing…")).toBeInTheDocument();
     expect(onError).not.toHaveBeenCalled();

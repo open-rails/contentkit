@@ -55,3 +55,35 @@ migration step. It refuses running old lifecycle jobs, retires only owned
 waiting rows, preserves history and other namespaces, and queues one normal
 image pass per known item using an existing journal receipt. No bucket discovery
 or recurring backfill job is installed.
+
+## Live editor status
+
+The existing `GET /v1/media/{kind}/{id}?status=1` and version route support
+`Accept: text/event-stream`. Ordinary JSON and `GetMediaVersion(...Status:true)`
+remain current-state queries. Go `Client.WatchMedia` streams the same snapshots
+through the configured HTTP transport, including the embedded engine client.
+
+Each connection emits an authorized `snapshot`. Item/version-matching retained
+facts trigger `progress` snapshots; other owners' facts never leave the handler.
+The engine selects its app log or shared account log from the registered media
+kind. Snapshot payloads contain no signed URLs, cookies or new work.
+
+SSE IDs are retained-log cursors. Reconnect with `Last-Event-ID` or `after`;
+retention expiry emits `resync` with a current snapshot and new cursor. Reading
+the boundary before the snapshot prevents lost concurrent completions. An
+invalid or differently scoped cursor is refused. Each observer owns its cursor;
+there is no registry, delivery job, acknowledgment or global poll coordinator.
+The request reads bounded retained pages, and writes one bounded snapshot at a
+time with a write deadline and a heartbeat every ten seconds. While processing,
+the heartbeat also reads canonical status so existing encoder segment/phase
+checkpoints can update the UI before a manifest rendition is complete. A
+timestamp-only encoder change does not emit progress; no producer or delivery
+job is added. Write deadlines are cleared between messages, including while
+catching up retained pages.
+
+Live permission and credential checks run before subsequent observations and
+heartbeats without replaying the request's sender proof. Expiry, revocation,
+account membership changes or loss of editor access terminate observation.
+Authenticators must provide the existing live `auth.PermissionChecker` contract;
+identity-only credentials cannot open a long-lived stream. Cancellation and
+response-body close release request resources, including embedded Go pipes.

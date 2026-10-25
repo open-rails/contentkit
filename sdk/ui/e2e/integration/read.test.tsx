@@ -148,7 +148,7 @@ describe("useMediaRead against the real ContentKit", () => {
     await waitFor(() => expect(failing.result.current.error?.code).toBe("rate_limited"), { timeout: 10_000 });
   }, 20_000);
 
-  it("polls an editor read while uploads process, then stops", async () => {
+  it("observes an editor read through SSE while uploads process, then stops", async () => {
     const ref = await item(h, "gallery", alice);
     // The worker's storage requests for this item wait: its upload stays in processing.
     await h.faults([{ item: ref.id, fault: "hold" }]);
@@ -156,8 +156,8 @@ describe("useMediaRead against the real ContentKit", () => {
     const up = await c.media.upload(png("1.png", 1301), { ref, path: "originals/001.png" });
     await c.media.commit(ref, [{ op: "put", path: up.path, blob: up.blob }]);
     const r = recording();
-    const polling = client(h, cfg, alice, { record: r });
-    const { result } = renderHook(() => useMediaRead(ref, { editor: true, poll: 50, client: polling }));
+    const observing = client(h, cfg, alice, { record: r });
+    const { result } = renderHook(() => useMediaRead(ref, { editor: true, client: observing }));
     await waitFor(() => expect(result.current.processing).toBe(true), wait);
     await h.clearFaults(ref.id);
     await waitFor(() => expect(result.current.processing).toBe(false), wait);
@@ -190,14 +190,14 @@ describe("useMediaRead against the real ContentKit", () => {
     await waitFor(() => expect(reads(r)).toBe(3), wait);
   });
 
-  it("reloads the item's viewer reads once a polled editor read shows its uploads processed", async () => {
+  it("reloads the item's viewer reads once a streamed editor read shows its uploads processed", async () => {
     const ref = await item(h, "gallery", alice);
     await h.faults([{ item: ref.id, fault: "hold" }]);
     const r = recording();
     const c = client(h, cfg, alice, { record: r });
     const up = await c.media.upload(png("1.png", 1401), { ref, path: "originals/001.png" });
     await c.media.commit(ref, [{ op: "put", path: up.path, blob: up.blob }]);
-    const { result } = renderHook(() => ({ editor: useMediaRead(ref, { editor: true, poll: 50 }), viewer: useMediaRead(ref, { prefix: "low-res/" }) }), { wrapper: provider(c) });
+    const { result } = renderHook(() => ({ editor: useMediaRead(ref, { editor: true }), viewer: useMediaRead(ref, { prefix: "low-res/" }) }), { wrapper: provider(c) });
     await waitFor(() => expect(result.current.editor.processing).toBe(true), wait);
     const viewerReads = () => r.queries.filter((q) => q.get("prefix") === "low-res/").length;
     expect(viewerReads()).toBe(1);

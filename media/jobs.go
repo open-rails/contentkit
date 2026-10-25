@@ -140,7 +140,7 @@ func (j *PGJournal) retireItemTx(ctx context.Context, tx pgx.Tx, item Item, owne
 	if err := jr.lockAdmission(ctx, tx, item.Prefix()); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO `+jr.table+`
+	inserted, err := tx.Exec(ctx, `INSERT INTO `+jr.table+`
 (tenant_id,operation_id,content_kind,content_id,content_version_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects)
 VALUES($1,$2,$3,$4,$5,$6,'',$7,$8,'applied',$9) ON CONFLICT(tenant_id,operation_id) DO NOTHING`,
 		item.Ref().TenantID, operation, item.Ref().ContentKind, item.Ref().ContentID, item.Ref().ContentVersionID, item.Prefix(), fingerprint[:], uuid.New(), effects)
@@ -154,7 +154,9 @@ VALUES($1,$2,$3,$4,$5,$6,'',$7,$8,'applied',$9) ON CONFLICT(tenant_id,operation_
 	if !c.Ref.Equal(item.Ref()) || c.Fingerprint != fingerprint || c.Effects.FolderDelete == nil {
 		return ErrCommitIdentity
 	}
-	if !c.Effects.FolderDelete.Completed {
+	if inserted.RowsAffected() > 0 {
+		// Only a new claim schedules initial erasure. Retrying the owner claim
+		// must not rewind a failed obligation or change its in-flight revision.
 		// Initial erasure must not wait behind an older late-write deadline.
 		_, err = tx.Exec(ctx, `INSERT INTO `+jr.cleanup+` AS c (tenant_id,folder_prefix,content_kind,due_at,deletion_operations)
 VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,folder_prefix) DO UPDATE SET due_at=least(c.due_at,EXCLUDED.due_at),

@@ -24,7 +24,7 @@ describe("media hooks against the real ContentKit", () => {
       return <ContentKitProvider client={c}>{children}</ContentKitProvider>;
     };
 
-  it("useMediaRead polls an editor read until the worker is done, and merges a viewer's windows", async () => {
+  it("useMediaRead observes an editor read until the worker is done, and merges a viewer's windows", async () => {
     const ref = await item(h, "gallery", accounts.get("alice"));
     const c = as();
     const ops: Op[] = [];
@@ -32,7 +32,7 @@ describe("media hooks against the real ContentKit", () => {
       const up = await c.media.upload(png(`${n}.png`, n), { ref, path: `originals/00${n}.png` });
       ops.push({ op: "put", path: up.path, blob: up.blob });
     }
-    const { result } = renderHook(() => useMediaRead(ref, { editor: true, prefix: "originals/", poll: 100 }), { wrapper: provider(c) });
+    const { result } = renderHook(() => useMediaRead(ref, { editor: true, prefix: "originals/" }), { wrapper: provider(c) });
     await act(async () => void (await c.media.commit(ref, ops)));
     await waitFor(() => expect(result.current.read?.files.map((f) => f.path)).toEqual(["originals/001.png", "originals/002.png", "originals/003.png"]), wait);
     await waitFor(() => expect(result.current.processing).toBe(false), wait);

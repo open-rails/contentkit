@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/open-rails/helpers/eventlog"
 	"log/slog"
 	"math"
 	"net/http"
@@ -32,6 +33,8 @@ type HandlerOptions struct {
 	// playlist and download counts.
 	// Viewers are keyed by Actor.ID, anonymous ones by their address.
 	Limit RateLimit
+	// Events selects the retained processing log for this physical item.
+	Events func(contentref.ContentRef) (eventlog.Reader, error)
 }
 
 // Handler serves the read API: the engine's media route group (/v1/media).
@@ -56,6 +59,10 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 	g := &gate.Gate{Auth: o.Auth, Log: log, Then: limited(o, log)}
 	httpapi.Mount(mux, g.Guard, readHandler{r, o, log}, readRoutes)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if acceptsProgress(req) {
+			mux.ServeHTTP(w, req)
+			return
+		}
 		mux.ServeHTTP(w, req.WithContext(access.WithMemo(req.Context())))
 	})
 }
@@ -67,8 +74,13 @@ type readHandler struct {
 }
 
 func (h readHandler) read(w http.ResponseWriter, req *http.Request) {
-	start := time.Now()
 	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Add("Vary", "Accept")
+	if acceptsProgress(req) {
+		h.progress(w, req)
+		return
+	}
+	start := time.Now()
 	res, g, err := h.r.serveRead(req, h.o)
 	if err != nil {
 		fail(w, req, h.log, err)

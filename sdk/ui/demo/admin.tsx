@@ -1,4 +1,4 @@
-import { CommentModeration, ContentManager, EntityManager, MediaItemPanel, PollManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
+import { CommentModeration, ContentManager, ContentUpload, EntityManager, MediaItemPanel, PollManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
 import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -74,6 +74,10 @@ function Alone() {
         <PollManager {...common} basePath="/admin/polls" languages={languages} />
       ) : at.startsWith("/admin/media/") ? (
         <MediaItemPanel {...common} item={{ kind: at.split("/")[3]!, id: at.split("/")[4]!, version: at.split("/")[5] || undefined }} languages={subtitleLanguages} />
+      ) : at.startsWith("/admin/content-upload") ? (
+        <ContentUpload {...common} kind={q.get("kind") ?? "comic"} defaults={{ format: q.get("format") ?? undefined, language: q.get("contentLanguage") ?? undefined }} onOpen={(content) => { const url = new URL(location.href); url.pathname = `/admin/comics/${content.code}`; location.assign(url); }} />
+      ) : at.startsWith("/admin/comics") ? (
+        <ContentManager {...common} kind={q.get("kind") ?? "comic"} basePath="/admin/comics" languages={languages} />
       ) : at.startsWith("/admin/uploads") ? (
         <>
           <Created />
@@ -126,6 +130,8 @@ function Hosted() {
           path="/admin/entities/*"
           element={<EntityManager client={client} basePath="/admin/entities" navigation={navigation} pageSize={size} language={lang} />}
         />
+        <Route path="/admin/content-upload" element={<ContentUpload client={client} kind={q.get("kind") ?? "comic"} defaults={{ format: q.get("format") ?? undefined, language: q.get("contentLanguage") ?? undefined }} onOpen={(content) => navigate(`/admin/comics/${content.code}${loc.search}`)} language={lang} />} />
+        <Route path="/admin/comics/*" element={<ContentManager client={client} kind={q.get("kind") ?? "comic"} basePath="/admin/comics" navigation={navigation} languages={languages} language={lang} />} />
         <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />
         <Route
           path="/admin/posts/*"

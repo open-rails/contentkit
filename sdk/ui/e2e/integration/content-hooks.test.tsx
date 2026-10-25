@@ -262,7 +262,9 @@ describe("content hooks against the real ContentKit", () => {
     expect(writer.result.current.imageSrc(imageRef(name))).toBe(fresh);
     await act(async () => void (await writer.result.current.setCover(png())));
     await waitFor(() => expect(writer.result.current.version?.cover?.image).toMatch(/^i-/), wait);
-    expect(writer.result.current.version?.cover?.url).toBeUndefined();
+    const publicCover = writer.result.current.version?.cover?.url;
+    expect(publicCover).toMatch(new RegExp(`/blog/${vid}/public/cover-i-`));
+    expect((await fetch(publicCover!)).status).toBe(200);
     // A draft's body images reach its editors signed, never as public files.
     for (const [n, u] of Object.entries(writer.result.current.content?.images ?? {})) expect([n, u.includes("?t=") && !u.includes("/public/")]).toEqual([name, true]);
     writer.unmount();
@@ -309,6 +311,8 @@ describe("content hooks against the real ContentKit", () => {
     // Unpublished, readers lose the item; published again, its images show again.
     await act(async () => void (await result.current.unpublish()));
     await waitFor(async () => expect(client().contents.get(id, "en")).rejects.toMatchObject({ code: "not_found" }), slow);
+    // Declared-public covers remain public independently of release visibility.
+    expect((await fetch(publicCover!)).status).toBe(200);
     await act(async () => void (await result.current.publish()));
     await readerSees();
   });

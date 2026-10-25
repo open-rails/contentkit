@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { Add01Icon, Search01Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, ArrowLeft02Icon, Search01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
@@ -114,7 +114,8 @@ function Manager({ basePath, navigation, ...p }: Inner) {
 function Back({ loc, kind }: { loc: AdminLocation; kind: string }) {
   const { t } = useMessages();
   return (
-    <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => loc.go(kind)}>
+    <Button variant="ghost" size="sm" className="-ms-2 h-8 justify-self-start gap-1.5 px-2 text-muted-foreground hover:text-foreground" onClick={() => loc.go(kind)}>
+      <HugeiconsIcon icon={ArrowLeft02Icon} strokeWidth={2} data-icon="inline-start" />
       {t("entityManager.back")}
     </Button>
   );
@@ -379,7 +380,7 @@ function Edit({ loc, kind, client, labels, onError, renderContent, contentHref, 
       >
         {(entity) => (
           <>
-            <ScopedEntities entity={entity} management labels={labels} client={client} onSelect={(c) => loc.go(`${c.kind}/${c.id}`)} />
+            <ScopedEntities entity={entity} management labels={labels} client={client} onSelect={(c) => loc.go(`${c.kind}/${c.id}`)} className="rounded-lg border border-border bg-card p-4" />
             <EntityMembers
               entity={entity}
               labels={labels}

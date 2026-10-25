@@ -65,7 +65,7 @@ it("an earlier visit's uploads return, reserve their names and are added beside 
   record.commits.length = 0;
   record.presigns.length = 0;
   const user = userEvent.setup();
-  const { container } = render(<MediaFolderEditor item={ref} client={c} poll={false} />);
+  const { container } = render(<MediaFolderEditor item={ref} client={c} />);
   await waitFor(() => expect(container.querySelector('[data-ckui="pending-row"]')).toHaveTextContent("a.png"), wait);
   await user.upload(container.querySelector<HTMLInputElement>('[data-ckui="folder-add"] input')!, png("a.png", 81));
   await waitFor(() => expect(record.presigns.map((p) => p.path)).toEqual(["originals/a-2.png"]), wait);
@@ -84,7 +84,7 @@ it("a draft adds earlier unattached uploads automatically", async () => {
   const c = client(h, cfg, owner, { record });
   await pending(c, ref, "b.png", 82);
   record.commits.length = 0;
-  const { container } = render(<MediaFolderEditor item={ref} client={c} commit="auto" poll={false} />);
+  const { container } = render(<MediaFolderEditor item={ref} client={c} commit="auto" />);
   await waitFor(() => expect(container.querySelectorAll('[data-ckui="upload-row"]')).toHaveLength(1), wait);
   expect(record.commits[0]).toEqual([expect.objectContaining({ op: "attach", path: "originals/b.png" })]);
 });
@@ -98,7 +98,7 @@ it("earlier unattached uploads count toward the folder's upload cap", async () =
   await pending(c, ref, "b.png", 84);
   record.presigns.length = 0;
   const user = userEvent.setup();
-  const { container } = render(<MediaFolderEditor item={ref} client={c} poll={false} />);
+  const { container } = render(<MediaFolderEditor item={ref} client={c} />);
   await screen.findByRole("button", { name: "Add 2" }, wait);
   await user.upload(container.querySelector<HTMLInputElement>('[data-ckui="folder-add"] input')!, png("c.png", 85));
   expect(await screen.findByRole("alert")).toHaveTextContent("This item holds at most 2 of these files. Remove some first.");

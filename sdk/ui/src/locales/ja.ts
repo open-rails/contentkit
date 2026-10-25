@@ -90,6 +90,8 @@ export const ja: ContentKitUiMessageBundle = {
     },
   },
   readiness: {
+    ready: "メディアの準備完了",
+    previews: "ページプレビュー",
     archivePages: "ZIP内のページ",
     full: "メディア処理は一時停止中です",
     fullHint: "ストレージ上限に達しました。不要なファイルを削除するか上限を増やしてください。",

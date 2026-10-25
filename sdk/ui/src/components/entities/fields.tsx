@@ -17,52 +17,55 @@ export function AttributeFields({ declared, form, onChange, labels }: { declared
   const names = Object.keys(declared).sort();
   if (!names.length) return null;
   return (
-    <div className="grid gap-3 sm:grid-cols-2" data-ckui="entity-attributes-form">
-      {names.map((name) => {
-        const spec = declared[name]!;
-        const label = labelOf(labels, name);
-        const value = form[name] ?? attributeInput(spec, undefined);
-        if (spec.type === "bool")
-          return (
-            <div key={name} className="flex items-center gap-2">
-              <Switch id={`${id}-${name}`} checked={value === true} onCheckedChange={(v) => onChange(name, v)} aria-label={label} />
-              <Label htmlFor={`${id}-${name}`}>{label}</Label>
-            </div>
-          );
-        if (spec.type === "enum")
+    // Two columns only when its own box is wide enough, so a side panel stacks them.
+    <div className="@container">
+      <div className="grid gap-3 @md:grid-cols-2" data-ckui="entity-attributes-form">
+        {names.map((name) => {
+          const spec = declared[name]!;
+          const label = labelOf(labels, name);
+          const value = form[name] ?? attributeInput(spec, undefined);
+          if (spec.type === "bool")
+            return (
+              <div key={name} className="flex items-center gap-2">
+                <Switch id={`${id}-${name}`} checked={value === true} onCheckedChange={(v) => onChange(name, v)} aria-label={label} />
+                <Label htmlFor={`${id}-${name}`}>{label}</Label>
+              </div>
+            );
+          if (spec.type === "enum")
+            return (
+              <div key={name} className="grid gap-1.5">
+                <Label>{label}{spec.required && " *"}</Label>
+                <Select value={String(value) || NONE} required={spec.required} onValueChange={(v) => onChange(name, v === NONE ? "" : String(v))}>
+                  <SelectTrigger size="sm" aria-label={label} aria-required={spec.required}>
+                    <SelectValue>{(v: string) => (v === NONE ? (spec.required ? t("entityEditor.choose") : t("entityEditor.none")) : labelOf(labels, v))}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {!spec.required && <SelectItem value={NONE}>{t("entityEditor.none")}</SelectItem>}
+                    {(spec.values ?? []).map((v) => (
+                      <SelectItem key={v} value={v}>
+                        {labelOf(labels, v)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            );
           return (
             <div key={name} className="grid gap-1.5">
-              <Label>{label}{spec.required && " *"}</Label>
-              <Select value={String(value) || NONE} required={spec.required} onValueChange={(v) => onChange(name, v === NONE ? "" : String(v))}>
-                <SelectTrigger size="sm" aria-label={label} aria-required={spec.required}>
-                  <SelectValue>{(v: string) => (v === NONE ? (spec.required ? t("entityEditor.choose") : t("entityEditor.none")) : labelOf(labels, v))}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {!spec.required && <SelectItem value={NONE}>{t("entityEditor.none")}</SelectItem>}
-                  {(spec.values ?? []).map((v) => (
-                    <SelectItem key={v} value={v}>
-                      {labelOf(labels, v)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor={`${id}-${name}`}>{label}{spec.required && " *"}</Label>
+              <Input
+                id={`${id}-${name}`}
+                required={spec.required}
+                className="h-8"
+                type={spec.type === "int" ? "number" : spec.type === "time" ? "datetime-local" : "text"}
+                step={spec.type === "int" ? 1 : undefined}
+                value={String(value)}
+                onChange={(e) => onChange(name, e.target.value)}
+              />
             </div>
           );
-        return (
-          <div key={name} className="grid gap-1.5">
-            <Label htmlFor={`${id}-${name}`}>{label}{spec.required && " *"}</Label>
-            <Input
-              id={`${id}-${name}`}
-              required={spec.required}
-              className="h-8"
-              type={spec.type === "int" ? "number" : spec.type === "time" ? "datetime-local" : "text"}
-              step={spec.type === "int" ? 1 : undefined}
-              value={String(value)}
-              onChange={(e) => onChange(name, e.target.value)}
-            />
-          </div>
-        );
-      })}
+        })}
+      </div>
     </div>
   );
 }

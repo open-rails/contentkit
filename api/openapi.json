@@ -6259,10 +6259,18 @@
           {
             "name": "status",
             "in": "query",
-            "description": "editors: whole-item processing counts only, without URLs, media grants or editor-view work",
+            "description": "editors: whole-item processing counts only, without URLs, media grants or editor-view work; Accept: text/event-stream observes retained progress",
             "allowEmptyValue": true,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "SSE reconnect cursor; Last-Event-ID is also accepted. Retention expiry sends a resync snapshot",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -6502,10 +6510,18 @@
           {
             "name": "status",
             "in": "query",
-            "description": "editors: whole-item processing counts only, without URLs, media grants or editor-view work",
+            "description": "editors: whole-item processing counts only, without URLs, media grants or editor-view work; Accept: text/event-stream observes retained progress",
             "allowEmptyValue": true,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "SSE reconnect cursor; Last-Event-ID is also accepted. Retention expiry sends a resync snapshot",
+            "schema": {
+              "type": "string"
             }
           },
           {

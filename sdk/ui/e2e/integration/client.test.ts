@@ -370,7 +370,7 @@ describe("reads", () => {
     await h.faults([{ item: ref.id, fault: "hold" }]);
     try {
       await c.commit(cover, [{ op: "edit", path: "cover.png", edit }]);
-      const done = c.waitFor(cover, "cover", { interval: 50, timeout: 60_000 });
+      const done = c.waitFor(cover, "cover", { timeout: 60_000 });
       await sleep(400);
       expect(reads(rec)).toBeGreaterThanOrEqual(2);
       await h.clearFaults(ref.id);
@@ -381,7 +381,7 @@ describe("reads", () => {
       const before = reads(rec);
       const up = await c.upload(image(6, "p.png"), { ref, path: "originals/p.png" });
       await c.commit(ref, [{ op: "put", path: up.path, blob: up.blob }]);
-      const placed = c.waitFor(ref, "originals/p", { interval: 50, timeout: 60_000 });
+      const placed = c.waitFor(ref, "originals/p", { timeout: 60_000 });
       await sleep(400);
       expect(reads(rec) - before).toBeGreaterThanOrEqual(2);
       await h.clearFaults(ref.id);

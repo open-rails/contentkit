@@ -106,3 +106,17 @@ it("keeps an uncertain commit in memory but never persists it without a known ac
   expect(commit.mock.calls[1]![2]?.operationID).toBe(commit.mock.calls[0]![2]?.operationID);
   expect(localStorage.length).toBe(0);
 });
+
+it("shows actual transferred byte totals separately from server processing", async () => {
+  const f = fixture();
+  f.upload.mockImplementationOnce(async (_file, options) => {
+    options.onProgress?.({ phase: "uploading", loaded: 5 * 1024 * 1024, total: 30 * 1024 * 1024 });
+    return new Promise((_resolve, reject) => options.signal?.addEventListener("abort", () => reject(new ContentKitError("aborted", "Closed")), { once: true }));
+  });
+  const user = userEvent.setup();
+  const view = render(f.content("alice"));
+  await user.upload(screen.getByLabelText("Add files"), file());
+  await waitFor(() => expect(view.container.querySelector('[data-ckui="upload-transfer"]')).toHaveTextContent("5 MB / 30 MB"));
+  expect(view.container.querySelector('[data-ckui="media-processing"]')).toBeNull();
+  view.unmount();
+});
