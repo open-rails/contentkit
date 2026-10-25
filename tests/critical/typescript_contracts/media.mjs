@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { createContentKitClient,ContentKitError,fetchTransport } from "../../../sdk/ui/dist/client.js";
+
+export async function runMediaContracts(group,fixture){
+ const owner=createContentKitClient({baseUrl:fixture.base,token:()=>fixture.owner,folders:{poll:"custom_polls"}});
+ const reader=createContentKitClient({baseUrl:fixture.base,token:()=>fixture.reader});
+ const ref=fixture.ref,bytes=Buffer.from(fixture.png,"base64"),file=new File([bytes],"one.png",{type:"image/png"});
+ const bindings=[];const proved=(...names)=>bindings.push(...names);
+ const refused=async(action,status,code)=>assert.rejects(action,error=>error instanceof ContentKitError&&error.status===status&&error.code===code);
+ const hash=data=>createHash("sha256").update(data).digest("hex");
+ if(group==="media_image_io"){
+  const url=fixture.base+"/v1/media/gallery/"+ref.id+"/versions/"+ref.version;
+  assert.equal(owner.media.api.itemURL(ref),url);
+  assert.throws(()=>owner.media.api.itemURL({...ref,id:"../../different-app"}),error=>error instanceof ContentKitError&&error.code==="invalid_request");
+  proved("MediaApi.itemURL");
+  const presets=await owner.media.api.presets();const cover=presets.find(x=>x.kind==="gallery"&&x.name==="cover");
+  assert(cover);assert.equal(cover.from,"cover");assert.deepEqual(cover.widths,[16,32]);
+  assert.deepEqual(await owner.media.presets(),presets);
+  proved("MediaApi.presets","MediaClient.presets");
+  assert.equal(await owner.media.presetPath("gallery","cover",file),"cover");
+  assert.equal(await owner.media.presetPath("unknown-kind",undefined,file),"one.png");
+  assert.deepEqual(owner.media.pollRef(ref.id),{kind:"custom_polls",id:ref.id});proved("MediaClient.presetPath","MediaClient.pollRef");
+  await refused(()=>reader.media.upload(file,{ref,path:"pages/forbidden.png"}),403,"forbidden");
+  const uploaded=await owner.media.upload(file,{ref,path:"pages/one.png"});
+  assert.equal(uploaded.path,"pages/one.png");assert.equal(uploaded.type,"image/png");assert.equal(uploaded.size,bytes.length);assert.equal(typeof uploaded.blob,"string");assert(uploaded.blob.length>0);
+  proved("MediaClient.upload","defaultTransport");
+  const committed=await owner.media.commit(ref,[{op:"put",path:uploaded.path,blob:uploaded.blob}],{operationID:crypto.randomUUID()});
+  assert(committed.some(x=>x.path==="pages/one.png"&&x.upload));proved("MediaClient.commit");
+  const processed=await owner.media.waitFor(ref,"pages/one.png",{timeout:30_000,interval:50});
+  assert.equal(processed.path,"pages/one.png");assert.equal(processed.w,96);assert.equal(processed.h,64);assert.equal(processed.size,bytes.length);assert(!processed.staged);assert(!processed.pending?.length);
+  proved("MediaClient.waitFor");
+  const read=await owner.media.read(ref,{editor:true});const source=read.files.find(x=>x.path==="pages/one.png");assert(source?.url);
+  const stored=await fetch(source.url);assert.equal(stored.status,200);assert.equal(hash(Buffer.from(await stored.arrayBuffer())),fixture.sha256);
+  const editor=await owner.media.editorView(ref,"pages/one.png",{timeout:30_000,interval:50});assert.equal(editor.width,96);assert.equal(editor.height,64);assert.equal((await fetch(editor.url)).status,200);
+  await refused(()=>owner.media.editorView(ref,"pages/missing.png"),404,"not_found");proved("MediaClient.editorView");
+  const placed=await owner.media.put(file,{ref,path:"pages/two.png",timeout:30_000});assert.equal(placed.path,"pages/two.png");assert.equal(placed.w,96);assert.equal(placed.h,64);assert(placed.upload);proved("MediaClient.put");
+  const text=new Blob(["Independent storage transport bytes"],{type:"text/plain"});
+  const textBytes=Buffer.from(await text.arrayBuffer());
+  const plan=await owner.media.api.presign({ref,path:"attachments/transport.txt",type:"text/plain",size:text.size,sha256:hash(textBytes)});assert(plan.put);
+  const invalid=new URL(plan.put.url);invalid.searchParams.set("X-Amz-Signature","0".repeat(64));
+  await refused(()=>fetchTransport({...plan.put,url:invalid.toString()},text,{}),403,"storage");
+  const sent=[];await fetchTransport(plan.put,text,{onProgress:n=>sent.push(n)});assert.deepEqual(sent,[text.size]);proved("fetchTransport");
+  const raw=await owner.media.api.commit({ref,operation_id:crypto.randomUUID(),ops:[{op:"put",path:plan.path,blob:plan.blob}]});
+  assert(raw.files.some(x=>x.path==="attachments/transport.txt"&&x.upload));
+  const attachment=await owner.media.waitFor(ref,"attachments/transport.txt",{timeout:30_000,interval:50});assert.equal(attachment.size,text.size);
+  const listing=await owner.media.read(ref,{editor:true,prefix:"attachments/"});assert.equal(listing.files.length,1);assert.equal(Buffer.from(await(await fetch(listing.files[0].url)).arrayBuffer()).toString(),"Independent storage transport bytes");
+  proved("MediaApi.commit");
+ }else throw new Error("Unknown media contract "+group);
+ return bindings;
+}

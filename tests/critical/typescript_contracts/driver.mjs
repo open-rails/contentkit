@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { runMediaContracts } from "./media.mjs";
 import { createContentKitClient, ContentKitError } from "../../../sdk/ui/dist/client.js";
 
 const fixture=JSON.parse(process.env.CONTENTKIT_TYPESCRIPT_FIXTURE);
@@ -191,5 +192,5 @@ if(group==="catalog_publication"){
  assert.deepEqual((await owner.notifications.list({dismissed:true})).items.map(x=>x.id),[fixture.first]);
  const restored=await owner.notifications.setDismissed(fixture.first,false);assert.equal(restored.id,fixture.first);assert.equal(restored.dismissed_at,null);assert.equal(restored.status,"open");assert.equal(restored.resolved_at,null);
  assert.deepEqual((await owner.notifications.list()).items.map(x=>x.id),[fixture.second,fixture.first]);proved("NotificationsClient.setDismissed");
-}else throw new Error(`Unknown contract group ${group}`);
+}else if(group.startsWith("media_")){bindings.push(...await runMediaContracts(group,fixture));}else throw new Error(`Unknown contract group ${group}`);
 console.log(JSON.stringify({group,bindings,passed:true}));
