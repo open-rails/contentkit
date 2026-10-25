@@ -39,6 +39,16 @@ retirement, retained references, late writes and existing temporary expiry must
 remain correct. Existing public caches and already downloaded bytes cannot be
 retracted by a database visibility change.
 
+Downloads of already served files use their public/private gateway paths.
+Retained originals and `HostOnly` outputs use the existing signed archive
+transfer endpoint in single-file mode, with access, completed-source revision
+and host download policy checked again at transfer time. These transfers are
+uncached binary attachments; the grant retains the original MIME type and
+filename. They never issue a reader token or gateway URL for internal storage.
+Same-rung MP4 presets have separate allocations so publishing an ordinary
+preset cannot move a `HostOnly` preset into a served area. This cannot prevent
+saving equivalent bytes already available through an ordinary served preset.
+
 Migration must preserve source bytes and original IDs, explicitly map old
 chapter hashes/ranges to virtual paths, and convert parent-wide entitlement
 grants to exact edition rights. Unresolved mappings refuse cutover. Old served
