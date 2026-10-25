@@ -101,6 +101,7 @@ export const admin = {
     noAccess: "You don't have permission to manage comments.",
     ban: "Site-wide comment ban",
     notBanned: "Not banned: they can comment.",
+    banned: "Banned from commenting",
     banLoadFailed: "The ban couldn't be loaded.",
     comments: "Recent comments",
     noComments: "No comments.",

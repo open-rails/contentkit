@@ -2632,8 +2632,8 @@ func (q GetSearchQuery) values() url.Values {
 }
 
 // GetSearch is GET /v1/search (public). Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.
-func (c *Client) GetSearch(ctx context.Context, q GetSearchQuery) (discovery.ContentPage, error) {
-	var out discovery.ContentPage
+func (c *Client) GetSearch(ctx context.Context, q GetSearchQuery) (discovery.SearchPage, error) {
+	var out discovery.SearchPage
 	err := c.call(ctx, http.MethodGet, "/v1/search", q.values(), nil, &out)
 	return out, err
 }

@@ -102,6 +102,7 @@ export const admin: typeof en = {
     noAccess: "你没有管理评论的权限。",
     ban: "全站评论封禁",
     notBanned: "未被封禁，可以评论。",
+    banned: "已禁止评论",
     banLoadFailed: "无法加载封禁信息。",
     comments: "最近的评论",
     noComments: "没有评论。",

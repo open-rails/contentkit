@@ -45,6 +45,7 @@ export const discovery: typeof en = {
     lockedShow_other: "잠긴 항목 {count}개 보기",
     lockedHide: "잠긴 항목 숨기기",
     noResults: "“{q}”와(과) 일치하는 항목이 없습니다.",
+    matchingEntities: "일치하는 태그와 이름",
     historySignedOut: "기록을 보려면 로그인하세요.",
     clearHistory: "기록 지우기",
     historyEmpty: "기록이 없습니다.",

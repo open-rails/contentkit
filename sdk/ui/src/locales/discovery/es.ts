@@ -45,6 +45,7 @@ export const discovery: typeof en = {
     lockedShow_other: "Mostrar {count} elementos bloqueados",
     lockedHide: "Ocultar elementos bloqueados",
     noResults: "Nada coincide con «{q}».",
+    matchingEntities: "Etiquetas y nombres coincidentes",
     historySignedOut: "Inicia sesión para ver tu historial.",
     clearHistory: "Borrar historial",
     historyEmpty: "Tu historial está vacío.",

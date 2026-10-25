@@ -3,7 +3,8 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { AccessMode, ContentQuery, HistoryQuery, RailQuery, SearchQuery } from "../../client/discovery.js";
-import type { Card, ListingSummary } from "../../client/generated/wire.js";
+import type { Card, EntityCard, ListingSummary } from "../../client/generated/wire.js";
+import { EntityLink, type EntityLike } from "../entities/parts.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContents, useExposure, useHistory, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
 import { useKinds } from "../../react/entities.js";
@@ -345,12 +346,18 @@ function CursorContentGrid({ query, locked = "show", ...p }: CardListProps & { q
   );
 }
 
-/** Search results as cards; nothing until the query has text. */
-export function SearchResults(p: CardListProps & { query: SearchQuery }) {
+export interface SearchResultsProps extends CardListProps {
+  query: SearchQuery;
+  /** An entity's page link; its canonical path by default. */
+  entityHref?: (entity: EntityLike) => string | undefined;
+}
+
+/** Search results as cards, after links to the entities matching the query; nothing until the query has text. */
+export function SearchResults(p: SearchResultsProps) {
   return p.pagination === "pages" ? <PagedSearchResults {...p} /> : <CursorSearchResults {...p} />;
 }
 
-function CursorSearchResults({ query, ...p }: CardListProps & { query: SearchQuery }) {
+function CursorSearchResults({ query, entityHref, ...p }: SearchResultsProps) {
   const { t } = useMessages();
   const q = useMemo(
     () => ({ ...query, mode: cardListMode(p.locked, query.mode), summary: query.summary ?? true, limit: query.limit ?? p.pageSize }),
@@ -359,15 +366,34 @@ function CursorSearchResults({ query, ...p }: CardListProps & { query: SearchQue
   const list = useSearch(q, { client: p.client });
   if (!query.q.trim()) return null;
   return (
-    <CardGrid
-      surface="search"
-      empty={t("contents.noResults", { q: query.q.trim() })}
-      {...p}
-      list={list}
-      render={JSON.stringify(q)}
-      filterKinds={query.kind ? [query.kind] : undefined}
-      filterLanguage={query.display_language ?? query.language}
-    />
+    <>
+      <SearchEntities entities={list.entities} href={entityHref} />
+      <CardGrid
+        surface="search"
+        empty={t("contents.noResults", { q: query.q.trim() })}
+        {...p}
+        list={list}
+        render={JSON.stringify(q)}
+        filterKinds={query.kind ? [query.kind] : undefined}
+        filterLanguage={query.display_language ?? query.language}
+      />
+    </>
+  );
+}
+
+/** Links to the entities whose names match a search, e.g. "Search the tag". */
+export function SearchEntities({ entities, href }: { entities: readonly EntityCard[]; href?: (entity: EntityLike) => string | undefined }) {
+  const { t } = useMessages();
+  if (!entities.length) return null;
+  return (
+    <nav aria-label={t("contents.matchingEntities")} className="mb-4 flex flex-wrap gap-2" data-ckui="search-entities">
+      {entities.map((entity) => (
+        <EntityLink key={entity.id} entity={entity} href={href} className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm hover:bg-muted">
+          <span>{entity.name || entity.slug}</span>
+          <span className="text-muted-foreground tabular-nums">{entity.count}</span>
+        </EntityLink>
+      ))}
+    </nav>
   );
 }
 

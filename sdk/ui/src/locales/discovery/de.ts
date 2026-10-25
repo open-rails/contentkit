@@ -45,6 +45,7 @@ export const discovery: typeof en = {
     lockedShow_other: "{count} gesperrte Einträge zeigen",
     lockedHide: "Gesperrte Einträge ausblenden",
     noResults: "Nichts passt zu „{q}“.",
+    matchingEntities: "Passende Tags und Namen",
     historySignedOut: "Melde dich an, um deinen Verlauf zu sehen.",
     clearHistory: "Verlauf löschen",
     historyEmpty: "Dein Verlauf ist leer.",

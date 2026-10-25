@@ -102,6 +102,7 @@ export const admin: typeof en = {
     noAccess: "No tienes permiso para gestionar comentarios.",
     ban: "Bloqueo de comentarios en todo el sitio",
     notBanned: "Sin bloqueo: puede comentar.",
+    banned: "No puede comentar",
     banLoadFailed: "No se pudo cargar el bloqueo.",
     comments: "Comentarios recientes",
     noComments: "No hay comentarios.",

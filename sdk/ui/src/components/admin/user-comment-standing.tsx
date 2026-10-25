@@ -101,7 +101,7 @@ function BanCard({ user, name, client, onError }: Inner) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="grid min-w-0 gap-0.5">
             <div>
-              <Badge variant={ban.expired ? "outline" : "destructive"}>{t(ban.expired ? "bans.expired" : "bans.active")}</Badge>
+              <Badge variant={ban.expired ? "outline" : "destructive"}>{t(ban.expired ? "bans.expired" : "standing.banned")}</Badge>
             </div>
             {ban.reason && <p className="break-words">{t("bans.reason", { reason: ban.reason })}</p>}
             <p className="text-muted-foreground">
