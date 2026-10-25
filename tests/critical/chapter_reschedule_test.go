@@ -107,6 +107,16 @@ func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 	w.clock.set(future.Add(time.Second))
 	_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, input)
 	must(t, err)
+	// The injected catalog clock advances independently of River's wall clock.
+	// Wake this exact durable request; advancing the reader clock is not a
+	// substitute for running its publication worker.
+	_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job j
+ SET scheduled_at=clock_timestamp(),state='available'
+ FROM `+w.schema+`.content_publication_requests r
+ WHERE j.kind='contentkit_version_release' AND j.args->>'id'=r.id::text
+ AND r.tenant_id=$1 AND r.version_id=$2 AND r.current
+ AND j.state IN ('scheduled','retryable')`, a.cfg.Scope.AppID.String(), ref.Version)
+	must(t, err)
 	waitForChapterPublication(t, func() bool {
 		view, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 		if err != nil {

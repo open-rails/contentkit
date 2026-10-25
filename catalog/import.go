@@ -24,7 +24,8 @@ import (
 
 // ImportContent is a content item as the bulk import writes it: its id,
 // state and times kept, trusted (not screened). Nil Creators, Text and a
-// version's Text and Segments keep what is stored; given ones replace it.
+// version's Text keep what is stored; given ones replace it. Chapters are
+// authored through PutVersions after content and source media are imported.
 type ImportContent struct {
 	ID               string
 	Kind             string
@@ -65,8 +66,10 @@ type ImportVersion struct {
 	Attributes  map[string]any
 	Ordinal     *int
 	// Cover selects one of the version's cover uploads (i-{uuid}).
-	Cover     string
-	Text      map[string]VersionText
+	Cover string
+	Text  map[string]VersionText
+	// Segments must be nil. Use PutVersions after importing source media so
+	// chapter changes hold the recovered manifest lock through commit.
 	Segments  []Segment
 	CreatedAt *time.Time
 	UpdatedAt *time.Time
@@ -809,20 +812,15 @@ func (s *Store) checkImportVersion(kind string, parentDeleted bool, v *ImportVer
 		v.Text[l] = t
 	}
 	if v.Segments != nil {
-		if !k.Segments {
-			return invalid("kind %s has no segments", kind)
+		for i, chapter := range v.Segments {
+			if chapter.StartPage == "" || chapter.Start != 0 || chapter.End != 0 {
+				return invalid("chapter %d: start_page must name a virtual manifest file; numeric ranges are migration-only", i+1)
+			}
 		}
-		segs, err := checkSegments(v.Segments)
-		if err != nil {
-			return err
-		}
-		if len(segs) > 0 && segs[0].StartPage != "" && k.Presentation != "reader" {
-			return invalid("page-anchored chapters require reader content")
-		}
-		for i := range segs {
-			segs[i].Title = strings.TrimSpace(segs[i].Title)
-		}
-		v.Segments = segs
+		// Import's transaction belongs to its caller and may already hold
+		// catalog rows. Taking a manifest lock here would invert upload's lock
+		// order; omitting it would race source removal and marker validation.
+		return invalid("import content and source media first, then update chapters with PUT /contents/{id}/versions/{version}/segments using start_page; bulk import cannot safely mutate chapters")
 	}
 	return nil
 }

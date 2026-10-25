@@ -118,15 +118,16 @@ type EdgeRecord struct {
 }
 
 // ContentRecord is a content item with its text, creators and versions. Nil
-// text, creators, version text and segments keep what is stored; given ones
-// replace it. Versions not listed are left as they are.
+// text, creators and version text keep what is stored; given ones replace it.
+// Versions not listed are left as they are. Import chapters separately through
+// the version segments route after the content and source media exist.
 type ContentRecord struct {
 	ExternalID string `json:"external_id"`
 	ID         string `json:"id,omitempty"`
 	Kind       string `json:"kind"`
-	// State is draft, published or deleted. A published item is live from
-	// PublishAt (now when omitted; scheduled when future); PublishedAt is
-	// when it went live.
+	// State is draft, published or deleted. PublishAt schedules durable
+	// publication; readers see the item only after its worker completes.
+	// PublishedAt preserves a historical first-publication date.
 	State       string     `json:"state"`
 	PublishAt   *time.Time `json:"publish_at,omitempty"`
 	PublishedAt *time.Time `json:"published_at,omitempty"`
@@ -172,11 +173,13 @@ type VersionRecord struct {
 	// Cover selects one of the version's cover uploads (i-{uuid}): a
 	// record's one legacy cover is uploaded to each of its versions. Left
 	// out, the stored selection stays.
-	Cover     string                         `json:"cover,omitempty"`
-	Text      map[string]catalog.VersionText `json:"text,omitempty"`
-	Segments  []catalog.Segment              `json:"segments,omitempty"`
-	CreatedAt *time.Time                     `json:"created_at,omitempty"`
-	UpdatedAt *time.Time                     `json:"updated_at,omitempty"`
+	Cover string                         `json:"cover,omitempty"`
+	Text  map[string]catalog.VersionText `json:"text,omitempty"`
+	// Segments must be omitted. Use the version segments route with virtual
+	// start_page markers after importing content and source media.
+	Segments  []catalog.Segment `json:"segments,omitempty"`
+	CreatedAt *time.Time        `json:"created_at,omitempty"`
+	UpdatedAt *time.Time        `json:"updated_at,omitempty"`
 }
 
 // MembershipSet replaces a content item's memberships in the listed entity

@@ -104,6 +104,11 @@ func TestDurableTextPublication(t *testing.T) {
 		t.Fatalf("new edition did not copy its creation default: %+v", added.Access)
 	}
 	must(t, admin.DeleteContentVersion(t.Context(), item.ID, edition.ID))
+	// The injected catalog clock is now hours ahead of River's wall clock.
+	// Wake the registered worker explicitly for each newly accepted immediate
+	// edit, just as above; do not wait for that synthetic future wall-clock date.
+	_, err = fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
+	must(t, err)
 	waitFor(t, func() bool {
 		var released bool
 		must(t, w.pool.QueryRow(t.Context(), `SELECT released FROM `+w.schema+`.content_versions WHERE tenant_id=$1 AND id=$2`,
@@ -111,6 +116,8 @@ func TestDurableTextPublication(t *testing.T) {
 		return !released
 	})
 	_, err = admin.PatchContentVersion(t.Context(), item.ID, edition.ID, catalog.VersionInput{State: catalog.StatePublished})
+	must(t, err)
+	_, err = fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
 	must(t, err)
 	waitFor(t, func() bool {
 		got, err := reader.GetContentVersion(t.Context(), item.ID, edition.ID, ck.GetContentVersionQuery{})

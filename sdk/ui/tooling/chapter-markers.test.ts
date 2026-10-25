@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { chapterRanges } from "../src/client/chapters.ts";
-import { nextPublicationRefresh, publicationPhase } from "../src/client/publication.ts";
-import type { Version } from "../src/client/generated/wire.ts";
+import { nextPublicationRefresh, publicationPendingNow, publicationPhase } from "../src/client/publication.ts";
+import type { Content, Version } from "../src/client/generated/wire.ts";
 
 test("inserted pages follow manifest order up to the next chapter marker", () => {
   const files = ["pages/001.jpg", "pages/017.jpg", "pages/017c.jpg", "pages/019b.jpg", "pages/020.jpg", "pages/040.jpg", "pages/041.jpg"];
@@ -53,4 +53,25 @@ test("publication observation preserves live content and stops on a durable fail
   assert.equal(nextPublicationRefresh(content, afterDue), null);
   assert.equal(version.live, true);
   assert.equal(nextPublicationRefresh({ versions: [{ live: true, state: "published" } as Version] }, now), null);
+});
+
+test("publishWhenReady observes completed amendments even while their old edition remains live", () => {
+  const now = Date.parse("2026-10-25T12:00:00Z");
+  const version = { state: "published", live: true, publication: { state: "pending", scheduled_at: "2026-10-25T11:00:00Z" } } as Version;
+  const content = { live: true, state: "published", versions: [version] } as Content;
+  assert.equal(publicationPendingNow(content, now), true);
+  for (const state of ["waiting", "running"]) {
+    version.publication!.state = state;
+    assert.equal(publicationPendingNow(content, now), true);
+  }
+  version.publication!.state = "completed";
+  assert.equal(publicationPendingNow(content, now), false);
+  version.publication!.state = "pending";
+  version.publication!.scheduled_at = "2026-10-25T13:00:00Z";
+  assert.equal(publicationPendingNow(content, now), false);
+  version.publication!.state = "failed";
+  content.live = version.live = false;
+  assert.equal(publicationPendingNow(content, now), false);
+  delete version.publication;
+  assert.equal(publicationPendingNow(content, now), true);
 });

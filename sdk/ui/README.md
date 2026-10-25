@@ -1230,9 +1230,10 @@ release. Reopening the editor reads that durable state. `useContent` observes
 accepted publication until it completes or reports failure; it never unlocks
 content by advancing the browser clock.
 
-`publishWhenReady` submits once and optionally observes initial availability
-for a bounded time. It returns pending content on timeout or for a future
-schedule; it never retries the publication POST while processing continues.
+`publishWhenReady` submits once and observes due publication work for a bounded
+time, including amendments whose previous release remains live. It returns the
+latest content on failure, timeout or a future schedule; it never retries the
+publication POST while processing continues.
 The bulk uploader creates private drafts and follows the same upload/commit
 flow. It has no publish-on-completion setting or publication status polling.
 

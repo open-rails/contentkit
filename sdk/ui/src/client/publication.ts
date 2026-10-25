@@ -16,6 +16,22 @@ export function publicationPhase(version: Version, now = Date.now()): "scheduled
   return "pending";
 }
 
+/** A live edition can still have an unfinished replacement. Wait for due
+ * accepted work, returning future schedules and durable failures to the caller.
+ */
+export function publicationPendingNow(content: Pick<Content, "live" | "state" | "publish_at" | "versions">, now = Date.now()): boolean {
+  const versions = (content.versions ?? []).filter((version) => version.state === "published");
+  if (versions.some((version) => publicationPhase(version, now) === "failed")) return false;
+  return versions.some((version) => {
+    const phase = publicationPhase(version, now);
+    if (phase === "scheduled") return false;
+    if (phase !== null) return true;
+    if (publicationOf(version)) return false;
+    const scheduled = Math.max(Date.parse(content.publish_at ?? "") || 0, Date.parse(version.publish_at ?? "") || 0);
+    return content.state === "published" && !version.live && scheduled <= now;
+  });
+}
+
 /** Observe only accepted editor work; a timestamp never changes local access. */
 export function nextPublicationRefresh(content: (Pick<Content, "versions"> & Partial<Pick<Content, "state" | "publish_at">>) | null, now = Date.now()): number | null {
   const due = (content?.versions ?? []).flatMap((version) => {

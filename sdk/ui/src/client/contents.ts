@@ -12,6 +12,7 @@ import type {
 } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import { call, type RouteQuery } from "./route.js";
+import { publicationPendingNow } from "./publication.js";
 
 /** The URL scheme of an image reference in a content body. */
 export const IMAGE_SCHEME = "contentkit:";
@@ -83,15 +84,15 @@ export class ContentsClient {
   publish(id: string, at?: string): Promise<Content> {
     return this.write(call(this.http, "POST", "/contents/{id}/publish", { params: { id }, body: { publish_at: at } }));
   }
-  /** Accepts publication once, then observes initial availability for up to waitMs.
-   * A future schedule or timeout returns the accepted pending content. It never
+  /** Accepts publication once, then observes completion for up to waitMs.
+   * A future schedule, failure or timeout returns the latest content. It never
    * resubmits publication while a server-owned operation is processing.
    */
   async publishWhenReady(id: string, at?: string, waitMs = 30_000): Promise<Content> {
     let content = await this.publish(id, at);
     if (at && Date.parse(at) > Date.now()) return content;
     const deadline = Date.now() + Math.max(0, waitMs);
-    while (!content.live && Date.now() < deadline) {
+    while (publicationPendingNow(content) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(1000, deadline - Date.now())));
       content = await this.write(this.get(id));
     }

@@ -18,7 +18,7 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
   (`{"external_id": "folder:123"}`); `target` names a `content`, `version`,
   `group` or `comment`, as the section allows.
 - Collections given replace what is stored (text, creators, version text,
-  segments, names, group text, edges, poll options); omitted ones stay.
+  names, group text, edges, poll options); omitted ones stay.
   Versions not listed stay. `memberships` replace a content item's
   memberships in the group `kinds` they name.
 - Content `code` and group `code` keep an existing content code; a version's
@@ -92,6 +92,14 @@ export staged there) is copied server-side instead (`POST
 importer. Publication, renditions and version facts (pages, duration) follow
 from the media jobs.
 
+Import content and source media first, then write chapter start markers with
+`PUT /v1/contents/{id}/versions/{vid}/segments` (`Client.PutContentVersionSegments`).
+Each `start_page` is the source file's virtual manifest path; the chapter runs
+until the next marker in manifest order. Omit `VersionRecord.segments` from bulk
+imports: the chapter route holds the source and recovered manifest locks through
+the catalog commit, while an import's caller-owned transaction cannot safely
+acquire them. Numeric ranges are accepted only by explicit legacy migration.
+
 Every file lives in a version; versions share none. A legacy record's one
 cover is ingested into each version's folder (a `Named` cover upload) and
 each `VersionRecord.cover` names that version's copy, sent once the files are
@@ -104,7 +112,7 @@ named as the body references them.
 |---|---|---|
 | `entities` | `EntityRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `edges`, `code`, times |
 | `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `comments` (open, closed, hidden), `access`, `restrictions`, `attributes`, `owner_group`, `creators`, `text`, `versions`, `code`, times |
-| | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `text`, `segments` |
+| | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `text` |
 | `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `active_from`, `active_until`, `state`) |
 | `offers` | `OfferRecord` | `target` (content, version, group), `terms` |
 | `aliases` | `AliasRecord` | `kind`, `key`, `locator`, `target` (content, group) |
