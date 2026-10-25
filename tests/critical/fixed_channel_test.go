@@ -17,7 +17,8 @@ import (
 )
 
 // Fixed site channels use the same records as creator channels, but enforce
-// host ownership and free access in every public write path, without workers.
+// host ownership and free access in every public write path. Public reads wait
+// for the ordinary durable publication worker.
 func TestFixedSiteChannelPolicy(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) {
 		cfg.Content.EntityKinds["official"] = kinds.EntityKind{Route: "official", Owner: "site"}
@@ -62,8 +63,10 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	if item.OwnerEntityID != string(official.ID) {
 		t.Fatalf("wrong fixed owner: %+v", item)
 	}
+	startPublicationRuntime(t, a)
 	item, err = staff.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, a, staff, item.ID, item.Versions[0].ID)
 	got, err := public.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 	must(t, err)
 	if got.OwnerEntityID != string(official.ID) || !got.Decision.Allowed || got.Body != "A free public announcement" {
@@ -89,6 +92,9 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	if importedID == "" {
 		t.Fatalf("import omitted ID: %+v", imported)
 	}
+	managed, err := staff.GetContent(t.Context(), importedID, ck.GetContentQuery{})
+	must(t, err)
+	awaitEditionPublication(t, a, staff, importedID, managed.Versions[0].ID)
 	got, err = public.GetContent(t.Context(), importedID, ck.GetContentQuery{})
 	must(t, err)
 	if got.OwnerEntityID != string(official.ID) || !got.Decision.Allowed {
@@ -128,6 +134,8 @@ func TestFixedSiteChannelMigration(t *testing.T) {
 		t.Fatal("rejected migration partially changed ownership")
 	}
 	_, err = admin.PatchContent(t.Context(), paid.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.Public}})
+	must(t, err)
+	_, err = admin.PatchContentVersion(t.Context(), paid.ID, paid.Versions[0].ID, catalog.VersionInput{Access: &access.Rule{Level: access.Public}})
 	must(t, err)
 	changed, err := ck.MigrateFixedOwners(t.Context(), w.pool, cfg, seeds)
 	must(t, err)
@@ -184,8 +192,10 @@ func TestFixedSiteChannelStaffRevocation(t *testing.T) {
 	must(t, err)
 	published, err := writer.PostContents(t.Context(), input)
 	must(t, err)
+	startPublicationRuntime(t, a)
 	published, err = writer.PostContentPublish(t.Context(), published.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, a, writer, published.ID, published.Versions[0].ID)
 	if len(draft.Creators) != 1 || draft.Creators[0].UserID != author.ID {
 		t.Fatalf("fixture lacks author credit: %+v", draft.Creators)
 	}
@@ -266,8 +276,10 @@ func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 	if post.OwnerEntityID != string(channel.ID) {
 		t.Fatal("channel-scoped writer escaped the fixed destination")
 	}
+	startPublicationRuntime(t, a)
 	_, err = writer.PostContentPublish(t.Context(), post.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, a, writer, post.ID, post.Versions[0].ID)
 	public, err := a.client("").GetContent(t.Context(), post.ID, ck.GetContentQuery{})
 	must(t, err)
 	if !public.Decision.Allowed || public.Body != input.Text["en"].Body {

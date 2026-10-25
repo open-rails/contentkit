@@ -74,6 +74,7 @@ func TestPostAttachmentPolicies(t *testing.T) {
 	cfg.Database.SkipMigrations = true
 	reopened, err := ck.New(t.Context(), cfg, a.deps)
 	must(t, err)
+	must(t, reopened.Start(t.Context()))
 	t.Cleanup(func() { must(t, reopened.Close(context.Background())) })
 	server := mountEngine(t, reopened)
 	second := ck.NewClient(server.URL+"/content", &http.Client{Transport: bearerTransport{token: key.Secret, base: http.DefaultTransport}})

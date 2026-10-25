@@ -37,6 +37,30 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
 	a.server = mountEngine(t, a.engine)
+	// Compose the single-worker host queue before publication fixtures start
+	// any runtime. It is stopped again before advancing the purge clock.
+	queue := catalog.QueueFor(a.cfg.Scope.AppID.String())
+	var fleet *river.Client[pgx.Tx]
+	start := func() {
+		t.Helper()
+		if fleet == nil {
+			fleet, err = riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{queue: {MaxWorkers: 1}}}, a.engine.RiverJobs())
+			must(t, err)
+			must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
+		}
+		must(t, fleet.Start(t.Context()))
+	}
+	stop := func() {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if fleet != nil {
+			must(t, fleet.Stop(ctx))
+		}
+		must(t, a.engine.Close(ctx))
+	}
+	t.Cleanup(stop)
+	start()
 	user, _ := w.person(t, 0)
 	deleted, untouched := publishedArticle(t, a, "Delete signal source"), publishedArticle(t, a, "Retain signal source")
 	store, err := signal.NewStore(direct, a.cfg.ClickHouse.Database)
@@ -67,32 +91,13 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	assertState(deleted, true)
 	assertState(untouched, true)
 	must(t, a.engine.Client().DeleteContentVersion(t.Context(), deleted.ID, deleted.Versions[0].ID))
+	must(t, fleet.Stop(t.Context()))
 	w.clock.set(time.Now().Add(31 * 24 * time.Hour))
 	producer, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 	must(t, err)
-	// Serialize the explicit probe and overdue startup sweep so neither can
-	// skip obligations currently locked by the other and appear successful.
-	var fleet *river.Client[pgx.Tx]
-	start := func() {
-		t.Helper()
-		fleet, err = riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{catalog.Queue: {MaxWorkers: 1}}}, a.engine.RiverJobs())
-		must(t, err)
-		must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
-		must(t, fleet.Start(t.Context()))
-	}
-	stop := func() {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if fleet != nil {
-			must(t, fleet.Stop(ctx))
-		}
-		must(t, a.engine.Close(ctx))
-	}
-	t.Cleanup(stop)
 	purge := func(want rivertype.JobState) {
 		t.Helper()
-		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.Queue, MaxAttempts: 1})
+		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)
 		waitForWithin(t, 55*time.Second, func() bool {
 			got, err := producer.JobGet(t.Context(), job.Job.ID)
@@ -126,6 +131,7 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	a.server.Close()
 	stop()
 	a.deps.ClickHouse = direct
+	fleet = nil
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
 	a.server = mountEngine(t, a.engine)
@@ -160,10 +166,10 @@ func TestContentSignalPurgeJobMigration(t *testing.T) {
 	must(t, err)
 	// Produce an actual retained purge fact, with no surviving content row,
 	// so legacy ownership inference is tested at the real historical boundary.
-	must(t, a.engine.Start(t.Context()))
+	startPublicationRuntime(t, a)
 	must(t, a.engine.Client().DeleteContentVersion(t.Context(), owned.ID, owned.Versions[0].ID))
 	w.clock.set(time.Now().Add(31 * 24 * time.Hour))
-	purge, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.Queue, MaxAttempts: 1})
+	purge, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 	must(t, err)
 	waitForWithin(t, 30*time.Second, func() bool {
 		got, err := producer.JobGet(t.Context(), purge.Job.ID)

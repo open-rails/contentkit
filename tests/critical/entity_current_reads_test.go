@@ -10,7 +10,8 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 )
 
-// The engine is never started: correctness cannot depend on a projection job.
+// Only publication runs initially. Counts and covers must follow membership
+// edits with every worker stopped, without an entity projection job.
 func TestEntityCountsAndCoversWithoutWorkers(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) {
 		cfg.Content.EntityKinds["tag"] = kinds.EntityKind{Route: "tags", Parent: "tag"}
@@ -44,7 +45,7 @@ func TestEntityCountsAndCoversWithoutWorkers(t *testing.T) {
 			}
 			for _, card := range page.Entities {
 				if card.Count != want || cover == "" && card.Cover != nil || cover != "" && (card.Cover == nil || card.Cover.ContentID != cover) {
-					t.Fatalf("directory %s count/cover before any worker: %+v; want count=%d cover=%s", sort, card, want, cover)
+					t.Fatalf("directory %s count/cover without projection work: %+v; want count=%d cover=%s", sort, card, want, cover)
 				}
 			}
 		}
@@ -57,7 +58,9 @@ func TestEntityCountsAndCoversWithoutWorkers(t *testing.T) {
 		}
 	}
 	check(0, "")
+	fleet := publicationOnlyFleet(t, a)
 	one := publishedArticle(t, a, "Already published")
+	must(t, fleet.Stop(t.Context()))
 	link(one.ID, child.ID, parent.ID) // inherited and explicit parent count once.
 	check(1, one.ID)
 	future, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Future", Body: "Not released"}}})
@@ -67,6 +70,8 @@ func TestEntityCountsAndCoversWithoutWorkers(t *testing.T) {
 	_, err = admin.PostContentPublish(t.Context(), future.ID, catalog.PublishInput{PublishAt: &at})
 	must(t, err)
 	check(1, one.ID)
+	w.clock.set(at.Add(time.Second))
+	check(1, one.ID) // The clock alone cannot include the uncompleted release.
 	link(one.ID)
 	check(0, "")
 	link(one.ID, child.ID)

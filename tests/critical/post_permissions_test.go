@@ -1,7 +1,6 @@
 package critical_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -15,11 +14,13 @@ import (
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/media"
+	"github.com/riverqueue/river"
 )
 
 func TestPostContributorAuthority(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
+	startPublicationRuntime(t, a)
 	alice, aliceToken := w.person(t, 0)
 	bob, bobToken := w.person(t, 0)
 	author, credited := a.client(aliceToken), a.client(bobToken)
@@ -64,6 +65,7 @@ func TestPostContributorAuthority(t *testing.T) {
 		must(t, err)
 		_, err = author.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
+		awaitEditionPublication(t, a, author, item.ID, item.Versions[0].ID)
 		public, err := a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 		if public.Body != "Ownership survives removing credits" {
@@ -145,6 +147,7 @@ func TestPostContributorAuthority(t *testing.T) {
 		requireError(t, err, 403, "forbidden")
 		_, err = author.PostContentPublish(t.Context(), own.ID, catalog.PublishInput{})
 		must(t, err)
+		awaitEditionPublication(t, a, author, own.ID, own.Versions[0].ID)
 		draft, err := author.PostContents(t.Context(), newPost("Channel grant revocation", string(channel.ID)))
 		must(t, err)
 		authtest.RevokeRole(t, w.tenant[0], scope, iam.UserSubject(alice.ID), w.channelContributor)
@@ -241,6 +244,7 @@ func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 	must(t, err)
 	_, err = client.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, a, client, item.ID, item.Versions[0].ID)
 	_, commentToken := w.person(t, 0)
 	comment := postComment(t, a.client(commentToken), item.ID, "Moderated site channel")
 	moderator, moderatorToken := w.person(t, 0)
@@ -262,7 +266,8 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 	var err error
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
-	a.server = mountEngine(t, a.engine) // no engine workers until the final phase.
+	a.server = mountEngine(t, a.engine)
+	fleet := publicationOnlyFleet(t, a) // Entity synchronization stays stopped until the final phase.
 	owner := authtest.NewUser(t, a.tenant)
 	owner.TOTP = authtest.EnrollTOTP(t, a.tenant, owner)
 	token := authtest.SignIn(t, a.tenant, owner).AccessToken
@@ -283,6 +288,7 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 	must(t, err)
 	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, a, a.engine.Client(), item.ID, item.Versions[0].ID)
 	gallery, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", OwnerEntityID: id, Text: map[string]catalog.Text{"en": {Title: "Pending gallery"}}})
 	must(t, err)
 	commenter, commentToken := w.person(t, 0)
@@ -333,7 +339,7 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 			t.Fatal("pending scope advertised owner capabilities")
 		}
 	}
-	must(t, a.engine.Start(context.Background()))
+	must(t, fleet.Queues().Add(entities.DefaultQueue, river.QueueConfig{MaxWorkers: 1}))
 	waitFor(t, func() bool {
 		current, err := a.engine.Client().GetManageEntity(t.Context(), id, ck.GetManageEntityQuery{})
 		must(t, err)
