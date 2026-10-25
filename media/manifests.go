@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Locker serializes manifest edits across every process sharing the bucket.
@@ -271,6 +272,14 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 		kept := item.Kind().PublicKept(cur)
 		var public []string
 		for _, key := range u.Public {
+			if blob, ok := item.BlobRef(key); ok {
+				if area, _, _ := layout.SplitBlobRef(blob); area != layout.AreaPublic {
+					if !slices.Contains(cur.Blobs(), blob) {
+						keys = append(keys, key)
+					}
+					continue
+				}
+			}
 			name, ok := strings.CutPrefix(key, item.PublicPrefix())
 			canonical, err := item.Public(name)
 			if !ok || err != nil || canonical != key {
@@ -341,6 +350,9 @@ func retiredPublicKeys(item Item, previous *Manifest, kept []string) ([]string, 
 	var keys []string
 	for _, file := range previous.Files {
 		for _, publication := range file.Public {
+			if len(publication.Blobs) > 0 {
+				continue
+			} // blob retirement owns prepared version outputs
 			retired := missing(publication.NamesOnDisk(), kept)
 			if len(retired) == 0 {
 				continue
@@ -403,7 +415,7 @@ func (m *Manifests) unreferenced(ctx context.Context, item Item, cur *Manifest, 
 			return nil, err
 		}
 		for _, key := range allocated {
-			if (strings.HasPrefix(key, item.PrivatePrefix()) || strings.HasPrefix(key, item.DownloadPrefix())) && !keep[key] && !slices.Contains(keys, key) {
+			if (strings.HasPrefix(key, item.PrivatePrefix()) || strings.HasPrefix(key, item.DownloadPrefix()) || strings.HasPrefix(key, item.OriginalsPrefix()) || strings.HasPrefix(key, item.FuturePrefix())) && !keep[key] && !slices.Contains(keys, key) {
 				keys = append(keys, key)
 			}
 		}
@@ -586,7 +598,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	slices.Sort(mutation.effects.Public)
 	mutation.effects.Public = slices.Compact(mutation.effects.Public)
 	mutation.effects.Mirror = item.kind.mirrors(item, cur, next)
-	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.Incarnation == cur.Incarnation && next.Deleted == cur.Deleted && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
+	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.Incarnation == cur.Incarnation && next.Deleted == cur.Deleted && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) && reflect.DeepEqual(next.Deliveries, cur.Deliveries) {
 		return cur, false, nil
 	}
 	if etag == "" && !mutation.lifecycle {

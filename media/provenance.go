@@ -190,7 +190,7 @@ func (k *Kind) Normalize(m *Manifest) {
 // frame, it is no body image (new versions copy those, editors view them),
 // and nothing is pending or failed from it.
 func (k *Kind) droppable(m *Manifest, f File) bool {
-	if k.KeepOriginals || k.IsPageUpload(f) || k.audioOriginal(f) || f.Blob == "" || len(f.Pending) > 0 || f.Fail() != nil || len(k.PublicFor(f.Path)) > 0 {
+	if k.Versions || k.KeepOriginals || k.IsPageUpload(f) || k.audioOriginal(f) || f.Blob == "" || len(f.Pending) > 0 || f.Fail() != nil || len(k.PublicFor(f.Path)) > 0 {
 		return false
 	}
 	i, _, _, _, ok := k.upload(f.Path)

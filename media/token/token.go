@@ -152,7 +152,7 @@ func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
 }
 
 // reserved are an item folder's own names, never a version.
-var reserved = []string{"manifest.json", "private", "download", "public", "temp"}
+var reserved = []string{"manifest.json", "private", "download", "public", "temp", "tmp", "originals", "future"}
 
 // VerifyDownload checks tok for the download key
 // "{ns}/{kind}/{id}[/{version}]/download/{name}" at now: that one key's

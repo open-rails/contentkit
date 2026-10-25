@@ -22,11 +22,14 @@ import (
 
 // Folder areas.
 const (
-	AreaManifest = "manifest"
-	AreaPrivate  = "private"
-	AreaDownload = "download"
-	AreaPublic   = "public"
-	AreaTemp     = "temp"
+	AreaManifest  = "manifest"
+	AreaPrivate   = "private"
+	AreaDownload  = "download"
+	AreaPublic    = "public"
+	AreaTemp      = "temp" // historical/non-version staging
+	AreaTmp       = "tmp"
+	AreaOriginals = "originals"
+	AreaFuture    = "future"
 )
 
 const (
@@ -96,7 +99,9 @@ func Parse(key string) (Key, bool) {
 	case len(rest) == 2 && rest[0] == AreaPrivate && ValidBlobName(rest[1]),
 		len(rest) == 2 && rest[0] == AreaDownload && ValidBlobRef(BlobRef(AreaDownload, rest[1])),
 		len(rest) == 2 && rest[0] == AreaPublic && ValidPublicName(rest[1]),
-		len(rest) == 2 && rest[0] == AreaTemp && ValidSegment(rest[1]):
+		len(rest) == 2 && (rest[0] == AreaTemp || rest[0] == AreaTmp) && ValidSegment(rest[1]),
+		len(rest) == 2 && rest[0] == AreaOriginals && ValidBlobName(rest[1]),
+		len(rest) == 2 && rest[0] == AreaFuture && ValidPublicName(rest[1]):
 		k.Area, k.Name = rest[0], rest[1]
 	default:
 		return Key{}, false
@@ -124,7 +129,7 @@ func ParseFolder(prefix string) (Key, bool) {
 // no area, manifest or reserved "_" name.
 func ValidVersion(s string) bool {
 	switch s {
-	case ManifestName, AreaPrivate, AreaDownload, AreaPublic, AreaTemp:
+	case ManifestName, AreaPrivate, AreaDownload, AreaPublic, AreaTemp, AreaTmp, AreaOriginals, AreaFuture:
 		return false
 	}
 	return ValidSegment(s) && s[0] != '_'
@@ -187,8 +192,8 @@ func ParseSHA256Name(name string) ([]byte, bool) {
 
 // BlobRef is the reference of an allocation named name in area.
 func BlobRef(area, name string) string {
-	if area == AreaDownload {
-		return AreaDownload + "/" + name
+	if area != AreaPrivate {
+		return area + "/" + name
 	}
 	return name
 }
@@ -196,11 +201,19 @@ func BlobRef(area, name string) string {
 // SplitBlobRef is a blob reference's area and allocation name.
 func SplitBlobRef(ref string) (area, name string, ok bool) {
 	area, name = AreaPrivate, ref
-	if n, dl := strings.CutPrefix(ref, AreaDownload+"/"); dl {
-		area, name = AreaDownload, n
-		if len(n) == len(SHA256Prefix)+64 {
+	if prefix, n, qualified := strings.Cut(ref, "/"); qualified {
+		switch prefix {
+		case AreaOriginals, AreaFuture, AreaPublic, AreaDownload:
+			area, name = prefix, n
+		default:
+			return "", "", false
+		}
+		if area == AreaDownload && ValidHashName(name) {
 			return "", "", false // download/ holds no pre-v0.68 blobs
 		}
+	}
+	if area == AreaFuture || area == AreaPublic {
+		return area, name, ValidPublicName(name)
 	}
 	return area, name, ValidBlobName(name)
 }

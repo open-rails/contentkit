@@ -104,8 +104,11 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 		// A reserved public output may still be on its way to S3.
 		for _, f := range cur.Files {
 			for _, p := range f.Public {
-				for _, name := range p.NamesOnDisk() {
-					key, _ := item.Public(name)
+				if len(p.Blobs) > 0 {
+					continue
+				} // retained and retired through ordinary blob references
+				for index := range p.Names {
+					key, _ := item.PublicationKey(p, index)
 					if !slices.Contains(mutation.effects.Public, key) {
 						mutation.effects.Public = append(mutation.effects.Public, key)
 					}
@@ -121,6 +124,7 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 			mutation.effects.Settlement = Settlement{Tenant: item.Ref().TenantID, Owner: owner, Delta: -charged}
 		}
 		cur.Deleted, cur.Hidden = true, true
+		cur.Deliveries = nil
 		cur.Files, cur.Meta, cur.Full, cur.Deficit = []File{}, nil, false, 0
 		return nil
 	})

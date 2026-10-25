@@ -198,9 +198,28 @@ func (i Item) ManifestKey() string   { return i.prefix + layout.ManifestName }
 func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/" }
 
 // DownloadPrefix is the folder's download/: files only a download token opens.
-func (i Item) DownloadPrefix() string { return i.prefix + layout.AreaDownload + "/" }
-func (i Item) PublicPrefix() string   { return i.prefix + layout.AreaPublic + "/" }
-func (i Item) TempPrefix() string     { return i.prefix + layout.AreaTemp + "/" }
+func (i Item) DownloadPrefix() string  { return i.prefix + layout.AreaDownload + "/" }
+func (i Item) PublicPrefix() string    { return i.prefix + layout.AreaPublic + "/" }
+func (i Item) OriginalsPrefix() string { return i.prefix + layout.AreaOriginals + "/" }
+func (i Item) FuturePrefix() string    { return i.prefix + layout.AreaFuture + "/" }
+func (i Item) TempPrefix() string {
+	if i.kind.Versions {
+		return i.prefix + layout.AreaTmp + "/"
+	}
+	return i.prefix + layout.AreaTemp + "/"
+}
+
+// PublicOutput is a processor's destination. Version outputs remain unserved
+// until an explicit promotion creates their public delivery copy.
+func (i Item) PublicOutput(name string) (string, error) {
+	if !layout.ValidPublicName(name) {
+		return "", fmt.Errorf("media: invalid public output %q", name)
+	}
+	if i.kind.Versions {
+		return i.FuturePrefix() + name, nil
+	}
+	return i.Public(name)
+}
 
 // Blob is the key of an allocation by its reference: "sha256-{hex}-{uuid}"
 // in private/, "download/sha256-{hex}-{uuid}" in download/.
@@ -215,7 +234,7 @@ func (i Item) Blob(ref string) (string, error) {
 // BlobRef is the reference of key, an allocation in the folder.
 func (i Item) BlobRef(key string) (string, bool) {
 	k, ok := layout.Parse(key)
-	if !ok || k.Folder() != i.prefix || k.Area != layout.AreaPrivate && k.Area != layout.AreaDownload {
+	if !ok || k.Folder() != i.prefix || !layout.ValidBlobRef(layout.BlobRef(k.Area, k.Name)) {
 		return "", false
 	}
 	return layout.BlobRef(k.Area, k.Name), true
@@ -235,6 +254,19 @@ func (i Item) Public(name string) (string, error) {
 		return "", fmt.Errorf("media: invalid public name %q", name)
 	}
 	return i.PublicPrefix() + name, nil
+}
+
+// PublicationKey locates one prepared public-preset rendition. Versions keep
+// their hash-named preparation in future; non-version assets retain their
+// independent public-preset lifecycle.
+func (i Item) PublicationKey(p Publication, index int) (string, error) {
+	if index < 0 || index >= len(p.Names) {
+		return "", fmt.Errorf("media: invalid publication index")
+	}
+	if len(p.Blobs) > 0 {
+		return i.Blob(p.Blobs[index])
+	}
+	return i.Public(p.NamesOnDisk()[index])
 }
 
 // DefaultKey is the key of the kind's default public image name.

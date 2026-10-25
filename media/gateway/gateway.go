@@ -254,7 +254,7 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 		return object{}, false
 	}
 	o := object{ns: k.Namespace, kind: k.Kind, id: k.ID, version: k.Version, area: k.Area, name: k.Name, scope: k.Scope}
-	if o.area != layout.AreaPublic && o.area != layout.AreaPrivate && o.area != layout.AreaDownload {
+	if o.area != layout.AreaPublic && o.area != layout.AreaPrivate {
 		return object{}, false
 	}
 	host := r.Host

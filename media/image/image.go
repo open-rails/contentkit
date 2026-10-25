@@ -260,8 +260,8 @@ func (p *Processor) publicStale(ctx context.Context, item media.Item, m *media.M
 	if !ok || !pub.Ready() || pub.FP != fp {
 		return true, nil
 	}
-	for _, n := range pub.NamesOnDisk() {
-		key, err := item.Public(n)
+	for i := range pub.Names {
+		key, err := item.PublicationKey(pub, i)
 		if err != nil {
 			return false, err
 		}
@@ -405,8 +405,8 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 				f, _ := cur.Get(d.src.Path)
 				owned, ok := f.Publication(pub.Preset)
 				if !ok || owned.Generation != pub.Generation {
-					for _, name := range pub.NamesOnDisk() {
-						key, err := item.Public(name)
+					for i := range pub.Names {
+						key, err := item.PublicationKey(pub, i)
 						if err != nil {
 							return err
 						}
@@ -415,8 +415,8 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 					continue
 				}
 				present := true
-				for _, name := range pub.NamesOnDisk() {
-					key, _ := item.Public(name)
+				for i := range pub.Names {
+					key, _ := item.PublicationKey(pub, i)
 					if _, err := p.c.Store.Head(ctx, key); errors.Is(err, media.ErrNotFound) {
 						present = false
 					} else if err != nil {
@@ -542,6 +542,17 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 		if d.dims = dims; err != nil {
 			return p.permanent(d, err)
 		}
+		var prepared []string
+		if k.Versions {
+			sums := make([][]byte, len(names))
+			for i, name := range names {
+				sums[i] = sha(outs[name].webp)
+			}
+			prepared, err = p.c.Manifests.NewBlobs(ctx, item.Ref(), layout.AreaFuture, sums)
+			if err != nil {
+				return d, err
+			}
+		}
 		var publication media.Publication
 		_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
 			publication = media.Publication{}
@@ -559,7 +570,7 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 			}
 			stable := pu.Stable
 			publication = media.Publication{Preset: pu.Name, Source: f.Key(), FP: fp, Stable: &stable,
-				Generation: uuid.NewString(), Names: names, Dims: make([]media.Dims, len(names))}
+				Generation: uuid.NewString(), Names: names, Blobs: prepared, Dims: make([]media.Dims, len(names))}
 			for i, name := range names {
 				publication.Dims[i] = outs[name].dims
 			}
@@ -575,9 +586,9 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 		if publication.Generation == "" {
 			continue
 		}
-		for i, n := range publication.NamesOnDisk() {
+		for i := range publication.Names {
 			out := outs[names[i]]
-			pk, err := item.Public(n)
+			pk, err := item.PublicationKey(publication, i)
 			if err != nil {
 				return d, err
 			}

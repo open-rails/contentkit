@@ -465,11 +465,11 @@ func layoutObjects(item Item, m *Manifest) []string {
 	}
 	for _, f := range m.Files {
 		for _, p := range f.Public {
-			for _, name := range p.NamesOnDisk() {
-				key, _ := item.Public(name)
+			for index := range p.Names {
+				key, _ := item.PublicationKey(p, index)
 				keys[key] = true
 			}
-			if spec := item.kind.public(p.Preset); spec != nil && spec.Stable {
+			if spec := item.kind.public(p.Preset); spec != nil && spec.Stable && !item.Kind().Versions {
 				for _, name := range p.Names {
 					key, _ := item.Public(name)
 					keys[key] = true

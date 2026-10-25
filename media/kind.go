@@ -327,6 +327,15 @@ func (k *Kind) owned(m *Manifest, f File, p *Public, pub Publication) bool {
 // names while one is current. Any other generation's name is permanently
 // retired; no later worker may reuse it.
 func (k *Kind) PublicKept(m *Manifest) []string {
+	if k.Versions {
+		var out []string
+		for _, blob := range m.Blobs() {
+			if area, name, ok := layout.SplitBlobRef(blob); ok && area == layout.AreaPublic {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
 	var out []string
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached {
@@ -356,6 +365,9 @@ type Mirror struct {
 // preset's current generation that next newly makes current, to its logical
 // names. Cleanup (PublicKept) removes them once none is current.
 func (k *Kind) mirrors(item Item, cur, next *Manifest) []Mirror {
+	if k.Versions {
+		return nil
+	}
 	var out []Mirror
 	for _, f := range next.Files {
 		if !f.IsUpload() {
@@ -550,6 +562,12 @@ func (k *Kind) validateDownloads() error {
 // Area is the area of the allocation of a file at path (an upload's) or of
 // preset (a derived file's): download/ for Downloads, else private/.
 func (k *Kind) Area(path, preset string) string {
+	if k.Versions {
+		if preset == "" {
+			return layout.AreaOriginals
+		}
+		return layout.AreaFuture
+	}
 	d := preset
 	if preset == "" {
 		if i, _, _, _, ok := k.upload(path); ok {

@@ -34,11 +34,12 @@ type Manifest struct {
 	// private outputs stop until a commit frees Deficit bytes (in the
 	// manifest and in what its uploads would still add): how far past the
 	// bound the refused record went.
-	Full    bool           `json:"full,omitempty"`
-	Deficit int64          `json:"deficit,omitempty"`
-	Meta    map[string]any `json:"meta,omitempty"` // the app's template values, e.g. title
-	Files   []File         `json:"files"`
-	Receipt *CommitReceipt `json:"receipt,omitempty"` // the last manifest attempt; retained until its journal effects settle
+	Full       bool                  `json:"full,omitempty"`
+	Deficit    int64                 `json:"deficit,omitempty"`
+	Meta       map[string]any        `json:"meta,omitempty"` // the app's template values, e.g. title
+	Files      []File                `json:"files"`
+	Deliveries []PublicationDelivery `json:"deliveries,omitempty"` // exact publication copies pinned until explicit withdrawal
+	Receipt    *CommitReceipt        `json:"receipt,omitempty"`    // the last manifest attempt; retained until its journal effects settle
 
 	index   map[string]int
 	size    int64    // its JSON length when last read or written
@@ -106,7 +107,8 @@ type Publication struct {
 	// Generation suffixes every physical name; "" is a legacy publication,
 	// files a pre-v0.68 worker wrote at the logical names (always ready).
 	Generation string           `json:"generation"`
-	Names      []string         `json:"names"` // logical preset names at this position
+	Blobs      []string         `json:"blobs,omitempty"` // version preset outputs prepared in future/, aligned with Names
+	Names      []string         `json:"names"`           // logical preset names at this position
 	State      PublicationState `json:"state"`
 	Dims       []Dims           `json:"dims"`
 }
@@ -345,6 +347,19 @@ func (m *Manifest) Blobs() []string {
 		if f.Editor != nil && !f.Gone {
 			out = append(out, f.Editor.Blob)
 		}
+		for _, p := range f.Public {
+			out = append(out, p.Blobs...)
+		}
+	}
+	for _, d := range m.Deliveries {
+		if !d.Withdrawn {
+			for _, f := range d.Files {
+				if !d.Ready {
+					out = append(out, f.Source)
+				}
+				out = append(out, f.Blob)
+			}
+		}
 	}
 	return out
 }
@@ -369,7 +384,7 @@ func (m *Manifest) Validate() error {
 			return errors.New("media: invalid manifest incarnation")
 		}
 	}
-	if m.Deleted && (!m.Hidden || len(m.Files) != 0 || len(m.Meta) != 0 || m.Full || m.Deficit != 0) {
+	if m.Deleted && (!m.Hidden || len(m.Files) != 0 || len(m.Meta) != 0 || len(m.Deliveries) != 0 || m.Full || m.Deficit != 0) {
 		return errors.New("media: deletion tombstone must be hidden and empty")
 	}
 	if m.Receipt != nil {
@@ -389,9 +404,9 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %q: invalid staged upload %q", f.Path, f.Staged)
 		case f.Blob != "" && !layout.ValidBlobRef(f.Blob), f.Blob == "" && f.Staged == "" && (f.Frame == nil || !f.IsUpload()):
 			return fmt.Errorf("media: manifest file %q: invalid blob %q", f.Path, f.Blob)
-		case f.Track != nil && f.Track.Index != "" && !layout.ValidBlobName(f.Track.Index):
+		case f.Track != nil && f.Track.Index != "" && !layout.ValidBlobRef(f.Track.Index):
 			return fmt.Errorf("media: manifest file %q: invalid track index %q", f.Path, f.Track.Index)
-		case f.Editor != nil && (!layout.ValidBlobName(f.Editor.Blob) || f.Editor.FP == ""):
+		case f.Editor != nil && (!layout.ValidBlobRef(f.Editor.Blob) || f.Editor.FP == ""):
 			return fmt.Errorf("media: manifest file %q: invalid editor view", f.Path)
 		case !f.IsUpload() && (f.Edit != nil || f.Frame != nil || f.Pending != nil || f.Unattached || len(f.Public) > 0 || f.Editor != nil):
 			return fmt.Errorf("media: manifest file %q: a derived file has upload fields", f.Path)
@@ -413,6 +428,17 @@ func (m *Manifest) Validate() error {
 				return fmt.Errorf("media: manifest file %q: invalid public publication", f.Path)
 			}
 			slots[slot{p.Preset, p.State}] = true
+			if len(p.Blobs) > 0 {
+				if len(p.Blobs) != len(p.Names) {
+					return errors.New("media: prepared public outputs do not match names")
+				}
+				for _, blob := range p.Blobs {
+					area, _, valid := layout.SplitBlobRef(blob)
+					if !valid || area != layout.AreaFuture && area != layout.AreaPublic && area != layout.AreaPrivate {
+						return errors.New("media: invalid public preparation or delivery area")
+					}
+				}
+			}
 			for j, name := range p.NamesOnDisk() {
 				if !layout.ValidSegment(p.Names[j]) || !layout.ValidPublicName(name) || p.Ready() && (p.Dims[j].W <= 0 || p.Dims[j].H <= 0) {
 					return fmt.Errorf("media: manifest file %q: invalid public rendition %q", f.Path, name)
@@ -425,7 +451,7 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %q: edit: %w", f.Path, err)
 		}
 	}
-	return nil
+	return validateDeliveries(m.Deliveries)
 }
 
 // Clone deep-copies the manifest for an edit: a cached manifest is shared,
@@ -438,6 +464,10 @@ func (m *Manifest) Clone() *Manifest {
 		out.Receipt = &r
 	}
 	out.Meta = cloneMap(m.Meta)
+	out.Deliveries = slices.Clone(m.Deliveries)
+	for i := range out.Deliveries {
+		out.Deliveries[i].Files = slices.Clone(out.Deliveries[i].Files)
+	}
 	out.Files = make([]File, len(m.Files))
 	for i, f := range m.Files {
 		f.Meta, f.Pending = cloneMap(f.Meta), slices.Clone(f.Pending)
@@ -456,6 +486,7 @@ func (m *Manifest) Clone() *Manifest {
 				f.Public[j].Stable = &stable
 			}
 			f.Public[j].Names = slices.Clone(f.Public[j].Names)
+			f.Public[j].Blobs = slices.Clone(f.Public[j].Blobs)
 			f.Public[j].Dims = slices.Clone(f.Public[j].Dims)
 		}
 		if f.Edit != nil {

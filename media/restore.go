@@ -66,7 +66,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 	versions := make(map[string]ObjectVersion, len(snap.Objects))
 	for _, object := range snap.Objects {
 		key, ok := layout.Parse(object.Key)
-		if !ok || key.Folder() != item.Prefix() || (key.Area != layout.AreaPrivate && key.Area != layout.AreaDownload && key.Area != layout.AreaTemp) ||
+		if !ok || key.Folder() != item.Prefix() || (key.Area != layout.AreaPrivate && key.Area != layout.AreaDownload && key.Area != layout.AreaTemp && key.Area != layout.AreaTmp && key.Area != layout.AreaOriginals && key.Area != layout.AreaFuture && key.Area != layout.AreaPublic) ||
 			object.VersionID == "" || object.VersionID == "null" {
 			return nil, errors.New("media: snapshot contains an invalid object version")
 		}
@@ -152,8 +152,11 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 		}
 		for _, f := range cur.Files {
 			for _, p := range f.Public {
-				for _, name := range p.NamesOnDisk() {
-					key, _ := item.Public(name)
+				if len(p.Blobs) > 0 {
+					continue
+				} // retained and retired through ordinary blob references
+				for index := range p.Names {
+					key, _ := item.PublicationKey(p, index)
 					if !slices.Contains(mutation.effects.Public, key) {
 						mutation.effects.Public = append(mutation.effects.Public, key)
 					}
@@ -162,16 +165,32 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 		}
 		remap := make(map[string]string, len(sources))
 		destinations := make([]string, len(sources))
+		originals := map[string]bool{}
+		for _, file := range next.Files {
+			if file.IsUpload() && !file.Gone {
+				originals[file.Blob] = true
+			}
+		}
 		for i, key := range sources {
 			parsed, _ := layout.Parse(key)
+			area := parsed.Area
 			from, name, to := parsed.Name, layout.StagedPrefix+uuid.NewString(), ""
-			if parsed.Area != layout.AreaTemp {
+			if parsed.Area != layout.AreaTemp && parsed.Area != layout.AreaTmp {
 				digest, _ := layout.BlobDigest(parsed.Name)
 				name = layout.BlobName(digest, uuid.NewString())
-				from, to = layout.BlobRef(parsed.Area, parsed.Name), layout.BlobRef(parsed.Area, name)
+				from = layout.BlobRef(parsed.Area, parsed.Name)
+				if item.Kind().Versions {
+					area = layout.AreaFuture
+					if originals[from] {
+						area = layout.AreaOriginals
+					}
+				}
+				to = layout.BlobRef(area, name)
+			} else if item.Kind().Versions {
+				area = layout.AreaTmp
 			}
 			remap[from] = cmp.Or(to, name)
-			destinations[i] = item.Prefix() + parsed.Area + "/" + name
+			destinations[i] = item.Prefix() + area + "/" + name
 		}
 		if err := j.cfg.Journal.allocateRestore(ctx, mutation.commit, next.Incarnation, destinations); err != nil {
 			return err
@@ -181,6 +200,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 				return err
 			}
 		}
+		next.Deliveries = nil // restore never revives a publication operation
 		for i := range next.Files {
 			f := &next.Files[i]
 			oldKey := f.Key()

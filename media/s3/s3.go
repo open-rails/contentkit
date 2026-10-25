@@ -414,7 +414,7 @@ func (s *Store) AbortMultipart(ctx context.Context, key, uploadID string) error 
 // infer ownership or change keys; the tag enables expiry without bucket scans.
 func temporaryTagging(key string) *string {
 	parsed, ok := layout.Parse(key)
-	if !ok || parsed.Area != layout.AreaTemp {
+	if !ok || parsed.Area != layout.AreaTemp && parsed.Area != layout.AreaTmp {
 		return nil
 	}
 	return aws.String("contentkit-temp=true")

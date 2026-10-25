@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Every item's current publications are projected into Postgres
@@ -245,9 +246,24 @@ func (k *Kind) publications(m *Manifest) []publication {
 				row.Generation = &pub.Generation
 			}
 			for i, name := range pub.NamesOnDisk() {
+				if k.Versions {
+					name = ""
+					if len(pub.Blobs) == len(pub.Names) {
+						if area, actual, valid := layout.SplitBlobRef(pub.Blobs[i]); valid && area == layout.AreaPublic {
+							name = actual
+						} else if blob, ok := m.Delivered(pub.Blobs[i], layout.AreaPublic); ok {
+							_, name, _ = layout.SplitBlobRef(blob)
+						}
+					}
+					if name == "" {
+						continue
+					}
+				}
 				row.Renditions = append(row.Renditions, projectedRendition{Name: name, W: pub.Dims[i].W, H: pub.Dims[i].H})
 			}
-			out = append(out, row)
+			if len(row.Renditions) > 0 {
+				out = append(out, row)
+			}
 		}
 	}
 	return out
