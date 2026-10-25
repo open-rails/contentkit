@@ -4,9 +4,8 @@ go 1.26.10
 
 require (
 	github.com/goccy/go-yaml v1.19.2
-	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.35.4
+	github.com/open-rails/authkit v1.35.5
 	github.com/open-rails/contentkit v0.126.0
 	github.com/open-rails/contentkit/adapters/openrails v0.9.0
 	github.com/open-rails/helpers v1.16.1
@@ -14,6 +13,8 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/riverqueue/river v0.49.0
 )
+
+require github.com/google/uuid v1.6.0 // indirect
 
 require (
 	github.com/ClickHouse/ch-go v0.71.0 // indirect
@@ -55,7 +56,7 @@ require (
 	github.com/go-webauthn/webauthn v0.18.2 // indirect
 	github.com/go-webauthn/x v0.3.1 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect

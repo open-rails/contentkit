@@ -164,7 +164,7 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		SignalPlane: e.signals != nil}); err != nil {
 		return nil, err
 	}
-	if e.gate, err = access.NewGate(access.GateConfig{Tenant: cfg.Tenant, Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log}); err != nil {
+	if e.gate, err = access.NewGate(access.GateConfig{Tenant: cfg.Tenant, Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log, Now: now}); err != nil {
 		return nil, err
 	}
 	if err := e.newCatalog(ctx, deps, now); err != nil {
@@ -706,7 +706,7 @@ func (e *Engine) mount(deps Deps) error {
 		return err
 	}
 	router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{Routes: c.Routes(), Languages: c.Languages, Logger: e.log,
-		Visibility: e.catalog.Visibility})
+		Visibility: e.codeVisibility})
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,231 @@
+id	language	surface	name	source	selection
+go:Client.GetKinds	go	Go generated Client route	Client.GetKinds	client_gen.go	included-critical
+go:Client.GetConfig	go	Go generated Client route	Client.GetConfig	client_gen.go	included-critical
+go:Client.PostCommentHold	go	Go generated Client route	Client.PostCommentHold	client_gen.go	included-critical
+go:Client.PostCommentRelease	go	Go generated Client route	Client.PostCommentRelease	client_gen.go	included-critical
+go:Client.GetCommentBans	go	Go generated Client route	Client.GetCommentBans	client_gen.go	included-critical
+go:Client.PutCommentBan	go	Go generated Client route	Client.PutCommentBan	client_gen.go	included-critical
+go:Client.DeleteCommentBan	go	Go generated Client route	Client.DeleteCommentBan	client_gen.go	included-critical
+go:Client.GetGlobalCommentBans	go	Go generated Client route	Client.GetGlobalCommentBans	client_gen.go	included-critical
+go:Client.GetGlobalCommentBan	go	Go generated Client route	Client.GetGlobalCommentBan	client_gen.go	included-critical
+go:Client.PutGlobalCommentBan	go	Go generated Client route	Client.PutGlobalCommentBan	client_gen.go	included-critical
+go:Client.DeleteGlobalCommentBan	go	Go generated Client route	Client.DeleteGlobalCommentBan	client_gen.go	included-critical
+go:Client.GetEntityHeldComments	go	Go generated Client route	Client.GetEntityHeldComments	client_gen.go	included-critical
+go:Client.GetEntityCommentBans	go	Go generated Client route	Client.GetEntityCommentBans	client_gen.go	included-critical
+go:Client.PutEntityCommentBan	go	Go generated Client route	Client.PutEntityCommentBan	client_gen.go	included-critical
+go:Client.DeleteEntityCommentBan	go	Go generated Client route	Client.DeleteEntityCommentBan	client_gen.go	included-critical
+go:Client.GetContentCanComment	go	Go generated Client route	Client.GetContentCanComment	client_gen.go	included-critical
+go:Client.GetEntityCanComment	go	Go generated Client route	Client.GetEntityCanComment	client_gen.go	included-critical
+go:Client.GetModerationHeld	go	Go generated Client route	Client.GetModerationHeld	client_gen.go	included-critical
+go:Client.PostModerationResolve	go	Go generated Client route	Client.PostModerationResolve	client_gen.go	included-critical
+go:Client.GetModerationBannedWords	go	Go generated Client route	Client.GetModerationBannedWords	client_gen.go	included-critical
+go:Client.PostModerationBannedWords	go	Go generated Client route	Client.PostModerationBannedWords	client_gen.go	included-critical
+go:Client.DeleteModerationBannedWords	go	Go generated Client route	Client.DeleteModerationBannedWords	client_gen.go	included-critical
+go:Client.GetModerationIpBans	go	Go generated Client route	Client.GetModerationIpBans	client_gen.go	included-critical
+go:Client.PostModerationIpBans	go	Go generated Client route	Client.PostModerationIpBans	client_gen.go	included-critical
+go:Client.DeleteModerationIpBans	go	Go generated Client route	Client.DeleteModerationIpBans	client_gen.go	included-critical
+go:Client.GetEvents	go	Go generated Client route	Client.GetEvents	client_gen.go	included-critical
+go:Client.GetCatalogTotals	go	Go generated Client route	Client.GetCatalogTotals	client_gen.go	included-critical
+go:Client.DeleteContentVersion	go	Go generated Client route	Client.DeleteContentVersion	client_gen.go	included-critical
+go:Client.GetContents	go	Go generated Client route	Client.GetContents	client_gen.go	included-critical
+go:Client.PostContentRestore	go	Go generated Client route	Client.PostContentRestore	client_gen.go	included-critical
+go:Client.PostContentPublish	go	Go generated Client route	Client.PostContentPublish	client_gen.go	included-critical
+go:Client.PostContentUnpublish	go	Go generated Client route	Client.PostContentUnpublish	client_gen.go	included-critical
+go:Client.PostMediaUploadPresign	go	Go generated Client route	Client.PostMediaUploadPresign	client_gen.go	included-critical
+go:Client.PostMediaUploadParts	go	Go generated Client route	Client.PostMediaUploadParts	client_gen.go	included-critical
+go:Client.PostMediaUploadPartsList	go	Go generated Client route	Client.PostMediaUploadPartsList	client_gen.go	included-critical
+go:Client.PostMediaUploadComplete	go	Go generated Client route	Client.PostMediaUploadComplete	client_gen.go	included-critical
+go:Client.PostMediaUploadAbort	go	Go generated Client route	Client.PostMediaUploadAbort	client_gen.go	included-critical
+go:Client.PostMediaUploadCommit	go	Go generated Client route	Client.PostMediaUploadCommit	client_gen.go	included-critical
+go:Client.GetMediaPresets	go	Go generated Client route	Client.GetMediaPresets	client_gen.go	included-critical
+go:Client.GetMedia	go	Go generated Client route	Client.GetMedia	client_gen.go	included-critical
+go:Client.GetMediaHls	go	Go generated Client route	Client.GetMediaHls	client_gen.go	included-critical
+go:Client.GetMediaVersion	go	Go generated Client route	Client.GetMediaVersion	client_gen.go	included-critical
+go:Client.GetMediaVersionHls	go	Go generated Client route	Client.GetMediaVersionHls	client_gen.go	included-critical
+go:Client.PostEntities	go	Go generated Client route	Client.PostEntities	client_gen.go	included-critical
+go:Client.PatchEntity	go	Go generated Client route	Client.PatchEntity	client_gen.go	included-critical
+go:Client.DeleteEntity	go	Go generated Client route	Client.DeleteEntity	client_gen.go	included-critical
+go:Client.GetManageEntities	go	Go generated Client route	Client.GetManageEntities	client_gen.go	included-critical
+go:Client.GetManageEntity	go	Go generated Client route	Client.GetManageEntity	client_gen.go	included-critical
+go:Client.GetMeEntities	go	Go generated Client route	Client.GetMeEntities	client_gen.go	included-critical
+go:Client.GetNotificationsInbox	go	Go generated Client route	Client.GetNotificationsInbox	client_gen.go	included-critical
+go:Client.PutNotificationRead	go	Go generated Client route	Client.PutNotificationRead	client_gen.go	included-critical
+go:Client.DeleteNotificationRead	go	Go generated Client route	Client.DeleteNotificationRead	client_gen.go	included-critical
+go:Client.PutNotificationDismiss	go	Go generated Client route	Client.PutNotificationDismiss	client_gen.go	included-critical
+go:Client.DeleteNotificationDismiss	go	Go generated Client route	Client.DeleteNotificationDismiss	client_gen.go	included-critical
+go:Client.PostNotificationsPublish	go	Go generated Client route	Client.PostNotificationsPublish	client_gen.go	included-critical
+go:Client.GetContentVersionDownload	go	Go generated Client route	Client.GetContentVersionDownload	client_gen.go	included-critical
+go:Client.GetContentVersionArchive	go	Go generated Client route	Client.GetContentVersionArchive	client_gen.go	included-critical
+go:Client.GetMeLibrary	go	Go generated Client route	Client.GetMeLibrary	client_gen.go	included-critical
+go:Client.GetReleases	go	Go generated Client route	Client.GetReleases	client_gen.go	included-critical
+go:Client.GetContentCards	go	Go generated Client route	Client.GetContentCards	client_gen.go	included-critical
+go:Client.GetSearch	go	Go generated Client route	Client.GetSearch	client_gen.go	included-critical
+go:Client.GetTypeahead	go	Go generated Client route	Client.GetTypeahead	client_gen.go	included-critical
+go:Client.GetContentSimilar	go	Go generated Client route	Client.GetContentSimilar	client_gen.go	included-critical
+go:Client.GetRecommendations	go	Go generated Client route	Client.GetRecommendations	client_gen.go	included-critical
+go:Client.GetReleaseDates	go	Go generated Client route	Client.GetReleaseDates	client_gen.go	included-critical
+go:Client.GetSitemapContents	go	Go generated Client route	Client.GetSitemapContents	client_gen.go	included-critical
+go:Client.GetSitemapEntities	go	Go generated Client route	Client.GetSitemapEntities	client_gen.go	included-critical
+go:Client.GetManageSearchSuggestions	go	Go generated Client route	Client.GetManageSearchSuggestions	client_gen.go	included-critical
+go:Engine.SetAccountDeleted	go	Go Engine member	Engine.SetAccountDeleted	account_lifecycle.go	included-critical
+go:Engine.AnonymizeAccount	go	Go Engine member	Engine.AnonymizeAccount	account_lifecycle.go	included-critical
+go:Engine.Client	go	Go Engine member	Engine.Client	client.go	included-critical
+go:Client.ListEvents	go	Go Client member	Client.ListEvents	client_events.go	included-critical
+go:Client.EventReader	go	Go Client member	Client.EventReader	client_events.go	included-critical
+go:Client.IngestMedia	go	Go Client member	Client.IngestMedia	client_media.go	included-critical
+go:Engine.Start	go	Go Engine member	Engine.Start	engine.go	included-critical
+go:Engine.Close	go	Go Engine member	Engine.Close	engine.go	included-critical
+go:Engine.Ready	go	Go Engine member	Engine.Ready	engine.go	included-critical
+go:Engine.Probes	go	Go Engine member	Engine.Probes	engine.go	included-critical
+go:Engine.EraseSubjects	go	Go Engine member	Engine.EraseSubjects	engine.go	included-critical
+go:Engine.EraseAppSubjects	go	Go Engine member	Engine.EraseAppSubjects	engine.go	included-critical
+go:Engine.ReplayErasureFences	go	Go Engine member	Engine.ReplayErasureFences	erasure.go	included-critical
+go:Engine.ReplayAccountErasures	go	Go Engine member	Engine.ReplayAccountErasures	erasure.go	included-critical
+go:Engine.RiverJobs	go	Go Engine member	Engine.RiverJobs	jobs.go	included-critical
+go:Engine.OpenRailsNotifications	go	Go Engine member	Engine.OpenRailsNotifications	notifications.go	included-critical
+go:Engine.OpenRailsNotificationsContext	go	Go Engine member	Engine.OpenRailsNotificationsContext	notifications.go	included-critical
+go:Engine.Routes	go	Go Engine member	Engine.Routes	routes.go	included-critical
+go:Engine.RouteGroups	go	Go Engine member	Engine.RouteGroups	routes.go	included-critical
+go:Engine.Scope	go	Go Engine member	Engine.Scope	scope.go	included-critical
+go:Config.AccountMedia	go	Go root factory/config/value	Config.AccountMedia	account_media.go	included critical host/value specification; use public literal values
+go:NewClient	go	Go root factory/config/value	NewClient	client.go	included critical host/value specification; use public literal values
+go:Error.Error	go	Go root factory/config/value	Error.Error	client.go	included critical host/value specification; use public literal values
+go:Reply.Decode	go	Go root factory/config/value	Reply.Decode	client.go	included critical host/value specification; use public literal values
+go:MediaCommitError.Error	go	Go root factory/config/value	MediaCommitError.Error	client_media.go	included critical host/value specification; use public literal values
+go:MediaCommitError.Unwrap	go	Go root factory/config/value	MediaCommitError.Unwrap	client_media.go	included critical host/value specification; use public literal values
+go:Config.MediaKinds	go	Go root factory/config/value	Config.MediaKinds	config.go	included critical host/value specification; use public literal values
+go:MigratePostgres	go	Go root factory/config/value	MigratePostgres	database.go	included critical host/value specification; use public literal values
+go:MigrateClickHouse	go	Go root factory/config/value	MigrateClickHouse	database.go	included critical host/value specification; use public literal values
+go:New	go	Go root factory/config/value	New	engine.go	included critical host/value specification; use public literal values
+go:NewForErasureReplay	go	Go root factory/config/value	NewForErasureReplay	engine.go	included critical host/value specification; use public literal values
+go:WithRiverClient	go	Go root factory/config/value	WithRiverClient	engine.go	included critical host/value specification; use public literal values
+go:ParseRouteGroups	go	Go root factory/config/value	ParseRouteGroups	routes.go	included critical host/value specification; use public literal values
+go:NewTenantID	go	Go root factory/config/value	NewTenantID	scope.go	included critical host/value specification; use public literal values
+go:NewAppID	go	Go root factory/config/value	NewAppID	scope.go	included critical host/value specification; use public literal values
+go:TenantID.String	go	Go root factory/config/value	TenantID.String	scope.go	included critical host/value specification; use public literal values
+go:AppID.String	go	Go root factory/config/value	AppID.String	scope.go	included critical host/value specification; use public literal values
+go:TenantID.IsZero	go	Go root factory/config/value	TenantID.IsZero	scope.go	included critical host/value specification; use public literal values
+go:AppID.IsZero	go	Go root factory/config/value	AppID.IsZero	scope.go	included critical host/value specification; use public literal values
+go:ParseTenantID	go	Go root factory/config/value	ParseTenantID	scope.go	included critical host/value specification; use public literal values
+go:ParseAppID	go	Go root factory/config/value	ParseAppID	scope.go	included critical host/value specification; use public literal values
+go:TenantID.MarshalText	go	Go root factory/config/value	TenantID.MarshalText	scope.go	included critical host/value specification; use public literal values
+go:AppID.MarshalText	go	Go root factory/config/value	AppID.MarshalText	scope.go	included critical host/value specification; use public literal values
+go:TenantID.UnmarshalText	go	Go root factory/config/value	TenantID.UnmarshalText	scope.go	included critical host/value specification; use public literal values
+go:AppID.UnmarshalText	go	Go root factory/config/value	AppID.UnmarshalText	scope.go	included critical host/value specification; use public literal values
+go:Scope.Validate	go	Go root factory/config/value	Scope.Validate	scope.go	included critical host/value specification; use public literal values
+go:MigrateVersionStorage	go	Go root factory/config/value	MigrateVersionStorage	version_storage.go	included critical host/value specification; use public literal values
+ts:CatalogClient.listEvents	ts	TS class member	CatalogClient.listEvents	sdk/ui/src/client/catalog.ts	included-critical
+ts:CatalogClient.totals	ts	TS class member	CatalogClient.totals	sdk/ui/src/client/catalog.ts	included-critical
+ts:BansClient.list	ts	TS class member	BansClient.list	sdk/ui/src/client/content/bans.ts	included-critical
+ts:BansClient.get	ts	TS class member	BansClient.get	sdk/ui/src/client/content/bans.ts	included-critical
+ts:BansClient.ban	ts	TS class member	BansClient.ban	sdk/ui/src/client/content/bans.ts	included-critical
+ts:BansClient.lift	ts	TS class member	BansClient.lift	sdk/ui/src/client/content/bans.ts	included-critical
+ts:ModerationClient.held	ts	TS class member	ModerationClient.held	sdk/ui/src/client/content/moderation.ts	included-critical
+ts:ModerationClient.resolve	ts	TS class member	ModerationClient.resolve	sdk/ui/src/client/content/moderation.ts	included-critical
+ts:ModerationClient.bannedWords	ts	TS class member	ModerationClient.bannedWords	sdk/ui/src/client/content/moderation.ts	included-critical
+ts:ModerationClient.banWords	ts	TS class member	ModerationClient.banWords	sdk/ui/src/client/content/moderation.ts	included-critical
+ts:ModerationClient.unbanWords	ts	TS class member	ModerationClient.unbanWords	sdk/ui/src/client/content/moderation.ts	included-critical
+ts:ModerationClient.ipBans	ts	TS class member	ModerationClient.ipBans	sdk/ui/src/client/content/moderation.ts	included-critical
+ts:ModerationClient.banIPs	ts	TS class member	ModerationClient.banIPs	sdk/ui/src/client/content/moderation.ts	included-critical
+ts:ModerationClient.liftIPBans	ts	TS class member	ModerationClient.liftIPBans	sdk/ui/src/client/content/moderation.ts	included-critical
+ts:ContentsClient.publish	ts	TS class member	ContentsClient.publish	sdk/ui/src/client/contents.ts	included-critical
+ts:ContentsClient.publishWhenReady	ts	TS class member	ContentsClient.publishWhenReady	sdk/ui/src/client/contents.ts	included-critical
+ts:ContentsClient.unpublish	ts	TS class member	ContentsClient.unpublish	sdk/ui/src/client/contents.ts	included-critical
+ts:ContentsClient.restore	ts	TS class member	ContentsClient.restore	sdk/ui/src/client/contents.ts	included-critical
+ts:ContentsClient.removeVersion	ts	TS class member	ContentsClient.removeVersion	sdk/ui/src/client/contents.ts	included-critical
+ts:DiscoveryClient.library	ts	TS class member	DiscoveryClient.library	sdk/ui/src/client/discovery.ts	included-critical
+ts:DiscoveryClient.list	ts	TS class member	DiscoveryClient.list	sdk/ui/src/client/discovery.ts	included-critical
+ts:DiscoveryClient.knownCards	ts	TS class member	DiscoveryClient.knownCards	sdk/ui/src/client/discovery.ts	included-critical
+ts:DiscoveryClient.search	ts	TS class member	DiscoveryClient.search	sdk/ui/src/client/discovery.ts	included-critical
+ts:DiscoveryClient.typeahead	ts	TS class member	DiscoveryClient.typeahead	sdk/ui/src/client/discovery.ts	included-critical
+ts:DiscoveryClient.adminSuggestions	ts	TS class member	DiscoveryClient.adminSuggestions	sdk/ui/src/client/discovery.ts	included-critical
+ts:DiscoveryClient.similar	ts	TS class member	DiscoveryClient.similar	sdk/ui/src/client/discovery.ts	included-critical
+ts:DiscoveryClient.recommendations	ts	TS class member	DiscoveryClient.recommendations	sdk/ui/src/client/discovery.ts	included-critical
+ts:DiscoveryClient.releaseDates	ts	TS class member	DiscoveryClient.releaseDates	sdk/ui/src/client/discovery.ts	included-critical
+ts:DiscoveryClient.releases	ts	TS class member	DiscoveryClient.releases	sdk/ui/src/client/discovery.ts	included-critical
+ts:EntitiesClient.create	ts	TS class member	EntitiesClient.create	sdk/ui/src/client/entities.ts	included-critical
+ts:EntitiesClient.update	ts	TS class member	EntitiesClient.update	sdk/ui/src/client/entities.ts	included-critical
+ts:EntitiesClient.remove	ts	TS class member	EntitiesClient.remove	sdk/ui/src/client/entities.ts	included-critical
+ts:EntitiesClient.mine	ts	TS class member	EntitiesClient.mine	sdk/ui/src/client/entities.ts	included-critical
+ts:ContentKitError.refusal	ts	TS class member	ContentKitError.refusal	sdk/ui/src/client/errors.ts	included-critical
+ts:ContentKitError.isLimit	ts	TS class member	ContentKitError.isLimit	sdk/ui/src/client/errors.ts	included-critical
+ts:ContentKitError.isCeiling	ts	TS class member	ContentKitError.isCeiling	sdk/ui/src/client/errors.ts	included-critical
+ts:ContentKitError.blocksQueue	ts	TS class member	ContentKitError.blocksQueue	sdk/ui/src/client/errors.ts	included-critical
+ts:ContentKitError.transient	ts	TS class member	ContentKitError.transient	sdk/ui/src/client/errors.ts	included-critical
+ts:MediaApi.presign	ts	TS class member	MediaApi.presign	sdk/ui/src/client/media/api.ts	included-critical
+ts:MediaApi.parts	ts	TS class member	MediaApi.parts	sdk/ui/src/client/media/api.ts	included-critical
+ts:MediaApi.listParts	ts	TS class member	MediaApi.listParts	sdk/ui/src/client/media/api.ts	included-critical
+ts:MediaApi.complete	ts	TS class member	MediaApi.complete	sdk/ui/src/client/media/api.ts	included-critical
+ts:MediaApi.abort	ts	TS class member	MediaApi.abort	sdk/ui/src/client/media/api.ts	included-critical
+ts:MediaApi.commit	ts	TS class member	MediaApi.commit	sdk/ui/src/client/media/api.ts	included-critical
+ts:MediaApi.read	ts	TS class member	MediaApi.read	sdk/ui/src/client/media/api.ts	included-critical
+ts:MediaApi.presets	ts	TS class member	MediaApi.presets	sdk/ui/src/client/media/api.ts	included-critical
+ts:MediaApi.itemURL	ts	TS class member	MediaApi.itemURL	sdk/ui/src/client/media/api.ts	included-critical
+ts:MediaClient.upload	ts	TS class member	MediaClient.upload	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.put	ts	TS class member	MediaClient.put	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.commit	ts	TS class member	MediaClient.commit	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.read	ts	TS class member	MediaClient.read	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.waitFor	ts	TS class member	MediaClient.waitFor	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.editorView	ts	TS class member	MediaClient.editorView	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.presets	ts	TS class member	MediaClient.presets	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.getFrame	ts	TS class member	MediaClient.getFrame	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.hlsBase	ts	TS class member	MediaClient.hlsBase	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.hls	ts	TS class member	MediaClient.hls	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.uploadNamed	ts	TS class member	MediaClient.uploadNamed	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.uploadInline	ts	TS class member	MediaClient.uploadInline	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.presetPath	ts	TS class member	MediaClient.presetPath	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.pollRef	ts	TS class member	MediaClient.pollRef	sdk/ui/src/client/media/client.ts	included-critical
+ts:MediaClient.discard	ts	TS class member	MediaClient.discard	sdk/ui/src/client/media/client.ts	included-critical
+ts:ItemUploadQueue.subscribe	ts	TS class member	ItemUploadQueue.subscribe	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.getSnapshot	ts	TS class member	ItemUploadQueue.getSnapshot	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.add	ts	TS class member	ItemUploadQueue.add	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.move	ts	TS class member	ItemUploadQueue.move	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.update	ts	TS class member	ItemUploadQueue.update	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.remove	ts	TS class member	ItemUploadQueue.remove	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.retry	ts	TS class member	ItemUploadQueue.retry	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.start	ts	TS class member	ItemUploadQueue.start	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.pause	ts	TS class member	ItemUploadQueue.pause	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.commit	ts	TS class member	ItemUploadQueue.commit	sdk/ui/src/client/media/queue.ts	included-critical
+ts:ItemUploadQueue.dispose	ts	TS class member	ItemUploadQueue.dispose	sdk/ui/src/client/media/queue.ts	included-critical
+ts:NotificationsClient.list	ts	TS class member	NotificationsClient.list	sdk/ui/src/client/notifications.ts	included-critical
+ts:NotificationsClient.refresh	ts	TS class member	NotificationsClient.refresh	sdk/ui/src/client/notifications.ts	included-critical
+ts:NotificationsClient.setRead	ts	TS class member	NotificationsClient.setRead	sdk/ui/src/client/notifications.ts	included-critical
+ts:NotificationsClient.setDismissed	ts	TS class member	NotificationsClient.setDismissed	sdk/ui/src/client/notifications.ts	included-critical
+ts:VersionsClient.download	ts	TS class member	VersionsClient.download	sdk/ui/src/client/versions.ts	included-critical
+ts:ContentKitClient.config	ts	TS root factory method	ContentKitClient.config	sdk/ui/src/client/client.ts	included-critical
+ts:ContentKitClient.kinds	ts	TS root factory method	ContentKitClient.kinds	sdk/ui/src/client/client.ts	included-critical
+ts:ContentKitClient.url	ts	TS root factory method	ContentKitClient.url	sdk/ui/src/client/client.ts	included-critical
+ts:ContentKitClient.setReadScope	ts	TS root factory method	ContentKitClient.setReadScope	sdk/ui/src/client/client.ts	included-critical
+ts:ContentKitClient.subscribe	ts	TS root factory method	ContentKitClient.subscribe	sdk/ui/src/client/client.ts	included-critical
+ts:createContentKitClient	ts	TS exported function	createContentKitClient	sdk/ui/src/client/client.ts	included-critical public-value vector
+ts:imageRef	ts	TS exported function	imageRef	sdk/ui/src/client/contents.ts	included-critical public-value vector
+ts:imageRefs	ts	TS exported function	imageRefs	sdk/ui/src/client/contents.ts	included-critical public-value vector
+ts:allowsEntityScope	ts	TS exported function	allowsEntityScope	sdk/ui/src/client/entity-scopes.ts	included-critical public-value vector
+ts:isContentKitError	ts	TS exported function	isContentKitError	sdk/ui/src/client/errors.ts	included-critical public-value vector
+ts:toContentKitError	ts	TS exported function	toContentKitError	sdk/ui/src/client/errors.ts	included-critical public-value vector
+ts:transportFailure	ts	TS exported function	transportFailure	sdk/ui/src/client/errors.ts	included-critical public-value vector
+ts:readContentKitError	ts	TS exported function	readContentKitError	sdk/ui/src/client/errors.ts	included-critical public-value vector
+ts:failureError	ts	TS exported function	failureError	sdk/ui/src/client/errors.ts	included-critical public-value vector
+ts:sha256Hex	ts	TS exported function	sha256Hex	sdk/ui/src/client/media/hash.ts	included-critical public-value vector
+ts:isContentId	ts	TS exported function	isContentId	sdk/ui/src/client/media/ref.ts	included-critical public-value vector
+ts:itemKey	ts	TS exported function	itemKey	sdk/ui/src/client/media/ref.ts	included-critical public-value vector
+ts:sameItem	ts	TS exported function	sameItem	sdk/ui/src/client/media/ref.ts	included-critical public-value vector
+ts:checkRef	ts	TS exported function	checkRef	sdk/ui/src/client/media/ref.ts	included-critical public-value vector
+ts:uploadRules	ts	TS exported function	uploadRules	sdk/ui/src/client/media/rules.ts	included-critical public-value vector
+ts:ruleFor	ts	TS exported function	ruleFor	sdk/ui/src/client/media/rules.ts	included-critical public-value vector
+ts:filesFor	ts	TS exported function	filesFor	sdk/ui/src/client/media/rules.ts	included-critical public-value vector
+ts:screenFiles	ts	TS exported function	screenFiles	sdk/ui/src/client/media/rules.ts	included-critical public-value vector
+ts:uniqueName	ts	TS exported function	uniqueName	sdk/ui/src/client/media/rules.ts	included-critical public-value vector
+ts:defaultTransport	ts	TS exported function	defaultTransport	sdk/ui/src/client/media/transport.ts	included-critical public-value vector
+ts:xhrTransport	ts	TS exported function	xhrTransport	sdk/ui/src/client/media/transport.ts	included-critical public-value vector
+ts:fetchTransport	ts	TS exported function	fetchTransport	sdk/ui/src/client/media/transport.ts	included-critical public-value vector
+ts:chunkOffsets	ts	TS exported function	chunkOffsets	sdk/ui/src/client/media/windows.ts	included-critical public-value vector
+ts:mergeReads	ts	TS exported function	mergeReads	sdk/ui/src/client/media/windows.ts	included-critical public-value vector
+ts:isProcessing	ts	TS exported function	isProcessing	sdk/ui/src/client/media/windows.ts	included-critical public-value vector
+ts:processing	ts	TS exported function	processing	sdk/ui/src/client/media/windows.ts	included-critical public-value vector
+ts:statusKind	ts	TS exported function	statusKind	sdk/ui/src/client/playback.ts	included-critical public-value vector
+ts:expiryDelay	ts	TS exported function	expiryDelay	sdk/ui/src/client/playback.ts	included-critical public-value vector
+ts:refreshable	ts	TS exported function	refreshable	sdk/ui/src/client/playback.ts	included-critical public-value vector
+ts:publicURL	ts	TS exported function	publicURL	sdk/ui/src/client/public.ts	included-critical public-value vector
+ts:publicRenditions	ts	TS exported function	publicRenditions	sdk/ui/src/client/public.ts	included-critical public-value vector
+ts:isPending	ts	TS exported function	isPending	sdk/ui/src/client/versions.ts	included-critical public-value vector
