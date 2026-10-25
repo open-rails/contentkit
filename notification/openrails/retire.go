@@ -25,20 +25,19 @@ func (s *Source) RetireInboxSync(ctx context.Context, pool *pgxpool.Pool, riverS
 	key := fmt.Sprintf("%x", sha256.Sum256([]byte(namespace+"\x00"+s.name+"\x00"+s.merchant)))
 	table := pgx.Identifier{riverSchema, "river_job"}.Sanitize()
 	var exists bool
-	if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil || !exists {
+	if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
 		return err
 	}
 	var running, pending bool
-	if err := pool.QueryRow(ctx, `SELECT coalesce(bool_or(state='running'),false),count(*)>0 FROM `+table+`
-	WHERE kind='contentkit_openrails_inbox_sync' AND args->>'key'=$1
-	AND state IN ('available','pending','retryable','scheduled','running')`, key).Scan(&running, &pending); err != nil {
-		return err
+	if exists {
+		if err := pool.QueryRow(ctx, `SELECT coalesce(bool_or(state='running'),false),count(*)>0 FROM `+table+`
+		WHERE kind='contentkit_openrails_inbox_sync' AND args->>'key'=$1
+		AND state IN ('available','pending','retryable','scheduled','running')`, key).Scan(&running, &pending); err != nil {
+			return err
+		}
 	}
 	if running {
 		return errors.New("openrails notifications: stop the running legacy inbox worker before retirement")
-	}
-	if !pending {
-		return nil
 	}
 	// Read the destination and source before taking a pool connection for the
 	// retirement transaction, including when the destination shares a size-one pool.
@@ -52,6 +51,11 @@ func (s *Source) RetireInboxSync(ctx context.Context, pool *pgxpool.Pool, riverS
 	}
 	if len(page.Events) != 0 || page.HasMore {
 		return ErrInboxHandoffRequired
+	}
+	// Between periodic ticks or after a discarded job there may be no live
+	// job at all. That does not prove the source cursor has caught up.
+	if !pending {
+		return nil
 	}
 	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
 		// Old instances must already be stopped. This lock closes the remaining

@@ -247,8 +247,8 @@ github.com/open-rails/contentkit/adapters/authkit v0.11.0 h1:lvHwMKGASUyJFvOxalI
 github.com/open-rails/contentkit/adapters/authkit v0.11.0/go.mod h1:3gSFIDsYoZNO6RQtbpBvqNqcxHci7s1Z6QN3Q/KcwXA=
 github.com/open-rails/contentkit/adapters/openrails v0.9.0 h1:LVIKgeqWepn/mCbDNRUsQmpCuQQs3S46rVOc84XcoYI=
 github.com/open-rails/contentkit/adapters/openrails v0.9.0/go.mod h1:ze4+PSE5j61PZ++RUR50IvpbdlYAuikvIA0J/PHJ5yI=
-github.com/open-rails/helpers v1.16.2-0.20261025024957-47f4de657abc h1:wB9AN0SC51vUU8LjCy4Z2F1Xh93nRgSjIxVs/CpzHVI=
-github.com/open-rails/helpers v1.16.2-0.20261025024957-47f4de657abc/go.mod h1:Olub8akvlMMb6wxdVX15+9sTETLvNnyyJytioFxj83o=
+github.com/open-rails/helpers v1.16.2-0.20261025033036-8c93ee4139d4 h1:Awi52sqUfflg00bO3wMwti+r3x1UWzpHZ4/+dhYsV34=
+github.com/open-rails/helpers v1.16.2-0.20261025033036-8c93ee4139d4/go.mod h1:Olub8akvlMMb6wxdVX15+9sTETLvNnyyJytioFxj83o=
 github.com/open-rails/migratekit v1.11.2 h1:QTtn8i/Yj62SiGv6b7FnQ/mKudSDfLjnlmPSQN0NA7k=
 github.com/open-rails/migratekit v1.11.2/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/open-rails/openrails v0.263.1 h1:6e621Tw+67jMzYOK00zbitB/IUX5Gy7Rar8Gkudzj9s=

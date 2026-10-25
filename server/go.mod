@@ -9,7 +9,7 @@ require (
 	github.com/open-rails/authkit v1.35.4
 	github.com/open-rails/contentkit v0.126.0
 	github.com/open-rails/contentkit/adapters/openrails v0.9.0
-	github.com/open-rails/helpers v1.16.2-0.20261025024957-47f4de657abc
+	github.com/open-rails/helpers v1.16.2-0.20261025033036-8c93ee4139d4
 	github.com/open-rails/openrails v0.263.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/riverqueue/river v0.49.0

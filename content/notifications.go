@@ -30,11 +30,11 @@ type commentNotice struct {
 func (c *comments) notifyReply(ctx context.Context, tx pgx.Tx, replyID string) error {
 	var recipient, actor, parent string
 	var ref contentref.ContentRef
-	err := tx.QueryRow(ctx, `SELECT parent.user_id,coalesce(reply.user_id,''),parent.id::text,reply.content_kind,reply.content_id,reply.content_version_id
+	err := tx.QueryRow(ctx, `SELECT reply.id::text,parent.user_id,coalesce(reply.user_id,''),parent.id::text,reply.content_kind,reply.content_id,reply.content_version_id
  FROM `+c.s.t.comments+` reply JOIN `+c.s.t.comments+` parent ON parent.id=reply.reply_to_id AND parent.tenant_id=reply.tenant_id
  WHERE reply.id=$1 AND reply.tenant_id=$2 AND reply.moderation='approved' AND reply.deleted_at IS NULL
  AND parent.moderation='approved' AND parent.deleted_at IS NULL AND parent.user_id IS NOT NULL`, replyID, c.s.tenant).
-		Scan(&recipient, &actor, &parent, &ref.ContentKind, &ref.ContentID, &ref.ContentVersionID)
+		Scan(&replyID, &recipient, &actor, &parent, &ref.ContentKind, &ref.ContentID, &ref.ContentVersionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

@@ -53,3 +53,36 @@ func TestRetireInboxSyncRequiresHandoffAndPreservesOtherJobs(t *testing.T) {
 		t.Fatalf("retirement touched wrong jobs: cancelled=%d completed=%d available=%d err=%v", cancelled, completed, available, err)
 	}
 }
+
+func TestRetireInboxSyncChecksBacklogWithoutLiveJobs(t *testing.T) {
+	for _, state := range []string{"no_table", "between_ticks", "discarded"} {
+		t.Run(state, func(t *testing.T) {
+			ctx := t.Context()
+			pool, schema := testStorage(t)
+			if state != "no_table" {
+				if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if state == "discarded" {
+				key := fmt.Sprintf("%x", sha256.Sum256([]byte("accounts\x00billing\x00m")))
+				if _, err := pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{schema, "river_job"}.Sanitize()+`
+				(kind,args,queue,max_attempts,state,finalized_at) VALUES
+				('contentkit_openrails_inbox_sync',jsonb_build_object('key',$1::text),'legacy',1,'discarded',clock_timestamp())`, key); err != nil {
+					t.Fatal(err)
+				}
+			}
+			source := sourceFor(t, &eventServer{events: []Event{event("unconsumed", "customer")}})
+			destination := inbox(t, pool, schema, "accounts")
+			if err := source.RetireInboxSync(ctx, pool, schema, "accounts", destination); !errors.Is(err, ErrInboxHandoffRequired) {
+				t.Fatalf("backlog without a live job bypassed handoff: %v", err)
+			}
+			if _, err := source.Consume(ctx, destination, mapped, ConsumeOptions{Filter: BillingLifecycle}); err != nil {
+				t.Fatal(err)
+			}
+			if err := source.RetireInboxSync(ctx, pool, schema, "accounts", destination); err != nil {
+				t.Fatalf("finished source refused retirement: %v", err)
+			}
+		})
+	}
+}

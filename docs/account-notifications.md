@@ -14,7 +14,14 @@ recipient, comment association, source revision/state and original time. It does
 not contain inbox payloads, read state or delivery cursors. The source metadata is
 needed to withdraw historical like-transition IDs that the current reaction row
 no longer retains. Explicit migration backfills known legacy identities without
-changing their destination receipts.
+changing their chosen receipt IDs or read/archive state. Known old uppercase reply
+identities are adopted to their canonical UUID spelling; an existing canonical
+receipt wins collisions, and old aliases become hidden tombstones. Scoped adoption
+classifies the known native source to its owning app before revisioned writes.
+Only pre-revision legacy rows may acquire classification; already-versioned
+unclassified rows require explicit source-state adoption rather than hash rewriting.
+The migration also withdraws receipts whose comment or parent was already deleted
+or hidden before the upgrade.
 
 Deleting reply B withdraws B's notices. Deleting parent A withdraws notices for A
 and the reply-to-A notices for its replies while keeping those replies intact.
