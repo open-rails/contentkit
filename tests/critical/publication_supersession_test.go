@@ -25,11 +25,12 @@ import (
 // its result from the publisher while a later catalog intent supersedes it.
 type pausePublicCopyResponse struct {
 	*medias3.Store
-	mu      sync.Mutex
-	armed   bool
-	arrived chan string
-	release chan struct{}
-	once    sync.Once
+	mu             sync.Mutex
+	armed          bool
+	expectedSource string
+	arrived        chan string
+	release        chan struct{}
+	once           sync.Once
 }
 
 func (s *pausePublicCopyResponse) unblock() { s.once.Do(func() { close(s.release) }) }
@@ -40,7 +41,7 @@ func (s *pausePublicCopyResponse) Copy(ctx context.Context, source, destination 
 		return object, err
 	}
 	s.mu.Lock()
-	pause := s.armed && strings.Contains(destination, "/public/")
+	pause := s.armed && source == s.expectedSource && strings.Contains(destination, "/public/")
 	if pause {
 		s.armed = false
 	}
@@ -115,7 +116,10 @@ func TestSupersededPublicCopyReturnsToPrivate(t *testing.T) {
 	if !valid || area != layout.AreaPrivate {
 		t.Fatalf("initial placement is %q", page.Blob)
 	}
+	readerSource, err := item.Blob(page.Blob)
+	must(t, err)
 	paused.mu.Lock()
+	paused.expectedSource = readerSource
 	paused.armed = true
 	paused.mu.Unlock()
 	_, err = admin.PatchContentVersion(t.Context(), ref.ID, ref.Version, catalog.VersionInput{Access: &access.Rule{Level: access.Public}})
@@ -158,7 +162,10 @@ func TestSupersededPublicCopyReturnsToPrivate(t *testing.T) {
 	must(t, err)
 	response.Body.Close()
 	if response.StatusCode != http.StatusNotFound {
-		t.Fatalf("superseded public copy remains readable after replacement completed: HTTP%d", response.StatusCode)
+		snapshot, _, readErr := manifests.Get(t.Context(), logical)
+		var requestsJSON []byte
+		dbErr := w.pool.QueryRow(t.Context(), `SELECT jsonb_agg(jsonb_build_object('id',id,'state',state,'current',current,'previous',plan->'previous','copies',plan->'copies','result_previous',result->'previous','error',error) ORDER BY created_at) FROM `+requests+` WHERE tenant_id=$1 AND version_id=$2`, tenant, ref.Version).Scan(&requestsJSON)
+		t.Fatalf("superseded public copy remains readable after replacement completed: HTTP%d; initial=%s stale=%s replacement=%s; manifest=%+v read=%v; requests=%s db=%v", response.StatusCode, initial, stale, replacement, snapshot, readErr, requestsJSON, dbErr)
 	}
 	after, _, err := manifests.Get(t.Context(), logical)
 	must(t, err)
