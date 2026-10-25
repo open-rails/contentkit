@@ -19,6 +19,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/resolve"
 )
 
 // HandlerOptions configure the read API.
@@ -104,6 +105,9 @@ func (h readHandler) presets(w http.ResponseWriter, req *http.Request) {
 
 func (h readHandler) playlist(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
+	if req.URL.Query().Has("editor") {
+		req = req.WithContext(resolve.WithEditorRead(req.Context()))
+	}
 	ref, actor, err := h.r.requestRef(req, h.o)
 	var g *Grant
 	if err == nil {

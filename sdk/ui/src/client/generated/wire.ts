@@ -1383,6 +1383,7 @@ export interface PlanPage {
 export interface PlanPlayback {
   item: RefBody;
   tracks: PlanTrack[];
+  inspection?: boolean;
 }
 
 export interface PlanPreview {
@@ -1624,6 +1625,7 @@ export interface ReactionRecord {
 
 export interface ReadResult {
   access: Access;
+  inspection?: boolean;
   expires: number;
   meta?: Record<string, unknown>;
   previews?: string[];

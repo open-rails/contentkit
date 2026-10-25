@@ -124,7 +124,7 @@ func (f *tinyHLSFixture) addSiteClip(t *testing.T) media.RefBody {
 	return ref
 }
 
-func (f *tinyHLSFixture) addClip(t *testing.T, title string) media.RefBody {
+func (f *tinyHLSFixture) addClip(t *testing.T, title string, publish ...bool) media.RefBody {
 	t.Helper()
 	admin := f.app.engine.Client()
 	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "clip", Text: map[string]catalog.Text{"en": {Title: title}}})
@@ -148,6 +148,9 @@ func (f *tinyHLSFixture) addClip(t *testing.T, title string) media.RefBody {
 		}
 		return read.State == media.StateReady && len(read.HLS) == 1
 	})
+	if len(publish) > 0 && !publish[0] {
+		return ref
+	}
 	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
 	awaitEditionPublication(t, f.app, admin, ref.ID, ref.Version)

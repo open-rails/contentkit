@@ -138,7 +138,8 @@ const (
 // in manifest order (Total of them), each with a URL within
 // [offset, offset+limit). Without access it lists none.
 type ReadResult struct {
-	Access string `json:"access"`
+	Access     string `json:"access"`
+	Inspection bool   `json:"inspection,omitempty"` // explicit administrative view; playlists must repeat the management-read request
 	// Expires is when the item token (the URLs, the cookie) stops working,
 	// in unix seconds. A read before then answers the same token, so a
 	// client keeps what it has and reads again shortly before.

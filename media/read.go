@@ -275,15 +275,31 @@ func (g *Grant) Allowed(f File) bool {
 }
 
 func (g *Grant) inspectionFile(f File) bool {
-	if f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil {
+	if f.Gone || f.Blob == "" || f.Fail() != nil {
 		return false
 	}
 	area, _, valid := layout.SplitBlobRef(f.Blob)
-	if !valid || area != layout.AreaFuture && area != layout.AreaPrivate && area != layout.AreaPublic {
+	if !valid || area != layout.AreaOriginals && area != layout.AreaFuture && area != layout.AreaPrivate && area != layout.AreaPublic {
+		return false
+	}
+	if f.IsUpload() {
+		// Only explicitly declared reader assets may pass through. Other
+		// originals, archives and editor-only source views remain unavailable.
+		return !f.Unattached && f.Admission == nil && f.Type != "application/zip" && f.Type != "application/x-zip-compressed" && !strings.EqualFold(path.Ext(f.Path), ".zip") &&
+			(g.Item.Kind().AudioUpload(f) || g.Item.Kind().ServeOriginals)
+	}
+	if area == layout.AreaOriginals {
 		return false
 	}
 	preset := g.Item.Kind().private(f.Preset)
 	if preset == nil || preset.HostOnly || preset.Zip != "" {
+		return false
+	}
+	download := g.Item.Kind().Download
+	if publication := g.Item.Kind().Publish; publication != nil && publication.Download != "" {
+		download = publication.Download
+	}
+	if archive := g.Item.Kind().private(download); archive != nil && archive.HostOnly && archive.Zip != "" && strings.HasPrefix(f.Path, archive.Zip) {
 		return false
 	}
 	source, exists := g.Manifest.Get(f.From)
@@ -616,7 +632,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		return nil, nil, err
 	}
 	editor := o.Editor && g.Editor()
-	out := &ReadResult{Access: AccessNone, Offset: o.Offset, Limit: o.Limit, Expires: g.Expires.Unix(), Files: []FileInfo{}, Cookie: g.Cookie()}
+	out := &ReadResult{Access: AccessNone, Inspection: editor || g.inspectionRead, Offset: o.Offset, Limit: o.Limit, Expires: g.Expires.Unix(), Files: []FileInfo{}, Cookie: g.Cookie()}
 	if g.Full() {
 		out.Access, out.Meta = AccessFull, g.Manifest.Meta
 	} else if len(g.files) > 0 || g.inspectionRead {
@@ -690,7 +706,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 				return nil, nil, err
 			}
 		}
-		if !g.inspectionRead && f.Track != nil && (f.Track.Kind == TrackVideo || f.Track.Kind == TrackAudio) && g.Allowed(f) {
+		if f.Track != nil && (f.Track.Kind == TrackVideo || f.Track.Kind == TrackAudio) && g.Allowed(f) {
 			if dir := path.Dir(f.Path) + "/"; len(out.HLS) == 0 || out.HLS[len(out.HLS)-1] != dir {
 				out.HLS = append(out.HLS, dir)
 			}

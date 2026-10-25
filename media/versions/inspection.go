@@ -10,8 +10,8 @@ import (
 
 // inspectionPlan is an in-memory administrative view, never a publication.
 // It lists only prepared reader derivatives that the same explicit inspection
-// media request will authorize. Original audio/source exports remain editor
-// capabilities; this read-only view cannot obtain them through Playback.
+// media request will authorize. Declared reader audio can pass through, but
+// this view cannot obtain other source exports or download-only renditions.
 func (s *Service) inspectionPlan(ctx context.Context, actor access.Actor, k *media.Kind, target Target) (*ReaderPlan, error) {
 	if s.m.Reader == nil {
 		return nil, ErrNotReady
@@ -83,8 +83,27 @@ func (s *Service) inspectionPlan(ctx context.Context, actor access.Actor, k *med
 		}
 		plan.Segments = append(plan.Segments, part)
 	}
+	playable := map[string]bool{}
+	if k.Publish.Playback != "" {
+		tracks, err := tracksOf(k, grant.Manifest)
+		if err != nil {
+			return nil, err
+		}
+		playback := &PlanPlayback{Item: *item, Inspection: true, Tracks: []PlanTrack{}}
+		for _, track := range tracks {
+			file, exists := grant.Manifest.Get(track.File.Path)
+			if !exists || file.Blob != track.File.Blob || !grant.Allowed(file) {
+				continue
+			}
+			playback.Tracks = append(playback.Tracks, PlanTrack{Name: track.Name, Path: track.File.Path, Duration: track.File.Dur})
+			playable[track.Name] = true
+		}
+		if len(playback.Tracks) > 0 {
+			plan.Playback = playback
+		}
+	}
 	if metadata, ok := readerMetaOf(grant.Manifest); ok {
-		filtered := metadata.hashPages(pages).filter(readable, map[string]bool{})
+		filtered := metadata.hashPages(pages).filter(readable, playable)
 		plan.Reader = &filtered
 	}
 	return plan, nil

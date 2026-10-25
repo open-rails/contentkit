@@ -79,8 +79,9 @@ type PresignedRequest struct {
 
 // EditorReadStore optionally signs an exact administrative preview using a
 // browser-reachable storage endpoint. Callers must establish current editor
-// authority for originals, or read-restricted authority for a ready, permitted
-// derivative. This is never an ordinary audience delivery capability.
+// authority for source exports, or read-restricted authority for a ready
+// derivative or explicitly declared reader asset. This is never an ordinary
+// audience delivery capability.
 type EditorReadStore interface {
 	PresignEditorGet(ctx context.Context, key string, ttl time.Duration) (PresignedRequest, error)
 }

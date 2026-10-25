@@ -6373,6 +6373,15 @@
             }
           },
           {
+            "name": "editor",
+            "in": "query",
+            "description": "explicit administrative inspection; current authority is rechecked",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "ContentKit-Reader-Preferences",
             "in": "header",
             "required": false,
@@ -6629,6 +6638,15 @@
               "items": {
                 "type": "string"
               }
+            }
+          },
+          {
+            "name": "editor",
+            "in": "query",
+            "description": "explicit administrative inspection; current authority is rechecked",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -16287,6 +16305,9 @@
             "items": {
               "$ref": "#/components/schemas/PlanTrack"
             }
+          },
+          "inspection": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -17079,6 +17100,9 @@
         "properties": {
           "access": {
             "$ref": "#/components/schemas/Access"
+          },
+          "inspection": {
+            "type": "boolean"
           },
           "expires": {
             "type": "integer"

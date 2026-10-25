@@ -45,6 +45,14 @@ func playlistURI(dir, filePath string) string {
 	return strings.Repeat("../", strings.Count(dir, "/")) + filePath + ".m3u8"
 }
 
+func (g *Grant) playlistURI(dir, filePath string) string {
+	uri := playlistURI(dir, filePath)
+	if g.inspectionRead || g.editorRead {
+		uri += "?editor"
+	}
+	return uri
+}
+
 // ladder lists the tracks of the HLS output directory dir this viewer may
 // play, in manifest order.
 func (g *Grant) ladder(dir string) (video, audio, subs []File, sprite *File) {
@@ -124,12 +132,12 @@ func (g *Grant) MasterPlaylist(dir string, o MasterOptions) ([]byte, error) {
 			audioCodecs = append(audioCodecs, c)
 		}
 		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=%q,NAME=%q%s,DEFAULT=%s,AUTOSELECT=YES,URI=%q\n",
-			audioGroup, uniqueName(names, a.Track), language(a.Track.Lang), yesNo(i == max(def, 0)), playlistURI(dir, a.Path))
+			audioGroup, uniqueName(names, a.Track), language(a.Track.Lang), yesNo(i == max(def, 0)), g.playlistURI(dir, a.Path))
 	}
 	names = map[string]bool{}
 	for _, s := range subs {
 		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=%q,NAME=%q%s,DEFAULT=NO,AUTOSELECT=YES,FORCED=%s,URI=%q\n",
-			subsGroup, uniqueName(names, s.Track), language(s.Track.Lang), yesNo(s.Track.Forced), playlistURI(dir, s.Path))
+			subsGroup, uniqueName(names, s.Track), language(s.Track.Lang), yesNo(s.Track.Forced), g.playlistURI(dir, s.Path))
 	}
 	var codecs []string
 	for _, v := range video {
@@ -153,7 +161,7 @@ func (g *Grant) MasterPlaylist(dir string, o MasterOptions) ([]byte, error) {
 			if len(subs) > 0 {
 				fmt.Fprintf(&b, ",SUBTITLES=%q", subsGroup)
 			}
-			b.WriteString(",CLOSED-CAPTIONS=NONE\n" + playlistURI(dir, v.Path) + "\n")
+			b.WriteString(",CLOSED-CAPTIONS=NONE\n" + g.playlistURI(dir, v.Path) + "\n")
 		}
 	}
 	return []byte(b.String()), nil
@@ -274,7 +282,11 @@ func (g *Grant) SpriteVTT(ctx context.Context, dir string) ([]byte, error) {
 // delivery projection. A prepared index must never bypass publication merely
 // because it is read by the application instead of the gateway.
 func (g *Grant) trackIndex(ctx context.Context, blob string) (*TrackIndex, error) {
-	if !g.editorRead {
+	if g.inspectionRead {
+		if !slices.ContainsFunc(g.Manifest.Files, func(file File) bool { return file.Track != nil && file.Track.Index == blob && g.Allowed(file) }) {
+			return nil, ErrNotAllowed
+		}
+	} else if !g.editorRead {
 		var err error
 		blob, err = g.deliveredBlob(blob)
 		if err != nil {

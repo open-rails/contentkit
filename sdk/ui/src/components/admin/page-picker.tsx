@@ -72,7 +72,7 @@ export function usePlanMedia(plan: ReaderPlan | null, client: ContentKitClient):
             const url = byPath.get(t.path);
             if (url) audio.set(t.name, url);
           }
-      });
+      }, playback.inspection);
     void Promise.all(Array.from({ length: Math.min(4, reads.length) }, async () => {
       while (!ctrl.signal.aborted) {
         const read = reads.shift();

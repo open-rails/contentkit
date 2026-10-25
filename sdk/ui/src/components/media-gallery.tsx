@@ -137,11 +137,24 @@ function useItemRead(p: MediaGalleryProps): MediaGalleryProps {
   const client = useOptionalContentKitClient(p.client);
   if (p.item && !client) throw new Error("contentkit-ui: MediaGallery item needs `client` or a <ContentKitProvider>");
   // One refresh timer for the gallery and its players, keyed by r.refresh.
-  const r = useMediaRead(p.item ?? NO_ITEM, { prefix: p.prefix, download: p.download, read: p.item ? p.read : null, refresh: false, client });
+  const r = useMediaRead(p.item ?? NO_ITEM, { prefix: p.prefix, download: p.download, editor: p.read?.inspection || undefined, read: p.item ? p.read : null, refresh: false, client });
   const item = p.item;
   const hlsBase = useCallback((dir: string) => client!.media.hlsBase(item!, dir), [client, item]);
+  const baseLoader = p.loader ?? client?.media.hls;
+  const loader = useMemo(() => {
+    if (!baseLoader || !r.read?.inspection) return baseLoader;
+    return {
+      segment: baseLoader.segment,
+      playlist: (address: string, signal?: AbortSignal) => {
+        const hashAt = address.indexOf("#");
+        const path = hashAt < 0 ? address : address.slice(0, hashAt);
+        const hash = hashAt < 0 ? "" : address.slice(hashAt);
+        return baseLoader.playlist(`${path}${path.includes("?") ? "&" : "?"}editor${hash}`, signal);
+      },
+    };
+  }, [baseLoader, r.read?.inspection]);
   if (!item || !client) return p;
-  return { ...p, read: r.read, hlsBase: p.hlsBase ?? hlsBase, loader: p.loader ?? client.media.hls, refresh: p.refresh ?? r.refresh };
+  return { ...p, read: r.read, hlsBase: p.hlsBase ?? hlsBase, loader, refresh: p.refresh ?? r.refresh };
 }
 
 function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: number; onIndex: (i: number) => void; lightbox?: boolean }) {

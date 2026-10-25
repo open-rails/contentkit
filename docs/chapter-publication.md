@@ -11,11 +11,13 @@ reader tokens cannot open `tmp`, `originals`, `future` or manifest files.
 An explicitly authorized read-only auditor can request administrative
 inspection of ready reader derivatives before release. These requests return
 short-lived exact preview URLs, never a folder cookie, editing controls,
-original uploads or `HostOnly` outputs. Reader-plan inspection segments carry
-an explicit flag so media fetches repeat the same permission check. Inspection
-does not create publication records or change release state. Draft source-audio
-pass-through and HLS playback are outside this derivative-preview mode; editor
-source access and ordinary published playback retain their existing paths.
+undeclared original uploads or `HostOnly`/download-only outputs. Declared reader
+audio and explicit non-ZIP `ServeOriginals` assets may pass through; this does
+not grant general source-export authority. Reader-plan inspection segments and
+playback carry an explicit flag so media fetches repeat the permission check.
+HLS inspection reads only indexes referenced by allowed current tracks and
+uses exact preview URLs for their bytes. Inspection does not create publication
+records or change release state.
 
 Chapters are start markers in the manifest's ordered source files. A chapter
 covers `[its start, next start)`; the last chapter continues to the end. Markers

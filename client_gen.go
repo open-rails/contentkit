@@ -1467,6 +1467,8 @@ type GetMediaHlsQuery struct {
 	Audio []string
 	// subtitle languages the master playlist keeps; empty keeps none
 	Subs []string
+	// explicit administrative inspection; current authority is rechecked
+	Editor bool
 }
 
 func (q GetMediaHlsQuery) values() url.Values {
@@ -1476,6 +1478,9 @@ func (q GetMediaHlsQuery) values() url.Values {
 	}
 	if len(q.Subs) > 0 {
 		v.Set("subs", strings.Join(q.Subs, ","))
+	}
+	if q.Editor {
+		v.Set("editor", "")
 	}
 	return v
 }
@@ -1547,6 +1552,8 @@ type GetMediaVersionHlsQuery struct {
 	Audio []string
 	// subtitle languages the master playlist keeps; empty keeps none
 	Subs []string
+	// explicit administrative inspection; current authority is rechecked
+	Editor bool
 }
 
 func (q GetMediaVersionHlsQuery) values() url.Values {
@@ -1556,6 +1563,9 @@ func (q GetMediaVersionHlsQuery) values() url.Values {
 	}
 	if len(q.Subs) > 0 {
 		v.Set("subs", strings.Join(q.Subs, ","))
+	}
+	if q.Editor {
+		v.Set("editor", "")
 	}
 	return v
 }

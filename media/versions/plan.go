@@ -69,8 +69,9 @@ type PlanPreview struct {
 
 // PlanPlayback is the version's audio item and its tracks.
 type PlanPlayback struct {
-	Item   media.RefBody `json:"item"`
-	Tracks []PlanTrack   `json:"tracks"`
+	Item       media.RefBody `json:"item"`
+	Tracks     []PlanTrack   `json:"tracks"`
+	Inspection bool          `json:"inspection,omitempty"`
 }
 
 type PlanTrack struct {

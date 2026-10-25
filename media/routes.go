@@ -81,7 +81,7 @@ var readRoutes = []httpapi.Route[readHandler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/hls/{path...}", Resource: "media", Auth: httpapi.Public,
 		Doc: "HLS: {dir}master.m3u8 (a ladder of the read's hls), {path}.m3u8 (a track) or {dir}sprite.vtt (the seek sprite).",
 		Query: []httpapi.Param{httpapi.List("audio", "audio languages the master playlist keeps; empty keeps none"),
-			httpapi.List("subs", "subtitle languages the master playlist keeps; empty keeps none")},
+			httpapi.List("subs", "subtitle languages the master playlist keeps; empty keeps none"), httpapi.Flag("editor", "explicit administrative inspection; current authority is rechecked")},
 		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: HLSContentType}), httpapi.OK(httpapi.Stream{ContentType: VTTContentType})}},
 		Serve: httpapi.H(readHandler.playlist)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/versions/{version}", Resource: "media", Auth: httpapi.Public,
@@ -92,7 +92,7 @@ var readRoutes = []httpapi.Route[readHandler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/versions/{version}/hls/{path...}", Resource: "media", Auth: httpapi.Public,
 		Doc: "A version's HLS playlists, as GET /{kind}/{id}/hls/{path...} serves an item's.",
 		Query: []httpapi.Param{httpapi.List("audio", "audio languages the master playlist keeps; empty keeps none"),
-			httpapi.List("subs", "subtitle languages the master playlist keeps; empty keeps none")},
+			httpapi.List("subs", "subtitle languages the master playlist keeps; empty keeps none"), httpapi.Flag("editor", "explicit administrative inspection; current authority is rechecked")},
 		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: HLSContentType}), httpapi.OK(httpapi.Stream{ContentType: VTTContentType})}},
 		Serve: httpapi.H(readHandler.playlist)},
 }
