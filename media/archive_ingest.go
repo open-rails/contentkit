@@ -25,14 +25,15 @@ import (
 )
 
 const archiveImageLimit = 2000
+const archiveCommitBatch = 8
 const archiveExpandedLimit = int64(2 << 30)
 
 var errArchiveChanged = errors.New("media: archive source changed during ingestion")
 
 // IngestArchives expands the configured ZIP uploads of an item. Placement
-// precedes this call; generated original files are attached in one conditional,
-// journaled edit before image/video processing. No catalog or HTTP callback is
-// required. The original ZIP remains in the manifest.
+// precedes this call. All entries are validated before any attachment, then
+// bounded batches commit with stable identities inside this same ingest job.
+// Each committed batch records observable progress. The original ZIP remains.
 func (m *Manifests) IngestArchives(ctx context.Context, ref contentref.ContentRef, tempDir string) error {
 	item, err := m.reg.Item(ref)
 	if err != nil {
@@ -242,10 +243,15 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		page.retainedPath, page.retainedBlob = file.Path, file.Blob
 	}
 	var newBytes int64
+	newPages := 0
 	for _, page := range pages {
 		if page.retainedPath == "" {
 			newBytes += max(page.size, uploadFloor)
+			newPages++
 		}
+	}
+	if current.uploads()+newPages > MaxUploads {
+		return tooManyFiles(MaxUploads, "archive exceeds item upload limit")
 	}
 
 	fingerprintInput, _ := json.Marshal(struct {
@@ -253,10 +259,6 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 		Admission            SourceAdmission
 	}{source.Blob, source.Path, destination, admission})
 	operation := uuid.NewSHA1(uuid.NameSpaceOID, append([]byte("contentkit:archive-ingest:v1:"+item.Ref().String()+":"), fingerprintInput...))
-	mutation := &manifestMutation{commit: manifestCommit{ID: operation, Ref: item.Ref(), Folder: item.Prefix(), Actor: "contentkit:archive-ingest", Fingerprint: sha256.Sum256(fingerprintInput)}, quota: admission.Quota}
-	if _, replayed, err := m.replayCommit(ctx, item, mutation.commit); err != nil || replayed {
-		return err
-	}
 	// Reserve the validated expanded bytes before any page PUT. The accepted
 	// source policy is replayed without invoking a host callback in the worker.
 	reservationKey := item.TempPrefix() + "archive-quota-" + operation.String()
@@ -283,164 +285,193 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source File, t
 			}
 		}
 	}()
-	// Allocations are recorded before PUT. The final edit adopts all or none;
-	// exact cleanup/recovery owns unused and uncertain writes, never a scan.
-	for i := range pages {
-		if pages[i].retainedPath != "" {
+	for batchStart := 0; batchStart < len(pages); batchStart += archiveCommitBatch {
+		batchEnd := min(batchStart+archiveCommitBatch, len(pages))
+		batchKey := "batch:" + strconv.Itoa(batchStart)
+		batchInput := append(slices.Clone(fingerprintInput), []byte(batchKey)...)
+		mutation := &manifestMutation{commit: manifestCommit{ID: uuid.NewSHA1(operation, []byte(batchKey)), Ref: item.Ref(), Folder: item.Prefix(), Actor: "contentkit:archive-ingest", Fingerprint: sha256.Sum256(batchInput)}, quota: admission.Quota}
+		if _, replayed, err := m.replayCommit(ctx, item, mutation.commit); err != nil {
+			return err
+		} else if replayed {
+			if err := CompleteProcessing(ctx, m, item.Ref(), nil); err != nil {
+				return err
+			}
 			continue
 		}
-		blob, err := m.NewBlobs(ctx, item.Ref(), k.Area(destination, ""), [][]byte{pages[i].sum})
-		if err != nil {
-			return err
-		}
-		pages[i].blob = blob[0]
-		written = append(written, blob[0])
-		input, err := os.Open(pages[i].file)
-		if err != nil {
-			return err
-		}
-		physical, err := item.Blob(blob[0])
-		if err != nil {
-			input.Close()
-			return err
-		}
-		_, writeErr := m.store.Put(ctx, physical, input, pages[i].size, PutOptions{ContentType: pages[i].typ, ChecksumSHA256: pages[i].sum, IfNoneMatch: "*"})
-		closeErr := input.Close()
-		if writeErr != nil {
-			return writeErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-
-	}
-	_, err = m.editOperation(ctx, item.Ref(), true, bound{project: k.Unwritten}, mutation, func(cur *Manifest) error {
-		i := cur.Find(source.Path)
-		if i < 0 || cur.Files[i].Source() != source.Source() {
-			return errArchiveChanged
-		}
-		if cur.Files[i].Admission == nil || *cur.Files[i].Admission != admission {
-			return errArchiveChanged
-		}
-		keys := make([]string, len(written))
-		for i, b := range written {
-			keys[i], _ = item.Blob(b)
-		}
-		if err := m.checkAllocationsIn(ctx, item, keys, cur.Incarnation); err != nil {
-			return err
-		}
-		archiveUnattached := cur.Files[i].Unattached
-		before := cur.uploadBytes()
-		objects := map[string]Object{}
-		for _, page := range pages {
-			if page.retainedPath != "" {
-				if old, ok := cur.Get(page.retainedPath); !ok || old.Blob != page.retainedBlob {
-					return errArchiveChanged
-				}
+		// Each batch owns its fresh allocations before PUT; its exact mutation
+		// adopts them together. Failed/unused objects belong to content purge.
+		for i := batchStart; i < batchEnd; i++ {
+			if pages[i].retainedPath != "" {
 				continue
 			}
-			physical, _ := item.Blob(page.blob)
-			obj, err := m.store.Head(ctx, physical)
+			blob, err := m.NewBlobs(ctx, item.Ref(), k.Area(destination, ""), [][]byte{pages[i].sum})
 			if err != nil {
 				return err
 			}
-			if obj.Size != page.size {
-				return uploadErr(CodeConflict, "prepared archive page changed")
-			}
-			objects[page.blob] = obj
-		}
-		runner := &opRun{k: k, m: cur, ref: item.Ref(), objects: objects, trusted: true, exempt: !admission.Enforce}
-		taken := map[string]bool{}
-		existing := map[int]File{}
-		for _, file := range cur.Files {
-			if !file.IsUpload() {
-				continue
-			}
-			g, _, _, _, ok := k.upload(file.Path)
-			if !ok || g != target {
-				continue
-			}
-			taken[k.NameOf(file.Path)] = true
-			pm, _ := pageMetadata(file.Meta)
-			if name, ok := pm["name"].(string); ok {
-				taken[name] = true
-			}
-			if pm["archive_sha256"] == digest {
-				switch index := pm["source_index"].(type) {
-				case int:
-					existing[index] = file
-				case float64:
-					existing[int(index)] = file
-				}
-			}
-		}
-		for n, page := range pages {
-			if old, ok := existing[n+1]; ok {
-				if sourceDigest(old) != hex.EncodeToString(page.sum) {
-					return uploadErr(CodeConflict, "previous imported archive page changed")
-				}
-				if old.Unattached && !archiveUnattached {
-					if err := runner.apply(-1, Op{Op: OpAttach, Path: old.Path}); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			if page.blob == "" {
-				return errArchiveChanged
-			}
-			stem := UniquePageName(strings.TrimSuffix(page.name, path.Ext(page.name)), taken)
-			taken[stem] = true
-			createID := uuid.NewSHA1(operation, []byte(strconv.Itoa(n)+":"+page.entry.Name)).String()
-			if rule.Named {
-				stem = NamedPrefix + createID
-			}
-			targetPath := strings.TrimSuffix(destination, "{name}") + stem + strings.ToLower(path.Ext(page.name))
-			meta := withPageSource(nil, stem, page.entry.Name)
-			pm, _ := pageMetadata(meta)
-			if _, from, to, ok := CanonicalPageName(page.name); ok {
-				pm["span"] = map[string]int{"from": from, "to": to}
-				delete(pm, "flags")
-			}
-			if stem != CleanName(strings.TrimSuffix(page.name, path.Ext(page.name))) {
-				flags, _ := pm["flags"].([]string)
-				pm["flags"] = append(flags, "duplicate_source_name")
-			}
-
-			pm["archive_sha256"], pm["source_entry"], pm["source_sha256"] = digest, page.entry.Name, hex.EncodeToString(page.sum)
-			pm["source_index"], pm["upload_index"] = n+1, page.uploadIndex
-			if page.name != path.Base(page.entry.Name) {
-				flags, _ := pm["flags"].([]string)
-				pm["flags"] = append(flags, "source_name_cleaned")
-			}
-			meta["page"] = pm
-			appendAt := MaxUploads
-			if err := runner.apply(-1, Op{Op: OpPut, Path: targetPath, Blob: page.blob, SourceName: path.Base(page.entry.Name), CreateID: createID, Meta: meta, Index: &appendAt, Unattached: archiveUnattached}); err != nil {
+			pages[i].blob = blob[0]
+			written = append(written, blob[0])
+			input, err := os.Open(pages[i].file)
+			if err != nil {
 				return err
 			}
-			if j := cur.Find(targetPath); j >= 0 {
-				copy := admission
-				cur.Files[j].Admission = &copy
+			physical, err := item.Blob(blob[0])
+			if err != nil {
+				input.Close()
+				return err
 			}
+			_, writeErr := m.store.Put(ctx, physical, input, pages[i].size, PutOptions{ContentType: pages[i].typ, ChecksumSHA256: pages[i].sum, IfNoneMatch: "*"})
+			closeErr := input.Close()
+			if writeErr != nil {
+				return writeErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+
 		}
-		i = cur.Find(source.Path)
-		meta := maps.Clone(cur.Files[i].Meta)
-		if meta == nil {
-			meta = map[string]any{}
+		_, err = m.editOperation(ctx, item.Ref(), true, bound{project: k.Unwritten}, mutation, func(cur *Manifest) error {
+			i := cur.Find(source.Path)
+			if i < 0 || cur.Files[i].Source() != source.Source() {
+				return errArchiveChanged
+			}
+			if cur.Files[i].Admission == nil || *cur.Files[i].Admission != admission {
+				return errArchiveChanged
+			}
+			keys := make([]string, len(written))
+			for i, b := range written {
+				keys[i], _ = item.Blob(b)
+			}
+			if err := m.checkAllocationsIn(ctx, item, keys, cur.Incarnation); err != nil {
+				return err
+			}
+			archiveUnattached := cur.Files[i].Unattached
+			before := cur.uploadBytes()
+			objects := map[string]Object{}
+			for _, page := range pages[batchStart:batchEnd] {
+				if page.retainedPath != "" {
+					if old, ok := cur.Get(page.retainedPath); !ok || old.Blob != page.retainedBlob {
+						return errArchiveChanged
+					}
+					continue
+				}
+				physical, _ := item.Blob(page.blob)
+				obj, err := m.store.Head(ctx, physical)
+				if err != nil {
+					return err
+				}
+				if obj.Size != page.size {
+					return uploadErr(CodeConflict, "prepared archive page changed")
+				}
+				objects[page.blob] = obj
+			}
+			runner := &opRun{k: k, m: cur, ref: item.Ref(), objects: objects, trusted: true, exempt: !admission.Enforce}
+			taken := map[string]bool{}
+			existing := map[int]File{}
+			for _, file := range cur.Files {
+				if !file.IsUpload() {
+					continue
+				}
+				g, _, _, _, ok := k.upload(file.Path)
+				if !ok || g != target {
+					continue
+				}
+				taken[k.NameOf(file.Path)] = true
+				pm, _ := pageMetadata(file.Meta)
+				if name, ok := pm["name"].(string); ok {
+					taken[name] = true
+				}
+				if pm["archive_sha256"] == digest {
+					switch index := pm["source_index"].(type) {
+					case int:
+						existing[index] = file
+					case float64:
+						existing[int(index)] = file
+					}
+				}
+			}
+			for n, page := range pages[batchStart:batchEnd] {
+				n += batchStart
+				if old, ok := existing[n+1]; ok {
+					if sourceDigest(old) != hex.EncodeToString(page.sum) {
+						return uploadErr(CodeConflict, "previous imported archive page changed")
+					}
+					if old.Unattached && !archiveUnattached {
+						if err := runner.apply(-1, Op{Op: OpAttach, Path: old.Path}); err != nil {
+							return err
+						}
+					}
+					continue
+				}
+				if page.blob == "" {
+					return errArchiveChanged
+				}
+				stem := UniquePageName(strings.TrimSuffix(page.name, path.Ext(page.name)), taken)
+				taken[stem] = true
+				createID := uuid.NewSHA1(operation, []byte(strconv.Itoa(n)+":"+page.entry.Name)).String()
+				if rule.Named {
+					stem = NamedPrefix + createID
+				}
+				targetPath := strings.TrimSuffix(destination, "{name}") + stem + strings.ToLower(path.Ext(page.name))
+				meta := withPageSource(nil, stem, page.entry.Name)
+				pm, _ := pageMetadata(meta)
+				if _, from, to, ok := CanonicalPageName(page.name); ok {
+					pm["span"] = map[string]int{"from": from, "to": to}
+					delete(pm, "flags")
+				}
+				if stem != CleanName(strings.TrimSuffix(page.name, path.Ext(page.name))) {
+					flags, _ := pm["flags"].([]string)
+					pm["flags"] = append(flags, "duplicate_source_name")
+				}
+
+				pm["archive_sha256"], pm["source_entry"], pm["source_sha256"] = digest, page.entry.Name, hex.EncodeToString(page.sum)
+				pm["source_index"], pm["upload_index"] = n+1, page.uploadIndex
+				if page.name != path.Base(page.entry.Name) {
+					flags, _ := pm["flags"].([]string)
+					pm["flags"] = append(flags, "source_name_cleaned")
+				}
+				meta["page"] = pm
+				appendAt := MaxUploads
+				if err := runner.apply(-1, Op{Op: OpPut, Path: targetPath, Blob: page.blob, SourceName: path.Base(page.entry.Name), CreateID: createID, Meta: meta, Index: &appendAt, Unattached: archiveUnattached}); err != nil {
+					return err
+				}
+				if j := cur.Find(targetPath); j >= 0 {
+					copy := admission
+					cur.Files[j].Admission = &copy
+				}
+			}
+			i = cur.Find(source.Path)
+			meta := maps.Clone(cur.Files[i].Meta)
+			if meta == nil {
+				meta = map[string]any{}
+			}
+			meta["archive_pages_total"] = len(pages)
+			if batchEnd == len(pages) {
+				meta["archive_completed_sha256"] = digest
+			}
+			cur.Files[i].Meta = meta
+			if cur.uploads() > MaxUploads {
+				return tooManyFiles(MaxUploads, "archive exceeds item upload limit")
+			}
+			chargedOwner := admission.Owner
+			if !admission.Accounting {
+				chargedOwner = ""
+			}
+			var reservationKeys []string
+			if batchEnd == len(pages) {
+				reservationKeys = []string{reservationKey}
+			}
+			mutation.effects.Settlement = Settlement{Tenant: item.Ref().TenantID, Owner: chargedOwner, Keys: reservationKeys, Delta: cur.uploadBytes() - before, Enforce: admission.Enforce}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		meta["archive_pages_total"], meta["archive_completed_sha256"] = len(pages), digest
-		cur.Files[i].Meta = meta
-		if cur.uploads() > MaxUploads {
-			return tooManyFiles(MaxUploads, "archive exceeds item upload limit")
+		if err := CompleteProcessing(ctx, m, item.Ref(), nil); err != nil {
+			return err
 		}
-		chargedOwner := admission.Owner
-		if !admission.Accounting {
-			chargedOwner = ""
-		}
-		mutation.effects.Settlement = Settlement{Tenant: item.Ref().TenantID, Owner: chargedOwner, Keys: []string{reservationKey}, Delta: cur.uploadBytes() - before, Enforce: admission.Enforce}
-		return nil
-	})
-	return err
+	}
+
+	return nil
 }
 
 func sourceDigest(f File) string {

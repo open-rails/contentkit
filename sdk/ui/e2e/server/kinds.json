@@ -483,7 +483,8 @@
           "thumb"
         ],
         "previews": "preview",
-        "download": "zip"
+        "download": "zip",
+        "import": "import/{name}"
       },
       "uploads": [
         {
@@ -512,6 +513,14 @@
           ],
           "max_bytes": 10485760,
           "max": 3
+        },
+        {
+          "path": "import/{name}",
+          "types": [
+            "application/zip"
+          ],
+          "max_bytes": 67108864,
+          "max": 2
         }
       ],
       "private": [

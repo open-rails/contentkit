@@ -136,6 +136,9 @@ func PlanLayoutMigration(ctx context.Context, source *Manifests, target *Registr
 // media protocol. Existing different bytes or a changed source stop the copy.
 // Completed entries are checked and skipped on retry, never overwritten.
 func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, plan *LayoutPlan) error {
+	// The explicit migration resumes its saved plan and settles every copied
+	// manifest before returning; it cannot depend on stopped runtime workers.
+	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	if source == nil || target == nil || plan == nil || plan.Version != 1 {
 		return errors.New("media: invalid layout migration")
 	}
@@ -187,7 +190,7 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 			if digestManifest(cur) != digestManifest(e.Manifest) {
 				// A failed first PUT is recovered by writing an empty fence.
 				// Only this exact migration's absent attempt may replace it.
-				empty := &Manifest{V: ManifestVersion, Hidden: true, Incarnation: layoutRecoveryIncarnation(commit.ID), Files: []File{}}
+				empty := &Manifest{V: ManifestVersion, Incarnation: layoutRecoveryIncarnation(commit.ID), Files: []File{}}
 				if prior == nil || prior.State != "absent" || cur.Receipt != nil || digestManifest(cur) != digestManifest(empty) {
 					return fmt.Errorf("%w: destination %s", ErrLayoutChanged, to.Prefix())
 				}

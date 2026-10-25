@@ -73,6 +73,8 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Read the body as a Blob instead of JSON. */
   blob?: boolean;
+  /** Return the streaming response through the same authenticated transport. */
+  stream?: boolean;
   keepalive?: boolean;
   /** Internal preference inventory reads never send unvalidated overrides. */
   guestPreferences?: boolean;
@@ -167,6 +169,7 @@ export class Http {
       body,
       signal,
       blob,
+      stream,
       keepalive,
       guestPreferences = true,
       retryGuestPreferences = true,
@@ -178,6 +181,7 @@ export class Http {
     const f = this.o.fetch ?? fetch;
     const headers = new Headers(await this.o.headers?.());
     headers.delete("ContentKit-Reader-Preferences");
+    if (stream) headers.set("Accept", "text/event-stream");
     if (body !== undefined) headers.set("Content-Type", "application/json");
     const token = await this.o.token?.();
     if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
@@ -221,6 +225,7 @@ export class Http {
             body,
             signal,
             blob,
+            stream,
             keepalive,
             guestPreferences,
             retryGuestPreferences: false,
@@ -228,6 +233,7 @@ export class Http {
       }
       throw error;
     }
+    if (stream) return res as T;
     if (blob) return (await res.blob()) as T;
     return (res.status === 204 ? undefined : await res.json()) as T;
   }

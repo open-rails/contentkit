@@ -120,7 +120,7 @@ func (k *Kind) readiness(m *Manifest, includeUnattached bool) Readiness {
 		if !f.IsUpload() || f.Unattached && !includeUnattached {
 			continue
 		}
-		public := !m.Hidden && !f.Unattached
+		public := !f.Unattached
 		measure := includeUnattached && isImageType(f.Type) && (f.W <= 0 || f.H <= 0) && len(k.Presets(f.Path, false)) != 0
 		switch {
 		case f.Fail() != nil && !k.audioOriginal(f):

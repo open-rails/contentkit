@@ -45,8 +45,6 @@ type VersionMedia interface {
 	Covers(ctx context.Context, covers []versions.CoverOf) ([][]media.PublicRendition, error)
 	// CopyBodiesTx copies body images between a content's versions.
 	CopyBodiesTx(ctx context.Context, tx pgx.Tx, copies []versions.BodyCopy) error
-	// ExposeTx follows a visibility change.
-	ExposeTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
 	// RepublishTx follows a change of a version's effective rule or segments.
 	RepublishTx(ctx context.Context, tx pgx.Tx, versions []versions.Target) error
 	// DeleteTx claims irreversible erasure under the eligibility row locks.
@@ -167,14 +165,6 @@ func contentTargets(ids []string) []versions.Target {
 		out[i] = versions.Target{Content: id}
 	}
 	return out
-}
-
-// exposeTx asks media to bring the items' media to their visibility.
-func (s *Store) exposeTx(ctx context.Context, tx pgx.Tx, ids []string) error {
-	if s.media == nil || len(ids) == 0 {
-		return nil
-	}
-	return s.media.Versions.ExposeTx(ctx, tx, contentTargets(ids))
 }
 
 // BodyImageInput names a body image uploaded to one version (Upload.Body).

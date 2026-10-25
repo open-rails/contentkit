@@ -36,7 +36,11 @@ export function useNotifications(o: UseNotificationsOptions = {}): UseNotificati
   const setRead = useCallback((id: string, read: boolean) => client.notifications.setRead(id, read), [client]);
   const setDismissed = useCallback((id: string, dismissed: boolean) => client.notifications.setDismissed(id, dismissed), [client]);
   const refresh = o.refreshInterval ?? false;
-  const reload = list.reload;
+  // Refresh every mounted inbox/unread view through the account transport.
+  // Reloading only this list leaves a sibling bell's unread state stale.
+  const reload = useCallback(() => {
+    if (enabled) client.notifications.refresh();
+  }, [client, enabled]);
   useEffect(() => {
     if (!enabled || refresh === false || refresh <= 0) return;
     const timer = setInterval(() => {
@@ -44,7 +48,7 @@ export function useNotifications(o: UseNotificationsOptions = {}): UseNotificati
     }, Math.max(5_000, refresh));
     return () => clearInterval(timer);
   }, [enabled, refresh, reload]);
-  return { ...list, signedOut: viewer === null, setRead, setDismissed };
+  return { ...list, reload, signedOut: viewer === null, setRead, setDismissed };
 }
 
 /** A bounded unread-present indicator, not an invented total count. */

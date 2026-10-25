@@ -78,7 +78,7 @@ var routes = []httpapi.Route[handler]{
 	editor(httpapi.POST, "/entities", "Creates entities with their names and text; an auth_scope kind's gets its AuthKit scope."+editors, []EntityInput{}, httpapi.Created([]Entity{}),
 		httpapi.H(handler.create), creates),
 	editor(httpapi.PATCH, "/entities/{id}", "Updates a entity's given fields; state restores or deletes it."+editors, EntityUpdate{}, httpapi.OK(Entity{}), httpapi.H(handler.update), creates),
-	editor(httpapi.DELETE, "/entities/{id}", "Marks a entity deleted, retires its AuthKit scope and hides its media; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back, and its media within the retention."+editors, nil, httpapi.OK(Entity{}), httpapi.H(handler.remove), notFound),
+	editor(httpapi.DELETE, "/entities/{id}", "Marks an entity deleted and retires its AuthKit scope; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back within retention. Declared public media remains public until permanent purge."+editors, nil, httpapi.OK(Entity{}), httpapi.H(handler.remove), notFound),
 	staff(httpapi.PUT, "/entities/{id}/names", "Replaces a entity's names and aliases.", []Name{}, httpapi.OK([]Name{}),
 		func(h handler) http.HandlerFunc { return h.names(h.s.SetNames) }, writes),
 	staff(httpapi.POST, "/entities/{id}/names", "Adds names and aliases to a entity; a new canonical name demotes the old one to an alias.", []Name{}, httpapi.OK([]Name{}),

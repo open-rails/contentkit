@@ -198,7 +198,8 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in Po
 }
 
 // softDelete flags deleted_at; the row (and its votes) stay for history, and
-// its media folder is deleted.
+// its media retirement intent commits with the tombstone. The existing
+// content-deletion sweep erases its files; history remains after failures.
 func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) error {
 	if err := p.rt.requirePerm(ctx, actor, access.PollsWrite); err != nil {
 		return err

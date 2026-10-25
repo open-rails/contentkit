@@ -18,8 +18,6 @@ export interface ReadEntry {
 
 /** What one reader asks of a shared read beyond the read itself. */
 export interface ReadPolicy {
-  /** Poll at this interval (ms) while uploads process (editor reads). */
-  poll?: number | false;
   /** Read again shortly before the URLs expire. */
   refresh?: boolean;
 }
@@ -64,11 +62,87 @@ export function withUpload(read: ReadResult | null, path: string, file: FileInfo
  * The reads hooks share, per client: one request per item and options while
  * any hook shows it. set() updates every reader in place; a commit reloads
  * the item's reads and a processed upload is patched into its editor reads.
- * Readers may ask for polling while uploads process and a read before the
- * URLs expire; the slot runs one timer for all of them.
+ * Processing uses one SSE observer per item and account scope. URL expiry
+ * keeps its own shared refresh timer.
  */
 export class ReadStore {
   private readonly slots = new Map<string, Slot>();
+  private readonly observers = new Map<string, AbortController>();
+
+  private observe(s: Slot): void {
+    if ((!s.options.editor && !s.options.status) || !s.entry.read || !processing(s.entry.read) || !s.listeners.size) return;
+    const key = s.scope + readKey(s.ref);
+    if (this.observers.has(key)) return;
+    const controller = new AbortController();
+    this.observers.set(key, controller);
+    const matching = () => [...this.slots.values()].filter((slot) => slot.scope === s.scope && sameItem(slot.ref, s.ref) && (slot.options.editor || slot.options.status) && slot.listeners.size);
+    const run = async () => {
+      let cursor = "";
+      for (let attempt = 0; ; attempt++) {
+        let authorizedSnapshot = false;
+        try {
+          await this.client.media.watch(s.ref, (update) => {
+            if (controller.signal.aborted) return;
+            cursor = update.cursor;
+            if (!update.read) return;
+            if (update.event === "snapshot" || update.event === "resync") authorizedSnapshot = true;
+            let completed = false;
+            for (const slot of matching()) {
+              const before = slot.entry.read;
+              const read = slot.options.status ? update.read : before ? { ...before, status: update.read.status, state: update.read.state, full: update.read.status?.state === "full" } : null;
+              if (read) this.update(slot, { read, error: undefined, ...(slot.options.status ? { loading: false, loaded: true } : {}) });
+              if (!slot.options.status) this.load(slot.key, "reload");
+              if (read && finished(before, read)) completed = true;
+            }
+            if (completed) this.reloadViewers(s.ref);
+            if (!processing(update.read)) {
+              this.observers.delete(key);
+              controller.abort();
+            }
+          }, controller.signal, cursor);
+          return;
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          const failure = toContentKitError(error);
+          // A long stream keeps its original credential. After an authorized
+          // snapshot, one fresh request lets the host's auth fetch refresh it.
+          // A refused reconnect gets no snapshot and therefore stops here.
+          if (failure.code === "unauthorized" && authorizedSnapshot) {
+            for (const slot of matching()) {
+              slot.ctl?.abort();
+              slot.ctl = undefined;
+              clearTimeout(slot.timer);
+              this.update(slot, { read: null, error: undefined, loading: true });
+            }
+            attempt = 0;
+            continue;
+          }
+          if (!failure.transient || attempt >= 3) {
+            for (const slot of matching()) {
+              slot.ctl?.abort();
+              slot.ctl = undefined;
+              clearTimeout(slot.timer);
+              this.update(slot, { read: null, error: failure, loading: false });
+            }
+            return;
+          }
+          await sleep(Math.min(8000, 1000 * 2 ** attempt), controller.signal);
+        }
+      }
+    };
+    void run().catch(() => {}).finally(() => {
+      if (this.observers.get(key) === controller) this.observers.delete(key);
+    });
+  }
+
+  private stopUnusedObservers(): void {
+    for (const [key, controller] of this.observers) {
+      if (![...this.slots.values()].some((slot) => slot.scope + readKey(slot.ref) === key && (slot.options.editor || slot.options.status) && slot.listeners.size)) {
+        controller.abort();
+        this.observers.delete(key);
+      }
+    }
+  }
 
   constructor(private readonly client: ContentKitClient) {
     client.subscribe((c, scope) => this.apply(c, scope));
@@ -89,6 +163,7 @@ export class ReadStore {
         slot.ctl?.abort();
         clearTimeout(slot.timer);
         this.slots.delete(key);
+        this.stopUnusedObservers();
       });
     };
   }
@@ -146,15 +221,14 @@ export class ReadStore {
     }
   }
 
-  // One timer per slot: the soonest of a poll (while uploads process) and the refresh before expiry.
+  // Signed URL expiry refresh is independent of processing observation.
   private schedule(s: Slot): void {
     clearTimeout(s.timer);
     s.timer = undefined;
+    this.observe(s);
     const read = s.entry.read;
     if (!read || s.ctl || !s.listeners.size) return;
     let delay: number | null = null;
-    const polls = [...s.listeners.values()].map((p) => p.poll).filter((p): p is number => typeof p === "number" && p > 0);
-    if (polls.length && processing(read)) delay = Math.min(...polls);
     if ([...s.listeners.values()].some((p) => p.refresh)) {
       const d = expiryDelay(read.expires);
       if (d !== null) delay = delay === null ? d : Math.min(delay, d);

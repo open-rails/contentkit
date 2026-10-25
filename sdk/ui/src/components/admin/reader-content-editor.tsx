@@ -1,3 +1,4 @@
+import { MediaReadinessNotice } from "../media-readiness-notice.js";
 import { ImageAdd01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
@@ -354,7 +355,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   }, [copyingFrom, refreshFiles, reloadFiles, reloadContent]);
   const notices = usePageNotices(item?.id, version?.id, { client });
   const reloadNotices = notices.reload;
-  // A ZIP's pages appear after its commit. Media polling alone does not
+  // A ZIP's pages appear after its commit. Media updates alone do not
   // refresh the notices when extraction changes the manifest.
   const mediaKey = ref && folder.read.read ? JSON.stringify([ref.id, ref.version,
     files.filter((file) => file.upload).map((file) => [file.path, file.size, file.staged, file.pending, file.failed]),
@@ -758,6 +759,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                   </span>
                 </div>
               )}
+              {ref && <MediaReadinessNotice item={ref} client={client} />}
               <MediaFolderEditor
                 folder={{ ...folder, add }}
                 confirmRemove={false}

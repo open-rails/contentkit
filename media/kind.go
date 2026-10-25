@@ -160,9 +160,9 @@ func (k *Kind) public(name string) *Public {
 }
 
 // Presets are the names of the presets an upload at path feeds: the private
-// ones, then (unless hidden) the public ones. Zips are not listed; they
+// ones, then (unless unattached) the public ones. Zips are not listed; they
 // follow their inputs.
-func (k *Kind) Presets(path string, hidden bool) []string {
+func (k *Kind) Presets(path string, unattached bool) []string {
 	i, _, _, _, ok := k.upload(path)
 	if !ok {
 		return nil
@@ -174,7 +174,7 @@ func (k *Kind) Presets(path string, hidden bool) []string {
 		}
 	}
 	for _, p := range k.Public {
-		if !hidden && p.From == k.Uploads[i].Path {
+		if !unattached && p.From == k.Uploads[i].Path {
 			out = append(out, p.Name)
 		}
 	}
@@ -289,9 +289,6 @@ func rendered(f File, p *Public) bool {
 // previewNames lists m's published preview generations in order.
 func (k *Kind) previewNames(m *Manifest) []string {
 	var out []string
-	if m.Hidden {
-		return nil
-	}
 	for i := range k.Public {
 		p := &k.Public[i]
 		for _, path := range k.firsts(m, p) {
@@ -321,7 +318,7 @@ func (k *Kind) Current(m *Manifest, f File, p *Public) (Publication, bool) {
 }
 
 func (k *Kind) owned(m *Manifest, f File, p *Public, pub Publication) bool {
-	return !m.Hidden && !f.Unattached && f.Fail() == nil && pub.Source == f.Key() &&
+	return !f.Unattached && f.Fail() == nil && pub.Source == f.Key() &&
 		slices.Equal(pub.Names, k.PublicNames(m, p, f.Path))
 }
 
@@ -331,9 +328,6 @@ func (k *Kind) owned(m *Manifest, f File, p *Public, pub Publication) bool {
 // retired; no later worker may reuse it.
 func (k *Kind) PublicKept(m *Manifest) []string {
 	var out []string
-	if m.Hidden {
-		return nil
-	}
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached {
 			continue
@@ -397,7 +391,7 @@ func (k *Kind) syncPreviews(before, m *Manifest) {
 			continue
 		}
 		was := map[int]string{}
-		if before != nil && !before.Hidden {
+		if before != nil {
 			for n, path := range k.firsts(before, p) {
 				if f, ok := before.Get(path); ok && !slices.Contains(f.Pending, p.Name) {
 					was[n] = f.Key()
@@ -414,7 +408,7 @@ func (k *Kind) syncPreviews(before, m *Manifest) {
 			n := slices.Index(now, f.Path)
 			pending := slices.Contains(f.Pending, p.Name)
 			switch {
-			case m.Hidden || n < 0 || f.Fail() != nil:
+			case n < 0 || f.Fail() != nil:
 				if pending {
 					f.Pending = slices.DeleteFunc(slices.Clone(f.Pending), func(s string) bool { return s == p.Name })
 					if len(f.Pending) == 0 {
@@ -798,7 +792,7 @@ const (
 // tracks one by one: a rendition per rung and codec, the sprite, and as many
 // audio and subtitle tracks as a source may carry), its measured fields,
 // and a staged upload's or frame's blob.
-// Then the zips, and the public presets' pending names an unhide adds.
+// Then the zips and the public presets' pending names.
 // Commits bound the manifest with it; an item whose outputs still overrun
 // it is marked Full by the worker.
 func (k *Kind) Unwritten(m *Manifest) int64 {
@@ -824,7 +818,7 @@ func (k *Kind) Unwritten(m *Manifest) int64 {
 		public := k.PublicFor(f.Path)
 		for _, p := range public {
 			names := k.PublicNames(m, p, f.Path)
-			if len(names) == 0 || m.Hidden || f.Unattached {
+			if len(names) == 0 || f.Unattached {
 				continue
 			}
 			if _, ok := k.Publication(m, f, p); !ok {

@@ -188,6 +188,7 @@ func (e *Env) Processing(reg *media.Registry) (*media.PGJournal, *workqueue.Queu
 	if err != nil {
 		s.owner.Fatal(err)
 	}
+	s.journal = journal
 	return journal, queue
 }
 

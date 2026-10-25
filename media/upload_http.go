@@ -281,6 +281,8 @@ func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		case errors.Is(err, ErrConditionalPutRequired):
 			h.o.Logger.ErrorContext(r.Context(), "media upload", "method", r.Method, "path", r.URL.Path, "error", err)
 			ue = &UploadError{Code: CodeUnavailable, Message: "media storage does not support conditional writes"}
+		case errors.Is(err, ErrNotFound):
+			ue = &UploadError{Code: CodeNotFound, Message: "media not found"}
 		default:
 			h.o.Logger.ErrorContext(r.Context(), "media upload", "method", r.Method, "path", r.URL.Path, "error", err)
 			writeJSON(w, http.StatusInternalServerError, ErrorReply{Error: "internal error", Code: "internal_error"})

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/contentref"
 )
@@ -32,6 +33,7 @@ type TransactionalProcessQueue interface {
 // PGJournal records unfinished S3 attempts and their database effects. The S3
 // manifest remains authoritative; this table contains no current file list.
 type PGJournal struct {
+	schema       string
 	pool         *pgxpool.Pool
 	table        string
 	allocations  string
@@ -43,7 +45,7 @@ type PGJournal struct {
 }
 
 // NewPGJournal uses the migrated ContentKit schema and a processing queue in
-// the same database. A nil queue supports manifest edits without queue effects.
+// the same database. A nil queue supports reads and owner-driven erasure only.
 // Quota policy is resolved by the uploader before preparing a transaction;
 // recovery uses the recorded owner and charge, never a host policy callback.
 func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQueue) (*PGJournal, error) {
@@ -51,14 +53,23 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 	if err != nil {
 		return nil, err
 	}
-	return &PGJournal{pool: pool, table: pgx.Identifier{schema, "content_media_commits"}.Sanitize(),
+	return &PGJournal{schema: schema, pool: pool, table: pgx.Identifier{schema, "content_media_commits"}.Sanitize(),
 		allocations:  pgx.Identifier{schema, "content_media_allocations"}.Sanitize(),
 		publications: pgx.Identifier{schema, "content_media_publications"}.Sanitize(),
 		cleanup:      pgx.Identifier{schema, "content_media_cleanup"}.Sanitize(),
 		limiter:      limiter, queue: queue}, nil
 }
 
+type folderDeletion struct {
+	Owner       string `json:"owner,omitempty"`
+	Incarnation string `json:"incarnation"`
+	Completed   bool   `json:"completed,omitempty"`
+}
+
 type journalEffects struct {
+	FolderDelete       *folderDeletion           `json:"folder_delete,omitempty"`
+	Manifest           []byte                    `json:"manifest,omitempty"` // exact admitted conditional PUT, owned by its ingest/processor job
+	Ingest             bool                      `json:"ingest,omitempty"`   // processing was admitted before the S3 write
 	VersionStoragePlan *versionStoragePlan       `json:"version_storage_plan,omitempty"`
 	VersionStorage     *versionStorageRetirement `json:"version_storage,omitempty"`
 	LegacyPublication  *legacyPublication        `json:"legacy_publication,omitempty"`
@@ -76,12 +87,28 @@ type journalEffects struct {
 	Public             []string                  `json:"public,omitempty"`  // exact retired public names, selected before PUT
 	Mirror             []Mirror                  `json:"mirror,omitempty"`  // Stable presets' new current files, copied to their logical names
 	Private            []string                  `json:"private,omitempty"` // exact takedown targets, selected before PUT
-	Notify             bool                      `json:"notify,omitempty"`  // host's idempotent ItemCommitted hook still needs delivery
 }
 
 // prepareCleanup retires exact allocations while the operation still owns
 // the folder. A cleaner that lost its lease cannot delete from an old snapshot.
 // The projection, without what this cleanup retires, commits with them.
+// lockAdmission orders irreversible owner claims against new mutation/allocation
+// admission without holding a catalog row lock across storage I/O.
+func (j *PGJournal) lockAdmission(ctx context.Context, tx pgx.Tx, folder string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, j.schema+"/media-admission/"+folder)
+	return err
+}
+
+func (j *PGJournal) writableTx(ctx context.Context, tx pgx.Tx, tenant, folder, incarnation string) error {
+	var retired bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+j.table+` WHERE tenant_id=$1 AND folder_prefix=$2
+AND effects->'folder_delete'->>'incarnation'=$3)`, tenant, folder, incarnation).Scan(&retired)
+	if err == nil && retired {
+		return ErrNotFound
+	}
+	return err
+}
+
 func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effects journalEffects, proj *projection) error {
 	j = j.forTenant(c.Ref.TenantID)
 	effects.Cleanup = true
@@ -91,6 +118,14 @@ func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effec
 	}
 	attempt := uuid.New()
 	err = pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
+		if len(effects.Allocate) > 0 {
+			if err := j.lockAdmission(ctx, tx, c.Folder); err != nil {
+				return err
+			}
+			if err := j.writableTx(ctx, tx, c.Ref.TenantID, c.Folder, effects.Incarnation); err != nil {
+				return err
+			}
+		}
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
 		if err != nil {
 			return err
@@ -112,6 +147,15 @@ WHERE tenant_id = $1 AND folder_prefix = $2 AND object_key = ANY($3::text[]) AND
 		}
 		if err := j.projectTx(ctx, tx, proj); err != nil {
 			return err
+		}
+		due := effects.CleanupAt
+		if len(effects.Private)+len(effects.Public) > 0 {
+			due = time.Now()
+		}
+		if !due.IsZero() {
+			if err := j.scheduleCleanupTx(ctx, tx, c.Ref, c.Folder, due, nil, false); err != nil {
+				return err
+			}
 		}
 		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'prepared', attempt_id = $3, effects = $4, updated_at = now()
 WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, attempt, body)
@@ -261,7 +305,7 @@ WHERE tenant_id = $1 AND operation_id = $2 FOR UPDATE`, tenant, id).Scan(
 
 // prepare records an attempt and its growth charge together, before S3 PUT.
 // A frozen caller cannot refresh its expected ETag and start another attempt.
-func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects journalEffects, quota int64) error {
+func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects journalEffects, quota int64, manifest []byte, incarnation string, lifecycle bool) error {
 	j = j.forTenant(c.Ref.TenantID)
 	if effects.Settlement.Tenant != "" && effects.Settlement.Tenant != c.Ref.TenantID ||
 		effects.Process != nil && !effects.Process.Ref.Equal(c.Ref) {
@@ -270,16 +314,33 @@ func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects jour
 	if (effects.Cancel || effects.Process != nil) && j.queue == nil {
 		return errors.New("media: commit processing requires a transactional queue")
 	}
+	attempt := c.Attempt
+	effects.Manifest = manifest
+	// Existing jobs own their writes. A request admits ingest in the same
+	// transaction as quota and the exact mutation, before any storage write.
+	_, ownerErr := river.ClientFromContextSafely[pgx.Tx](ctx)
+	owned, _ := ctx.Value(synchronousMutationOwnerKey{}).(bool)
+	effects.Ingest = !lifecycle && !owned && ownerErr != nil
+	if effects.Ingest && j.queue == nil {
+		return errors.New("media: manifest mutation needs a durable ingest queue")
+	}
 	body, err := json.Marshal(effects)
 	if err != nil {
 		return err
 	}
-	attempt := uuid.New()
 	charged := max(effects.Settlement.Delta, 0)
 	if effects.Settlement.Owner == "" {
 		charged = 0
 	}
 	err = pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
+		if !lifecycle {
+			if err := j.lockAdmission(ctx, tx, c.Folder); err != nil {
+				return err
+			}
+			if err := j.writableTx(ctx, tx, c.Ref.TenantID, c.Folder, incarnation); err != nil {
+				return err
+			}
+		}
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
 		if err != nil {
 			return err
@@ -296,6 +357,21 @@ func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects jour
 		}
 		if err := j.adoptTx(ctx, tx, c, effects); err != nil {
 			return err
+		}
+		if effects.Ingest {
+			if effects.Cancel {
+				if _, err := j.queue.CancelTx(ctx, tx, c.Ref); err != nil {
+					return err
+				}
+			}
+			job := ProcessJob{Ref: c.Ref}
+			if effects.Process != nil {
+				job = *effects.Process
+			}
+			job.Commit, job.Place = c.ID.String(), true
+			if err := j.queue.EnqueueTx(ctx, tx, job); err != nil {
+				return err
+			}
 		}
 		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'prepared', attempt_id = $3,
 expected_etag = $4, effects = $5, charged_bytes = $6, updated_at = now()
@@ -430,12 +506,12 @@ func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, 
 		if err := j.limiter.SettleTx(ctx, tx, s, 0); err != nil {
 			return err
 		}
-		if applied && found.Effects.Cancel {
+		if applied && found.Effects.Cancel && !found.Effects.Ingest {
 			if _, err := j.queue.CancelTx(ctx, tx, found.Ref); err != nil {
 				return err
 			}
 		}
-		if applied && found.Effects.Process != nil {
+		if applied && found.Effects.Process != nil && !found.Effects.Ingest {
 			if err := j.queue.EnqueueTx(ctx, tx, *found.Effects.Process); err != nil {
 				return err
 			}
@@ -451,71 +527,19 @@ func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, 
 				if found.Effects.CleanupDelete {
 					operations = []uuid.UUID{found.ID}
 				}
-				if err := j.scheduleCleanupTx(ctx, tx, found.Ref, found.Folder, found.Effects.CleanupAt, operations, false); err != nil {
+				due := found.Effects.CleanupAt
+				if len(found.Effects.Public)+len(found.Effects.Private) > 0 {
+					due = time.Now()
+				}
+				if err := j.scheduleCleanupTx(ctx, tx, found.Ref, found.Folder, due, operations, false); err != nil {
 					return err
 				}
 			}
 		}
-		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = $3, updated_at = now()
+		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = $3, effects = effects - 'manifest', updated_at = now()
 WHERE tenant_id = $1 AND operation_id = $2`, found.Ref.TenantID, found.ID, state)
 		return err
 	})
-}
-
-// pending also discovers attempts that crashed before the first manifest PUT.
-// Unfinished commits come first; pending notifications fill the rest of the
-// limit. Each query matches a partial index, so neither reads the retained
-// receipt history.
-func (j *PGJournal) pending(ctx context.Context, tenant string, kinds []string, limit int, notifications bool) ([]manifestCommit, error) {
-	j = j.forTenant(tenant)
-	out, err := j.pendingIn(ctx, `state IN ('open', 'prepared', 'frozen')
- AND NOT(content_version_id IS NOT NULL AND coalesce(effects->>'erasure','false')='true')`, tenant, kinds, limit, nil)
-	if err != nil || !notifications || len(out) == limit {
-		return out, err
-	}
-	return j.pendingIn(ctx, `state = 'applied' AND effects->>'notify' = 'true'`, tenant, kinds, limit-len(out), out)
-}
-
-// pendingIn appends up to limit commits matching state, oldest first.
-func (j *PGJournal) pendingIn(ctx context.Context, state, tenant string, kinds []string, limit int, out []manifestCommit) ([]manifestCommit, error) {
-	rows, err := j.pool.Query(ctx, `SELECT operation_id, content_kind, content_id, content_version_id, folder_prefix FROM `+j.table+`
-WHERE tenant_id = $1 AND content_kind = ANY($2) AND `+state+`
-ORDER BY updated_at, operation_id LIMIT $3`, tenant, kinds, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		c := manifestCommit{Ref: contentref.ContentRef{TenantID: tenant}}
-		if err := rows.Scan(&c.ID, &c.Ref.ContentKind, &c.Ref.ContentID, &c.Ref.ContentVersionID, &c.Folder); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-func (j *PGJournal) notification(ctx context.Context, c manifestCommit) (bool, error) {
-	j = j.forTenant(c.Ref.TenantID)
-	var pending bool
-	// Rotate a failed delivery behind other due notifications. Notification
-	// outages must not starve either newer callbacks or unfinished S3 attempts.
-	err := j.pool.QueryRow(ctx, `UPDATE `+j.table+` SET updated_at = now()
-WHERE tenant_id = $1 AND operation_id = $2 AND content_kind = $3 AND content_id = $4 AND content_version_id IS NOT DISTINCT FROM $5::text
-AND state = 'applied' AND effects->>'notify' = 'true' RETURNING true`,
-		c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID, c.Ref.ContentVersionID).Scan(&pending)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	return pending, err
-}
-
-func (j *PGJournal) acknowledgeNotification(ctx context.Context, c manifestCommit) error {
-	j = j.forTenant(c.Ref.TenantID)
-	_, err := j.pool.Exec(ctx, `UPDATE `+j.table+` SET effects = jsonb_set(effects, '{notify}', 'false'), updated_at = now()
-WHERE tenant_id = $1 AND operation_id = $2 AND content_kind = $3 AND content_id = $4 AND content_version_id IS NOT DISTINCT FROM $5::text AND state = 'applied'`,
-		c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID, c.Ref.ContentVersionID)
-	return err
 }
 
 func (c manifestCommit) receipt() *CommitReceipt {

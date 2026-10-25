@@ -1,33 +1,26 @@
 name: CI
+# Source validation runs only on ready PRs into delivery branches or explicit dispatch.
 'on':
   pull_request:
-    branches: [master]
-    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [master, 'release/**']
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, closed]
   workflow_dispatch: {}
   workflow_call: {}
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.event.pull_request.draft && format('draft-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.draft && github.event.action != 'converted_to_draft' && github.event.action != 'closed' && format('draft-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  select:
-    name: Select suites
-    if: github.event.pull_request.draft != true
+  source:
+    name: Verify candidate source
+    if: github.event.pull_request.draft != true && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     outputs:
-      go: ${{ steps.select.outputs.go }}
-      go_shards: ${{ steps.select.outputs.go_shards }}
-      server: ${{ steps.select.outputs.server }}
-      authkit_adapter: ${{ steps.select.outputs.authkit_adapter }}
-      openrails_adapter: ${{ steps.select.outputs.openrails_adapter }}
-      media_image: ${{ steps.select.outputs.media_image }}
-      media_video: ${{ steps.select.outputs.media_video }}
-      ui: ${{ steps.select.outputs.ui }}
-      ui_unit: ${{ steps.select.outputs.ui_unit }}
-      ui_browser: ${{ steps.select.outputs.ui_browser }}
-      images: ${{ steps.select.outputs.images }}
-      workflow: ${{ steps.select.outputs.workflow }}
+      images: ${{ steps.areas.outputs.images }}
+      critical: ${{ steps.areas.outputs.critical }}
+      suite: ${{ steps.areas.outputs.suite }}
+      scan: ${{ steps.areas.outputs.scan }}
     steps:
     - uses: actions/checkout@v4
       with:
@@ -36,12 +29,14 @@ jobs:
         persist-credentials: false
     - name: Verify tested merge
       env:
+        GH_TOKEN: ${{ github.token }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: |
         python3 - <<'PY'
         import os, subprocess
+        from urllib.parse import quote
         tested = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
         if tested != os.environ['GITHUB_SHA']:
             raise SystemExit('checkout differs from tested commit')
@@ -52,62 +47,44 @@ jobs:
                 raise SystemExit('not the expected PR plus current-base merge')
             ref = 'refs/heads/' + os.environ['PR_BASE_REF']
             subprocess.run(['git', 'check-ref-format', ref], check=True)
-            current = subprocess.check_output(['git', 'ls-remote', '--exit-code', 'origin', ref], text=True).split()[0]
+            endpoint = 'repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/ref/heads/' + quote(os.environ['PR_BASE_REF'], safe='/')
+            current = subprocess.check_output(['gh', 'api', endpoint, '--jq', '.object.sha'], text=True).strip()
             if current != os.environ['PR_BASE_SHA']:
                 raise SystemExit('base advanced; update the PR and rerun')
         PY
-    - name: Validate selection and select suites
-      id: select
-      env:
-        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      run: |
-        python3 -B -m unittest discover -s .github/scripts -p test_select_ci.py
-        python3 .github/scripts/select-ci.py
-  scan:
-    needs: select
-    uses: ./.github/workflows/scan.yaml
-  workflow-lint:
-    needs: select
-    if: needs.select.outputs.workflow == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: ${{ github.sha }}
-        persist-credentials: false
     - name: Lint workflows
       run: |
         curl --fail --silent --show-error --location https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output "$RUNNER_TEMP/actionlint.tar.gz"
         printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --status
         tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
         "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
-  go:
-    needs: select
-    if: needs.select.outputs.go == 'true'
+    - name: Select affected checks conservatively
+      id: areas
+      env:
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        set -euo pipefail
+        python3 .github/scripts/check-ci-policy.py
+        if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+          python3 .github/scripts/ci-scope.py --base "$PR_BASE_SHA" --head "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/selected-checks.json"
+        else
+          python3 .github/scripts/ci-scope.py --full --github-output "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/selected-checks.json"
+        fi
+        cat "$RUNNER_TEMP/selected-checks.json" >> "$GITHUB_STEP_SUMMARY"
+
+  scan:
+    needs: source
+    if: needs.source.outputs.scan == 'true'
+    uses: ./.github/workflows/scan.yaml
+  critical:
+    needs: source
+    if: needs.source.outputs.critical == 'true'
     uses: ./.github/workflows/go.yaml
     with:
-      shards: ${{ needs.select.outputs.go_shards }}
-      server: ${{ needs.select.outputs.server == 'true' }}
-      authkit_adapter: ${{ needs.select.outputs.authkit_adapter == 'true' }}
-      openrails_adapter: ${{ needs.select.outputs.openrails_adapter == 'true' }}
-  media-image:
-    needs: select
-    if: needs.select.outputs.media_image == 'true'
-    uses: ./.github/workflows/media-image.yaml
-  media-video:
-    needs: select
-    if: needs.select.outputs.media_video == 'true'
-    uses: ./.github/workflows/media-video.yaml
-  sdk-ui:
-    needs: select
-    if: needs.select.outputs.ui == 'true'
-    uses: ./.github/workflows/sdk-ui.yaml
-    with:
-      unit: ${{ needs.select.outputs.ui_unit == 'true' }}
-      browser: ${{ needs.select.outputs.ui_browser == 'true' }}
+      suite: ${{ needs.source.outputs.suite }}
   image-definitions:
-    needs: select
-    if: needs.select.outputs.images == 'true'
+    needs: source
+    if: needs.source.outputs.images == 'true'
     uses: ./.github/workflows/images.yaml
     permissions:
       contents: read
@@ -115,50 +92,29 @@ jobs:
     with:
       verify_only: true
   gate:
-    name: ${{ github.event.pull_request.draft && 'Draft PR (CI not requested)' || 'CI Gate' }}
-    needs: [select, scan, workflow-lint, go, media-image, media-video, sdk-ui, image-definitions]
-    if: always() && github.event.pull_request.draft != true
+    name: ${{ (github.event.pull_request.draft || github.event.action == 'closed') && 'Inactive PR (CI not requested)' || 'CI Gate' }}
+    needs: [source, scan, critical, image-definitions]
+    if: always() && github.event.pull_request.draft != true && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     steps:
-    - name: Require every selected suite to pass
+    - name: Require every selected contract and artifact check
       env:
         NEEDS: ${{ toJSON(needs) }}
       run: |
-        python3 - <<'PY'
+        python3 - <<'PY_CHECK'
         import json, os
         jobs = json.loads(os.environ['NEEDS'])
-        for name in ('select', 'scan'):
-            if jobs[name]['result'] != 'success':
-                raise SystemExit(f'{name} did not pass')
-        outputs = jobs['select']['outputs']
-        flags = ('go', 'server', 'authkit_adapter', 'openrails_adapter', 'media_image', 'media_video', 'ui', 'ui_unit', 'ui_browser', 'images', 'workflow')
-        for flag in flags:
-            if outputs.get(flag) not in ('true', 'false'):
-                raise SystemExit(f'missing or invalid suite selection: {flag}')
-        try:
-            shards = json.loads(outputs['go_shards'])
-        except (KeyError, ValueError):
-            raise SystemExit('missing or invalid Go shard selection')
-        if not isinstance(shards, list) or any(shard not in ('0', '1', '2', 'e2e') for shard in shards) or len(set(shards)) != len(shards):
-            raise SystemExit('invalid Go shards')
-        core = set(shards) & {'0', '1', '2'}
-        if core and core != {'0', '1', '2'}:
-            raise SystemExit('incomplete core Go suite')
-        go_needed = bool(shards) or any(outputs[flag] == 'true' for flag in ('server', 'authkit_adapter', 'openrails_adapter'))
-        ui_needed = any(outputs[flag] == 'true' for flag in ('ui_unit', 'ui_browser'))
-        if (outputs['go'] == 'true') != go_needed or (outputs['ui'] == 'true') != ui_needed:
-            raise SystemExit('inconsistent aggregate suite selection')
-        suites = {'workflow-lint': 'workflow', 'go': 'go', 'media-image': 'media_image', 'media-video': 'media_video', 'sdk-ui': 'ui', 'image-definitions': 'images'}
-        for name, selected in suites.items():
-            if outputs.get(selected) not in ('true', 'false'):
-                raise SystemExit(f'missing or invalid suite selection: {selected}')
-            result = jobs[name]['result']
-            if outputs[selected] == 'true':
-                if result != 'success':
-                    raise SystemExit(f'selected {name} did not pass: {result}')
-            elif result not in ('success', 'skipped'):
-                raise SystemExit(f'{name} failed: {result}')
-        PY
+        if jobs['source']['result'] != 'success':
+            raise SystemExit('source verification did not pass')
+        plan = jobs['source']['outputs']
+        for name, area in [('scan', 'scan'), ('critical', 'critical'), ('image-definitions', 'images')]:
+            selected = plan.get(area)
+            if selected not in ('true', 'false'):
+                raise SystemExit(f'missing selection for {area}')
+            expected = 'success' if selected == 'true' else 'skipped'
+            if jobs[name]['result'] != expected:
+                raise SystemExit(f"{name}: {jobs[name]['result']}; expected {expected}")
+        PY_CHECK
     - name: Require the tested base to remain current
       if: github.event_name == 'pull_request'
       env:

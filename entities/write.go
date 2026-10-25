@@ -3,6 +3,7 @@ package entities
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -531,7 +532,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		changed = changed[:0]
 		var textIDs, nameIDs, reach []string
 		var restored []entityRow
-		var flipped []Ref
 		var relabeled []string
 		given := map[string][]nameRow{}
 		var unavailable []Ref
@@ -561,11 +561,15 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 					changed = append(changed, string(g.ID))
 				}
 				if *u.State == StateActive {
+					tx, ok := q.(pgx.Tx)
+					if !ok {
+						return errors.New("entities: restore requires a transaction")
+					}
+					if err := s.checkMediaRestorable(ctx, tx, Ref{Kind: g.Kind, ID: g.ID}); err != nil {
+						return err
+					}
 					restored = append(restored, row.entityRow)
 				}
-				flipped = append(flipped, Ref{Kind: g.Kind, ID: g.ID})
-			} else if u.Internal != nil && *u.Internal != g.Internal {
-				flipped = append(flipped, Ref{Kind: g.Kind, ID: g.ID})
 			}
 			if row.Slug != g.Slug {
 				relabeled = append(relabeled, string(g.ID))
@@ -615,11 +619,7 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		if err := s.checkCaps(ctx, q, restored); err != nil {
 			return err
 		}
-		if tx, ok := q.(pgx.Tx); ok && s.folders != nil && len(flipped) > 0 {
-			if err := s.folders.ExposeTx(ctx, tx, flipped); err != nil {
-				return err
-			}
-		}
+
 		if len(nameIDs) > 0 {
 			stored, err := s.names(ctx, q, nameIDs)
 			if err != nil {

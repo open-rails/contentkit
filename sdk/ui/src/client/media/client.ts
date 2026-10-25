@@ -1,3 +1,4 @@
+import type { MediaProgress } from "./progress.js";
 import { ContentKitError, aborted, failureError, throwIfAborted, toContentKitError } from "../errors.js";
 import type { CommitBody, Edit, FileInfo, InlineImage, Op, PresetRule, PresignReply, ReadResult, RefBody, RequestReply } from "../generated/wire.js";
 import type { HlsLoader, Http } from "../http.js";
@@ -81,8 +82,6 @@ export interface PutOptions {
 
 export interface WaitOptions {
   signal?: AbortSignal;
-  /** Poll interval, ms. Default 1000. */
-  interval?: number;
   /** ms; then render_timeout. Default 120000. */
   timeout?: number;
 }
@@ -309,48 +308,69 @@ export class MediaClient {
     return this.retry(() => this.api.read(ref, o, o.signal), o.signal);
   }
 
-  /**
-   * Polls an editor read until the upload at path (or with that stem) is
-   * processed: placed (not staged), nothing pending and its blob present (a
-   * frame grabbed).
-   * Rejects with its failure, not_found once it is gone, too_large while the
-   * item is full (nothing is processed until uploads are removed),
-   * render_timeout after the timeout.
-   */
-  async waitFor(ref: RefBody, path: string, o: WaitOptions = {}): Promise<FileInfo> {
-    const emit = this.http.captureChanges();
-    const until = Date.now() + (o.timeout ?? 120_000);
-    for (;;) {
-      const r = await this.read(ref, { editor: true, prefix: stem(path), signal: o.signal });
-      const f = r.files.find((x) => x.upload && samePath(x.path, path));
-      if (!f) throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
-      if (f.failed) throw failureError(f.failed);
-      if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) {
-        emit({ type: "media.processed", ref: itemRef(ref), file: f });
-        return f;
-      }
-      if (r.full) throw new ContentKitError("too_large", `${path} waits: the item is full; remove uploads to process more`, { status: 413 });
-      if (Date.now() >= until) throw new ContentKitError("render_timeout", `${path} is still processing`);
-      await sleep(o.interval ?? 1000, o.signal);
-    }
+  /** One authenticated stream; callers own bounded reconnect and cancellation. */
+  watch(ref: RefBody, receive: (update: MediaProgress) => void | Promise<void>, signal: AbortSignal, after = ""): Promise<void> {
+    return this.api.watch(ref, receive, signal, after);
   }
 
-  /**
-   * The upload's editor view, for re-cropping: its URL and the upload's
-   * oriented size. Waits while it renders (an editor read asks for it);
-   * not_found when the path has no upload, render_timeout after the timeout
-   * (default 30 s).
-   */
-  async editorView(ref: RefBody, path: string, o: WaitOptions = {}): Promise<{ url: string; width: number; height: number; edit?: Edit }> {
-    const until = Date.now() + (o.timeout ?? 30_000);
-    for (;;) {
-      const r = await this.read(ref, { editor: true, prefix: stem(path), signal: o.signal });
-      const f = r.files.find((x) => x.upload && samePath(x.path, path));
-      if (!f) throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
+  /** Wait for one upload using current reads and retained processing updates. */
+  async waitFor(ref: RefBody, path: string, o: WaitOptions = {}): Promise<FileInfo> {
+    const emit = this.http.captureChanges();
+    const file = await this.untilReady(ref, path, o, (r, f) => {
+      if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) return f;
+      if (r.full) throw new ContentKitError("too_large", `${path} waits: the item is full; remove uploads to process more`, { status: 413 });
+    });
+    emit({ type: "media.processed", ref: itemRef(ref), file });
+    return file;
+  }
+
+  /** Wait for the editor rendition; reading it still requests its rendering. */
+  editorView(ref: RefBody, path: string, o: WaitOptions = {}): Promise<{ url: string; width: number; height: number; edit?: Edit }> {
+    return this.untilReady(ref, path, { timeout: 30_000, ...o }, (_r, f) => {
       if (f.editor_url && f.w && f.h) return { url: f.editor_url, width: f.w, height: f.h, ...(f.edit ? { edit: f.edit } : {}) };
-      if (f.failed) throw failureError(f.failed);
-      if (Date.now() >= until) throw new ContentKitError("render_timeout", `the editor view of ${path} is still rendering`);
-      await sleep(o.interval ?? 1000, o.signal);
+    });
+  }
+
+  private async untilReady<T>(ref: RefBody, path: string, o: WaitOptions, inspect: (read: ReadResult, file: FileInfo) => T | undefined): Promise<T> {
+    const controller = new AbortController();
+    const abort = () => controller.abort(o.signal?.reason);
+    if (o.signal?.aborted) abort();
+    else o.signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => controller.abort(new ContentKitError("render_timeout", `${path} is still processing`)), o.timeout ?? 120_000);
+    let result: T | undefined;
+    let cursor = "";
+    const check = async (snapshot?: ReadResult) => {
+      const read = await this.read(ref, { editor: true, prefix: stem(path), signal: controller.signal });
+      const file = read.files.find((f) => f.upload && samePath(f.path, path));
+      if (!file) {
+        // Accepted ingest may not have applied its manifest yet. The canonical
+        // status includes that durable admission; an absent file is not final.
+        const current = snapshot ?? await this.read(ref, { status: true, signal: controller.signal });
+        if (current.status?.state === "processing") return;
+        throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
+      }
+      if (file.failed) throw failureError(file.failed);
+      result = inspect(read, file);
+    };
+    try {
+      await check();
+      if (result !== undefined) return result;
+      await this.retry(() => this.watch(ref, async (update) => {
+        if (update.event !== "heartbeat") {
+          await check(update.read);
+          if (result !== undefined) controller.abort();
+        }
+        cursor = update.cursor;
+      }, controller.signal, cursor), controller.signal);
+      throw new ContentKitError("network", "Media progress disconnected.");
+    } catch (error) {
+      if (result !== undefined) return result;
+      if (controller.signal.reason instanceof ContentKitError) throw controller.signal.reason;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      o.signal?.removeEventListener("abort", abort);
+      controller.abort();
     }
   }
 

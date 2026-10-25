@@ -85,17 +85,18 @@ func (m *Manifests) NewBlobs(ctx context.Context, ref contentref.ContentRef, are
 }
 
 func (m *Manifests) allocate(ctx context.Context, item Item, keys []string) error {
-	if _, _, err := m.Get(ctx, item.Ref()); errors.Is(err, ErrNotFound) {
-		// Establish the S3 incarnation before issuing a write capability.
-		// Edit refuses a tombstone; only explicit reset can clear it.
-		if _, err := m.Edit(ctx, item.Ref(), func(*Manifest) error { return nil }); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
 	return m.cleanup(ctx, item, false, func(cur *Manifest, exists bool) (journalEffects, error) {
-		if !exists || cur.Deleted {
+		if !exists {
+			// cleanup has recorded the scoped folder owner under the manifest
+			// lock. Publish the empty root only after that receipt exists, so a
+			// concurrent presign cannot observe an ownerless version manifest.
+			var err error
+			cur, err = m.ensureIncarnation(ctx, item)
+			if err != nil {
+				return journalEffects{}, err
+			}
+		}
+		if cur.Deleted {
 			return journalEffects{}, ErrNotFound
 		}
 		return journalEffects{Allocate: keys, Incarnation: cur.Incarnation}, nil
@@ -113,6 +114,19 @@ func (m *Manifests) checkAllocations(ctx context.Context, item Item, keys []stri
 		return err
 	}
 	return m.checkAllocationsIn(ctx, item, keys, cur.Incarnation)
+}
+
+func manifestAllocations(item Item, m *Manifest) []string {
+	var keys []string
+	for _, name := range m.Blobs() {
+		key, _ := item.Blob(name)
+		keys = append(keys, key)
+	}
+	for _, name := range m.StagedNames() {
+		key, _ := item.Staged(name)
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func (m *Manifests) checkAllocationsIn(ctx context.Context, item Item, keys []string, incarnation string) error {
