@@ -6,13 +6,14 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	ck "github.com/open-rails/contentkit"
 )
 
 func TestMediaHLSAuthorization(t *testing.T) {
 	t.Run("CK-J13-S07_HLS_children_and_segment_capabilities_remain_content_scoped", func(t *testing.T) {
-		f := newTinyHLSFixture(t)
+		f := newTinyHLSFixture(t, true)
 		readSegment := func(address string, want int) []byte {
 			t.Helper()
 			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, address, nil)
@@ -55,14 +56,14 @@ func TestMediaHLSAuthorization(t *testing.T) {
 		unsigned.RawQuery = ""
 		readSegment(unsigned.String(), 404)
 		other := f.addClip(t, "Another real HLS item")
-		child, err := f.app.client("").GetMediaVersionHls(t.Context(), other.Kind, other.ID, other.Version, f.ChildPath, ck.GetMediaVersionHlsQuery{})
+		child, err := f.Reader.GetMediaVersionHls(t.Context(), other.Kind, other.ID, other.Version, f.ChildPath, ck.GetMediaVersionHlsQuery{})
 		must(t, err)
 		otherURL, err := url.Parse(playlistURIForTest(t, child.Body))
 		must(t, err)
 		readSegment(otherURL.String(), 206)
 		otherURL.RawQuery = firstURL.RawQuery
 		readSegment(otherURL.String(), 404)
-		_, err = f.app.client("").GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, other.Version, f.ChildPath, ck.GetMediaVersionHlsQuery{})
+		_, err = f.Reader.GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, other.Version, f.ChildPath, ck.GetMediaVersionHlsQuery{})
 		requireError(t, err, 404, "not_found")
 		_, err = f.app.engine.Client().PostContentUnpublish(t.Context(), f.Ref.ID)
 		must(t, err)
@@ -70,10 +71,24 @@ func TestMediaHLSAuthorization(t *testing.T) {
 			_, err = f.app.client("").GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, f.Ref.Version, playlist, ck.GetMediaVersionHlsQuery{})
 			requireError(t, err, 404, "not_found")
 		}
+		// The old item token remains cryptographically valid, but durable
+		// withdrawal must remove the object it used to authorize at origin.
+		deadline := time.Now().Add(45 * time.Second)
+		for {
+			response, err := http.Get(f.SegmentURL)
+			must(t, err)
+			response.Body.Close()
+			if response.StatusCode == http.StatusNotFound {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("withdrawal left the old HLS origin readable: %d", response.StatusCode)
+			}
+			time.Sleep(550 * time.Millisecond)
+		}
 		// The other item's positive control stays readable after this item's
-		// availability changes. Previously issued segment tokens are bounded
-		// capabilities; this case does not promise immediate token revocation.
-		_, err = f.app.client("").GetMediaVersionHls(t.Context(), other.Kind, other.ID, other.Version, f.ChildPath, ck.GetMediaVersionHlsQuery{})
+		// completed withdrawal. It does not share the withdrawn item's scope.
+		_, err = f.Reader.GetMediaVersionHls(t.Context(), other.Kind, other.ID, other.Version, f.ChildPath, ck.GetMediaVersionHlsQuery{})
 		must(t, err)
 	})
 }

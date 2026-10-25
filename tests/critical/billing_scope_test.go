@@ -5,11 +5,13 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
@@ -43,16 +45,20 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	must(t, err)
 	t.Cleanup(billingPool.Close)
 	b := attachBilling(t, w, a, func(d *openrails.Deps) { d.Postgres = billingPool })
+	startPublicationRuntime(t, a)
 	admin := a.engine.Client()
 	create := func(title string, rule access.Rule) catalog.Content {
 		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &rule,
 			Text: map[string]catalog.Text{"en": {Title: title, Body: "Protected manuscript"}}, Versions: []catalog.VersionInput{
-				{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title + " English"}}},
-				{Languages: []string{"de"}, Text: map[string]catalog.VersionText{"de": {Title: title + " German"}}},
+				{Languages: []string{"en"}, Access: &rule, Text: map[string]catalog.VersionText{"en": {Title: title + " English"}}},
+				{Languages: []string{"de"}, Access: &rule, Text: map[string]catalog.VersionText{"de": {Title: title + " German"}}},
 			}})
 		must(t, err)
 		item, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
+		for _, version := range item.Versions {
+			awaitEditionPublication(t, a, admin, item.ID, version.ID)
+		}
 		return item
 	}
 	one, other := create("Granted article", access.Rule{Level: access.PPV}), create("Unrelated article", access.Rule{Level: access.PPV})
@@ -100,8 +106,8 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 				reader, id := newReader(t)
 				assertVersion(t, reader, one, 0, false)
 				grant(t, id, products[name], nil)
-				assertVersion(t, reader, one, 0, name == "content" || name == "version")
-				assertVersion(t, reader, one, 1, name == "content")
+				assertVersion(t, reader, one, 0, name == "version")
+				assertVersion(t, reader, one, 1, false)
 				assertVersion(t, reader, other, 0, false)
 				assertVersion(t, reader, tier, 0, name == "tier")
 				assertVersion(t, reader, entityItem, 0, name == "entity")
@@ -111,8 +117,8 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	t.Run("CK-J06-S02_future_window_cannot_open_content_early", func(t *testing.T) {
 		reader, id := newReader(t)
 		hours := 1
-		first := grant(t, id, products["content"], &hours)
-		future := grant(t, id, products["content"], &hours)
+		first := grant(t, id, products["version"], &hours)
+		future := grant(t, id, products["version"], &hours)
 		if first.EndsAt == nil || !future.StartsAt.Equal(*first.EndsAt) {
 			t.Fatal("public grants did not create consecutive access windows")
 		}
@@ -130,7 +136,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 			t.Run(mode, func(t *testing.T) {
 				reader, id := newReader(t)
 				hours := 1
-				window := grant(t, id, products["content"], &hours)
+				window := grant(t, id, products["version"], &hours)
 				assertVersion(t, reader, one, 0, true)
 				if mode == "revoke" {
 					must(t, b.merchant.RevokeProductAccess(t.Context(), window.ID, billing.RevokeProductAccessParams{Reason: "Revoke access"}))
@@ -149,15 +155,15 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	})
 	t.Run("CK-J06-S07_new_price_preserves_content_and_grant_identity", func(t *testing.T) {
 		reader, id := newReader(t)
-		window := grant(t, id, products["content"], nil)
-		p := products["content"]
+		window := grant(t, id, products["version"], nil)
+		p := products["version"]
 		_, err := b.merchant.CreatePrice(t.Context(), billing.CreatePriceParams{ProductID: p.ID, Key: "purchase", UnitAmount: 10_000_000, Currency: "USD"})
 		must(t, err)
 		_, err = b.merchant.CreatePrice(t.Context(), billing.CreatePriceParams{ProductID: p.ID, Key: "purchase", UnitAmount: 20_000_000, Currency: "USD"})
 		must(t, err)
 		current, err := b.merchant.GetProduct(t.Context(), p.ID)
 		must(t, err)
-		if !reflect.DeepEqual(current.Entitlements, []string{contentKey}) {
+		if !reflect.DeepEqual(current.Entitlements, []string{versionKey}) {
 			t.Fatalf("price replacement changed product rights: %+v", current)
 		}
 		rows, err := b.merchant.ListProductAccess(t.Context(), billing.ProductAccessListParams{IDs: []billing.ProductAccessID{window.ID}})
@@ -169,12 +175,15 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	})
 	t.Run("CK-J05-S05_unpublish_and_reschedule_preserve_purchased_rights", func(t *testing.T) {
 		reader, customer := newReader(t)
-		window := grant(t, customer, products["content"], nil)
+		window := grant(t, customer, products["version"], nil)
 		assertVersion(t, reader, one, 0, true)
 		_, err := admin.PostContentUnpublish(t.Context(), one.ID)
 		must(t, err)
 		_, err = reader.GetContent(t.Context(), one.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
+		// Let withdrawal finish before scheduling a new request so the
+		// subsequent clock-only assertion has no outstanding prior release.
+		awaitPublicationJobsIdle(t, w, a)
 		at := b.clock.Now().Add(time.Hour)
 		_, err = admin.PostContentPublish(t.Context(), one.ID, catalog.PublishInput{PublishAt: &at})
 		must(t, err)
@@ -182,11 +191,15 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		requireError(t, err, 404, "not_found")
 		rows, err := b.merchant.ListProductAccess(t.Context(), billing.ProductAccessListParams{IDs: []billing.ProductAccessID{window.ID}})
 		must(t, err)
-		if len(rows.Items) != 1 || rows.Items[0].RevokedAt != nil || rows.Items[0].ProductID != products["content"].ID {
+		if len(rows.Items) != 1 || rows.Items[0].RevokedAt != nil || rows.Items[0].ProductID != products["version"].ID {
 			t.Fatal("unpublishing revoked or replaced the independent purchase right")
 		}
 		b.clock.Advance(at.Sub(b.clock.Now()))
 		w.clock.set(at)
+		_, err = reader.GetVersion(t.Context(), one.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
+		wakeDuePublicationJobs(t, a)
+		awaitEditionPublication(t, a, admin, one.ID, one.Versions[0].ID)
 		assertVersion(t, reader, one, 0, true)
 		rows, err = b.merchant.ListProductAccess(t.Context(), billing.ProductAccessListParams{IDs: []billing.ProductAccessID{window.ID}})
 		must(t, err)
@@ -201,9 +214,9 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		_, err = b.merchant.UpdateCustomer(t.Context(), customer, billing.UpdateCustomerParams{})
 		must(t, err)
 		foreign := publishedArticle(t, w.apps[1], "Purchased sibling app item")
-		foreignKey := keyOf(access.ContentKey(w.apps[1].cfg.Scope.AppID.String(), foreign.ID))
-		otherKey := keyOf(access.ContentKey(a.cfg.Scope.AppID.String(), other.ID))
-		for _, p := range []billing.Product{products["content"], product(otherKey), product(foreignKey)} {
+		foreignKey := keyOf(access.VersionKey(w.apps[1].cfg.Scope.AppID.String(), foreign.ID, foreign.Versions[0].ID))
+		otherKey := keyOf(access.VersionKey(a.cfg.Scope.AppID.String(), other.ID, other.Versions[0].ID))
+		for _, p := range []billing.Product{products["version"], product(otherKey), product(foreignKey)} {
 			grant(t, customer, p, nil)
 		}
 		_, err = admin.PutContentEntitiesShared(t.Context(), one.ID, entities.ContentEntities{Memberships: []entities.Membership{{EntityID: tags[0].ID}}}, ck.PutContentEntitiesSharedQuery{})
@@ -228,8 +241,12 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 			seen := map[string]bool{}
 			for _, item := range page.Items {
 				seen[item.ContentID] = true
-				if !item.Whole || len(item.VersionIDs) != 2 {
-					t.Fatalf("whole grant lost edition identities: %+v", item)
+				want := one.Versions[0].ID
+				if item.ContentID == other.ID {
+					want = other.Versions[0].ID
+				}
+				if item.Whole || !slices.Equal(item.VersionIDs, []string{want}) {
+					t.Fatalf("edition grant broadened to a gallery or sibling: %+v", item)
 				}
 			}
 			if len(seen) != len(sample.want) || !page.Complete {
@@ -258,12 +275,12 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	})
 	t.Run("CK-J06-S05_unavailable_entitlement_authority_refuses_protected_access", func(t *testing.T) {
 		reader, id := newReader(t)
-		grant(t, id, products["content"], nil)
+		grant(t, id, products["version"], nil)
 		assertVersion(t, reader, one, 0, true)
 		wire.cut()
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
-		if _, err := b.merchant.CheckEntitlements(ctx, billing.CheckEntitlementsParams{CustomerID: id, Entitlements: []string{contentKey}}); err == nil {
+		if _, err := b.merchant.CheckEntitlements(ctx, billing.CheckEntitlementsParams{CustomerID: id, Entitlements: []string{versionKey}}); err == nil {
 			t.Fatal("fault did not disconnect the real entitlement store")
 		}
 		locked, err := reader.GetContent(ctx, one.ID, ck.GetContentQuery{})
@@ -273,5 +290,35 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		}
 		_, err = reader.GetMeLibrary(ctx, ck.GetMeLibraryQuery{})
 		requireError(t, err, 503, "unavailable")
+	})
+}
+
+// Await completion through the editor's actual version read. Slow polling
+// stays below HTTP issuance limits while the real River worker runs.
+func awaitEditionPublication(t *testing.T, app *application, client *ck.Client, content, version string) {
+	t.Helper()
+	deadline := time.Now().Add(45 * time.Second)
+	var last catalog.Version
+	var err error
+	for time.Now().Before(deadline) {
+		wakeDuePublicationJobs(t, app)
+		last, err = client.GetContentVersion(t.Context(), content, version, ck.GetContentVersionQuery{})
+		if err == nil && last.Live {
+			return
+		}
+		time.Sleep(550 * time.Millisecond)
+	}
+	t.Fatalf("edition publication did not complete: version=%s current=%+v error=%v", version, last, err)
+}
+
+func awaitPublicationJobsIdle(t *testing.T, w *world, app *application) {
+	t.Helper()
+	waitForWithin(t, 45*time.Second, func() bool {
+		wakeDuePublicationJobs(t, app)
+		var pending int
+		err := w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+`
+ WHERE kind IN ('contentkit_version_release','contentkit_version_publish','contentkit_content_publish_due') AND state IN ('available','running','retryable')`).Scan(&pending)
+		must(t, err)
+		return pending == 0
 	})
 }

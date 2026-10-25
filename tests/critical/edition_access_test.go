@@ -24,6 +24,7 @@ func TestEditionEntitlementIsolation(t *testing.T) {
 	})
 	a := w.apps[0]
 	b := attachBilling(t, w, a)
+	startPublicationRuntime(t, a)
 	create := func(title string) catalog.Content {
 		item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{
 			Kind: "article", Access: &access.Rule{Level: access.PPV},
@@ -33,6 +34,9 @@ func TestEditionEntitlementIsolation(t *testing.T) {
 		must(t, err)
 		item, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
+		for _, version := range item.Versions {
+			awaitEditionPublication(t, a, a.engine.Client(), item.ID, version.ID)
+		}
 		return item
 	}
 	one, other := create("Edition grant"), create("Other edition")

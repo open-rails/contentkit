@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -27,9 +28,11 @@ type tinyHLSFixture struct {
 	Ref                               media.RefBody
 	Source                            []byte
 	MasterPath, ChildPath, SegmentURL string
+	Reader                            *ck.Client
+	private                           bool
 }
 
-func newTinyHLSFixture(t *testing.T) *tinyHLSFixture {
+func newTinyHLSFixture(t *testing.T, private ...bool) *tinyHLSFixture {
 	t.Helper()
 	m := newResilientMedia(t, func(c *ck.Config) {
 		c.Content.Kinds["clip"] = kinds.Kind{Route: "clips", Presentation: "player", Versions: kinds.VersionRules{Languages: "one", Hidden: true}}
@@ -69,15 +72,20 @@ func newTinyHLSFixture(t *testing.T) *tinyHLSFixture {
 	}
 	data, err := os.ReadFile(source)
 	must(t, err)
-	f := &tinyHLSFixture{resilientMedia: m, Source: data, MasterPath: "streams/master.m3u8"}
+	f := &tinyHLSFixture{resilientMedia: m, Source: data, MasterPath: "streams/master.m3u8", Reader: m.app.client(""), private: len(private) > 0 && private[0]}
+	if f.private {
+		// This fixture checks media capability scope, not billing grants.
+		// The authorized editor receives an ordinary completed-reader view.
+		f.Reader = m.app.engine.Client()
+	}
 	f.Ref = f.addClip(t, "Tiny public HLS")
-	master, err := m.app.client("").GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, f.Ref.Version, f.MasterPath, ck.GetMediaVersionHlsQuery{})
+	master, err := f.Reader.GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, f.Ref.Version, f.MasterPath, ck.GetMediaVersionHlsQuery{})
 	must(t, err)
 	if master.Status != 200 || !bytes.Contains(master.Body, []byte("#EXT-X-STREAM-INF")) || !bytes.Contains(master.Body, []byte("avc1")) {
 		t.Fatalf("actual H264 master invalid: %d %s", master.Status, master.Body)
 	}
 	f.ChildPath = path.Join(path.Dir(f.MasterPath), playlistURIForTest(t, master.Body))
-	child, err := m.app.client("").GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, f.Ref.Version, f.ChildPath, ck.GetMediaVersionHlsQuery{})
+	child, err := f.Reader.GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, f.Ref.Version, f.ChildPath, ck.GetMediaVersionHlsQuery{})
 	must(t, err)
 	if !bytes.Contains(child.Body, []byte("#EXT-X-BYTERANGE:")) || !bytes.Contains(child.Body, []byte("#EXT-X-MAP:")) {
 		t.Fatalf("actual HLS child has no byte-range segments: %s", child.Body)
@@ -98,6 +106,7 @@ func (f *tinyHLSFixture) addSiteClip(t *testing.T) media.RefBody {
 	_, err = admin.IngestMedia(t.Context(), nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(f.Source)}})
 	must(t, err)
 	waitForWithin(t, 90*time.Second, func() bool {
+		time.Sleep(550 * time.Millisecond)
 		read, err := admin.GetMedia(t.Context(), ref.Kind, ref.ID, ck.GetMediaQuery{Editor: true})
 		must(t, err)
 		if read.Status != nil && read.Status.FailureCount != 0 {
@@ -117,9 +126,14 @@ func (f *tinyHLSFixture) addClip(t *testing.T, title string) media.RefBody {
 		t.Fatal("clip must have its single hidden version")
 	}
 	ref := media.RefBody{Kind: "clip", ID: item.ID, Version: item.Versions[0].ID}
+	if f.private {
+		_, err = admin.PatchContentVersion(t.Context(), ref.ID, ref.Version, catalog.VersionInput{Access: &access.Rule{Level: access.PPV}})
+		must(t, err)
+	}
 	_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(f.Source)}})
 	must(t, err)
 	waitForWithin(t, 90*time.Second, func() bool {
+		time.Sleep(550 * time.Millisecond)
 		read, err := admin.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 		must(t, err)
 		if read.Status != nil && read.Status.FailureCount != 0 {
@@ -129,6 +143,18 @@ func (f *tinyHLSFixture) addClip(t *testing.T, title string) media.RefBody {
 	})
 	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
+	awaitEditionPublication(t, f.app, admin, ref.ID, ref.Version)
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		master, err := f.Reader.GetMediaVersionHls(t.Context(), ref.Kind, ref.ID, ref.Version, f.MasterPath, ck.GetMediaVersionHlsQuery{})
+		if err == nil && master.Status == http.StatusOK {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("completed HLS publication unavailable: %v", err)
+		}
+		time.Sleep(550 * time.Millisecond)
+	}
 	return ref
 }
 
