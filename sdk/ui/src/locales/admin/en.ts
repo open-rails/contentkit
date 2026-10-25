@@ -148,6 +148,9 @@ export const admin = {
     goesLive: "Goes live {date}",
     wentLive: "Live since {date}",
     closedOn: "Closed {date}",
+    question: "Question",
+    votes: "Votes",
+    none: "No polls yet.",
   },
   contentManager: {
     switchLanguage: "Switch language?",

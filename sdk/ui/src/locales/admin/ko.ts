@@ -149,6 +149,9 @@ export const admin: typeof en = {
     goesLive: "{date}에 공개",
     wentLive: "{date}부터 진행 중",
     closedOn: "{date}에 마감됨",
+    question: "질문",
+    votes: "투표 수",
+    none: "아직 투표가 없습니다.",
   },
   contentManager: {
     switchLanguage: "언어를 바꿀까요?",
