@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -17,6 +18,8 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/notification"
+	"github.com/open-rails/helpers/notify"
 	"github.com/open-rails/openrails/billing"
 )
 
@@ -123,6 +126,36 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		runTypeScriptContract(t, "discovery_entities", map[string]any{"base": a.server.URL + "/content", "owner": token, "reader": readerToken, "ownerID": owner.ID, "channel": string(channel.ID), "foreign": foreign.ID, "paid": paid.ID}, []string{
 			"EntitiesClient.create", "EntitiesClient.update", "EntitiesClient.remove", "EntitiesClient.mine", "DiscoveryClient.library", "DiscoveryClient.list", "DiscoveryClient.knownCards", "DiscoveryClient.search", "DiscoveryClient.typeahead", "DiscoveryClient.adminSuggestions", "DiscoveryClient.similar", "DiscoveryClient.recommendations", "DiscoveryClient.releaseDates", "DiscoveryClient.releases",
 		})
+	})
+
+	t.Run("notification_receipts", func(t *testing.T) {
+		w := newWorld(t)
+		a := w.apps[0]
+		recipient, token := w.person(t, 0)
+		stranger, strangerToken := w.person(t, 0)
+		persona, err := w.auth.Persona("app")
+		must(t, err)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(stranger.ID), persona.OwnerRole())
+		inputs := []notify.Input{}
+		for i, name := range []string{"first", "second", "other"} {
+			user := recipient.ID
+			if name == "other" {
+				user = stranger.ID
+			}
+			body, err := json.Marshal(map[string]string{"message": "Private " + name})
+			must(t, err)
+			inputs = append(inputs, notify.Input{Recipient: notify.Recipient{Audience: "user", ID: user}, Origin: notify.Origin{System: "typescript", Scope: a.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "critical." + name, Data: body, CreatedAt: w.clock.now().Add(time.Duration(i-4) * time.Second), Status: "open", ActionRequested: true})
+		}
+		published, err := a.engine.Client().PostNotificationsPublish(t.Context(), notification.Publication{Notifications: inputs})
+		must(t, err)
+		if len(published.Items) != 3 {
+			t.Fatal("three actual recipient receipts are required")
+		}
+		ids := map[string]string{}
+		for _, item := range published.Items {
+			ids[item.Kind] = item.ID
+		}
+		runTypeScriptContract(t, "notification_receipts", map[string]any{"base": a.server.URL + "/content", "owner": token, "reader": strangerToken, "recipient": recipient.ID, "first": ids["critical.first"], "second": ids["critical.second"], "other": ids["critical.other"]}, []string{"NotificationsClient.list", "NotificationsClient.refresh", "NotificationsClient.setRead", "NotificationsClient.setDismissed"})
 	})
 
 }

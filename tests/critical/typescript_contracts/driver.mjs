@@ -170,5 +170,26 @@ if(group==="catalog_publication"){
  const releases=await anonymous.discovery.releases({...query,days:1});assert.deepEqual(releases.days.flatMap(day=>day.contents.map(x=>x.id)).sort(),expected);proved("DiscoveryClient.releases");
  const library=await reader.discovery.library({language:"en",limit:1});assert.equal(library.complete,true);assert.equal(library.items.length,1);assert.equal(library.items[0].content_id,fixture.paid);assert.equal(library.items[0].whole,true);assert.equal(library.items[0].version_ids.length,1);
  assert.deepEqual((await owner.discovery.library()).items,[]);await refused(()=>anonymous.discovery.library(),401,"unauthorized");proved("DiscoveryClient.library");
+}else if(group==="notification_receipts"){
+ const page=await owner.notifications.list({limit:1});assert.equal(page.items.length,1);assert.equal(page.items[0].id,fixture.second);assert.equal(page.items[0].data.message,"Private second");assert(page.next_cursor);
+ const next=await owner.notifications.list({limit:1,cursor:page.next_cursor});assert.deepEqual(next.items.map(x=>x.id),[fixture.first]);assert.equal(next.items[0].recipient.id,fixture.recipient);
+ assert.deepEqual((await reader.notifications.list()).items.map(x=>x.id),[fixture.other]);
+ await refused(()=>anonymous.notifications.list(),401,"unauthorized");
+ await refused(()=>reader.notifications.setRead(fixture.first),404,"not_found");
+ await refused(()=>reader.notifications.setDismissed(fixture.first),404,"not_found");
+ const before=(await owner.notifications.list()).items.find(x=>x.id===fixture.first);assert.equal(before.read_at,null);assert.equal(before.dismissed_at,null);
+ proved("NotificationsClient.list");
+ owner.setReadScope("notification-owner");const changes=[];const stop=owner.subscribe((change,scope)=>changes.push({change,scope}));
+ owner.notifications.refresh();assert.deepEqual(changes,[{change:{type:"notifications.changed"},scope:"notification-owner"}]);
+ stop();owner.notifications.refresh();assert.equal(changes.length,1);proved("NotificationsClient.refresh");
+ const read=await owner.notifications.setRead(fixture.first);assert.equal(read.id,fixture.first);assert.equal(typeof read.read_at,"string");assert(read.revision>before.revision);assert.equal(read.status,"open");assert.equal(read.resolved_at,null);
+ assert.deepEqual((await owner.notifications.list({unread:true})).items.map(x=>x.id),[fixture.second]);
+ const unread=await owner.notifications.setRead(fixture.first,false);assert.equal(unread.id,fixture.first);assert.equal(unread.read_at,null);assert.equal(unread.status,"open");assert.equal(unread.resolved_at,null);
+ assert.equal((await owner.notifications.list({unread:true})).items.length,2);proved("NotificationsClient.setRead");
+ const dismissed=await owner.notifications.setDismissed(fixture.first);assert.equal(dismissed.id,fixture.first);assert.equal(typeof dismissed.dismissed_at,"string");assert.equal(dismissed.status,"open");assert.equal(dismissed.resolved_at,null);
+ assert.deepEqual((await owner.notifications.list()).items.map(x=>x.id),[fixture.second]);
+ assert.deepEqual((await owner.notifications.list({dismissed:true})).items.map(x=>x.id),[fixture.first]);
+ const restored=await owner.notifications.setDismissed(fixture.first,false);assert.equal(restored.id,fixture.first);assert.equal(restored.dismissed_at,null);assert.equal(restored.status,"open");assert.equal(restored.resolved_at,null);
+ assert.deepEqual((await owner.notifications.list()).items.map(x=>x.id),[fixture.second,fixture.first]);proved("NotificationsClient.setDismissed");
 }else throw new Error(`Unknown contract group ${group}`);
 console.log(JSON.stringify({group,bindings,passed:true}));
