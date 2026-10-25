@@ -421,7 +421,9 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 	for _, chapter := range plan.Pages.Segments {
 		boundaries = append(boundaries, []any{chapter.ID, chapter.Position, chapter.Title, chapter.StartPage, chapter.Start, chapter.End, chapter.ReleaseAt})
 	}
-	encoded, err := json.Marshal([]any{identity, boundaries, plan.Chapters, state, parentState, rule, plan.Released})
+	// A scheduled policy can change eligibility while all objects remain in
+	// private/. Its completed policy must still advance the active revision.
+	encoded, err := json.Marshal([]any{identity, boundaries, plan.Chapters, state, parentState, rule, plan.EffectiveAccess, plan.Released})
 	if err != nil {
 		return nil, err
 	}
