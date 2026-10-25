@@ -1290,7 +1290,7 @@ func (c *Client) PutContentVersionsOrder(ctx context.Context, id string, body ca
 	return out, err
 }
 
-// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publication is durably accepted and remains pending while its media is processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
+// PatchContentVersion is PATCH /v1/contents/{id}/versions/{vid} (public). Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes its cover, own access policy or state=published to restore it. Publication is durably accepted and remains pending while its media is processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.
 func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string, body catalog.VersionInput) (catalog.Version, error) {
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)

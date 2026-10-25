@@ -4246,7 +4246,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes only its cover or state=published to restore it. Publication is durably accepted and remains pending while its media is processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
+        "summary": "Edits a version: languages, traits, label, state and schedule, access, attributes, text, segments and cover; a hidden version takes its cover, own access policy or state=published to restore it. Publication is durably accepted and remains pending while its media is processing. Creators, the owner group's editors (its owner, holders of {kind}:content:write in its AuthKit scope) and root:content:write holders only.",
         "parameters": [
           {
             "name": "id",
