@@ -250,7 +250,7 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 		return object{}, false
 	}
 	k, ok := layout.Parse(rest)
-	if !ok || strings.HasPrefix(k.ID, "_") {
+	if !ok || strings.HasPrefix(k.ID, "_") || k.Version != "" {
 		return object{}, false
 	}
 	o := object{ns: k.Namespace, kind: k.Kind, id: k.ID, version: k.Version, area: k.Area, name: k.Name, scope: k.Scope}

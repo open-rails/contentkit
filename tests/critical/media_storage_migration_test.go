@@ -25,6 +25,7 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 func TestLegacyMediaStorageMigration(t *testing.T) {
@@ -80,13 +81,34 @@ func TestLegacyMediaStorageMigration(t *testing.T) {
 				t.Fatalf("media bytes changed: HTTP%d %q", response.StatusCode, body)
 			}
 		}
-		readBytes(old.Read.Files[0].URL)
 		oldURL, err := url.Parse(old.Read.Files[0].URL)
 		must(t, err)
 		legacyPrefix := "/v1/previous-media/article/" + old.Ref.ID + "/" + old.Ref.Version + "/"
 		if !strings.HasPrefix(oldURL.Path, legacyPrefix) {
 			t.Fatalf("fixture already uses modern storage, not a real migration: %s", oldURL.Path)
 		}
+		// The new gateway intentionally rejects legacy nested-reader paths.
+		// Inspect the pinned old release's stored bytes without preserving a
+		// reader route that can bypass originals/future separation after cutover.
+		sourceKey := strings.TrimPrefix(oldURL.Path, layout.URLPrefix)
+		source, _, err := m.store.Get(t.Context(), sourceKey, media.GetOptions{})
+		must(t, err)
+		sourceBytes, err := io.ReadAll(source)
+		source.Close()
+		must(t, err)
+		if string(sourceBytes) != payload {
+			t.Fatal("pinned legacy release stored different original bytes")
+		}
+		denyLegacy := func() {
+			t.Helper()
+			response, err := http.Get(old.Read.Files[0].URL)
+			must(t, err)
+			response.Body.Close()
+			if response.StatusCode != http.StatusNotFound {
+				t.Fatal("legacy nested token bypassed the new publication boundary")
+			}
+		}
+		denyLegacy()
 		flatManifest := "previous-media/article/" + old.Ref.Version + "/manifest.json"
 		_, err = m.store.Head(t.Context(), flatManifest)
 		if !errors.Is(err, media.ErrNotFound) {
@@ -113,9 +135,28 @@ func TestLegacyMediaStorageMigration(t *testing.T) {
 		must(t, w.pool.Ping(t.Context()))
 		_, err = m.store.Head(t.Context(), flatManifest)
 		must(t, err)
+		unprepared, err = ck.New(t.Context(), cfg, deps)
+		if unprepared != nil || !errors.Is(err, media.ErrPublicationLayoutRequired) {
+			if unprepared != nil {
+				_ = unprepared.Close(t.Context())
+			}
+			t.Fatalf("flat legacy sources served before explicit publication conversion: %v", err)
+		}
+		publication, err := ck.MigratePublicationStorage(t.Context(), w.pool, cfg, m.store)
+		must(t, err)
+		if publication.Staged != 1 || publication.Queued != 1 {
+			t.Fatalf("publication conversion did not stage and durably queue the edition: %+v", publication)
+		}
 		engine, err := ck.New(t.Context(), cfg, deps)
 		must(t, err)
 		defer func() { must(t, engine.Close(context.Background())) }()
+		must(t, engine.Start(t.Context()))
+		waitForWithin(t, 45*time.Second, func() bool {
+			var released bool
+			err := w.pool.QueryRow(t.Context(), `SELECT released AND release_id IS NOT NULL FROM `+pgx.Identifier{schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, cfg.Tenant, old.Ref.Version).Scan(&released)
+			must(t, err)
+			return released
+		})
 		server := mountEngine(t, engine)
 		client := ck.NewClient(server.URL+"/content", nil)
 		got, err := client.GetContent(t.Context(), old.Content.ID, ck.GetContentQuery{})
@@ -130,15 +171,29 @@ func TestLegacyMediaStorageMigration(t *testing.T) {
 		}
 		newURL, err := url.Parse(read.Files[0].URL)
 		must(t, err)
-		if !strings.HasPrefix(newURL.Path, "/v1/previous-media/article/"+old.Ref.Version+"/") || strings.Contains(newURL.Path, old.Ref.ID) || path.Base(newURL.Path) != path.Base(oldURL.Path) {
+		if !strings.HasPrefix(newURL.Path, "/v1/previous-media/article/"+old.Ref.Version+"/public/") || strings.Contains(newURL.Path, old.Ref.ID) {
 			t.Fatalf("wrong migrated storage identity: %s -> %s", oldURL.Path, newURL.Path)
 		}
+		oldDigest, oldValid := layout.BlobDigest(path.Base(oldURL.Path))
+		newDigest, newValid := layout.BlobDigest(path.Base(newURL.Path))
+		if !oldValid || !newValid || !bytes.Equal(oldDigest, newDigest) {
+			t.Fatal("publication conversion changed source content digest")
+		}
 		readBytes(read.Files[0].URL)
-		readBytes(old.Read.Files[0].URL) // source is retained for its declared retirement grace
+		denyLegacy()
+		// Original bytes remain retained for migration recovery, but this old
+		// path and token are no longer an audience delivery capability.
+		_, err = m.store.Head(t.Context(), sourceKey)
+		must(t, err)
 		again, err := ck.MigrateVersionStorage(t.Context(), w.pool, cfg, m.store)
 		must(t, err)
 		if again.Copied != 0 || again.Absent != 0 {
 			t.Fatalf("repeated migration recopied or lost a live source: %+v", again)
+		}
+		republication, err := ck.MigratePublicationStorage(t.Context(), w.pool, cfg, m.store)
+		must(t, err)
+		if republication.Staged != 0 || republication.Queued != 0 {
+			t.Fatalf("repeated publication conversion restarted released media: %+v", republication)
 		}
 		replayed, err := client.GetMediaVersion(t.Context(), old.Ref.Kind, old.Ref.ID, old.Ref.Version, ck.GetMediaVersionQuery{})
 		must(t, err)

@@ -58,6 +58,15 @@ func TestPreviousReleaseMigration(t *testing.T) {
 			t.Fatalf("old schema served before explicit migration: %v", err)
 		}
 		must(t, ck.MigratePostgres(t.Context(), w.pool, cfg))
+		// This prior release has no media store. Its already-published text
+		// edition must remain released after the forward publication migration,
+		// without inventing a storage-conversion prerequisite or running a job.
+		var released, ownAccess bool
+		err = w.pool.QueryRow(t.Context(), `SELECT released,access IS NOT NULL FROM `+pgx.Identifier{schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, cfg.Tenant, seeded.Content.Versions[0].ID).Scan(&released, &ownAccess)
+		must(t, err)
+		if !released || !ownAccess {
+			t.Fatal("migration lost published text availability or independent edition policy")
+		}
 		engine, err := ck.New(t.Context(), cfg, deps)
 		must(t, err)
 		defer func() { must(t, engine.Close(context.Background())) }()
