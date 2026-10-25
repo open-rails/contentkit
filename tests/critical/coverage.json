@@ -1135,7 +1135,8 @@
       "evidence": [
         "Actual H264 master/child playlists and byte-range segments remain bound to their content, version and capabilities, including after unpublish. Combine with the real ZIP prefix, signed-page-count and entitlement tests.",
         "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required.",
-        "Exact single-file transfers reuse the policy-checked signed endpoint for internal originals and HostOnly renditions; gateway item tokens still deny internal areas. Same-rung MP4 presets keep independent allocations, and served downloads preserve attachment headers."
+        "Exact single-file transfers reuse the policy-checked signed endpoint for internal originals and HostOnly renditions; gateway item tokens still deny internal areas. Same-rung MP4 presets keep independent allocations, and served downloads preserve attachment headers.",
+        "A real retained source ZIP with released and future chapter pages cannot be granted as an exact-file transfer, even through a low-level literal-download configuration; the generated reader ZIP contains only its released page."
       ],
       "cases": [
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
@@ -1143,7 +1144,8 @@
         "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/expire",
         "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/revoke",
         "TestMediaHLSAuthorization/CK-J13-S07_HLS_children_and_segment_capabilities_remain_content_scoped",
-        "TestPublishedSingleFileDownload"
+        "TestPublishedSingleFileDownload",
+        "TestOriginalZIPCannotBypassChapterRelease"
       ]
     },
     {
