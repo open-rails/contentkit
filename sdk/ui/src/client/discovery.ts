@@ -13,6 +13,7 @@ import type {
   LibraryPage,
   RecentSearches,
   ReleaseDates,
+  SearchPage,
   SignalInput,
   Signals,
   Typeahead,
@@ -200,9 +201,9 @@ export class DiscoveryClient {
     return call(this.http, "GET", "/content-cards", { query: query(q) as never, signal });
   }
   /** A first page is kept among the reader's recent searches. */
-  async search(q: SearchQuery, signal?: AbortSignal): Promise<ContentPage> {
+  async search(q: SearchQuery, signal?: AbortSignal): Promise<SearchPage> {
     const emit = q.cursor || (q.page ?? 1) > 1 ? null : this.http.captureChanges();
-    const out: ContentPage = await call(this.http, "GET", "/search", { query: query(q) as never, signal });
+    const out: SearchPage = await call(this.http, "GET", "/search", { query: query(q) as never, signal });
     emit?.({ type: "searches.changed" });
     return out;
   }

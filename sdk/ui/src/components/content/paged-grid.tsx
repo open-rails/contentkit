@@ -4,7 +4,7 @@ import type { ContentQuery, SearchQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentsPage, useSearchPage, type UseContentsPage } from "../../react/discovery.js";
 import { ContentKitUiRoot } from "../../scope.js";
-import { CardGrid, cardListMode, type CardListProps } from "./grid.js";
+import { CardGrid, cardListMode, SearchEntities, type CardListProps, type SearchResultsProps } from "./grid.js";
 import { Pagination } from "./pagination.js";
 
 const NUMBERED_PAGE_SIZE = 24;
@@ -85,7 +85,7 @@ export function PagedContentGrid({ query, locked = "show", ...p }: CardListProps
 }
 
 /** SearchResults' numbered pages; nothing until the query has text. */
-export function PagedSearchResults({ query, ...p }: CardListProps & { query: SearchQuery }) {
+export function PagedSearchResults({ query, entityHref, ...p }: SearchResultsProps) {
   const { t } = useMessages();
   const { page: _page, cursor: _cursor, ...base } = query;
   const q = useMemo<SearchQuery>(
@@ -97,17 +97,20 @@ export function PagedSearchResults({ query, ...p }: CardListProps & { query: Sea
   const result = useSearchPage(q, page, { client: p.client });
   if (!query.q.trim()) return null;
   return (
-    <NumberedCards
-      surface="search"
-      empty={t("contents.noResults", { q: query.q.trim() })}
-      {...p}
-      pageSize={q.limit}
-      result={result}
-      page={page}
-      setPage={setPage}
-      render={JSON.stringify([q, page])}
-      filterKinds={query.kind ? [query.kind] : undefined}
-      filterLanguage={query.display_language ?? query.language}
-    />
+    <>
+      <SearchEntities entities={result.entities} href={entityHref} />
+      <NumberedCards
+        surface="search"
+        empty={t("contents.noResults", { q: query.q.trim() })}
+        {...p}
+        pageSize={q.limit}
+        result={result}
+        page={page}
+        setPage={setPage}
+        render={JSON.stringify([q, page])}
+        filterKinds={query.kind ? [query.kind] : undefined}
+        filterLanguage={query.display_language ?? query.language}
+      />
+    </>
   );
 }

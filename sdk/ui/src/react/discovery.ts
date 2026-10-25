@@ -4,7 +4,7 @@ import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
 import type { ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
 import { ContentKitError, toContentKitError } from "../client/errors.js";
-import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DailyReleases, DateCount, EntityCard, Interaction, InteractionPage, RecentSearch, Typeahead } from "../client/generated/wire.js";
+import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DailyReleases, DateCount, EntityCard, Interaction, InteractionPage, RecentSearch, SearchPage, Typeahead } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 import { guestStanding, type GuestReadingItem } from "../client/guest-reading-history.js";
@@ -52,6 +52,7 @@ export interface UseContentsPage {
 }
 
 const NO_CARDS: Card[] = [];
+const NO_ENTITIES: EntityCard[] = [];
 
 function useNumbered(key: string | null, fetch: (signal: AbortSignal) => Promise<ContentPage>, o: { client?: ContentKitClient }): UseContentsPage {
   const { store } = useContentScope(o.client);
@@ -67,21 +68,19 @@ export function useContentsPage(q: ContentQuery | null, page: number, o: { clien
   return useNumbered(query ? keyOf("cards", scope, "list-page", query, n) : null, (signal) => client.discovery.list({ ...query!, cursor: undefined, page: n, summary: query!.summary ?? true }, signal), o);
 }
 
-/** Page `page` (from 1) of a search, with its summary; nothing until the query has text. */
-export function useSearchPage(q: SearchQuery | null, page: number, o: { client?: ContentKitClient } = {}): UseContentsPage {
-  const { client, scope, viewer } = useContentScope(o.client);
+/** Page `page` (from 1) of a search, with its summary and, on page 1, the matching entities; nothing until the query has text. */
+export function useSearchPage(q: SearchQuery | null, page: number, o: { client?: ContentKitClient } = {}): UseContentsPage & { entities: EntityCard[] } {
+  const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q?.q.trim() ? q : null);
   const n = Math.max(1, Math.floor(page));
   const isCurrent = useCurrentDiscoveryScope(client, scope);
-  return useNumbered(
-    query ? keyOf("cards", scope, "search-page", query, n) : null,
-    async (signal) => {
-      const out = await client.discovery.search({ ...query!, cursor: undefined, page: n, summary: query!.summary ?? true }, signal);
-      if (n === 1 && viewer === null && !signal.aborted && isCurrent()) client.discovery.browserSearches.record(query!.q, out.contents.length);
-      return out;
-    },
-    o,
-  );
+  const key = query ? keyOf("cards", scope, "search-page", query, n) : null;
+  const r = useResource<SearchPage>(store, key, { type: "cards" }, async (signal) => {
+    const out = await client.discovery.search({ ...query!, cursor: undefined, page: n, summary: query!.summary ?? true }, signal);
+    if (n === 1 && viewer === null && !signal.aborted && isCurrent()) client.discovery.browserSearches.record(query!.q, out.contents.length);
+    return out;
+  });
+  return { items: r.data?.contents ?? NO_CARDS, summary: r.data?.summary, entities: r.data?.entities ?? NO_ENTITIES, loading: r.loading || (!!key && !r.loaded), error: r.error, reload: r.reload };
 }
 
 /** Locked contents in the same full selection, including its activity window. */
@@ -100,17 +99,17 @@ export function useLockedCount(q: ContentQuery | null, o: { client?: ContentKitC
   return { count: r.data, loading: r.loading };
 }
 
-/** Keyword search results as cards; nothing while q.q is empty. */
-export function useSearch(q: SearchQuery | null, o: { client?: ContentKitClient } = {}): UseContents {
+/** Keyword search results as cards, and the entities matching the query; nothing while q.q is empty. */
+export function useSearch(q: SearchQuery | null, o: { client?: ContentKitClient } = {}): UseContents & { entities: EntityCard[] } {
   const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q?.q.trim() ? q : null);
   const isCurrent = useCurrentDiscoveryScope(client, scope);
-  const list = useList(store, query ? keyOf("cards", scope, "search", query) : null, { type: "cards" }, async (cursor, signal) => {
+  const list = useList<Card, Pick<SearchPage, "summary" | "entities">>(store, query ? keyOf("cards", scope, "search", query) : null, { type: "cards" }, async (cursor, signal) => {
     const out = await client.discovery.search({ ...query!, cursor: cursor as string | undefined, summary: cursor ? undefined : query?.summary }, signal);
     if (!cursor && viewer === null && !signal.aborted && isCurrent()) client.discovery.browserSearches.record(query!.q, out.contents.length);
-    return page(out);
+    return { items: out.contents, next: out.next_cursor ?? null, metadata: { summary: out.summary, entities: out.entities } };
   });
-  return { ...list, summary: list.metadata };
+  return { ...list, metadata: list.metadata?.summary, summary: list.metadata?.summary, entities: list.metadata?.entities ?? NO_ENTITIES };
 }
 
 export interface UseRail {

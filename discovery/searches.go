@@ -178,7 +178,7 @@ func (h handler) clearSearches(w http.ResponseWriter, r *http.Request) {
 }
 
 // recordSearch keeps a first page's query; a failure only logs.
-func (h handler) recordSearch(r *http.Request, o SearchOptions, page ContentPage) {
+func (h handler) recordSearch(r *http.Request, o SearchOptions, page SearchPage) {
 	if o.Cursor != "" || o.Page > 1 {
 		return
 	}
