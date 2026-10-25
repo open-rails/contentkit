@@ -33,9 +33,26 @@ func TestNotificationReceiptBoundaries(t *testing.T) {
 		if len(inbox.Items) != 1 || inbox.Items[0].ID != first.Items[0].ID {
 			t.Fatalf("recipient inbox did not contain exactly its receipt: %+v", inbox)
 		}
+		other, otherToken := w.person(t, 0)
+		in.Notifications[0].Recipient.ID = other.ID
+		sharedOrigin, err := admin.PostNotificationsPublish(t.Context(), in)
+		must(t, err)
+		if len(sharedOrigin.Items) != 1 || sharedOrigin.Items[0].ID == first.Items[0].ID {
+			t.Fatal("origin-only deduplication merged different recipients")
+		}
+		otherInbox, err := a.client(otherToken).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+		must(t, err)
+		if len(otherInbox.Items) != 1 || otherInbox.Items[0].ID != sharedOrigin.Items[0].ID {
+			t.Fatal("second recipient did not receive its independent receipt")
+		}
+		inbox, err = a.client(token).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+		must(t, err)
+		if len(inbox.Items) != 1 || inbox.Items[0].ID != first.Items[0].ID {
+			t.Fatal("second recipient changed the original inbox")
+		}
 	})
 	t.Run("CK-J25-S02_other_user_cannot_read_or_mutate_receipt", func(t *testing.T) {
-		owner, _ := w.person(t, 0)
+		owner, ownerToken := w.person(t, 0)
 		_, stranger := w.person(t, 0)
 		published, err := admin.PostNotificationsPublish(t.Context(), publication(owner.ID))
 		must(t, err)
@@ -52,6 +69,11 @@ func TestNotificationReceiptBoundaries(t *testing.T) {
 		requireError(t, err, 404, "not_found")
 		_, err = client.PutNotificationDismiss(t.Context(), published.Items[0].ID)
 		requireError(t, err, 404, "not_found")
+		ownerInbox, err := a.client(ownerToken).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+		must(t, err)
+		if len(ownerInbox.Items) != 1 || ownerInbox.Items[0].ID != published.Items[0].ID || ownerInbox.Items[0].ReadAt != nil || ownerInbox.Items[0].DismissedAt != nil {
+			t.Fatal("refused stranger mutation still changed the owner's receipt")
+		}
 	})
 	t.Run("CK-J25-S03_read_and_archive_do_not_resolve_source_work", func(t *testing.T) {
 		user, token := w.person(t, 0)
@@ -92,10 +114,18 @@ func TestNotificationReceiptBoundaries(t *testing.T) {
 	})
 	t.Run("CK-J25-S04_foreign_or_unknown_recipient_is_refused", func(t *testing.T) {
 		foreign, _ := w.person(t, 1)
-		_, err := admin.PostNotificationsPublish(t.Context(), publication(foreign.ID))
-		requireError(t, err, 400, "invalid_request")
-		_, err = admin.PostNotificationsPublish(t.Context(), publication(uuid.NewString()))
-		requireError(t, err, 400, "invalid_request")
+		local, token := w.person(t, 0)
+		for _, recipient := range []string{foreign.ID, uuid.NewString()} {
+			batch := publication(local.ID)
+			batch.Notifications = append(batch.Notifications, publication(recipient).Notifications...)
+			_, err := admin.PostNotificationsPublish(t.Context(), batch)
+			requireError(t, err, 400, "invalid_request")
+			inbox, err := a.client(token).GetNotificationsInbox(t.Context(), ck.GetNotificationsInboxQuery{})
+			must(t, err)
+			if len(inbox.Items) != 0 {
+				t.Fatal("invalid recipient batch partially published the preceding valid receipt")
+			}
+		}
 	})
 	t.Run("CK-J25-S05_erased_recipient_cannot_be_recreated_by_delayed_publish", func(t *testing.T) {
 		user, token := w.person(t, 0)

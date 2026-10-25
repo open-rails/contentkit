@@ -170,8 +170,14 @@
       "id": "CK-J03-S02",
       "journey": "CK-J03",
       "behavior": "Entity editor writes only within its entity/app",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "The scoped writer creates inside its entity; the other-entity write403s and a host read proves only the original item remains under its original entity.",
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+      ],
+      "cases": [
+        "TestOwnedEntityAuthority/CK-J03-S02_entity_writer_does_not_write_another_entity"
+      ]
     },
     {
       "id": "CK-J03-S03",
@@ -190,8 +196,17 @@
       "id": "CK-J03-S04",
       "journey": "CK-J03",
       "behavior": "Root/tenant/app permissions retain credential ceilings",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Real organization keys at root, configured tenant and app scopes read their granted event stream but cannot create or edit content beyond their role. Full sign-ins provide positive write controls, denied writes preserve state, app/tenant bindings hold, native root read inheritance is preserved, and key revocation401s on the existing client. Personal-token admission is unsupported by the current tenant-actor resolver.",
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+      ],
+      "cases": [
+        "TestInheritedAuthorityCredentialCeilings/CK-J03-S04_root_tenant_and_app_keys_cannot_exceed_their_role",
+        "TestInheritedAuthorityCredentialCeilings/CK-J03-S04_root_tenant_and_app_keys_cannot_exceed_their_role/app",
+        "TestInheritedAuthorityCredentialCeilings/CK-J03-S04_root_tenant_and_app_keys_cannot_exceed_their_role/root",
+        "TestInheritedAuthorityCredentialCeilings/CK-J03-S04_root_tenant_and_app_keys_cannot_exceed_their_role/tenant"
+      ]
     },
     {
       "id": "CK-J03-S05",
@@ -323,8 +338,19 @@
       "id": "CK-J06-S04",
       "journey": "CK-J06",
       "behavior": "Revoked/expired entitlement blocks fresh content/media/download grants",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Actual product-access revocation and exact expiry remove body and purchased-library access plus fresh media URLs and download grants. A real ZIP is readable before loss of access; a still-unexpired signed archive ticket also refuses after revocation/expiry.",
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+      ],
+      "cases": [
+        "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants",
+        "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants/expire",
+        "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants/revoke",
+        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access",
+        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/expire",
+        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/revoke"
+      ]
     },
     {
       "id": "CK-J06-S05",
@@ -474,8 +500,14 @@
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Both editions are public before deletion. Deleting one changes that exact managed version to deleted and makes its public lookup404 while the sibling remains publicly visible and its parent survives.",
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+      ],
+      "cases": [
+        "TestVersionDeletionDerivesParent/CK-J08-S01_deleting_one_version_preserves_siblings_and_parent"
+      ]
     },
     {
       "id": "CK-J08-S02",
@@ -507,24 +539,44 @@
       "id": "CK-J08-S04",
       "journey": "CK-J08",
       "behavior": "Retention-boundary purge removes content/media while billing history remains",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "The existing River purge preserves version and parent at the earliest 30-day equality boundary. Past both deadlines it removes public/managed rows and actual S3 media, retaining only decoded empty deleted manifests and gateway fences. The real Stripe-wire purchase, settled payment amount and billing product still exist.",
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+      ],
+      "cases": [
+        "TestDeletedContentPurgeOwnsMedia/CK-J08-S04_CK-J08-S05_retried_same_sweep_erases_media_and_records_but_retains_billing",
+        "TestDeletedContentPurgeOwnsMedia/CK-J08-S04_exact_retention_boundary_preserves_soft_deleted_records_and_media"
+      ]
     },
     {
       "id": "CK-J08-S05",
       "journey": "CK-J08",
       "behavior": "Storage failure retains deleted content rows for the same purge sweep",
-      "status": "pending",
-      "evidence": [],
-      "adopted_from": "Accepted future P0 requirement; implementation landed by origin/master8377f8b3"
+      "status": "verified",
+      "evidence": [
+        "Real S3 DELETE failures discard the purge job while leaving its deleted content rows and media intact. A later successful invocation of the same purge job erases both without requiring another reaper.",
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+      ],
+      "adopted_from": "Accepted future P0 requirement; implementation landed by origin/master8377f8b3",
+      "cases": [
+        "TestDeletedContentPurgeOwnsMedia/CK-J08-S04_CK-J08-S05_retried_same_sweep_erases_media_and_records_but_retains_billing",
+        "TestDeletedContentPurgeOwnsMedia/CK-J08-S05_storage_failure_retains_database_records_and_retry_obligation"
+      ]
     },
     {
       "id": "CK-J08-S06",
       "journey": "CK-J08",
       "behavior": "Concurrent restore versus durable purge claim has one stable winner",
-      "status": "pending",
-      "evidence": [],
-      "adopted_from": "Accepted future P0 requirement; implementation landed by origin/master8377f8b3"
+      "status": "verified",
+      "evidence": [
+        "A real database barrier lets a restoration claim the parent/version first; a concurrent purge skips it and leaves media intact. With the opposite ordering, a committed purge claim waits at the S3 boundary and restoration409s; completing storage erases only that losing item.",
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+      ],
+      "adopted_from": "Accepted future P0 requirement; implementation landed by origin/master8377f8b3",
+      "cases": [
+        "TestDeletedContentPurgeOwnsMedia/CK-J08-S06_restore_and_durable_purge_claim_have_one_winner"
+      ]
     },
     {
       "id": "CK-J09-S01",
@@ -719,8 +771,14 @@
       "id": "CK-J16-S01",
       "journey": "CK-J16",
       "behavior": "Owned entity creates only the expected tenant/app authorization scope",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Real scope provisioning binds the exact tenant/app. A sibling-app entity edit404s and leaves both owner and description unchanged.",
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+      ],
+      "cases": [
+        "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app"
+      ]
     },
     {
       "id": "CK-J16-S02",
@@ -766,8 +824,14 @@
       "id": "CK-J16-S05",
       "journey": "CK-J16",
       "behavior": "Restoring entity follows original ownership without wider grants",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Restoration preserves owner and scope IDs, revives the real AuthKit group in its original tenant, permits the owner to author again and still denies a stranger.",
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+      ],
+      "cases": [
+        "TestOwnedEntityAuthority/CK-J16-S05_restore_does_not_widen_scope_or_change_owner"
+      ]
     },
     {
       "id": "CK-J20-S01",
@@ -964,15 +1028,27 @@
       "id": "CK-J25-S01",
       "journey": "CK-J25",
       "behavior": "Same origin plus recipient yields one receipt",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Repeating the same origin/recipient preserves one receipt. The same origin sent to a different real recipient produces a distinct receipt, each visible only in its own inbox.",
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+      ],
+      "cases": [
+        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate"
+      ]
     },
     {
       "id": "CK-J25-S02",
       "journey": "CK-J25",
       "behavior": "Another user/app cannot read or mutate a private receipt",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A stranger cannot list, read or dismiss another receipt; an owner readback proves the refused mutations did not change read/dismissed state.",
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+      ],
+      "cases": [
+        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt"
+      ]
     },
     {
       "id": "CK-J25-S03",
@@ -991,8 +1067,14 @@
       "id": "CK-J25-S04",
       "journey": "CK-J25",
       "behavior": "Publishing to nonmember/foreign tenant recipient refuses",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "A batch whose first recipient is valid and later recipient is unknown or foreign fails400; the local positive-control inbox stays empty, proving no partial publication.",
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+      ],
+      "cases": [
+        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused"
+      ]
     },
     {
       "id": "CK-J25-S05",
@@ -1077,8 +1159,14 @@
       "id": "CK-J26-S05",
       "journey": "CK-J26",
       "behavior": "Reads neither ACK nor delete nor mutate source events",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "The case creates its own immutable published fact before reading. Two identical source queries return the exact same nonempty page without ACK or deletion.",
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+      ],
+      "cases": [
+        "TestRetainedLog/CK-J26-S05_reads_do_not_ack_or_delete_source_facts"
+      ]
     },
     {
       "id": "CK-J26-S06",
@@ -1110,8 +1198,14 @@
       "id": "CK-J29-S01",
       "journey": "CK-J29",
       "behavior": "Go remote and embedded clients preserve equivalent-principal results",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "The embedded host and equivalent remote organization staff agree on exact draft reads, share mutation results, preserve invalid-kind and user-only refusal behavior, and retain context cancellation identity.",
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+      ],
+      "cases": [
+        "TestClientEquivalentStaffOperations/CK-J29-S01_embedded_host_and_remote_staff_match_shared_operations"
+      ]
     },
     {
       "id": "CK-J29-S02",
@@ -1152,8 +1246,14 @@
       "id": "CK-J29-S07",
       "journey": "CK-J29",
       "behavior": "URL mounts and credential transport cannot redirect authority across app/host",
-      "status": "pending",
-      "evidence": []
+      "status": "verified",
+      "evidence": [
+        "Nested mount prefixes and trailing base slashes serve the intended app. A key cannot cross into its sibling mount, path-like or absolute-URL resource IDs fail without authority transfer, and an absent mount retains the host HTTP404 response.",
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+      ],
+      "cases": [
+        "TestClientEquivalentStaffOperations/CK-J29-S07_mount_prefix_and_app_key_cannot_cross_authority"
+      ]
     }
   ],
   "review_notes": {

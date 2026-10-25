@@ -17,6 +17,10 @@ func TestVersionDeletionDerivesParent(t *testing.T) {
 		if len(item.Versions) != 2 {
 			t.Fatal("fixture did not create two versions")
 		}
+		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+		must(t, err)
+		_, err = a.client("").GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
+		must(t, err)
 		must(t, admin.DeleteContentVersion(t.Context(), item.ID, item.Versions[0].ID))
 		got, err := admin.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
@@ -28,6 +32,15 @@ func TestVersionDeletionDerivesParent(t *testing.T) {
 		if sibling.State == "deleted" || sibling.ID != item.Versions[1].ID {
 			t.Fatal("sibling edition was deleted or replaced")
 		}
+		deleted, err := admin.GetContentVersion(t.Context(), item.ID, item.Versions[0].ID, ck.GetContentVersionQuery{})
+		must(t, err)
+		if deleted.State != "deleted" {
+			t.Fatal("requested edition was not actually soft-deleted")
+		}
+		_, err = a.client("").GetVersion(t.Context(), item.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
+		_, err = a.client("").GetVersion(t.Context(), item.Versions[1].ID, ck.GetVersionQuery{})
+		must(t, err)
 	})
 	t.Run("CK-J08-S02_last_version_also_deletes_parent", func(t *testing.T) {
 		item := publishedArticle(t, a, "last edition")

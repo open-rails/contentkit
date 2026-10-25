@@ -104,7 +104,7 @@ func newMediaStorage(t *testing.T, scope ck.Scope) *mediaWorld {
 	return m
 }
 
-func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
+func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.Config)) *mediaWorld {
 	t.Helper()
 	m := newMediaStorage(t, *a.cfg.Scope)
 	var err error
@@ -115,6 +115,9 @@ func attachMedia(t *testing.T, w *world, a *application) *mediaWorld {
 		Private: []media.Private{{Name: "reader", From: "pages/{name}", To: "reader/{name}.webp", Image: &media.Image{Width: 48, Height: 48}}},
 		Public:  []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{16, 32}, Image: media.Image{Aspect: media.Square}}},
 	}}}, WorkerSchema: w.schema + "_media_worker", Delivery: ck.DeliveryConfig{Mode: string(media.DeliverURL), SigningKey: m.signing, TTL: time.Minute, Window: time.Second}}
+	for _, apply := range configure {
+		apply(&a.cfg)
+	}
 	a.deps.Store = m.store
 	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
 	a.cfg.Database.SkipMigrations = true

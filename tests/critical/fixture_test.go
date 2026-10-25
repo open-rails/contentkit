@@ -63,6 +63,10 @@ type application struct {
 }
 
 func newWorld(t *testing.T, configure ...func(*ck.Config)) *world {
+	return newWorldAuth(t, nil, configure...)
+}
+
+func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure ...func(*ck.Config)) *world {
 	t.Helper()
 	dsn := os.Getenv("CONTENTKIT_CRITICAL_PG")
 	if dsn == "" {
@@ -97,7 +101,13 @@ func newWorld(t *testing.T, configure ...func(*ck.Config)) *world {
 	w.channelWriter = channel.Role("writer", channelPermissions["channel:content:write"])
 	w.channelModerator = channel.Role("moderator", channelPermissions["channel:comments:moderate"])
 	w.auth, _ = authtest.New(t,
-		authtest.WithConfig(func(c *authkit.Config) { c.Roles = w.roles; c.DefaultTenantID = iam.TenantID{} }),
+		authtest.WithConfig(func(c *authkit.Config) {
+			c.Roles = w.roles
+			c.DefaultTenantID = iam.TenantID{}
+			if configureAuth != nil {
+				configureAuth(c)
+			}
+		}),
 		authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = pool; w.signer = d.KeySource.ActiveSigner() }))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

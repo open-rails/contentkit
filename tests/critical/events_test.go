@@ -78,6 +78,7 @@ func TestRetainedLog(t *testing.T) {
 		}
 	})
 	t.Run("CK-J26-S05_reads_do_not_ack_or_delete_source_facts", func(t *testing.T) {
+		publishedArticle(t, a, "reader has its own immutable positive control")
 		query := catalog.EventQuery{Types: []string{"content.published"}}
 		one, err := admin.ListEvents(t.Context(), query)
 		must(t, err)

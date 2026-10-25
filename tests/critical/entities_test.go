@@ -154,7 +154,12 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		current, err := a.client(token).GetEntity(t.Context(), string(entity.ID), ck.GetEntityQuery{})
 		must(t, err)
 		if current.OwnerUserID != owner.ID {
-			t.Fatal("cross-app request changed the owner")
+			t.Fatal("cross-app request changed the entity")
+		}
+		for _, text := range current.Text {
+			if text.Description == "cross-app edit" {
+				t.Fatal("cross-app request changed entity description")
+			}
 		}
 	})
 	t.Run("CK-J16-S02_creation_limit_is_enforced_without_extra_entity", func(t *testing.T) {
@@ -183,6 +188,11 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		input.OwnerEntityID = string(other.ID)
 		_, err = a.client(token).PostContents(t.Context(), input)
 		requireError(t, err, 403, "forbidden")
+		rows, err := a.engine.Client().GetManage(t.Context(), ck.GetManageQuery{Q: "Scoped work"})
+		must(t, err)
+		if len(rows) != 1 || rows[0].ID != created.ID || rows[0].OwnerEntityID != string(first.ID) {
+			t.Fatalf("refused cross-entity write changed content: %+v", rows)
+		}
 	})
 	t.Run("CK-J16-S04_deletion_retires_scope_and_owned_content", func(t *testing.T) {
 		_, token, entity := ownedEntity(t, w, a, "retirement")
@@ -211,6 +221,18 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		must(t, err)
 		if restored.OwnerUserID != owner.ID || restored.AuthScope != entity.AuthScope {
 			t.Fatalf("restore changed authority: %+v", restored)
+		}
+		id, err := ckauth.EntityScopeID(*a.cfg.Scope, restored.AuthScope)
+		must(t, err)
+		group, err := w.auth.Group(t.Context(), iam.GroupByID(id))
+		must(t, err)
+		if group.DeletedAt != nil || group.TenantID.String() != a.cfg.Scope.TenantID.String() {
+			t.Fatalf("restored scope not active in original tenant: %+v", group)
+		}
+		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", OwnerEntityID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Restored owner's work"}}})
+		must(t, err)
+		if item.OwnerEntityID != string(entity.ID) {
+			t.Fatal("restored owner lost authoring capability")
 		}
 		_, outsider := w.person(t, 0)
 		_, err = a.client(outsider).PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{Text: []entities.Text{{Language: "en", Description: "unauthorized"}}})

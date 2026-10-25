@@ -101,3 +101,10 @@ They use known cryptographic literals, native SHA-256 as an independent streamin
 oracle, canonical identity/configuration round trips, typed error payloads,
 upload admission limits and media read-window/expiry values. Integration
 fixtures still refuse missing database settings before attempting a connection.
+
+The credential-ceiling scenarios use supported organization API keys at root,
+tenant and app scopes. The current AuthKit tenant-actor resolver excludes
+noninteractive personal tokens, so this suite does not claim functional PAT
+admission. Entity owner assignment is checked through its real ownership,
+directory and authorization effects; there is no public actor-audit event for
+that operation to assert.
