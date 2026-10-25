@@ -9,6 +9,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
@@ -239,7 +240,7 @@ func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 	must(t, err)
 	_, err = client.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
-	_, commentToken := w.person(t, 0)
+	commenter, commentToken := w.person(t, 0)
 	comment := postComment(t, a.client(commentToken), item.ID, "Moderated site channel")
 	moderator, moderatorToken := w.person(t, 0)
 	authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(moderator.ID), w.channelModerator)
@@ -283,8 +284,12 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 	must(t, err)
 	gallery, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", OwnerEntityID: id, Text: map[string]catalog.Text{"en": {Title: "Pending gallery"}}})
 	must(t, err)
-	_, commentToken := w.person(t, 0)
+	commenter, commentToken := w.person(t, 0)
 	comment := postComment(t, a.client(commentToken), item.ID, "Not moderated by metadata")
+	_, err = caller.PutCommentBan(t.Context(), commenter.ID, content.BanInput{})
+	must(t, err)
+	_, err = a.client(commentToken).PostEntityComments(t.Context(), id, content.CommentInput{Body: "Personal blocks do not moderate a scoped channel"})
+	must(t, err)
 	_, err = caller.PostContents(t.Context(), input)
 	requireError(t, err, 403, "forbidden")
 	_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Forbidden", Body: "no"})
