@@ -26,13 +26,15 @@
         "The actual public v0.125.0 initializer records its module version, creates and publishes content. Current read-only startup refuses its schema, explicit migration preserves item/version IDs, code and body through embedded and HTTP reads, and repeated migration preserves revision.",
         "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification.",
         "A pinned publicv0.112.1 executable writes actual legacy nested media; current public migration copies real bytes once while preserving content/version/blob identities. Existingv0.125 text migration remains an independent profile.",
-        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required.",
+        "Explicit storage conversion refuses old/incomplete layouts, resumes verified copies and retirement, and preserves immutable source identities."
       ],
       "cases": [
         "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity",
         "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity",
         "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/anonymous_HTTP",
-        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/embedded_host"
+        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/embedded_host",
+        "TestPublicationStorage"
       ]
     },
     {
@@ -336,28 +338,31 @@
     {
       "id": "CK-J05-S01",
       "journey": "CK-J05",
-      "behavior": "Immediate publication becomes visible and records once",
+      "behavior": "Immediate publication is durable and becomes visible after completed work",
       "status": "verified",
       "evidence": [
-        "Draft is404; publish returns live, real anonymous detail exact body, exactly one content.published fact for the item.",
-        "Independent semantic review frozen at f0522d2; exact cases passed in the integrated 293.407-second race aggregate."
+        "Publication accepts durable work; real workers establish visibility and emit one content/version release fact. Historical case IDs remain stable.",
+        "The #250 focused source checks are partial; the strict runner must execute these cases on the final candidate."
       ],
       "cases": [
-        "TestPublicationWithoutWorkers/CK-J05-S01_immediate_publication_is_visible"
-      ]
+        "TestPublicationWithoutWorkers/CK-J05-S01_immediate_publication_is_visible",
+        "TestDurableTextPublication"
+      ],
+      "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
     {
       "id": "CK-J05-S02",
       "journey": "CK-J05",
-      "behavior": "Scheduled content is unavailable before and available at boundary with recorder stopped",
+      "behavior": "Scheduled content remains unavailable until due publication work completes",
       "status": "verified",
       "evidence": [
-        "With no Start, timestamp-1us is404 and exact timestamp exposes exact body and listing membership.",
-        "Independent semantic review frozen at f0522d2; exact cases passed in the integrated 293.407-second race aggregate."
+        "With workers stopped, advancing the clock cannot publish. Starting the actual due worker establishes the completed reader state; chapter placement follows the same rule."
       ],
       "cases": [
-        "TestPublicationWithoutWorkers/CK-J05-S02_scheduled_content_opens_at_deadline_without_recorder"
-      ]
+        "TestPublicationWithoutWorkers/CK-J05-S02_scheduled_content_opens_at_deadline_without_recorder",
+        "TestChapterPlacementReconciliation"
+      ],
+      "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
     {
       "id": "CK-J05-S03",
@@ -376,60 +381,69 @@
     {
       "id": "CK-J05-S04",
       "journey": "CK-J05",
-      "behavior": "Segment and audience releases use their own exact boundaries",
+      "behavior": "Independent chapters and audience changes follow durable placement",
       "status": "verified",
       "evidence": [
-        "Actual two-page media has independent chapter and public-audience times. Exact before/equality reads expose one/two/zero pages as appropriate; paid access opens the early tier and public release grants no billing entitlement. Signed archives obey the same released prefix.",
-        "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
+        "Start markers derive half-open spans from source-file order. Independently released chapters can skip an unreleased middle; copied and inserted files follow their current chapter.",
+        "Valid item tokens grant all served private outputs of exactly that edition, never future/original bytes or unreleased metadata."
       ],
       "cases": [
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
-        "TestPublicationWithoutWorkers/CK-J05-S04_public_audience_release_opens_without_a_grant"
-      ]
+        "TestPublicationWithoutWorkers/CK-J05-S04_public_audience_release_opens_without_a_grant",
+        "TestCopiedPageChapterPlacement",
+        "TestIndependentChaptersSkipUnreleasedMiddle",
+        "TestCompletedPublicationReader"
+      ],
+      "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
     {
       "id": "CK-J05-S05",
       "journey": "CK-J05",
-      "behavior": "Unpublish/reschedule removes availability without deleting purchase rights",
+      "behavior": "Unpublish and future reschedule withdraw files while preserving edition purchase rights",
       "status": "verified",
       "evidence": [
-        "Unpublish and future reschedule remove detail availability without removing or replacing a real existing product-access grant. At the rescheduled instant the same grant opens the content again.",
-        "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
+        "Rescheduling a released chapter into the future queues same-worker withdrawal and later release. The old served URL must cease resolving at origin; exact-edition purchase rights remain."
       ],
       "cases": [
         "TestCommerceEntitlementBoundaries/CK-J05-S05_unpublish_and_reschedule_preserve_purchased_rights",
-        "TestPublicationWithoutWorkers/CK-J05-S05_unpublish_and_reschedule_remove_public_visibility"
-      ]
+        "TestPublicationWithoutWorkers/CK-J05-S05_unpublish_and_reschedule_remove_public_visibility",
+        "TestReleasedChapterFutureDateWithdrawsItsFiles"
+      ],
+      "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
     {
       "id": "CK-J05-S06",
       "journey": "CK-J05",
-      "behavior": "Repeated/concurrent due-recording catches up facts without duplicate releases",
+      "behavior": "Concurrent durable publication and queue migration preserve ownership and completion facts",
       "status": "verified",
       "evidence": [
-        "Actual host-composed River workers race four recorder jobs plus startup catch-up after runtime reads already expose the due body. Exactly one content, version and audience fact appears; publication timestamps retain the parent deadline and another job creates no duplicate.",
-        "Executed with the race detector in resume-boundaries3; the aggregate failed only the separately corrected commerce outage oracle."
+        "Real registered workers establish availability and deduplicate completion; per-app publication queues isolate shared catalog tables. Explicit queue conversion preserves targets and unrelated or terminal history."
       ],
       "cases": [
-        "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once"
-      ]
+        "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
+        "TestPublicationQueuesIsolateSharedCatalogApps",
+        "TestPublicationQueueMigrationPreservesOwners"
+      ],
+      "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
     {
       "id": "CK-J06-S01",
       "journey": "CK-J06",
-      "behavior": "Content/version/entity/tier grants expose only their intended resource",
+      "behavior": "Edition, entity and tier grants are scoped; parent content grants do not authorize editions",
       "status": "verified",
       "evidence": [
-        "Real OpenRails product grants independently exercise content, exact version, entity and tier access. Each reader sees only its intended resource/edition; unrelated protected content stays redacted.",
-        "New cases passed under the race detector in resume-boundaries5; the full package failed only separate new fixture/oracle issues. Strict qualification re-executes every named case."
+        "Real OpenRails product grants test exact-edition, entity and tier scope. A parent ContentKey is a negative control and cannot open sibling editions."
       ],
       "cases": [
         "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped",
         "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped/content",
         "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped/entity",
         "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped/tier",
-        "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped/version"
-      ]
+        "TestCommerceEntitlementBoundaries/CK-J06-S01_content_version_entity_and_tier_grants_are_scoped/version",
+        "TestEditionEntitlementIsolation",
+        "TestChapterSubsetPreviewIsRefused"
+      ],
+      "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
     {
       "id": "CK-J06-S02",
@@ -844,11 +858,13 @@
       "status": "verified",
       "evidence": [
         "A coherently signed but expired real multipart ticket cannot list, complete, abort or presign parts. The original live ticket still works, proving no destructive side effect.",
-        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required.",
+        "Actual S3 tmp uploads and completed multipart objects carry temporary tags; permanent copies clear them, explicit multipart abort works and tickets beyond seven days are refused. Automatic seven-day backend abortion requires separate lifecycle support verification."
       ],
       "cases": [
         "TestMediaAdmissionBoundaries/CK-J10-S04_expired_issuer_ticket_cannot_read_complete_abort_or_presign_parts",
-        "TestMultipartUpload/CK-J10-S04_foreign_actor_cannot_reuse_ticket"
+        "TestMultipartUpload/CK-J10-S04_foreign_actor_cannot_reuse_ticket",
+        "TestTemporaryPublicationStorage"
       ]
     },
     {
