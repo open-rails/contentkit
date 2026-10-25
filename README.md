@@ -665,20 +665,17 @@ own scope in a transaction, including newly created entity names, and preserve
 sibling versions. The older all-scopes entity replacement remains available
 for imports and callers deliberately replacing the entire work.
 
-Keyword documents include active associations without start or end dates and
-their active ancestors. A static featured rail can contribute keywords;
-scheduled curation is evaluated at read time and is not copied into keyword
-text.
+Keyword documents include active associations and their active ancestors.
+Writes refresh association facets in the same transaction. Entity counts and
+automatic entity covers read current facets and release timestamps; no periodic
+recount or timed-membership job is needed. Manual entity covers remain explicit.
+Likes and favorites keep their existing atomic counters.
 
-Writes are batches in one transaction. Engine jobs keep the rest current:
-`Recount` (every 5 minutes, and after an import) rebuilds per-language content
-counts and automatic covers from the facets, and `RefreshWindows` (every
-minute) applies association windows that opened or closed since a facet was
-written, so listings trail a window by up to a minute and catch up after an
-outage. Direct access decisions apply windows at once. The engine builds
-`entities.Store` from `Config.Content` and serves it as `EntityRoutes`.
-Only user-owned or permission-scoped entity kinds need lifecycle sync and
-recovery jobs; ordinary taxonomy and featured rails schedule neither.
+The engine builds `entities.Store` from `Config.Content` and serves it as
+`EntityRoutes`. Creator channels retain their editor teams and optional billing
+entitlements. Their lifecycle changes enqueue exact durable sync work in the
+writing transaction, including when no local worker is running. Ordinary
+staff-managed tags, series and channels do not need that work.
 
 Go and relational names use entity. Existing HTTP fields such as `group_id`,
 access values `group`/`group_ppv`, and billing keys containing `:group:` retain

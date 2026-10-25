@@ -1403,13 +1403,12 @@ the host's periodic jobs. The worker migrates its schema itself.
 
 `entities.Store` owns the app's artists, tags, series, characters, channels and
 collections; their kinds come from `kinds.Config.EntityKinds`. Shared and
-version-level associations are replaced independently. Writes refresh timeless
-association facets in the same transaction. Engine jobs keep counts and
-automatic covers (`Recount`, every 5 minutes and after an import) and dated
-associations (`RefreshWindows`, every minute) current in the stored facets;
-direct access decisions apply dated associations at once. Only configured user-owned or permission-scoped entity
-kinds schedule lifecycle recovery. The entity routes remain `/v1/entities…`
-and `/v1/contents/{id}/entities`.
+version-level associations are replaced independently. Writes refresh association
+facets in the same transaction. Entity counts and automatic covers are derived
+on reads, so edits and release times take effect without a recount job.
+Creator-owned or permission-scoped entity changes enqueue exact durable lifecycle
+sync; ordinary staff-managed entities need no lifecycle worker. The entity routes
+remain `/v1/entities…` and `/v1/contents/{id}/entities`.
 
 Keyword documents enrich content with timeless active associations and their
 ancestors. A static entry in a window-enabled rail still contributes keywords;

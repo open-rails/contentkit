@@ -52,8 +52,6 @@ const (
 	resyncEvery         = 24 * time.Hour
 	repairEvery         = time.Hour
 	reclassifyEvery     = 10 * time.Minute
-	recountEvery        = 5 * time.Minute
-	windowsEvery        = time.Minute
 	searchPruneEvery    = time.Hour
 )
 
@@ -74,7 +72,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		}
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &entitiesWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
@@ -93,8 +90,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 				}, &river.PeriodicJobOpts{ID: id, RunOnStart: true}))
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{})
-		periodic("contentkit_entities_recount", recountEvery, entitiesArgs{})
-		periodic("contentkit_entities_windows", windowsEvery, entitiesArgs{Windows: true})
 		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{})
 		if e.classifier {
 			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{})
@@ -126,9 +121,8 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 	return riverhelpers.Group(parts...)
 }
 
-// rebuild queues the jobs that rebuild what an import changed: search
-// documents and entity counts and covers. Before Start their periodic first
-// runs do it.
+// rebuild queues search documents after an import. Counts and entity covers
+// are read from committed content facets.
 func (e *Engine) rebuild(ctx context.Context) error {
 	c := e.jobs.bound()
 	if c == nil {
@@ -137,7 +131,7 @@ func (e *Engine) rebuild(ctx context.Context) error {
 	opts := func(queue string) *river.InsertOpts {
 		return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
 	}
-	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}, {Args: entitiesArgs{}, InsertOpts: opts(QueueContentKit)}}
+	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}}
 	_, err := c.InsertMany(ctx, params)
 	return err
 }
@@ -178,30 +172,6 @@ func (w *searchSyncWorker) Work(ctx context.Context, _ *river.Job[searchSyncArgs
 	e := w.e
 	return worker.SyncOnce(ctx, worker.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
 		SupportedLanguages: e.cfg.Content.Languages, Sources: []worker.Source{e.catalog, e.entities}})
-}
-
-type entitiesArgs struct {
-	// Windows refreshes the memberships whose time windows opened or closed;
-	// otherwise it recounts entities and their automatic covers.
-	Windows bool `json:"windows,omitempty"`
-}
-
-func (entitiesArgs) Kind() string { return "contentkit_entity_projection" }
-
-// entitiesWorker keeps entities' stored counts, covers and windowed facets
-// current.
-type entitiesWorker struct {
-	river.WorkerDefaults[entitiesArgs]
-	e *Engine
-}
-
-func (w *entitiesWorker) Timeout(*river.Job[entitiesArgs]) time.Duration { return 30 * time.Minute }
-
-func (w *entitiesWorker) Work(ctx context.Context, job *river.Job[entitiesArgs]) error {
-	if job.Args.Windows {
-		return w.e.entities.RefreshWindows(ctx)
-	}
-	return w.e.entities.Recount(ctx)
 }
 
 type searchPruneArgs struct{}
