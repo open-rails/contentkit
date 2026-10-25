@@ -708,6 +708,20 @@ func TestMediaWorkerRecovery(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("killed worker left output request live")
 		}
+		// Accepted pending work also survives a host Engine.Close/New cycle;
+		// the borrowed database and original queued payload remain authoritative.
+		m.app.server.Close()
+		must(t, m.app.engine.Close(t.Context()))
+		m.app.engine, err = ck.New(t.Context(), m.app.cfg, m.app.deps)
+		must(t, err)
+		m.app.server = mountEngine(t, m.app.engine)
+		must(t, m.app.engine.Start(t.Context()))
+		client = m.app.engine.Client()
+		persisted, err := queue.JobGet(t.Context(), jobs.Jobs[0].ID)
+		must(t, err)
+		if !bytes.Equal(persisted.EncodedArgs, jobs.Jobs[0].EncodedArgs) {
+			t.Fatal("host reopen lost the original accepted media job")
+		}
 		m.start(t)
 		replay := replayMediaJob(t, queue, jobs.Jobs[0])
 		ready := awaitMediaReady(t, client, ref)

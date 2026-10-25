@@ -38,6 +38,9 @@ func newTinyHLSFixture(t *testing.T) *tinyHLSFixture {
 			Uploads: []media.Upload{{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 10 << 20}},
 			Private: []media.Private{{Name: "stream", From: "source", To: "streams/", HLS: &media.HLS{Ladder: []int{144}}}},
 		})
+		site := c.Media.Config.Kinds[len(c.Media.Config.Kinds)-1]
+		site.Name = "siteclip"
+		c.Media.Config.Kinds = append(c.Media.Config.Kinds, site)
 	})
 	config := m.config
 	config.VideoCodecs = []media.Codec{media.CodecH264}
@@ -84,6 +87,25 @@ func newTinyHLSFixture(t *testing.T) *tinyHLSFixture {
 		t.Fatalf("child playlist bypasses the gateway: %s", f.SegmentURL)
 	}
 	return f
+}
+
+func (f *tinyHLSFixture) addSiteClip(t *testing.T) media.RefBody {
+	t.Helper()
+	id, err := uuid.NewV7()
+	must(t, err)
+	ref := media.RefBody{Kind: "siteclip", ID: id.String()}
+	admin := f.app.engine.Client()
+	_, err = admin.IngestMedia(t.Context(), nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(f.Source)}})
+	must(t, err)
+	waitForWithin(t, 90*time.Second, func() bool {
+		read, err := admin.GetMedia(t.Context(), ref.Kind, ref.ID, ck.GetMediaQuery{Editor: true})
+		must(t, err)
+		if read.Status != nil && read.Status.FailureCount != 0 {
+			t.Fatalf("site video processing failed: %+v", read.Status.Failures)
+		}
+		return read.State == media.StateReady && len(read.HLS) == 1
+	})
+	return ref
 }
 
 func (f *tinyHLSFixture) addClip(t *testing.T, title string) media.RefBody {

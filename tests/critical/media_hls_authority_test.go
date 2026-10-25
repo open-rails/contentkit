@@ -35,6 +35,20 @@ func TestMediaHLSAuthorization(t *testing.T) {
 			return body
 		}
 		readSegment(f.SegmentURL, 206)
+		// The unversioned API serves non-content media kinds. It is not a
+		// parent/default-edition alias for content kinds that require versions.
+		site := f.addSiteClip(t)
+		for _, playlist := range []string{f.MasterPath, f.ChildPath} {
+			read, err := f.app.engine.Client().GetMediaHls(t.Context(), site.Kind, site.ID, playlist, ck.GetMediaHlsQuery{})
+			must(t, err)
+			if read.Status != 200 || !bytes.HasPrefix(read.Body, []byte("#EXTM3U")) {
+				t.Fatalf("unversioned HLS contract failed: %+v", read)
+			}
+			_, err = f.app.client("").GetMediaHls(t.Context(), site.Kind, site.ID, playlist, ck.GetMediaHlsQuery{})
+			requireError(t, err, 404, "not_found")
+		}
+		_, err := f.app.engine.Client().GetMediaHls(t.Context(), f.Ref.Kind, f.Ref.ID, f.MasterPath, ck.GetMediaHlsQuery{})
+		requireError(t, err, 404, "not_found")
 		firstURL, err := url.Parse(f.SegmentURL)
 		must(t, err)
 		unsigned := *firstURL
