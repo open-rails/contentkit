@@ -303,8 +303,8 @@ func TestPublicationStorage(t *testing.T) {
 	must(t, err)
 	store.deleteFailure = legacyKey
 	migration := uuid.NewString()
-	if err := manifests.MigratePublicationLayout(t.Context(), target, migration); err == nil {
-		t.Fatal("migration reported completion despite failed old private-object deletion")
+	if err := manifests.MigratePublicationLayout(t.Context(), target, migration); err == nil || !strings.Contains(err.Error(), "old served object deletion failed") {
+		t.Fatalf("migration did not reach the injected old-origin deletion failure: %v", err)
 	}
 	partial, _, err := manifests.Get(t.Context(), target)
 	must(t, err)

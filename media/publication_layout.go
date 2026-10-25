@@ -66,18 +66,21 @@ func (m *Manifests) MigratePublicationLayout(ctx context.Context, ref contentref
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		current, _, err := m.Get(ctx, ref)
+		var current *Manifest
+		current, _, err = m.Get(ctx, ref)
 		if err != nil {
 			return err
 		}
 		if current.PublicationLayout == PublicationLayoutVersion || current.Deleted {
 			return nil
 		}
-		plan, err := m.planPublicationLayout(ctx, item, id, current)
+		var plan *publicationLayoutPlan
+		plan, err = m.planPublicationLayout(ctx, item, id, current)
 		if err != nil {
 			return err
 		}
-		body, err := json.Marshal(journalEffects{PublicationLayoutPlan: plan})
+		var body []byte
+		body, err = json.Marshal(journalEffects{PublicationLayoutPlan: plan})
 		if err != nil {
 			return err
 		}
