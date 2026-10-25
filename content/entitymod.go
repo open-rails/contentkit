@@ -93,6 +93,9 @@ func (c *comments) hold(ctx context.Context, actor access.Actor, cid string) err
 	if err := c.count(ctx, tx, replyTo, k, -1); err != nil {
 		return err
 	}
+	if err := c.withdrawNotices(ctx, tx, cid); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 

@@ -73,22 +73,21 @@ type Engine struct {
 	gate            *access.Gate
 	classifier      bool // free-text answers to reclassify
 
-	hub              *hub.Hub
-	signals          *signalPlane // nil without ClickHouse
-	chMu             sync.Mutex
-	ownCH            clickhouse.Conn // opened from Config.ClickHouse
-	content          *content.Runtime
-	notices          *notification.Store
-	notificationJobs *billingNotificationJobs
-	entities         *entities.Store
-	catalog          *catalog.Store
-	discover         *discovery.Service
-	importer         *importer.Service
-	media            *engineMedia
-	avatars          *engineAvatars
-	modules          map[httpapi.Module]http.Handler
-	inproc           http.Handler
-	probes           []Probe
+	hub      *hub.Hub
+	signals  *signalPlane // nil without ClickHouse
+	chMu     sync.Mutex
+	ownCH    clickhouse.Conn // opened from Config.ClickHouse
+	content  *content.Runtime
+	notices  *notification.Store
+	entities *entities.Store
+	catalog  *catalog.Store
+	discover *discovery.Service
+	importer *importer.Service
+	media    *engineMedia
+	avatars  *engineAvatars
+	modules  map[httpapi.Module]http.Handler
+	inproc   http.Handler
+	probes   []Probe
 
 	mu        sync.Mutex
 	jobs      *jobs
@@ -320,6 +319,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return ErrScopeConflict
 	}
 	if err := e.bindScope(ctx); err != nil {
+		return err
+	}
+	if err := e.adoptCommentNoticeIdentities(ctx); err != nil {
 		return err
 	}
 	if err := e.avatarPlacement(ctx, options.explicit); err != nil {
@@ -586,8 +588,9 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 	l := in.Limits
 	o := content.Options{
 		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Notifications: e.cfg.Notifications, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
-		Processor: deps.Processor,
-		Moderator: deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
+		Processor:             deps.Processor,
+		NotificationPublisher: deps.Notifications,
+		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		Classifier: deps.Classifier, ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
@@ -651,12 +654,15 @@ func (e *Engine) accountExists(deps Deps) func(context.Context, string) (bool, e
 
 // mount builds each configured module's handler and the in-process mux.
 func (e *Engine) mount(deps Deps) error {
+	var err error
 	e.modules = map[httpapi.Module]http.Handler{httpapi.Content: e.content.Handler()}
-	nh, err := e.notices.Handler(e.auth)
-	if err != nil {
-		return err
+	if deps.Notifications == nil {
+		nh, err := e.notices.Handler(e.auth)
+		if err != nil {
+			return err
+		}
+		e.modules[httpapi.Notifications] = nh
 	}
-	e.modules[httpapi.Notifications] = nh
 	if m := e.media; m != nil {
 		e.modules[httpapi.Upload] = media.UploadHandler(m.uploads, media.UploadHandlerOptions{Auth: e.auth, Logger: e.log})
 		e.modules[httpapi.Media] = m.reader.Handler(media.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit})

@@ -149,7 +149,7 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 		var targetReply *string
 		var targetDeleted *time.Time
 		var targetState, targetLanguage string
-		row := tx.QueryRow(ctx, `SELECT id::text, `+keyCols+`, reply_to_id::text, deleted_at, moderation, language FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = $1`, in.ReplyToID, c.s.tenant)
+		row := tx.QueryRow(ctx, `SELECT id::text, `+keyCols+`, reply_to_id::text, deleted_at, moderation, language FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = $1 FOR UPDATE`, in.ReplyToID, c.s.tenant)
 		if err := row.Scan(&in.ReplyToID, &target.TenantID, &target.ContentKind, &target.ContentID, versionid.Into(&target.ContentVersionID), &targetReply, &targetDeleted, &targetState, &targetLanguage); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Comment{}, badRequest("comment to reply to not found")
@@ -507,6 +507,9 @@ func (c *comments) restore(ctx context.Context, cid string) error {
 		if err := c.count(ctx, tx, replyTo, k, 1); err != nil {
 			return err
 		}
+		if err := c.restoreReplyNotices(ctx, tx, cid); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -678,7 +681,11 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 		}
 	}
 	if sc.state == ModerationApproved && before != ModerationApproved {
-		if err := c.notifyReply(ctx, tx, cid); err != nil {
+		if err := c.restoreReplyNotices(ctx, tx, cid); err != nil {
+			return Comment{}, err
+		}
+	} else if sc.state != ModerationApproved && before == ModerationApproved {
+		if err := c.withdrawNotices(ctx, tx, cid); err != nil {
 			return Comment{}, err
 		}
 	}
@@ -721,6 +728,9 @@ func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid strin
 		if err := c.count(ctx, tx, replyTo, k, -1); err != nil {
 			return err
 		}
+	}
+	if err := c.withdrawNotices(ctx, tx, cid); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

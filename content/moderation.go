@@ -300,7 +300,7 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 		if err := c.count(ctx, tx, replyTo, k, 1); err != nil {
 			return err
 		}
-		if err := c.notifyReply(ctx, tx, cid); err != nil {
+		if err := c.restoreReplyNotices(ctx, tx, cid); err != nil {
 			return err
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -210,4 +211,46 @@ func (s *Store) PublishTx(ctx context.Context, tx pgx.Tx, in notify.Input) (noti
 		return notify.Item{}, err
 	}
 	return s.view.Load().PublishTx(ctx, tx, in)
+}
+
+// Apply joins the legacy local store during explicit account-inbox adoption.
+// New hosts inject AuthKit's publisher into ContentKit instead.
+func (s *Store) Apply(ctx context.Context, mutations []notify.Mutation) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error { return s.ApplyTx(ctx, tx, mutations) })
+}
+
+func (s *Store) ApplyTx(ctx context.Context, tx pgx.Tx, mutations []notify.Mutation) error {
+	if len(mutations) > notify.MaxMutations {
+		return fmt.Errorf("%w: too many notification mutations", notify.ErrInvalid)
+	}
+	prepared := make([]notify.Mutation, 0, len(mutations))
+	for _, mutation := range mutations {
+		var err error
+		mutation.Input, err = s.publication(mutation.Input)
+		if err != nil {
+			return err
+		}
+		if err := s.checkRecipient(ctx, tx, mutation.Recipient); errors.Is(err, ErrRecipientNotFound) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		prepared = append(prepared, mutation)
+	}
+	// A savepoint per recipient lets terminal recipient erasure drop that
+	// recipient's notice without dropping another recipient's mutation.
+	slices.SortStableFunc(prepared, func(a, b notify.Mutation) int {
+		if d := strings.Compare(string(a.Recipient.Audience), string(b.Recipient.Audience)); d != 0 {
+			return d
+		}
+		return strings.Compare(a.Recipient.ID, b.Recipient.ID)
+	})
+	return pgx.BeginFunc(ctx, tx, func(batch pgx.Tx) error {
+		for _, mutation := range prepared {
+			if err := s.view.Load().ApplyTx(ctx, batch, []notify.Mutation{mutation}); err != nil && !errors.Is(err, notify.ErrRecipientErased) {
+				return err
+			}
+		}
+		return nil
+	})
 }

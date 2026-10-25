@@ -63,6 +63,7 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 			}
 		}
 		for _, q := range []string{
+			`DELETE FROM ` + pgx.Identifier{rt.schema, "content_comment_notifications"}.Sanitize() + ` WHERE tenant_id=$1 AND recipient=$2`,
 			`UPDATE ` + s.t.pollAnswers + ` SET actor_id=NULL WHERE tenant_id=$1 AND actor_id=$2`,
 			`UPDATE ` + s.t.comments + ` SET user_id=NULL,anon_name='<Deleted>' WHERE tenant_id=$1 AND user_id=$2`,
 			`UPDATE ` + s.t.comments + ` SET moderated_by=NULL WHERE tenant_id=$1 AND moderated_by=$2`,

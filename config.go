@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/authkit/userinfo"
+	notifypg "github.com/open-rails/helpers/notify/postgres"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"
@@ -326,6 +327,10 @@ type Deps struct {
 	// Transactional notification publication additionally needs GetTx so this
 	// lookup uses the domain transaction, never another pool connection.
 	Users userinfo.Lookup
+	// Notifications publishes native notices through the account inbox owner.
+	// The publisher joins each content transaction, including remote delivery
+	// obligations. Nil retains the legacy local inbox during explicit adoption.
+	Notifications notifypg.TxSink
 	// Billing is the site's OpenRails merchant (adapters/openrails.Billing
 	// over an embedded engine or the remote client): held entitlement keys
 	// and prices, free grants. Nil holds no keys and sells nothing.

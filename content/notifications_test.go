@@ -42,16 +42,20 @@ func TestCommentNotificationsPublicationAndIdentity(t *testing.T) {
 	if _, err := rt.Notifications.SetRead(ctx, got[0].Recipient, got[0].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	// A later held edit and reapproval do not re-notify or reset local read state.
+	// A held edit withdraws the obsolete notice. Reapproval explicitly reopens
+	// the same identity at a newer producer revision, visible as unread.
 	if _, err := rt.comments.edit(ctx, writer, held.ID, "iffy replacement"); err != nil {
 		t.Fatal(err)
+	}
+	if got := inbox(t, rt, "owner"); len(got) != 0 {
+		t.Fatalf("held reply remained in inbox: %+v", got)
 	}
 	if err := rt.Resolve(ctx, KindComment, held.ID, ReviewDecision{Revision: 2, Decision: DecisionApprove, Reviewer: "staff"}); err != nil {
 		t.Fatal(err)
 	}
 	got = inbox(t, rt, "owner")
-	if len(got) != 1 || got[0].ReadAt == nil {
-		t.Fatalf("reapproval reset notice: %+v", got)
+	if len(got) != 1 || got[0].ReadAt != nil || got[0].ProducerRevision != 3 {
+		t.Fatalf("reapproval did not reopen same issue: %+v", got)
 	}
 	// First publication by editing a held reply also emits.
 	held2 := mustComment(t, rt, writer, "gallery", cid(1), CommentInput{Body: "iffy second", ReplyToID: root.ID})

@@ -131,7 +131,7 @@ func (e *Engine) Routes(selection Routes) ([]Route, error) {
 	return []Route{{Path: prefix + httpapi.Version + "/", Handler: e.dispatch(prefix, modules)}}, nil
 }
 
-var needs = map[RouteGroups]string{UploadRoutes: "Config.Media", MediaRoutes: "Config.Media"}
+var needs = map[RouteGroups]string{UploadRoutes: "Config.Media", MediaRoutes: "Config.Media", NotificationRoutes: "the AuthKit account inbox when Deps.Notifications is configured"}
 
 // RouteGroups is every route group the engine can serve: those whose modules
 // its Config provides.

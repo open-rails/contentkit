@@ -145,6 +145,9 @@ func (rt *Runtime) eraseSubjects(ctx context.Context, actorIDs []string, account
 	if err := rt.eraseInteractions(ctx, tx, ids); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM `+pgx.Identifier{rt.schema, "content_comment_notifications"}.Sanitize()+` WHERE tenant_id=$1 AND recipient=ANY($2)`, rt.tenant, ids); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+rt.store.t.pollAnswers+` WHERE tenant_id=$1 AND actor_id=ANY($2)`, rt.tenant, ids); err != nil {
 		return err
 	}

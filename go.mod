@@ -20,7 +20,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/open-rails/authkit v1.35.4
-	github.com/open-rails/helpers v1.16.1
+	github.com/open-rails/helpers v1.16.2-0.20261025024957-47f4de657abc
 	github.com/open-rails/migratekit v1.11.2
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.22.0

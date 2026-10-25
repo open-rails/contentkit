@@ -74,7 +74,17 @@ func (c *comments) publishNotice(ctx context.Context, tx pgx.Tx, recipient, kind
 	if err != nil {
 		return fmt.Errorf("content: encode notification: %w", err)
 	}
-	_, err = c.rt.Notifications.PublishTx(ctx, tx, notify.Input{Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: recipient}, Origin: notify.Origin{System: "contentkit", Scope: c.s.tenant, ID: eventID}, Kind: kind, Data: data, CreatedAt: time.Now().UTC()})
+	var revision int64
+	var createdAt time.Time
+	err = tx.QueryRow(ctx, `INSERT INTO `+c.noticeTable()+` AS n
+	(tenant_id,comment_id,recipient,source_id,kind,created_at) VALUES ($1,$2,$3,$4,$5,clock_timestamp())
+	ON CONFLICT (tenant_id,recipient,source_id) DO UPDATE
+	SET revision=n.revision+CASE WHEN n.withdrawn THEN 1 ELSE 0 END,withdrawn=false
+	RETURNING revision,created_at`, c.s.tenant, payload.CommentID, recipient, eventID, kind).Scan(&revision, &createdAt)
+	if err != nil {
+		return fmt.Errorf("content: record notification identity: %w", err)
+	}
+	err = c.rt.notifier.ApplyTx(ctx, tx, []notify.Mutation{{Input: notify.Input{Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: recipient}, Origin: notify.Origin{System: "contentkit", Scope: c.s.tenant, ID: eventID}, Kind: kind, Data: data, CreatedAt: createdAt}, Revision: revision}})
 	// Erased recipients cannot receive new notices; their old published comments
 	// can remain under host policy without blocking someone else's interaction.
 	if errors.Is(err, notify.ErrRecipientErased) || errors.Is(err, notification.ErrRecipientNotFound) {
@@ -82,6 +92,63 @@ func (c *comments) publishNotice(ctx context.Context, tx pgx.Tx, recipient, kind
 	}
 	if err != nil {
 		return fmt.Errorf("content: publish notification: %w", err)
+	}
+	return nil
+}
+
+func (c *comments) noticeTable() string {
+	return pgx.Identifier{c.s.schema, "content_comment_notifications"}.Sanitize()
+}
+
+// withdrawNotices uses source-owned notice identities, never an inbox scan.
+// Replies survive parent deletion, but their reply-to-parent notices do not.
+// The caller holds the thread lock and records all withdrawals in its transaction.
+func (c *comments) withdrawNotices(ctx context.Context, tx pgx.Tx, cid string) error {
+	for {
+		rows, err := tx.Query(ctx, `WITH selected AS (
+	SELECT tenant_id,recipient,source_id FROM `+c.noticeTable()+`
+	WHERE tenant_id=$1 AND NOT withdrawn AND (comment_id=$2 OR
+	 (kind='comment.reply' AND comment_id IN (SELECT id FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND reply_to_id=$2)))
+	ORDER BY recipient,source_id LIMIT $3 FOR UPDATE
+)
+	UPDATE `+c.noticeTable()+` n SET withdrawn=true,revision=n.revision+1 FROM selected s
+	WHERE n.tenant_id=s.tenant_id AND n.recipient=s.recipient AND n.source_id=s.source_id
+	RETURNING n.recipient,n.source_id,n.revision`, c.s.tenant, cid, notify.MaxMutations)
+		if err != nil {
+			return err
+		}
+		mutations, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (notify.Mutation, error) {
+			m := notify.Mutation{Input: notify.Input{Recipient: notify.Recipient{Audience: notify.AudienceUser}, Origin: notify.Origin{System: "contentkit", Scope: c.s.tenant}}, Withdrawn: true}
+			err := row.Scan(&m.Recipient.ID, &m.Origin.ID, &m.Revision)
+			return m, err
+		})
+		if err != nil || len(mutations) == 0 {
+			return err
+		}
+		if err := c.rt.notifier.ApplyTx(ctx, tx, mutations); err != nil {
+			return fmt.Errorf("content: withdraw comment notifications: %w", err)
+		}
+	}
+}
+
+// restoreReplyNotices republishes the visible replies of a restored parent
+// with their existing identities and newer producer revisions.
+func (c *comments) restoreReplyNotices(ctx context.Context, tx pgx.Tx, cid string) error {
+	if err := c.notifyReply(ctx, tx, cid); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT id::text FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND reply_to_id=$2 AND deleted_at IS NULL AND moderation='approved' ORDER BY id`, c.s.tenant, cid)
+	if err != nil {
+		return err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := c.notifyReply(ctx, tx, id); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -1,15 +1,15 @@
 # Notifications
 
-ContentKit is an application's user-notification aggregator. It accepts native
-comment events, OpenRails producer events and notices selected by the host,
-stores local receipts, and serves the application's inbox and UI. The reusable
-`github.com/open-rails/helpers/notify` package owns persistence, idempotency,
-read/archive state, tracked workflow state and erasure. Hosts own identity
-mapping and domain action destinations. ContentKit provides shared billing
-selection, scheduling and presentation; hosts can customize other event kinds.
+Account inbox ownership belongs to the optional AuthKit notification add-on.
+Hosts pass its transactional publisher as `contentkit.Deps.Notifications`.
+ContentKit supplies comment notices and presentation; Helpers supplies the shared
+notification model and storage. The AuthKit owner verifies recipients and serves
+personal inbox/read/archive operations. See [account notification adoption](account-notifications.md).
 
-`contentkit.New` installs the shared store in ContentKit's schema, scoped to
-`contentkit:<tenant>`; the shared library has its own ledger.
+With an injected publisher, ContentKit does not mount its legacy notification
+routes. The local store and HTTP adapter remain compatibility/recovery facilities
+for explicit staged adoption and existing account erasure fences. Native content
+mutations use the injected publisher exclusively; they do not duplicate receipts.
 
 ## Native and host-authored events
 
@@ -100,60 +100,25 @@ The bell checks unread presence every 30 seconds while the page is visible;
 so loading more stays stable. Hosts can call `client.notifications.refresh()`
 when their own event channel signals a change.
 
-## OpenRails producer events
+## OpenRails notifications
 
-OpenRails records billing facts in its retained event log. ContentKit reads
-`GET /v1/app/events` (or the identical embedded `Client.ListEvents` API) and
-owns the destination cursor. Reading the source never registers a consumer,
-acknowledges a message or deletes an event.
+OpenRails deliberately publishes selected billing notices through the same
+AuthKit-owned channel and withdraws resolved issues by deterministic identity.
+`Engine.OpenRailsNotifications` and the `contentkit_openrails_inbox_sync` worker
+have been removed. Do not attach a periodic event-to-inbox reader to the host
+fleet. General OpenRails events remain available for independent host logic.
 
-The typed adapter uses the same client for embedded and remote OpenRails:
+`notification/openrails.Source.Consume` is retained for explicit one-time legacy
+handoff. With old writers stopped, drain previously accepted pages to the saved
+cursor, adopt exact legacy receipt identities into OpenRails's current issue
+identities through AuthKit's migration operation, then call
+`Source.RetireInboxSync` for the source's namespace and River schema. Retirement
+refuses a running old worker or facts still beyond the saved cursor and preserves
+all unrelated jobs, terminal history, source events and inbox receipts.
 
-```go
-source, err := billingadapter.NewNotificationSource(merchantClient, "openrails")
-if err != nil { return err }
-jobs, err := ck.OpenRailsNotifications(source,
-    billingadapter.SameAccounts(accounts.UserInfo(), accountIssuer))
-if err != nil { return err }
-// Include jobs in the host's River fleet before starting it.
-```
-
-For HTTP without the OpenRails Go module, construct the same source directly:
-
-```go
-source, err := openrails.New(openrails.Options{
-    Name: "openrails:billing-production",
-    URL: billingURL, // before /v1
-    MerchantID: merchantID,
-    Token: applicationToken,
-})
-```
-
-The shared inbox stores one cursor per origin and account namespace. Both sites
-therefore continue the same import. Each bounded page commits its selected
-notices and continuation in **one database transaction**. The thirty-second
-poller keeps one active job per source and drains at most ten pages per run;
-a failed run is retried by the next tick rather than delayed per-event jobs. A lookup or write
-failure rolls back the whole page. Competing replicas compare the saved cursor
-under a row lock, so a stale reader cannot overwrite progress. Replaying an old
-page preserves receipt identity and read/archive state.
-
-The default selection covers unexpected payment failure, actual access ending
-and applied downgrades, rather than notices for direct user actions. Other
-billing facts and optional notices advance the cursor without creating inbox
-items. Erased or absent accounts are skipped; directory outages are retried.
-The retained customer UUID and issuer establish identity even after billing
-rows are deleted. The typed mapper accepts native accounts and explicitly
-allowed external issuers; an unknown issuer never proves account ownership.
-
-Source retention is independent of reader progress. An expired or reset cursor
-returns an explicit error and requires a deliberate resync; it never silently
-drops a missing interval. Historical rows deleted before event-log adoption
-cannot be reconstructed by this adapter.
-
-Requests have bounded size and timeouts and refuse redirects. Monetary values
-remain JSON strings. An action-requested notice describes the historical fact:
-fetch current billing state before offering an action.
+A historical billing fact is not current debt state. Fetch the current billing
+state before presenting an action. Reading/dismissing a notice never settles a
+payment; the billing owner withdraws the notice when its actual issue resolves.
 
 ## AuthKit and application events
 
@@ -197,23 +162,11 @@ per-tenant store and unrestricted trusted producer selection. The older
 `Config.Notifications` spelling remains available for inbox-only sharing. Do not
 configure it together with `Config.Accounts`.
 
-Once the OpenRails client exists, attach the source before `Start` and compose
-the returned River contribution with the host fleet:
-
-```go
-source, err := openrailsadapter.NewNotificationSource(billing.Client(), "openrails")
-if err != nil { return err }
-notificationJobs, err := ck.OpenRailsNotifications(source, openrailsadapter.SameAccounts(auth.UserInfo(), accountIssuer))
-if err != nil { return err }
-// Include notificationJobs alongside ck.RiverJobs() in the host's River fleet.
-```
-
-Both hosts use the same source name and account namespace. The contribution
-registers a source-specific shared queue. Each bounded attempt commits inbox
-changes and the destination cursor together and safely retries failures.
-No host billing-kind filter or poller is needed. `SameAccounts` is suitable only
-when the billing customer ID is the very same verified AuthKit subject; use a
-verified association mapper otherwise. No email comparison establishes identity.
+Configure the AuthKit account inbox against the existing shared schema and
+explicitly map the account tenant to its adopted logical scope. Pass a scoped
+publisher to each producer at construction. Both hosts retain their shared
+merchant/account identity and app visibility; no normal billing inbox consumer
+or additional per-site copy is created.
 
 The default selection is payment failure, actual access expiry/revocation
 (`access_ended: true`) and an applied asynchronous downgrade

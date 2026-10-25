@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/authkit/userinfo"
+	notifypg "github.com/open-rails/helpers/notify/postgres"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -98,6 +99,9 @@ type Options struct {
 
 	// Notifications optionally shares an account inbox while retaining Tenant social origin.
 	Notifications *notification.Config
+	// NotificationPublisher is the account owner's transactional channel.
+	// Nil uses the legacy local store during inbox adoption.
+	NotificationPublisher notifypg.TxSink
 	// NotificationAppID is the immutable owning app supplied by the engine.
 	NotificationAppID string
 	// AccountExists must use a directory fixed to this account tenant. Scoped
@@ -116,6 +120,7 @@ type Options struct {
 type Runtime struct {
 	// Notifications is this tenant's user inbox.
 	Notifications  *notification.Store
+	notifier       notifypg.TxSink
 	store          *store
 	schema         string
 	tenant         string
@@ -207,6 +212,10 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, err
 	}
 	rt.Notifications = notices
+	rt.notifier = opts.NotificationPublisher
+	if rt.notifier == nil {
+		rt.notifier = notices
+	}
 	rt.guard = &gate.Gate{Auth: opts.Auth, Log: log}
 	rt.rules = newRules(rt)
 	if err := rt.checkSchema(ctx); err != nil {
@@ -228,6 +237,7 @@ func (rt *Runtime) checkSchema(ctx context.Context) error {
 		SELECT revision FROM `+rt.store.t.reactions+` LIMIT 0; SELECT value, revision FROM `+rt.store.t.favorites+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0;
 		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0;
+		SELECT revision,withdrawn FROM `+pgx.Identifier{rt.schema, "content_comment_notifications"}.Sanitize()+` LIMIT 0;
 		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0;
 		SELECT scope, until FROM `+rt.store.t.commentBans+` LIMIT 0; SELECT language FROM `+rt.store.t.comments+` LIMIT 0;
 		SELECT action FROM `+rt.store.t.bannedWords+` LIMIT 0; SELECT network FROM `+rt.store.t.ipBans+` LIMIT 0`); err != nil {

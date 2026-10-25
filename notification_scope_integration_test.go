@@ -49,14 +49,13 @@ func TestScopedAppsShareOnlyTheirVerifiedMerchant(t *testing.T) {
 		return s
 	}
 	merchant := uuid.NewString()
-	mapper := func(context.Context, source.Event) (string, bool, error) { return "alice", true, nil }
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for _, e := range []*Engine{a, b} {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := e.OpenRailsNotificationsContext(ctx, makeSource(merchant), mapper)
+			err := e.notices.BindMerchant(ctx, e.scope.TenantID.String(), makeSource(merchant).Origin())
 			errs <- err
 		}()
 	}
@@ -67,11 +66,11 @@ func TestScopedAppsShareOnlyTheirVerifiedMerchant(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := a.OpenRailsNotificationsContext(ctx, makeSource(uuid.NewString()), mapper); !errors.Is(err, notification.ErrMerchantBinding) {
+	if err := a.notices.BindMerchant(ctx, a.scope.TenantID.String(), makeSource(uuid.NewString()).Origin()); !errors.Is(err, notification.ErrMerchantBinding) {
 		t.Fatalf("foreign merchant attached: %v", err)
 	}
 	otherTenant := makeApp(NewTenantID(), "other-accounts", "other")
-	if _, err := otherTenant.OpenRailsNotificationsContext(ctx, makeSource(merchant), mapper); !errors.Is(err, notification.ErrMerchantBinding) {
+	if err := otherTenant.notices.BindMerchant(ctx, otherTenant.scope.TenantID.String(), makeSource(merchant).Origin()); !errors.Is(err, notification.ErrMerchantBinding) {
 		t.Fatalf("merchant reassigned to foreign tenant: %v", err)
 	}
 }
