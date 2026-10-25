@@ -10,7 +10,8 @@ API key or vector extension. Semantic search belongs entirely to the separate, d
 library; ContentKit has no semantic search configuration or runtime hook.
 
 Design: [open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/DESIGN.md).
-Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md). Migrations:
+Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md).
+Post/channel policies: [docs/posts-and-channels.md](docs/posts-and-channels.md). Migrations:
 [docs/migration.md](docs/migration.md), [docs/restore.md](docs/restore.md).
 
 ## Release policy

@@ -814,6 +814,11 @@ export interface EntityRecord {
   updated_at?: string;
 }
 
+export interface EntityRef {
+  kind: string;
+  slug: string;
+}
+
 export interface EntitySummary {
   id: string;
   kind: string;
@@ -1137,6 +1142,7 @@ export interface Kind {
   segments?: boolean;
   entities?: string[];
   attributes?: Record<string, Attribute>;
+  owner_entity?: EntityRef;
   sort?: string;
   locked?: Locked;
   download?: Download;

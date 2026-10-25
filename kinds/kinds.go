@@ -148,6 +148,10 @@ type Kind struct {
 	// Entities are the entity kinds content of this kind may join.
 	Entities   []string             `json:"entities,omitempty" yaml:"entities"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
+	// OwnerEntity fixes this kind to one site-owned channel, resolved by kind
+	// and slug in the current app. It must be seeded explicitly before writes.
+	// Omitted preserves caller-selected ownership, including creator channels.
+	OwnerEntity *EntityRef `json:"owner_entity,omitempty" yaml:"owner_entity"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
 	// Locked is what a viewer who does not open its content sees of it;
@@ -523,6 +527,13 @@ func (c Config) Validate() error {
 		for _, g := range k.Entities {
 			if _, ok := c.EntityKinds[g]; !ok {
 				return fmt.Errorf("%w: kind %s names unknown group kind %q", ErrInvalid, name, g)
+			}
+		}
+		if ref := k.OwnerEntity; ref != nil {
+			owner, ok := c.EntityKinds[ref.Kind]
+			if !ok || strings.TrimSpace(ref.Slug) == "" || strings.TrimSpace(ref.Slug) != ref.Slug ||
+				owner.Owner == "user" || owner.AuthScope || owner.Entitled || owner.ScopedBy != "" {
+				return fmt.Errorf("%w: kind %s owner_entity must name an unscoped site-owned entity without delegated permissions or billing entitlements", ErrInvalid, name)
 			}
 		}
 		if e := k.PathEntity; e != "" && (!slices.Contains(k.Entities, e) || !c.EntityKinds[e].AllowsMembership(ContentScope)) {

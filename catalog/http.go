@@ -253,6 +253,8 @@ func classify(err error) (int, string, string) {
 		return http.StatusConflict, "not_ready", notReady.Error()
 	case errors.Is(err, errMediaNotConfigured):
 		return http.StatusNotImplemented, "not_configured", "images need ContentKit media"
+	case errors.Is(err, errFixedOwnerUnavailable):
+		return http.StatusServiceUnavailable, httpapi.CodeUnavailable, "configured content channel is unavailable"
 	case errors.Is(err, access.ErrUnavailable):
 		return http.StatusServiceUnavailable, httpapi.CodeUnavailable, "entitlements are unavailable; retry"
 	}

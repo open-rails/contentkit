@@ -859,7 +859,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     if (!f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       if (!item) {
-        const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: ownerEntity });
+        const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: model?.kinds[kind]?.owner_entity ? undefined : ownerEntity });
         // Starting entities link once the item exists; version-level kinds need a version first.
         const linked = (entities ?? []).filter((g) => model?.kinds[kind]?.entities?.includes(g.kind) && allowsEntityScope(model.entity_kinds[g.kind], "content"));
         if (linked.length) {

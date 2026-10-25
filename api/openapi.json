@@ -14733,6 +14733,21 @@
           }
         }
       },
+      "EntityRef": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "slug"
+        ]
+      },
       "EntitySummary": {
         "type": "object",
         "properties": {
@@ -15807,6 +15822,9 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/Attribute"
             }
+          },
+          "owner_entity": {
+            "$ref": "#/components/schemas/EntityRef"
           },
           "sort": {
             "type": "string"
