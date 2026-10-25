@@ -3,7 +3,6 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
-import { fromLocalInput, toLocalInput } from "../../client/entity-fields.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
 import type { EntityCard, EntityKind, Membership } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
@@ -105,7 +104,7 @@ export function EntityChips(p: EntityChipsProps) {
   const suggestions = useMemo(() => found.entities.filter((g) => g.kind === p.kind && !plain.has(g.id)).slice(0, 6), [found.entities, p.kind, plain]);
   const listOpen = fragment !== "" && suggestions.length > 0;
   useEffect(() => setActive(0), [fragment]);
-  const detailed = (m: Membership) => (allowsEntityScope(p.spec, "version") && p.allowVersionChange !== false) || !!p.spec.roles?.length || !!p.spec.ordered || m.state === "proposed" || !!m.active_from || !!m.active_until;
+  const detailed = (m: Membership) => (allowsEntityScope(p.spec, "version") && p.allowVersionChange !== false) || !!p.spec.roles?.length || !!p.spec.ordered || m.state === "proposed";
   const add = (card: EntityCard) => {
     if (plain.has(card.id)) return false;
     p.onAdd(card);
@@ -397,41 +396,9 @@ export function MembershipRow({
           />
         </div>
       )}
-      {spec.windows && <WindowFields from={x.active_from} until={x.active_until} name={name} onChange={onChange} />}
       <Button type="button" size="xs" variant="ghost" aria-label={t("memberships.remove", { name })} onClick={onRemove}>
         {t("common.remove")}
       </Button>
     </li>
-  );
-}
-
-export function WindowFields({ from, until, name, onChange }: { from?: string; until?: string; name: string; onChange: (patch: Partial<Membership>) => void }) {
-  const { t } = useMessages();
-  const id = useId();
-  return (
-    <div className="flex flex-wrap items-center gap-1" data-ckui="membership-window">
-      <Label htmlFor={`${id}-from`} className="text-xs text-muted-foreground">
-        {t("memberships.from")}
-      </Label>
-      <Input
-        id={`${id}-from`}
-        className="h-8 w-48"
-        type="datetime-local"
-        aria-label={t("memberships.fromOf", { name })}
-        value={toLocalInput(from)}
-        onChange={(e) => onChange({ active_from: fromLocalInput(e.target.value) })}
-      />
-      <Label htmlFor={`${id}-until`} className="text-xs text-muted-foreground">
-        {t("memberships.until")}
-      </Label>
-      <Input
-        id={`${id}-until`}
-        className="h-8 w-48"
-        type="datetime-local"
-        aria-label={t("memberships.untilOf", { name })}
-        value={toLocalInput(until)}
-        onChange={(e) => onChange({ active_until: fromLocalInput(e.target.value) })}
-      />
-    </div>
   );
 }

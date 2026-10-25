@@ -491,7 +491,6 @@ func (s *Service) positions(ctx context.Context, rows []cardRow, shown map[strin
  FROM unnest($3::text[], $4::text[]) AS v(content_id, version_id)
  JOIN `+s.t.memberships+` m ON m.tenant_id = $1 AND m.content_id = v.content_id AND (m.version_id IS NULL OR m.version_id = v.version_id)
  WHERE m.entity_id = ANY($2) AND m.state = 'active' AND m.position IS NOT NULL
-  AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
  GROUP BY m.content_id, m.entity_id`, s.o.Tenant, ordered, contents, versions)
 	if err != nil {
 		return nil, err

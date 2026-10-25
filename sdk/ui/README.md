@@ -623,7 +623,7 @@ const content = useContentEntities(contentId); // content.set(memberships, kinds
   language, cover, related entities; `EntityMergeDialog`; delete and restore.
 - **`MembershipEditor`** (staff): a content's entities per entity kind, with the
   version (`versions`), role, position and window each kind allows; one save.
-  **`EntityMembers`**: an entity's members, reordered, windowed, used as cover.
+  **`EntityMembers`**: an entity's members, reordered or used as cover.
 - `labels` names kinds, attributes, roles and values by identifier; others
   show humanized. Covers render `cover.renditions`; `renderCover` stands in
   until entity reads carry them.

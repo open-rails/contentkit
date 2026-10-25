@@ -93,7 +93,7 @@ var routes = []httpapi.Route[handler]{
 		MergeInput{}, httpapi.OK(MergeReport{}), httpapi.H(handler.merge), writes),
 	staff(httpapi.GET, "/entities/{id}/members", "A entity's memberships in member order, paged.", nil, httpapi.OK(MemberPage{}), httpapi.H(handler.members), notFound,
 		httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 50 by default, at most 500")),
-	staff(httpapi.POST, "/entities/{id}/members", "Adds contents or versions to a entity, or updates their position, window and state.", []Membership{}, httpapi.OK(Written{}),
+	staff(httpapi.POST, "/entities/{id}/members", "Adds contents or versions to a entity, or updates their position and state.", []Membership{}, httpapi.OK(Written{}),
 		httpapi.H(handler.addMembers), writes),
 	staff(httpapi.DELETE, "/entities/{id}/members", "Removes contents or versions from a entity.", []Membership{}, httpapi.OK(Written{}), httpapi.H(handler.removeMembers), nil),
 	staff(httpapi.PUT, "/entities/{id}/members/order", "Orders an ordered entity: the listed members first, in list order.", Order{}, httpapi.OK(Written{}),

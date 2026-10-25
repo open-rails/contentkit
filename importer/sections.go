@@ -157,8 +157,7 @@ func (run *batchRun) memberships(r *resolver, i int) (any, string, error) {
 		if err != nil {
 			return nil, set.Content.ExternalID, err
 		}
-		gm := entities.Membership{EntityID: entities.EntityID(gid), ContentID: id, Role: m.Role, Position: m.Position, ActiveFrom: m.ActiveFrom,
-			ActiveUntil: m.ActiveUntil, State: entities.MembershipState(m.State)}
+		gm := entities.Membership{EntityID: entities.EntityID(gid), ContentID: id, Role: m.Role, Position: m.Position, State: entities.MembershipState(m.State)}
 		if m.Version != nil {
 			if gm.VersionID, err = r.ref(RecordVersion, *m.Version); err != nil {
 				return nil, set.Content.ExternalID, err

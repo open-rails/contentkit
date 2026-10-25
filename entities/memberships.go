@@ -10,7 +10,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -28,17 +27,14 @@ const (
 )
 
 // Membership places content, or one version of it, in an entity. Position
-// orders an ordered entity (appended when omitted); the window bounds when a
-// windowed membership (a featured rail) is effective.
+// orders an ordered entity (appended when omitted).
 type Membership struct {
-	EntityID    EntityID        `json:"group_id,omitempty"`
-	ContentID   string          `json:"content_id,omitempty"`
-	VersionID   string          `json:"version_id,omitempty"`
-	Role        string          `json:"role,omitempty"`
-	Position    *int            `json:"position,omitempty"`
-	ActiveFrom  *time.Time      `json:"active_from,omitempty"`
-	ActiveUntil *time.Time      `json:"active_until,omitempty"`
-	State       MembershipState `json:"state,omitempty"`
+	EntityID  EntityID        `json:"group_id,omitempty"`
+	ContentID string          `json:"content_id,omitempty"`
+	VersionID string          `json:"version_id,omitempty"`
+	Role      string          `json:"role,omitempty"`
+	Position  *int            `json:"position,omitempty"`
+	State     MembershipState `json:"state,omitempty"`
 }
 
 // ContentEntities is one content's memberships in the entity kinds Kinds names.
@@ -74,14 +70,12 @@ type Order struct {
 type memberKey struct{ entity, content, version, role string }
 
 type memberRow struct {
-	EntityID    string     `json:"entity_id"`
-	ContentID   string     `json:"content_id"`
-	VersionID   *string    `json:"version_id"`
-	Role        string     `json:"role"`
-	Position    *int       `json:"position"`
-	ActiveFrom  *time.Time `json:"active_from"`
-	ActiveUntil *time.Time `json:"active_until"`
-	State       string     `json:"state"`
+	EntityID  string  `json:"entity_id"`
+	ContentID string  `json:"content_id"`
+	VersionID *string `json:"version_id"`
+	Role      string  `json:"role"`
+	Position  *int    `json:"position"`
+	State     string  `json:"state"`
 }
 
 func (r memberRow) key() memberKey {
@@ -179,8 +173,7 @@ func (s *Store) prepare(ctx context.Context, q Querier, ms []Membership) ([]memb
 		if k, ok := s.cfg.Kinds[contentKind]; !ok || !slices.Contains(k.Entities, g.Kind) {
 			return nil, f, fmt.Errorf("%w: %s content does not join %s groups", ErrInvalid, contentKind, g.Kind)
 		}
-		row := memberRow{EntityID: string(m.EntityID), ContentID: m.ContentID, Role: strings.TrimSpace(m.Role), Position: m.Position,
-			ActiveFrom: m.ActiveFrom, ActiveUntil: m.ActiveUntil, State: string(m.State)}
+		row := memberRow{EntityID: string(m.EntityID), ContentID: m.ContentID, Role: strings.TrimSpace(m.Role), Position: m.Position, State: string(m.State)}
 		if m.VersionID == "" && len(gk.MembershipScopes) > 0 && !gk.AllowsMembership(kinds.ContentScope) {
 			return nil, f, fmt.Errorf("%w: %s memberships are version-level", ErrInvalid, g.Kind)
 		}
@@ -199,12 +192,6 @@ func (s *Store) prepare(ctx context.Context, q Querier, ms []Membership) ([]memb
 		}
 		if row.Position != nil && (!gk.Ordered || *row.Position < 0) {
 			return nil, f, fmt.Errorf("%w: positions belong to ordered groups and are not negative", ErrInvalid)
-		}
-		if (row.ActiveFrom != nil || row.ActiveUntil != nil) && !gk.Windows {
-			return nil, f, fmt.Errorf("%w: %s memberships take no window", ErrInvalid, g.Kind)
-		}
-		if row.ActiveFrom != nil && row.ActiveUntil != nil && !row.ActiveUntil.After(*row.ActiveFrom) {
-			return nil, f, fmt.Errorf("%w: a window must end after it starts", ErrInvalid)
 		}
 		switch MembershipState(row.State) {
 		case "":
@@ -282,11 +269,11 @@ func (s *Store) upsert(ctx context.Context, q Querier, rows []memberRow) error {
 	if err != nil {
 		return err
 	}
-	_, err = q.Exec(ctx, fmt.Sprintf(`INSERT INTO %s AS m (tenant_id, entity_id, content_id, version_id, role, position, active_from, active_until, state)
- SELECT $1, r.entity_id, r.content_id, r.version_id, r.role, r.position, r.active_from, r.active_until, r.state
- FROM jsonb_to_recordset($2::jsonb) AS r(entity_id text, content_id text, version_id text, role text, position int, active_from timestamptz, active_until timestamptz, state text)
+	_, err = q.Exec(ctx, fmt.Sprintf(`INSERT INTO %s AS m (tenant_id, entity_id, content_id, version_id, role, position, state)
+ SELECT $1, r.entity_id, r.content_id, r.version_id, r.role, r.position, r.state
+ FROM jsonb_to_recordset($2::jsonb) AS r(entity_id text, content_id text, version_id text, role text, position int, state text)
  ON CONFLICT (tenant_id, entity_id, content_id, version_id, role) DO UPDATE
- SET position = EXCLUDED.position, active_from = EXCLUDED.active_from, active_until = EXCLUDED.active_until, state = EXCLUDED.state`,
+ SET position = EXCLUDED.position, state = EXCLUDED.state`,
 		s.table("content_memberships")), s.tenant, data)
 	return err
 }
@@ -301,7 +288,7 @@ func contentIDsOf(rows []memberRow) []string {
 	return out
 }
 
-// AddMemberships adds memberships, or updates the position, window and state
+// AddMemberships adds memberships, or updates the position and state
 // of existing ones (same entity, content, version and role).
 func (s *Store) AddMemberships(ctx context.Context, ms []Membership) error {
 	if len(ms) == 0 {
@@ -564,7 +551,7 @@ func (s *Store) MembershipsOf(ctx context.Context, contentIDs []string) (map[str
 	return out, err
 }
 
-const membershipColumns = `m.entity_id, m.content_id, coalesce(m.version_id, ''), m.role, m.position, m.active_from, m.active_until, m.state`
+const membershipColumns = `m.entity_id, m.content_id, coalesce(m.version_id, ''), m.role, m.position, m.state`
 
 func scanMemberships(rows interface {
 	Next() bool
@@ -576,7 +563,7 @@ func scanMemberships(rows interface {
 	out := []Membership{}
 	for rows.Next() {
 		var m Membership
-		if err := rows.Scan(&m.EntityID, &m.ContentID, &m.VersionID, &m.Role, &m.Position, &m.ActiveFrom, &m.ActiveUntil, &m.State); err != nil {
+		if err := rows.Scan(&m.EntityID, &m.ContentID, &m.VersionID, &m.Role, &m.Position, &m.State); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

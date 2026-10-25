@@ -595,7 +595,6 @@ func (s *Service) downloadEntities(ctx context.Context, v version) ([]DownloadEn
  g.attributes
 FROM `+pgxIdent(s.o.Schema, "content_memberships")+` m JOIN `+s.t.entities+` g ON g.tenant_id = m.tenant_id AND g.id = m.entity_id AND g.state = 'active' AND NOT g.internal
 WHERE m.tenant_id = $1 AND m.content_id = $2 AND (m.version_id IS NULL OR m.version_id = $3) AND m.state = 'active'
-AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
 ORDER BY g.kind, g.slug`, s.o.Tenant, v.Content, v.Version, v.Language, s.o.Kinds.Languages[0])
 	if err != nil {
 		return nil, err

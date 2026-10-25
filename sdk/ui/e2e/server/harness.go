@@ -72,7 +72,7 @@ type harness struct {
 // blogs, each a content kind whose media live in its versions (kinds.json);
 // comics and movies with traits, segments and every group
 // kind; entity kinds that between them declare roles, attributes, order,
-// parents, scopes, windows and version-level memberships; a tier and a
+// parents, scopes and version-level memberships; a tier and a
 // content filter.
 var site = func() kinds.Config {
 	one := kinds.VersionRules{Languages: "one"}
@@ -98,7 +98,7 @@ var site = func() kinds.Config {
 			"series":      {Route: "series", Ordered: true, Parent: "series"},
 			"character":   {Route: "characters", ScopedBy: "series"},
 			"voice_actor": {Route: "voice-actors", VersionLevel: true},
-			"rail":        {Ordered: true, Windows: true},
+			"rail":        {Ordered: true},
 		}}
 }
 

@@ -554,15 +554,13 @@ func (s *Store) sameMemberships(f facts, set ContentEntities, stored []Membershi
 		if state == "" {
 			state = MembershipActive
 		}
-		if !ok || h.State != state || !sameTime(h.ActiveFrom, m.ActiveFrom) || !sameTime(h.ActiveUntil, m.ActiveUntil) ||
+		if !ok || h.State != state ||
 			m.Position != nil && (h.Position == nil || *h.Position != *m.Position) {
 			return false
 		}
 	}
 	return true
 }
-
-func sameTime(a, b *time.Time) bool { return (a == nil) == (b == nil) && (a == nil || a.Equal(*b)) }
 
 // ImportDeletes deletes the active entities among ids in q, as DeleteEntities
 // does; deleted and merged ones stay as they are.

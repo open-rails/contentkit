@@ -7893,7 +7893,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "Adds contents or versions to a entity, or updates their position, window and state.",
+        "summary": "Adds contents or versions to a entity, or updates their position and state.",
         "parameters": [
           {
             "name": "id",
@@ -14606,9 +14606,6 @@
           "auth_scope": {
             "type": "boolean"
           },
-          "windows": {
-            "type": "boolean"
-          },
           "membership_scopes": {
             "type": "array",
             "items": {
@@ -16086,14 +16083,6 @@
           "position": {
             "type": "integer"
           },
-          "active_from": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "active_until": {
-            "type": "string",
-            "format": "date-time"
-          },
           "state": {
             "type": "string",
             "enum": [
@@ -16117,14 +16106,6 @@
           },
           "position": {
             "type": "integer"
-          },
-          "active_from": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "active_until": {
-            "type": "string",
-            "format": "date-time"
           },
           "state": {
             "type": "string"

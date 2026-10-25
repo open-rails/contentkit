@@ -142,8 +142,8 @@ func (s *Store) merge(ctx context.Context, q Querier, src, dst Entity) (MergeRep
    AND d.content_id = o.content_id AND d.version_id IS NOT DISTINCT FROM o.version_id AND d.role = o.role`, m), s.tenant, from, into); err != nil {
 		return r, err
 	}
-	tag, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s (tenant_id, entity_id, content_id, version_id, role, position, active_from, active_until, state)
- SELECT tenant_id, $3, content_id, version_id, role, position, active_from, active_until, state FROM %[1]s WHERE tenant_id = $1 AND entity_id = $2
+	tag, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s (tenant_id, entity_id, content_id, version_id, role, position, state)
+ SELECT tenant_id, $3, content_id, version_id, role, position, state FROM %[1]s WHERE tenant_id = $1 AND entity_id = $2
  ON CONFLICT (tenant_id, entity_id, content_id, version_id, role) DO NOTHING`, m), s.tenant, from, into)
 	if err != nil {
 		return r, err

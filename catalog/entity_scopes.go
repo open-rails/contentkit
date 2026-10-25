@@ -3,7 +3,6 @@ package catalog
 import (
 	"context"
 	"slices"
-	"time"
 )
 
 type entityScope struct{ content, version string }
@@ -11,10 +10,9 @@ type entityScope struct{ content, version string }
 // entityScopes reads actual ownership once for the visible batch. Facet entity
 // IDs deliberately combine parent and version associations for access/search;
 // that union must not erase credit ownership in public content details.
-func (s *Store) entityScopes(ctx context.Context, ids []string, at time.Time) (map[entityScope][]string, error) {
+func (s *Store) entityScopes(ctx context.Context, ids []string) (map[entityScope][]string, error) {
 	rows, err := s.pool.Query(ctx, `SELECT content_id, COALESCE(version_id, ''), entity_id
-FROM `+s.t.memberships+` WHERE tenant_id=$1 AND content_id=ANY($2) AND state='active'
-AND (active_from IS NULL OR active_from <= $3) AND (active_until IS NULL OR active_until > $3)`, s.tenant, ids, at)
+FROM `+s.t.memberships+` WHERE tenant_id=$1 AND content_id=ANY($2) AND state='active'`, s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}

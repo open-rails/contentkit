@@ -20,8 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { Skeleton } from "#ckui/ui/skeleton";
 import { accessLabel, contentStatus } from "../admin/content-manager.js";
 import { SortableList } from "../sortable-list.js";
-import { contentError, ErrorLine, formatDate, useAction } from "../social/parts.js";
-import { WindowFields } from "./entity-chips.js";
+import { contentError, ErrorLine, useAction } from "../social/parts.js";
 import { labelOf, type Labels } from "./parts.js";
 
 const NONE = "__none__";
@@ -94,8 +93,6 @@ export function EntityMembers(p: EntityMembersProps) {
     client,
   );
   const save = useAction("membership.save", p.onError);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [win, setWin] = useState<{ from?: string; until?: string }>({});
   // The last removal, offered back for a few seconds.
   const [removed, setRemoved] = useState<{ member: Membership; name: string } | null>(null);
   useEffect(() => {
@@ -140,29 +137,6 @@ export function EntityMembers(p: EntityMembersProps) {
       </Button>
     </>
   );
-  const dates = (x: Member) =>
-    spec.windows &&
-    (editing === x.id ? (
-      <span className="flex flex-wrap items-center gap-1">
-        <WindowFields from={win.from} until={win.until} name={spoken(x)} onChange={(w) => setWin((cur) => ({ from: "active_from" in w ? w.active_from : cur.from, until: "active_until" in w ? w.active_until : cur.until }))} />
-        <Button size="xs" disabled={save.pending} onClick={() => void save.run(() => members.add([{ ...strip(x), active_from: win.from, active_until: win.until }])).then((d) => d !== undefined && setEditing(null))}>
-          {t("common.save")}
-        </Button>
-        <Button size="xs" variant="ghost" onClick={() => setEditing(null)}>
-          {t("common.cancel")}
-        </Button>
-      </span>
-    ) : (
-      <button type="button" className="text-start text-xs text-muted-foreground hover:underline" data-ckui="member-window"
-        onClick={() => {
-          setWin({ from: x.active_from, until: x.active_until });
-          setEditing(x.id);
-        }}>
-        {x.active_from || x.active_until
-          ? t("memberships.window", { from: x.active_from ? formatDate(m, x.active_from) : "…", until: x.active_until ? formatDate(m, x.active_until) : "…" })
-          : t("memberships.always")}
-      </button>
-    ));
   // Each content kind's cover shape: wide for players (videos), portrait for reader works.
   const shapeOf = (kind?: string) =>
     ratio(presets.find((r) => r.kind === kind && r.name === "cover")?.aspect) ?? (kinds?.kinds[kind ?? ""]?.presentation === "player" ? 16 / 9 : 7 / 10);
@@ -189,7 +163,6 @@ export function EntityMembers(p: EntityMembersProps) {
           </>
         )}
         <span className="flex flex-wrap gap-1">{badges(x, c)}</span>
-        {dates(x)}
         {/* Shown on touch screens, which have no hover; quieter until hovered where there is one. */}
         <span className="absolute end-1 top-1 flex gap-1 transition-opacity [@media(hover:hover)]:not-group-hover/member:not-focus-within:opacity-70">{actions(x)}</span>
       </li>
@@ -210,7 +183,6 @@ export function EntityMembers(p: EntityMembersProps) {
           </>
         )}
         {badges(x, c)}
-        {dates(x)}
         <span className="flex gap-1 opacity-60 transition-opacity group-hover/member:opacity-100 focus-within:opacity-100">{actions(x)}</span>
       </div>
     );
@@ -315,7 +287,7 @@ export function EntityMembers(p: EntityMembersProps) {
   );
 }
 
-/** A title search over contents the caller manages; picking one adds it, after its role, version or dates when the kind has them. */
+/** A title search over contents the caller manages; picking one adds it, after its role or version when the kind has them. */
 function AddContent({ spec, labels, client, onAdd }: { spec: EntityKind; labels?: Labels; client: ContentKitClient; onAdd: (m: Membership) => Promise<unknown> }) {
   const { t } = useMessages();
   const id = useId();
@@ -324,8 +296,6 @@ function AddContent({ spec, labels, client, onAdd }: { spec: EntityKind; labels?
   const [picked, setPicked] = useState<{ card: Card; versions?: Content["versions"] } | null>(null);
   const [version, setVersion] = useState("");
   const [role, setRole] = useState("");
-  const [from, setFrom] = useState<string>();
-  const [until, setUntil] = useState<string>();
   const request = useCallback(
     (q: TypeaheadQuery, signal: AbortSignal) =>
       client.discovery.adminSuggestions({ q: q.q, display_language: q.display_language, include_contents: true, include_entities: false, limit: 8 }, signal),
@@ -335,14 +305,14 @@ function AddContent({ spec, labels, client, onAdd }: { spec: EntityKind; labels?
   const results = found.contents;
   const listOpen = text.trim() !== "" && !picked && results.length > 0;
   useEffect(() => setActive(0), [text]);
-  const detailed = allowsEntityScope(spec, "version") || !!spec.roles?.length || !!spec.windows;
+  const detailed = allowsEntityScope(spec, "version") || !!spec.roles?.length;
   const reset = () => {
     setText("");
     setPicked(null);
     setVersion("");
   };
   const add = (card: Card, v?: string) =>
-    void onAdd({ content_id: card.id, version_id: v || undefined, role: role || undefined, active_from: from, active_until: until }).then((d) => d !== undefined && reset());
+    void onAdd({ content_id: card.id, version_id: v || undefined, role: role || undefined }).then((d) => d !== undefined && reset());
   const pick = (card: Card) => {
     if (!detailed) return add(card);
     setPicked({ card });
@@ -443,17 +413,6 @@ function AddContent({ spec, labels, client, onAdd }: { spec: EntityKind; labels?
                 ))}
               </SelectContent>
             </Select>
-          )}
-          {spec.windows && (
-            <WindowFields
-              from={from}
-              until={until}
-              name={t("memberships.newMember")}
-              onChange={(w) => {
-                if ("active_from" in w) setFrom(w.active_from);
-                if ("active_until" in w) setUntil(w.active_until);
-              }}
-            />
           )}
           <Button size="sm" disabled={!allowsEntityScope(spec, "content") && !version} onClick={() => add(picked.card, version)}>
             {t("memberships.addMember")}

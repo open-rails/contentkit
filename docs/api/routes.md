@@ -161,7 +161,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | DELETE | `/v1/entities/{id}/edges` | staff `root:entities:write` | `EdgeInput[]` | 200 `Edge[]` | Removes edges from a entity. |
 | POST | `/v1/entities/{id}/merge` | staff `root:entities:write` | `MergeInput` | 200 `MergeReport` | Merges a entity into another of its kind: memberships, names, edges and children move, and its code redirects. |
 | GET | `/v1/entities/{id}/members` | staff `root:entities:write` | — | 200 `MemberPage` | A entity's memberships in member order, paged. Query: `cursor`, `limit`. |
-| POST | `/v1/entities/{id}/members` | staff `root:entities:write` | `Membership[]` | 200 `Written` | Adds contents or versions to a entity, or updates their position, window and state. |
+| POST | `/v1/entities/{id}/members` | staff `root:entities:write` | `Membership[]` | 200 `Written` | Adds contents or versions to a entity, or updates their position and state. |
 | DELETE | `/v1/entities/{id}/members` | staff `root:entities:write` | `Membership[]` | 200 `Written` | Removes contents or versions from a entity. |
 | PUT | `/v1/entities/{id}/members/order` | staff `root:entities:write` | `Order` | 200 `Written` | Orders an ordered entity: the listed members first, in list order. |
 | GET | `/v1/contents/{id}/entities` | staff `root:entities:write` | — | 200 `ContentMemberships` | A content's memberships, its versions' included, with the entities they name. Query: `language`. |

@@ -344,8 +344,6 @@ type EntityKind struct {
 	// AuthScope entities name an AuthKit group whose permissions govern their
 	// content (OnlyDemo channels).
 	AuthScope bool `json:"auth_scope,omitempty" yaml:"auth_scope"`
-	// Windows lets memberships carry active_from/active_until (rails).
-	Windows bool `json:"windows,omitempty" yaml:"windows"`
 	// MembershipScopes declares where this entity kind can be attached.
 	// Omitted keeps the legacy default: content, or version with VersionLevel.
 	MembershipScopes []MembershipScope `json:"membership_scopes,omitempty" yaml:"membership_scopes"`

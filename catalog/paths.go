@@ -54,7 +54,6 @@ func (s *Store) pathEntities(ctx context.Context, q entities.Querier, ids []stri
 	rows, err := q.Query(ctx, `SELECT DISTINCT ON (m.content_id) m.content_id, k.slug, k.slugs::text FROM `+s.t.items+` c
  JOIN unnest($2::text[], $3::text[]) AS p(kind, entity) ON p.kind = c.kind
  JOIN `+s.t.memberships+` m ON m.tenant_id = c.tenant_id AND m.content_id = c.id AND m.version_id IS NULL AND m.state = 'active'
-  AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
  JOIN `+s.t.entities+` g ON g.tenant_id = m.tenant_id AND g.id = m.entity_id AND g.kind = p.entity AND g.state = 'active' AND NOT g.internal
  JOIN `+s.qs+`.content_codes k ON k.tenant_id = g.tenant_id AND k.content_kind = g.kind AND k.content_id = g.id AND k.merged_into IS NULL
  WHERE c.tenant_id = $1 AND c.id = ANY($4)

@@ -7,14 +7,14 @@ import (
 
 // effectiveSQL derives eff(version_id, entity_ids) for the versions source
 // selects as (version_id, content_id): active memberships of the content and
-// of that version inside their window now, in active entities, plus every
+// of that version, in active entities, plus every
 // active ancestor through parent_id. $1 is the tenant. UNION stops cycles.
 func (s *Store) effectiveSQL(source string) string {
 	return fmt.Sprintf(`WITH RECURSIVE v AS (%[1]s),
 direct AS (
  SELECT v.version_id, m.entity_id FROM v
  JOIN %[2]s m ON m.tenant_id = $1 AND m.content_id = v.content_id AND (m.version_id IS NULL OR m.version_id = v.version_id)
-  AND m.state = 'active' AND (m.active_from IS NULL OR m.active_from <= now()) AND (m.active_until IS NULL OR m.active_until > now())
+  AND m.state = 'active'
  JOIN %[3]s g ON g.tenant_id = $1 AND g.id = m.entity_id AND g.state = 'active'),
 up (version_id, entity_id) AS (
  SELECT version_id, entity_id FROM direct
@@ -29,7 +29,7 @@ eff AS (
 }
 
 // EffectiveEntities returns, per version, the sorted ids of the active entities it
-// belongs to through its content's memberships or its own (windows applied),
+// belongs to through its content's memberships or its own,
 // plus each one's active ancestors via parent_id. It runs on q, the caller's
 // transaction, so memberships written in it count. Unknown versions are
 // absent; a version in no entity maps to an empty list.

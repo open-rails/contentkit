@@ -1933,7 +1933,7 @@ func (c *Client) GetEntityMembers(ctx context.Context, id string, q GetEntityMem
 	return out, err
 }
 
-// PostEntityMembers is POST /v1/entities/{id}/members (staff). Adds contents or versions to a entity, or updates their position, window and state.
+// PostEntityMembers is POST /v1/entities/{id}/members (staff). Adds contents or versions to a entity, or updates their position and state.
 func (c *Client) PostEntityMembers(ctx context.Context, id string, body []entities.Membership) (entities.Written, error) {
 	var out entities.Written
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/members", "{id}", url.PathEscape(id)), nil, body, &out)

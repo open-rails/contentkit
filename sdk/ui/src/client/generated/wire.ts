@@ -778,7 +778,6 @@ export interface EntityKind {
   uploads?: UploadLimits;
   entitled?: boolean;
   auth_scope?: boolean;
-  windows?: boolean;
   membership_scopes?: ("content" | "version")[];
   version_level?: boolean;
   creatable?: boolean;
@@ -1221,8 +1220,6 @@ export interface Membership {
   version_id?: string;
   role?: string;
   position?: number;
-  active_from?: string;
-  active_until?: string;
   state?: "active" | "proposed";
 }
 
@@ -1231,8 +1228,6 @@ export interface MembershipRecord {
   version?: Ref;
   role?: string;
   position?: number;
-  active_from?: string;
-  active_until?: string;
   state?: string;
 }
 
