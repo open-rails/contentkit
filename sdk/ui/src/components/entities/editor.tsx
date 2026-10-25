@@ -1,14 +1,14 @@
-import { Delete02Icon, GitMergeIcon, MoreHorizontalIcon } from "@hugeicons/core-free-icons";
+import { Add01Icon, ArrowDown01Icon, Delete02Icon, GitMergeIcon, Link01Icon, MoreHorizontalIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { fold, parseAttributes, slugify } from "../../client/entity-fields.js";
 import type { ContentModel, Entity, EntityCard, EntityDetail, EntityKind, EntityUpdate, EntitiesText as Text, MergeReport, Name } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
-import type { ContentKitErrorHandler } from "../../react/context.js";
+import { ContentKitContext, type ContentKitErrorHandler } from "../../react/context.js";
 import { useEntity, useKinds, type UseEntity } from "../../react/entities.js";
 import { useDraft } from "../../react/use-draft.js";
 import { ContentKitUiRoot } from "../../scope.js";
@@ -39,6 +39,8 @@ export interface EntityEditorProps {
   languages?: readonly string[];
   labels?: Labels;
   onCreated?: (entity: Entity) => void;
+  /** Leaves the new-entity form without creating, e.g. back to the list; none: no Cancel. */
+  onCancel?: () => void;
   /** After a merge: the survivor's id is report.into. */
   onMerged?: (report: MergeReport) => void;
   onDeleted?: (entity: Entity) => void;
@@ -226,7 +228,7 @@ function EditForm({ entity, spec, languages, g, kinds, onLeaveGuard, ...p }: Ent
 
 function Section({ title, children, ckui, action, note }: { title: ReactNode; children: ReactNode; ckui: string; action?: ReactNode; note?: ReactNode }) {
   return (
-    <section className="grid gap-4 rounded-lg border border-border bg-card p-4" data-ckui={ckui}>
+    <section className="grid gap-4 rounded-lg border border-border bg-muted/30 p-4" data-ckui={ckui}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="grid gap-0.5">
           <h3 className="text-sm font-medium">{title}</h3>
@@ -430,7 +432,7 @@ export function EntityMergeDialog({ open, onOpenChange, entity, onMerge, languag
   );
 }
 
-const Required = () => <span aria-hidden> *</span>;
+const Required = () => <span aria-hidden className="text-destructive"> *</span>;
 
 /** A parent or scope: the chosen entity with a change and a clear, or a picker. */
 function EntityField({ label, kind, value, onChange, exclude, required, client, management }: { management?: boolean; label: string; kind: string; value: EntityLike | null; onChange: (g: EntityLike | null) => void; exclude?: string[]; required?: boolean; client?: ContentKitClient }) {
@@ -457,7 +459,7 @@ function EntityField({ label, kind, value, onChange, exclude, required, client, 
   );
 }
 
-function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, client, management }: EntityEditorProps & { spec: EntityKind; languages: readonly string[]; g: UseEntity }) {
+function CreateForm({ kind, spec, languages, labels, g, onCreated, onCancel, onError, client, management }: EntityEditorProps & { spec: EntityKind; languages: readonly string[]; g: UseEntity }) {
   const m = useMessages();
   const { t } = m;
   const id = useId();
@@ -472,7 +474,35 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
   const [attrs, setAttrs] = useState<Record<string, string | boolean>>(() => formOf(declared, {}));
   const [invalid, setInvalid] = useState<string | null>(null);
   const create = useAction("entity.save", onError);
-  const first = names[languages[0]!] ?? "";
+  const first0 = languages[0]!;
+  const others = languages.slice(1);
+  const first = names[first0] ?? "";
+  const filledOthers = others.filter((l) => names[l]?.trim());
+  const [othersOpen, setOthersOpen] = useState(true);
+  const kindOne = labelOf(labels, kind, "one");
+  const title = t("entityEditor.newTitle", { kind: kindOne });
+  // A language in its own words ("中文"), beside its name in the UI's language.
+  const nativeName = (l: string) => {
+    try {
+      return new Intl.DisplayNames([l], { type: "language" }).of(l) ?? l;
+    } catch {
+      return l;
+    }
+  };
+  // The page address it will have: the host's route for the kind, the code it gets on creation shown as "…".
+  const urls = useContext(ContentKitContext)?.urls;
+  const address = useMemo(() => {
+    if (!urls) return null;
+    try {
+      const path = urls.path({ content_kind: kind, code: "0000000000", slug: "s" });
+      const at = path.lastIndexOf("0000000000");
+      return at < 0 ? null : { prefix: `${path.slice(0, at)}…/` };
+    } catch {
+      return null;
+    }
+  }, [urls, kind]);
+  // Picked attribute values, e.g. the Type, read beside the kind.
+  const facts = Object.entries(attrs).flatMap(([name, v]) => (typeof v === "string" && v && declared[name]?.values ? [labelOf(labels, v, "one")] : []));
   // What Create waits for, named as the labels name it.
   const missing = [
     !first.trim() && t("entityEditor.nameIn", { language: languageName(languages[0]!) }),
@@ -499,56 +529,190 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onError, clie
   };
   return (
     <form
-      className="grid gap-4"
+      className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_19rem]"
       data-ckui="entity-create"
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
       }}
     >
-      <h2 className="text-xl font-semibold tracking-tight">{t("entityEditor.newTitle", { kind: labelOf(labels, kind, "one") })}</h2>
-      {languages.map((l, i) => (
-        <div key={l} className="grid gap-1.5">
-          <Label htmlFor={`${id}-${l}`}>
-            {t("entityEditor.nameIn", { language: languageName(l) })}
-            {i === 0 && <Required />}
-          </Label>
-          <Input id={`${id}-${l}`} className="h-8" lang={l} required={i === 0} value={names[l] ?? ""} onChange={(e) => setNames((n) => ({ ...n, [l]: e.target.value }))} />
-        </div>
-      ))}
-      <div className="grid gap-1.5">
-        <Label htmlFor={`${id}-slug`}>
-          {t("entityEditor.slug")}
-          <Required />
-        </Label>
-        <Input
-          id={`${id}-slug`}
-          className="h-8"
-          required
-          value={slug}
-          onChange={(e) => {
-            setSlugEdited(true);
-            setSlug(e.target.value);
-          }}
-        />
+      <div className="grid gap-1 lg:col-span-2">
+        <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+        <p className="text-sm text-muted-foreground">{t("entityEditor.createIntro")}</p>
       </div>
-      {spec.scoped_by && <EntityField management={management} label={labelOf(labels, spec.scoped_by, "one")} kind={spec.scoped_by} value={scope} onChange={setScope} required client={client} />}
-      {spec.parent && <EntityField management={management} label={t("entityEditor.parent")} kind={spec.parent} value={parent} onChange={setParent} client={client} />}
-      {management && <InternalField id={`${id}-internal`} checked={internal} onChange={setInternal} />}
-      <AttributeFields declared={declared} form={attrs} onChange={(n, v) => setAttrs((a) => ({ ...a, [n]: v }))} labels={labels} />
-      {invalid && <ErrorLine>{invalid}</ErrorLine>}
-      {create.error && <ErrorLine>{contentError(m, create.error)}</ErrorLine>}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" disabled={create.pending || missing.length > 0} aria-describedby={missing.length ? `${id}-missing` : undefined}>
-          {create.pending ? t("common.saving") : t("entityEditor.create")}
-        </Button>
-        {missing.length > 0 && (
-          <p id={`${id}-missing`} className="text-muted-foreground" data-ckui="entity-create-missing">
-            {t("entityEditor.stillNeeded", { fields: missing.join(", ") })}
-          </p>
+      <div className="grid min-w-0 gap-5">
+        <Card title={t("entityEditor.identity")} hint={t("entityEditor.identityHint")} ckui="entity-create-identity">
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${id}-${first0}`}>
+              {t("entityEditor.nameIn", { language: languageName(first0) })}
+              <Required />
+            </Label>
+            <Input id={`${id}-${first0}`} className="h-10" lang={first0} required autoFocus value={names[first0] ?? ""} onChange={(e) => setNames((n) => ({ ...n, [first0]: e.target.value }))} />
+          </div>
+          {spec.scoped_by && <EntityField management={management} label={labelOf(labels, spec.scoped_by, "one")} kind={spec.scoped_by} value={scope} onChange={setScope} required client={client} />}
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${id}-slug`}>
+              {t("entityEditor.slug")}
+              <Required />
+            </Label>
+            {/* Reads as the page address: the host's route before the slug, the code it gets on creation as "…". */}
+            <div className="flex h-10 min-w-0 items-stretch overflow-hidden rounded-md border border-input bg-transparent focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30">
+              {address && (
+                <span aria-hidden className="flex max-w-[45%] shrink-0 items-center truncate border-e border-input bg-muted/50 px-3 font-mono text-sm text-muted-foreground">
+                  {address.prefix}
+                </span>
+              )}
+              <input
+                id={`${id}-slug`}
+                className="min-w-0 flex-1 bg-transparent px-3 font-mono text-sm outline-none"
+                required
+                aria-describedby={`${id}-slug-hint`}
+                value={slug}
+                onChange={(e) => {
+                  setSlugEdited(true);
+                  setSlug(e.target.value);
+                }}
+              />
+            </div>
+            <p id={`${id}-slug-hint`} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <HugeiconsIcon icon={Link01Icon} strokeWidth={2} className="size-3.5 shrink-0" />
+              {t("entityEditor.slugHint")}
+            </p>
+          </div>
+        </Card>
+        {others.length > 0 && (
+          <section className="rounded-lg border border-border bg-muted/30" data-ckui="entity-create-other-names">
+            <button
+              type="button"
+              className="flex w-full items-start gap-3 p-5 text-start outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              aria-expanded={othersOpen}
+              aria-controls={`${id}-others`}
+              onClick={() => setOthersOpen((o) => !o)}
+            >
+              <span className="grid min-w-0 flex-1 gap-0.5">
+                <span className="text-sm font-medium">
+                  {t("entityEditor.otherNames")}
+                  <span className="font-normal text-muted-foreground"> · {t("entityEditor.optional")}</span>
+                </span>
+                <span className="text-xs text-muted-foreground">{t("entityEditor.otherNamesHint", { language: languageName(first0) })}</span>
+              </span>
+              <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground tabular-nums">
+                {t("entityEditor.namesAdded", { count: filledOthers.length, total: others.length })}
+              </span>
+              <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className={cn("mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform", othersOpen && "rotate-180")} />
+            </button>
+            <div id={`${id}-others`} hidden={!othersOpen} className="grid gap-3 border-t border-border p-5">
+              {others.map((l) => (
+                <div key={l} className="grid gap-2 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-center sm:gap-4">
+                  <Label htmlFor={`${id}-${l}`} className="flex items-center gap-3 font-normal">
+                    <span aria-hidden className="grid h-6 min-w-8 place-items-center rounded border border-border bg-muted px-1 font-mono text-[11px] font-medium text-muted-foreground uppercase">{l}</span>
+                    <span className="sr-only">{t("entityEditor.nameIn", { language: languageName(l) })}</span>
+                    <span aria-hidden className="grid leading-tight">
+                      <span className="text-sm font-medium">{languageName(l)}</span>
+                      {nativeName(l) !== languageName(l) && <span className="text-xs text-muted-foreground">{nativeName(l)}</span>}
+                    </span>
+                  </Label>
+                  <Input id={`${id}-${l}`} className="h-10" lang={l} placeholder={t("entityEditor.namePlaceholder", { language: languageName(l) })} value={names[l] ?? ""} onChange={(e) => setNames((n) => ({ ...n, [l]: e.target.value }))} />
+                </div>
+              ))}
+            </div>
+          </section>
         )}
+        {(spec.parent || management || Object.keys(declared).length > 0) && (
+          <Card title={t("entityEditor.visibility")} ckui="entity-create-details">
+            {management && (
+              <div className="flex items-start justify-between gap-4 rounded-md border border-border p-4">
+                <div className="grid gap-1">
+                  <Label htmlFor={`${id}-internal`}>{t("entityEditor.internal")}</Label>
+                  <p className="text-xs text-muted-foreground">{t("entityEditor.internalHint")}</p>
+                </div>
+                <Switch id={`${id}-internal`} checked={internal} onCheckedChange={setInternal} />
+              </div>
+            )}
+            {spec.parent && <EntityField management={management} label={t("entityEditor.parent")} kind={spec.parent} value={parent} onChange={setParent} client={client} />}
+            <AttributeFields declared={declared} form={attrs} onChange={(n, v) => setAttrs((a) => ({ ...a, [n]: v }))} labels={labels} />
+          </Card>
+        )}
+        {invalid && <ErrorLine>{invalid}</ErrorLine>}
+        {create.error && <ErrorLine>{contentError(m, create.error)}</ErrorLine>}
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <p className="me-auto text-xs text-muted-foreground">
+            <span className="text-destructive">*</span> {t("entityEditor.required")}
+            {missing.length > 0 && (
+              <>
+                {" · "}
+                <span id={`${id}-missing`} data-ckui="entity-create-missing">
+                  {t("entityEditor.stillNeeded", { fields: missing.join(", ") })}
+                </span>
+              </>
+            )}
+          </p>
+          {onCancel && (
+            <Button type="button" variant="outline" disabled={create.pending} onClick={onCancel}>
+              {t("common.cancel")}
+            </Button>
+          )}
+          <Button type="submit" disabled={create.pending || missing.length > 0} aria-describedby={missing.length ? `${id}-missing` : undefined}>
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+            {create.pending ? t("common.saving") : t("entityEditor.createNamed", { kind: kindOne })}
+          </Button>
+        </div>
       </div>
+      {/* How the new entity reads, as it is typed. */}
+      <aside className="hidden lg:sticky lg:top-[calc(var(--ckui-sticky-top,0px)+1rem)] lg:block" aria-label={t("entityEditor.preview")} data-ckui="entity-create-preview">
+        <div className="overflow-hidden rounded-lg border border-border bg-muted/30">
+          <div className="flex items-center justify-between gap-2 border-b border-border px-5 py-3">
+            <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{t("entityEditor.preview")}</p>
+            <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset", internal ? "bg-muted text-muted-foreground ring-border" : "bg-success/15 text-foreground ring-success/45")}>
+              {t(internal ? "entityEditor.internalShort" : "entityEditor.public")}
+            </span>
+          </div>
+          <div className="grid gap-4 p-5">
+            <div className="flex min-w-0 items-center gap-3">
+              <span aria-hidden className="grid size-12 shrink-0 place-items-center rounded-full bg-primary/15 text-lg font-semibold text-primary">
+                {(first.trim()[0] ?? "?").toUpperCase()}
+              </span>
+              <div className="grid min-w-0">
+                <span className={cn("truncate font-semibold", !first.trim() && "text-muted-foreground")}>{first.trim() || title}</span>
+                <span className="truncate text-sm text-muted-foreground">{[kindOne, ...facts].join(" · ")}</span>
+              </div>
+            </div>
+            {slug.trim() && (
+              <p className="flex min-w-0 items-center gap-2 rounded-md border border-border px-3 py-2 font-mono text-xs">
+                <HugeiconsIcon icon={Link01Icon} strokeWidth={2} className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">{(address?.prefix ?? "") + slug.trim()}</span>
+              </p>
+            )}
+            {filledOthers.length > 0 && (
+              <div className="grid gap-1.5">
+                <p className="text-xs text-muted-foreground">{t("entityEditor.otherNames")}</p>
+                <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
+                  {filledOthers.map((l) => (
+                    <div key={l} className="contents">
+                      <dt className="text-muted-foreground">{languageName(l)}</dt>
+                      <dd className="truncate" lang={l}>{names[l]!.trim()}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
+          </div>
+        </div>
+      </aside>
     </form>
+  );
+}
+
+/** A card with a heading and an optional one-line hint. */
+function Card({ title, hint, ckui, children }: { title: ReactNode; hint?: ReactNode; ckui: string; children: ReactNode }) {
+  return (
+    <section className="grid gap-4 rounded-lg border border-border bg-muted/30 p-5" data-ckui={ckui}>
+      <div className="grid gap-0.5">
+        <h3 className="text-sm font-medium">{title}</h3>
+        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      </div>
+      {children}
+    </section>
   );
 }
 

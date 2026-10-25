@@ -232,7 +232,7 @@ export function EntityMembers(p: EntityMembersProps) {
         return href ? [{ kind, href }] : [];
       });
   return (
-    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 rounded-lg border border-border bg-card p-4 text-sm", p.className)} data-ckui="entity-members">
+    <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 rounded-lg border border-border bg-muted/30 p-4 text-sm", p.className)} data-ckui="entity-members">
       <div className="grid gap-0.5">
         <h3 className="text-sm font-medium">{t("memberships.members")}</h3>
         <p className="text-xs text-muted-foreground">{t("entityEditor.savesNow")}</p>

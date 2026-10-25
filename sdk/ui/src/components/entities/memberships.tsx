@@ -88,7 +88,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
   const root = (children: ReactNode) => (
     <ContentKitUiRoot
       appearance={p.appearance}
-      className={cn("rounded-lg border border-border bg-card p-4 grid gap-4 text-sm", p.className)}
+      className={cn("rounded-lg border border-border bg-muted/30 p-4 grid gap-4 text-sm", p.className)}
       data-ckui="membership-editor"
     >
       <div className="flex items-center justify-between">

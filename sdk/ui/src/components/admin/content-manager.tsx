@@ -1092,7 +1092,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
             </header>
 
             {/* Title and description */}
-            <div className="rounded-lg border border-border bg-card p-4 grid gap-4">
+            <div className="rounded-lg border border-border bg-muted/30 p-4 grid gap-4">
               <h3 className="text-sm font-medium">
                 {t("contentManager.titleAndDescription")}
               </h3>
@@ -1149,7 +1149,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
             )}
 
             {/* Body */}
-            <div className="rounded-lg border border-border bg-card p-4 grid gap-4">
+            <div className="rounded-lg border border-border bg-muted/30 p-4 grid gap-4">
               <div className="grid gap-1">
                 <h3 className="text-sm font-medium">
                   {t("contentManager.body")}
@@ -1222,7 +1222,7 @@ function Cover({ item, src, saving, onFile }: { item: Content | null; src?: stri
   const { t } = useMessages();
   const file = useRef<HTMLInputElement>(null);
   return (
-    <div className="rounded-lg border border-border bg-card p-4 grid gap-4" data-ckui="content-cover">
+    <div className="rounded-lg border border-border bg-muted/30 p-4 grid gap-4" data-ckui="content-cover">
       <h3 className="text-sm font-medium">{t("contentManager.cover")}</h3>
       {item ? (
         <div className="flex flex-wrap items-center gap-4">
