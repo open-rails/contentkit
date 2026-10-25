@@ -84,21 +84,32 @@ try {
 	// parent with only draft editions does not exercise the media-ready gate.
 	await page.evaluate(() => client.contents.updateVersion(fixture.ref.id, fixture.ref.version, {state: "published"}));
 
-  let notReady;
-  const refusedPublication = new Promise(resolve => notReady = resolve);
+  let accepted;
+  const acceptedPublication = new Promise(resolve => accepted = resolve);
+  let publicationRequests = 0;
   await page.route(`**/contents/${fixture.ref.id}/publish`, async route => {
+    publicationRequests++;
     const response = await route.fetch();
-    if (response.status() >= 400) {
-      const body = await response.json();
-      assert.equal(body.code, "not_ready");
-      notReady();
-    }
+    assert.equal(response.status(), 200, "publication must durably accept before media processing completes");
+    const content = await response.json();
+    assert.equal(content.live, false, "acceptance must not report completed publication");
+    assert.equal(content.state, "published");
+    accepted(content);
     await route.fulfill({response});
   });
-  await page.evaluate(() => { window.publication = client.contents.publishWhenReady(fixture.ref.id, undefined, 30_000); });
-  await bounded(refusedPublication, "publishWhenReady never observed a real not_ready response");
+  await page.evaluate(() => {
+    window.publicationSettled = false;
+    window.publication = client.contents.publishWhenReady(fixture.ref.id, undefined, 30_000)
+      .then(content => { window.publicationSettled = true; return content; });
+  });
+  await bounded(acceptedPublication, "publishWhenReady never accepted durable work");
+  assert.equal(await page.evaluate(() => publicationSettled), false, "publication completed while its media worker was stopped");
+  assert.equal(await page.evaluate(() => mediaFactory.createContentKitClient({baseUrl: "/content"}).contents.get(fixture.ref.id)
+    .then(() => false, error => error.status === 404)), true, "pending publication leaked to ordinary readers");
   await page.evaluate(() => fetch("/start-worker", {method: "POST"}).then(response => { if (response.status !== 204) throw Error("worker fixture did not start"); }));
-  assert.equal(await page.evaluate(() => publication.then(content => content.id)), fixture.ref.id);
+  const released = await page.evaluate(() => publication.then(content => ({id: content.id, live: content.live})));
+  assert.deepEqual(released, {id: fixture.ref.id, live: true});
+  assert.equal(publicationRequests, 1, "completion polling resubmitted publication");
   assert.equal(await page.evaluate(() => mediaFactory.createContentKitClient({baseUrl: "/content"}).contents.get(fixture.ref.id).then(content => content.id)), fixture.ref.id);
 
   // Dispose aborts an in-flight multipart part; a fresh queue restores the
@@ -146,7 +157,7 @@ try {
   });
   assert.ok(calls > 4);
   const bindings = ["subscribe", "getSnapshot", "add", "move", "update", "remove", "retry", "start", "pause", "commit", "dispose"].map(name => `ItemUploadQueue.${name}`);
-  console.log(JSON.stringify({status: "passed", bindings, publishWhenReady: "actual not_ready then published", multipart: "same ticket; first stored part reused"}));
+  console.log(JSON.stringify({status: "passed", bindings, publishWhenReady: "accepted once; pending with worker stopped; completed after worker start", multipart: "same ticket; first stored part reused"}));
 } finally {
   await browser.close();
 }

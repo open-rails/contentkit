@@ -28,7 +28,7 @@ func TestGatewayCapabilities(t *testing.T) {
 	ring, err := token.NewRing(m.key, nil)
 	must(t, err)
 	scope := m.gatewayConfig.Routes[0].Scope
-	folder := scope.Prefix("gallery", uuid.NewString(), uuid.NewString())
+	folder := scope.Prefix("gallery", uuid.NewString(), "")
 	data := []byte("exact private bytes: 0123456789")
 	sum := sha256.Sum256(data)
 	first := folder + "private/" + layout.BlobName(sum[:], uuid.NewString())
@@ -83,16 +83,24 @@ func TestGatewayCapabilities(t *testing.T) {
 		control(t, first, grant(first))
 		control(t, second, grant(second))
 		deny(t, second, grant(first), "")
-		other := scope.Prefix("gallery", uuid.NewString(), uuid.NewString()) + "private/" + layout.BlobName(sum[:], uuid.NewString())
+		other := scope.Prefix("gallery", uuid.NewString(), "") + "private/" + layout.BlobName(sum[:], uuid.NewString())
 		seed(t, other)
 		control(t, other, grant(other))
 		deny(t, other, grant(first), "")
+		// A flat item token covers sibling files in this exact version only.
+		item := ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute))
+		control(t, first, item)
+		control(t, second, item)
+		deny(t, other, item, "")
+		nested := scope.Prefix("gallery", uuid.NewString(), uuid.NewString()) + "private/" + layout.BlobName(sum[:], uuid.NewString())
+		seed(t, nested)
+		deny(t, nested, grant(nested), "")
 	})
 	t.Run("CK-J13-S02_item_token_cannot_open_download_area", func(t *testing.T) {
 		item := ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute))
 		control(t, first, item)
 		control(t, second, item)
-		control(t, download, ring.Sign(token.DownloadScope(download), time.Now().Add(time.Minute)))
+		deny(t, download, ring.Sign(token.DownloadScope(download), time.Now().Add(time.Minute)), "")
 		deny(t, download, item, "")
 		deny(t, download, grant(first), "")
 	})
@@ -149,7 +157,7 @@ func TestGatewayCapabilities(t *testing.T) {
 	})
 	t.Run("CK-J13-S05_reserved_and_erasure_fenced_objects_refuse", func(t *testing.T) {
 		control(t, first, grant(first))
-		for _, key := range []string{folder + layout.ManifestName, folder + "temp/u-" + uuid.NewString(), folder + "public/" + layout.ErasureFenceName} {
+		for _, key := range []string{folder + layout.ManifestName, folder + "temp/u-" + uuid.NewString(), folder + "tmp/u-" + uuid.NewString(), folder + "future/" + layout.BlobName(sum[:], uuid.NewString()), folder + "originals/" + layout.BlobName(sum[:], uuid.NewString()), folder + "public/" + layout.ErasureFenceName} {
 			seed(t, key)
 			deny(t, key, ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute)), "")
 		}
@@ -192,7 +200,7 @@ func TestGatewayCapabilities(t *testing.T) {
 		}
 	})
 	t.Run("CK-J13-S08_cors_cache_and_download_headers", func(t *testing.T) {
-		address := m.gateway.URL + "/v1/" + download + "?t=" + url.QueryEscape(ring.Sign(token.DownloadScope(download), time.Now().Add(time.Minute))) + "&dl=" + url.QueryEscape("report \"quoted\".txt")
+		address := m.gateway.URL + "/v1/" + first + "?t=" + url.QueryEscape(grant(first)) + "&dl=" + url.QueryEscape("report \"quoted\".txt")
 		downloaded, err := http.Get(address)
 		must(t, err)
 		_, err = io.Copy(io.Discard, downloaded.Body)
@@ -203,10 +211,10 @@ func TestGatewayCapabilities(t *testing.T) {
 		}
 		pngBytes := imageBytes(t)
 		pngSum := sha256.Sum256(pngBytes)
-		pngKey := folder + "download/" + layout.BlobName(pngSum[:], uuid.NewString())
+		pngKey := folder + "private/" + layout.BlobName(pngSum[:], uuid.NewString())
 		_, err = m.management.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: &m.bucket, Key: &pngKey, Body: bytes.NewReader(pngBytes), ContentType: aws.String("image/png")})
 		must(t, err)
-		address = m.gateway.URL + "/v1/" + pngKey + "?t=" + url.QueryEscape(ring.Sign(token.DownloadScope(pngKey), time.Now().Add(time.Minute))) + "&dl=report.png"
+		address = m.gateway.URL + "/v1/" + pngKey + "?t=" + url.QueryEscape(grant(pngKey)) + "&dl=report.png"
 		downloaded, err = http.Get(address)
 		must(t, err)
 		got, err := io.ReadAll(downloaded.Body)
