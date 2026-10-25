@@ -687,16 +687,17 @@ func (p *Processor) editorViews(ctx context.Context, item media.Item, m *media.M
 	if len(want) == 0 {
 		return nil
 	}
-	have := map[string]bool{}
-	for o, err := range p.c.Store.List(ctx, item.PrivatePrefix()) {
-		if err != nil {
-			return err
-		}
-		have[strings.TrimPrefix(o.Key, item.PrivatePrefix())] = true
-	}
 	for name, f := range want {
-		if have[p.reg.EditorView(f)] {
-			delete(want, name)
+		if blob := p.reg.EditorView(f); blob != "" {
+			key, err := item.Blob(blob)
+			if err != nil {
+				return err
+			}
+			if _, err := p.c.Store.Head(ctx, key); err == nil {
+				delete(want, name)
+			} else if !errors.Is(err, media.ErrNotFound) {
+				return err
+			}
 		}
 	}
 	g, gctx := errgroup.WithContext(ctx)

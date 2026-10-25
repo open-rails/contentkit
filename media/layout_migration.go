@@ -264,7 +264,8 @@ func ApplyLayoutMigration(ctx context.Context, source *Manifests, target *Jobs, 
 			next.Receipt = nil
 			keys := make([]string, 0, len(e.Objects))
 			for _, o := range e.Objects {
-				if k, ok := layout.Parse(o.Target); ok && (k.Area == layout.AreaPrivate || k.Area == layout.AreaDownload) {
+				if k, ok := layout.Parse(o.Target); ok && k.Folder() == to.Prefix() &&
+					layout.ValidBlobRef(layout.BlobRef(k.Area, k.Name)) {
 					keys = append(keys, o.Target)
 				}
 			}
