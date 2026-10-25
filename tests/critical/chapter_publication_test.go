@@ -2,6 +2,7 @@ package critical_test
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -100,6 +101,21 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 	})
 	admin, viewer := a.engine.Client(), a.client("")
 	ref := galleryRef(t, admin, "Ordered chapter publication")
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, query := range []string{
+			`SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'state',state,'current',current,'due',scheduled_at,'error',error,'plan_fingerprint',plan->>'fingerprint','result_fingerprint',result->>'fingerprint')),'[]') FROM ` + pgx.Identifier{w.schema, "content_publication_requests"}.Sanitize(),
+			`SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'kind',kind,'state',state,'args',args,'errors',errors,'due',scheduled_at)),'[]') FROM ` + pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize() + ` WHERE kind IN ('contentkit_version_publish','contentkit_version_release') AND state NOT IN ('completed','cancelled')`,
+		} {
+			var state string
+			err := w.pool.QueryRow(ctx, query).Scan(&state)
+			t.Logf("publication diagnostic: %s error=%v", state, err)
+		}
+	})
 	var files []ck.MediaFile
 	for i, path := range []string{"pages/01.png", "pages/17.png", "pages/20.png", "pages/40.png"} {
 		files = append(files, ck.MediaFile{Path: path, Type: "image/png", Body: bytes.NewReader(chapterImage(t, uint8(7+i*23)))})
