@@ -79,16 +79,18 @@ export class ReadStore {
     const run = async () => {
       let cursor = "";
       for (let attempt = 0; ; attempt++) {
+        let authorizedSnapshot = false;
         try {
           await this.client.media.watch(s.ref, (update) => {
             if (controller.signal.aborted) return;
             cursor = update.cursor;
             if (!update.read) return;
+            if (update.event === "snapshot" || update.event === "resync") authorizedSnapshot = true;
             let completed = false;
             for (const slot of matching()) {
               const before = slot.entry.read;
               const read = slot.options.status ? update.read : before ? { ...before, status: update.read.status, state: update.read.state, full: update.read.status?.state === "full" } : null;
-              if (read) this.update(slot, { read, error: undefined });
+              if (read) this.update(slot, { read, error: undefined, ...(slot.options.status ? { loading: false, loaded: true } : {}) });
               if (!slot.options.status) this.load(slot.key, "reload");
               if (read && finished(before, read)) completed = true;
             }
@@ -102,6 +104,19 @@ export class ReadStore {
         } catch (error) {
           if (controller.signal.aborted) return;
           const failure = toContentKitError(error);
+          // A long stream keeps its original credential. After an authorized
+          // snapshot, one fresh request lets the host's auth fetch refresh it.
+          // A refused reconnect gets no snapshot and therefore stops here.
+          if (failure.code === "unauthorized" && authorizedSnapshot) {
+            for (const slot of matching()) {
+              slot.ctl?.abort();
+              slot.ctl = undefined;
+              clearTimeout(slot.timer);
+              this.update(slot, { read: null, error: undefined, loading: true });
+            }
+            attempt = 0;
+            continue;
+          }
           if (!failure.transient || attempt >= 3) {
             for (const slot of matching()) {
               slot.ctl?.abort();
