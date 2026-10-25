@@ -385,7 +385,10 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 						return nil, err
 					}
 				} else {
-					f.Blob, f.Staged, f.Editor = "", "", nil
+					// Preserve the internal source reference: public rendition
+					// ownership is checked against its source/edit key. Reader
+					// grants reject originals independently of this snapshot.
+					f.Staged, f.Editor = "", nil
 				}
 				plan.View.Files = append(plan.View.Files, f)
 			}
@@ -468,11 +471,17 @@ func (p *releasePlan) applyDelivery(delivery *media.PublicationDelivery) {
 	}
 	for i := range p.View.Files {
 		f := &p.View.Files[i]
+		priorSource := f.Key()
 		f.Blob = replace(f.Blob)
 		if f.Track != nil {
 			f.Track.Index = replace(f.Track.Index)
 		}
 		for j := range f.Public {
+			// ServeOriginals can remap the upload itself to identical served
+			// bytes; its verified rendition ownership follows that reference.
+			if f.Public[j].Source == priorSource {
+				f.Public[j].Source = f.Key()
+			}
 			for n := range f.Public[j].Blobs {
 				f.Public[j].Blobs[n] = replace(f.Public[j].Blobs[n])
 			}
