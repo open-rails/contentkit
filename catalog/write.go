@@ -165,6 +165,17 @@ func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn
 }
 
 func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) error {
+	// Lifecycle paths share this transaction boundary, including moderation,
+	// owner deletion/restoration and imported tombstones. A visibility change
+	// must not leave served objects behind without a durable reconciliation.
+	for _, event := range fx.events {
+		switch event.Type {
+		case EventContentDeleted, EventContentRestored, EventContentUnpublished:
+			fx.publish = append(fx.publish, versions.Target{Content: event.ContentID})
+		case EventVersionDeleted:
+			fx.publish = append(fx.publish, versions.Target{Content: event.ContentID, Version: event.VersionID})
+		}
+	}
 	if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET revision = revision + 1, updated_at = clock_timestamp() WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids); err != nil {
 		return err
 	}
@@ -887,8 +898,8 @@ const ownedBatch = 100
 
 // DeleteOwned deletes the live content of the deleted user-owned entities
 // among entities (every one with nil), recording each entity as its content's
-// cause (entities.OwnedContent): holders of a deleted item's key still read
-// it until the content is erased after the deletion retention.
+// cause (entities.OwnedContent). The same transaction schedules withdrawal;
+// retained originals remain restorable until permanent purge.
 func (s *Store) DeleteOwned(ctx context.Context, entities []string) error {
 	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_entity_id
  WHERE c.tenant_id = $1 AND g.state = 'deleted' AND g.kind = ANY($2) AND ($3::text[] IS NULL OR g.id = ANY($3)) AND c.state <> 'deleted'

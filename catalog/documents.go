@@ -28,10 +28,11 @@ func (s *Store) ListDocuments(ctx context.Context, kind, language, cursor string
 		limit = 1000
 	}
 	rows, err := s.pool.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.kind = $2 AND c.state = 'published' AND c.id > $4
+ AND EXISTS (SELECT 1 FROM `+s.t.versions+` live WHERE live.tenant_id=c.tenant_id AND live.content_id=c.id AND live.state='published' AND live.released)
  AND (EXISTS (SELECT 1 FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3)
  OR ($6 AND (coalesce(c.original_title,'')<>'' OR EXISTS (
  SELECT 1 FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND (v.publish_at IS NULL OR v.publish_at<=clock_timestamp()) AND t.title<>''))))
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released AND t.title<>''))))
  ORDER BY c.id LIMIT $5`,
 		s.tenant, kind, language, cursor, limit+1, s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion)
 	if err != nil {
@@ -74,13 +75,14 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
 	}
 	rows, err := s.pool.Query(ctx, `SELECT c.id, t.title, t.aliases, coalesce(c.original_title,''),
  ARRAY(SELECT vt.title FROM `+s.t.versions+` v JOIN `+s.t.versionText+` vt ON vt.tenant_id=v.tenant_id AND vt.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND (v.publish_at IS NULL OR v.publish_at<=clock_timestamp())
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released
  AND vt.language=ANY(v.languages) AND vt.title<>'' ORDER BY (vt.language=$3) DESC,v.position,vt.language),
  ARRAY(SELECT coalesce((SELECT n.name FROM `+s.t.entityNames+` n WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND n.kind = 'name'
    ORDER BY n.language = $3 DESC, n.language = $5 DESC, n.language LIMIT 1), g.slug)
   FROM `+s.t.entities+` g WHERE g.tenant_id = c.tenant_id AND g.state = 'active' AND NOT g.internal AND g.id = ANY(`+s.qs+`.content_keyword_entity_ids(c.tenant_id,c.id)) ORDER BY g.kind, g.slug)
  FROM `+s.t.items+` c LEFT JOIN `+s.t.text+` t ON t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3
- WHERE c.tenant_id = $1 AND c.id = ANY($2) AND c.kind = $4 AND c.state = 'published'`, s.tenant, ids, language, kind, s.defaultLanguage())
+ WHERE c.tenant_id = $1 AND c.id = ANY($2) AND c.kind = $4 AND c.state = 'published'
+ AND EXISTS (SELECT 1 FROM `+s.t.versions+` live WHERE live.tenant_id=c.tenant_id AND live.content_id=c.id AND live.state='published' AND live.released)`, s.tenant, ids, language, kind, s.defaultLanguage())
 	if err != nil {
 		return nil, err
 	}

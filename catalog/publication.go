@@ -98,7 +98,7 @@ func (s *Store) publishTextDue(ctx context.Context) (int, error) {
  AND ((c.state='published' AND v.state='published' AND (
        (NOT v.released AND coalesce(c.publish_at,$2)<=$2 AND coalesce(v.publish_at,$2)<=$2)
        OR (v.released AND v.released_access IS DISTINCT FROM `+s.qs+`.content_frozen_access(v.access,$2))))
-   OR (v.released AND (c.state='draft' OR v.state='draft'))))
+   OR (v.released AND (c.state<>'published' OR v.state<>'published'))))
  ORDER BY c.id LIMIT 200 FOR UPDATE SKIP LOCKED`, s.tenant, at)
 	if err != nil {
 		return 0, err
@@ -113,7 +113,7 @@ func (s *Store) publishTextDue(ctx context.Context) (int, error) {
  AND ((c.state='published' AND v.state='published' AND (
        (NOT v.released AND coalesce(c.publish_at,$3)<=$3 AND coalesce(v.publish_at,$3)<=$3)
        OR (v.released AND v.released_access IS DISTINCT FROM `+s.qs+`.content_frozen_access(v.access,$3))))
-   OR (v.released AND (c.state='draft' OR v.state='draft')))
+   OR (v.released AND (c.state<>'published' OR v.state<>'published')))
  ORDER BY v.content_id,v.id FOR UPDATE OF v`, s.tenant, parents, at)
 	if err != nil {
 		return 0, err

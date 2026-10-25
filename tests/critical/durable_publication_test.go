@@ -103,6 +103,19 @@ func TestDurableTextPublication(t *testing.T) {
 	if added.Access == nil || added.Access.Level != access.TierLevel {
 		t.Fatalf("new edition did not copy its creation default: %+v", added.Access)
 	}
+	must(t, admin.DeleteContentVersion(t.Context(), item.ID, edition.ID))
+	waitFor(t, func() bool {
+		var released bool
+		must(t, w.pool.QueryRow(t.Context(), `SELECT released FROM `+w.schema+`.content_versions WHERE tenant_id=$1 AND id=$2`,
+			a.cfg.Scope.AppID.String(), edition.ID).Scan(&released))
+		return !released
+	})
+	_, err = admin.PatchContentVersion(t.Context(), item.ID, edition.ID, catalog.VersionInput{State: catalog.StatePublished})
+	must(t, err)
+	waitFor(t, func() bool {
+		got, err := reader.GetContentVersion(t.Context(), item.ID, edition.ID, ck.GetContentVersionQuery{})
+		return err == nil && got.Live
+	})
 	publicAt := actual.Add(time.Hour)
 	protected, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery",
 		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: publicAt, Level: access.Public}}},
