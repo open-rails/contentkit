@@ -149,6 +149,9 @@ export const admin: typeof en = {
     goesLive: "{date} 上线",
     wentLive: "自 {date} 起进行中",
     closedOn: "已于 {date} 结束",
+    question: "问题",
+    votes: "票数",
+    none: "还没有投票。",
   },
   contentManager: {
     switchLanguage: "切换语言？",
