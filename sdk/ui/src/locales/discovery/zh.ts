@@ -45,6 +45,7 @@ export const discovery: typeof en = {
     lockedShow_other: "显示 {count} 个锁定项目",
     lockedHide: "隐藏锁定项目",
     noResults: "没有与“{q}”匹配的内容。",
+    matchingEntities: "匹配的标签和名称",
     historySignedOut: "登录后查看你的历史记录。",
     clearHistory: "清除历史记录",
     historyEmpty: "你的历史记录为空。",

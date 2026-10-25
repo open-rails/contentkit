@@ -1,5 +1,5 @@
 export { CardStatusBadges, ContentCard, OwnerChip, PostCard, cardStatus, lockLabel, type CardMetadata, type CardStatus, type ContentCardProps, type PostCardProps } from "./card.js";
-export { cardGridLayout, CardGrid, ContentGrid, ContentHistory, ContentRail, SearchResults, type CardGridLayout, type CardListProps, type ContentRailProps, type LockedCards } from "./grid.js";
+export { cardGridLayout, CardGrid, ContentGrid, ContentHistory, ContentRail, SearchEntities, SearchResults, type CardGridLayout, type CardListProps, type ContentRailProps, type LockedCards, type SearchResultsProps } from "./grid.js";
 export { DailyReleases, type DailyReleasesProps } from "./daily-releases.js";
 export { ReleaseDatePicker, isReleaseDate, localReleaseDate, type ReleaseDatePickerProps } from "./release-date-picker.js";
 export { PopularContentGrid, type PopularContentGridProps } from "./popular.js";

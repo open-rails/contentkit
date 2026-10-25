@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,11 +66,18 @@ func (s *Service) languageMode() hub.LanguageMode {
 	return hub.LanguageModeExact
 }
 
+// SearchPage is a page of search results. The first page also carries the
+// entities matching the query that have contents the reader can see.
+type SearchPage struct {
+	ContentPage
+	Entities []entities.EntityCard `json:"entities,omitempty"`
+}
+
 // Search pages the contents matching a keyword query, grouped per content
 // item, under the reader's visibility and the filter.
-func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPage, resultErr error) {
+func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPage, resultErr error) {
 	ctx = access.WithMemo(ctx)
-	empty := ContentPage{Contents: []Card{}}
+	empty := SearchPage{ContentPage: ContentPage{Contents: []Card{}}}
 	text := strings.TrimSpace(o.Query)
 	if text == "" {
 		return empty, fmt.Errorf("%w: q is required", ErrInvalid)
@@ -88,9 +96,14 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPa
 		return empty, err
 	}
 	var summaryOrder order
+	firstPage := o.Cursor == "" && o.Page <= 1
+	entityMatch := s.entityMatch(q)
 	defer func() {
 		if resultErr == nil && o.Summary && o.Cursor == "" {
 			result.Summary, resultErr = s.searchSummary(ctx, o, q, summaryOrder)
+		}
+		if resultErr == nil && firstPage {
+			result.Entities, resultErr = s.matchingEntities(ctx, text, q.display, entityMatch)
 		}
 	}()
 	limit := pageLimit(o.Limit, 24)
@@ -131,7 +144,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPa
 				cards[i].Ranking = &ranking
 			}
 		}
-		return ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}, err
+		return SearchPage{ContentPage: ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}}, err
 	}
 	cur, err := decodeCursor(o.Cursor, SortRelevance)
 	if err != nil {
@@ -161,7 +174,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result ContentPa
 		return empty, err
 	}
 	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
-	out := ContentPage{Contents: cards}
+	out := SearchPage{ContentPage: ContentPage{Contents: cards}}
 	if res.HasMore && len(res.Hits) > 0 {
 		out.NextCursor = cursor{Sort: SortRelevance, Value: strconv.Itoa(offset + len(res.Hits)), ID: ids[len(ids)-1], AsOf: q.asOf}.encode()
 	}
@@ -238,27 +251,56 @@ func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead,
 	if len(kinds) == 0 {
 		return out, nil
 	}
-	ghits, err := s.o.Hub.Typeahead(ctx, text, hub.TypeaheadOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: kinds, Limit: limit,
-		Eligibility: &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.entities +
-			` g WHERE g.tenant_id = sd.tenant_id AND g.id = sd.content_id AND g.kind = sd.content_kind AND g.state = 'active' AND NOT g.internal)`}})
+	out.Entities, err = s.entityTypeahead(ctx, text, q.display, kinds, limit, &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.entities +
+		` g WHERE g.tenant_id = sd.tenant_id AND g.id = sd.content_id AND g.kind = sd.content_kind AND g.state = 'active' AND NOT g.internal)`})
+	return out, err
+}
+
+// entityMatch keeps the active public entities with a content q selects.
+// It copies q now, before Search narrows q to the keyword matches.
+func (s *Service) entityMatch(q *sel) *search.Eligibility {
+	return &search.Eligibility{SQL: fmt.Sprintf(`SELECT 0 AS priority FROM %s g
+ WHERE g.tenant_id = sd.tenant_id AND g.id = sd.content_id AND g.kind = sd.content_kind AND g.state = 'active' AND NOT g.internal
+ AND EXISTS (SELECT 1 FROM %s f WHERE (f.entity_ids @> ARRAY[g.id] OR f.owner_entity_id = g.id) AND %s)`, s.t.entities, s.t.facets, q.predicate()),
+		Args: maps.Clone(q.args)}
+}
+
+// matchingEntities are up to 8 routed entities whose names match text.
+func (s *Service) matchingEntities(ctx context.Context, text, language string, eligible *search.Eligibility) ([]entities.EntityCard, error) {
+	var kinds []string
+	for k, ek := range s.o.Kinds.EntityKinds {
+		if ek.Route != "" {
+			kinds = append(kinds, k)
+		}
+	}
+	if len(kinds) == 0 {
+		return nil, nil
+	}
+	slices.Sort(kinds)
+	return s.entityTypeahead(ctx, text, language, kinds, 8, eligible)
+}
+
+// entityTypeahead returns the cards of the eligible entities of kinds whose
+// names match text, best match first.
+func (s *Service) entityTypeahead(ctx context.Context, text, language string, kinds []string, limit int, eligible *search.Eligibility) ([]entities.EntityCard, error) {
+	hits, err := s.o.Hub.Typeahead(ctx, text, hub.TypeaheadOptions{Language: language, LanguageMode: s.languageMode(), ContentKinds: kinds, Limit: limit, Eligibility: eligible})
 	if err != nil {
-		return out, err
+		return nil, err
 	}
-	gids := make([]entities.EntityID, 0, len(ghits))
-	for _, h := range ghits {
-		gids = append(gids, entities.EntityID(h.ContentID))
+	ids := make([]entities.EntityID, 0, len(hits))
+	for _, h := range hits {
+		ids = append(ids, entities.EntityID(h.ContentID))
 	}
-	cards, err := s.o.Entities.Cards(ctx, gids, entities.CardOptions{Language: q.display, Covers: true})
+	cards, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: language, Covers: true})
 	if err != nil {
-		return out, err
+		return nil, err
 	}
-	rank := make(map[entities.EntityID]int, len(gids))
-	for i, id := range gids {
+	rank := make(map[entities.EntityID]int, len(ids))
+	for i, id := range ids {
 		rank[id] = i
 	}
 	slices.SortFunc(cards, func(a, b entities.EntityCard) int { return rank[a.ID] - rank[b.ID] })
-	out.Entities = cards
-	return out, nil
+	return cards, nil
 }
 
 // now is the service clock.

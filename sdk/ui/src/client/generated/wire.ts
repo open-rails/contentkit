@@ -1762,6 +1762,14 @@ export interface Rule {
   releases?: Release[];
 }
 
+export interface SearchPage {
+  contents: Card[];
+  summary?: ListingSummary;
+  next_cursor?: string;
+  ranking?: RankingInfo;
+  entities?: EntityCard[];
+}
+
 export interface Segment {
   position: number;
   title?: string;
