@@ -169,6 +169,8 @@ func AsUploadError(err error) (*UploadError, bool) {
 		return &UploadError{Code: CodeInvalid, Message: "the id must be a canonical lowercase UUIDv7"}, true
 	case errors.Is(err, ErrFolderNotEmpty):
 		return &UploadError{Code: CodeConflict, Message: "the item's folder already holds files"}, true
+	case errors.Is(err, ErrAllocationRetired):
+		return &UploadError{Code: CodeConflict, Message: "the file allocation changed or expired; upload or copy again"}, true
 	case errors.Is(err, ErrCommitIdentity):
 		return &UploadError{Code: CodeConflict, Message: "operation_id already identifies another commit"}, true
 	}

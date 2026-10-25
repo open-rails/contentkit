@@ -551,15 +551,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	if err := next.Validate(); err != nil {
 		return nil, false, err
 	}
-	var allocations []string
-	for _, name := range next.Blobs() {
-		key, _ := item.Blob(name)
-		allocations = append(allocations, key)
-	}
-	for _, name := range next.StagedNames() {
-		key, _ := item.Staged(name)
-		allocations = append(allocations, key)
-	}
+	allocations := manifestAllocations(item, next)
 	if err := m.checkAllocationsIn(ctx, item, allocations, next.Incarnation); err != nil {
 		return nil, false, err
 	}
@@ -720,6 +712,12 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 	next, err := decodeManifest(commit.Effects.Manifest)
 	if err != nil || !commit.matches(next.Receipt) {
 		return nil, false, ErrCommitIdentity
+	}
+	// Admission preserves the intended bytes, not ownership forever. A retry
+	// must not adopt retired or reassigned allocations, even when S3 accepted
+	// the manifest before the original request lost its response.
+	if err := m.checkAllocationsIn(ctx, item, manifestAllocations(item, next), next.Incarnation); err != nil {
+		return nil, false, err
 	}
 	for range m.retries {
 		cur, etag, err := m.get(ctx, item.ManifestKey())
