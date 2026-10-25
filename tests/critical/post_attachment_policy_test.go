@@ -2,6 +2,7 @@ package critical_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -97,6 +98,10 @@ func TestPostAttachmentPolicies(t *testing.T) {
 		if r.err == nil {
 			successes++
 			continue
+		}
+		var conflict *ck.Error
+		if !errors.As(r.err, &conflict) || conflict.Status != 409 || (conflict.Code != "conflict" && conflict.Code != "too_many_files") {
+			t.Fatalf("concurrent limit request failed unexpectedly: %v", r.err)
 		}
 		refused = append(refused, r.op)
 	}
