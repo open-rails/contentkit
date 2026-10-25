@@ -96,9 +96,23 @@ func TestDiscoveryVisibility(t *testing.T) {
 			item, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: publishAt})
 			must(t, err)
 			if publishAt == nil || !publishAt.After(w.clock.now()) {
-				for _, version := range item.Versions {
-					awaitEditionPublication(t, a, admin, item.ID, version.ID)
-				}
+				// Some fixtures intentionally fail the default domain's entity
+				// filter. Observe completion through management, then assert their
+				// ordinary reader visibility below using each explicit host.
+				waitForWithin(t, 45*time.Second, func() bool {
+					wakeDuePublicationJobs(t, a)
+					managed, err := admin.GetManage(t.Context(), ck.GetManageQuery{Ids: []string{item.ID}})
+					must(t, err)
+					if len(managed) != 1 || len(managed[0].Versions) == 0 {
+						return false
+					}
+					for _, version := range managed[0].Versions {
+						if !version.Live {
+							return false
+						}
+					}
+					return true
+				})
 			}
 		}
 		return item

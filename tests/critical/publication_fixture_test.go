@@ -29,8 +29,10 @@ func wakeDuePublicationJobs(t *testing.T, a *application) {
 	}
 	requests := pgx.Identifier{a.cfg.Database.Schema, "content_publication_requests"}.Sanitize()
 	versions := pgx.Identifier{a.cfg.Database.Schema, "content_versions"}.Sanitize()
+	// River fetches against database now(), which the moderation fixture can
+	// freeze independently of wall time. Wake to that same clock boundary.
 	_, err := a.deps.Postgres.Exec(t.Context(), `UPDATE `+pgx.Identifier{schema, "river_job"}.Sanitize()+` job
- SET scheduled_at=clock_timestamp(),state='available'
+ SET scheduled_at=now(),state='available'
  WHERE job.state IN ('scheduled','retryable') AND (job.args->>'due')::timestamptz<=$1
  AND ((job.kind='contentkit_version_release' AND EXISTS
   (SELECT 1 FROM `+requests+` request WHERE request.tenant_id=$2 AND request.id::text=job.args->>'id'))

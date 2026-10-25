@@ -104,6 +104,17 @@ func TestErasedProjectionAndReclassification(t *testing.T) {
 	if control.MyAnswer == nil || !control.MyAnswer.Classified || len(control.Groups) != 1 || control.Groups[0].Count != 1 {
 		t.Fatalf("live classifier positive control absent: %+v", control)
 	}
+	// Compose the host fleet before the published fixture starts any owned
+	// workers. This same fleet performs publication and the later real replay.
+	fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
+	must(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		must(t, fleet.Stop(ctx))
+	})
+	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
+	must(t, fleet.Start(t.Context()))
 	item := publishedArticle(t, a, "Projection source")
 	ref := contentref.NewVersion(a.cfg.Scope.AppID.String(), "article", item.ID, item.Versions[0].ID)
 	store, err := signal.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
@@ -128,17 +139,8 @@ func TestErasedProjectionAndReclassification(t *testing.T) {
 	}
 	assertState(target.ID, true)
 	assertState(live.ID, true)
-	fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
-	must(t, err)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		must(t, fleet.Stop(ctx))
-	})
-	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 	job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_reclassify"}, &river.InsertOpts{Queue: ck.QueueContentKit, MaxAttempts: 1})
 	must(t, err)
-	must(t, fleet.Start(t.Context()))
 	t.Run("CK-J23-S07_delayed_classifier_and_projection_rebuild_cannot_resurrect_erased_subject", func(t *testing.T) {
 		select {
 		case <-entered:
