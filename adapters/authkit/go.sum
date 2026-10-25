@@ -159,8 +159,8 @@ github.com/nyaruka/phonenumbers v1.8.1 h1:2K9YMQuv1dCGqjjzB1DwmdCe89khT4KPBQb2Cx
 github.com/nyaruka/phonenumbers v1.8.1/go.mod h1:fsKPJ70O9JetEA4ggnJadYTFWwtGPvu/lETTXNXq6Cs=
 github.com/open-rails/authkit v1.35.4 h1:IZLAKcSHGlZKU3ZdFL2r7PKAUvNkKN9QtQnzgppKekE=
 github.com/open-rails/authkit v1.35.4/go.mod h1:lVRhZKvKemhaQHoqr9lecnECqtkVoEw/z20bxxP6j0g=
-github.com/open-rails/helpers v1.16.1 h1:Cz8zD1dOPSIjZHY4aOMPNgPC5eKR+DqzdQR5b4D+LtQ=
-github.com/open-rails/helpers v1.16.1/go.mod h1:Olub8akvlMMb6wxdVX15+9sTETLvNnyyJytioFxj83o=
+github.com/open-rails/helpers v1.16.2-0.20261025024957-47f4de657abc h1:wB9AN0SC51vUU8LjCy4Z2F1Xh93nRgSjIxVs/CpzHVI=
+github.com/open-rails/helpers v1.16.2-0.20261025024957-47f4de657abc/go.mod h1:Olub8akvlMMb6wxdVX15+9sTETLvNnyyJytioFxj83o=
 github.com/open-rails/migratekit v1.11.2 h1:QTtn8i/Yj62SiGv6b7FnQ/mKudSDfLjnlmPSQN0NA7k=
 github.com/open-rails/migratekit v1.11.2/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/paulmach/orb v0.12.0 h1:z+zOwjmG3MyEEqzv92UN49Lg1JFYx0L9GpGKNVDKk1s=
