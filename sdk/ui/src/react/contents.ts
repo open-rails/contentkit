@@ -3,6 +3,7 @@ import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { CatalogText, Content, ContentInput, ContentPatch, Version } from "../client/generated/wire.js";
 import { IMAGE_SCHEME, imageRef, imageRefs, type ManageQuery } from "../client/contents.js";
+import { nextPublicationRefresh } from "../client/publication.js";
 import { useMediaRead } from "./read.js";
 import { useGuarded } from "./context.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
@@ -97,6 +98,14 @@ export function useContent(
   const key = cid ? keyOf("content", scope, cid) : null;
   const r = useResource<Content | null>(store, key, { type: "content", id: cid ?? undefined }, (s) => client.contents.get(cid!, language, s), { initial: o.initial });
   const content = r.data ?? null;
+  const reloadPublication = r.reload;
+  useEffect(() => {
+    if (r.loading || r.error) return;
+    const at = nextPublicationRefresh(content);
+    if (at === null) return;
+    const timer = setTimeout(reloadPublication, Math.min(2 ** 31 - 1, Math.max(0, at - Date.now()) + 250));
+    return () => clearTimeout(timer);
+  }, [content, r.loading, r.error, reloadPublication]);
   const [inflight, setInflight] = useState(0);
   const guarded = useGuarded();
   const run = useCallback(async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -219,7 +228,7 @@ export function useContent(
     (t: CatalogText) => run(() => client.contents.putText(need(), language, t.body === undefined ? t : { ...t, body: storedBody(t.body) })),
     [client, run, need, language, storedBody],
   );
-  const publish = useCallback((at?: string) => run(() => client.contents.publishWhenReady(need(), at)), [client, run, need]);
+  const publish = useCallback((at?: string) => run(() => client.contents.publish(need(), at)), [client, run, need]);
   const unpublish = useCallback(() => run(() => client.contents.unpublish(need())), [client, run, need]);
   const removeVersion = useCallback(() => run(() => client.contents.removeVersion(need(), needVersion())), [client, run, need, needVersion]);
   const restoreVersion = useCallback(() => run(() => client.contents.updateVersion(need(), needVersion(), { state: "published" })), [client, run, need, needVersion]);

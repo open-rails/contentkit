@@ -1,4 +1,6 @@
 import { cn } from "cn";
+import { chapterRanges } from "../../client/chapters.js";
+import { publicationOf, publicationPhase } from "../../client/publication.js";
 import { createPortal } from "react-dom";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { Add01Icon } from "@hugeicons/core-free-icons";
@@ -6,7 +8,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { ratio } from "../../client/aspect.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/entity-fields.js";
-import type { Content, ContentModel, Rule, Segment, SegmentInput, Version, VersionState } from "../../client/generated/wire.js";
+import type { Content, ContentModel, Rule, SegmentInput, Version, VersionState } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useKinds } from "../../react/entities.js";
@@ -270,7 +272,6 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
   const group = value.group_id ? named.get(value.group_id) : undefined;
   const set = (patch: Partial<Rule>) => onChange({ ...value, ...patch });
   const pages = spec?.presentation === "reader";
-  const segments = !!spec?.segments;
   return (
     <div className="grid gap-3" data-ckui="rule-fields">
       <div className="grid gap-1.5 sm:max-w-xs">
@@ -348,20 +349,6 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
               />
             </div>
           )}
-          {segments && (
-            <div className="grid gap-1.5">
-              <Label htmlFor={`${id}-segments`}>{t("contentEditor.previewSegments")}</Label>
-              <Input
-                id={`${id}-segments`}
-                className="h-8"
-                type="number"
-                min={0}
-                value={value.preview?.segments ?? ""}
-                onChange={(e) => set({ preview: { ...value.preview, segments: e.target.value ? Math.max(0, Math.trunc(Number(e.target.value))) : undefined } })}
-              />
-            </div>
-          )}
-
         </div>
       )}
       {value.level !== "public" && <fieldset className="grid gap-3">
@@ -390,7 +377,7 @@ export const complete = (r: Rule) => (!grouped(r.level) || !!r.group_id) && (r.r
 
 /** A rule as stored: empty previews and absent fields left out. */
 export function cleanRule(r: Rule): Rule {
-  const preview = r.preview && (r.preview.pages || r.preview.segments) ? { pages: r.preview.pages || undefined, segments: r.preview.segments || undefined } : undefined;
+  const preview = r.preview?.pages ? { pages: r.preview.pages } : undefined;
   return {
     level: r.level,
     tiers: r.level === "tier" ? r.tiers : undefined,
@@ -411,7 +398,8 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
   const { t } = useMessages();
   const client = useContentKitClient(p.client);
   const { model } = useKind(content.kind, p.client);
-  const rule = useDraft(content.access);
+  const version = content.versions.find((v) => v.id === content.selected_version_id) ?? content.versions.find((v) => v.state !== "deleted");
+  const rule = useDraft(version?.access ?? content.access);
   const reload = useEditorReload(content, p.client);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
@@ -422,9 +410,10 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
         className="grid gap-3"
         onSubmit={(e) => {
           e.preventDefault();
+          if (!version) return;
           setSaved(false);
           const settle = rule.checkpoint();
-          void save.run(() => client.contents.update(content.id, { access: cleanRule(rule.value), revision: content.revision })).then((d) => d && setSaved(settle(d.access)));
+          void save.run(() => client.contents.updateVersion(content.id, version.id, { access: cleanRule(rule.value) })).then((d) => d && setSaved(settle(d.access ?? rule.value)));
         }}
       >
         <RuleFields value={rule.value} onChange={(r) => { rule.edit(r); setSaved(false); }} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />
@@ -439,7 +428,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
               const settle = rule.checkpoint();
               void save.run(reload).then((d) => {
                 if (!d) return;
-                settle(d.access);
+                settle(d.versions.find((v) => v.id === version?.id)?.access ?? rule.value);
                 setSaved(false);
               });
             }}
@@ -450,7 +439,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
             type="submit"
             size="sm"
             variant={dirty && complete(rule.value) ? "default" : "outline"}
-            disabled={save.pending || !complete(rule.value)}
+            disabled={save.pending || !version || !complete(rule.value)}
           >
             {save.pending ? t("common.saving") : t("common.save")}
           </Button>
@@ -465,17 +454,21 @@ export function versionLabel(v: Version, languageName: (l: string) => string, la
   return v.label || [...(v.languages ?? []).map(languageName), ...(v.traits ?? []).map((x) => labelOf(labels, x))].join(" · ");
 }
 
-function VersionStatus({ version }: { version: Version }) {
+export function VersionStatus({ version }: { version: Version }) {
   const { t } = useMessages();
   if (version.state === "deleted") {
     return <span className="text-sm text-muted-foreground" data-ckui="version-status" data-state="deleted">{t("contentManager.deleted")}</span>;
   }
+  const phase = publicationPhase(version);
   const color = version.live ? "bg-success" : version.state === "draft" ? "bg-muted-foreground/50" : "bg-sky-500";
-  const label = version.live ? t("contentEditor.live") : version.state === "draft" ? t("contentManager.draft") : t("contentManager.scheduled");
+  const label = version.live ? t("contentEditor.live") : version.state === "draft" ? t("contentManager.draft")
+    : phase ? phase === "scheduled" ? t("contentManager.scheduled") : t(`contentEditor.publication_${phase}`)
+      : version.publish_at && Date.parse(version.publish_at) > Date.now() ? t("contentManager.scheduled") : t("readerEditor.ready");
   return (
     <span className="inline-flex items-center gap-1.5 text-sm text-foreground" data-ckui="version-status" data-state={version.live ? "live" : version.state}>
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", color)} />
       {label}
+      {version.live && phase && <span className="text-muted-foreground">· {phase === "scheduled" ? t("contentManager.scheduled") : t(`contentEditor.publication_${phase}`)}</span>}
     </span>
   );
 }
@@ -745,23 +738,22 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
   const client = useContentKitClient(p.client);
   const spec = model?.kinds[content.kind];
   const coordinated = useContext(EditorSaveContext) !== null;
-  const seed = useCallback((v: Version) => ({langs:v.languages,traits:v.traits,at:toLocalInput(v.publish_at),own:!!v.access,rule:v.access??content.access}),[content.access]);
+  const seed = useCallback((v: Version) => ({langs:v.languages,traits:v.traits,at:toLocalInput(v.publish_at),rule:v.access??content.access}),[content.access]);
   const fields = useDraft(useMemo(()=>seed(v),[seed,v]));
-  const {langs,traits,at,own,rule}=fields.value;
-  const directAccess = spec?.access_scope === "version";
+  const {langs,traits,at,rule}=fields.value;
   useEffect(() => { onScheduleChange?.(at); }, [at, onScheduleChange]);
   useEffect(() => { onLanguagesChange?.(langs); }, [langs, onLanguagesChange]);
   const edit=(patch:Partial<typeof fields.value>)=>{fields.edit((old)=>({...old,...patch}));setSaved(false);};
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
   const remove = useAction("content.save", p.onError);
-  const valid=langs.length>0&&(!(directAccess||own)||complete(rule));
+  const valid=langs.length>0&&complete(rule);
   const submit=async(state?: VersionState)=>{
     if(!valid)return false;
     setSaved(false);
     const settle=fields.checkpoint();
-    const accessChanged = fields.dirty.includes("own") || fields.dirty.includes("rule");
-    const out=await save.run(()=>client.contents.updateVersion(content.id,v.id,{languages:langs,traits,publish_at:fromLocalInput(at),...(state?{state}:{}),...(accessChanged?(directAccess||own?{access:cleanRule(rule)}:{clear_access:true}):{})}));
+    const accessChanged = fields.dirty.includes("rule");
+    const out=await save.run(()=>client.contents.updateVersion(content.id,v.id,{languages:langs,traits,publish_at:fromLocalInput(at),...(state?{state}:{}),...(accessChanged?{access:cleanRule(rule)}:{})}));
     if(!out)return false;
     const clean=settle(seed(out));setSaved(clean);return clean;
   };
@@ -842,13 +834,11 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
             </fieldset>
           )}
           {scheduleTarget === undefined ? schedule : scheduleTarget && createPortal(schedule, scheduleTarget)}
-          {!directAccess && <label className="flex items-center gap-2">
-            <Switch size="sm" checked={own} onCheckedChange={(own)=>edit({own})} />
-            {t("contentEditor.ownAccess")}
-          </label>}
-          {(directAccess || own) && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />}
+          <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />
+          {publicationOf(v)?.error && <ErrorLine>{publicationOf(v)!.error}</ErrorLine>}
           <ErrorLine error={save.error} />
           <div className="flex flex-wrap items-center gap-3">
+            {publicationPhase(v) === "failed" && <Button type="button" size="sm" variant="outline" disabled={save.pending || !valid} onClick={() => void submit("published")}>{t("common.retry")}</Button>}
             {!coordinated && <>
               <Button type="submit" size="sm" disabled={save.pending || !langs.length}>
                 {save.pending ? t("common.saving") : t("common.save")}
@@ -954,39 +944,36 @@ function VersionMedia({ content, version, model, ...p }: Common & { content: Con
   </>;
 }
 
-type Row = { title: string; start: string; end: string; release: string };
-const segmentRows=(version:Version):Row[]=>version.segments.map((s)=>({title:s.title??"",start:String(s.start),end:String(s.end),release:toLocalInput(s.release_at)}));
+type Row = { id?: string; title: string; start: string; end: string; release: string };
+const segmentRows=(version:Version):Row[]=>version.segments.map((s)=>({id:"id" in s&&typeof s.id==="string"?s.id:undefined,title:s.title??"",start:String(s.start),end:String(s.end),release:toLocalInput(s.release_at)}));
 
 type SegmentsEditorProps = Common & { content: Content; version: Version; heading?: boolean };
 
-/** Reader chapters use stable start-page identities; other presentations retain their numeric ranges. */
+/** Reader chapters use virtual filename start markers in current manifest order. */
 export function SegmentsEditor(p: SegmentsEditorProps) {
   const { spec } = useKind(p.content.kind, p.client);
   if (!spec) return <Skeleton className="h-24 w-full" />;
   return spec.presentation === "reader" ? <ReaderChaptersEditor {...p} /> : <NumericSegmentsEditor {...p} />;
 }
 
-type ChapterRow = { title: string; startPage: string; release: string };
+type ChapterRow = { id?: string; title: string; startPage: string; release: string };
 
 function ReaderChaptersEditor({ content, version, heading = true, ...p }: SegmentsEditorProps) {
   const { t } = useMessages();
   const coordinated = useContext(EditorSaveContext) !== null;
   const client = useContentKitClient(p.client);
   const read = useMediaRead({ kind: content.kind, id: content.id, version: version.id }, { editor: true, window: ALL_EDITOR_FILES, client });
-  const pages = useMemo(() => editorMedia(read.read).pages, [read.read]);
+  const pages = useMemo(() => editorMedia(read.read, "path").pages, [read.read]);
   const rowsOf = useCallback((value: Version): ChapterRow[] => value.segments.map((segment) => ({
+    id: "id" in segment && typeof segment.id === "string" ? segment.id : undefined,
     title: segment.title ?? "",
     startPage: segment.start_page || pages[segment.start]?.id || "",
     release: toLocalInput(segment.release_at),
   })), [pages]);
   const fields = useDraft(useMemo(() => ({ rows: rowsOf(version) }), [rowsOf, version]));
   const rows = fields.value.rows;
-  const starts = rows.map((row) => pages.findIndex((page) => page.id === row.startPage && !page.disabled));
-  const unselected = rows.some((row) => !row.startPage);
-  const missing = rows.some((row) => !!row.startPage && !pages.some((page) => page.id === row.startPage));
-  const ambiguous = rows.some((row) => pages.some((page) => page.id === row.startPage && page.disabled));
-  const ordered = starts.every((start, i) => i === 0 || start > starts[i - 1]!);
-  const valid = !unselected && !missing && !ambiguous && ordered;
+  const { ranges, problem } = chapterRanges(pages.map((page) => page.id), rows.map((row) => row.startPage));
+  const valid = problem === null;
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
   const edit = (index: number, patch: Partial<ChapterRow>) => {
@@ -997,7 +984,7 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
     if (!valid) return false;
     setSaved(false);
     const settle = fields.checkpoint();
-    const segments: SegmentInput[] = rows.map((row, i) => ({ position: i + 1, title: row.title.trim() || undefined, start_page: row.startPage, release_at: fromLocalInput(row.release) }));
+    const segments: SegmentInput[] = rows.map((row, i) => ({ id: row.id, position: i, title: row.title.trim() || undefined, start_page: row.startPage, release_at: fromLocalInput(row.release) }));
     const out = await save.run(() => client.contents.setSegments(content.id, version.id, segments));
     if (!out) return false;
     const clean = settle({ rows: rowsOf(out) });
@@ -1008,10 +995,11 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
   if (read.loading && !read.read) return <Skeleton className="h-24 w-full" />;
   return <div className="grid gap-3" data-ckui="segments-editor">
     {heading && <h4 className="text-sm font-medium">{t("contentEditor.segments")}</h4>}
+    <p className="text-sm text-muted-foreground">{t("contentEditor.chapterMarkersHint")}</p>
     {rows.length === 0 && <p className="text-muted-foreground">{t("contentEditor.noSegments")}</p>}
     {rows.map((row, i) => {
-      const start = starts[i]!, end = starts[i + 1] ?? pages.length;
-      return <div key={i} className="flex flex-wrap items-center gap-2" data-ckui="segment-row">
+      const { start, end } = ranges[i]!;
+      return <div key={row.id ?? i} className="flex flex-wrap items-center gap-2" data-ckui="segment-row">
         <span className="w-6 text-xs tabular-nums text-muted-foreground">{i + 1}</span>
         <Input className="h-8 w-40" aria-label={t("contentEditor.segmentTitle", { n: i + 1 })} placeholder={t("contentEditor.segmentTitlePlaceholder")} value={row.title} onChange={(e) => edit(i, { title: e.target.value })} />
         <PagePicker label={t("contentEditor.segmentStart", { n: i + 1 })} pages={pages} value={row.startPage} onChange={(startPage) => edit(i, { startPage })} />
@@ -1020,13 +1008,13 @@ function ReaderChaptersEditor({ content, version, heading = true, ...p }: Segmen
         <Button type="button" size="xs" variant="ghost" onClick={() => { setSaved(false); fields.edit((previous) => ({ rows: previous.rows.filter((_, j) => j !== i) })); }}>{t("common.remove")}</Button>
       </div>;
     })}
-    {unselected && <ErrorLine>{t("contentEditor.chapterStartRequired")}</ErrorLine>}
-    {missing && <ErrorLine>{t("contentEditor.chapterStartMissing")}</ErrorLine>}
-    {ambiguous && <ErrorLine>{t("contentEditor.chapterStartAmbiguous")}</ErrorLine>}
-    {!unselected && !missing && !ambiguous && !ordered && <ErrorLine>{t("contentEditor.chapterStartsOrdered")}</ErrorLine>}
+    {problem === "unselected" && <ErrorLine>{t("contentEditor.chapterStartRequired")}</ErrorLine>}
+    {problem === "missing" && <ErrorLine>{t("contentEditor.chapterStartMissing")}</ErrorLine>}
+    {problem === "duplicate" && <ErrorLine>{t("contentEditor.chapterStartAmbiguous")}</ErrorLine>}
+    {problem === "order" && <ErrorLine>{t("contentEditor.chapterStartsOrdered")}</ErrorLine>}
     <div className="flex flex-wrap items-center gap-2">
       <Button type="button" size="sm" variant="outline" onClick={() => {
-        const next = starts.length ? starts[starts.length - 1]! + 1 : 0;
+        const next = ranges.length ? ranges[ranges.length - 1]!.start + 1 : 0;
         setSaved(false);
         fields.edit((previous) => ({ rows: [...previous.rows, { title: "", startPage: pages[next]?.id ?? "", release: "" }] }));
       }}>{t("contentEditor.addSegment")}</Button>
@@ -1061,7 +1049,7 @@ function NumericSegmentsEditor({ content, version, heading = true, ...p }: Segme
   const submit=async()=>{
     if(!valid)return false;
     setSaved(false);const settle=fields.checkpoint();
-    const segments:Segment[]=rows.map((r,i)=>({position:i+1,title:r.title.trim()||undefined,start:Number(r.start),end:Number(r.end),release_at:fromLocalInput(r.release),released:false}));
+    const segments:SegmentInput[]=rows.map((r,i)=>({id:r.id,position:i,title:r.title.trim()||undefined,start:Number(r.start),end:Number(r.end),release_at:fromLocalInput(r.release)}));
     const out=await save.run(()=>client.contents.setSegments(content.id,version.id,segments));
     if(!out)return false;const clean=settle({rows:segmentRows(out)});setSaved(clean);return clean;
   };

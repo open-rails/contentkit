@@ -32,10 +32,11 @@ import { labelOf } from "../entities/parts.js";
 import { ImageCropDialog } from "../image-crop-dialog.js";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
-import { RuleFields, cleanRule, complete, VersionEditor, SegmentsEditor, AddVersion, versionLabel, defaultAccessRule } from "../content/editors.js";
+import { RuleFields, cleanRule, complete, VersionEditor, VersionStatus, SegmentsEditor, AddVersion, versionLabel, defaultAccessRule } from "../content/editors.js";
+import { publicationOf } from "../../client/publication.js";
 import { ErrorLine, contentError, formatDate, useAction } from "../social/parts.js";
 import { localInput } from "../social/bans.js";
-import { EditorSaveContext, readerMediaReady, useEditorSaveCoordinator } from "../content/editor-save.js";
+import { EditorSaveContext, useEditorSaveCoordinator } from "../content/editor-save.js";
 import { ReaderManifestEditor } from "./reader-manifest.js";
 import { isAudioRule } from "./page-picker.js";
 import { PageNotices } from "./page-notices.js";
@@ -379,10 +380,10 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const selectedPages = pages.length;
   const filesPending = folder.busy || allocating || processing || folder.read.loading || cover.pending;
   const publishingBlocked =
-    filesPending ||
+    folder.busy || allocating || folder.read.loading || cover.pending ||
     mediaFailed ||
     !!folder.read.error ||
-    selectedPages === 0 ||
+    selectedPages === 0 && !files.some((file) => file.upload && !file.unattached && file.type === "application/zip") ||
     coordinator.pending;
   const add = (input: Iterable<File>) => {
     const added = [...input];
@@ -532,16 +533,18 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
       history.clear(publication.dirty.length ? publication.historyKey : undefined);
       if (publish) {
         const fresh = sourceFolderRef.current;
-        if (!ref || fresh.busy || fresh.error || fresh.queue.items.some((q) => q.status === "failed") || !(await readerMediaReady(client, ref)))
+        if (!ref || fresh.busy || fresh.error || fresh.queue.items.some((q) => q.status === "failed"))
           throw new ValidationError(t("readerEditor.filesNotReady"));
         const edition = version ? await client.contents.version(content.id, version.id, language) : null;
         if (!edition) throw new ValidationError(t("readerEditor.versionMissing"));
-        if (edition.state !== "published") await client.contents.updateVersion(content.id, edition.id, { state: "published" });
+        // The same action also retries an unfinished publication of an
+        // already-live edition; it never withdraws its active reader snapshot.
+        await client.contents.updateVersion(content.id, edition.id, { state: "published" });
         if (!current()) return;
         const settlePublication = publication.checkpoint();
         if (!content.live) {
           const at = versionSchedule || publishAt;
-          const published = await guarded(() => client.contents.publishWhenReady(content.id, at ? new Date(at).toISOString() : undefined));
+          const published = await guarded(() => client.contents.publish(content.id, at ? new Date(at).toISOString() : undefined));
           settlePublication({ at: published.publish_at ? localInput(new Date(published.publish_at)) : "" });
         } else ed.reload();
         history.clear();
@@ -831,7 +834,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 {renderEntities(versionKinds, versionAssociations, version?.id)}
               </Panel>
             )}
-            {spec.access_scope !== "version" && <Panel title={t("contentEditor.accessOnlyTitle")}>
+            {!version && <Panel title={t("contentEditor.accessOnlyTitle")}>
               <RuleFields
                 value={details.value.access}
                 onChange={(access) => changeDetails({ access })}
@@ -846,17 +849,16 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             {(item || spec.comment_modes?.length !== 1) && <Panel title={t("readerEditor.publication")}>
               {item && version && (
                 <div className="grid gap-1 text-sm">
-                  <p className="font-medium">
-                    {t("readerEditor.versionStatus", {
-                      language: version.languages.map(nameOf).join(", "),
-                      status: t(version.state === "deleted" ? "contentManager.deleted" : version.state === "draft" ? "contentManager.draft" : version.publish_at && Date.parse(version.publish_at) > Date.now() ? "contentManager.scheduled" : item.live ? "contentManager.published" : "readerEditor.ready"),
-                    })}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2 font-medium">
+                    <span>{version.languages.map(nameOf).join(", ")}</span>
+                    <VersionStatus version={version} />
+                  </div>
+                  {publicationOf(version)?.error && <ErrorLine>{publicationOf(version)!.error}</ErrorLine>}
                   {version.state === "published" && !item?.live && status !== "published" && (
                     <p className="text-pretty text-muted-foreground">
                       {status === "scheduled"
                         ? item.publish_at && Date.parse(item.publish_at) > Date.now() ? t("readerEditor.hiddenUntilDate", { date: formatDate(m, item.publish_at) }) : t("readerEditor.hiddenUntilLive")
-                        : t(`readerEditor.hidden_${status}`)}
+                        : status === "publishing" ? t("contentEditor.publication_pending") : t(`readerEditor.hidden_${status}`)}
                     </p>
                   )}
                 </div>
@@ -926,7 +928,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
               onAdd={(input, from) => {
                 if (!item) return;
                 const content = item.id;
-                void addVersion.run(() => client.contents.addVersion(content, { ...input, ...(spec.access_scope === "version" ? { access: version?.access ?? item.access } : {}) })).then((v) => {
+                void addVersion.run(() => client.contents.addVersion(content, { ...input, access: version?.access ?? item.access })).then((v) => {
                   if (!v || !current()) return;
                   if (from) startCopy(content, v, from);
                   else openVersion(v);

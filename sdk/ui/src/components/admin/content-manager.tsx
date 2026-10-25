@@ -71,12 +71,12 @@ export function useContentManagerAccess(o: FlowClientOptions = {}): StaffAccess<
   return useStaffAccess(["contents"] as const, o);
 }
 
-export type ContentStatus = "draft" | "scheduled" | "published";
+export type ContentStatus = "draft" | "scheduled" | "publishing" | "published";
 
 /** An item's status as the manager names it. */
 export function contentStatus(c: Content): ContentStatus {
   if (c.state === "draft") return "draft";
-  if (!c.live) return "scheduled";
+  if (!c.live) return c.publish_at && Date.parse(c.publish_at) > Date.now() ? "scheduled" : "publishing";
   return "published";
 }
 
@@ -692,7 +692,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   );
 }
 
-const dot: Record<ContentStatus, string> = { published: "bg-success", scheduled: "bg-sky-500", draft: "bg-muted-foreground/50" };
+const dot: Record<ContentStatus, string> = { published: "bg-success", scheduled: "bg-sky-500", publishing: "bg-sky-500", draft: "bg-muted-foreground/50" };
 
 /** A status as a coloured dot and its name. */
 function StatusDot({ status }: { status: ContentStatus }) {

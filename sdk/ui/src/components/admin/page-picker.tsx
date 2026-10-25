@@ -12,7 +12,7 @@ import { useMessages } from "../../i18n/context.js";
 import { Button } from "#ckui/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
 
-/** One choosable page: its original source hash, display label and thumbnail. */
+/** One choosable page: the caller's reference, display label and thumbnail. */
 export interface PickerPage {
   id: string;
   label: string;
@@ -96,22 +96,23 @@ export const isAudioRule = (rule: UploadRule) => isPattern(rule.path) && !rule.p
 
 /**
  * An editor read's current pages (attached, included page uploads by source
- * hash, with their smallest image rendition) and audio uploads by {name} with
+ * reference, with their smallest image rendition) and audio uploads by {name} with
  * a playable URL (the M4A rendition, else the upload): what the server checks
  * reader metadata against, before or after any publication.
  */
-export function editorMedia(read: ReadResult | null): PlanMedia & { files: string[] } {
+export function editorMedia(read: ReadResult | null, pageReference: "source" | "path" = "source"): PlanMedia & { files: string[] } {
   const files = read?.files ?? [], rules = read?.uploads ?? [];
-  const sources = files.filter((file) => file.upload && !file.unattached && file.page_id && ruleFor(rules, file.path)?.page && !pageRemoved(file));
+  const sources = files.filter((file) => file.upload && !file.unattached && (pageReference === "path" || file.page_id) && ruleFor(rules, file.path)?.page && !pageRemoved(file));
+  const reference = (file: (typeof files)[number]) => pageReference === "path" ? file.path : file.page_id!;
   const counts = new Map<string, number>();
-  for (const file of sources) counts.set(file.page_id!, (counts.get(file.page_id!) ?? 0) + 1);
+  for (const file of sources) counts.set(reference(file), (counts.get(reference(file)) ?? 0) + 1);
   const previews = new Map<string, (typeof files)[number]>();
   for (const file of files) {
     if (file.upload || !file.from || !file.url || !file.type.startsWith("image/")) continue;
     const previous = previews.get(file.from);
     if (!previous || (file.w ?? Infinity) * (file.h ?? Infinity) < (previous.w ?? Infinity) * (previous.h ?? Infinity)) previews.set(file.from, file);
   }
-  const pages = sources.map((file) => ({ id: file.page_id!, label: file.path.split("/").at(-1) ?? file.path, url: previews.get(file.path)?.url, disabled: counts.get(file.page_id!)! > 1 }));
+  const pages = sources.map((file) => ({ id: reference(file), label: file.path.split("/").at(-1) ?? file.path, url: previews.get(file.path)?.url, disabled: counts.get(reference(file))! > 1 }));
   const m4a = new Map(files.flatMap((f) => (f.from && f.url && f.path.endsWith("/audio.m4a") ? [[f.from, f.url] as const] : [])));
   const audio = new Map<string, string>(), names = new Set<string>();
   for (const file of files) {
@@ -127,8 +128,8 @@ export function editorMedia(read: ReadResult | null): PlanMedia & { files: strin
 
 /**
  * Picks one page from thumbnails: the trigger shows the current page, the
- * dialog the whole version in reading order. value is a source hash or one of
- * extras' values.
+ * dialog the whole version in reading order. value is the supplied page
+ * reference (a virtual filename for chapter starts) or one of extras' values.
  */
 export function PagePicker({ label, pages, value, extras = [], onChange, className }: {
   label: string;

@@ -22,13 +22,20 @@ export interface UseReaderPlan {
 // setTimeout's longest delay.
 const MAX_DELAY = 2 ** 31 - 1;
 
-/** When the plan changes by itself: its next scheduled segment's release. */
+/** The next publication boundary to observe, including an overdue operation. */
 export function nextRelease(plan: ReaderPlan | null, now = Date.now()): number | null {
-  const at = (plan?.segments ?? []).flatMap((s) => (!s.released && s.release_at ? [Date.parse(s.release_at)] : [])).filter((t) => t > now);
+  const next = (plan as ReaderPlan & { next_release_at?: string } | null)?.next_release_at;
+  const at = [
+    ...(next ? [Date.parse(next)] : []),
+    ...(plan?.segments ?? []).flatMap((s) => (!s.released && s.release_at ? [Date.parse(s.release_at)] : [])),
+  ].filter(Number.isFinite);
+  // Past dates mean storage work may still be running. Ask again without
+  // pretending the chapter has already become available in this plan.
+  if (at.some((time) => time <= now)) return now + 2000;
   return at.length ? Math.min(...at) : null;
 }
 
-/** Refresh signed previews before expiry, or sooner for a chapter release. */
+/** Refresh signed previews before expiry and observe durable chapter completion. */
 export function nextReaderRefresh(plan: ReaderPlan | null, now = Date.now()): number | null {
   const release = nextRelease(plan, now);
   if (!plan?.expires) return release;

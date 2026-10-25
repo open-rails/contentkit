@@ -54,7 +54,6 @@ export function Paywall({ decision, onCheckout, tiers, onSignIn, labels, childre
         {decision.unknown ? t("paywall.unknown") : required ? t("paywall.requiresFirst") : t("paywall.locked")}
       </p>
       {preview?.pages ? <p className="text-muted-foreground">{m.plural("paywall.previewPages", preview.pages)}</p> : null}
-      {preview?.segments ? <p className="text-muted-foreground">{m.plural("paywall.previewSegments", preview.segments)}</p> : null}
       <ReleaseNotice releases={decision.releases} />
       {!decision.unknown && (
         <div className="flex flex-wrap gap-2" data-ckui="paywall-actions">

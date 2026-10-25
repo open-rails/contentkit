@@ -10,7 +10,6 @@ import type {
   Version,
   VersionInput,
 } from "./generated/wire.js";
-import { toContentKitError } from "./errors.js";
 import type { Http } from "./http.js";
 import { call, type RouteQuery } from "./route.js";
 
@@ -80,21 +79,23 @@ export class ContentsClient {
   setCreators(id: string, creators: Creator[]): Promise<Content> {
     return this.write(call(this.http, "PUT", "/contents/{id}/creators", { params: { id }, body: { creators } }));
   }
-  /** Publishes now, or schedules for at; moderation "held" when the moderator holds it. */
+  /** Accepts durable publication now or at a future time. Check live/status for completion. */
   publish(id: string, at?: string): Promise<Content> {
     return this.write(call(this.http, "POST", "/contents/{id}/publish", { params: { id }, body: { publish_at: at } }));
   }
-  /** publish, retrying while the server answers not_ready (files finishing their publication) for up to waitMs. */
+  /** Accepts publication once, then observes initial availability for up to waitMs.
+   * A future schedule or timeout returns the accepted pending content. It never
+   * resubmits publication while a server-owned operation is processing.
+   */
   async publishWhenReady(id: string, at?: string, waitMs = 30_000): Promise<Content> {
-    const deadline = Date.now() + waitMs;
-    for (let delay = 1000; ; delay = Math.min(delay * 2, 5000)) {
-      try {
-        return await this.publish(id, at);
-      } catch (e) {
-        if (toContentKitError(e).code !== "not_ready" || Date.now() + delay > deadline) throw e;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+    let content = await this.publish(id, at);
+    if (at && Date.parse(at) > Date.now()) return content;
+    const deadline = Date.now() + Math.max(0, waitMs);
+    while (!content.live && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000, deadline - Date.now())));
+      content = await this.write(this.get(id));
     }
+    return content;
   }
   unpublish(id: string): Promise<Content> {
     return this.write(call(this.http, "POST", "/contents/{id}/unpublish", { params: { id } }));
@@ -128,7 +129,7 @@ export class ContentsClient {
   orderVersions(id: string, ids: string[]): Promise<Content> {
     return this.write(call(this.http, "PUT", "/contents/{id}/versions/order", { params: { id }, body: { ids } }));
   }
-  /** Replaces a version's segments (chapters). */
+  /** Replaces chapter start markers in virtual manifest order and their schedules. */
   setSegments(id: string, vid: string, segments: SegmentInput[]): Promise<Version> {
     return this.writeVersion(id, call(this.http, "PUT", "/contents/{id}/versions/{vid}/segments", { params: { id, vid }, body: { segments } }));
   }

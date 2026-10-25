@@ -1222,9 +1222,41 @@ ZIP extraction, thumbnails and other renditions run in the normal media
 workers; their existing media progress remains available.
 
 Uploading never publishes the content. Edit its metadata and call
-`client.contents.publish(id, publishAt)` separately when it should go live.
+`client.contents.publish(id, publishAt)` separately to accept durable publication.
+The response may still have `live: false`: the server finishes processing and
+storage publication in the background. Editor `version.publication` records
+pending, waiting, running or failed work independently of an existing live
+release. Reopening the editor reads that durable state. `useContent` observes
+accepted publication until it completes or reports failure; it never unlocks
+content by advancing the browser clock.
+
+`publishWhenReady` submits once and optionally observes initial availability
+for a bounded time. It returns pending content on timeout or for a future
+schedule; it never retries the publication POST while processing continues.
 The bulk uploader creates private drafts and follows the same upload/commit
 flow. It has no publish-on-completion setting or publication status polling.
+
+Chapters use start markers naming virtual manifest files:
+
+```ts
+await client.contents.setSegments(galleryId, versionId, [
+  { title: "Chapter 1", start_page: "pages/001.jpg" },
+  { title: "Chapter 2", start_page: "pages/020.jpg", release_at: "2026-11-01T12:00:00Z" },
+]);
+```
+
+Manifest order determines each chapter's files up to the next marker or the
+end. Inserting `017c.jpg` or `019b.jpg` before `020.jpg` includes those files in
+chapter 1 automatically. Hashes and original names remain file metadata; they
+are not chapter membership lists. Preserve a returned chapter `id` when editing
+its marker or title. Missing or reordered markers require correction instead
+of silently selecting another file.
+
+Every chapter shares its version's access policy. Publication moves the selected
+files from that version's `future` area into `public` or `private`; one item
+token opens its private folder and never a sibling version. Reader plans expose
+completed chapters and an optional `next_release_at` observation hint, without
+revealing future file paths. A due hint triggers another read, not local access.
 
 The bulk upload queue retains the exact commit batch until the server confirms
 it. A retry reuses that batch ID and ordered operations. Browser persistence
