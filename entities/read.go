@@ -246,10 +246,21 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
 	count := "coalesce(cc.n, 0)"
-	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT count(DISTINCT (f.kind,f.content_id))::int AS n FROM %s f
+	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT count(DISTINCT f.content_id)::int AS n FROM %s f
  WHERE f.tenant_id=g.tenant_id AND (f.entity_ids @> ARRAY[g.id] OR f.owner_entity_id=g.id)
- AND g.state='active' AND %s AND (@count_language='' OR f.languages @> ARRAY[@count_language::text])%s) cc ON true`,
+ AND g.state='active' AND %s AND (@count_language='' OR @count_language::text=ANY(f.languages))%s) cc ON true`,
 		s.table("content_facets"), liveListed, countKind)
+	if c.sort == SortCount {
+		// Ranking needs counts for every candidate entity. Aggregate the eligible
+		// facets once instead of repeating an indexed lookup per entity.
+		counts = fmt.Sprintf(`LEFT JOIN (SELECT members.entity_id, count(*)::int AS n FROM (
+ SELECT membership.entity_id,f.content_id
+ FROM %s f CROSS JOIN LATERAL unnest(array_append(f.entity_ids,f.owner_entity_id)) membership(entity_id)
+ WHERE f.tenant_id=@tenant AND membership.entity_id IS NOT NULL AND %s
+ AND (@count_language='' OR @count_language::text=ANY(f.languages))%s
+ GROUP BY membership.entity_id,f.content_id) members
+ GROUP BY members.entity_id) cc ON cc.entity_id=g.id AND g.state='active'`, s.table("content_facets"), liveListed, countKind)
+	}
 	c.args["covered_kinds"] = s.coveredKinds()
 	covers := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT jsonb_build_object('content_id',f.content_id,'auto',true) AS cover
  FROM %s f LEFT JOIN %s ic ON ic.tenant_id=f.tenant_id AND ic.content_kind=f.kind
