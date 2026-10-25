@@ -1315,10 +1315,11 @@ and `hentai0_media_worker`, and passes it everywhere:
 It is required. Hosts sharing a database must never share one: a worker
 drains every job in its schema, so it would take another host's jobs (same
 queue and job kinds) and fail them against its own registry and bucket. Queue
-names (`media_place`, `media_image`, `media_video`, `media_audio`) are fixed
-within a schema; every upload passes through `media_place`, so a worker must
-run even for kinds without presets. Autoscalers (KEDA) count `{schema}.river_job` rows of `media_video`
-and `media_audio` (available/running/retryable).
+names (`media_ingest`, `media_image`, `media_video`) are fixed within a schema.
+Every accepted upload passes through `media_ingest`, so a worker must run even
+for kinds without presets. Ingest preserves uploaded audio without conversion;
+video processing retains its configured soundtracks. Autoscalers (KEDA) can
+count available/running/retryable rows in these queues in `{schema}.river_job`.
 
 It is never the host's own River schema either: River elects one leader per
 schema, and only the leader enqueues periodic jobs and runs maintenance, from
