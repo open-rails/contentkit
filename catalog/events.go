@@ -13,37 +13,44 @@ import (
 
 // Event types recorded with the domain mutation.
 const (
-	EventContentCreated     = "content.created"
-	EventContentUpdated     = "content.updated"
-	EventContentScheduled   = "content.scheduled"
-	EventContentPublished   = "content.published"
-	EventContentUnpublished = "content.unpublished"
-	EventContentDeleted     = "content.deleted"
-	EventContentRestored    = "content.restored"
-	EventContentPurged      = "content.purged"
-	EventVersionCreated     = "version.created"
-	EventVersionUpdated     = "version.updated"
-	EventVersionPublished   = "version.published"
-	EventVersionDeleted     = "version.deleted"
-	EventVersionPurged      = "version.purged"
-	EventAudienceReleased   = "version.audience_released"
+	EventContentCreated       = "content.created"
+	EventContentUpdated       = "content.updated"
+	EventContentScheduled     = "content.scheduled"
+	EventContentPublished     = "content.published"
+	EventContentUnpublished   = "content.unpublished"
+	EventContentDeleted       = "content.deleted"
+	EventContentRestored      = "content.restored"
+	EventContentPurged        = "content.purged"
+	EventVersionCreated       = "version.created"
+	EventVersionUpdated       = "version.updated"
+	EventVersionPublished     = "version.published"
+	EventVersionDeleted       = "version.deleted"
+	EventVersionPurged        = "version.purged"
+	EventAudienceReleased     = "version.audience_released"
+	EventPublicationCompleted = "version.publication_completed"
 )
 
 // Event is the catalog fact appended by a mutation. Readers receive EventRecord.
 type Event struct {
-	Type       string
-	Kind       string
-	ContentID  string
-	VersionID  string
-	OccurredAt time.Time
-	Release    *access.Release
+	Type          string
+	Kind          string
+	ContentID     string
+	VersionID     string
+	OccurredAt    time.Time
+	Release       *access.Release
+	PublicationID string
+	ChapterIDs    []string
+	Released      *bool
 }
 
 type eventPayload struct {
-	Kind      string          `json:"kind"`
-	ContentID string          `json:"content_id"`
-	VersionID string          `json:"version_id,omitempty"`
-	Release   *access.Release `json:"release,omitempty"`
+	Kind          string          `json:"kind"`
+	ContentID     string          `json:"content_id"`
+	VersionID     string          `json:"version_id,omitempty"`
+	Release       *access.Release `json:"release,omitempty"`
+	PublicationID string          `json:"publication_id,omitempty"`
+	ChapterIDs    []string        `json:"chapter_ids,omitempty"`
+	Released      *bool           `json:"released,omitempty"`
 }
 
 // emit queues facts in the mutation transaction. The shared deferred flush
@@ -62,7 +69,8 @@ func (s *Store) emit(ctx context.Context, tx pgx.Tx, events ...Event) error {
 		if times[i].IsZero() {
 			times[i] = s.now()
 		}
-		payload, err := json.Marshal(eventPayload{Kind: e.Kind, ContentID: e.ContentID, VersionID: e.VersionID, Release: e.Release})
+		payload, err := json.Marshal(eventPayload{Kind: e.Kind, ContentID: e.ContentID, VersionID: e.VersionID, Release: e.Release,
+			PublicationID: e.PublicationID, ChapterIDs: e.ChapterIDs, Released: e.Released})
 		if err != nil {
 			return err
 		}

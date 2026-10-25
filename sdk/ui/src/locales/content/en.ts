@@ -20,7 +20,7 @@ export const content = {
     lockedOption: "{name} (locked)",
   },
   contentEditor: {
-    chapterMarkersHint: "Choose each chapter’s first file. Files up to the next marker belong to that chapter, including files inserted later.",
+    chapterMarkersHint: "Choose each chapter’s first file. Files up to the next marker belong to that chapter, including files inserted later. Setting a released chapter to a future date withdraws it until that date.",
     publication_pending: "Publication queued",
     publication_waiting: "Waiting for media",
     publication_running: "Publishing",

@@ -21,7 +21,7 @@ export const content: typeof en = {
     lockedOption: "{name} (잠김)",
   },
   contentEditor: {
-    chapterMarkersHint: "각 챕터의 첫 파일을 선택하세요. 다음 표시까지의 파일은 나중에 삽입한 파일도 포함하여 해당 챕터에 속합니다.",
+    chapterMarkersHint: "각 챕터의 첫 파일을 선택하세요. 다음 표시까지의 파일은 나중에 삽입한 파일도 포함하여 해당 챕터에 속합니다. 공개된 챕터에 미래 날짜를 설정하면 해당 날짜까지 공개가 철회됩니다.",
     publication_pending: "공개 대기 중",
     publication_waiting: "미디어 기다리는 중",
     publication_running: "공개 처리 중",

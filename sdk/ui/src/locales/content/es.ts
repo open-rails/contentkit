@@ -21,7 +21,7 @@ export const content: typeof en = {
     lockedOption: "{name} (bloqueada)",
   },
   contentEditor: {
-    chapterMarkersHint: "Elige el primer archivo de cada capítulo. Los archivos hasta el siguiente marcador pertenecen al capítulo, incluidos los que añadas después.",
+    chapterMarkersHint: "Elige el primer archivo de cada capítulo. Los archivos hasta el siguiente marcador pertenecen al capítulo, incluidos los que añadas después. Cambiar un capítulo publicado a una fecha futura lo retira hasta esa fecha.",
     publication_pending: "Publicación en cola",
     publication_waiting: "Esperando los archivos",
     publication_running: "Publicando",

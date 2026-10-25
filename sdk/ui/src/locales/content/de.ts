@@ -21,7 +21,7 @@ export const content: typeof en = {
     lockedOption: "{name} (gesperrt)",
   },
   contentEditor: {
-    chapterMarkersHint: "Wähle die erste Datei jedes Kapitels. Alle Dateien bis zur nächsten Markierung gehören dazu, auch später eingefügte Dateien.",
+    chapterMarkersHint: "Wähle die erste Datei jedes Kapitels. Alle Dateien bis zur nächsten Markierung gehören dazu, auch später eingefügte Dateien. Ein zukünftiges Datum zieht ein bereits veröffentlichtes Kapitel bis zu diesem Datum zurück.",
     publication_pending: "Veröffentlichung vorgemerkt",
     publication_waiting: "Warten auf Medien",
     publication_running: "Wird veröffentlicht",

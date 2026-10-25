@@ -21,7 +21,7 @@ export const content: typeof en = {
     lockedOption: "{name}（已锁定）",
   },
   contentEditor: {
-    chapterMarkersHint: "选择每个章节的第一个文件。到下一个标记之前的文件都属于该章节，包括以后插入的文件。",
+    chapterMarkersHint: "选择每个章节的第一个文件。到下一个标记之前的文件都属于该章节，包括以后插入的文件。 将已发布章节的日期改为未来时间，会在该时间之前撤回该章节。",
     publication_pending: "发布已排队",
     publication_waiting: "等待媒体处理",
     publication_running: "正在发布",

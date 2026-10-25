@@ -21,7 +21,7 @@ export const content: typeof en = {
     lockedOption: "{name}（ロック中）",
   },
   contentEditor: {
-    chapterMarkersHint: "各チャプターの最初のファイルを選択します。次のマーカーまでのファイルは、後から挿入したものも含めてそのチャプターに属します。",
+    chapterMarkersHint: "各チャプターの最初のファイルを選択します。次のマーカーまでのファイルは、後から挿入したものも含めてそのチャプターに属します。 公開済みのチャプターに未来の日時を設定すると、その日時まで非公開になります。",
     publication_pending: "公開待ち",
     publication_waiting: "メディアを待機中",
     publication_running: "公開処理中",
