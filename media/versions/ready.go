@@ -52,8 +52,8 @@ func (s *Service) PendingTx(ctx context.Context, q pgx.Tx, targets []Target) ([]
 	return out, nil
 }
 
-func (s *Service) pending(ctx context.Context, q querier, k *media.Kind, t Target) (string, error) {
-	m, err := s.manifest(ctx, k, t)
+func (s *Service) pending(ctx context.Context, q pgx.Tx, k *media.Kind, t Target) (string, error) {
+	m, err := s.manifest(ctx, q, k, t)
 	if err != nil {
 		return "", err
 	}

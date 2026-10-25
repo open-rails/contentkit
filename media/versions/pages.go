@@ -643,7 +643,7 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 				return err
 			}
 			// Not the manifest this edit wrote: a commit may have landed since.
-			m, _, err := s.m.Manifests.Get(ctx, ref)
+			m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
 			if errors.Is(err, media.ErrNotFound) {
 				return nil
 			} else if err != nil {

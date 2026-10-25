@@ -321,12 +321,12 @@ func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Tar
 }
 
 // manifest is v's item's manifest; an empty one before its first upload.
-func (s *Service) manifest(ctx context.Context, k *media.Kind, v Target) (*media.Manifest, error) {
+func (s *Service) manifest(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target) (*media.Manifest, error) {
 	ref, err := s.ref(k.Name, v)
 	if err != nil {
 		return nil, err
 	}
-	m, _, err := s.m.Manifests.Get(ctx, ref)
+	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
 	if errors.Is(err, media.ErrNotFound) {
 		return &media.Manifest{V: media.ManifestVersion}, nil
 	}
