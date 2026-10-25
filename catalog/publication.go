@@ -163,12 +163,15 @@ func (s *Store) publishTextDue(ctx context.Context) (int, error) {
 	}
 	defer tx.Rollback(ctx)
 	at := s.now()
+	// Soft deletion retains the last completed edition for its exact-key
+	// holders until physical purge. Freeze its policy; only unpublishing
+	// withdraws availability, and deleted drafts never become released.
 	rows, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c
  WHERE c.tenant_id=$1 AND c.kind=ANY($3) AND EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
  AND ((c.state='published' AND v.state='published' AND (
        (NOT v.released AND coalesce(c.publish_at,$2)<=$2 AND coalesce(v.publish_at,$2)<=$2)
        OR (v.released AND v.released_access IS DISTINCT FROM `+s.qs+`.content_frozen_access(v.access,$2))))
-   OR (v.released AND (c.state<>'published' OR v.state<>'published'))))
+   OR (v.released AND (c.state NOT IN ('published','deleted') OR v.state NOT IN ('published','deleted')))))
  ORDER BY c.id LIMIT 200 FOR UPDATE SKIP LOCKED`, s.tenant, at, kinds)
 	if err != nil {
 		return 0, err
@@ -183,7 +186,7 @@ func (s *Store) publishTextDue(ctx context.Context) (int, error) {
  AND ((c.state='published' AND v.state='published' AND (
        (NOT v.released AND coalesce(c.publish_at,$3)<=$3 AND coalesce(v.publish_at,$3)<=$3)
        OR (v.released AND v.released_access IS DISTINCT FROM `+s.qs+`.content_frozen_access(v.access,$3))))
-   OR (v.released AND (c.state<>'published' OR v.state<>'published')))
+   OR (v.released AND (c.state NOT IN ('published','deleted') OR v.state NOT IN ('published','deleted'))))
  ORDER BY v.content_id,v.id FOR UPDATE OF v`, s.tenant, parents, at)
 	if err != nil {
 		return 0, err

@@ -33,6 +33,7 @@ type releasePlan struct {
 	Chapters    []string          `json:"chapters"`
 	Previous    []string          `json:"previous"`
 	Released    bool              `json:"released"`
+	Retained    bool              `json:"retained,omitempty"`
 	Waiting     bool              `json:"waiting"`
 	NextAt      *time.Time        `json:"next_at,omitempty"`
 }
@@ -205,10 +206,61 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 	if err != nil {
 		return nil, err
 	}
+	if prior != nil && prior.View != nil {
+		// applyDelivery keeps only aliases whose served destinations the new
+		// delivery actually owns, including unchanged HLS index references.
+		plan.View.Deliveries = slices.Clone(prior.View.Deliveries)
+	}
 	for _, delivery := range m.Deliveries {
 		if !delivery.Withdrawn {
 			plan.Previous = append(plan.Previous, delivery.ID)
 		}
+	}
+	if prior != nil && prior.Released && !m.Deleted && (state == "deleted" || parentState == "deleted") &&
+		(state == "published" || state == "deleted") && (parentState == "published" || parentState == "deleted") {
+		// Retention freezes exactly the completed snapshot, including chapter
+		// membership and source revisions. Authoring edits and future deadlines
+		// cannot add files while either this edition or its parent is deleted.
+		prior.Copies, prior.Previous = nil, plan.Previous
+		prior.Waiting, prior.NextAt, prior.Retained = false, nil, true
+		prior.EffectiveAccess = access.Rule{Level: access.PPV}
+		prior.Fingerprint = "retained:" + strings.TrimPrefix(prior.Fingerprint, "retained:")
+		pin := func(blob, area string) error {
+			if blob == "" {
+				return nil
+			}
+			sourceArea, _, valid := layout.SplitBlobRef(blob)
+			if !valid || sourceArea != layout.AreaPublic && sourceArea != layout.AreaPrivate {
+				return fmt.Errorf("%w: retained publication contains unserved media", ErrInvalid)
+			}
+			copy := media.Promotion{Source: blob, Area: area}
+			if !slices.Contains(prior.Copies, copy) {
+				prior.Copies = append(prior.Copies, copy)
+			}
+			return nil
+		}
+		for _, f := range prior.View.Files {
+			if !f.IsUpload() || k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
+				if err := pin(f.Blob, layout.AreaPrivate); err != nil {
+					return nil, err
+				}
+			}
+			if f.Track != nil {
+				if err := pin(f.Track.Index, layout.AreaPrivate); err != nil {
+					return nil, err
+				}
+			}
+			// Configured public previews remain public, just as for a paid
+			// edition. Ordinary reader files move to private before completion.
+			for _, pub := range f.Public {
+				for _, blob := range pub.Blobs {
+					if err := pin(blob, layout.AreaPublic); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+		return prior, nil
 	}
 	served := map[string]bool{}
 	retained := map[string]bool{}
@@ -508,6 +560,22 @@ func (p *releasePlan) applyDelivery(delivery *media.PublicationDelivery) {
 		area, _, _ := layout.SplitBlobRef(f.Blob)
 		return area != layout.AreaPrivate && area != layout.AreaPublic
 	})
+	// Immutable HLS indexes still name the preparation's original references.
+	// Carry their aliases forward only when this delivery explicitly owns the
+	// previous served destination; withdrawn or unrelated bytes gain no alias.
+	for _, previous := range p.View.Deliveries {
+		if !previous.Ready || previous.Withdrawn {
+			continue
+		}
+		for _, file := range previous.Files {
+			blob, copied := lookup[file.Blob]
+			if !copied || slices.ContainsFunc(committed.Files, func(f media.DeliveryFile) bool { return f.Source == file.Source }) {
+				continue
+			}
+			file.Blob = blob
+			committed.Files = append(committed.Files, file)
+		}
+	}
 	p.View.Deliveries = []media.PublicationDelivery{committed}
 }
 
@@ -712,7 +780,11 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err := s.recordFacts(ctx, tx, k, t, plan.View); err != nil {
 				return err
 			}
-			if plan.Released {
+			if plan.Retained {
+				if err := completion.WithdrawPublicationTx(ctx, tx, t, true); err != nil {
+					return err
+				}
+			} else if plan.Released {
 				if err := completion.CompletePublicationTx(ctx, tx, t, at); err != nil {
 					return err
 				}

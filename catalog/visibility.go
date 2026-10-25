@@ -342,7 +342,7 @@ type itemView struct {
 // decide applies the rule to content items for direct reads: an editor (staff,
 // creator, owner-entity editor) sees everything; anyone else sees the live
 // versions of live content in the site's scope, and a deleted one that was
-// live if they hold its content or version key. Optional content filters
+// live if they hold its exact version key. Optional content filters
 // do not apply to direct reads. With every, each item's owner entity is asked
 // for editorship (a detail page); else only those of items the rule does not
 // show whole or open.
@@ -390,7 +390,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		return nil, err
 	}
 	// Live versions are decided by their rule; deleted ones that were live
-	// open only to holders of their own content or version key.
+	// open only to holders of their own exact version key.
 	known := func(id string) bool { return v.staff || creator[id] || v.editable(byID[id][0].ownerEntity) }
 	var live, held []facetRow
 	for id, rs := range byID {
