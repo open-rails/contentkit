@@ -1,117 +1,102 @@
 # Critical ContentKit integration suite
 
-This replacement is in progress in draft PR390. It must not be used as passing
-replacement evidence until every selected critical behavior is implemented and
-verified. The old test corpus was deleted first from this isolated candidate,
-as requested; the production checkout and other worktrees are unchanged.
+This suite exercises the public HTTP, Go and TypeScript contracts against real
+AuthKit, PostgreSQL, object storage, media workers, browsers and ClickHouse.
+Tenant and app fixtures share database tables so separate schemas cannot hide
+missing scope checks. Controlled boundaries include clocks, storage failures
+and connection cuts; authentication and access decisions use the real services.
 
-The first slices use real AuthKit, PostgreSQL, the scoped ContentKit engine and
-its public HTTP/Go clients. All apps share tables: separate schemas must not
-hide missing tenant/app predicates. The only controlled boundaries are the
-clock, an actual TCP connection cut, and legitimately signed expired issuer
-input. No internal authentication, access, store or billing collaborator is
-mocked.
+The old test corpus was retired when this suite was built. The scenario and
+binding inventories describe what must be verified. They are not themselves
+proof that an execution passed.
 
-Run a focused implemented slice against an owned disposable PostgreSQL18 with
-PGroonga4.1+ and pg_trgm:
+## Full qualification
 
-```sh
-cd tests/critical
-CONTENTKIT_CRITICAL_PG='postgres://user:password@127.0.0.1:port/disposable?sslmode=disable' \
-  GOWORK=off go test -count=1 -run '^TestPublicationWithoutWorkers$' ./...
-```
-
-Missing PostgreSQL fails the suite; it never skips. The strict selected-case runner, real object-store/commercial fixtures and built-package browser cases are present. ClickHouse recovery checks and the full public-operation mapping remain in progress. `coverage.json` records obligations rather than turning
-scenario titles or counts into tests. Existing pure fixtures may be reused;
-legacy tests are not retained under new names.
-
-`CK_NEGATIVE_CONTROL=foreign-app-grant` deliberately widens one actor's authority
-in the test fixture. Its cross-app403 assertion must fail. This opt-in fault is
-for demonstrating sensitivity, never a normal passing CI mode.
-
-The new publication slice exposed an injected-clock inconsistency: catalog
-queries used Deps.Clock while access decisions used time.Now. The separate
-clock-wiring fix keeps ordinary nil-clock behavior and is covered by real HTTP
-release-boundary and wall-clock controls. It is not a claim that deployed
-wall-clock publication was broken.
-
-
-The full runner is `python3 tests/critical/run.py --race` from the repository
-root. It deliberately fails until the ledger has reviewed executable cases and
-the selected public-operation mapping. For local development only:
+From the repository root:
 
 ```sh
-python3 tests/critical/run.py --focus '^TestMultipartUpload$'
+python3 tests/critical/run.py --race
 ```
 
-This prints `LOCAL PARTIAL EXECUTION; NOT QUALIFICATION`. It rejects selected
-skips and zero completed tests; focused execution is prohibited in CI.
-`results/go.jsonl` records every Go test action. Full qualification also checks
-every exact reviewed scenario, operation and public Go/TS binding case name actually passed.
-The HTTP ledger is also checked against the current declared route inventory,
-so missing, duplicate and changed operation records cannot qualify.
+The runner requires every reviewed scenario, HTTP operation and public Go/TS
+binding to have executable case mappings. It then requires every selected case
+to run and pass exactly once. Failures, skipped tests, missing cases, unfinished
+packages and empty executions all fail qualification. The HTTP inventory is
+checked against the declared API, and both operation and binding inventories
+are checked against the ledger.
 
-`python3 tests/critical/run.py --race --suite sdk` qualifies every selected
-TypeScript binding through its reviewed Go test owner. It runs those owners
-in full, preserving their real-service setup and actor profiles. This fixed CI
-selection differs from local `--focus`: missing review, skipped cases and
-duplicate required executions still fail. The default suite continues to
-require every critical scenario, HTTP contract and Go/TypeScript binding.
+The current inventories contain 126 scenarios, 166 HTTP operations and 236
+bindings. `coverage.json` records their review and case mappings;
+`results/go.jsonl` records actual execution. A successful full runner is the
+qualification result, not the review status of an individual ledger entry.
 
-Additional required owned-fixture settings:
+CI builds and checks the shipped SDK, public Go modules and native commands
+before running the suite with race detection. It uploads execution results and
+browser screenshots even when the run fails.
 
+## Owned fixtures
+
+Provide disposable services through:
+
+- `CONTENTKIT_CRITICAL_PG`: PostgreSQL 18 with PGroonga 4.1+ and pg_trgm.
 - `CONTENTKIT_CRITICAL_S3_ENDPOINT`, `CONTENTKIT_CRITICAL_S3_USER`,
-  `CONTENTKIT_CRITICAL_S3_PASSWORD`: a real S3-compatible service with signed
+  `CONTENTKIT_CRITICAL_S3_PASSWORD`: S3-compatible storage supporting signed
   checksums, multipart and conditional writes. Browser uploads also need CORS.
 - `CONTENTKIT_CRITICAL_CH_ADDR`, `CONTENTKIT_CRITICAL_CH_USER`,
   `CONTENTKIT_CRITICAL_CH_PASSWORD`, optionally `CONTENTKIT_CRITICAL_CH_CLUSTER`:
   ClickHouse with Keeper and replica macros. Each fixture owns a fresh database.
-- Native libvips, ffmpeg, Node, pnpm and Playwright Chromium. Build the package
-  and harness with `pnpm --dir sdk/ui build` followed by
-  `pnpm --dir sdk/ui exec vite build --config ../../tests/critical/browser/vite.config.mjs`.
 
-Current additions exercise actual image output dimensions and published cover
-URLs, draft reopen/status reads, rejected uploads, immutable edits, uncertain
-commit replay, real multipart resume/abort, gateway capabilities and real React
-identity changes. Their scenario IDs are still obligations under semantic
-review; for example file-count coverage does not establish owner quota coverage,
-foreign multipart tickets do not establish expiry coverage, and HTTP range
-coverage does not establish HLS/archive authorization.
+Native tests need libvips and the media worker's compatible FFmpeg runtime;
+browser tests need Node, pnpm and Playwright Chromium. CI provisions these in
+`.github/workflows/go.yaml`. `.github/scripts/critical-media-tools.sh` exposes
+the pinned media image's FFmpeg tools to host tests and removes only its owned
+container. It does not replace the worker under test with a released worker.
 
-The TypeScript `ContentKitError` contract exposes status/code, retryAfter,
-details, blobs, ban, action, reason, availableAt and unknownCode. RequestID is a
-Go error field; adding it to TypeScript is outside the current public contract.
-
-The candidate now includes upstream `8377f8b3`. The two accepted P0 purge
-scenarios `CK-J08-S05` and `CK-J08-S06` are current obligations, bringing the
-selected scenario count to 123. Audio remains P1. Content-item moderation was
-removed upstream; the version/parent publication boundary remains required.
-The HTTP inventory still contains 166 operations. `binding_matrix.tsv` records
-the 115 Go and 115 TypeScript public bindings selected by the approved plan;
-the runner refuses an omitted, duplicated or changed binding ledger row.
-
-New focused checks cover real owner/entity/app comment moderation boundaries,
-ban expiry and lift, normalized word/IP rules, concurrent entity ownership,
-deleted and foreign-recreated authorization scopes, and startup against
-PostgreSQL-enforced read-only transactions. The scope refusal currently surfaces
-as `503 unavailable`; ordinary missing permission remains `403 forbidden`.
-These additions do not complete the pending semantic and operation review.
-
-Small public-value contracts run without a database or browser after building
-the shipped SDK:
+Build the shipped SDK and browser harness before browser tests:
 
 ```sh
-python3 tests/critical/run.py --focus '^Test(PublicScopeValues|ShippedTypeScriptValues)$'
+pnpm --dir sdk/ui build
+pnpm --dir sdk/ui exec vite build --config ../../tests/critical/browser/vite.config.mjs
 ```
 
-They use known cryptographic literals, native SHA-256 as an independent streaming
-oracle, canonical identity/configuration round trips, typed error payloads,
-upload admission limits and media read-window/expiry values. Integration
-fixtures still refuse missing database settings before attempting a connection.
+Missing required fixtures fail rather than skip. Never point destructive
+fixture tests at application or production databases.
 
-The credential-ceiling scenarios use supported organization API keys at root,
-tenant and app scopes. The current AuthKit tenant-actor resolver excludes
-noninteractive personal tokens, so this suite does not claim functional PAT
-admission. Entity owner assignment is checked through its real ownership,
-directory and authorization effects; there is no public actor-audit event for
-that operation to assert.
+## Focused development
+
+Run whole test owners to preserve their setup and actor profiles:
+
+```sh
+python3 tests/critical/run.py --focus '^TestDeletedContentPurgeOwnsMedia$' --race
+python3 tests/critical/run.py --focus '^TestMediaSSEUpload$'
+```
+
+Focused execution is prohibited in CI and prints
+`LOCAL PARTIAL EXECUTION; NOT QUALIFICATION`. Pure public-value checks can run
+without database fixtures after building the SDK; integration fixtures still
+require their actual services.
+
+The fixed CI selection `--suite sdk` runs all reviewed TypeScript binding test
+owners in full. It applies the same failure, omission and duplicate-case checks
+to that selection; it does not qualify the complete backend suite.
+
+`CK_NEGATIVE_CONTROL=foreign-app-grant` deliberately widens one fixture actor's
+authority. Its cross-app assertion must fail. This demonstrates the assertion's
+sensitivity and is never a normal passing mode.
+
+## Media acceptance
+
+The real ZIP/browser journey verifies upload byte progress, partial extraction,
+loaded thumbnails, reopening the editor, credential refresh, and a fully
+processed draft that remains unpublished. Go streaming cases cover snapshots,
+replay/resync, expiry, revocation, ordered callbacks and cancellation.
+
+Video checks inspect actual AV1/H264 output and audio streams alongside HLS
+metadata. Other cases cover image dimensions, interrupted work,
+immutable upload admission, multipart handling, scoped delivery, legacy storage
+migration and the existing content-purge sweep's storage retry and restore race.
+
+Scope and value tests retain their actual public boundaries: organization keys
+exercise root/tenant/app authority; unsupported personal-token admission is not
+claimed. TypeScript errors expose the fields declared by that client; a Go-only
+error field is not treated as a missing TypeScript contract.
