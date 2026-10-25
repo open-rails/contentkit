@@ -45,6 +45,10 @@ transfer endpoint in single-file mode, with access, completed-source revision
 and host download policy checked again at transfer time. These transfers are
 uncached binary attachments; the grant retains the original MIME type and
 filename. They never issue a reader token or gateway URL for internal storage.
+Uploaded source ZIPs are never reader downloads, even when selected as a
+literal download file: they can contain future chapters. Reader ZIPs are
+assembled only from the completed released set; editors use their separate
+original-file interface.
 Same-rung MP4 presets have separate allocations so publishing an ordinary
 preset cannot move a `HostOnly` preset into a served area. This cannot prevent
 saving equivalent bytes already available through an ordinary served preset.

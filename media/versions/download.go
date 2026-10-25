@@ -730,6 +730,14 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 	// must never be added to ordinary reader manifests or gateway grants.
 	if preset := private(k, k.Download); preset == nil || !k.LazyZip(preset) {
 		file, state := k.DownloadFile(m)
+		if file.IsUpload() && (file.Type == "application/zip" || file.Type == "application/x-zip-compressed" ||
+			file.Admission != nil || strings.EqualFold(path.Ext(file.Path), ".zip")) {
+			// An uploaded archive can contain unreleased chapters. Reader
+			// downloads must assemble their ZIP from the completed released
+			// set; even a signed single-file transfer cannot expose this source.
+			// Editors retain their separate authorized original-file interface.
+			return media.Item{}, nil, ErrNoDownload
+		}
 		if state != media.DownloadNone {
 			sourcePath := file.Path
 			if !file.IsUpload() {
