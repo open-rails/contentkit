@@ -22,6 +22,42 @@ OpenRails owns channel subscription products, purchases, renewals and entitlemen
 expiry. ContentKit asks whether the viewer has the required entitlement when
 serving a protected post. Expiration needs no ContentKit collection timer.
 
+## Host-defined channel roles
+
+With `auth_scope: true`, each channel has a distinct AuthKit group in the
+`channel` persona. The adapter derives an app-isolated group identity, so a role
+in one channel or app grants nothing in another. AuthKit stores role assignments;
+ContentKit stores the group reference, not a copy of its permissions.
+
+The host declares capabilities and chooses its own role bundles:
+
+| Capability | Meaning in that channel |
+| --- | --- |
+| `channel:content:create` | Create one's own post and read it; does not grant editing |
+| `channel:content:edit-own` | Read, edit, publish and manage media of posts the account actually created |
+| `channel:content:write` | Create/edit/publish/delete any post in the channel |
+| `channel:settings:manage` | Manage the channel itself |
+| `channel:media:write` | Manage the channel's cover/avatar, not arbitrary post media |
+| `channel:comments:moderate` | Moderate channel comments |
+
+For example, a contributor role can bundle create and edit-own, an editor can
+hold content:write, and a moderator can hold comments:moderate. The host decides
+which memberships to assign. Public subscriptions and billing entitlements do
+not automatically grant any of these authoring permissions. A scoped owner's
+permissions come from their current AuthKit owner role, not an owner-ID shortcut.
+
+Own-post rights require immutable `created_by` plus a current grant in the
+appropriate group. Editable author credits remain attribution. Without a channel,
+the corresponding app-level create/edit-own permissions apply. An app-level
+contributor cannot post into an arbitrary channel. Permission checks use the
+current credential and grants on each request; revocation does not wait for a
+worker. Read-only staff access does not grant upload or editing authority.
+
+The optional channel lifecycle job provisions/retires the AuthKit group and
+handles channel deletion/restoration. It is exact durable work triggered by a
+change, not permission copying or periodic reconciliation. Unscoped site blogs
+may deliberately rely on their existing app staff roles instead.
+
 ## One fixed official channel
 
 A site blog can fix a post kind to a site-owned channel:
