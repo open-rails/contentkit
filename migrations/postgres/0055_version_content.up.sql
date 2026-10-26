@@ -53,3 +53,18 @@ USING pgroonga (contentkit_search_names(original_title, '{}'::text[]) public.pgr
 
 DROP TABLE content_text;
 ALTER TABLE content_items DROP COLUMN original_title,DROP COLUMN original_language;
+
+-- Search already supports edition-qualified document keys. Retire parent
+-- documents and seed exact version obligations through its existing dirty log.
+DELETE FROM content_search_documents d USING content_items c
+WHERE d.tenant_id=c.tenant_id AND d.content_kind=c.kind AND d.content_id=c.id AND d.content_version_id IS NULL;
+UPDATE content_search_dirty d SET is_deleted=true,reason='version-content',updated_at=clock_timestamp()
+FROM content_items c WHERE d.tenant_id=c.tenant_id AND d.content_kind=c.kind AND d.content_id=c.id AND d.content_version_id IS NULL;
+INSERT INTO content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,reason)
+SELECT v.tenant_id,c.kind,c.id,v.id,l.language,'version-content'
+FROM content_versions v JOIN content_items c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+CROSS JOIN LATERAL (SELECT t.language FROM content_version_text t WHERE t.tenant_id=v.tenant_id AND t.version_id=v.id UNION SELECT unnest(v.languages)) l
+ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language)
+DO UPDATE SET is_deleted=false,reason=EXCLUDED.reason,updated_at=clock_timestamp();
+UPDATE content_search_backfill b SET cursor='',state='running',last_error=NULL,updated_at=clock_timestamp()
+WHERE EXISTS(SELECT 1 FROM content_items c WHERE c.tenant_id=b.tenant_id AND c.kind=b.content_kind);

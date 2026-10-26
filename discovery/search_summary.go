@@ -19,14 +19,13 @@ func (s *Service) searchSummary(ctx context.Context, o SearchOptions, selected *
 	}
 	opts := hub.SearchOptions{Language: relaxed.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind),
 		Eligibility: s.eligibility(relaxed), Limit: search.MaxCandidateLimit, CandidateLimit: search.MaxCandidateLimit}
+	match, err := s.o.Hub.KeywordMatch(ctx, o.Query, opts)
+	if err != nil {
+		return nil, err
+	}
+	matchingEditions := func(q *sel) *sel { return q.with("(f.content_id,f.version_id) IN ("+match.SQL+")", match.Args) }
 	if o.Sort != "" && o.Sort != SortRelevance {
-		match, err := s.o.Hub.KeywordMatch(ctx, o.Query, opts)
-		if err != nil {
-			return nil, err
-		}
-		return s.listingSummary(ctx, o.Filter, selected, sort, &summaryCandidates{selection: func(q *sel) *sel {
-			return q.with("f.content_id IN ("+match.SQL+")", match.Args)
-		}})
+		return s.listingSummary(ctx, o.Filter, selected, sort, &summaryCandidates{selection: matchingEditions})
 	}
 	res, err := s.o.Hub.Search(ctx, o.Query, hub.HubSearchOptions{SearchOptions: opts})
 	if err != nil {
@@ -37,6 +36,6 @@ func (s *Service) searchSummary(ctx context.Context, o SearchOptions, selected *
 		ids = append(ids, hit.ContentID)
 	}
 	return s.listingSummary(ctx, o.Filter, selected, sort, &summaryCandidates{
-		visible: ids, relaxed: ids, truncated: res.Truncated || res.HasMore,
+		visible: ids, relaxed: ids, truncated: res.Truncated || res.HasMore, selection: matchingEditions,
 	})
 }

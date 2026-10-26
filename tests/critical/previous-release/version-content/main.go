@@ -9,6 +9,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/search"
 	"os"
 )
 
@@ -56,6 +57,9 @@ func run() error {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO `+table("content_version_text")+`(tenant_id,version_id,language,title,description) VALUES('version-owned-migration',$1,'en','Edition override','Edition summary')`, ids["en"]); err != nil {
+		return err
+	}
+	if err = search.UpsertKeywordDocuments(ctx, tx, schema, []search.KeywordDocument{{DocumentKey: search.DocumentKey{ContentRef: contentref.New("version-owned-migration", "post", ids["content"]), Language: "en"}, Title: "Old parent document"}}); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {

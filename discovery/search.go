@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/internal/hub"
@@ -52,7 +53,7 @@ func (s *Service) eligibility(q *sel) *search.Eligibility {
 		args[k] = v
 	}
 	return &search.Eligibility{SQL: fmt.Sprintf(`SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM %s f
- WHERE f.content_id = sd.content_id AND f.kind = sd.content_kind AND %s)`, s.t.facets, q.predicate()), Args: args}
+ WHERE f.content_id = sd.content_id AND f.version_id=sd.content_version_id AND f.kind = sd.content_kind AND %s)`, s.t.facets, q.predicate()), Args: args}
 }
 
 func (s *Service) searchKinds(kind string) []string {
@@ -139,7 +140,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 		if err != nil {
 			return empty, err
 		}
-		q.and("f.content_id IN ("+match.SQL+")", match.Args)
+		q.and("(f.content_id,f.version_id) IN ("+match.SQL+")", match.Args)
 		picks, next, err := s.page(ctx, q, srt, o.Cursor, limit, offset)
 		if err != nil {
 			return empty, err
@@ -169,10 +170,12 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 		return empty, err
 	}
 	ids := make([]string, 0, len(res.Hits))
+	refs := make([]contentref.ContentRef, 0, len(res.Hits))
 	for _, h := range res.Hits {
 		ids = append(ids, h.ContentID)
+		refs = append(refs, h.ContentRef)
 	}
-	picks, err := s.pickAmong(ctx, q, ids)
+	picks, err := s.pickSearchMatches(ctx, q, refs)
 	if err != nil {
 		return empty, err
 	}
@@ -226,11 +229,11 @@ func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead,
 	if err != nil {
 		return out, err
 	}
-	ids := make([]string, 0, len(hits))
-	for _, h := range hits {
-		ids = append(ids, h.ContentID)
+	refs := make([]contentref.ContentRef, 0, len(hits))
+	for _, hit := range hits {
+		refs = append(refs, hit.ContentRef)
 	}
-	picks, err := s.pickAmong(ctx, q, ids)
+	picks, err := s.pickSearchMatches(ctx, q, refs)
 	if err != nil {
 		return out, err
 	}
@@ -327,4 +330,18 @@ func (s *Service) namedEntities(ctx context.Context, text string) ([]string, err
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+// Search grouping picks one matching document per item before pagination.
+// Preserve that exact edition during hydration instead of choosing a sibling.
+func (s *Service) pickSearchMatches(ctx context.Context, q *sel, hits []contentref.ContentRef) ([]pick, error) {
+	ids, versions := make([]string, 0, len(hits)), make([]string, 0, len(hits))
+	for _, hit := range hits {
+		if hit.Version() != "" {
+			ids = append(ids, hit.ContentID)
+			versions = append(versions, hit.Version())
+		}
+	}
+	selected := q.with("f.version_id=ANY(@d_search_versions::text[])", pgx.NamedArgs{"d_search_versions": versions})
+	return s.pickAmong(ctx, selected, ids)
 }
