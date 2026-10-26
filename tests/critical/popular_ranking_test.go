@@ -65,7 +65,7 @@ func TestDailyPopularityCountsReadersExactly(t *testing.T) {
 	}
 	for _, h := range hits {
 		readers := want[h.ContentID]
-		wantScore := readers / 50020 / 7
+		wantScore := math.Round(readers/50020/7*1e12) / 1e12
 		if math.Abs(h.Score-wantScore) > 1e-12*wantScore {
 			t.Fatalf("%s score = %v; want %v", h.ContentID, h.Score, wantScore)
 		}

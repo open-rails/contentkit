@@ -246,7 +246,9 @@ func (st *Store) DailyPopularityCoverage(ctx context.Context, tenant, kind strin
 // DailyPopular reads only prepared anonymous day rows. Available days with no
 // readers contribute zero. Each available UTC day has equal weight, including
 // a partial launch/access-transition day; no period-distinct or quality terms
-// are reconstructed here. Raw data and the explicit rebuild remain available.
+// are reconstructed here. Scores use twelve decimal places before the ID tie
+// break so parallel floating-point reductions cannot reorder equal scores.
+// Raw data and the explicit rebuild remain available.
 func (st *Store) DailyPopular(ctx context.Context, tenant, kind string, window Window, scope ActivityScope, limit int) ([]PopularHit, error) {
 	if err := dailyPopularityScope(tenant, kind, scope); err != nil {
 		return nil, err
@@ -260,7 +262,7 @@ func (st *Store) DailyPopular(ctx context.Context, tenant, kind string, window W
 	predicate, args := window.dayPredicate("day")
 	params := append([]any{tenant, kind, scope.Domain, scope.Language}, args...)
 	params = append(params, limit)
-	query := `SELECT content_id,avg(toFloat64(readers)/(eligible+20.)) AS score
+	query := `SELECT content_id,round(avg(toFloat64(readers)/(eligible+20.)),12) AS score
  FROM ` + st.db + `.popularity_daily FINAL WHERE tenant=? AND content_kind=? AND domain=? AND language=?` + predicate + `
  GROUP BY content_id HAVING sum(readers)>0 ORDER BY score DESC,content_id LIMIT ? SETTINGS max_threads=2`
 	rows, err := st.conn.Query(ctx, query, params...)

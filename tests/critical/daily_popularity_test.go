@@ -114,7 +114,7 @@ func TestDailyParticipationPreparation(t *testing.T) {
 	}
 	hits, err := store.DailyPopular(t.Context(), tenant, "article", signal.Between(day, end), scope, 10)
 	must(t, err)
-	if len(hits) != 2 || hits[0].ContentID != premium.ContentID || math.Abs(hits[0].Score-2./22) > 1e-12 || math.Abs(hits[1].Score-(2./24)/2) > 1e-12 {
+	if len(hits) != 2 || hits[0].ContentID != premium.ContentID || hits[0].Score != math.Round(2./22*1e12)/1e12 || hits[1].Score != math.Round((2./24)/2*1e12)/1e12 {
 		t.Fatalf("daily score/available-day mean=%+v", hits)
 	}
 	// A new historical receipt does not silently rewrite finalized days.
