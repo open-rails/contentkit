@@ -217,6 +217,20 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	if err != nil {
 		return err
 	}
+	// The primary channel is immutable once the original exists. Import replay
+	// can update content, but cannot silently transfer editorial ownership.
+	for _, record := range in {
+		if _, exists := items[record.ID]; !exists {
+			continue
+		}
+		var owner string
+		if err := tx.QueryRow(ctx, `SELECT coalesce(owner_entity_id,'') FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, record.ID).Scan(&owner); err != nil {
+			return err
+		}
+		if owner != record.ChannelID {
+			return invalid("content %s cannot change its primary channel", record.ID)
+		}
+	}
 	hidden, err := s.hiddenVersions(ctx, tx, in)
 	if err != nil {
 		return err
