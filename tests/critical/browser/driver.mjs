@@ -5,6 +5,12 @@ const scenario=process.argv[2];
 const browser=await chromium.launch({headless:true, ...(process.env.CONTENTKIT_CRITICAL_CHROMIUM?{executablePath:process.env.CONTENTKIT_CRITICAL_CHROMIUM}:{})});
 try {
   const page=await browser.newPage();
+  const debug=[];
+  const account=request=>{const bearer=request.headers().authorization;return bearer===`Bearer ${fixture.aliceToken}`?"alice":bearer===`Bearer ${fixture.bobToken}`?"bob":"other";};
+  page.on("request",request=>{if(request.url().includes("/favorite"))debug.push({event:"request",method:request.method(),account:account(request)});});
+  page.on("requestfailed",request=>{if(request.url().includes("/favorite"))debug.push({event:"failed",account:account(request),error:request.failure()?.errorText});});
+  page.on("response",response=>{if(response.url().includes("/favorite"))debug.push({event:"response",status:response.status(),account:account(response.request())});});
+  page.on("pageerror",error=>debug.push({event:"pageerror",error:String(error)}));
   await page.goto(fixture.url);
   await page.waitForFunction(()=>!!window.critical);
   await page.evaluate(input=>window.critical.initialize(input),fixture);
@@ -32,7 +38,12 @@ try {
     await page.evaluate(()=>window.critical.mount());await held.seen;
     await page.evaluate(()=>window.critical.switchToBob());
     held.release();await held.done;
+    try {
     await page.waitForFunction(bob=>{const view=document.querySelector("#favorite");return view?.dataset.viewer===bob&&view.dataset.loading==="false"&&view.textContent==="false";},fixture.bob);
+    } catch (error) {
+      const rendered=await page.locator("#favorite").evaluate(view=>({text:view.textContent,viewer:view.dataset.viewer,loading:view.dataset.loading}));
+      throw new Error(`Account-switch favorite did not settle: ${JSON.stringify({rendered,debug,samples:await page.evaluate(()=>window.favoriteSamples),leaks:await page.evaluate(()=>window.leaks)})}`,{cause:error});
+    }
     // A fresh new-scope HTTP read confirms the rendered value is Bob's.
     assert.equal(await page.evaluate(id=>window.client.favorites.get({type:"contents",id}).then(x=>x.favorited),fixture.item),false);
     assert.deepEqual(await page.evaluate(()=>window.leaks),[],"Alice's late state appeared transiently in Bob's view");
