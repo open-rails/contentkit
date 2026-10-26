@@ -1,33 +1,14 @@
-// Package popularity ranks host content by a named, bounded policy over the
-// signal plane's canonical window metrics (docs/popularity-policy.md).
-// The viewer-reach policy uses:
+// Package popularity ranks works by their event-time eligible-population
+// participation over immutable access intervals, weighted by bounded quality
+// (docs/popularity-policy.md):
 //
-//	reach   = log10(1 + readers)
-//	engage  = (reader_quality_sum + e0·ke) / (readers + ke)
-//	finish  = (completers + f0·kf) / (readers + kf)
-//	approve = (positive + a0·ka) / (positive + negative + ka)
-//	revisit = returning_readers / (readers + kr)
-//	rank    = reach × (1 + we·engage + wf·finish + wa·approve + wr·revisit)
+//	rank = rate + we·engage + wf·finish + wa·approve + wr·revisit
 //
-// Every quality term lies in [0, 1], so reach (distinct subjects) dominates
-// and the multiplier is bounded by MaxQuality. Each person's best measured
-// edition quality contributes at most one unit; activity on multiple UTC days
-// contributes at most one returning-reader observation. Priors smooth feedback: one vote
-// moves approve by at most 1/(ka+1). Time only selects the window; no term
-// depends on when an observation happened inside it. The same formula runs in
-// ClickHouse (RankExpr, global top-N) and in Go (Score, candidate sets), and
-// public metrics come from measured evidence, never from a rank. PolicyV2
-// instead weights bounded quality by eligible-population participation over
-// immutable event-time access intervals.
+// where every term is the duration-weighted mean over a work's intervals of
+// its smoothed participation rate times the interval's smoothed quality term.
 package popularity
 
-import (
-	"fmt"
-	"math"
-	"sort"
-
-	"github.com/open-rails/contentkit/signal"
-)
+import "fmt"
 
 // Weights are the quality term weights, each in [0, 1].
 type Weights struct {
@@ -49,30 +30,16 @@ type Priors struct {
 	RevisitWeight    float64
 }
 
-// Algorithm is the meaning of the ranking, independent of its policy version
-// name. A newly named or tuned normalized policy retains its algorithm.
-type Algorithm string
-
-const (
-	AlgorithmViewerReach        Algorithm = "viewer_reach"
-	AlgorithmEligiblePopulation Algorithm = "eligible_population"
-)
-
-// Policy is one named, immutable ranking. Changing a weight or prior is a new
-// name, never an edit of an existing one: configuration and cache keys carry
-// the name.
+// Policy is the ranking's weights and priors.
 type Policy struct {
-	Name string
-	// Empty preserves the original viewer-reach algorithm for callers.
-	Algorithm Algorithm
-	Weights   Weights
-	Priors    Priors
+	Weights Weights
+	Priors  Priors
 }
 
-// PolicyV1 is the qualified policy: weights and priors selected by the judged
-// fixture recorded in docs/popularity-policy.md.
-var PolicyV1 = Policy{
-	Name:    "v1",
+// PolicyV2 normalizes each historical access interval by its active eligible
+// population. Its twenty pseudo-eligible nonreaders are a modest reliability
+// heuristic, not a statistical confidence interval.
+var PolicyV2 = Policy{
 	Weights: Weights{Engagement: 0.35, Completion: 0.25, Approval: 0.40, Revisit: 0.10},
 	Priors: Priors{
 		Engagement: 0.40, EngagementWeight: 10,
@@ -82,118 +49,12 @@ var PolicyV1 = Policy{
 	},
 }
 
-// PolicyV2 normalizes each historical access interval by its active eligible
-// population. Its twenty pseudo-eligible nonreaders are a modest reliability
-// heuristic, not a statistical confidence interval. Quality keeps v1's bounds.
-var PolicyV2 = func() Policy {
-	p := PolicyV1
-	p.Name = "v2"
-	p.Algorithm = AlgorithmEligiblePopulation
-	return p
-}()
-
-// DefaultName is the ByName helper default; discovery separately defaults to v2.
-const DefaultName = "v1"
-
-var policies = map[string]Policy{PolicyV1.Name: PolicyV1, PolicyV2.Name: PolicyV2}
-
-// ByName resolves a configured policy. Unknown names are errors so a host
-// refuses to start rather than ranking under a silent default.
-func ByName(name string) (Policy, error) {
-	if name == "" {
-		name = DefaultName
-	}
-	p, ok := policies[name]
-	if !ok {
-		return Policy{}, fmt.Errorf("popularity: unknown policy %q (known: %v)", name, Names())
-	}
-	return p, nil
-}
-
-// Names lists the registered policies.
-func Names() []string {
-	names := make([]string, 0, len(policies))
-	for n := range policies {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// Validate rejects parameters outside the documented bounds.
-func (p Policy) Validate() error {
-	if p.Name == "" {
-		return fmt.Errorf("popularity: policy needs a name")
-	}
-	if p.Algorithm != "" && p.Algorithm != AlgorithmViewerReach && p.Algorithm != AlgorithmEligiblePopulation {
-		return fmt.Errorf("popularity: unknown algorithm %q", p.Algorithm)
-	}
-	for _, w := range []struct {
-		name string
-		v    float64
-	}{{"engagement weight", p.Weights.Engagement}, {"completion weight", p.Weights.Completion}, {"approval weight", p.Weights.Approval}, {"revisit weight", p.Weights.Revisit}, {"engagement prior", p.Priors.Engagement}, {"completion prior", p.Priors.Completion}, {"approval prior", p.Priors.Approval}} {
-		if w.v < 0 || w.v > 1 || math.IsNaN(w.v) {
-			return fmt.Errorf("popularity: policy %s: %s %g outside [0,1]", p.Name, w.name, w.v)
-		}
-	}
-	for _, k := range []struct {
-		name string
-		v    float64
-	}{{"engagement prior weight", p.Priors.EngagementWeight}, {"completion prior weight", p.Priors.CompletionWeight}, {"approval prior weight", p.Priors.ApprovalWeight}, {"revisit prior weight", p.Priors.RevisitWeight}} {
-		if !(k.v >= 1) || math.IsInf(k.v, 0) {
-			return fmt.Errorf("popularity: policy %s: %s %g must be >= 1", p.Name, k.name, k.v)
-		}
-	}
-	return nil
-}
-
-// Normalized reports whether this policy uses event-time eligible populations.
-func (p Policy) Normalized() bool { return p.Algorithm == AlgorithmEligiblePopulation }
-
-// MaxQuality is the largest multiplier the quality terms can reach.
-func (p Policy) MaxQuality() float64 {
-	return 1 + p.Weights.Engagement + p.Weights.Completion + p.Weights.Approval + p.Weights.Revisit
-}
-
-// Score ranks one work's window metrics. No qualified readers means no v1 rank.
-func (p Policy) Score(m signal.ContentMetrics) float64 {
-	if p.Normalized() {
-		n := m.Normalization
-		if n == nil {
-			return 0
-		}
-		return n.Rate + p.Weights.Engagement*n.Engagement + p.Weights.Completion*n.Completion + p.Weights.Approval*n.Approval + p.Weights.Revisit*n.Revisit
-	}
-	readers := float64(m.Readers)
-	if readers == 0 {
-		return 0
-	}
-	engage := (m.ReaderQualitySum + p.Priors.Engagement*p.Priors.EngagementWeight) / (readers + p.Priors.EngagementWeight)
-	finish := (float64(m.Completers) + p.Priors.Completion*p.Priors.CompletionWeight) / (readers + p.Priors.CompletionWeight)
-	positive, negative := float64(m.PositiveSubjects), float64(m.NegativeSubjects)
-	approve := (positive + p.Priors.Approval*p.Priors.ApprovalWeight) / (positive + negative + p.Priors.ApprovalWeight)
-	revisit := float64(m.ReturningReaders) / (readers + p.Priors.RevisitWeight)
-	quality := 1 + p.Weights.Engagement*engage + p.Weights.Completion*finish + p.Weights.Approval*approve + p.Weights.Revisit*revisit
-	return math.Log10(1+readers) * quality
-}
-
-// RankExpr renders Score as a ClickHouse expression over the window metric
-// columns for signal.PopularOptions.RankExpr. Parameters are rendered as
-// literals; nothing user-controlled reaches it.
+// RankExpr renders the policy as a ClickHouse expression over the normalized
+// metric columns for signal.PopularOptions.RankExpr. Parameters are rendered
+// as literals; nothing user-controlled reaches it.
 func (p Policy) RankExpr() string {
-	if p.Normalized() {
-		return fmt.Sprintf("normalized_rate + %s*normalized_engagement + %s*normalized_completion + %s*normalized_approval + %s*normalized_revisit",
-			lit(p.Weights.Engagement), lit(p.Weights.Completion), lit(p.Weights.Approval), lit(p.Weights.Revisit))
-	}
-	return fmt.Sprintf(`log10(1 + toFloat64(readers)) * (1
- + %s * ((toFloat64(reader_quality_sum) + %s) / (toFloat64(readers) + %s))
- + %s * ((toFloat64(completers) + %s) / (toFloat64(readers) + %s))
- + %s * ((toFloat64(positive_subjects) + %s) / (toFloat64(positive_subjects) + toFloat64(negative_subjects) + %s))
- + %s * (toFloat64(returning_readers) / (toFloat64(readers) + %s)))`,
-		lit(p.Weights.Engagement), lit(p.Priors.Engagement*p.Priors.EngagementWeight), lit(p.Priors.EngagementWeight),
-		lit(p.Weights.Completion), lit(p.Priors.Completion*p.Priors.CompletionWeight), lit(p.Priors.CompletionWeight),
-		lit(p.Weights.Approval), lit(p.Priors.Approval*p.Priors.ApprovalWeight), lit(p.Priors.ApprovalWeight),
-		lit(p.Weights.Revisit), lit(p.Priors.RevisitWeight))
+	return fmt.Sprintf("normalized_rate + %s*normalized_engagement + %s*normalized_completion + %s*normalized_approval + %s*normalized_revisit",
+		lit(p.Weights.Engagement), lit(p.Weights.Completion), lit(p.Weights.Approval), lit(p.Weights.Revisit))
 }
 
 // lit renders a float as a ClickHouse Float64 literal with full precision.

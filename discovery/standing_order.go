@@ -6,7 +6,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -28,16 +27,15 @@ func (s *Service) standingOrder(raw string, w signal.Window, favorites bool) ord
 	// Any positive action makes the person a supporter; one person, one vote.
 	join := `LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE vote>0) AS positive,count(*) FILTER (WHERE vote<0) AS negative
  FROM (SELECT actor,max(vote) AS vote FROM (` + action + `) actions GROUP BY actor) people) standing ON true`
-	info := &popularity.RankingInfo{Policy: "standing_wilson", Mode: "standing"}
 	var from, until *time.Time
 	if !w.From.IsZero() {
 		v := w.From.UTC()
-		from, info.RequestedFrom = &v, v.Format(time.RFC3339)
+		from = &v
 	}
 	if !w.To.IsZero() {
 		v := w.To.UTC()
-		until, info.RequestedUntil = &v, v.Format(time.RFC3339)
+		until = &v
 	}
 	score := `CASE WHEN standing.positive=0 THEN 0::float8 ELSE ` + content.RatingSQL("standing.positive", "standing.negative") + ` END`
-	return order{raw: raw, expr: score, join: join, desc: true, cast: "float8", args: pgx.NamedArgs{"standing_from": from, "standing_until": until}, ranking: info}
+	return order{raw: raw, expr: score, join: join, desc: true, cast: "float8", args: pgx.NamedArgs{"standing_from": from, "standing_until": until}}
 }
