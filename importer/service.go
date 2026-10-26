@@ -240,13 +240,23 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 	// retried by the same external ID. Finish outside the import transaction:
 	// embedded AuthKit may share this pool, and remote AuthKit may time out.
 	// A provider failure is a failed record, never success deferred to a worker.
-	if sec.name == SectionChannels {
+	if sec.name == SectionChannels || sec.name == SectionDeletes {
 		completed := written[:0]
 		for _, p := range written {
-			input := p.in.(channels.Import)
-			if err := s.o.Channels.Finish(ctx, []string{input.ID}); err != nil {
-				run.fail(sec.name, p.index, p.external, err)
-				continue
+			var channelID string
+			switch input := p.in.(type) {
+			case channels.Import:
+				channelID = input.ID
+			case deletion:
+				if input.entity == RecordChannel {
+					channelID = input.id
+				}
+			}
+			if channelID != "" {
+				if err := s.o.Channels.Finish(ctx, []string{channelID}); err != nil {
+					run.fail(sec.name, p.index, p.external, err)
+					continue
+				}
 			}
 			completed = append(completed, p)
 		}
