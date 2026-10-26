@@ -125,9 +125,12 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 	cfg := t.e.cfg.Content
 	var items []contentref.ContentRef
 	var ids []entities.EntityID
+	var channelIDs []string
 	for _, ref := range refs {
 		if _, ok := cfg.Kinds[ref.ContentKind]; ok {
 			items = append(items, ref)
+		} else if ref.ContentKind == "channel" && cfg.Channels != nil && ref.ContentVersionID == nil && ref.TenantID == t.e.cfg.Tenant {
+			channelIDs = append(channelIDs, ref.ContentID)
 		} else if _, ok := cfg.EntityKinds[ref.ContentKind]; ok && ref.ContentVersionID == nil && ref.TenantID == t.e.cfg.Tenant {
 			ids = append(ids, entities.EntityID(ref.ContentID))
 		}
@@ -139,12 +142,19 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 			return nil, err
 		}
 	}
-	if len(ids) == 0 {
+	if len(ids) == 0 && len(channelIDs) == 0 {
 		return out, nil
 	}
 	found, err := t.e.entities.Entities(ctx, ids)
 	if err != nil {
 		return nil, err
+	}
+	if len(channelIDs) > 0 {
+		channelRows, err := t.e.channels.RawMany(ctx, channelIDs)
+		if err != nil {
+			return nil, err
+		}
+		found = append(found, channelRows...)
 	}
 	byID := map[entities.EntityID]entities.Entity{}
 	var survivors []entities.EntityID
@@ -177,14 +187,14 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 			continue
 		}
 		res := resolve.Resolution{Ref: contentref.New(t.e.cfg.Tenant, g.Kind, string(g.ID)), Visible: true, Accessible: true, Owner: g.OwnerUserID}
-		if cfg.EntityKinds[g.Kind].AuthScope {
+		if g.Kind == "channel" {
 			// Scoped channel threads use group moderation, not personal account blocks.
 			res.Owner = ""
 		}
-		if cfg.EntityKinds[g.Kind].Owner == "user" || cfg.EntityKinds[g.Kind].AuthScope {
-			res.OwnerEntity = &resolve.OwnerEntity{Kind: g.Kind, ID: string(g.ID), Owner: g.OwnerUserID, Scope: g.AuthScope}
-			if cfg.EntityKinds[g.Kind].AuthScope && g.AuthScope == "" {
-				res.OwnerEntity.Owner = ""
+		if g.Kind == "channel" {
+			res.Channel = &resolve.Channel{Kind: g.Kind, ID: string(g.ID), Owner: g.OwnerUserID, Scope: g.AuthScope}
+			if g.AuthScope == "" {
+				res.Channel.Owner = ""
 			}
 		}
 		out[ref.Key()] = res

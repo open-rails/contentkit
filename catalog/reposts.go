@@ -3,17 +3,76 @@ package catalog
 import (
 	"context"
 	"errors"
+	"net/http"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
-	"net/http"
 )
 
-// PutRepost adds one destination reference to published original content.
-// It never changes the original's owner, access, versions, media or counters.
+// Repost authority is read before opening a transaction: AuthKit may share
+// our pool. The transaction then revalidates the exact destination identity.
+type repostGrant struct {
+	revision      int64
+	scope         string
+	create, write bool
+}
+
+func (s *Store) repostGrant(ctx context.Context, actor access.Actor, id string) (repostGrant, error) {
+	var out repostGrant
+	if s.cfg.Channels == nil {
+		return out, ErrNotFound
+	}
+	err := s.pool.QueryRow(ctx, "SELECT revision,auth_scope FROM "+s.t.entities+" WHERE tenant_id=$1 AND id=$2 AND kind='channel' AND state='active' AND auth_scope IS NOT NULL", s.tenant, id).Scan(&out.revision, &out.scope)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return out, ErrNotFound
+	}
+	if err != nil {
+		return out, err
+	}
+	rights, err := s.staffRights(ctx, actor)
+	if err != nil {
+		return out, err
+	}
+	if rights.write {
+		out.create, out.write = true, true
+		return out, nil
+	}
+	writers, err := s.entityEditor(ctx, s.pool, actor, []string{id})
+	if err != nil {
+		return out, err
+	}
+	out.write = writers[id]
+	if out.write {
+		out.create = true
+		return out, nil
+	}
+	creators, err := s.entityAllowed(ctx, s.pool, actor, []string{id}, true)
+	out.create = creators[id]
+	return out, err
+}
+
+func (s *Store) lockRepostDestination(ctx context.Context, tx pgx.Tx, id string, g repostGrant) error {
+	var revision int64
+	var scope string
+	err := tx.QueryRow(ctx, "SELECT revision,auth_scope FROM "+s.t.entities+" WHERE tenant_id=$1 AND id=$2 AND kind='channel' AND state='active' AND auth_scope IS NOT NULL FOR SHARE", s.tenant, id).Scan(&revision, &scope)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if revision != g.revision || scope != g.scope {
+		return errStale
+	}
+	return nil
+}
+
+// PutRepost adds one destination reference to a published original. It never
+// changes original ownership, access, versions, media or interaction counters.
 func (s *Store) PutRepost(ctx context.Context, actor access.Actor, destination, contentID, host string) (channels.Repost, error) {
 	out := channels.Repost{ChannelID: destination}
 	for _, id := range []string{destination, contentID} {
@@ -21,48 +80,65 @@ func (s *Store) PutRepost(ctx context.Context, actor access.Actor, destination, 
 			return out, invalid("repost identifier: %v", err)
 		}
 	}
-	if s.cfg.Channels == nil {
+	grant, err := s.repostGrant(ctx, actor, destination)
+	if err != nil {
+		return out, err
+	}
+	if !grant.create {
+		return out, ErrForbidden
+	}
+	var revision int64
+	var owner, state string
+	err = s.pool.QueryRow(ctx, "SELECT revision,coalesce(owner_entity_id,''),state FROM "+s.t.items+" WHERE tenant_id=$1 AND id=$2", s.tenant, contentID).Scan(&revision, &owner, &state)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (state != StatePublished || owner == "") {
 		return out, ErrNotFound
+	}
+	if err != nil {
+		return out, err
+	}
+	if owner == destination {
+		return out, invalid("the primary channel already contains this original")
 	}
 	viewer, err := s.Viewer(ctx, ViewerOptions{Actor: actor, Host: host, Mode: access.Hide})
 	if err != nil {
 		return out, err
 	}
+	views, err := viewer.decide(ctx, []string{contentID}, false)
+	if err != nil {
+		return out, err
+	}
+	allowed := []string{}
+	if view := views[contentID]; view != nil {
+		for _, version := range view.versions {
+			if viewer.live(version) && !version.deleted && !version.contentDeleted && view.decisions[version.versionID].Allowed {
+				allowed = append(allowed, version.versionID)
+			}
+		}
+	}
+	if len(allowed) == 0 {
+		return out, ErrNotFound
+	}
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var kind, owner, state string
-		if err := tx.QueryRow(ctx, `SELECT kind,coalesce(owner_entity_id,''),state FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2 FOR SHARE`, s.tenant, contentID).Scan(&kind, &owner, &state); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return err
-		}
-		if state != StatePublished || owner == "" {
+		var current int64
+		var kind, currentOwner, currentState string
+		err := tx.QueryRow(ctx, "SELECT revision,kind,coalesce(owner_entity_id,''),state FROM "+s.t.items+" WHERE tenant_id=$1 AND id=$2 FOR SHARE", s.tenant, contentID).Scan(&current, &kind, &currentOwner, &currentState)
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
-		if owner == destination {
-			return invalid("the primary channel already contains this original")
-		}
-		var active bool
-		if err := tx.QueryRow(ctx, `SELECT state='active' AND auth_scope IS NOT NULL FROM `+s.t.entities+` WHERE tenant_id=$1 AND id=$2 AND kind='channel' FOR SHARE`, s.tenant, destination).Scan(&active); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return err
-		}
-		if !active {
-			return ErrNotFound
-		}
-		allowed, err := s.canRepost(ctx, tx, actor, destination, false, "")
 		if err != nil {
 			return err
 		}
-		if !allowed {
-			return ErrForbidden
+		if current != revision || currentOwner != owner || currentState != StatePublished {
+			return errStale
+		}
+		if err := s.lockRepostDestination(ctx, tx, destination, grant); err != nil {
+			return err
 		}
 		clause, args := viewer.Listed("f")
-		args["repost_content"] = contentID
+		args["rp_tenant"], args["rp_content"], args["rp_versions"] = s.tenant, contentID, allowed
 		var readable bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.facets+` f WHERE f.content_id=@repost_content AND NOT f.deleted AND NOT f.unplayable AND f.live_from IS NOT NULL AND f.live_from<=now() AND (`+clause+`))`, args).Scan(&readable); err != nil {
+		err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM "+s.t.facets+" f WHERE f.tenant_id=@rp_tenant AND f.content_id=@rp_content AND f.version_id=ANY(@rp_versions::text[]) AND NOT f.deleted AND NOT f.unplayable AND f.live_from<=@cv_now::timestamptz AND ("+clause+"))", args).Scan(&readable)
+		if err != nil {
 			return err
 		}
 		if !readable {
@@ -75,10 +151,7 @@ func (s *Store) PutRepost(ctx context.Context, actor access.Actor, destination, 
 		if err := tx.QueryRow(ctx, `SELECT coalesce(actor_id,''),created_at FROM `+s.qs+`.content_channel_reposts WHERE tenant_id=$1 AND channel_id=$2 AND content_id=$3`, s.tenant, destination, contentID).Scan(&out.ActorID, &out.CreatedAt); err != nil {
 			return err
 		}
-		out.CanRemove, err = s.canRepost(ctx, tx, actor, destination, true, out.ActorID)
-		if err != nil {
-			return err
-		}
+		out.CanRemove = grant.write || grant.create && out.ActorID != "" && out.ActorID == viewerID(actor)
 		if tag.RowsAffected() > 0 {
 			return s.emit(ctx, tx, Event{Type: "content.reposted", Kind: kind, ContentID: contentID, ChannelID: destination, ActorID: viewerID(actor)})
 		}
@@ -87,57 +160,40 @@ func (s *Store) PutRepost(ctx context.Context, actor access.Actor, destination, 
 	return out, err
 }
 
-func (s *Store) canRepost(ctx context.Context, q Querier, actor access.Actor, channelID string, remove bool, createdBy string) (bool, error) {
-	rights, err := s.staffRights(ctx, actor)
-	if err != nil {
-		return false, err
-	}
-	if rights.write {
-		return true, nil
-	}
-	if remove {
-		writers, err := s.entityEditor(ctx, q, actor, []string{channelID})
-		if err != nil {
-			return false, err
-		}
-		if writers[channelID] {
-			return true, nil
-		}
-		if viewerID(actor) == "" || viewerID(actor) != createdBy {
-			return false, nil
-		}
-	}
-	allowed, err := s.entityAllowed(ctx, q, actor, []string{channelID}, true)
-	return allowed[channelID], err
-}
-
 func (s *Store) DeleteRepost(ctx context.Context, actor access.Actor, destination, contentID string) error {
 	for _, id := range []string{destination, contentID} {
 		if err := contentref.ValidateID(id); err != nil {
 			return invalid("repost identifier: %v", err)
 		}
 	}
+	grant, err := s.repostGrant(ctx, actor, destination)
+	if err != nil {
+		return err
+	}
+	if !grant.create {
+		return ErrForbidden
+	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var actorID, kind string
-		err := tx.QueryRow(ctx, `SELECT coalesce(r.actor_id,''),c.kind FROM `+s.qs+`.content_channel_reposts r JOIN `+s.t.items+` c ON c.tenant_id=r.tenant_id AND c.id=r.content_id WHERE r.tenant_id=$1 AND r.channel_id=$2 AND r.content_id=$3 FOR UPDATE OF r`, s.tenant, destination, contentID).Scan(&actorID, &kind)
+		var kind string
+		err := tx.QueryRow(ctx, "SELECT kind FROM "+s.t.items+" WHERE tenant_id=$1 AND id=$2 FOR SHARE", s.tenant, contentID).Scan(&kind)
 		if errors.Is(err, pgx.ErrNoRows) {
-			allowed, e := s.canRepost(ctx, tx, actor, destination, false, "")
-			if e != nil {
-				return e
-			}
-			if !allowed {
-				return ErrForbidden
-			}
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := s.lockRepostDestination(ctx, tx, destination, grant); err != nil {
+			return err
+		}
+		var creator string
+		err = tx.QueryRow(ctx, `SELECT coalesce(actor_id,'') FROM `+s.qs+`.content_channel_reposts WHERE tenant_id=$1 AND channel_id=$2 AND content_id=$3 FOR UPDATE`, s.tenant, destination, contentID).Scan(&creator)
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		allowed, err := s.canRepost(ctx, tx, actor, destination, true, actorID)
-		if err != nil {
-			return err
-		}
-		if !allowed {
+		if !grant.write && (creator == "" || creator != viewerID(actor)) {
 			return ErrForbidden
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM `+s.qs+`.content_channel_reposts WHERE tenant_id=$1 AND channel_id=$2 AND content_id=$3`, s.tenant, destination, contentID); err != nil {

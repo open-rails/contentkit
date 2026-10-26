@@ -56,7 +56,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		visibleIDs[row.ID] = struct{}{}
 		if !row.Access.Allowed && !row.Access.Unknown {
 			switch row.Access.Level {
-			case access.TierLevel, access.EntityLevel, access.PPV, access.EntityPPV:
+			case access.TierLevel, access.ChannelLevel, access.PPV, access.ChannelPPV:
 				out.LockedCount++
 			}
 		}
@@ -153,13 +153,9 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	}
 	// One read of the whole selection; access is then settled a batch at a time.
 	args["summary_tenant"], args["summary_user"] = s.o.Tenant, person(q.reader.Actor)
-	// Only a held entity opens a row; against complete holdings no other
-	// entity changes a decision.
-	entityIDs := "f.entity_ids"
-	if filter, err := s.o.Gate.Filter(ctx, q.reader.Actor); err == nil && filter.Complete() {
-		args["summary_entities"] = append(filter.Entities(), counted...)
-		entityIDs = "ARRAY(SELECT e FROM unnest(f.entity_ids) e WHERE e = ANY(@summary_entities::text[]))"
-	}
+	// Descriptive associations only support filter counts; they never open content.
+	args["summary_entities"] = counted
+	entityIDs := "ARRAY(SELECT e FROM unnest(f.entity_ids) e WHERE e = ANY(@summary_entities::text[]))"
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, %[6]s, coalesce(f.owner_entity_id, ''), f.published_at,
  @summary_user <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @summary_user)
  FROM (%[5]s) p

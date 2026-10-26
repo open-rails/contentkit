@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/entities"
@@ -42,9 +43,9 @@ type Card struct {
 	Version  CardVersion             `json:"version"`
 	// Entities are the version's effective entities with a page, by entity kind.
 	Entities map[string][]Chip `json:"entities"`
-	// Owner is the owner entity's card (a channel's name, path, avatar and
-	// cover).
-	Owner       *entities.EntityCard `json:"owner,omitempty"`
+	// Channel is the original authoring home; reposts do not replace it.
+	Channel     *channels.Card       `json:"channel,omitempty"`
+	Repost      *channels.Repost     `json:"repost,omitempty"`
 	Counts      Counts               `json:"counts"`
 	Access      CardAccess           `json:"access"`
 	Viewer      *catalog.ViewerState `json:"viewer,omitempty"`
@@ -337,8 +338,7 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 func (s *Service) settle(ctx context.Context, q *sel, rows []cardRow) error {
 	items := make([]access.Item, len(rows))
 	for i, c := range rows {
-		items[i] = access.Item{Content: c.ID, Version: c.Version.ID, Rule: access.Effective(c.contentRule, c.override).Previewed(s.o.Kinds.Kinds[c.Kind]),
-			Entities: c.entityIDs}
+		items[i] = access.Item{Content: c.ID, Version: c.Version.ID, Rule: access.Effective(c.contentRule, c.override).Previewed(s.o.Kinds.Kinds[c.Kind])}
 	}
 	ds, err := s.o.Gate.Decide(ctx, q.reader.Actor, items)
 	if err != nil && (ds == nil || !errors.Is(err, access.ErrUnavailable)) {
@@ -351,23 +351,23 @@ func (s *Service) settle(ctx context.Context, q *sel, rows []cardRow) error {
 	now := s.o.Now()
 	for i, d := range ds {
 		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, Releases: d.Releases, Level: access.Public}
-		a.Releases = slices.DeleteFunc(slices.Clone(a.Releases), func(r access.Release) bool { return internal[r.Entity] })
+		a.Releases = slices.DeleteFunc(slices.Clone(a.Releases), func(r access.Release) bool { return internal[r.ChannelID] })
 		if r := items[i].Rule; !r.Free(now) {
 			a.Level, a.Tiers = r.Level, r.AudienceTiers(now)
 		}
 		for _, k := range d.Sell {
-			if k.Kind() != access.KeyEntity || !internal[k.Entity()] {
+			if k.Kind() != access.KeyChannel || !internal[k.Channel()] {
 				a.Sell = append(a.Sell, k.String())
 			}
 		}
 		if d.Requires != nil {
-			if d.Requires.Kind() == access.KeyEntity && internal[d.Requires.Entity()] {
+			if d.Requires.Kind() == access.KeyChannel && internal[d.Requires.Channel()] {
 				a.Sell = nil
 			} else {
 				a.Requires = d.Requires.String()
 			}
 		}
-		if internal[items[i].Rule.Entity] && (a.Level == access.EntityLevel || a.Level == access.EntityPPV) {
+		if internal[items[i].Rule.ChannelID] && (a.Level == access.ChannelLevel || a.Level == access.ChannelPPV) {
 			a.Level = access.PPV
 		}
 		rows[i].Access = a
@@ -507,23 +507,26 @@ func (s *Service) positions(ctx context.Context, rows []cardRow, shown map[strin
 // owners fills the cards' owner entities, avatars and covers resolved, in one
 // call.
 func (s *Service) owners(ctx context.Context, q *sel, rows []cardRow) error {
-	var ids []entities.EntityID
+	if s.o.Channels == nil {
+		return nil
+	}
+	var ids []string
 	for _, c := range rows {
-		if c.owner != "" && !slices.Contains(ids, entities.EntityID(c.owner)) {
-			ids = append(ids, entities.EntityID(c.owner))
+		if c.owner != "" && !slices.Contains(ids, c.owner) {
+			ids = append(ids, c.owner)
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	cards, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: q.display, Covers: true})
+	cards, err := s.o.Channels.Cards(ctx, ids, q.display)
 	if err != nil {
 		return err
 	}
 	for i := range rows {
 		for j := range cards {
-			if string(cards[j].ID) == rows[i].owner {
-				rows[i].Owner = &cards[j]
+			if cards[j].ID == rows[i].owner {
+				rows[i].Channel = &cards[j]
 			}
 		}
 	}

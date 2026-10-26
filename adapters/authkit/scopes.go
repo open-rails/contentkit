@@ -75,7 +75,7 @@ func (s scopes) providerID(id string) (string, error) {
 	if s.app == nil {
 		return id, nil
 	}
-	return EntityScopeID(*s.app, id)
+	return ChannelScopeID(*s.app, id)
 }
 
 // Provision creates each scope as a group of its kind's persona, its owner
@@ -84,6 +84,9 @@ func (s scopes) providerID(id string) (string, error) {
 // a group starts a new team with its owner.
 func (s scopes) Provision(ctx context.Context, list []entities.Scope) error {
 	for _, sc := range list {
+		if sc.Kind != "channel" {
+			return errors.New("contentkit/authkit: authorization groups are only for channels")
+		}
 		id, err := s.providerID(sc.ID)
 		if err != nil {
 			return err
@@ -161,11 +164,14 @@ func (s scopes) Holding(ctx context.Context, user string, kinds []string) (map[s
 	}
 	want := map[iam.Persona][]named{}
 	for _, k := range kinds {
+		if k != "channel" {
+			continue
+		}
 		persona, err := s.c.Persona(k)
 		if err != nil {
 			return nil, fmt.Errorf("authkit: persona of group kind %s: %w", k, err)
 		}
-		for _, name := range access.EntityPermissions(k) {
+		for _, name := range access.ChannelPermissions() {
 			p, err := s.c.Permission(name)
 			if err != nil {
 				return nil, fmt.Errorf("authkit: %w", err)
@@ -245,10 +251,10 @@ func (s scopes) HoldingScopes(ctx context.Context, user string, kinds, ids []str
 			if err != nil {
 				return nil, err
 			}
-			if group.DeletedAt != nil || !slices.Contains(kinds, group.Persona.String()) || group.TenantID.String() != s.app.TenantID.String() {
+			if group.DeletedAt != nil || group.Persona.String() != "channel" || !slices.Contains(kinds, "channel") || group.TenantID.String() != s.app.TenantID.String() {
 				continue
 			}
-			for _, name := range access.EntityPermissions(group.Persona.String()) {
+			for _, name := range access.ChannelPermissions() {
 				perm, err := s.c.Permission(name)
 				if err != nil {
 					return nil, err

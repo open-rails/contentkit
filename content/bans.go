@@ -26,18 +26,18 @@ import (
 // banned; the rate limits cover them.
 const (
 	// ScopeGlobal is the whole tenant, managed by holders of root:comments:ban.
-	ScopeGlobal = "global"
-	ownerScope  = "owner:"
-	entityScope = "group:"
+	ScopeGlobal  = "global"
+	ownerScope   = "owner:"
+	channelScope = "group:"
 )
 
 // OwnerScope is the scope of content whose Resolution.Owner is ownerID,
 // managed by that owner.
 func OwnerScope(ownerID string) string { return ownerScope + ownerID }
 
-// EntityScope is the scope of a user-owned entity and the content it owns
-// (Resolution.OwnerEntity), managed by the entity's comment moderators.
-func EntityScope(entityID string) string { return entityScope + entityID }
+// ChannelScope is the retained ban scope of a channel and its original posts.
+// The opaque group: prefix preserves existing restrictions.
+func ChannelScope(entityID string) string { return channelScope + entityID }
 
 const (
 	maxBanReason = 500 // runes
@@ -97,8 +97,8 @@ func (rt *Runtime) checkCommentBan(ctx context.Context, userID string, res resol
 	if res.Owner != "" {
 		scopes = append(scopes, OwnerScope(res.Owner))
 	}
-	if g := res.OwnerEntity; g != nil {
-		scopes = append(scopes, EntityScope(g.ID))
+	if g := res.Channel; g != nil {
+		scopes = append(scopes, ChannelScope(g.ID))
 	}
 	var n BanNotice
 	err := rt.store.pool.QueryRow(ctx, `SELECT scope, reason, until FROM `+rt.store.t.commentBans+`

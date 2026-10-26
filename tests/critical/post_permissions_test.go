@@ -9,10 +9,12 @@ import (
 	ck "github.com/open-rails/contentkit"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/riverqueue/river"
 )
@@ -26,7 +28,7 @@ func TestPostContributorAuthority(t *testing.T) {
 	author, credited := a.client(aliceToken), a.client(bobToken)
 	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.contributor)
 	newPost := func(title, channel string) catalog.ContentInput {
-		return catalog.ContentInput{Kind: "article", OwnerEntityID: channel, Text: map[string]catalog.Text{"en": {Title: title, Body: "Private contributor source"}}}
+		return catalog.ContentInput{Kind: "article", ChannelID: channel, Text: map[string]catalog.Text{"en": {Title: title, Body: "Private contributor source"}}}
 	}
 	t.Run("CK-J03-S01_app_create_is_personal_and_credits_are_not_authority", func(t *testing.T) {
 		input := newPost("Personal contributor draft", "")
@@ -116,20 +118,20 @@ func TestPostContributorAuthority(t *testing.T) {
 		}
 	})
 	t.Run("CK-J03-S01_channel_contributor_cannot_edit_other_posts_or_channel", func(t *testing.T) {
-		channelOwner, ownerToken, channel := ownedEntity(t, w, a, "Community")
+		channelOwner, ownerToken, channel := ownedChannel(t, w, a, "Community")
 		owner := a.client(ownerToken)
 		existing, err := owner.PostContents(t.Context(), newPost("Owner private draft", string(channel.ID)))
 		must(t, err)
 		_, err = author.PostContents(t.Context(), newPost("App grant is not channel grant", string(channel.ID)))
 		requireError(t, err, 403, "forbidden")
-		scopeID, err := ckauth.EntityScopeID(*a.cfg.Scope, channel.AuthScope)
+		scopeID, err := ckauth.ChannelScopeID(*a.cfg.Scope, channel.AuthScope)
 		must(t, err)
 		scope := iam.GroupByID(scopeID)
 		authtest.GrantRole(t, w.tenant[0], scope, iam.UserSubject(alice.ID), w.channelContributor)
-		mine, err := author.GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
+		mine, err := author.GetMeChannels(t.Context(), ck.GetMeChannelsQuery{})
 		must(t, err)
-		if len(mine.Entities) != 1 || mine.Entities[0].ID != channel.ID || !mine.Entities[0].CanPost || !mine.Entities[0].CanEditOwn || mine.Entities[0].Writer || mine.Entities[0].Editor || mine.Entities[0].Moderator {
-			t.Fatalf("contributor channel capabilities wrong: %+v", mine.Entities)
+		if len(mine.Channels) != 1 || mine.Channels[0].ID != channel.ID || !mine.Channels[0].CanPost || !mine.Channels[0].CanEditOwn || mine.Channels[0].Writer || mine.Channels[0].Editor || mine.Channels[0].Moderator {
+			t.Fatalf("contributor channel capabilities wrong: %+v", mine.Channels)
 		}
 		own, err := author.PostContents(t.Context(), newPost("Contributor post", string(channel.ID)))
 		must(t, err)
@@ -140,9 +142,9 @@ func TestPostContributorAuthority(t *testing.T) {
 		_, err = author.PutContentText(t.Context(), existing.ID, "en", catalog.Text{Title: "Cannot edit owner", Body: "no"})
 		requireError(t, err, 403, "forbidden")
 		slug := "cannot-manage-channel"
-		_, err = author.PatchEntity(t.Context(), string(channel.ID), entities.EntityUpdate{Slug: &slug})
+		_, err = author.PatchChannel(t.Context(), string(channel.ID), channels.Update{Slug: &slug})
 		requireError(t, err, 403, "forbidden")
-		_, _, foreignChannel := ownedEntity(t, w, w.apps[1], "Other app community")
+		_, _, foreignChannel := ownedChannel(t, w, w.apps[1], "Other app community")
 		_, err = author.PostContents(t.Context(), newPost("Foreign app channel", string(foreignChannel.ID)))
 		requireError(t, err, 403, "forbidden")
 		_, err = author.PostContentPublish(t.Context(), own.ID, catalog.PublishInput{})
@@ -166,10 +168,10 @@ func TestPostContributorAuthority(t *testing.T) {
 		requireError(t, err, 404, "not_found")
 		_, err = owner.PostContents(t.Context(), newPost("Owner metadata cannot bypass revocation", string(channel.ID)))
 		requireError(t, err, 403, "forbidden")
-		mine, err = owner.GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
+		mine, err = owner.GetMeChannels(t.Context(), ck.GetMeChannelsQuery{})
 		must(t, err)
-		if len(mine.Entities) != 0 {
-			t.Fatalf("revoked owner metadata still grants channel capabilities: %+v", mine.Entities)
+		if len(mine.Channels) != 0 {
+			t.Fatalf("revoked owner metadata still grants channel capabilities: %+v", mine.Channels)
 		}
 
 	})
@@ -205,28 +207,24 @@ func TestPostContributorMediaRevocation(t *testing.T) {
 // A community can belong to the site while AuthKit groups delegate its team.
 func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) {
-		kind := cfg.Content.EntityKinds["channel"]
-		kind.Owner = "site"
-		kind.MaxPerOwner = 0
-		cfg.Content.EntityKinds["channel"] = kind
+		cfg.Content.Channels.Creation = "staff"
 	})
 	a := w.apps[0]
 	attachMedia(t, w, a)
-	rows, err := a.engine.Client().PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: "official", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Official community"}}}})
+	channel, err := a.engine.Client().PostChannels(t.Context(), channels.Input{Slug: "official", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Official community"}}})
 	must(t, err)
-	channel := rows[0]
 	if channel.OwnerUserID != "" || channel.AuthScope == "" {
 		t.Fatal("site channel fixture has wrong ownership")
 	}
-	id, err := ckauth.EntityScopeID(*a.cfg.Scope, channel.AuthScope)
+	id, err := ckauth.ChannelScopeID(*a.cfg.Scope, channel.AuthScope)
 	must(t, err)
 	group := iam.GroupByID(id)
 	manager, token := w.person(t, 0)
 	client := a.client(token)
 	authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(manager.ID), w.channelManager)
-	_, err = client.PatchEntity(t.Context(), string(channel.ID), entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Renamed by manager"}}})
+	_, err = client.PatchChannel(t.Context(), string(channel.ID), channels.Update{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Renamed by manager"}}})
 	must(t, err)
-	_, err = client.PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: "not-authorized"}})
+	_, err = client.PostChannels(t.Context(), channels.Input{Slug: "not-authorized"})
 	requireError(t, err, 403, "forbidden")
 	payload := imageBytes(t)
 	ref := media.RefBody{Kind: "channel", ID: string(channel.ID)}
@@ -236,10 +234,10 @@ func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 	authtest.RevokeRole(t, w.tenant[0], group, iam.UserSubject(manager.ID), w.channelManager)
 	_, err = client.PostMediaUploadPresign(t.Context(), presign)
 	requireError(t, err, 403, "forbidden")
-	_, err = client.PatchEntity(t.Context(), string(channel.ID), entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Revoked manager"}}})
+	_, err = client.PatchChannel(t.Context(), string(channel.ID), channels.Update{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Revoked manager"}}})
 	requireError(t, err, 403, "forbidden")
 	authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(manager.ID), w.channelWriter)
-	input := catalog.ContentInput{Kind: "article", OwnerEntityID: string(channel.ID), Text: map[string]catalog.Text{"en": {Title: "Official post", Body: "Public"}}}
+	input := catalog.ContentInput{Kind: "article", ChannelID: string(channel.ID), Text: map[string]catalog.Text{"en": {Title: "Official post", Body: "Public"}}}
 	item, err := client.PostContents(t.Context(), input)
 	must(t, err)
 	_, err = client.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
@@ -258,7 +256,11 @@ func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 // Offline imports must not turn a not-yet-provisioned authorization scope into
 // the intentionally unscoped direct-owner model.
 func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
-	w := newWorld(t)
+	w := newWorld(t, func(cfg *ck.Config) {
+		gallery := cfg.Content.Kinds["gallery"]
+		gallery.Channel = &kinds.ChannelPolicy{}
+		cfg.Content.Kinds["gallery"] = gallery
+	})
 	a := w.apps[0]
 	attachMedia(t, w, a)
 	a.server.Close()
@@ -273,53 +275,53 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 	token := authtest.SignIn(t, a.tenant, owner).AccessToken
 	caller := a.client(token)
 	id := contentref.NewID()
-	result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "pending-channel-scope", ProvisionScopes: true, Entities: []importer.EntityRecord{{ExternalID: "pending", ID: id, Kind: "channel", Slug: "pending-scope", OwnerUserID: owner.ID}}})
+	result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "pending-channel-scope", ProvisionScopes: true, Channels: []importer.ChannelRecord{{ExternalID: "pending", ID: id, Slug: "pending-scope", OwnerUserID: owner.ID}}})
 	must(t, err)
 	if len(result.Failed) != 0 {
 		t.Fatalf("pending scope fixture: %+v", result.Failed)
 	}
-	channel, err := a.engine.Client().GetManageEntity(t.Context(), id, ck.GetManageEntityQuery{})
+	channel, err := a.engine.Client().GetManageChannel(t.Context(), id, ck.GetManageChannelQuery{})
 	must(t, err)
 	if channel.AuthScope != "" {
 		t.Fatal("fixture processed scope before the checks")
 	}
-	input := catalog.ContentInput{Kind: "article", OwnerEntityID: id, Text: map[string]catalog.Text{"en": {Title: "Pending channel", Body: "Public content remains public"}}}
+	input := catalog.ContentInput{Kind: "article", ChannelID: id, Text: map[string]catalog.Text{"en": {Title: "Pending channel", Body: "Public content remains public"}}}
 	item, err := a.engine.Client().PostContents(t.Context(), input)
 	must(t, err)
 	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
 	awaitEditionPublication(t, a, a.engine.Client(), item.ID, item.Versions[0].ID)
-	gallery, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", OwnerEntityID: id, Text: map[string]catalog.Text{"en": {Title: "Pending gallery"}}})
+	gallery, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", ChannelID: id, Text: map[string]catalog.Text{"en": {Title: "Pending gallery"}}})
 	must(t, err)
 	commenter, commentToken := w.person(t, 0)
 	comment := postComment(t, a.client(commentToken), item.ID, "Not moderated by metadata")
 	_, err = caller.PutCommentBan(t.Context(), commenter.ID, content.BanInput{})
 	must(t, err)
-	_, err = a.client(commentToken).PostEntityComments(t.Context(), id, content.CommentInput{Body: "Personal blocks do not moderate a scoped channel"})
+	_, err = a.client(commentToken).PostChannelComments(t.Context(), id, content.CommentInput{Body: "Personal blocks do not moderate a scoped channel"})
 	must(t, err)
 	// A saved channel ban may outlive an authorization-scope restoration.
 	// Reproduce that durable state without granting the pending owner authority.
 	banned, bannedToken := w.person(t, 0)
 	_, err = w.pool.Exec(t.Context(), "INSERT INTO "+pgx.Identifier{w.schema, "content_comment_bans"}.Sanitize()+
-		" (tenant_id,user_id,scope,reason,banned_by) VALUES($1,$2,$3,$4,$5)", a.cfg.Scope.AppID.String(), banned.ID, content.EntityScope(id), "Retained channel restriction", owner.ID)
+		" (tenant_id,user_id,scope,reason,banned_by) VALUES($1,$2,$3,$4,$5)", a.cfg.Scope.AppID.String(), banned.ID, content.ChannelScope(id), "Retained channel restriction", owner.ID)
 	must(t, err)
 	bannedClient := a.client(bannedToken)
 	_, err = bannedClient.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "Still banned while scope is pending"}, ck.PostContentCommentsQuery{})
 	requireError(t, err, 403, "comment_banned")
-	_, err = bannedClient.PostEntityComments(t.Context(), id, content.CommentInput{Body: "Channel thread keeps the same ban"})
+	_, err = bannedClient.PostChannelComments(t.Context(), id, content.CommentInput{Body: "Channel thread keeps the same ban"})
 	requireError(t, err, 403, "comment_banned")
-	err = caller.DeleteEntityCommentBan(t.Context(), id, banned.ID)
+	err = caller.DeleteChannelCommentBan(t.Context(), id, banned.ID)
 	requireError(t, err, 403, "forbidden")
-	other, err := a.engine.Client().PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: "other-ban-scope", OwnerUserID: owner.ID}})
+	other, err := a.engine.Client().PostChannels(t.Context(), channels.Input{Slug: "other-ban-scope"})
 	must(t, err)
-	_, err = bannedClient.PostEntityComments(t.Context(), string(other[0].ID), content.CommentInput{Body: "A different channel is unaffected"})
+	_, err = bannedClient.PostChannelComments(t.Context(), other.ID, content.CommentInput{Body: "A different channel is unaffected"})
 	must(t, err)
 	_, err = caller.PostContents(t.Context(), input)
 	requireError(t, err, 403, "forbidden")
 	_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Forbidden", Body: "no"})
 	requireError(t, err, 403, "forbidden")
-	update := entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Team updated"}}}
-	_, err = caller.PatchEntity(t.Context(), id, update)
+	update := channels.Update{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Team updated"}}}
+	_, err = caller.PatchChannel(t.Context(), id, update)
 	requireError(t, err, 403, "forbidden")
 	err = caller.PostCommentHold(t.Context(), comment.ID)
 	requireError(t, err, 403, "forbidden")
@@ -332,22 +334,22 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 		_, err = caller.PostMediaUploadPresign(t.Context(), request)
 		requireError(t, err, 403, "forbidden")
 	}
-	mine, err := caller.GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
+	mine, err := caller.GetMeChannels(t.Context(), ck.GetMeChannelsQuery{})
 	must(t, err)
-	for _, entity := range mine.Entities {
+	for _, entity := range mine.Channels {
 		if string(entity.ID) == id {
 			t.Fatal("pending scope advertised owner capabilities")
 		}
 	}
 	must(t, fleet.Queues().Add(entities.DefaultQueue, river.QueueConfig{MaxWorkers: 1}))
 	waitFor(t, func() bool {
-		current, err := a.engine.Client().GetManageEntity(t.Context(), id, ck.GetManageEntityQuery{})
+		current, err := a.engine.Client().GetManageChannel(t.Context(), id, ck.GetManageChannelQuery{})
 		must(t, err)
 		return current.AuthScope != ""
 	})
 	_, err = caller.PostContents(t.Context(), input)
 	must(t, err)
-	_, err = caller.PatchEntity(t.Context(), id, update)
+	_, err = caller.PatchChannel(t.Context(), id, update)
 	must(t, err)
 	must(t, caller.PostCommentHold(t.Context(), comment.ID))
 	for _, request := range requests {
