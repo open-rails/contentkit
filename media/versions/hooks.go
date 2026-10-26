@@ -201,7 +201,7 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
 		return err
 	}
-	return s.SchedulePublicationTx(ctx, tx, []Target{v})
+	return s.wakePublicationTx(ctx, tx, v)
 
 }
 
@@ -226,7 +226,7 @@ func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.
 	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
 		return err
 	}
-	return s.SchedulePublicationTx(ctx, tx, []Target{v})
+	return s.wakePublicationTx(ctx, tx, v)
 }
 
 // beforeRetire serializes snapshot invalidation with publishers. A publisher
