@@ -24,7 +24,7 @@ window.critical = {
     root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" },
       React.createElement(React.Fragment, null,
         React.createElement(RepostButton, { contentId: fixture.item, originalChannelId: fixture.originalChannel }),
-        React.createElement(ChannelFeed, { channelId: fixture.destination, query: { language: "en" }, empty: React.createElement("p", { id: "empty-channel" }, "Empty channel") })));
+        React.createElement(ChannelFeed, { channelId: fixture.destination, query: { language: "en" }, empty: React.createElement("p", { id: "empty-channel" }, "Empty channel") }))));
   },
   async uploadChannelImage() {
     const ref=client.channels.folder(fixture.destination);
