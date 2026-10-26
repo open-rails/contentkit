@@ -143,7 +143,7 @@ func (s *Store) contentEditors(ctx context.Context, ids []string) map[string]boo
 		}
 	} else if err == nil {
 		for _, g := range scoped {
-			if out[g.id], err = gate.ChannelEditor(ctx, s.as.auth, v, "", g.scope, access.ChannelContentWrite); err != nil {
+			if out[g.id], err = gate.ChannelEditor(ctx, s.as.auth, v, g.scope, access.ChannelContentWrite); err != nil {
 				break
 			}
 		}
