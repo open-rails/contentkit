@@ -719,6 +719,18 @@
       ]
     },
     {
+      "id": "CK-J07-S14",
+      "journey": "CK-J07",
+      "behavior": "A list's counts are shared for a minute and then follow catalog changes",
+      "status": "verified",
+      "evidence": [
+        "After a second article is published, the list summary keeps its shared total within the minute and counts both articles once the minute has passed."
+      ],
+      "cases": [
+        "TestListingSummaryRefreshesWithinAMinute"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",

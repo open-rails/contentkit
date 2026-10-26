@@ -10,16 +10,15 @@ import (
 	"time"
 )
 
-// summaryTTL bounds how long a list's counts may miss a change that records no
-// catalog event, such as content going live on schedule.
+// summaryTTL bounds how long a list's counts may miss a catalog change: an
+// edit, a publication or content going live on schedule.
 const summaryTTL = time.Minute
 
 const summaryEntries = 4096
 
 // summaryCache keeps a list's selection counts, so its numbered pages and
-// repeat views share one count. A key is the compiled selection (its SQL and
-// arguments, the viewer's included) and the catalog's latest event, so any
-// catalog write starts fresh counts.
+// repeat views share one count. A key is the compiled selection: its SQL and
+// arguments, the viewer's included.
 type summaryCache struct {
 	mu      sync.Mutex
 	entries map[[sha256.Size]byte]summaryEntry
@@ -34,10 +33,6 @@ type summaryEntry struct {
 var clockArgs = []string{"cv_now", "ci_now", "d_published_now"}
 
 func (s *Service) cachedListingSummary(ctx context.Context, filter Filter, q *sel, sort order) (*ListingSummary, error) {
-	var stamp int64
-	if err := s.o.Pool.QueryRow(ctx, `SELECT coalesce((SELECT position FROM `+s.t.eventStreams+` WHERE source='contentkit' AND scope=$1),0)`, s.o.Tenant).Scan(&stamp); err != nil {
-		return nil, err
-	}
 	args := maps.Clone(q.args)
 	for _, k := range clockArgs {
 		delete(args, k)
@@ -46,8 +41,7 @@ func (s *Service) cachedListingSummary(ctx context.Context, filter Filter, q *se
 		Predicate, Sort, Join string
 		Args                  map[string]any
 		SortArgs              map[string]any
-		Stamp                 int64
-	}{q.predicate(), sort.raw, sort.join, args, sort.args, stamp})
+	}{q.predicate(), sort.raw, sort.join, args, sort.args})
 	if err != nil {
 		return nil, err
 	}
