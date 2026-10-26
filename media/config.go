@@ -334,8 +334,8 @@ type Hooks struct {
 	// job, synchronously in its completion transaction. It must be idempotent; an error
 	// retries.
 	ItemReady func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r Readiness) error
-	// ItemProgressed reports changed reader media while other processing is
-	// pending, or a player once its first rendition is playable. It runs in a
+	// ItemProgressed reports changed preparation while other outputs are
+	// pending. It never means a partial reader release is available. It runs in a
 	// processor completion transaction alongside ItemReady, which
 	// reports final completion. Optional; idempotent; an error retries.
 	ItemProgressed func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error
