@@ -290,7 +290,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := preflightPublishingJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
 		return err
 	}
-	if err := e.preflightReclassificationJobs(ctx, options.RetireReclassificationJobs); err != nil {
+	if err := e.preflightObsoletePeriodicJobs(ctx, options.RetireObsoleteJobs); err != nil {
 		return err
 	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
@@ -344,7 +344,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
 	if options.explicit {
-		if err := e.retireReclassificationJobs(ctx, options.RetireReclassificationJobs); err != nil {
+		if err := e.retireObsoletePeriodicJobs(ctx, options.RetireObsoleteJobs); err != nil {
 			return err
 		}
 	}

@@ -9,26 +9,28 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The old classifier used empty args and a shared queue. Neither identifies
+// Retired periodic jobs used empty args and a shared queue. Neither identifies
 // an app, so only an operator's exact reviewed IDs authorize retirement.
-func (e *Engine) reclassificationTable(ctx context.Context) (string, error) {
+var obsoletePeriodicJobKinds = []string{"contentkit_reclassify"}
+
+func (e *Engine) obsoletePeriodicJobsTable(ctx context.Context) (string, error) {
 	return removedJobsTable(ctx, e.pool, e.riverSchema, []string{e.cfg.Tenant})
 }
 
-func inspectReclassificationJobs(ctx context.Context, q interface {
+func inspectObsoletePeriodicJobs(ctx context.Context, q interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 }, table string, selected []int64, lock bool) ([]int64, error) {
 	ids := slices.Compact(slices.Sorted(slices.Values(selected)))
 	if len(ids) > 0 && ids[0] <= 0 {
-		return nil, errors.New("contentkit: reclassification retirement IDs must be positive")
+		return nil, errors.New("contentkit: obsolete periodic job retirement IDs must be positive")
 	}
 	query := `SELECT id,kind,queue,state,args='{}'::jsonb FROM ` + table + `
- WHERE id=ANY($1::bigint[]) OR (kind='contentkit_reclassify' AND queue=$2
+ WHERE id=ANY($1::bigint[]) OR (kind=ANY($3::text[]) AND queue=$2
  AND state IN ('available','pending','retryable','scheduled','running')) ORDER BY id`
 	if lock {
 		query += ` FOR UPDATE`
 	}
-	rows, err := q.Query(ctx, query, ids, QueueContentKit)
+	rows, err := q.Query(ctx, query, ids, QueueContentKit, obsoletePeriodicJobKinds)
 	if err != nil {
 		return nil, err
 	}
@@ -42,10 +44,10 @@ func inspectReclassificationJobs(ctx context.Context, q interface {
 			return nil, err
 		}
 		if !slices.Contains(ids, id) {
-			return nil, fmt.Errorf("contentkit: classification job %d has no app identity; stop the owning fleet, review its exact IDs, then use MigrationOptions.RetireReclassificationJobs", id)
+			return nil, fmt.Errorf("contentkit: obsolete periodic job %d has no app identity; stop the owning fleet, review its exact IDs, then use MigrationOptions.RetireObsoleteJobs", id)
 		}
-		if kind != "contentkit_reclassify" || queue != QueueContentKit || !empty {
-			return nil, fmt.Errorf("contentkit: job %d does not match the retired empty-argument classifier; leave foreign or ambiguous work untouched", id)
+		if !slices.Contains(obsoletePeriodicJobKinds, kind) || queue != QueueContentKit || !empty {
+			return nil, fmt.Errorf("contentkit: job %d does not match a retired empty-argument periodic job; leave foreign or ambiguous work untouched", id)
 		}
 		found = append(found, id)
 		switch state {
@@ -59,33 +61,33 @@ func inspectReclassificationJobs(ctx context.Context, q interface {
 		return nil, err
 	}
 	if !slices.Equal(ids, found) {
-		return nil, errors.New("contentkit: a selected reclassification job does not exist in this River schema")
+		return nil, errors.New("contentkit: a selected obsolete periodic job does not exist in this River schema")
 	}
 	return waiting, nil
 }
 
-func (e *Engine) preflightReclassificationJobs(ctx context.Context, ids []int64) error {
-	table, err := e.reclassificationTable(ctx)
+func (e *Engine) preflightObsoletePeriodicJobs(ctx context.Context, ids []int64) error {
+	table, err := e.obsoletePeriodicJobsTable(ctx)
 	if err != nil || table == "" {
 		if err == nil && len(ids) != 0 {
-			return errors.New("contentkit: selected reclassification jobs require an existing River schema")
+			return errors.New("contentkit: selected obsolete periodic jobs require an existing River schema")
 		}
 		return err
 	}
-	_, err = inspectReclassificationJobs(ctx, e.pool, table, ids, false)
+	_, err = inspectObsoletePeriodicJobs(ctx, e.pool, table, ids, false)
 	return err
 }
 
-func (e *Engine) retireReclassificationJobs(ctx context.Context, ids []int64) error {
+func (e *Engine) retireObsoletePeriodicJobs(ctx context.Context, ids []int64) error {
 	if len(ids) == 0 {
-		return e.preflightReclassificationJobs(ctx, nil)
+		return e.preflightObsoletePeriodicJobs(ctx, nil)
 	}
-	table, err := e.reclassificationTable(ctx)
+	table, err := e.obsoletePeriodicJobsTable(ctx)
 	if err != nil {
 		return err
 	}
 	return pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
-		waiting, err := inspectReclassificationJobs(ctx, tx, table, ids, true)
+		waiting, err := inspectObsoletePeriodicJobs(ctx, tx, table, ids, true)
 		if err != nil || len(waiting) == 0 {
 			return err
 		}

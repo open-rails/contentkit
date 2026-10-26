@@ -48,7 +48,7 @@ func TestClassificationJobRetirement(t *testing.T) {
 			_ = engine.Close(t.Context())
 			t.Fatal("runtime silently adopted ambiguous work")
 		}
-		if err == nil || !strings.Contains(err.Error(), "RetireReclassificationJobs") {
+		if err == nil || !strings.Contains(err.Error(), "RetireObsoleteJobs") {
 			t.Fatalf("missing actionable startup refusal: %v", err)
 		}
 		err = ck.MigratePostgres(t.Context(), w.pool, a.cfg)
@@ -56,14 +56,14 @@ func TestClassificationJobRetirement(t *testing.T) {
 			t.Fatalf("migration guessed job ownership: %v", err)
 		}
 		assertState(waiting, rivertype.JobStateAvailable)
-		err = ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{RetireReclassificationJobs: []int64{waiting, foreign}})
+		err = ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{RetireObsoleteJobs: []int64{waiting, foreign}})
 		if err == nil || !strings.Contains(err.Error(), "does not match") {
 			t.Fatalf("foreign queue accepted: %v", err)
 		}
 		assertState(waiting, rivertype.JobStateAvailable)
 		_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job SET state='running',attempted_at=clock_timestamp() WHERE id=$1`, waiting)
 		must(t, err)
-		err = ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{RetireReclassificationJobs: []int64{waiting}})
+		err = ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{RetireObsoleteJobs: []int64{waiting}})
 		if err == nil || !strings.Contains(err.Error(), "running") {
 			t.Fatalf("running classifier accepted: %v", err)
 		}
@@ -71,7 +71,7 @@ func TestClassificationJobRetirement(t *testing.T) {
 		_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job SET state='available' WHERE id=$1`, waiting)
 		must(t, err)
 		for range 2 {
-			must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{RetireReclassificationJobs: []int64{waiting, terminal}}))
+			must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{RetireObsoleteJobs: []int64{waiting, terminal}}))
 		}
 		assertState(waiting, rivertype.JobStateCancelled)
 		assertState(terminal, rivertype.JobStateCompleted)
