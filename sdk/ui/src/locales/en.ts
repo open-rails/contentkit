@@ -299,6 +299,7 @@ export const en = {
     resume_mismatch: "The saved upload is for a different file. Please pick the file again.",
     moderation_rejected: "This was rejected by moderation.",
     comment_banned: "You can't comment here.",
+    comment_moderated: "A comment awaiting review or not published can't be edited.",
     comments_closed: "Comments are closed here.",
     comments_locked: "Unlock this to see and write comments.",
     not_joinable: "This group isn't open to join right now.",

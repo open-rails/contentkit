@@ -366,7 +366,8 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
   const { standing } = thread;
   const name = authorName(c, t("comments.anonymous"));
   const own = !!standing?.user_id && c.user_id === standing.user_id;
-  const canEdit = !c.deleted && (own || !!standing?.moderate);
+  const canDelete = !c.deleted && (own || !!standing?.moderate);
+  const canEdit = canDelete && !c.moderation;
   const canBan = !c.deleted && !!c.user_id && !own && (standing?.ban_scopes.length ?? 0) > 0;
   const bans = c.user_id ? thread.banned.get(c.user_id) : undefined;
   const [editing, setEditing] = useState(false);
@@ -396,14 +397,14 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
           <RelativeTime at={c.created_at} className="text-xs text-muted-foreground" />
           {c.moderation === "held" && <Badge variant="secondary">{t("comments.heldBadge")}</Badge>}
           {c.moderation === "rejected" && <Badge variant="destructive">{t("comments.rejectedBadge")}</Badge>}
-          {(canEdit || canBan || (c.deleted && standing?.moderate)) && (
+          {(canDelete || canBan || (c.deleted && standing?.moderate)) && (
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" className="ms-auto" aria-label={t("comments.actions")} />}>
                 <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {canEdit && <DropdownMenuItem onClick={() => setEditing(true)}>{t("comments.edit")}</DropdownMenuItem>}
-                {canEdit && (
+                {canDelete && (
                   <DropdownMenuItem className="text-destructive" onClick={() => setDeleting(true)}>
                     {t("comments.delete")}
                   </DropdownMenuItem>
@@ -516,6 +517,11 @@ function Composer(p: ComposerProps) {
       thread.report(err, p.operation);
       if (err.code === "comment_banned" && err.ban) thread.onBanned(err.ban);
       else if (err.code === "comments_locked") thread.onLocked();
+      else if (err.code === "comment_moderated") {
+        // Held or rejected since this page loaded: show why and refresh the row.
+        setError(contentError(m, err));
+        thread.comments.reload();
+      }
       else if (err.code === "rate_limited") setError(err.retryAfter ? t("comments.rateLimited", { seconds: err.retryAfter }) : t("comments.rateLimitedSoon"));
       else setError(contentError(m, err));
     } finally {
