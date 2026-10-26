@@ -120,7 +120,7 @@ for _, r := range routes {
   versions' (`media.ForContent`, the `media/versions` service). All content
   belongs to ContentKit: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
-  projection repair, publication events, event retention and content purge,
+  popularity refresh, publication events, event retention and content purge,
   and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and
