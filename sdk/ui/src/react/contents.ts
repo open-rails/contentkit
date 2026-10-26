@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { CatalogText, Content, ContentInput, ContentPatch, Version } from "../client/generated/wire.js";
+import type { VersionText, Content, ContentInput, ContentPatch, Version } from "../client/generated/wire.js";
 import { IMAGE_SCHEME, imageRef, imageRefs, type ManageQuery } from "../client/contents.js";
+import { selectedEdition } from "../client/edition-access.js";
 import { nextPublicationRefresh } from "../client/publication.js";
 import { useMediaRead } from "./read.js";
 import { useGuarded } from "./context.js";
@@ -38,7 +39,7 @@ export interface UseContent {
   create: (input: ContentInput) => Promise<Content>;
   update: (patch: ContentPatch) => Promise<Content>;
   /** Sets the text in the hook's language; a body from the editor is stored with image references (storedBody). */
-  putText: (text: CatalogText) => Promise<Content>;
+  saveText: (text: VersionText) => Promise<Version>;
   /** Publishes now, or schedules for at. */
   publish: (at?: string) => Promise<Content>;
   unpublish: () => Promise<Content>;
@@ -50,13 +51,12 @@ export interface UseContent {
   restore: () => Promise<Content>;
   /**
    * The version whose cover and body images the hook edits: the one asked
-   * for, else the first. Every version has its own cover and its own copy of
-   * the body's images.
+   * for, else the selected edition. Every version owns its text, cover and images.
    */
   version: Version | null;
   /** Uploads the version's cover (null returns to its first upload); resolves with a URL that shows it now. */
   setCover: (file: Blob | null) => Promise<string | null>;
-  /** Uploads an image for the body into the version, copied into the others; resolves with a URL that shows it now, to place in the editor. */
+  /** Uploads an image for this version's body; resolves with a URL that shows it now, to place in the editor. */
   uploadImage: (file: Blob) => Promise<string>;
   /**
    * A URL that shows one of the item's images now, by name ("i-{uuid}") or
@@ -68,7 +68,7 @@ export interface UseContent {
   /** The version's cover through imageSrc. */
   coverSrc: string | undefined;
   /** The language's stored text, its body's images through imageSrc: what an editor shows. */
-  text: CatalogText | undefined;
+  text: VersionText | undefined;
   /** HTML from the editor with every image URL this hook showed turned back into the image's reference. */
   storedBody: (html: string) => string;
 }
@@ -95,8 +95,8 @@ export function useContent(
   const { client, store, scope } = useContentScope(o.client);
   const [created, setCreated] = useState<string | null>(null);
   const cid = id ?? created;
-  const key = cid ? keyOf("content", scope, cid) : null;
-  const r = useResource<Content | null>(store, key, { type: "content", id: cid ?? undefined }, (s) => client.contents.get(cid!, language, s), { initial: o.initial });
+  const key = cid ? keyOf("content", scope, cid, language, o.version) : null;
+  const r = useResource<Content | null>(store, key, { type: "content", id: cid ?? undefined }, (s) => o.version ? client.contents.getByVersion(o.version, language, s) : client.contents.get(cid!, language, s), { initial: o.initial });
   const content = r.data ?? null;
   const reloadPublication = r.reload;
   useEffect(() => {
@@ -120,12 +120,9 @@ export function useContent(
     if (!cid) throw new Error("contentkit-ui: create the item first");
     return cid;
   }, [cid]);
-  const stored = content?.text?.[language];
+  const version = useMemo(() => content ? selectedEdition(content, o.version) ?? null : null, [content, o.version]);
+  const stored = version?.text?.[language];
   const body = stored?.body;
-  const version = useMemo(() => {
-    const vs = [...(content?.versions ?? [])].sort((a, b) => a.position - b.position);
-    return vs.find((v) => v.id === o.version) ?? vs[0] ?? null;
-  }, [content?.versions, o.version]);
   const vid = version?.id;
   const cover = version?.cover;
   const needVersion = useCallback(() => {
@@ -135,7 +132,8 @@ export function useContent(
 
   // Images: fresh uploads show from their file, published ones from
   // content.images, the rest (an unpublished item's) from an editor read.
-  const [previews, setPreviews] = useState<ReadonlyMap<string, string>>(new Map());
+  const [previewState, setPreviews] = useState<{ version?: string; images: ReadonlyMap<string, string> }>({ images: new Map() });
+  const previews = useMemo(() => previewState.version === vid ? previewState.images : new Map<string, string>(), [previewState, vid]);
   const blobs = useRef<string[]>([]);
   useEffect(() => {
     const urls = blobs.current;
@@ -179,10 +177,10 @@ export function useContent(
   }, [missing, files, reload]);
 
   // Every URL shown for an image, of this and earlier reads, back to its name.
-  const shown = useRef(new Map<string, string>());
+  const shown = useMemo(() => new Map<string, string>(), [vid]);
   useEffect(() => {
-    for (const m of [previews, published, views]) for (const [n, u] of m) shown.current.set(u, n);
-  }, [previews, published, views]);
+    for (const m of [previews, published, views]) for (const [n, u] of m) shown.set(u, n);
+  }, [previews, published, views, shown]);
 
   const imageSrc = useCallback(
     (image: string | null | undefined) => {
@@ -198,21 +196,21 @@ export function useContent(
   );
   const storedBody = useCallback(
     (html: string) => {
-      const back = new Map(shown.current);
+      const back = new Map(shown);
       for (const m of [previews, published, views]) for (const [n, u] of m) back.set(u, n);
       let out = html;
       for (const [u, n] of back) out = out.split(u).join(imageRef(n)).split(u.replaceAll("&", "&amp;")).join(imageRef(n));
       return out;
     },
-    [previews, published, views],
+    [previews, published, views, shown],
   );
   const preview = useCallback((name: string, file: Blob): string | undefined => {
     if (typeof URL.createObjectURL !== "function") return undefined;
     const url = URL.createObjectURL(file);
     blobs.current.push(url);
-    setPreviews((m) => new Map(m).set(name, url));
+    setPreviews((state) => ({ version: vid, images: new Map(state.version === vid ? state.images : []).set(name, url) }));
     return url;
-  }, []);
+  }, [vid]);
 
   const create = useCallback(
     (input: ContentInput) =>
@@ -224,9 +222,11 @@ export function useContent(
     [client, run],
   );
   const update = useCallback((patch: ContentPatch) => run(() => client.contents.update(need(), patch)), [client, run, need]);
-  const putText = useCallback(
-    (t: CatalogText) => run(() => client.contents.putText(need(), language, t.body === undefined ? t : { ...t, body: storedBody(t.body) })),
-    [client, run, need, language, storedBody],
+  const saveText = useCallback(
+    (text: VersionText) => run(() => client.contents.updateVersion(need(), needVersion(), {
+      text: { ...version?.text, [language]: text.body === undefined ? text : { ...text, body: storedBody(text.body) } },
+    })),
+    [client, run, need, needVersion, version?.text, language, storedBody],
   );
   const publish = useCallback((at?: string) => run(() => client.contents.publish(need(), at)), [client, run, need]);
   const unpublish = useCallback(() => run(() => client.contents.unpublish(need())), [client, run, need]);
@@ -244,20 +244,20 @@ export function useContent(
         const up = await client.media.uploadNamed(ref, file, { path: await client.media.presetPath(kind, "cover", file) });
         const saved = await client.contents.setCover(ref.id, ref.version, up.name);
         const url = preview(up.name, file) ?? saved.cover?.url ?? null;
-        if (url) shown.current.set(url, up.name);
+        if (url) shown.set(url, up.name);
         return url;
       }),
-    [client, run, need, needVersion, kind, preview],
+    [client, run, need, needVersion, kind, preview, shown],
   );
   const uploadImage = useCallback(
     (file: Blob) =>
       run(async () => {
         const up = await client.media.uploadInline({ kind, id: need(), version: needVersion() }, file);
         const url = preview(up.name, file) ?? up.url ?? up.ref;
-        shown.current.set(url, up.name);
+        shown.set(url, up.name);
         return url;
       }),
-    [client, run, need, needVersion, kind, preview],
+    [client, run, need, needVersion, kind, preview, shown],
   );
   return {
     content,
@@ -267,7 +267,7 @@ export function useContent(
     saving: inflight > 0,
     create,
     update,
-    putText,
+    saveText,
     publish,
     unpublish,
     removeVersion,

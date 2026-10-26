@@ -4,7 +4,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { parseAttributes } from "../../client/entity-fields.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { CatalogText, Content, ContentModel, FileInfo, EntityCard, Membership, NewEntity, RefBody, Version, VersionText } from "../../client/generated/wire.js";
+import type { Content, ContentModel, FileInfo, EntityCard, Membership, NewEntity, RefBody, Version, VersionText } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
 import { ruleFor, uploadRules } from "../../client/media/rules.js";
@@ -46,11 +46,9 @@ import { contentStatus, type ContentEditorProps } from "./content-manager.js";
 import { fileTitle } from "./bulk-drafts.js";
 
 const NO_REF: RefBody = { kind: "", id: "" };
-const blank = (): CatalogText => ({ title: "", slug: "", description: "", body: "" });
-const editableText = (item: Content | null, language: string): CatalogText =>
-  item?.text?.[language] ??
-  (item?.language === language ? { title: item.title, slug: item.slug, description: item.description, body: item.body } : blank());
-const textOf = (text: CatalogText): CatalogText => ({
+const blank = (): VersionText => ({ title: "", slug: "", description: "", body: "" });
+const editableText = (version: Version | undefined, language: string): VersionText => version?.text?.[language] ?? blank();
+const textOf = (text: VersionText): VersionText => ({
   ...text,
   title: text.title.trim(),
   description: text.description?.trim(),
@@ -149,23 +147,22 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const entityKinds = useMemo(() => spec.entities ?? [], [spec.entities]);
   const sharedKinds = useMemo(() => entityKinds.filter((kind) => allowsEntityScope(model.entity_kinds[kind], "content")), [entityKinds, model.entity_kinds]);
   const versionKinds = useMemo(() => entityKinds.filter((kind) => allowsEntityScope(model.entity_kinds[kind], "version")), [entityKinds, model.entity_kinds]);
-  const texts = useDraft(useMemo(() => Object.fromEntries(languageKey.split("|").map((l) => [l, editableText(item, l)])), [item, languageKey]));
+  const texts = useDraft(useMemo(() => Object.fromEntries(languageKey.split("|").map((l) => [l, editableText(version, l)])), [version, languageKey]));
   const editionLanguage = stagedLanguage && stagedLanguage.version === version?.id ? stagedLanguage.language : version?.languages[0] ?? language;
   const versionID = version?.id;
   const onVersionLanguagesChange = useCallback((languages: readonly string[]) => {
     if (versionID) setStagedLanguage({ version: versionID, language: languages[0] ?? language });
   }, [versionID, language]);
-  const versionTexts = useDraft(useMemo<Record<string, VersionText>>(() => version?.text ?? {}, [version?.text]));
-  const displayTitle = versionTexts.value[editionLanguage]?.title ?? item?.text?.[editionLanguage]?.title ?? (item?.language === editionLanguage ? item.title : "");
+  const displayTitle = texts.value[editionLanguage]?.title ?? "";
   const details = useDraft(
     useMemo(
       () => ({
-        originalTitle: item?.original_title ?? "",
+        originalTitle: version?.original_title ?? "",
         comments: item?.comments ?? (!spec.comment_modes?.length || spec.comment_modes.includes("open") ? "open" : spec.comment_modes[0]!),
         attributes: formOf(spec.attributes ?? {}, item?.attributes ?? {}),
         access: version?.access ?? defaultAccessRule(model, p.kind),
       }),
-      [item?.original_title, item?.comments, item?.attributes, version?.access, spec.attributes, spec.comment_modes, model, p.kind],
+      [version?.original_title, item?.comments, item?.attributes, version?.access, spec.attributes, spec.comment_modes, model, p.kind],
     ),
   );
   const associations = useDraft(
@@ -191,8 +188,8 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     return linked.size + create.filter((c) => c.kind === by).length === 1 ? undefined : labelOf(p.labels, by);
   };
   const coordinator = useEditorSaveCoordinator();
-  const latest = useRef({ texts, details, associations, versionAssociations, language, versionTexts, editionLanguage });
-  latest.current = { texts, details, associations, versionAssociations, language, versionTexts, editionLanguage };
+  const latest = useRef({ texts, details, associations, versionAssociations, language, editionLanguage });
+  latest.current = { texts, details, associations, versionAssociations, language, editionLanguage };
   // Starting entities (e.g. a series' "new gallery") join a new item's draft once, when they resolve.
   const started = useRef(false);
   useEffect(() => {
@@ -209,7 +206,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     seed(versionKinds.filter((kind) => !sharedKinds.includes(kind)), latest.current.versionAssociations);
   }, [p.id, p.entities, entityKinds, sharedKinds, versionKinds]);
   const text = texts.value[language] ?? blank();
-  const editText = (patch: Partial<CatalogText>) => texts.edit((all) => ({ ...all, [language]: { ...(all[language] ?? blank()), ...patch } }));
+  const editText = (patch: Partial<VersionText>) => texts.edit((all) => ({ ...all, [language]: { ...(all[language] ?? blank()), ...patch } }));
   const fail = (e: unknown) => {
     if (!current()) return;
     setError(e instanceof ValidationError ? e.message : e);
@@ -221,12 +218,11 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     setAllocating(true);
     const l = originalAndVersion ? latest.current.editionLanguage : latest.current.language;
     const before = latest.current.texts.get()[l] ?? blank();
-    const title = (originalAndVersion ? latest.current.versionTexts.get()[l]?.title : before.title)?.trim() || fileTitle(suggested ?? "") || t("readerEditor.untitled");
-    if (originalAndVersion && !latest.current.versionTexts.get()[l]?.title?.trim()) latest.current.versionTexts.edit((all) => ({ ...all, [l]: { ...all[l], title } }));
+    const title = before.title?.trim() || fileTitle(suggested ?? "") || t("readerEditor.untitled");
     if (!before.title.trim()) latest.current.texts.edit((all) => ({ ...all, [l]: { ...(all[l] ?? blank()), title } }));
     const input = {
       kind: p.kind,
-      text: { [l]: { ...before, title } },
+      versions: [{ languages: [l], text: { [l]: { ...before, title } } }],
       owner_group_id: spec.owner_entity ? undefined : p.ownerEntity,
       access: cleanRule(latest.current.details.get().access),
       ...(spec.comment_modes?.length ? { comments: latest.current.details.get().comments } : {}),
@@ -307,7 +303,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   };
   const dirty =
     fileDraft.dirty ||
-    versionTexts.dirty.length > 0 ||
     publication.dirty.length > 0 ||
     texts.dirty.length > 0 ||
     details.dirty.length > 0 ||
@@ -331,7 +326,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     setNotice("");
     const state = latest.current;
     const active = state.texts.get()[state.language];
-    const activeDisplayTitle = state.versionTexts.get()[state.editionLanguage]?.title ?? item?.text?.[state.editionLanguage]?.title ?? (item?.language === state.editionLanguage ? item.title : "");
+    const activeDisplayTitle = state.texts.get()[state.editionLanguage]?.title ?? "";
     if (!(originalAndVersion ? activeDisplayTitle : active?.title)?.trim()) return setError(t("contentManager.titleRequired"));
     const problem = coordinator.problem();
     if (problem) return setError(t("readerEditor.fixSection", { section: problem }));
@@ -346,7 +341,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     if (publish && publishingBlocked) return setError(t("readerEditor.filesNotReady"));
     setSaving(true);
     const settleTexts = state.texts.checkpoint(),
-      settleVersionTexts = state.versionTexts.checkpoint(),
       settleDetails = state.details.checkpoint(),
       settleAssociations = state.associations.checkpoint(),
       settleVersionAssociations = state.versionAssociations.checkpoint(),
@@ -357,8 +351,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     if (originalAndVersion) for (const l of changedText) {
       if (snapshotTexts[l] && !snapshotTexts[l].title.trim()) snapshotTexts[l] = { ...snapshotTexts[l], title: activeDisplayTitle };
     }
-    const snapshotVersionTexts = { ...state.versionTexts.get() };
-    let savedVersionTexts = snapshotVersionTexts;
     const snapshotDetails = state.details.get();
     const snapshotAssociations = state.associations.get().memberships.slice();
     const snapshotCreate = state.associations.get().create.slice();
@@ -372,20 +364,28 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
       if (!current()) return;
       if (membership.error) throw membership.error;
       await guarded(async () => {
-        for (const key of changedText) {
-          const l = String(key);
-          const next = snapshotTexts[l];
-          if (!next?.title.trim()) throw new ValidationError(t("contentManager.titleRequired"));
-          content = await client.contents.putText(content.id, l, textOf(next));
+        const targetVersion = version ? content.versions.find((v) => v.id === version.id) : content.versions[0];
+        if (!targetVersion) throw new ValidationError(t("readerEditor.versionMissing"));
+        if (changedText.length || changedDetails.includes("originalTitle")) {
+          const fresh = await client.contents.version(content.id, targetVersion.id, state.editionLanguage);
+          const merged = { ...fresh.text };
+          for (const key of changedText) {
+            const l = String(key), next = snapshotTexts[l];
+            if (!next?.title.trim()) throw new ValidationError(t("contentManager.titleRequired"));
+            merged[l] = textOf(next);
+          }
+          await client.contents.updateVersion(content.id, targetVersion.id, {
+            ...(changedText.length ? { text: merged } : {}),
+            ...(changedDetails.includes("originalTitle") ? { original_title: snapshotDetails.originalTitle } : {}),
+          });
           if (!current()) return;
         }
         // Text writes advance the content revision. Fetch the current record
         // before the revision-checked details write, never reuse a stale one.
         content = await client.contents.get(content.id, language);
         if (!current()) return;
-        if (changedDetails.some((field) => field !== "access")) {
+        if (changedDetails.some((field) => field !== "access" && field !== "originalTitle")) {
           content = await client.contents.update(content.id, {
-            ...(changedDetails.includes("originalTitle") ? { original_title: snapshotDetails.originalTitle } : {}),
             ...(changedDetails.includes("comments") ? { comments: snapshotDetails.comments } : {}),
             ...(changedDetails.includes("attributes") ? { attributes } : {}),
             revision: content.revision,
@@ -396,17 +396,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
           if (!target) throw new ValidationError(t("readerEditor.versionMissing"));
           const saved = await saveEditionAccess(client.contents, content, cleanRule(snapshotDetails.access), target.id);
           content = { ...content, versions: content.versions.map((edition) => edition.id === saved.id ? saved : edition) };
-        }
-        if (!current()) return;
-        if (originalAndVersion && (state.versionTexts.dirty.length || !version?.text?.[state.editionLanguage]?.title)) {
-          const targetVersion = version ? content.versions.find((v) => v.id === version.id) : content.versions[0];
-          if (!targetVersion) throw new ValidationError(t("readerEditor.versionMissing"));
-          const fresh = await client.contents.version(content.id, targetVersion.id, state.editionLanguage);
-          const merged = { ...fresh.text };
-          for (const l of state.versionTexts.dirty) merged[l] = snapshotVersionTexts[l]!;
-          if (!merged[state.editionLanguage]?.title) merged[state.editionLanguage] = { ...merged[state.editionLanguage], title: activeDisplayTitle };
-          const saved = await client.contents.updateVersion(content.id, targetVersion.id, { text: merged });
-          savedVersionTexts = saved.text ?? merged;
         }
         if (!current()) return;
         const remember = (saved: { entities: EntityCard[] }) => setPicked((all) => new Map([...all, ...saved.entities.map((g) => [g.id, g] as const)]));
@@ -437,15 +426,15 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
       // edition rule instead of restoring the earlier details snapshot.
       content = await client.contents.get(content.id, language);
       if (!current()) return;
-      const cleanTexts = settleTexts(Object.fromEntries(languages.map((l) => [l.value, content.text?.[l.value] ?? snapshotTexts[l.value] ?? blank()])));
-      const cleanVersionTexts = settleVersionTexts(savedVersionTexts);
+      const savedEdition = selectedEdition(content, version?.id);
+      const cleanTexts = settleTexts(Object.fromEntries(languages.map((l) => [l.value, savedEdition?.text?.[l.value] ?? snapshotTexts[l.value] ?? blank()])));
       const cleanDetails = settleDetails({
-        originalTitle: content.original_title ?? "",
+        originalTitle: savedEdition?.original_title ?? "",
         comments: content.comments,
         attributes: formOf(spec.attributes ?? {}, content.attributes),
         access: selectedEdition(content, version?.id)?.access ?? snapshotDetails.access,
       });
-      if (!cleanTexts || !cleanVersionTexts || !cleanDetails || !cleanAssociations) throw new ValidationError(t("readerEditor.changedDuringSave"));
+      if (!cleanTexts || !cleanDetails || !cleanAssociations) throw new ValidationError(t("readerEditor.changedDuringSave"));
       // Files are the last draft mutation: a failed metadata section cannot
       // leave a rename/removal committed behind a still-undoable local draft.
       const currentFolder = folderRef.current;
@@ -517,9 +506,8 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     folder.discard();
     fileDraft.discard();
     setDraftGeneration((value) => value + 1);
-    texts.checkpoint()(Object.fromEntries(languages.map((l) => [l.value, editableText(item, l.value)])));
-    versionTexts.checkpoint()({});
-    details.checkpoint()({ originalTitle: item!.original_title ?? "", comments: item!.comments, attributes: formOf(spec.attributes ?? {}, item!.attributes ?? {}), access: version?.access ?? defaultAccessRule(model, p.kind) });
+    texts.checkpoint()(Object.fromEntries(languages.map((l) => [l.value, editableText(version, l.value)])));
+    details.checkpoint()({ originalTitle: version?.original_title ?? "", comments: item!.comments, attributes: formOf(spec.attributes ?? {}, item!.attributes ?? {}), access: version?.access ?? defaultAccessRule(model, p.kind) });
     publication.checkpoint()({ at: item!.publish_at ? localInput(new Date(item!.publish_at)) : "" });
     associations.checkpoint()({ memberships: membership.memberships.filter((a) => !a.version_id && sharedKinds.includes(membership.entities.get(a.group_id ?? "")?.kind ?? "")), create: [] });
     versionAssociations.checkpoint()({ memberships: [], create: [] });
@@ -639,7 +627,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor={`${ids}-title`}>{t("readerEditor.displayTitle", { language: languages.find((l) => l.value === editionLanguage)?.label ?? editionLanguage })}</Label>
-                  <Input id={`${ids}-title`} required maxLength={512} value={displayTitle} onChange={(e) => versionTexts.edit((all) => ({ ...all, [editionLanguage]: { ...all[editionLanguage], title: e.target.value } }))} />
+                  <Input id={`${ids}-title`} required maxLength={512} value={displayTitle} onChange={(e) => texts.edit((all) => ({ ...all, [editionLanguage]: { ...(all[editionLanguage] ?? blank()), title: e.target.value } }))} />
                 </div>
               </div> : <>
               <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
