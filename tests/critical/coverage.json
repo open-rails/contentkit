@@ -778,6 +778,16 @@
       ]
     },
     {
+      "id": "CK-J07-S20",
+      "journey": "CK-J07",
+      "behavior": "The shipped popularity grid uses host choices and prepared whole-day ranges",
+      "status": "verified",
+      "evidence": [
+        "The real built shared UI selects two host-defined bucket IDs, renders their actual HTTP/PG ranking order, switches to a prepared-only ClickHouse date range, displays its inclusive last day, and receives the structured earliest-date refusal. No ranking cache is created by browser reads."
+      ],
+      "cases": ["TestPreparedPopularityBrowser"]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
