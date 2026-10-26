@@ -73,6 +73,30 @@ try {
     assert.equal(original.id,fixture.item);
     assert.equal(original.channel_id,fixture.originalChannel);
     assert.equal(original.editor,false,"reposting must not grant editing authority");
+  } else if(scenario==="CK-J29-S09") {
+    await page.evaluate(()=>window.critical.mountVersionEditor());
+    const title=page.getByRole("textbox",{name:"Title",exact:true});
+    const body=page.getByRole("textbox",{name:"Body",exact:true});
+    await page.waitForFunction(()=>document.querySelector('[aria-label="Body"]')?.value==="English body only");
+    assert.equal(await title.inputValue(),"English edition");
+    await page.getByRole("combobox",{name:"Versions",exact:true}).click();
+    await page.getByRole("option",{name:"Chinese",exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[aria-label="Body"]')?.value==="中文内容");
+    assert.equal(await title.inputValue(),"中文版本");
+    await title.fill("中文编辑");await body.fill("只有中文更新");
+    const saved=page.waitForResponse(response=>response.request().method()==="PATCH" && response.url().includes(`/versions/${fixture.zhVersion}`));
+    await page.getByRole("button",{name:"Save",exact:true}).first().click();
+    assert.equal((await saved).status(),200);
+    await page.getByRole("combobox",{name:"Versions",exact:true}).click();
+    await page.getByRole("option",{name:"English",exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[aria-label="Body"]')?.value==="English body only");
+    assert.equal(await title.inputValue(),"English edition");
+    const editions=await page.evaluate(async fixture=>({en:await window.client.contents.getByVersion(fixture.enVersion,"en"),zh:await window.client.contents.getByVersion(fixture.zhVersion,"zh")}),fixture);
+    assert.equal(editions.en.body,"English body only");assert.equal(editions.zh.body,"只有中文更新");
+    await page.evaluate(version=>window.critical.mountVersionReader(version),fixture.zhVersion);
+    await page.waitForFunction(version=>{const el=document.querySelector("#version-reader");return el?.dataset.version===version&&el.dataset.loading==="false"&&el.textContent==="只有中文更新";},fixture.zhVersion);
+    await page.evaluate(version=>window.critical.mountVersionReader(version),fixture.enVersion);
+    await page.waitForFunction(version=>{const el=document.querySelector("#version-reader");return el?.dataset.version===version&&el.dataset.loading==="false"&&el.textContent==="English body only";},fixture.enVersion);
   } else throw Error(`unknown browser scenario ${scenario}`);
   console.log(JSON.stringify({scenario,status:"passed"}));
 } finally {await browser.close();}
