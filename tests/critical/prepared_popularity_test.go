@@ -61,7 +61,7 @@ func TestPreparedPopularityBuckets(t *testing.T) {
 	})
 	ready, err := client.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular"})
 	must(t, err)
-	if ready.Popularity == nil || !ready.Popularity.Ready || len(ready.Contents) != 0 {
+	if ready.Popularity == nil || !ready.Popularity.Ready || !ready.Popularity.Provisional || len(ready.Contents) != 0 {
 		t.Fatalf("prepared empty bucket is not ready: %+v", ready.Popularity)
 	}
 	before := *ready.Popularity
@@ -89,6 +89,9 @@ func TestPreparedPopularityBuckets(t *testing.T) {
 	query := ck.GetContentsQuery{Kind: "article", Sort: "popular", ActivityFrom: day.AddDate(0, 0, -1).Format(time.DateOnly), ActivityUntil: day.Format(time.DateOnly), Limit: 1}
 	ranged, err := client.GetContents(t.Context(), query)
 	must(t, err)
+	if ranged.Popularity == nil || !ranged.Popularity.Provisional {
+		t.Fatal("yesterday's prepared range was not marked provisional")
+	}
 	if len(ranged.Contents) != 1 || ranged.Contents[0].ID != first.ID || ranged.NextCursor == "" {
 		t.Fatalf("prepared range ordering/page: %+v", ranged)
 	}

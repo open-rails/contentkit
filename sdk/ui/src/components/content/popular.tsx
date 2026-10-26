@@ -54,6 +54,7 @@ function PreparedPopularGrid({query,bucket,...p}:CardListProps & {query:PopularQ
   const snapshot = list.popularity;
   return <>
     {snapshot?.ready && snapshot.from && snapshot.until && <p className="mb-4 text-center text-muted-foreground">{m.t("listing.activityRange",{from:snapshot.from.slice(0,10),until:lastIncludedDay(snapshot.until)})}</p>}
+    {snapshot?.provisional && <p className="mb-4 text-center text-muted-foreground">{m.t("listing.provisionalPopularity")}</p>}
     <CardGrid {...p} surface={p.surface ?? "popular"} list={list} render={JSON.stringify(q)} filterKinds={query.kind ? [query.kind] : undefined} filterLanguage={query.display_language ?? query.language} empty={snapshot && !snapshot.ready ? m.t("listing.preparingPopularity") : p.empty} infinite />
   </>;
 }

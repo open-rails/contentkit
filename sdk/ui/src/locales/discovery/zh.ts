@@ -81,6 +81,7 @@ export const discovery: typeof en = {
   },
   listing: {
     preparingPopularity: "此排行榜正在准备中。",
+    provisionalPopularity: "近期活动仍在更新。",
     activityRange: "{from} 至 {until} 的活动（含首尾两天，UTC）",
     popularPeriod: "热门时间范围",
     pastDays_one: "过去{count}天",

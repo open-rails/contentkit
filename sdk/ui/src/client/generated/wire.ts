@@ -1527,6 +1527,7 @@ export interface PopularitySnapshot {
   until?: string;
   available_from?: string;
   computed_at?: string;
+  provisional?: boolean;
 }
 
 export interface PresetRule {

@@ -81,6 +81,7 @@ export const discovery = {
   listing: {
     popularPeriod: "Popularity period",
     preparingPopularity: "This ranking is being prepared.",
+    provisionalPopularity: "Recent activity is still updating.",
     activityRange: "Activity from {from} through {until} (UTC)",
     pastDays_one: "Past {count} day",
     pastDays_other: "Past {count} days",

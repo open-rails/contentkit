@@ -27,6 +27,9 @@ type PopularitySnapshot struct {
 	Until         *time.Time `json:"until,omitempty"`
 	AvailableFrom *time.Time `json:"available_from,omitempty"`
 	ComputedAt    *time.Time `json:"computed_at,omitempty"`
+	// Provisional marks recent days still accepting measurements. Absence does
+	// not certify that every older day has completed its final preparation.
+	Provisional bool `json:"provisional,omitempty"`
 }
 
 type popularRanking struct{ kind, period, domain, language string }
@@ -64,6 +67,9 @@ func (s *Service) rankingSnapshot(ctx context.Context, key popularRanking) (*Pop
 		}
 	}
 	snapshot.Ready = snapshot.ComputedAt != nil && snapshot.From != nil
+	if snapshot.Until != nil && snapshot.ComputedAt != nil {
+		snapshot.Provisional = snapshot.Until.Add(24 * time.Hour).After(*snapshot.ComputedAt)
+	}
 	return snapshot, err
 }
 

@@ -16805,6 +16805,9 @@
           "computed_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "provisional": {
+            "type": "boolean"
           }
         },
         "required": [
