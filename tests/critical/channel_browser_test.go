@@ -55,7 +55,7 @@ func TestShippedChannelBrowser(t *testing.T) {
 	defer server.Close()
 	fixture, err := json.Marshal(map[string]string{"url": server.URL, "item": original.ID, "alice": alice.ID, "aliceToken": aliceToken, "originalChannel": originalChannel.ID, "destination": destination.ID})
 	must(t, err)
-	command := exec.CommandContext(t.Context(), "node", "browser/driver.mjs", "CK-J29-S07")
+	command := exec.CommandContext(t.Context(), "node", "browser/driver.mjs", "CK-J29-S08")
 	command.Env = append(os.Environ(), "CONTENTKIT_BROWSER_FIXTURE="+string(fixture))
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -66,7 +66,7 @@ func TestShippedChannelBrowser(t *testing.T) {
 		Status   string `json:"status"`
 	}
 	must(t, json.Unmarshal([]byte(strings.TrimSpace(string(output))), &receipt))
-	if receipt.Scenario != "CK-J29-S07" || receipt.Status != "passed" {
+	if receipt.Scenario != "CK-J29-S08" || receipt.Status != "passed" {
 		t.Fatalf("channel browser journey not executed: %s", output)
 	}
 }
