@@ -4,83 +4,73 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
 )
 
-// Ranking a catalog at real reading volume takes minutes, so popular lists,
-// recommendation fill and personalized search read rankings built by a job.
-const (
-	shortRankingEvery = time.Hour
-	longRankingEvery  = 24 * time.Hour
-	// customRankingKept bounds how long a reader-chosen range is served.
-	customRankingKept = 24 * time.Hour
-	// maxCustomRankings bounds the reader-chosen ranges requested or kept, so
-	// arbitrary ranges cannot queue unbounded ranking work.
-	maxCustomRankings = 50
-)
-
-// popularRanking names one stored ranking: a preset period or a reader-chosen
-// "YYYY-MM-DD/YYYY-MM-DD" range, for one reader scope.
-type popularRanking struct {
-	kind, period, domain, language string
+// PopularitySnapshot describes the prepared ranking actually served. A pending
+// bucket has Ready=false; a successfully prepared empty ranking has Ready=true.
+type PopularitySnapshot struct {
+	Bucket string `json:"bucket"`
+	Ready  bool   `json:"ready"`
+	// WindowFrom/WindowUntil are the resolved bucket requested at preparation.
+	WindowFrom  *time.Time `json:"window_from,omitempty"`
+	WindowUntil *time.Time `json:"window_until,omitempty"`
+	// From/Until are the covered whole UTC days actually ranked.
+	From          *time.Time `json:"from,omitempty"`
+	Until         *time.Time `json:"until,omitempty"`
+	AvailableFrom *time.Time `json:"available_from,omitempty"`
+	ComputedAt    *time.Time `json:"computed_at,omitempty"`
+	// Provisional marks recent days still accepting measurements. Absence does
+	// not certify that every older day has completed its final preparation.
+	Provisional bool `json:"provisional,omitempty"`
 }
 
-func customPeriod(w signal.Window) string {
-	return w.From.UTC().Format(time.DateOnly) + "/" + w.To.UTC().Format(time.DateOnly)
-}
+type popularRanking struct{ kind, period, domain, language string }
 
-func (k popularRanking) preset() bool { return !strings.Contains(k.period, "/") }
-
-func (k popularRanking) window(now time.Time) (signal.Window, error) {
-	from, until, custom := strings.Cut(k.period, "/")
-	if !custom {
-		return popularity.WindowForPeriod(k.period, now)
-	}
-	start, err := time.Parse(time.DateOnly, from)
-	if err != nil {
-		return signal.Window{}, err
-	}
-	end, err := time.Parse(time.DateOnly, until)
-	if err != nil {
-		return signal.Window{}, err
-	}
-	w := signal.Between(start, end)
-	return w, w.Validate()
-}
-
-func (s *Service) rankingFor(ctx context.Context, reader Reader, kind, period string) popularRanking {
+func (s *Service) rankingFor(ctx context.Context, reader Reader, kind, id string) (popularRanking, bool) {
 	host := reader.Host
 	if host == "" {
 		host = gate.Domain(ctx)
 	}
 	domain, _ := s.o.Kinds.DomainFor(host)
-	return popularRanking{kind: kind, period: period, domain: domain.Name, language: reader.Language}
+	for _, bucket := range s.o.Kinds.Kinds[kind].Popularity {
+		if id != "" && bucket.ID != id {
+			continue
+		}
+		if scope, ok := bucket.Scope(domain.Name, reader.Language); ok {
+			return popularRanking{kind, bucket.ID, scope.Domain, scope.Language}, true
+		}
+	}
+	return popularRanking{}, false
 }
 
-// requestRanking records a wanted ranking for the job to build. Scopes outside
-// the configured kinds and languages are never built.
-func (s *Service) requestRanking(ctx context.Context, key popularRanking) error {
-	var exists bool
-	err := s.o.Pool.QueryRow(ctx, `SELECT true FROM `+s.t.rankings+` WHERE tenant_id=$1 AND kind=$2 AND period=$3 AND domain=$4 AND language=$5`,
-		s.o.Tenant, key.kind, key.period, key.domain, key.language).Scan(&exists)
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
+func (s *Service) rankingSnapshot(ctx context.Context, key popularRanking) (*PopularitySnapshot, error) {
+	snapshot := &PopularitySnapshot{Bucket: key.period}
+	err := s.o.Pool.QueryRow(ctx, `SELECT window_from,window_until,covered_from,covered_until,available_from,computed_at FROM `+s.t.rankings+`
+ WHERE tenant_id=$1 AND kind=$2 AND period=$3 AND domain=$4 AND language=$5`,
+		s.o.Tenant, key.kind, key.period, key.domain, key.language).Scan(&snapshot.WindowFrom, &snapshot.WindowUntil, &snapshot.From, &snapshot.Until, &snapshot.AvailableFrom, &snapshot.ComputedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return snapshot, nil
 	}
-	if _, ok := s.o.Kinds.Kinds[key.kind]; !ok || key.language != "" && !slices.Contains(s.o.Kinds.Languages, key.language) {
-		return nil
+	// PostgreSQL timestamps may decode in the host's local zone. These public
+	// boundaries are UTC calendar dates regardless of the process time zone.
+	for _, at := range []*time.Time{snapshot.WindowFrom, snapshot.WindowUntil, snapshot.From, snapshot.Until, snapshot.AvailableFrom, snapshot.ComputedAt} {
+		if at != nil {
+			*at = at.UTC()
+		}
 	}
-	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.rankings+` (tenant_id,kind,period,domain,language,preset,requested_at)
- SELECT $1,$2,$3,$4,$5,$6,$7 WHERE $6 OR (SELECT count(*) FROM `+s.t.rankings+` WHERE tenant_id=$1 AND NOT preset)<$8
- ON CONFLICT DO NOTHING`, s.o.Tenant, key.kind, key.period, key.domain, key.language, key.preset(), s.now(), maxCustomRankings)
-	return err
+	snapshot.Ready = snapshot.ComputedAt != nil && snapshot.From != nil
+	if snapshot.Until != nil && snapshot.ComputedAt != nil {
+		snapshot.Provisional = snapshot.Until.Add(24 * time.Hour).After(*snapshot.ComputedAt)
+	}
+	return snapshot, err
 }
 
 // rankingJoin exposes the stored ranking as activity(content_id, score), best
@@ -90,14 +80,11 @@ func (s *Service) rankingJoin(key popularRanking) (string, pgx.NamedArgs) {
  CROSS JOIN LATERAL unnest(p.content_ids) WITH ORDINALITY AS r(content_id,ord)
  WHERE p.tenant_id=@d_rank_tenant AND p.kind=@d_rank_kind AND p.period=@d_rank_period AND p.domain=@d_rank_domain AND p.language=@d_rank_language) activity
  ON activity.content_id=f.content_id `, pgx.NamedArgs{"d_rank_tenant": s.o.Tenant, "d_rank_kind": key.kind, "d_rank_period": key.period,
-		"d_rank_domain": key.domain, "d_rank_language": key.language}
+			"d_rank_domain": key.domain, "d_rank_language": key.language}
 }
 
 // topRanked returns up to limit ids of the stored ranking, best first.
 func (s *Service) topRanked(ctx context.Context, key popularRanking, limit int) ([]string, error) {
-	if err := s.requestRanking(ctx, key); err != nil {
-		return nil, err
-	}
 	var ids []string
 	err := s.o.Pool.QueryRow(ctx, `SELECT content_ids[1:$6] FROM `+s.t.rankings+` WHERE tenant_id=$1 AND kind=$2 AND period=$3 AND domain=$4 AND language=$5`,
 		s.o.Tenant, key.kind, key.period, key.domain, key.language, limit).Scan(&ids)
@@ -110,9 +97,6 @@ func (s *Service) topRanked(ctx context.Context, key popularRanking, limit int) 
 // rankedScores scores ids by their place in the stored ranking, higher
 // first; unranked ids are absent.
 func (s *Service) rankedScores(ctx context.Context, key popularRanking, ids []string) (map[string]float64, error) {
-	if err := s.requestRanking(ctx, key); err != nil {
-		return nil, err
-	}
 	rows, err := s.o.Pool.Query(ctx, `SELECT r.content_id,r.ord FROM `+s.t.rankings+` p CROSS JOIN LATERAL unnest(p.content_ids) WITH ORDINALITY AS r(content_id,ord)
  WHERE p.tenant_id=$1 AND p.kind=$2 AND p.period=$3 AND p.domain=$4 AND p.language=$5 AND r.content_id=ANY($6)`,
 		s.o.Tenant, key.kind, key.period, key.domain, key.language, ids)
@@ -133,64 +117,89 @@ func (s *Service) rankedScores(ctx context.Context, key popularRanking, ids []st
 	return out, rows.Err()
 }
 
-// RefreshPopularRankings drops expired reader-chosen ranges, then builds
-// every requested ranking and every preset past its refresh interval,
-// requested ones first. Each build is stored as it completes; one failing
-// ranking does not hold back the rest.
+// RefreshPopularRankings prepares the host's declared choices, including on an
+// empty installation with no public traffic. A reader never creates work.
 func (s *Service) RefreshPopularRankings(ctx context.Context) error {
 	if err := s.signals(); err != nil {
 		return err
 	}
 	now := s.now()
-	if _, err := s.o.Pool.Exec(ctx, `DELETE FROM `+s.t.rankings+` WHERE tenant_id=$1 AND NOT preset AND coalesce(computed_at,requested_at)<$2`,
-		s.o.Tenant, now.Add(-customRankingKept)); err != nil {
-		return err
+	type scopeKey struct {
+		kind  string
+		scope kinds.PopularityScope
 	}
-	// The slack keeps an hourly refresh from slipping a period behind its run.
-	slack := 5 * time.Minute
-	rows, err := s.o.Pool.Query(ctx, `SELECT kind,period,domain,language FROM `+s.t.rankings+`
- WHERE tenant_id=$1 AND (computed_at IS NULL OR preset AND computed_at<CASE WHEN period IN ('7d','30d') THEN $2::timestamptz ELSE $3::timestamptz END)
- ORDER BY computed_at NULLS FIRST`, s.o.Tenant, now.Add(slack-shortRankingEvery), now.Add(slack-longRankingEvery))
-	if err != nil {
-		return err
+	type pending struct {
+		key    popularRanking
+		window signal.Window
 	}
-	due, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (popularRanking, error) {
-		var k popularRanking
-		return k, row.Scan(&k.kind, &k.period, &k.domain, &k.language)
-	})
-	if err != nil {
-		return err
-	}
-	var errs []error
-	for _, key := range due {
-		if err := s.buildRanking(ctx, key); err != nil {
-			errs = append(errs, err)
+	groups := map[scopeKey][]pending{}
+	for kind, config := range s.o.Kinds.Kinds {
+		for _, bucket := range config.Popularity {
+			from, until := bucket.Window(now)
+			window := signal.Between(from, until)
+			for _, scope := range bucket.ActivityScopes() {
+				group := scopeKey{kind, scope}
+				key := popularRanking{kind, bucket.ID, scope.Domain, scope.Language}
+				snapshot, err := s.rankingSnapshot(ctx, key)
+				if err != nil {
+					return err
+				}
+				if snapshot.ComputedAt != nil && snapshot.ComputedAt.Add(bucket.Every()).After(now) && sameBound(snapshot.WindowFrom, from) && sameBound(snapshot.WindowUntil, until) {
+					continue
+				}
+				groups[group] = append(groups[group], pending{key, window})
+			}
 		}
 	}
-	return errors.Join(errs...)
+	var failures []error
+	for group, due := range groups {
+		scope := signal.ActivityScope{Domain: group.scope.Domain, Language: group.scope.Language}
+		coverage, err := popularity.Prepare(ctx, s.o.Hub, s, group.kind, now, scope)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("discovery: prepare popularity %s: %w", group.kind, err))
+			continue
+		}
+		for _, p := range due {
+			if err := s.buildRanking(ctx, p.key, p.window, coverage, now); err != nil {
+				failures = append(failures, err)
+			}
+		}
+	}
+	return errors.Join(failures...)
 }
 
-// buildRanking ranks key's window and stores it; without trusted audience
-// history the ranking is stored empty. A key that no longer names a
-// configured kind or a valid window is removed.
-func (s *Service) buildRanking(ctx context.Context, key popularRanking) error {
-	w, err := key.window(s.now())
-	if _, ok := s.o.Kinds.Kinds[key.kind]; err != nil || !ok {
-		_, err := s.o.Pool.Exec(ctx, `DELETE FROM `+s.t.rankings+` WHERE tenant_id=$1 AND kind=$2 AND period=$3 AND domain=$4 AND language=$5`,
-			s.o.Tenant, key.kind, key.period, key.domain, key.language)
-		return err
+func sameBound(stored *time.Time, actual time.Time) bool {
+	return stored == nil && actual.IsZero() || stored != nil && stored.Equal(actual)
+}
+
+func optionalBound(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
 	}
-	computed := s.now()
-	ids, err := popularity.Rank(ctx, s.o.Hub, s, key.kind, w, signal.ActivityScope{Domain: key.domain, Language: key.language}, PopularityDepth)
+	return &value
+}
+
+func (s *Service) buildRanking(ctx context.Context, key popularRanking, window, coverage signal.Window, computed time.Time) error {
+	ids, err := popularity.Rank(ctx, s.o.Hub, s, key.kind, window, signal.ActivityScope{Domain: key.domain, Language: key.language}, PopularityDepth)
 	if err != nil {
 		return fmt.Errorf("discovery: rank %s %s: %w", key.kind, key.period, err)
 	}
 	if ids == nil {
 		ids = []string{}
 	}
-	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.rankings+` (tenant_id,kind,period,domain,language,preset,requested_at,computed_at,content_ids)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8)
- ON CONFLICT (tenant_id,kind,period,domain,language) DO UPDATE SET computed_at=excluded.computed_at,content_ids=excluded.content_ids`,
-		s.o.Tenant, key.kind, key.period, key.domain, key.language, key.preset(), computed, ids)
+	covered := coverage
+	if window.From.After(covered.From) {
+		covered.From = window.From
+	}
+	if !window.To.IsZero() && (covered.To.IsZero() || window.To.Before(covered.To)) {
+		covered.To = window.To
+	}
+	if coverage.From.IsZero() || !covered.From.Before(covered.To) {
+		covered = signal.Window{}
+	}
+	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.rankings+` (tenant_id,kind,period,domain,language,window_from,window_until,computed_at,content_ids,covered_from,covered_until,available_from)
+ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ ON CONFLICT (tenant_id,kind,period,domain,language) DO UPDATE SET window_from=excluded.window_from,window_until=excluded.window_until,computed_at=excluded.computed_at,content_ids=excluded.content_ids,covered_from=excluded.covered_from,covered_until=excluded.covered_until,available_from=excluded.available_from`,
+		s.o.Tenant, key.kind, key.period, key.domain, key.language, optionalBound(window.From), optionalBound(window.To), computed, ids, optionalBound(covered.From), optionalBound(covered.To), optionalBound(coverage.From))
 	return err
 }

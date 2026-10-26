@@ -491,7 +491,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	if hasPeriod && name != SortPopular && name != SortTopRated {
 		return o, fmt.Errorf("%w: sort %q takes no period", ErrInvalid, raw)
 	}
-	if hasPeriod && !slices.Contains(popularity.Periods, period) {
+	if hasPeriod && name == SortTopRated && !slices.Contains(popularity.Periods, period) {
 		return o, fmt.Errorf("%w: sort period %q is one of %v", ErrInvalid, period, popularity.Periods)
 	}
 	switch name {
@@ -500,11 +500,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	case SortTitle:
 		o.expr, o.cast, o.desc = fmt.Sprintf(titleKey, s.t.text), "text", false
 	case SortPopular:
-		window, err := popularity.WindowForPeriod(cmpOr(period, popularity.DefaultPeriod), s.now())
-		if err != nil {
-			return o, err
-		}
-		return s.standingOrder(raw, window, true), nil
+		return o, fmt.Errorf("%w: popular requires an explicit kind and configured bucket", ErrInvalid)
 	case SortTopRated:
 		if period == "" || period == "all" {
 			o.expr = content.RatingSQL("coalesce(counts.likes, 0)", "coalesce(counts.dislikes, 0)")

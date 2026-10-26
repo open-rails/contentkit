@@ -80,6 +80,15 @@ func (st *Store) PurgeContentKinds(ctx context.Context, tenant string, contentKi
 			return err
 		}
 	}
+	daily, err := st.existing(ctx, []string{"popularity_daily", "popularity_daily_prepared"})
+	if err != nil {
+		return err
+	}
+	for _, table := range daily {
+		if err := st.mutate(ctx, table, "tenant = ? AND content_kind IN ?", tenant, kinds); err != nil {
+			return err
+		}
+	}
 	pairs, err := st.existing(ctx, []string{"content_pairs", "engagement_pairs"})
 	if err != nil {
 		return err

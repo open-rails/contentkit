@@ -84,7 +84,7 @@ const (
 	// details.max is the limit in characters. -> 422
 	CodeCommentTooLong = "comment_too_long"
 	// CodeNotConfigured: the capability exists but the host never wired its
-	// port (Media, AnswerClassifier). Retrying does not help. -> 501
+	// media port. Retrying does not help. -> 501
 	CodeNotConfigured = "not_configured"
 	// CodeTenantMismatch: a host port answered with another tenant's data.
 	// A configuration fault, not a client fault; the cause stays in the log.
@@ -175,8 +175,6 @@ func classifyErr(err error) (status int, code, msg string) {
 		return http.StatusNotFound, CodeNotFound, "not found"
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrSubjectErased):
 		return http.StatusForbidden, CodeForbidden, "forbidden"
-	case errors.Is(err, ErrNoClassifier):
-		return http.StatusNotImplemented, CodeNotConfigured, "free-text polls need an AnswerClassifier"
 	case errors.Is(err, errMediaNotConfigured):
 		return http.StatusNotImplemented, CodeNotConfigured, "images need ContentKit media"
 	case errors.Is(err, ErrTenant):

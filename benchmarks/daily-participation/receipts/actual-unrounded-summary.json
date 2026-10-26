@@ -1,0 +1,114 @@
+[
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050246_0",
+    "run": 0,
+    "wall_seconds": 2.681083996
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 100,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050249_1",
+    "run": 1,
+    "wall_seconds": 2.963154878
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 41,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050252_2",
+    "run": 2,
+    "wall_seconds": 2.804412373
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050255_3",
+    "run": 3,
+    "wall_seconds": 2.926866981
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 100,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050258_4",
+    "run": 4,
+    "wall_seconds": 2.987019584
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050261_5",
+    "run": 5,
+    "wall_seconds": 2.702700759
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050263_6",
+    "run": 6,
+    "wall_seconds": 3.038368224
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050266_7",
+    "run": 7,
+    "wall_seconds": 4.304916395
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050271_8",
+    "run": 8,
+    "wall_seconds": 4.18435617
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050275_9",
+    "run": 9,
+    "wall_seconds": 3.359570656
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050278_10",
+    "run": 10,
+    "wall_seconds": 3.122252762
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050281_11",
+    "run": 11,
+    "wall_seconds": 3.761151161
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050285_12",
+    "run": 12,
+    "wall_seconds": 2.791348981
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050288_13",
+    "run": 13,
+    "wall_seconds": 3.125336534
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050291_14",
+    "run": 14,
+    "wall_seconds": 2.8689481089999997
+  },
+  {
+    "ids": 100000,
+    "order_changed_positions": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050294_15",
+    "run": 15,
+    "wall_seconds": 3.325082083
+  }
+]

@@ -15,7 +15,6 @@ import (
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/internal/hub"
-	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -119,18 +118,14 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 	}
 	base := hub.SearchOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind), Eligibility: s.eligibility(q)}
 	if o.Sort != "" && o.Sort != SortRelevance {
-		srt, err := s.parseSort(ctx, o.Sort, o.Filter)
-		if name, period, _ := strings.Cut(o.Sort, ":"); err == nil && name == SortPopular && o.Kind != "" && s.o.Hub.SignalsConfigured() {
-			if period == "" {
-				period = popularity.DefaultPeriod
-			}
-			window, windowErr := popularity.WindowForPeriod(period, s.now())
-			if windowErr != nil {
-				return empty, windowErr
-			}
-			srt, err = s.historicalOrder(ctx, o.Kind, period, window, o.Reader)
-			srt.raw = o.Sort
+		var srt order
+		var snapshot *PopularitySnapshot
+		if id, popular := popularSort(o.Sort); popular {
+			srt, snapshot, err = s.popularOrder(ctx, o.Kind, id, o.Reader, o.Sort)
+		} else {
+			srt, err = s.parseSort(ctx, o.Sort, o.Filter)
 		}
+
 		if err != nil {
 			return empty, err
 		}
@@ -145,7 +140,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 			return empty, err
 		}
 		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
-		return SearchPage{ContentPage: ContentPage{Contents: cards, NextCursor: next}}, err
+		return SearchPage{ContentPage: ContentPage{Contents: cards, NextCursor: next, Popularity: snapshot}}, err
 	}
 	cur, err := decodeCursor(o.Cursor, SortRelevance)
 	if err != nil {
@@ -161,7 +156,11 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 	if a := o.Actor; a.Member() && !o.Unpersonalized {
 		opts.Personalize = &hub.Personalization{Subject: signal.Subject{UserID: a.AccountID()}, DemoteSeen: true,
 			Popularity: func(ctx context.Context, kind string, ids []string) (map[string]float64, error) {
-				return s.rankedScores(ctx, s.rankingFor(ctx, o.Reader, kind, popularity.DefaultPeriod), ids)
+				key, ok := s.rankingFor(ctx, o.Reader, kind, "")
+				if !ok {
+					return nil, nil
+				}
+				return s.rankedScores(ctx, key, ids)
 			}}
 	}
 	res, err := s.o.Hub.Search(ctx, text, opts)

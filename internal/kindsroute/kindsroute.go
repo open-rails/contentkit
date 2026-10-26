@@ -55,21 +55,14 @@ func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentMode
 }
 
 type server struct {
-	bodies  [2][]byte // without and with signals
+	content kinds.Config
+	avatars *media.PresetRule
 	signals func() bool
 }
 
-// Handler serves GET /kinds from c and the avatar preset, rendered once,
-// and whether signals are recorded, asked per request.
+// Handler serves the content model and the current domain’s configured buckets.
 func Handler(c kinds.Config, signals func() bool, avatars *media.PresetRule) (http.Handler, error) {
-	srv := &server{signals: signals}
-	for i, on := range []bool{false, true} {
-		body, err := json.Marshal(Public(c, on, avatars))
-		if err != nil {
-			return nil, err
-		}
-		srv.bodies[i] = body
-	}
+	srv := &server{content: c, signals: signals, avatars: avatars}
 	mux := http.NewServeMux()
 	httpapi.Mount(mux, nil, srv, routes)
 	return mux, nil
@@ -83,13 +76,28 @@ var routes = []httpapi.Route[*server]{
 		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}}, Serve: httpapi.H((*server).handle)},
 }
 
-func (s *server) handle(w http.ResponseWriter, _ *http.Request) {
-	body := s.bodies[0]
-	if s.signals() {
-		body = s.bodies[1]
+func (s *server) handle(w http.ResponseWriter, r *http.Request) {
+	model := Public(s.content, s.signals(), s.avatars)
+	domain, _ := s.content.DomainFor(r.Host)
+	for name, kind := range model.Kinds {
+		buckets := make([]kinds.PopularityBucket, 0, len(kind.Popularity))
+		for _, bucket := range kind.Popularity {
+			scopes := make([]kinds.PopularityScope, 0, len(bucket.Scopes))
+			for _, scope := range bucket.ActivityScopes() {
+				if scope.Domain == "" || scope.Domain == domain.Name {
+					scopes = append(scopes, scope)
+				}
+			}
+			if len(scopes) > 0 {
+				bucket.Scopes = scopes
+				buckets = append(buckets, bucket)
+			}
+		}
+		kind.Popularity = buckets
+		model.Kinds[name] = kind
 	}
 	w.Header().Set("Content-Type", "application/json")
 	// Short, so clients see the signal plane come and go.
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	_, _ = w.Write(body)
+	_ = json.NewEncoder(w).Encode(model)
 }

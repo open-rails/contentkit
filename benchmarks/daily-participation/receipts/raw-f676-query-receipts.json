@@ -1,0 +1,74 @@
+[
+  {
+    "Label": "verify_existing_before",
+    "QueryID": "ck261_raw_20261026_211659_verify_existing_before_0000",
+    "Kind": "Query",
+    "SQL": "SELECT content_id,readers,eligible FROM ck261_raw_20261026_211659.popularity_daily FINAL ORDER BY content_id",
+    "WallSeconds": 0.00558112,
+    "Error": ""
+  },
+  {
+    "Label": "existing_explicit_rebuild",
+    "QueryID": "ck261_raw_20261026_211659_existing_explicit_rebuild_0001",
+    "Kind": "Query",
+    "SQL": "SELECT day,max(computed_at) FROM ck261_raw_20261026_211659.popularity_daily_prepared\n WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day\u003e=? AND day\u003c? GROUP BY day",
+    "WallSeconds": 0.005332066,
+    "Error": ""
+  },
+  {
+    "Label": "existing_explicit_rebuild",
+    "QueryID": "ck261_raw_20261026_211659_existing_explicit_rebuild_0002",
+    "Kind": "Exec",
+    "SQL": "ALTER TABLE ck261_raw_20261026_211659.popularity_daily DELETE WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day=? SETTINGS mutations_sync = 2",
+    "WallSeconds": 0.069292396,
+    "Error": ""
+  },
+  {
+    "Label": "existing_explicit_rebuild",
+    "QueryID": "ck261_raw_20261026_211659_existing_explicit_rebuild_0003",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.popularity_daily\n (tenant,content_kind,domain,language,day,content_id,readers,eligible,version)\n WITH canonical AS (\n SELECT content_id,content_version_id,subject_kind,subject,receipt_id,\n argMax(tuple(active_ms,notEmpty(covered_units)),version) AS fact\n FROM ck261_raw_20261026_211659.engagement_segments\n WHERE tenant=? AND content_kind=? AND occurred_at\u003e=? AND occurred_at\u003c? AND (sipHash128(concat(subject_kind, ':', subject)), tenant) NOT IN (SELECT subject_hash, tenant FROM ck261_raw_20261026_211659.erasures)\n AND JSONExtractString(access_context,'viewer_access')='full'\n AND (?='' OR JSONExtractString(access_context,'domain')=?) AND (?='' OR JSONExtractString(access_context,'language')=?)\n GROUP BY content_id,content_version_id,subject_kind,subject,receipt_id\n ), people AS (\n SELECT subject_kind,subject,groupUniqArrayArrayIf(eligible_tiers,eligibility_known) AS tiers\n FROM ck261_raw_20261026_211659.measured_population_observations\n WHERE tenant=? AND content_kind=? AND observed_at\u003e=? AND observed_at\u003c? AND (sipHash128(concat(subject_kind, ':', subject)), tenant) NOT IN (SELECT subject_hash, tenant FROM ck261_raw_20261026_211659.erasures)\n AND (?='' OR domain=?) AND (?='' OR language=?) GROUP BY subject_kind,subject\n ), qualified AS (\n SELECT r.content_id AS content_id,r.content_version_id AS content_version_id,r.subject_kind AS subject_kind,r.subject AS subject\n FROM canonical r INNER JOIN contentkit_daily_audiences a ON r.content_id=a.content_id\n INNER JOIN people p ON p.subject_kind=r.subject_kind AND p.subject=r.subject\n WHERE a.public=1 OR hasAny(p.tiers,a.tiers)\n GROUP BY r.content_id,r.content_version_id,r.subject_kind,r.subject\n HAVING sum(toUInt64(r.fact.1))\u003e=1000 AND max(r.fact.2)\u003e0\n ), readers AS (\n SELECT content_id,uniqExact(tuple(subject_kind,subject)) AS readers FROM qualified GROUP BY content_id\n ), cohorts AS (SELECT DISTINCT audience,public,tiers FROM contentkit_daily_audiences), population AS (\n SELECT a.audience,count() AS eligible FROM cohorts a CROSS JOIN people p\n WHERE a.public=1 OR hasAny(p.tiers,a.tiers) GROUP BY a.audience\n )\n SELECT ?,?,?,?,toDate(?),a.content_id,coalesce(r.readers,0),coalesce(p.eligible,0),toUInt64(toUnixTimestamp64Micro(now64(6)))\n FROM contentkit_daily_audiences a LEFT JOIN readers r USING(content_id) LEFT JOIN population p USING(audience)\n SETTINGS max_threads=2, max_execution_time=120, max_memory_usage=1073741824,\n max_bytes_before_external_group_by=134217728, max_bytes_before_external_sort=134217728",
+    "WallSeconds": 13.086332865,
+    "Error": ""
+  },
+  {
+    "Label": "existing_explicit_rebuild",
+    "QueryID": "ck261_raw_20261026_211659_existing_explicit_rebuild_0004",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.popularity_daily_prepared\n (tenant,content_kind,domain,language,day,computed_at) VALUES (?,?,?,?,?,now64(6))",
+    "WallSeconds": 0.01623101,
+    "Error": ""
+  },
+  {
+    "Label": "verify_existing_rebuilt",
+    "QueryID": "ck261_raw_20261026_211659_verify_existing_rebuilt_0005",
+    "Kind": "Query",
+    "SQL": "SELECT content_id,readers,eligible FROM ck261_raw_20261026_211659.popularity_daily FINAL ORDER BY content_id",
+    "WallSeconds": 0.002072143,
+    "Error": ""
+  },
+  {
+    "Label": "existing_reuse_finalized",
+    "QueryID": "ck261_raw_20261026_211659_existing_reuse_finalized_0006",
+    "Kind": "Query",
+    "SQL": "SELECT day,max(computed_at) FROM ck261_raw_20261026_211659.popularity_daily_prepared\n WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day\u003e=? AND day\u003c? GROUP BY day",
+    "WallSeconds": 0.00578711,
+    "Error": ""
+  },
+  {
+    "Label": "rank",
+    "QueryID": "ck261_raw_20261026_211659_rank_0007",
+    "Kind": "Query",
+    "SQL": "SELECT content_id,round(avg(toFloat64(readers)/(eligible+20.)),12) AS score\n FROM ck261_raw_20261026_211659.popularity_daily FINAL WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day \u003e= toDate(?) AND day \u003c toDate(?)\n GROUP BY content_id HAVING sum(readers)\u003e0 ORDER BY score DESC,content_id LIMIT ? SETTINGS max_threads=2",
+    "WallSeconds": 0.003329512,
+    "Error": ""
+  },
+  {
+    "Label": "flush_logs",
+    "QueryID": "ck261_raw_20261026_211659_flush_logs_0008",
+    "Kind": "Exec",
+    "SQL": "SYSTEM FLUSH LOGS",
+    "WallSeconds": 0.10419212,
+    "Error": ""
+  }
+]

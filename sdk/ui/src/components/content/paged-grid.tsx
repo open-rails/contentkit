@@ -1,4 +1,5 @@
 import { cn } from "cn";
+import { eventId } from "../../client/beacons.js";
 import { useMemo, useRef, useState } from "react";
 import type { ContentQuery, SearchQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
@@ -31,8 +32,9 @@ function NumberedCards({
   render,
   filterKinds,
   filterLanguage,
+  searchQuery, queryID, ranker, settledEmpty,
   ...p
-}: CardListProps & { result: UseContentsPage; page: number; setPage: (page: number) => void; render: string; filterKinds?: readonly string[]; filterLanguage?: string }) {
+}: CardListProps & { result: UseContentsPage; page: number; setPage: (page: number) => void; render: string; filterKinds?: readonly string[]; filterLanguage?: string; searchQuery?: string; queryID?: string; ranker?: string; settledEmpty?: boolean }) {
   const top = useRef<HTMLDivElement>(null);
   const size = p.pageSize ?? NUMBERED_PAGE_SIZE;
   const total = result.summary?.total ?? 0;
@@ -53,7 +55,8 @@ function NumberedCards({
       <div ref={top} className="scroll-mt-20">
         {controls(false)}
       </div>
-      <CardGrid {...p} className={undefined} list={list} render={render} filterKinds={filterKinds} filterLanguage={filterLanguage} />
+      <CardGrid {...p} className={undefined} list={list} render={render} filterKinds={filterKinds} filterLanguage={filterLanguage}
+        positionOffset={(page - 1) * size} searchQuery={searchQuery} queryID={queryID} ranker={ranker} settledEmpty={settledEmpty} />
       {list.items.length > 0 && controls(true)}
     </ContentKitUiRoot>
   );
@@ -95,6 +98,7 @@ export function PagedSearchResults({ query, entityHref, ...p }: SearchResultsPro
   );
   const [page, setPage] = usePage(p, q);
   const result = useSearchPage(q, page, { client: p.client });
+  const queryID = useMemo(() => eventId(), [JSON.stringify(q)]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!query.q.trim()) return null;
   return (
     <>
@@ -108,6 +112,10 @@ export function PagedSearchResults({ query, entityHref, ...p }: SearchResultsPro
         page={page}
         setPage={setPage}
         render={JSON.stringify([q, page])}
+        queryID={queryID}
+        searchQuery={query.q}
+        settledEmpty={!result.loading && !result.error && result.items.length === 0}
+        ranker={query.sort ?? "relevance"}
         filterKinds={query.kind ? [query.kind] : undefined}
         filterLanguage={query.display_language ?? query.language}
       />

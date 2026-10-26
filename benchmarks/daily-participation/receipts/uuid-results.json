@@ -1,0 +1,214 @@
+[
+  {
+    "label": "create",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_create_75675579",
+    "wall_seconds": 0.17714232999423984,
+    "result_bytes": 0,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_create_75675579",
+      "query_duration_ms": 10,
+      "read_rows": 0,
+      "read_bytes": 0,
+      "result_rows": 0,
+      "result_bytes": 0,
+      "memory_usage": 124184,
+      "os_read_bytes": 4096,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "populate",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_populate_4e35ef34",
+    "wall_seconds": 4.564184996997938,
+    "result_bytes": 0,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_populate_4e35ef34",
+      "query_duration_ms": 4386,
+      "read_rows": 36500000,
+      "read_bytes": 365005121,
+      "result_rows": 36500000,
+      "result_bytes": 803005121,
+      "memory_usage": 197571591,
+      "os_read_bytes": 692224,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "7d_run1",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_7d_run1_42f7fff8",
+    "wall_seconds": 0.29864375699253287,
+    "result_bytes": 7399900,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_7d_run1_42f7fff8",
+      "query_duration_ms": 82,
+      "read_rows": 704877,
+      "read_bytes": 15501661,
+      "result_rows": 100000,
+      "result_bytes": 3145728,
+      "memory_usage": 26186763,
+      "os_read_bytes": 319488,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "30d_run1",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_30d_run1_200e2f61",
+    "wall_seconds": 0.38699050500872545,
+    "result_bytes": 7399863,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_30d_run1_200e2f61",
+      "query_duration_ms": 165,
+      "read_rows": 3010253,
+      "read_bytes": 66220563,
+      "result_rows": 100000,
+      "result_bytes": 3145728,
+      "memory_usage": 28141130,
+      "os_read_bytes": 0,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "365d_run1",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_365d_run1_c8ea9da2",
+    "wall_seconds": 1.6063277760113124,
+    "result_bytes": 7397549,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_365d_run1_c8ea9da2",
+      "query_duration_ms": 1373,
+      "read_rows": 36500365,
+      "read_bytes": 803012252,
+      "result_rows": 100000,
+      "result_bytes": 3145728,
+      "memory_usage": 26523240,
+      "os_read_bytes": 0,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "7d_run2",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_7d_run2_a74e11fd",
+    "wall_seconds": 0.29701048199785873,
+    "result_bytes": 7399900,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_7d_run2_a74e11fd",
+      "query_duration_ms": 78,
+      "read_rows": 704877,
+      "read_bytes": 15501661,
+      "result_rows": 100000,
+      "result_bytes": 3145728,
+      "memory_usage": 24657121,
+      "os_read_bytes": 0,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "30d_run2",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_30d_run2_f97ab955",
+    "wall_seconds": 0.3507332270091865,
+    "result_bytes": 7399863,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_30d_run2_f97ab955",
+      "query_duration_ms": 150,
+      "read_rows": 3010253,
+      "read_bytes": 66220563,
+      "result_rows": 100000,
+      "result_bytes": 3145728,
+      "memory_usage": 24320568,
+      "os_read_bytes": 0,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "365d_run2",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_365d_run2_3e61472b",
+    "wall_seconds": 1.602569743001368,
+    "result_bytes": 7397549,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_365d_run2_3e61472b",
+      "query_duration_ms": 1402,
+      "read_rows": 36500365,
+      "read_bytes": 803012252,
+      "result_rows": 100000,
+      "result_bytes": 3145728,
+      "memory_usage": 25023094,
+      "os_read_bytes": 0,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "7d_run3",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_7d_run3_9699d2a8",
+    "wall_seconds": 0.3160166049929103,
+    "result_bytes": 7399900,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_7d_run3_9699d2a8",
+      "query_duration_ms": 89,
+      "read_rows": 704877,
+      "read_bytes": 15501661,
+      "result_rows": 100000,
+      "result_bytes": 3145728,
+      "memory_usage": 20982452,
+      "os_read_bytes": 0,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "30d_run3",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_30d_run3_7b2cb594",
+    "wall_seconds": 0.41492881400336046,
+    "result_bytes": 7399863,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_30d_run3_7b2cb594",
+      "query_duration_ms": 181,
+      "read_rows": 3010253,
+      "read_bytes": 66220563,
+      "result_rows": 100000,
+      "result_bytes": 3145728,
+      "memory_usage": 24320568,
+      "os_read_bytes": 0,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "365d_run3",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_365d_run3_9ff6c9a5",
+    "wall_seconds": 1.6055342270119581,
+    "result_bytes": 7397549,
+    "server": {
+      "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_365d_run3_9ff6c9a5",
+      "query_duration_ms": 1387,
+      "read_rows": 36500365,
+      "read_bytes": 803012252,
+      "result_rows": 100000,
+      "result_bytes": 3145728,
+      "memory_usage": 25023094,
+      "os_read_bytes": 0,
+      "max_threads": "2",
+      "exception_code": 0
+    }
+  },
+  {
+    "label": "flush",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_flush_ccc2c6a0",
+    "wall_seconds": 0.3248640749952756,
+    "result_bytes": 0,
+    "server": null
+  },
+  {
+    "label": "metrics",
+    "query_id": "ck261_20261026_210446_3e3ddbf5_uuid_metrics_2f34b9b6",
+    "wall_seconds": 0.1913360170001397,
+    "result_bytes": 2833,
+    "server": null
+  }
+]

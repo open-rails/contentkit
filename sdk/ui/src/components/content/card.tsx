@@ -6,6 +6,7 @@ import { Fragment, useCallback, useContext, useLayoutEffect, useState, type CSSP
 import type { Card, CardAccess, Chip as EntityChip } from "../../client/generated/wire.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { ratio } from "../../client/aspect.js";
+import { renewOriginLink } from "../../client/navigation-origin.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext } from "../../react/context.js";
@@ -147,13 +148,21 @@ function useLink(url: string | undefined, before?: () => void) {
   const navigate = useContext(ContentKitContext)?.navigate;
   return useCallback(
     (e: MouseEvent<HTMLAnchorElement>) => {
+      if (e.defaultPrevented || e.button !== 0) return;
+      const target = renewOriginLink(e.currentTarget.getAttribute("href") ?? url ?? "", true);
+      e.currentTarget.href = target;
       before?.();
       if (!navigate || !url || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       e.preventDefault();
-      navigate(url);
+      navigate(target);
     },
     [navigate, url, before],
   );
+}
+
+function prepareNativeLink(e: MouseEvent<HTMLAnchorElement>) {
+  if (e.type === "auxclick" && e.button !== 1) return;
+  e.currentTarget.href = renewOriginLink(e.currentTarget.href, e.type === "auxclick");
 }
 
 /** Which chips of a one-line list fit whole beside its "+N": `through` counts chips in list order (breakpoint-hidden ones included), `fitted` the ones that show, `squeezed` when even the first one does not fit and must shrink; null until measured. `chipsKey` names the chips rendered, so new ones are measured. */
@@ -281,7 +290,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       {item}
     </Fragment>)}
   </p>;
-  const titleLink = <a href={url} onClick={onClick} className={cn("text-lg leading-snug font-medium break-words focus-visible:underline sm:text-xl", titlePosition === "cover" ? "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 via-black/60 to-transparent px-3 pt-10 pb-3 text-white hover:underline" : "hover:underline")} data-ckui="card-title">
+  const titleLink = <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className={cn("text-lg leading-snug font-medium break-words focus-visible:underline sm:text-xl", titlePosition === "cover" ? "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 via-black/60 to-transparent px-3 pt-10 pb-3 text-white hover:underline" : "hover:underline")} data-ckui="card-title">
     <span className="line-clamp-2">{title}</span>
     {lock && <span className="sr-only"> ({lock})</span>}
     {dim && <span className="sr-only"> ({t("contents.disliked")})</span>}
@@ -290,7 +299,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   return (
     <article ref={setArticle} className={cn("group/card relative grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       <div className="relative overflow-hidden rounded-lg" data-ckui="card-cover">
-        <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
+        <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
           <div data-ckui="card-cover-frame" data-disliked={dim || undefined} className={cn(coverAspect === undefined && (shape === "landscape" ? "aspect-video" : "aspect-[3/4]"), "transition-[opacity,filter]", dim && "opacity-50 brightness-75", st.deleted && "opacity-60 grayscale")} style={coverAspect === undefined ? undefined : { aspectRatio: coverAspect }}>
             {loadMedia ? <RenditionImg
               outputs={card.cover}
@@ -368,14 +377,14 @@ export function OwnerChip({ entity, href, className, loadMedia = true }: { entit
 
 function MetaLink({ url, name }: { url?: string; name: string }) {
   const onClick = useLink(url);
-  return url ? <a href={url} onClick={onClick} className="hover:text-foreground hover:underline">{name}</a> : <span>{name}</span>;
+  return url ? <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className="hover:text-foreground hover:underline">{name}</a> : <span>{name}</span>;
 }
 
 function Chip({ url, name, variant = "chips" }: { url?: string; name: string; variant?: "chips" | "text" }) {
   const onClick = useLink(url);
   const cls = variant === "text" ? "text-sm text-muted-foreground" : "inline-block rounded-md border border-border px-1.5 py-0.5 text-sm text-muted-foreground";
   return url ? (
-    <a href={url} onClick={onClick} className={cn(cls, "hover:text-foreground", variant === "text" ? "hover:underline" : "hover:bg-muted")}>
+    <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className={cn(cls, "hover:text-foreground", variant === "text" ? "hover:underline" : "hover:bg-muted")}>
       {name}
     </a>
   ) : (
@@ -399,7 +408,7 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = tr
   return (
     <article className={cn("relative grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       {byline ?? (owner && card.owner && <OwnerChip entity={card.owner} href={ownerHref} loadMedia={loadMedia} className="text-sm" />)}
-      <a href={url} onClick={onClick} className="grid gap-2">
+      <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className="grid gap-2">
         <span className="font-medium break-words hover:underline" data-ckui="card-title">
           {title}
         </span>

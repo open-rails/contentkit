@@ -7,17 +7,17 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
-	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/media/versions"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 )
 
 // publicationOnlyFleet keeps entity synchronization stopped while allowing the
-// real text publication worker to complete. Pending-scope tests add the entity
+// real publication worker to complete. Pending-scope tests add the entity
 // queue explicitly only after proving that unprovisioned scopes grant nothing.
 func publicationOnlyFleet(t *testing.T, app *application) *river.Client[pgx.Tx] {
 	t.Helper()
-	queue := catalog.QueueFor(app.cfg.Scope.AppID.String())
+	queue := versions.QueueFor(publicationTenant(app))
 	var dormant []string
 	only := riverhelpers.NewContribution("critical-publication-only", func(_ context.Context, cfg *river.Config) error {
 		for name := range cfg.Queues {

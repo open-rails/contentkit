@@ -570,14 +570,14 @@ func (c *Client) GetPollsAdmin(ctx context.Context, q GetPollsAdminQuery) ([]con
 	return out, err
 }
 
-// GetPoll is GET /v1/polls/{id} (public). A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders.
+// GetPoll is GET /v1/polls/{id} (public). A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders.
 func (c *Client) GetPoll(ctx context.Context, id string) (content.Poll, error) {
 	var out content.Poll
 	err := c.call(ctx, http.MethodGet, expand("/v1/polls/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PostPolls is POST /v1/polls (staff). Creates a poll with its options; a free-text poll needs an AnswerClassifier.
+// PostPolls is POST /v1/polls (staff). Creates a poll with at least two predefined options; only multiple_choice is supported.
 func (c *Client) PostPolls(ctx context.Context, body content.PollInput) (content.Poll, error) {
 	var out content.Poll
 	err := c.call(ctx, http.MethodPost, "/v1/polls", nil, body, &out)
@@ -600,13 +600,6 @@ func (c *Client) DeletePoll(ctx context.Context, id string) error {
 func (c *Client) PostPollVote(ctx context.Context, id string, body content.PollVote) (content.Poll, error) {
 	var out content.Poll
 	err := c.call(ctx, http.MethodPost, expand("/v1/polls/{id}/vote", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// PostPollAnswer is POST /v1/polls/{id}/answer (user). Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply.
-func (c *Client) PostPollAnswer(ctx context.Context, id string, body content.PollAnswerInput) (content.Poll, error) {
-	var out content.Poll
-	err := c.call(ctx, http.MethodPost, expand("/v1/polls/{id}/answer", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
@@ -2402,15 +2395,15 @@ type GetContentsQuery struct {
 	DisplayLanguage string
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
-	// newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
+	// newest, oldest, title, popular[:bucket], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
 	// selection-wide total, filtered and locked counts on the first page or every numbered page
 	Summary *bool
-	// custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter
+	// inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only
 	ActivityFrom string
-	// custom popularity activity window: exclusive UTC date YYYY-MM-DD; requires activity_from, kind and sort=popular
+	// exclusive UTC date; requires activity_from, kind and sort=popular
 	ActivityUntil string
 	// the previous page's next_cursor
 	Cursor string

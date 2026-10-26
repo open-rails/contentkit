@@ -40,6 +40,24 @@ func TestAccountMediaEventReader(t *testing.T) {
 		user, credential := w.person(t, 0)
 		client := a.client(credential)
 		ref := media.RefBody{Kind: "user", ID: user.ID}
+		// Hold the observation transaction while the actual image processor can
+		// finish its manifest. Readiness and event visibility are separate commits.
+		mediaConfig, err := a.cfg.MediaKinds()
+		must(t, err)
+		registry, err := media.NewRegistry(mediaConfig)
+		must(t, err)
+		accountRef, err := registry.Ref("user", user.ID)
+		must(t, err)
+		item, err := registry.Item(accountRef)
+		must(t, err)
+		storage, _, err := a.cfg.AccountMedia()
+		must(t, err)
+		barrier, err := pgx.ConnectConfig(t.Context(), w.pool.Config().ConnConfig.Copy())
+		must(t, err)
+		defer barrier.Close(context.Background())
+		key := storage.Schema + "/media-processing/" + item.Prefix()
+		_, err = barrier.Exec(t.Context(), "SELECT pg_advisory_lock(hashtextextended($1,0))", key)
+		must(t, err)
 		_, err = client.IngestMedia(t.Context(), nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "avatar.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
 		must(t, err)
 		ready := errors.New("avatar finished")
@@ -57,23 +75,37 @@ func TestAccountMediaEventReader(t *testing.T) {
 		query.After = before.NextCursor
 		page, err := reader.ListEvents(t.Context(), query)
 		must(t, err)
-		completed := false
-		for _, event := range page.Events {
-			var fact media.ProcessingEvent
-			must(t, json.Unmarshal(event.Data, &fact))
-			if fact.Kind != "user" || fact.ContentID != user.ID || fact.VersionID != "" {
-				t.Fatalf("account stream leaked a different item: %+v", fact)
-			}
-			if event.Type == media.EventProcessingCompleted && fact.State == media.StateReady && fact.Uploads.Completed == 1 {
-				completed = true
-			}
-			if bytes.Contains(event.Data, []byte("http://")) || bytes.Contains(event.Data, []byte(credential)) {
-				t.Fatal("retained media fact contains a delivery URL or credential")
-			}
+		if len(page.Events) != 0 {
+			t.Fatalf("processing event crossed its held commit barrier: %+v", page)
 		}
-		if !completed {
-			t.Fatalf("real avatar processing produced no completion fact: %+v", page)
-		}
+		waitForWithin(t, 10*time.Second, func() bool {
+			var blocked bool
+			must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, int32(barrier.PgConn().PID())).Scan(&blocked))
+			return blocked
+		})
+		_, err = barrier.Exec(t.Context(), "SELECT pg_advisory_unlock(hashtextextended($1,0))", key)
+		must(t, err)
+		// The ready snapshot is not an acknowledgement of the observation
+		// transaction. Wait for that durable fact before comparing event readers.
+		waitForWithin(t, 30*time.Second, func() bool {
+			page, err = reader.ListEvents(t.Context(), query)
+			must(t, err)
+			completed := false
+			for _, event := range page.Events {
+				var fact media.ProcessingEvent
+				must(t, json.Unmarshal(event.Data, &fact))
+				if fact.Kind != "user" || fact.ContentID != user.ID || fact.VersionID != "" {
+					t.Fatalf("account stream leaked a different item: %+v", fact)
+				}
+				if event.Type == media.EventProcessingCompleted && fact.State == media.StateReady && fact.Uploads.Completed == 1 {
+					completed = true
+				}
+				if bytes.Contains(event.Data, []byte("http://")) || bytes.Contains(event.Data, []byte(credential)) {
+					t.Fatal("retained media fact contains a delivery URL or credential")
+				}
+			}
+			return completed
+		})
 		shared, err := sibling.engine.AccountMediaEvents()
 		must(t, err)
 		replayed, err := shared.ListEvents(t.Context(), query)

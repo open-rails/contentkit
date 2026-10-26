@@ -1,0 +1,2 @@
+{"table":"daily","rows":109500000,"bytes_on_disk":568082556,"uncompressed_bytes":1642500000,"parts":63}
+{"table":"population","rows":1095,"bytes_on_disk":1224,"uncompressed_bytes":7665,"parts":1}

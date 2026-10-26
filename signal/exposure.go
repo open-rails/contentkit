@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/open-rails/contentkit/internal/normalize"
 )
 
 // RecordExposures appends one row per result list and stage, batched into a
@@ -23,6 +26,9 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 	}
 	subjects := make([]Subject, 0, len(exposures))
 	for i := range exposures {
+		if utf8.RuneCountInString(normalize.Query(exposures[i].SearchQuery)) > 200 {
+			return fmt.Errorf("exposure: search query exceeds 200 runes")
+		}
 		if err := exposures[i].validate(tenant); err != nil {
 			return err
 		}
@@ -34,7 +40,7 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 	if err != nil {
 		return err
 	}
-	const perRow = 16
+	const perRow = 17
 	rows := make([]string, 0, len(exposures))
 	args := make([]any, 0, len(exposures)*perRow)
 	sizes := make([]int, 0, len(exposures))
@@ -69,18 +75,18 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 		// Keep the erasure predicate in the INSERT statement. The client-side
 		// fenced lookup is only an optimization; an in-flight writer may resume
 		// after EraseSubjects records its ledger row.
-		rows = append(rows, "SELECT ? AS tenant, ? AS render_id, ? AS stage, ? AS revision, ? AS query_id, ? AS surface, ? AS ranker, ? AS language, ? AS subject_kind, ? AS subject, ? AS content_kinds, ? AS content_ids, ? AS content_version_ids, ? AS positions, ? AS occurred_at, ? AS access_contexts")
+		rows = append(rows, "SELECT ? AS tenant, ? AS render_id, ? AS stage, ? AS revision, ? AS query_id, ? AS surface, ? AS ranker, ? AS language, ? AS subject_kind, ? AS subject, ? AS content_kinds, ? AS content_ids, ? AS content_version_ids, ? AS positions, ? AS occurred_at, ? AS access_contexts, ? AS search_query")
 		args = append(args, tenant, e.RenderID, string(e.Stage), e.Revision, e.QueryID, surface, e.Ranker, e.Language,
-			kind, key, kinds, ids, versions, positions, e.OccurredAt.UTC(), contexts)
+			kind, key, kinds, ids, versions, positions, e.OccurredAt.UTC(), contexts, strings.ToLower(normalize.Query(e.SearchQuery)))
 		sizes = append(sizes, inlinedSize(rows[len(rows)-1], args[len(args)-perRow:]))
 	}
 	for start, end := 0, 0; start < len(rows); start = end {
 		end = insertEnd(sizes, start)
 		insert := fmt.Sprintf(`INSERT INTO %s.exposures
 (tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
- content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts)
+ content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts, search_query)
 SELECT tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
-       content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts
+       content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts, search_query
 FROM (%s) AS incoming
 WHERE %s`, st.db, strings.Join(rows[start:end], " UNION ALL "), st.notErased())
 		if err := st.conn.Exec(ctx, insert, args[start*perRow:end*perRow]...); err != nil {

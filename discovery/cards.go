@@ -112,8 +112,9 @@ type CardAccess struct {
 
 // ContentPage is one page of cards.
 type ContentPage struct {
-	Contents []Card          `json:"contents"`
-	Summary  *ListingSummary `json:"summary,omitempty"`
+	Popularity *PopularitySnapshot `json:"popularity,omitempty"`
+	Contents   []Card              `json:"contents"`
+	Summary    *ListingSummary     `json:"summary,omitempty"`
 	// NextCursor pages on; empty on the last page.
 	NextCursor string `json:"next_cursor,omitempty"`
 }

@@ -49,9 +49,9 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`, st.db, st.
 
 	copyExposures := fmt.Sprintf(`INSERT INTO %s.exposures
 (tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
- content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts, version, ingested_at)
+ content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts, search_query, version, ingested_at)
 SELECT tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, ?,
-       content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts, version, now64(6)
+       content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts, search_query, version, now64(6)
 FROM %s.exposures
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`, st.db, st.db, st.notErased(), st.subjectNotErased())
 	if err := st.conn.Exec(ctx, copyExposures, next.Key(), tenant, old.Kind(), old.Key(), tenant, subjectHashKey(next)); err != nil {
@@ -68,9 +68,9 @@ WHERE tenant=? AND subject_kind=? AND subject=? AND %s AND %s`, st.db, st.db, st
 
 	copySegments := fmt.Sprintf(`INSERT INTO %s.engagement_segments
  (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,
- occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,version,ingested_at)
+ occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,origin_click_id,version,ingested_at)
  SELECT tenant,content_kind,content_id,content_version_id,subject_kind,?,receipt_id,revision,visit_id,segment_id,
- occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,version,now64(6)
+ occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,origin_click_id,version,now64(6)
  FROM %s.engagement_segments WHERE tenant=? AND subject_kind=? AND subject=? AND %s AND %s`, st.db, st.db, st.notErased(), st.subjectNotErased())
 	if err := st.conn.Exec(ctx, copySegments, next.Key(), tenant, old.Kind(), old.Key(), tenant, subjectHashKey(next)); err != nil {
 		return fmt.Errorf("signal: rekey measured segments: %w", err)

@@ -1,0 +1,902 @@
+[
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c20",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7217,
+    "previous_id": "00000001-0000-7000-8000-000000016bde",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c21",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7218,
+    "previous_id": "00000001-0000-7000-8000-000000016bdf",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c22",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7219,
+    "previous_id": "00000001-0000-7000-8000-000000016be0",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c23",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7220,
+    "previous_id": "00000001-0000-7000-8000-000000016be1",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c24",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7221,
+    "previous_id": "00000001-0000-7000-8000-000000016be2",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c25",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7222,
+    "previous_id": "00000001-0000-7000-8000-000000016be3",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c26",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7223,
+    "previous_id": "00000001-0000-7000-8000-000000016be4",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c27",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7224,
+    "previous_id": "00000001-0000-7000-8000-000000016be5",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c28",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7225,
+    "previous_id": "00000001-0000-7000-8000-000000016be6",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c29",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7226,
+    "previous_id": "00000001-0000-7000-8000-000000016be7",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c2a",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7227,
+    "previous_id": "00000001-0000-7000-8000-000000016be8",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c2b",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7228,
+    "previous_id": "00000001-0000-7000-8000-000000016be9",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c2c",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7229,
+    "previous_id": "00000001-0000-7000-8000-000000016bea",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c2d",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7230,
+    "previous_id": "00000001-0000-7000-8000-000000016beb",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c2e",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7231,
+    "previous_id": "00000001-0000-7000-8000-000000016bec",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c2f",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7232,
+    "previous_id": "00000001-0000-7000-8000-000000016bed",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c30",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7233,
+    "previous_id": "00000001-0000-7000-8000-000000016bee",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c31",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7234,
+    "previous_id": "00000001-0000-7000-8000-000000016bef",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c32",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7235,
+    "previous_id": "00000001-0000-7000-8000-000000016bf0",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c33",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7236,
+    "previous_id": "00000001-0000-7000-8000-000000016bf1",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c34",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7237,
+    "previous_id": "00000001-0000-7000-8000-000000016bf2",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c35",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7238,
+    "previous_id": "00000001-0000-7000-8000-000000016bf3",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c36",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7239,
+    "previous_id": "00000001-0000-7000-8000-000000016bf4",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c37",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7240,
+    "previous_id": "00000001-0000-7000-8000-000000016bf5",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c38",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7241,
+    "previous_id": "00000001-0000-7000-8000-000000016bf6",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c39",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7242,
+    "previous_id": "00000001-0000-7000-8000-000000016bf7",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c3a",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7243,
+    "previous_id": "00000001-0000-7000-8000-000000016bf8",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c3b",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7244,
+    "previous_id": "00000001-0000-7000-8000-000000016bf9",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c3c",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7245,
+    "previous_id": "00000001-0000-7000-8000-000000016bfa",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c3d",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7246,
+    "previous_id": "00000001-0000-7000-8000-000000016bfb",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c3e",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7247,
+    "previous_id": "00000001-0000-7000-8000-000000016bfc",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c3f",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7248,
+    "previous_id": "00000001-0000-7000-8000-000000016bfd",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c40",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7249,
+    "previous_id": "00000001-0000-7000-8000-000000016bfe",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c41",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.00047267349239751106,
+    "position": 7250,
+    "previous_id": "00000001-0000-7000-8000-000000016bff",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bde",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7251,
+    "previous_id": "00000001-0000-7000-8000-000000016c00",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bdf",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7252,
+    "previous_id": "00000001-0000-7000-8000-000000016c01",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be0",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7253,
+    "previous_id": "00000001-0000-7000-8000-000000016c02",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be1",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7254,
+    "previous_id": "00000001-0000-7000-8000-000000016c03",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be2",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7255,
+    "previous_id": "00000001-0000-7000-8000-000000016c04",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be3",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7256,
+    "previous_id": "00000001-0000-7000-8000-000000016c05",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be4",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7257,
+    "previous_id": "00000001-0000-7000-8000-000000016c06",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be5",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7258,
+    "previous_id": "00000001-0000-7000-8000-000000016c07",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be6",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7259,
+    "previous_id": "00000001-0000-7000-8000-000000016c08",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be7",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7260,
+    "previous_id": "00000001-0000-7000-8000-000000016c09",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be8",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7261,
+    "previous_id": "00000001-0000-7000-8000-000000016c0a",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016be9",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7262,
+    "previous_id": "00000001-0000-7000-8000-000000016c0b",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bea",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7263,
+    "previous_id": "00000001-0000-7000-8000-000000016c0c",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016beb",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7264,
+    "previous_id": "00000001-0000-7000-8000-000000016c0d",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bec",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7265,
+    "previous_id": "00000001-0000-7000-8000-000000016c0e",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bed",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7266,
+    "previous_id": "00000001-0000-7000-8000-000000016c0f",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bee",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7267,
+    "previous_id": "00000001-0000-7000-8000-000000016c10",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bef",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7268,
+    "previous_id": "00000001-0000-7000-8000-000000016c11",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf0",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7269,
+    "previous_id": "00000001-0000-7000-8000-000000016c12",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf1",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7270,
+    "previous_id": "00000001-0000-7000-8000-000000016c13",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf2",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7271,
+    "previous_id": "00000001-0000-7000-8000-000000016c14",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf3",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7272,
+    "previous_id": "00000001-0000-7000-8000-000000016c15",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf4",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7273,
+    "previous_id": "00000001-0000-7000-8000-000000016c16",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf5",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7274,
+    "previous_id": "00000001-0000-7000-8000-000000016c17",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf6",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7275,
+    "previous_id": "00000001-0000-7000-8000-000000016c18",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf7",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7276,
+    "previous_id": "00000001-0000-7000-8000-000000016c19",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf8",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7277,
+    "previous_id": "00000001-0000-7000-8000-000000016c1a",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bf9",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7278,
+    "previous_id": "00000001-0000-7000-8000-000000016c1b",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bfa",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7279,
+    "previous_id": "00000001-0000-7000-8000-000000016c1c",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bfb",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7280,
+    "previous_id": "00000001-0000-7000-8000-000000016c1d",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bfc",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7281,
+    "previous_id": "00000001-0000-7000-8000-000000016c1e",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bfd",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7282,
+    "previous_id": "00000001-0000-7000-8000-000000016c1f",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.000472673492397511
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bfe",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7283,
+    "previous_id": "00000001-0000-7000-8000-000000016c20",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016bff",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7284,
+    "previous_id": "00000001-0000-7000-8000-000000016c21",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c00",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7285,
+    "previous_id": "00000001-0000-7000-8000-000000016c22",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c01",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7286,
+    "previous_id": "00000001-0000-7000-8000-000000016c23",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c02",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7287,
+    "previous_id": "00000001-0000-7000-8000-000000016c24",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c03",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7288,
+    "previous_id": "00000001-0000-7000-8000-000000016c25",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c04",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7289,
+    "previous_id": "00000001-0000-7000-8000-000000016c26",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c05",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7290,
+    "previous_id": "00000001-0000-7000-8000-000000016c27",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c06",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7291,
+    "previous_id": "00000001-0000-7000-8000-000000016c28",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c07",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7292,
+    "previous_id": "00000001-0000-7000-8000-000000016c29",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c08",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7293,
+    "previous_id": "00000001-0000-7000-8000-000000016c2a",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c09",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7294,
+    "previous_id": "00000001-0000-7000-8000-000000016c2b",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c0a",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7295,
+    "previous_id": "00000001-0000-7000-8000-000000016c2c",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c0b",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7296,
+    "previous_id": "00000001-0000-7000-8000-000000016c2d",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c0c",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7297,
+    "previous_id": "00000001-0000-7000-8000-000000016c2e",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c0d",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7298,
+    "previous_id": "00000001-0000-7000-8000-000000016c2f",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c0e",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7299,
+    "previous_id": "00000001-0000-7000-8000-000000016c30",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c0f",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7300,
+    "previous_id": "00000001-0000-7000-8000-000000016c31",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c10",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7301,
+    "previous_id": "00000001-0000-7000-8000-000000016c32",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c11",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7302,
+    "previous_id": "00000001-0000-7000-8000-000000016c33",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c12",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7303,
+    "previous_id": "00000001-0000-7000-8000-000000016c34",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c13",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7304,
+    "previous_id": "00000001-0000-7000-8000-000000016c35",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c14",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7305,
+    "previous_id": "00000001-0000-7000-8000-000000016c36",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c15",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7306,
+    "previous_id": "00000001-0000-7000-8000-000000016c37",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c16",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7307,
+    "previous_id": "00000001-0000-7000-8000-000000016c38",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c17",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7308,
+    "previous_id": "00000001-0000-7000-8000-000000016c39",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c18",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7309,
+    "previous_id": "00000001-0000-7000-8000-000000016c3a",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c19",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7310,
+    "previous_id": "00000001-0000-7000-8000-000000016c3b",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c1a",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7311,
+    "previous_id": "00000001-0000-7000-8000-000000016c3c",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c1b",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7312,
+    "previous_id": "00000001-0000-7000-8000-000000016c3d",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c1c",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7313,
+    "previous_id": "00000001-0000-7000-8000-000000016c3e",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c1d",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7314,
+    "previous_id": "00000001-0000-7000-8000-000000016c3f",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c1e",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7315,
+    "previous_id": "00000001-0000-7000-8000-000000016c40",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000016c1f",
+    "current_item_score_before": 0.0004726734923975113,
+    "current_item_score_now": 0.000472673492397511,
+    "position": 7316,
+    "previous_id": "00000001-0000-7000-8000-000000016c41",
+    "previous_item_score_before": 0.0004726734923975113,
+    "previous_item_score_now": 0.00047267349239751106
+  }
+]

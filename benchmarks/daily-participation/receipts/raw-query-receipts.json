@@ -1,0 +1,370 @@
+[
+  {
+    "Label": "schema",
+    "QueryID": "ck261_raw_20261026_211659_schema_0000",
+    "Kind": "Exec",
+    "SQL": "CREATE DATABASE ck261_raw_20261026_211659",
+    "WallSeconds": 0.052909715,
+    "Error": ""
+  },
+  {
+    "Label": "schema",
+    "QueryID": "ck261_raw_20261026_211659_schema_0001",
+    "Kind": "Exec",
+    "SQL": "CREATE TABLE IF NOT EXISTS ck261_raw_20261026_211659.erasures  (\n    `tenant` LowCardinality(String),\n    `subject_hash` FixedString(16),\n    `erased_at` DateTime64(6, 'UTC')\n)\nENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', erased_at)\nORDER BY (tenant, subject_hash)\nSETTINGS index_granularity = 8192;",
+    "WallSeconds": 0.641289513,
+    "Error": ""
+  },
+  {
+    "Label": "schema",
+    "QueryID": "ck261_raw_20261026_211659_schema_0002",
+    "Kind": "Exec",
+    "SQL": "CREATE TABLE IF NOT EXISTS ck261_raw_20261026_211659.engagement_segments  (\n    tenant LowCardinality(String),\n    content_kind LowCardinality(String),\n    content_id String,\n    content_version_id String,\n    subject_kind LowCardinality(String),\n    subject String,\n    receipt_id String,\n    revision UInt64,\n    visit_id String,\n    segment_id String,\n    occurred_at DateTime64(6, 'UTC'),\n    active_ms UInt32,\n    covered_units Array(UInt32),\n    unit_attention Map(UInt32, UInt64),\n    unit_total UInt32,\n    unit_scale UInt32,\n    resume String,\n    access_context String,\n    measurement String,\n    version UInt128 DEFAULT bitOr(bitShiftLeft(toUInt128(revision),64),toUInt128(cityHash64(visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement))),\n    ingested_at DateTime64(6, 'UTC') DEFAULT now64(6),\n    INDEX idx_engagement_subject (subject_kind,subject) TYPE bloom_filter GRANULARITY 4\n)\nENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', version)\nPARTITION BY toYYYYMM(occurred_at)\nORDER BY (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id)\nSETTINGS index_granularity = 8192;",
+    "WallSeconds": 0.967062822,
+    "Error": ""
+  },
+  {
+    "Label": "schema",
+    "QueryID": "ck261_raw_20261026_211659_schema_0003",
+    "Kind": "Exec",
+    "SQL": "CREATE TABLE IF NOT EXISTS ck261_raw_20261026_211659.measured_population_observations  (\n    `tenant` LowCardinality(String),\n    `subject_kind` LowCardinality(String),\n    `subject` String,\n    `content_kind` LowCardinality(String),\n    `observation_id` String,\n    `observed_at` DateTime64(6, 'UTC'),\n    `domain` LowCardinality(String),\n    `language` LowCardinality(String),\n    `eligible_tiers` Array(String),\n    `eligibility_known` Bool,\n    `version` UInt64 DEFAULT cityHash64(observed_at, domain, language, eligible_tiers, eligibility_known),\n    INDEX idx_population_observed observed_at TYPE minmax GRANULARITY 1\n)\nENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', version)\nPARTITION BY toYYYYMM(observed_at)\nORDER BY (tenant, content_kind, subject_kind, subject, observation_id)\nSETTINGS index_granularity = 8192;",
+    "WallSeconds": 1.106324799,
+    "Error": ""
+  },
+  {
+    "Label": "schema",
+    "QueryID": "ck261_raw_20261026_211659_schema_0004",
+    "Kind": "Exec",
+    "SQL": "CREATE TABLE IF NOT EXISTS ck261_raw_20261026_211659.popularity_daily  (\n    tenant LowCardinality(String),\n    content_kind LowCardinality(String),\n    domain LowCardinality(String),\n    language LowCardinality(String),\n    day Date,\n    content_id String,\n    readers UInt64,\n    eligible UInt64,\n    version UInt64\n)\nENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', version)\nPARTITION BY toYYYYMM(day)\nORDER BY (tenant, content_kind, domain, language, day, content_id);",
+    "WallSeconds": 0.628453885,
+    "Error": ""
+  },
+  {
+    "Label": "schema",
+    "QueryID": "ck261_raw_20261026_211659_schema_0005",
+    "Kind": "Exec",
+    "SQL": "CREATE TABLE IF NOT EXISTS ck261_raw_20261026_211659.popularity_daily_prepared  (\n    tenant LowCardinality(String),\n    content_kind LowCardinality(String),\n    domain LowCardinality(String),\n    language LowCardinality(String),\n    day Date,\n    computed_at DateTime64(6, 'UTC')\n)\nENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', computed_at)\nPARTITION BY toYYYYMM(day)\nORDER BY (tenant, content_kind, domain, language, day);",
+    "WallSeconds": 0.638021313,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_0",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_0_0006",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(0,300000)",
+    "WallSeconds": 1.822202886,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_1",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_1_0007",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(300000,300000)",
+    "WallSeconds": 1.7234074069999998,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_2",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_2_0008",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(600000,300000)",
+    "WallSeconds": 1.551346554,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_3",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_3_0009",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(900000,300000)",
+    "WallSeconds": 1.08964992,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_4",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_4_0010",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(1200000,300000)",
+    "WallSeconds": 1.584419257,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_5",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_5_0011",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(1500000,300000)",
+    "WallSeconds": 1.9016396850000001,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_6",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_6_0012",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(1800000,300000)",
+    "WallSeconds": 2.018501758,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_7",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_7_0013",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(2100000,300000)",
+    "WallSeconds": 1.183414318,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_8",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_8_0014",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(2400000,300000)",
+    "WallSeconds": 1.335598664,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_9",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_9_0015",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(2700000,300000)",
+    "WallSeconds": 2.919098382,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_10",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_10_0016",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(3000000,300000)",
+    "WallSeconds": 1.573679447,
+    "Error": ""
+  },
+  {
+    "Label": "insert_source_11",
+    "QueryID": "ck261_raw_20261026_211659_insert_source_11_0017",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(2-number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(3300000,300000)",
+    "WallSeconds": 1.707695264,
+    "Error": ""
+  },
+  {
+    "Label": "insert_population",
+    "QueryID": "ck261_raw_20261026_211659_insert_population_0018",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.measured_population_observations\n (tenant,subject_kind,subject,content_kind,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known)\n WITH toUInt64(intDiv(number,4)) AS person,toUInt64(intDiv(number%4,2)) AS observation\n SELECT 'benchmark261','user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),'gallery',concat('00000007-0000-7000-8000-',leftPad(lower(hex(person*2+observation)),12,'0')),toDateTime64('2025-01-15 11:00:00',6,'UTC')+toIntervalSecond(observation),\n 'main','en',if(observation=1 AND person%2=0,['gold'],CAST([],'Array(String)')),true FROM numbers(240000)",
+    "WallSeconds": 1.067696835,
+    "Error": ""
+  },
+  {
+    "Label": "prepare_initial",
+    "QueryID": "ck261_raw_20261026_211659_prepare_initial_0019",
+    "Kind": "Query",
+    "SQL": "SELECT day,max(computed_at) FROM ck261_raw_20261026_211659.popularity_daily_prepared\n WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day\u003e=? AND day\u003c? GROUP BY day",
+    "WallSeconds": 0.007881218,
+    "Error": ""
+  },
+  {
+    "Label": "prepare_initial",
+    "QueryID": "ck261_raw_20261026_211659_prepare_initial_0020",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.popularity_daily\n (tenant,content_kind,domain,language,day,content_id,readers,eligible,version)\n WITH canonical AS (\n SELECT content_id,content_version_id,subject_kind,subject,receipt_id,\n argMax(tuple(active_ms,notEmpty(covered_units),access_context),version) AS fact\n FROM ck261_raw_20261026_211659.engagement_segments\n WHERE tenant=? AND content_kind=? AND occurred_at\u003e=? AND occurred_at\u003c? AND (sipHash128(concat(subject_kind, ':', subject)), tenant) NOT IN (SELECT subject_hash, tenant FROM ck261_raw_20261026_211659.erasures)\n GROUP BY content_id,content_version_id,subject_kind,subject,receipt_id\n ), people AS (\n SELECT subject_kind,subject,groupUniqArrayArrayIf(eligible_tiers,eligibility_known) AS tiers\n FROM ck261_raw_20261026_211659.measured_population_observations\n WHERE tenant=? AND content_kind=? AND observed_at\u003e=? AND observed_at\u003c? AND (sipHash128(concat(subject_kind, ':', subject)), tenant) NOT IN (SELECT subject_hash, tenant FROM ck261_raw_20261026_211659.erasures)\n AND (?='' OR domain=?) AND (?='' OR language=?) GROUP BY subject_kind,subject\n ), qualified AS (\n SELECT r.content_id AS content_id,r.content_version_id AS content_version_id,r.subject_kind AS subject_kind,r.subject AS subject\n FROM canonical r INNER JOIN contentkit_daily_audiences a ON r.content_id=a.content_id\n INNER JOIN people p ON p.subject_kind=r.subject_kind AND p.subject=r.subject\n WHERE JSONExtractString(r.fact.3,'viewer_access')='full'\n AND (?='' OR JSONExtractString(r.fact.3,'domain')=?) AND (?='' OR JSONExtractString(r.fact.3,'language')=?)\n AND (a.public=1 OR hasAny(p.tiers,a.tiers))\n GROUP BY r.content_id,r.content_version_id,r.subject_kind,r.subject\n HAVING sum(toUInt64(r.fact.1))\u003e=1000 AND max(r.fact.2)\u003e0\n ), readers AS (\n SELECT content_id,uniqExact(tuple(subject_kind,subject)) AS readers FROM qualified GROUP BY content_id\n ), cohorts AS (SELECT DISTINCT audience,public,tiers FROM contentkit_daily_audiences), population AS (\n SELECT a.audience,count() AS eligible FROM cohorts a CROSS JOIN people p\n WHERE a.public=1 OR hasAny(p.tiers,a.tiers) GROUP BY a.audience\n )\n SELECT ?,?,?,?,toDate(?),a.content_id,coalesce(r.readers,0),coalesce(p.eligible,0),toUInt64(toUnixTimestamp64Micro(now64(6)))\n FROM contentkit_daily_audiences a LEFT JOIN readers r USING(content_id) LEFT JOIN population p USING(audience)\n SETTINGS max_threads=2, max_execution_time=120, max_memory_usage=1073741824,\n max_bytes_before_external_group_by=134217728, max_bytes_before_external_sort=134217728",
+    "WallSeconds": 34.134920634,
+    "Error": ""
+  },
+  {
+    "Label": "prepare_initial",
+    "QueryID": "ck261_raw_20261026_211659_prepare_initial_0021",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.popularity_daily_prepared\n (tenant,content_kind,domain,language,day,computed_at) VALUES (?,?,?,?,?,now64(6))",
+    "WallSeconds": 0.040742024,
+    "Error": ""
+  },
+  {
+    "Label": "verify_initial",
+    "QueryID": "ck261_raw_20261026_211659_verify_initial_0022",
+    "Kind": "Query",
+    "SQL": "SELECT content_id,readers,eligible FROM ck261_raw_20261026_211659.popularity_daily FINAL ORDER BY content_id",
+    "WallSeconds": 0.003697475,
+    "Error": ""
+  },
+  {
+    "Label": "reuse_closed_day",
+    "QueryID": "ck261_raw_20261026_211659_reuse_closed_day_0023",
+    "Kind": "Query",
+    "SQL": "SELECT day,max(computed_at) FROM ck261_raw_20261026_211659.popularity_daily_prepared\n WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day\u003e=? AND day\u003c? GROUP BY day",
+    "WallSeconds": 0.009452764,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_0",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_0_0024",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(0,300000)",
+    "WallSeconds": 1.903019454,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_1",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_1_0025",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(300000,300000)",
+    "WallSeconds": 2.204302624,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_2",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_2_0026",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(600000,300000)",
+    "WallSeconds": 2.6297198489999998,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_3",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_3_0027",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(900000,300000)",
+    "WallSeconds": 2.874609093,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_4",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_4_0028",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(1200000,300000)",
+    "WallSeconds": 2.082145328,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_5",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_5_0029",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(1500000,300000)",
+    "WallSeconds": 3.57751265,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_6",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_6_0030",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(1800000,300000)",
+    "WallSeconds": 3.058286482,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_7",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_7_0031",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(2100000,300000)",
+    "WallSeconds": 3.221543766,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_8",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_8_0032",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(2400000,300000)",
+    "WallSeconds": 4.7359192629999995,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_9",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_9_0033",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(2700000,300000)",
+    "WallSeconds": 3.613070896,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_10",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_10_0034",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(3000000,300000)",
+    "WallSeconds": 3.32397644,
+    "Error": ""
+  },
+  {
+    "Label": "replay_source_11",
+    "QueryID": "ck261_raw_20261026_211659_replay_source_11_0035",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.engagement_segments (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement) WITH toUInt64(intDiv(number,6)) AS pair, toUInt64(intDiv(pair,10)) AS person,\n toUInt64(pair%10) AS slot, toUInt64(intDiv(number%6,2)) AS receipt, toUInt64(1+number%2) AS rev,\n if(slot\u003c5,(person*5+slot)%1000,1000+(person*5+slot-5)%99000) AS item\n SELECT 'benchmark261','gallery',concat('00000001-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),concat('00000002-0000-7000-8000-',leftPad(lower(hex(item)),12,'0')),'user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),concat('00000004-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),rev,concat('00000005-0000-7000-8000-',leftPad(lower(hex(pair)),12,'0')),concat('00000006-0000-7000-8000-',leftPad(lower(hex(pair*3+receipt)),12,'0')),\n toDateTime64('2025-01-15 12:00:00',6,'UTC'),\n toUInt32(if(person%10=0,100,if(rev=2,400,200))),[toUInt32(0)],map(toUInt32(0),toUInt64(if(person%10=0,100,if(rev=2,400,200)))),toUInt32(100),toUInt32(100),'p0',\n '{\"observed_at\":\"2025-01-15T12:00:00Z\",\"content_access\":\"public\",\"viewer_access\":\"full\",\"policy_revision\":\"bench261\",\"audience\":\"public\",\"eligibility_known\":true,\"domain\":\"main\",\"language\":\"en\"}',\n '{\"pages\":[{\"index\":0,\"ranges\":[{\"from\":0,\"to\":100}],\"active_ms\":400}]}'\n FROM numbers(3300000,300000)",
+    "WallSeconds": 2.679737255,
+    "Error": ""
+  },
+  {
+    "Label": "replay_population",
+    "QueryID": "ck261_raw_20261026_211659_replay_population_0036",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.measured_population_observations\n (tenant,subject_kind,subject,content_kind,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known)\n WITH toUInt64(intDiv(number,4)) AS person,toUInt64(intDiv(number%4,2)) AS observation\n SELECT 'benchmark261','user',concat('00000003-0000-7000-8000-',leftPad(lower(hex(person)),12,'0')),'gallery',concat('00000007-0000-7000-8000-',leftPad(lower(hex(person*2+observation)),12,'0')),toDateTime64('2025-01-15 11:00:00',6,'UTC')+toIntervalSecond(observation),\n 'main','en',if(observation=1 AND person%2=0,['gold'],CAST([],'Array(String)')),true FROM numbers(240000)",
+    "WallSeconds": 0.721769767,
+    "Error": ""
+  },
+  {
+    "Label": "reuse_after_replay",
+    "QueryID": "ck261_raw_20261026_211659_reuse_after_replay_0037",
+    "Kind": "Query",
+    "SQL": "SELECT day,max(computed_at) FROM ck261_raw_20261026_211659.popularity_daily_prepared\n WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day\u003e=? AND day\u003c? GROUP BY day",
+    "WallSeconds": 0.017319327,
+    "Error": ""
+  },
+  {
+    "Label": "verify_reused",
+    "QueryID": "ck261_raw_20261026_211659_verify_reused_0038",
+    "Kind": "Query",
+    "SQL": "SELECT content_id,readers,eligible FROM ck261_raw_20261026_211659.popularity_daily FINAL ORDER BY content_id",
+    "WallSeconds": 0.007899648,
+    "Error": ""
+  },
+  {
+    "Label": "explicit_rebuild_after_replay",
+    "QueryID": "ck261_raw_20261026_211659_explicit_rebuild_after_replay_0039",
+    "Kind": "Query",
+    "SQL": "SELECT day,max(computed_at) FROM ck261_raw_20261026_211659.popularity_daily_prepared\n WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day\u003e=? AND day\u003c? GROUP BY day",
+    "WallSeconds": 0.016684737,
+    "Error": ""
+  },
+  {
+    "Label": "explicit_rebuild_after_replay",
+    "QueryID": "ck261_raw_20261026_211659_explicit_rebuild_after_replay_0040",
+    "Kind": "Exec",
+    "SQL": "ALTER TABLE ck261_raw_20261026_211659.popularity_daily DELETE WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day=? SETTINGS mutations_sync = 2",
+    "WallSeconds": 0.095777499,
+    "Error": ""
+  },
+  {
+    "Label": "explicit_rebuild_after_replay",
+    "QueryID": "ck261_raw_20261026_211659_explicit_rebuild_after_replay_0041",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.popularity_daily\n (tenant,content_kind,domain,language,day,content_id,readers,eligible,version)\n WITH canonical AS (\n SELECT content_id,content_version_id,subject_kind,subject,receipt_id,\n argMax(tuple(active_ms,notEmpty(covered_units),access_context),version) AS fact\n FROM ck261_raw_20261026_211659.engagement_segments\n WHERE tenant=? AND content_kind=? AND occurred_at\u003e=? AND occurred_at\u003c? AND (sipHash128(concat(subject_kind, ':', subject)), tenant) NOT IN (SELECT subject_hash, tenant FROM ck261_raw_20261026_211659.erasures)\n GROUP BY content_id,content_version_id,subject_kind,subject,receipt_id\n ), people AS (\n SELECT subject_kind,subject,groupUniqArrayArrayIf(eligible_tiers,eligibility_known) AS tiers\n FROM ck261_raw_20261026_211659.measured_population_observations\n WHERE tenant=? AND content_kind=? AND observed_at\u003e=? AND observed_at\u003c? AND (sipHash128(concat(subject_kind, ':', subject)), tenant) NOT IN (SELECT subject_hash, tenant FROM ck261_raw_20261026_211659.erasures)\n AND (?='' OR domain=?) AND (?='' OR language=?) GROUP BY subject_kind,subject\n ), qualified AS (\n SELECT r.content_id AS content_id,r.content_version_id AS content_version_id,r.subject_kind AS subject_kind,r.subject AS subject\n FROM canonical r INNER JOIN contentkit_daily_audiences a ON r.content_id=a.content_id\n INNER JOIN people p ON p.subject_kind=r.subject_kind AND p.subject=r.subject\n WHERE JSONExtractString(r.fact.3,'viewer_access')='full'\n AND (?='' OR JSONExtractString(r.fact.3,'domain')=?) AND (?='' OR JSONExtractString(r.fact.3,'language')=?)\n AND (a.public=1 OR hasAny(p.tiers,a.tiers))\n GROUP BY r.content_id,r.content_version_id,r.subject_kind,r.subject\n HAVING sum(toUInt64(r.fact.1))\u003e=1000 AND max(r.fact.2)\u003e0\n ), readers AS (\n SELECT content_id,uniqExact(tuple(subject_kind,subject)) AS readers FROM qualified GROUP BY content_id\n ), cohorts AS (SELECT DISTINCT audience,public,tiers FROM contentkit_daily_audiences), population AS (\n SELECT a.audience,count() AS eligible FROM cohorts a CROSS JOIN people p\n WHERE a.public=1 OR hasAny(p.tiers,a.tiers) GROUP BY a.audience\n )\n SELECT ?,?,?,?,toDate(?),a.content_id,coalesce(r.readers,0),coalesce(p.eligible,0),toUInt64(toUnixTimestamp64Micro(now64(6)))\n FROM contentkit_daily_audiences a LEFT JOIN readers r USING(content_id) LEFT JOIN population p USING(audience)\n SETTINGS max_threads=2, max_execution_time=120, max_memory_usage=1073741824,\n max_bytes_before_external_group_by=134217728, max_bytes_before_external_sort=134217728",
+    "WallSeconds": 45.3951973,
+    "Error": ""
+  },
+  {
+    "Label": "explicit_rebuild_after_replay",
+    "QueryID": "ck261_raw_20261026_211659_explicit_rebuild_after_replay_0042",
+    "Kind": "Exec",
+    "SQL": "INSERT INTO ck261_raw_20261026_211659.popularity_daily_prepared\n (tenant,content_kind,domain,language,day,computed_at) VALUES (?,?,?,?,?,now64(6))",
+    "WallSeconds": 0.936878622,
+    "Error": ""
+  },
+  {
+    "Label": "verify_rebuilt",
+    "QueryID": "ck261_raw_20261026_211659_verify_rebuilt_0043",
+    "Kind": "Query",
+    "SQL": "SELECT content_id,readers,eligible FROM ck261_raw_20261026_211659.popularity_daily FINAL ORDER BY content_id",
+    "WallSeconds": 0.006788994,
+    "Error": ""
+  },
+  {
+    "Label": "rank",
+    "QueryID": "ck261_raw_20261026_211659_rank_0044",
+    "Kind": "Query",
+    "SQL": "SELECT content_id,avg(toFloat64(readers)/(eligible+20.)) AS score\n FROM ck261_raw_20261026_211659.popularity_daily FINAL WHERE tenant=? AND content_kind=? AND domain=? AND language=? AND day \u003e= toDate(?) AND day \u003c toDate(?)\n GROUP BY content_id HAVING sum(readers)\u003e0 ORDER BY score DESC,content_id LIMIT ? SETTINGS max_threads=2",
+    "WallSeconds": 0.01076994,
+    "Error": ""
+  },
+  {
+    "Label": "flush_logs",
+    "QueryID": "ck261_raw_20261026_211659_flush_logs_0045",
+    "Kind": "Exec",
+    "SQL": "SYSTEM FLUSH LOGS",
+    "WallSeconds": 0.378490932,
+    "Error": ""
+  }
+]

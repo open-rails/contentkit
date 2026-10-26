@@ -322,9 +322,9 @@ func (h *Hub) SetSignals(s *signal.Store) { h.store.Store(s) }
 // SignalsConfigured reports whether the hub has a signal plane, up or down.
 func (h *Hub) SignalsConfigured() bool { return h.configured }
 
-// RepairProjections is the bounded, host-scheduled projection repair (see
-// signal.Store.RepairProjections): run it periodically with IngestedSince for
-// crash repair, and with Rebuild over a window after projection changes.
+// RepairProjections is the bounded explicit projection repair (see
+// signal.Store.RepairProjections). Use IngestedSince for a known interruption
+// or Rebuild over a window after projection changes. Failures reach the caller.
 func (h *Hub) RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error) {
 	store, err := h.requireStore()
 	if err != nil {
@@ -412,13 +412,30 @@ func (h *Hub) PopulationCoverage(ctx context.Context, kind string, scope signal.
 	return store.PopulationCoverage(ctx, h.tenant, kind, scope, window)
 }
 
-// ReadContent returns the contents of kind read in the window.
-func (h *Hub) ReadContent(ctx context.Context, kind string, window signal.Window) ([]string, error) {
+// PrepareDailyPopularity is explicit worker/admin preparation, not a request
+// cache or background loop. Closed daily aggregates are reused unless rebuilt.
+func (h *Hub) PrepareDailyPopularity(ctx context.Context, kind string, availability signal.Availability, scope signal.ActivityScope, rebuild bool) (signal.DailyPopularityPreparation, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return signal.DailyPopularityPreparation{}, err
+	}
+	return store.PrepareDailyPopularity(ctx, h.tenant, kind, availability, scope, rebuild)
+}
+
+func (h *Hub) DailyPopularityCoverage(ctx context.Context, kind string, scope signal.ActivityScope) (signal.Window, bool, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return signal.Window{}, false, err
+	}
+	return store.DailyPopularityCoverage(ctx, h.tenant, kind, scope)
+}
+
+func (h *Hub) DailyPopular(ctx context.Context, kind string, window signal.Window, scope signal.ActivityScope, limit int) ([]signal.PopularHit, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
 	}
-	return store.ReadContent(ctx, h.tenant, kind, window)
+	return store.DailyPopular(ctx, h.tenant, kind, window, scope, limit)
 }
 
 // --- Discovery plane ---
@@ -516,14 +533,6 @@ func (h *Hub) Activity(ctx context.Context, contentKind string, window signal.Wi
 		return nil, err
 	}
 	return store.Activity(ctx, h.tenant, contentKind, window, cohorts...)
-}
-
-func (h *Hub) Popular(ctx context.Context, contentKind string, opts signal.PopularOptions) ([]signal.PopularHit, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	return store.Popular(ctx, h.tenant, contentKind, opts)
 }
 
 func clampInt(v, lo, hi int) int {

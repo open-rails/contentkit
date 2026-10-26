@@ -132,7 +132,7 @@ FROM (%s) WHERE %s`, st.db, strings.Join(parts[start:end], " UNION ALL "), st.no
 
 // PopulationCoverage returns the start of trusted instrumentation. The
 // non-personal watermark survives erasure; no activity inside a window is a
-// valid empty normalized ranking rather than permission to reuse legacy data.
+// valid empty daily ranking rather than permission to reuse legacy data.
 func (st *Store) PopulationCoverage(ctx context.Context, tenant, kind string, scope ActivityScope, window Window) (time.Time, bool, error) {
 	if err := window.Validate(); err != nil {
 		return time.Time{}, false, err
@@ -156,28 +156,4 @@ func (st *Store) PopulationCoverage(ctx context.Context, tenant, kind string, sc
 		at = window.From
 	}
 	return at, true, rows.Err()
-}
-
-// ReadContent returns the contents of kind with engagement receipts in the
-// window. A normalized ranking only returns contents read in its window, so
-// availability history is needed for these alone.
-func (st *Store) ReadContent(ctx context.Context, tenant, kind string, window Window) ([]string, error) {
-	if err := window.Validate(); err != nil {
-		return nil, err
-	}
-	rows, err := st.conn.Query(ctx, "SELECT DISTINCT content_id FROM "+st.db+".engagement_segments WHERE tenant=? AND content_kind=? AND (? OR occurred_at>=?) AND (? OR occurred_at<?)",
-		tenant, kind, window.From.IsZero(), window.From, window.To.IsZero(), window.To)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }

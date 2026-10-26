@@ -110,12 +110,6 @@ func projectionKeyContext(ctx context.Context, keys []ProjectionKey) (context.Co
 	return clickhouse.Context(ctx, clickhouse.WithExternalTable(table)), nil
 }
 
-// RecordSignals appends source events, then rebuilds the compact state and
-// daily projections of every touched subject × content reference from its
-// canonical events. Replays, reordering and revisions converge; nothing is
-// incremented. Signals of erased subjects (EraseSubjects) are dropped. If the
-// process stops between the insert and the projections, the events are durable
-// and RepairProjections restores the projections.
 // insertChunk bounds the rows of one inlined INSERT ... SELECT, and
 // insertBytes the bytes those rows take once the driver inlines their
 // arguments: ClickHouse rejects a statement over max_query_size (256 KiB by
@@ -125,6 +119,13 @@ const (
 	insertBytes = 240 << 10
 )
 
+// RecordSignals appends canonical source events. Measured engagement then
+// attempts state/daily summaries inline; a summary failure is logged without
+// rejecting accepted receipts. Another interaction for the same key or explicit
+// RepairProjections recomputes them. Untouched summaries may remain stale.
+// Validation and canonical insert errors are returned; a failed batch can have
+// accepted earlier rows. Replays/revisions converge without incrementing counts.
+// Signals of erased subjects are dropped, and erasure checks remain required.
 func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Signal) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
@@ -238,7 +239,7 @@ type RepairResult struct {
 	Next *ProjectionKey
 }
 
-// RepairProjections is the owned projection repair. It examines up to Limit
+// RepairProjections is an explicit projection repair. It examines up to Limit
 // candidate keys in key order and rebuilds those whose state or daily
 // projection is missing or behind its canonical generation, or whose positive
 // daily rows do not cover exactly the canonical days (all keys with Rebuild).
@@ -351,8 +352,9 @@ func subjectFromKey(kind, key string) Subject {
 
 // Forget erases a subject's events and projections for one content item (the
 // work and all its versions) or an entire content kind when contentID is
-// empty. Windows and popularity read the per-subject projections, so they stop
-// counting the subject at once. This is NOT account erasure: exposures and the
+// empty. Per-subject readers stop counting the subject at once; anonymous
+// finalized daily popularity counts remain until explicitly rebuilt. This is
+// NOT account erasure: exposures and the
 // content_pairs rollup remain, and a write racing the deletion can re-project.
 func (st *Store) Forget(ctx context.Context, tenant string, subject Subject, contentKind string, contentID string) error {
 	if strings.TrimSpace(tenant) == "" {
@@ -445,6 +447,15 @@ func (st *Store) ForgetContents(ctx context.Context, tenant string, contents []F
 		return nil
 	}
 	if err := forget(works, tables, func(in string) string { return "(content_kind, content_id) IN " + in }); err != nil {
+		return err
+	}
+	// Daily popularity is work-level and anonymous. Purging one edition must
+	// not remove the work's other editions from its historical aggregate.
+	daily, err := st.existing(ctx, []string{"popularity_daily"})
+	if err != nil {
+		return err
+	}
+	if err := forget(works, daily, func(in string) string { return "(content_kind, content_id) IN " + in }); err != nil {
 		return err
 	}
 	if err := forget(works, pairs, func(in string) string {

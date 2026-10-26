@@ -80,7 +80,10 @@ export const discovery: typeof en = {
     removeRecent: "移除“{q}”",
   },
   listing: {
-    activityRange: "UTC 时间 {from} 起至 {until} 前的活动",
+    preparingPopularity: "此排行榜正在准备中。",
+    provisionalPopularity: "近期活动仍在更新。",
+    activityAvailableFrom: "活动数据自 {from}（UTC）起可用。",
+    activityRange: "{from} 至 {until} 的活动（含首尾两天，UTC）",
     popularPeriod: "热门时间范围",
     pastDays_one: "过去{count}天",
     pastDays_other: "过去{count}天",

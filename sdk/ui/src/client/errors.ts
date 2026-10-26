@@ -18,7 +18,7 @@ export const ERROR_CODES: readonly ContentKitErrorCode[] = [...(Object.keys(CONT
 export interface ContentKitErrorInit extends ErrorOptions {
   status?: number;
   retryAfter?: number;
-  details?: ErrorDetails;
+  details?: ErrorDetails & { available_from?: string; available_until?: string };
   blobs?: string[];
   ban?: BanNotice;
   action?: string;
@@ -32,7 +32,7 @@ export class ContentKitError extends Error {
   /** HTTP status; 0 for client-side codes. */
   readonly status: number;
   readonly retryAfter?: number;
-  readonly details?: ErrorDetails;
+  readonly details?: ErrorDetails & { available_from?: string; available_until?: string };
   readonly blobs?: string[];
   readonly ban?: BanNotice;
   readonly action?: string;

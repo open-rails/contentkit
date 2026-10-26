@@ -359,7 +359,8 @@
       "cases": [
         "TestPublicationWithoutWorkers/CK-J05-S01_immediate_publication_is_visible",
         "TestDurableTextPublication",
-        "TestMediaApplicationPublishesTextKinds"
+        "TestMediaApplicationPublishesTextKinds",
+        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -440,6 +441,8 @@
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
         "TestPublicationQueuesIsolateSharedCatalogApps",
         "TestPublicationQueueMigrationPreservesOwners",
+        "TestUnifiedReleaseMigration",
+        "TestUnifiedReleaseMigrationKeepsCompletedRequest",
         "TestSupersededPublicCopyReturnsToPrivate",
         "TestImportChaptersRequiresManifestLockingWriter",
         "TestPublicationSchedulingLocksParentBeforeRequest",
@@ -743,7 +746,7 @@
       "behavior": "Popular lists follow the stored ranking of their kind, period and reader scope",
       "status": "verified",
       "evidence": [
-        "Before its ranking is built a popular list shows only works with standing; once the refresh stores a ranking, the list follows its order."
+        "A configured bucket reads its stored order; an empty prepared ranking remains empty without unrelated standing scores."
       ],
       "cases": [
         "TestDiscoveryVisibility/CK-J07-S15_popular_list_follows_the_stored_ranking"
@@ -752,25 +755,68 @@
     {
       "id": "CK-J07-S16",
       "journey": "CK-J07",
-      "behavior": "Reader-chosen popularity ranges queue bounded ranking work",
+      "behavior": "Public popularity reads only declared presets or prepared whole-day ranges",
       "status": "verified",
       "evidence": [
-        "With fifty reader-chosen ranges requested, another range is not requested; after one is dropped, it is."
+        "Unknown bucket, kind and scope requests are refused without creating work.",
+        "Cold start prepares configured presets without public requests; metadata distinguishes pending from computed empty and reports actual covered dates across UTC rollover.",
+        "Arbitrary ranges read prepared scalars with catalog pagination and create no cache rows; dates before the first fully trusted UTC day or beyond prepared coverage are refused with structured bounds."
       ],
       "cases": [
-        "TestDiscoveryVisibility/CK-J07-S16_reader_chosen_ranges_are_bounded"
+        "TestDiscoveryVisibility/CK-J07-S16_public_requests_cannot_create_popularity_work",
+        "TestPreparedPopularityBuckets"
       ]
     },
     {
       "id": "CK-J07-S17",
       "journey": "CK-J07",
-      "behavior": "A ranking split by reader counts every reader exactly once",
+      "behavior": "Daily popularity counts each qualified person once per work and available UTC day",
       "status": "verified",
       "evidence": [
-        "A work with 25,000 readers, more than one batch holds, ranks with exactly 25,000 of 50,000 eligible readers, and a ten-reader work in another batch with exactly ten."
+        "A 25,000-reader work and a ten-reader work share exactly 50,000 eligible readers; six available zero-reader days remain in the seven-day mean. Canonical receipt revisions, edition deduplication, public/tier daily unions, finalization, explicit rebuild, erasure and purge boundaries are covered with real ClickHouse."
       ],
       "cases": [
-        "TestPopularRankingSplitsReadersExactly"
+        "TestDailyPopularityCountsReadersExactly",
+        "TestDailyParticipationPreparation"
+      ]
+    },
+    {
+      "id": "CK-J07-S18",
+      "journey": "CK-J07",
+      "behavior": "Canonical measured engagement is accepted despite derived summary failure; future interactions or explicit rebuild refresh summaries without automatic repair",
+      "status": "verified",
+      "evidence": [
+        "Actual ClickHouse INSERT constraints independently fail state, daily and canonical tables in disposable databases. Source receipts, revision deduplication, stale public state/activity reads, next-interaction convergence and explicit repair errors are asserted against real persisted data.",
+        "Signal schema recovery runs through the real engine callback with an unstarted River fleet: preference catch-up proves recovery occurred, while projection repair is neither enqueued nor registered. Focused and full execution receipts remain separate qualification gates."
+      ],
+      "cases": [
+        "TestEngagementSummaryFailuresAreBestEffort",
+        "TestEngagementCanonicalFailuresRemainErrors",
+        "TestSignalRecoveryDoesNotScheduleProjectionRepair"
+      ]
+    },
+    {
+      "id": "CK-J07-S20",
+      "journey": "CK-J07",
+      "behavior": "The shipped popularity grid uses host choices and prepared whole-day ranges",
+      "status": "verified",
+      "evidence": [
+        "The real built shared UI selects two host-defined bucket IDs, renders their actual HTTP/PG ranking order, switches to a prepared-only ClickHouse date range, displays its inclusive last day, and receives the structured earliest-date refusal. No ranking cache is created by browser reads."
+      ],
+      "cases": ["TestPreparedPopularityBrowser"]
+    },
+    {
+      "id": "CK-J07-S19",
+      "journey": "CK-J07",
+      "behavior": "Observed search query and absolute result rank join to exact clicked visits across same-tab and native new-tab navigation",
+      "status": "verified",
+      "evidence": [
+        "Built shared SearchResults, SearchBox, ordinary ContentGrid and useReadingEngagement run in Chromium against real AuthKit/API/PostgreSQL/ClickHouse. Rendered and visible query/rank records join through exact click IDs to observed visits; opaque hrefs, direct returns, repeated tabs and snapshot retries preserve identity. A held real zero-result response produces no loading impression; only its successful settled empty list emits one rendered query observation, while a failed request emits none.",
+        "Real ClickHouse exports exclude origins with another subject, item or tenant, combine one visit across editions without receipt inflation, and retain historical analytics query text without age expiry. Recent-search clearing remains distinct from subject erasure. Execution receipts qualify the actual selected candidate separately."
+      ],
+      "cases": [
+        "TestBrowserSearchEngagementAttribution",
+        "TestSearchAttributionUsesExactOriginScope"
       ]
     },
     {
@@ -1352,7 +1398,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner’s eligible content",
+      "behavior": "Owner ban affects only the owner\u2019s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
@@ -1535,15 +1581,14 @@
     {
       "id": "CK-J23-S07",
       "journey": "CK-J23",
-      "behavior": "Projection rebuild/reclassification and delayed writes remain fenced",
+      "behavior": "Historical poll answers and measured projection rebuilds remain fenced by account erasure",
       "status": "verified",
       "evidence": [
-        "An actual River reclassifier waits on a stateless HTTP provider while erasure deletes its pending answer. The delayed reply cannot restore it; a direct late measured signal is fenced, and a nonempty real CH projection rebuild preserves only the live control.",
-        "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
+        "A real historical free-text answer and live same-app/sibling controls remain stored after feature retirement. Repeated app erasure deletes only the target app answer; direct late measured ingestion remains fenced and a nonempty ClickHouse projection rebuild retains only the live signal control."
       ],
       "cases": [
         "TestClickHouseErasureRetry/CK-J23-S07_late_signal_cannot_rebuild_erased_subject",
-        "TestErasedProjectionAndReclassification/CK-J23-S07_delayed_classifier_and_projection_rebuild_cannot_resurrect_erased_subject"
+        "TestErasedProjectionAndHistoricalAnswers/CK-J23-S07_historical_answers_and_projection_rebuild_remain_erased"
       ]
     },
     {
@@ -2204,6 +2249,33 @@
       ],
       "cases": [
         "TestOptionalInboxAnonymizationRestore"
+      ]
+    },
+    {
+      "id": "CK-J30-S01",
+      "journey": "CK-J30",
+      "behavior": "Only predefined-choice polls accept creation, import and votes; scope, closure, final-vote and erasure counts remain correct",
+      "status": "verified",
+      "evidence": [
+        "Real public Go/HTTP poll operations exercise rejected free-text creation/import/submission, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls, preserved historical rows and repeated account erasure."
+      ],
+      "cases": [
+        "TestChoicePolls/CK-J30-S01_predefined_choices_reject_retired_writes",
+        "TestChoicePolls/CK-J30-S01_duplicate_votes_scope_and_erasure_keep_counts",
+        "TestChoicePolls/CK-J30-S01_closed_scheduled_and_historical_polls_stay_inert",
+        "TestAnonymousChoicePolls"
+      ]
+    },
+    {
+      "id": "CK-J30-S02",
+      "journey": "CK-J30",
+      "behavior": "Obsolete classifier and projection-repair jobs do not block startup and exhaust their stored River attempt limits",
+      "status": "verified",
+      "evidence": [
+        "Actual Engine startup and migration accept old empty-argument rows. Real River execution discards both obsolete kinds after their three attempts while ordinary search work completes; foreign queues and terminal history remain unchanged."
+      ],
+      "cases": [
+        "TestObsoletePeriodicJobsDoNotBlockStartup/CK-J30-S02_unknown_jobs_fail_finitely_while_supported_work_continues"
       ]
     }
   ],
@@ -3275,35 +3347,6 @@
         "TestHTTPAuthenticationMatrix/CK-API-038_POST_/v1/polls/{id}/vote/expired_credential",
         "TestHTTPAuthenticationMatrix/CK-API-038_POST_/v1/polls/{id}/vote/wrong_issuer",
         "TestHTTPAuthenticationMatrix/CK-API-038_POST_/v1/polls/{id}/vote/foreign_app_key"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-039",
-      "method": "POST",
-      "path": "/v1/polls/{id}/answer",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/anonymous_protected_operation"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/anonymous_protected_operation"
       ],
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
