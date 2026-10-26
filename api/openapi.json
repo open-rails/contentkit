@@ -4973,7 +4973,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.",
+        "summary": "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's original posts when they currently edit that channel.",
         "parameters": [
           {
             "name": "state",
@@ -4986,7 +4986,7 @@
           {
             "name": "channel_id",
             "in": "query",
-            "description": "only this owner group's, which the caller edits",
+            "description": "only this primary channel's content, which the caller edits",
             "schema": {
               "type": "string"
             }
@@ -5131,7 +5131,7 @@
           {
             "name": "channel_id",
             "in": "query",
-            "description": "only this owner group's, which the caller edits",
+            "description": "only this primary channel's content, which the caller edits",
             "schema": {
               "type": "string"
             }
@@ -5278,7 +5278,7 @@
           {
             "name": "channel_id",
             "in": "query",
-            "description": "only this owner group's, which the caller edits",
+            "description": "only this primary channel's content, which the caller edits",
             "schema": {
               "type": "string"
             }
@@ -9356,7 +9356,7 @@
         "tags": [
           "channels"
         ],
-        "summary": "Soft-deletes the channel using its existing content-retention lifecycle.",
+        "summary": "Soft-deletes the channel and synchronously retires its authoring group and original content; retained media follows the existing purge policy.",
         "parameters": [
           {
             "name": "id",

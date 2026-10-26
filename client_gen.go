@@ -1156,7 +1156,7 @@ func (c *Client) GetContentVersion(ctx context.Context, id string, vid string, q
 type GetManageQuery struct {
 	// draft, scheduled, published (live) or deleted; every state but deleted by default
 	State string
-	// only this owner group's, which the caller edits
+	// only this primary channel's content, which the caller edits
 	ChannelId string
 	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
 	Access string
@@ -1211,7 +1211,7 @@ func (q GetManageQuery) values() url.Values {
 	return v
 }
 
-// GetManage is GET /v1/manage (public). Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.
+// GetManage is GET /v1/manage (public). Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's original posts when they currently edit that channel.
 func (c *Client) GetManage(ctx context.Context, q GetManageQuery) ([]catalog.Content, error) {
 	var out []catalog.Content
 	err := c.call(ctx, http.MethodGet, "/v1/manage", q.values(), nil, &out)
@@ -1222,7 +1222,7 @@ func (c *Client) GetManage(ctx context.Context, q GetManageQuery) ([]catalog.Con
 type GetManageKindQuery struct {
 	// draft, scheduled, published or deleted
 	State string
-	// only this owner group's, which the caller edits
+	// only this primary channel's content, which the caller edits
 	ChannelId string
 	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
 	Access string
@@ -1288,7 +1288,7 @@ func (c *Client) GetManageKind(ctx context.Context, kind string, q GetManageKind
 type GetManageCountQuery struct {
 	// draft, scheduled, published or deleted
 	State string
-	// only this owner group's, which the caller edits
+	// only this primary channel's content, which the caller edits
 	ChannelId string
 	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
 	Access string
@@ -2330,7 +2330,7 @@ func (c *Client) PatchChannel(ctx context.Context, id string, body channels.Upda
 	return out, err
 }
 
-// DeleteChannel is DELETE /v1/channels/{id} (editor). Soft-deletes the channel using its existing content-retention lifecycle.
+// DeleteChannel is DELETE /v1/channels/{id} (editor). Soft-deletes the channel and synchronously retires its authoring group and original content; retained media follows the existing purge policy.
 func (c *Client) DeleteChannel(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/channels/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
 }
