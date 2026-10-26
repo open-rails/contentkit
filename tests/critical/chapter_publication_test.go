@@ -50,7 +50,13 @@ func TestCopiedPageChapterPlacement(t *testing.T) {
 	}})
 	must(t, err)
 	ready := awaitMediaReady(t, admin, ref)
-	requireMediaPaths(t, ready, "pages/01.png", "pages/20.png", "pages/30.png", "reader/01.webp", "reader/20.webp", "reader/30.webp")
+	requireMediaPaths(t, ready, "cover.png", "pages/01.png", "pages/20.png", "pages/30.png", "reader/01.webp", "reader/20.webp", "reader/30.webp")
+	if len(ready.Public) != 1 || len(ready.Public[0].Renditions) != 2 {
+		t.Fatalf("automatic cover renditions incomplete: %+v", ready.Public)
+	}
+	for _, rendition := range ready.Public[0].Renditions {
+		assertImage(t, rendition.URL, rendition.W, rendition.H)
+	}
 	// The existing page-quality policy excludes duplicate images by default.
 	// Explicitly retain them through the editor API before assigning chapters.
 	notices, err := admin.GetContentVersionPageNotices(t.Context(), ref.ID, ref.Version)
