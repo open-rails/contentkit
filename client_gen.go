@@ -3568,7 +3568,7 @@ func (c *Client) PostExposures(ctx context.Context, body discovery.Exposures) er
 
 // GetMeFavoritesQuery is the query of GetMeFavorites.
 type GetMeFavoritesQuery struct {
-	// contents (the default) or entities
+	// contents (the default), entities or channels
 	Target string
 	// only this content kind or group kind
 	Kind string
@@ -3620,7 +3620,7 @@ func (q GetMeFavoritesQuery) values() url.Values {
 	return v
 }
 
-// GetMeFavorites is GET /v1/me/favorites (user). The content items (as their listing shows them) or groups the reader favorited, most recent first.
+// GetMeFavorites is GET /v1/me/favorites (user). The content items (as their listing shows them) entities or channels the reader favorited, most recent first.
 func (c *Client) GetMeFavorites(ctx context.Context, q GetMeFavoritesQuery) (discovery.InteractionPage, error) {
 	var out discovery.InteractionPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/favorites", q.values(), nil, &out)
