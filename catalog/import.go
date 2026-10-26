@@ -908,7 +908,7 @@ func (s *Store) checkOwners(ctx context.Context, q Querier, ids []string) error 
 	}
 	var missing string
 	if err := q.QueryRow(ctx, `SELECT coalesce(min(u.id), '') FROM unnest($2::text[]) AS u(id)
- WHERE NOT EXISTS (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id = $1 AND g.id = u.id AND g.state = 'active')`, s.tenant, ids).Scan(&missing); err != nil {
+ WHERE NOT EXISTS (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id = $1 AND g.id = u.id AND g.state = 'active' AND g.kind='channel')`, s.tenant, ids).Scan(&missing); err != nil {
 		return err
 	}
 	if missing != "" {
