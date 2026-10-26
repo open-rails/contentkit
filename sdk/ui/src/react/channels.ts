@@ -36,10 +36,11 @@ export function useChannelContents(id: string | null | undefined, query: Channel
 export function useChannel(id: string | null | undefined, options: { client?: ContentKitClient; language?: string; initial?: Channel } = {}) {
   const { client, store, scope, language } = useContentScope(options.client);
   const guard = useGuarded();
-  const [created, setCreated] = useState<string>();
-  const channelId = id ?? created;
+  const [created, setCreated] = useState<{ id: string; scope: string; client: ContentKitClient }>();
+  const channelId = id ?? (created?.scope === scope && created.client === client ? created.id : undefined);
+  const previewKey = keyOf(scope, channelId);
   const [saving, setSaving] = useState(0);
-  const [previews, setPreviews] = useState<Partial<Record<ChannelImageSlot, string>>>({});
+  const [previews, setPreviews] = useState<{ client: ContentKitClient; key: string; images: Partial<Record<ChannelImageSlot, string>> }>({ client, key: previewKey, images: {} });
   const blobs = useRef<string[]>([]);
   useEffect(() => { const urls = blobs.current; return () => urls.forEach((url) => URL.revokeObjectURL(url)); }, []);
   const resource = useResource<Channel>(store, channelId ? keyOf("channel", scope, channelId, options.language ?? language) : null, { type: "channel", id: channelId }, (signal) => client.channels.get(channelId!, options.language ?? language, signal), { initial: options.initial });
@@ -54,15 +55,15 @@ export function useChannel(id: string | null | undefined, options: { client?: Co
     error: resource.error,
     saving: saving > 0,
     reload: resource.reload,
-    previews,
-    create: (input: ChannelInput) => run(async () => { const channel = await client.channels.create(input); setCreated(channel.id); return channel; }),
+    previews: previews.client === client && previews.key === previewKey ? previews.images : {},
+    create: (input: ChannelInput) => run(async () => { const channel = await client.channels.create(input); setCreated({ id: channel.id, scope, client }); return channel; }),
     update: (patch: ChannelUpdate) => run(() => client.channels.update(need(), patch)),
     remove: () => run(() => client.channels.remove(need())),
     uploadImage: (slot: ChannelImageSlot, file: Blob & { name?: string }, upload: { wait?: boolean; edit?: Edit } = {}) => run(async () => {
       const result = await client.channels.uploadImage(need(), slot, file, upload);
       if (!upload.edit && typeof URL.createObjectURL === "function") {
         const url = URL.createObjectURL(file); blobs.current.push(url);
-        setPreviews((current) => ({ ...current, [slot]: url }));
+        setPreviews((current) => ({ client, key: previewKey, images: { ...(current.client === client && current.key === previewKey ? current.images : {}), [slot]: url } }));
       }
       return result;
     }),

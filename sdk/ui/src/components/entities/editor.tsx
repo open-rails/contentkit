@@ -872,7 +872,7 @@ function Images({ entity, spec, onError, client, management }: { management?: bo
   const { t } = useMessages();
   const c = entity.cover;
   const mode = c?.image ? "image" : c?.content_id && !c.auto ? "content" : "auto";
-  const avatar = spec.owner === "user" || !!spec.avatar;
+  const avatar = !!spec.avatar;
   return (
     <Section title={t(avatar ? "entityEditor.images" : "entityEditor.cover")} ckui="entity-cover-editor" note={t("entityEditor.savesNow")}>
       <p className="text-muted-foreground" data-ckui="cover-mode">

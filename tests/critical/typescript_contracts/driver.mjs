@@ -637,6 +637,15 @@ if (group === "catalog_publication") {
   await reader.channels.removeRepost(destination.id, original.id);
   assert.deepEqual(ids(await anonymous.channels.contents(destination.id)), []);
   assert.equal((await anonymous.contents.get(original.id)).id, original.id, "removing a repost must keep the original");
+  const channelTarget = { type: "channels", id: destination.id };
+  assert.equal((await owner.favorites.set(channelTarget, true)).favorited, true);
+  assert.equal((await owner.favorites.get(channelTarget)).favorited, true);
+  assert.deepEqual((await owner.favorites.mine({ target: "channels" })).items.map((entry) => entry.channel?.id), [destination.id]);
+  assert.equal((await owner.reactions.set(channelTarget, 1)).likes, 1);
+  assert.equal((await owner.reactions.get(channelTarget)).likes, 1);
+  await owner.reactions.set(channelTarget, 0);
+  await owner.favorites.set(channelTarget, false);
+  assert.deepEqual((await owner.favorites.mine({ target: "channels" })).items, []);
   await reader.channels.remove(destination.id);
   await refused(() => anonymous.channels.get(destination.id), 404, "not_found");
   proved("ChannelsClient.create", "ChannelsClient.get", "ChannelsClient.list", "ChannelsClient.update", "ChannelsClient.entities", "ChannelsClient.setEntities", "ChannelsClient.repost", "ChannelsClient.removeRepost", "ChannelsClient.contents", "ChannelsClient.remove");
