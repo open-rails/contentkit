@@ -24,6 +24,14 @@ declared version owner, then clear the old metadata and rerun migrations.
 Preparation remains applied so the operator can resume; an interrupted copy
 never causes the schema migration to discard the original cover.
 
+## Content model configuration
+
+Content model files use `content_kinds` alongside `entity_kinds`. Rename the old
+`kinds` configuration key before loading this release; YAML and JSON decoding
+reject it rather than silently ignoring it or accepting a legacy alias. The Go
+member remains `kinds.Config.Kinds`. This does not rename the `kinds` field in the
+public `GET /kinds` discovery response or any HTTP query parameters.
+
 ## ContentKit's own schema
 
 Hosts run `MigratePostgres(ctx, pool, cfg)` and
@@ -32,6 +40,18 @@ The PostgreSQL entrypoint prepares the configured catalog, account storage,
 scope bindings and queues; `MigrationOptions{SkipQueues: true}` skips queue
 DDL when the caller manages that separately. The ClickHouse entrypoint creates
 its target database before applying the signal lineage.
+
+The PostgreSQL call also realizes fixed `owner_entity` declarations from the
+content model. It creates missing site-owned channels and binds eligible unowned
+posts, preserving existing names, identities, grants and access. If a declared
+owner has `auth_scope: true`, provide `MigrationOptions.Scopes` using the existing
+runtime provider or `adapters/authkit.MigrationScopes(pool, authConfig, scope)`.
+The latter needs only migrated AuthKit storage and the host's role configuration,
+not a full authentication runtime. No fixed owners means no provisioning or extra
+authorization dependency. See [configured channels](posts-and-channels.md#one-fixed-official-channel)
+for retry and conflict behavior. This provisioning runs only through the explicit
+migration call, never ordinary runtime initialization.
+
 
 Set `Config.Database.SkipMigrations = true` for application startup. `New`
 then checks prepared storage without applying migrations, including when the

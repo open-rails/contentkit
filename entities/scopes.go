@@ -15,14 +15,16 @@ import (
 	"github.com/open-rails/contentkit/internal/gate"
 )
 
-// Scopes keeps the AuthKit groups (scopes) of auth_scope entity kinds:
-// adapters/authkit over an AuthKit client. Provision and Retire are
-// idempotent.
-type Scopes interface {
-	// Provision makes each scope a live AuthKit group of its kind's persona,
-	// seeded with Owner as its owner when new; a scope retired before is
-	// replaced by a new entity under the same id.
+// ScopeProvisioner ensures the declared authorization groups exist. It is the
+// only provider capability needed by explicit fixed-owner migrations.
+type ScopeProvisioner interface {
 	Provision(ctx context.Context, scopes []Scope) error
+}
+
+// Scopes keeps the AuthKit groups of auth_scope entity kinds. Provision and
+// Retire are idempotent; runtime adds read/revocation behavior to provisioning.
+type Scopes interface {
+	ScopeProvisioner
 	// Retire stops each scope resolving and granting.
 	Retire(ctx context.Context, ids []string) error
 	// Holding answers, per live scope of the kinds' personas user belongs
@@ -45,9 +47,13 @@ type AppBinding interface {
 
 // Scope is one entity's AuthKit scope: ContentKit keys it by the entity's id.
 type Scope struct {
-	ID    string
-	Kind  string
-	Owner string
+	// Restore permits deliberately restoring a previously retired group. Normal
+	// provisioning (including configured fixed owners) preserves live groups
+	// and refuses deleted groups rather than silently removing their grants.
+	Restore bool
+	ID      string
+	Kind    string
+	Owner   string
 }
 
 // Folders records durable retirement and reports its actual storage outcome.
@@ -216,7 +222,7 @@ func (s *Store) syncScopes(ctx context.Context, ids []string) error {
 			}
 			switch {
 			case state == StateActive && scope == "" && s.cfg.EntityKinds[kind].AuthScope:
-				provision, provided = append(provision, Scope{ID: id, Kind: kind, Owner: owner}), append(provided, id)
+				provision, provided = append(provision, Scope{ID: id, Kind: kind, Owner: owner, Restore: true}), append(provided, id)
 			case state != StateActive && scope != "":
 				retire, retired = append(retire, scope), append(retired, id)
 			}

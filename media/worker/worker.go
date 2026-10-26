@@ -348,7 +348,19 @@ func (w *ingestWorker) Timeout(*river.Job[workqueue.IngestArgs]) time.Duration {
 // Work places an item's staged uploads, after any equal job it follows, then
 // enqueues its processing.
 func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.IngestArgs]) (err error) {
-	defer func() { err = media.SnoozeUnavailable(ctx, w.c.Store, job.JobRow, err) }()
+	if err := w.c.restoreRescuedAttempt(ctx, job.JobRow); err != nil {
+		return err
+	}
+	fail := func(ctx context.Context, cause error) error {
+		if err := full(ctx, w.manifests, job.Args.Ref, w.manifests.FailIngest(ctx, job.Args.Ref, cause)); err != nil {
+			return err
+		}
+		return w.queue.Enqueue(ctx, media.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset})
+	}
+	if err := w.c.checkAttemptBudget(ctx, job.JobRow, fail); err != nil {
+		return err
+	}
+	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
 	a := job.Args
 	item, err := w.c.Kinds.Item(a.Ref)
 	if err != nil {
@@ -394,7 +406,18 @@ func (w *imageWorker) Timeout(*river.Job[workqueue.ImageArgs]) time.Duration { r
 
 // Work runs one image job, after any equal job it follows.
 func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) (err error) {
-	defer func() { err = media.SnoozeUnavailable(ctx, w.c.Store, job.JobRow, err) }()
+	if err := w.c.restoreRescuedAttempt(ctx, job.JobRow); err != nil {
+		return err
+	}
+	fail := func(ctx context.Context, cause error) error {
+		return full(ctx, w.manifests, job.Args.Ref, w.images.FailPending(ctx, media.ProcessJob{
+			Ref: job.Args.Ref, Preset: job.Args.Preset, Editor: job.Args.Editor,
+		}, cause))
+	}
+	if err := w.c.checkAttemptBudget(ctx, job.JobRow, fail); err != nil {
+		return err
+	}
+	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
 	a := job.Args
 	pj := media.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force, Editor: a.Editor}
 	if _, err := w.c.Kinds.Item(pj.Ref); err != nil {

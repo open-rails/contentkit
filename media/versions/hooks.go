@@ -274,8 +274,7 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 	}
 	v := Target{Content: ref.ContentID, Version: ref.Version()}
 	vk := k
-	withdraw := false
-	err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 		// As in itemReady: lock v, then read the newest manifest.
 		if err := s.lockTarget(ctx, tx, v); err != nil {
 			return err
@@ -290,16 +289,12 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 			return err
 		}
 		if !m.PublicationLayoutReady() && vk.Publish != nil {
-			if withdraw, err = s.withdrawStaleTx(ctx, tx, vk, v, m); err != nil {
+			if _, err := s.withdrawStaleTx(ctx, tx, vk, v, m); err != nil {
 				return err
 			}
 		}
 		return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
 	})
-	if err != nil || !withdraw {
-		return err
-	}
-	return nil
 }
 
 func (s *Service) failed(ctx context.Context, ref contentref.ContentRef, path string, err error) {

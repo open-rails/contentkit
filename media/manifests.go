@@ -629,7 +629,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 			return nil, false, err
 		}
 	}
-	body, err := encodeManifest(next)
+	_, err = encodeManifest(next)
 	if err != nil {
 		return nil, false, err
 	}
@@ -642,9 +642,6 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	// only re-run the work to the same refusal.
 	if cur.Full && b.project != nil && cur.size+b.project(cur)-next.size-b.project(next) >= max(cur.Deficit, 1) {
 		next.Full, next.Deficit = false, 0
-		if body, err = encodeManifest(next); err != nil {
-			return nil, false, err
-		}
 	}
 	mutation.commit.ETag = etag
 	if mutation.effects.Process != nil && next.Full && !publicPending(item.Kind(), next) {
@@ -652,7 +649,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	}
 	mutation.commit.Attempt = uuid.New()
 	next.Receipt = mutation.commit.receipt()
-	body, err = encodeManifest(next)
+	body, err := encodeManifest(next)
 	if err == nil {
 		err = b.check(cur, next)
 	}

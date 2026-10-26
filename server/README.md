@@ -20,7 +20,7 @@ engine:
     schema: example_accounts
   content:
     languages: [en]
-    kinds:
+    content_kinds:
       gallery: {route: g, presentation: reader, versions: {languages: one}}
 auth:
   database:
