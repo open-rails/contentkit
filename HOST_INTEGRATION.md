@@ -1510,15 +1510,16 @@ thin results fall back to engagement.
 
 ## Popularity (policy-ranked)
 
-A filtered `popular` list ranks measured people and bounded quality in the
-selected activity window live, normalizing trusted free/premium populations.
-Without a signal plane, or without population lineage for the window, it is the
-explicit standing order (`ranking.policy=standing_wilson`, `mode=standing`):
-one vote per person from current reactions and favorites last changed in the
-window, Wilson-scored and erasure-fenced. Windowed `top_rated` uses the same
-standing over reactions; all-time `top_rated` is the catalog's current rating.
-Nothing reads cached facet scores. See
-[docs/popularity-policy.md](docs/popularity-policy.md) for the formula.
+Hosts declare popularity presets per content kind and scope. Preset requests
+read stored rankings; arbitrary whole-UTC-day ranges read prepared daily counts.
+The score is the mean daily `U/(N+20)`, where `U` counts qualified participants
+once per person/item/day and `N` is the day's active eligible audience. Arbitrary
+range requests outside trustworthy prepared coverage are rejected; an unprepared
+preset stays pending. Recent days remain provisional through the 24-hour receipt window,
+then finalized days are retained and reused until an explicit rebuild. See
+[docs/popularity-policy.md](docs/popularity-policy.md) for qualification,
+coverage, refresh and retention semantics. `top_rated` keeps its separate
+rating behavior.
 
 ## Migration checklist
 
