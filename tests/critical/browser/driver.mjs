@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { chromium } from "../../../sdk/ui/node_modules/@playwright/test/index.mjs";
+import { resolveInlineImageReferences } from "../../../sdk/ui/dist/client.js";
 const fixture=JSON.parse(process.env.CONTENTKIT_BROWSER_FIXTURE);
 const scenario=process.argv[2];
 const browser=await chromium.launch({headless:true, ...(process.env.CONTENTKIT_CRITICAL_CHROMIUM?{executablePath:process.env.CONTENTKIT_CRITICAL_CHROMIUM}:{})});
@@ -74,6 +75,18 @@ try {
     assert.equal(original.channel_id,fixture.originalChannel);
     assert.equal(original.editor,false,"reposting must not grant editing authority");
   } else if(scenario==="CK-J29-S09") {
+    const serverHTML='<img src="contentkit:i-11111111-1111-4111-8111-111111111111">';
+    assert.equal(typeof DOMParser,"undefined");
+    assert.equal(resolveInlineImageReferences(serverHTML,{}),serverHTML,"server rendering must not require DOMParser");
+    const inline=await page.evaluate(()=>window.critical.inlineImages());
+    assert.deepEqual(inline.en.sources,[inline.enURL,null]);
+    assert.deepEqual(inline.zh.sources,[inline.zhURL,null]);
+    for(const unsafe of inline.unsafe)assert.deepEqual(unsafe.sources,[null,null]);
+    assert.equal(inline.plain,inline.plainHTML,"ordinary markup must remain unchanged");
+    assert.deepEqual(inline.en.handlers,[null,null]);
+    assert.equal(inline.en.text,`keep literal contentkit:${inline.id}`);
+    assert.deepEqual(inline.quill.ops,[{insert:{image:inline.zhURL}},{insert:`literal contentkit:${inline.id}`}]);
+    assert.deepEqual(JSON.parse(resolveInlineImageReferences(JSON.stringify({ops:[{insert:{image:`contentkit:${inline.id}`}}]}),{[inline.id]:inline.enURL},"quill")),{ops:[{insert:{image:inline.enURL}}]},"Quill resolution must also work during server rendering");
     await page.evaluate(()=>window.critical.mountVersionEditor());
     const title=page.getByRole("textbox",{name:"Title",exact:true});
     const body=page.getByRole("textbox",{name:"Body",exact:true});
