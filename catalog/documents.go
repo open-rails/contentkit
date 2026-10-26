@@ -27,14 +27,10 @@ func (s *Store) ListDocuments(ctx context.Context, kind, language, cursor string
 	if limit <= 0 {
 		limit = 1000
 	}
-	rows, err := s.pool.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.kind = $2 AND c.state = 'published' AND c.id > $4
- AND EXISTS (SELECT 1 FROM `+s.t.versions+` live WHERE live.tenant_id=c.tenant_id AND live.content_id=c.id AND live.state='published' AND live.released)
- AND (EXISTS (SELECT 1 FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3)
- OR ($6 AND (coalesce(c.original_title,'')<>'' OR EXISTS (
- SELECT 1 FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released AND t.title<>''))))
- ORDER BY c.id LIMIT $5`,
-		s.tenant, kind, language, cursor, limit+1, s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion)
+	rows, err := s.pool.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND c.kind=$2 AND c.state='published' AND c.id>$4
+ AND EXISTS(SELECT 1 FROM `+s.t.versions+` v LEFT JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id AND t.language=$3
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released AND $3=ANY(v.languages)
+ AND (t.title<>'' OR ($6 AND coalesce(v.original_title,'')<>''))) ORDER BY c.id LIMIT $5`, s.tenant, kind, language, cursor, limit+1, s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion)
 	if err != nil {
 		return nil, "", false, err
 	}
@@ -73,21 +69,21 @@ func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs 
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT c.id, t.title, t.aliases, coalesce(c.original_title,''),
+	rows, err := s.pool.Query(ctx, `SELECT c.id,chosen.title,chosen.aliases,coalesce(chosen.original_title,''),
  ARRAY(SELECT vt.title FROM `+s.t.versions+` v JOIN `+s.t.versionText+` vt ON vt.tenant_id=v.tenant_id AND vt.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released
- AND vt.language=ANY(v.languages) AND vt.title<>'' ORDER BY (vt.language=$3) DESC,v.position,vt.language),
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released AND $3=ANY(v.languages) AND vt.language=$3 AND vt.title<>'' ORDER BY v.position,v.id),
  ARRAY(SELECT k.name FROM `+s.t.entities+` g CROSS JOIN LATERAL (
-   SELECT n.name, n.kind = 'alias' AS alias, n.language FROM `+s.t.entityNames+` n
-   WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND (n.kind = 'alias' OR n.language IN ($3, $5))
-   UNION ALL
-   SELECT coalesce((SELECT n.name FROM `+s.t.entityNames+` n WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND n.kind = 'name' ORDER BY n.language LIMIT 1), g.slug), false, ''
-   WHERE NOT EXISTS (SELECT 1 FROM `+s.t.entityNames+` n WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND n.kind = 'name' AND n.language IN ($3, $5))) k
-  WHERE g.tenant_id = c.tenant_id AND g.state = 'active' AND NOT g.internal AND g.id = ANY(`+s.qs+`.content_keyword_entity_ids(c.tenant_id,c.id))
-  ORDER BY k.alias, g.kind, g.slug, k.language = $3 DESC, k.name)
- FROM `+s.t.items+` c LEFT JOIN `+s.t.text+` t ON t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3
- WHERE c.tenant_id = $1 AND c.id = ANY($2) AND c.kind = $4 AND c.state = 'published'
- AND EXISTS (SELECT 1 FROM `+s.t.versions+` live WHERE live.tenant_id=c.tenant_id AND live.content_id=c.id AND live.state='published' AND live.released)`, s.tenant, ids, language, kind, s.defaultLanguage())
+  SELECT n.name,n.kind='alias' AS alias,n.language FROM `+s.t.entityNames+` n
+  WHERE n.tenant_id=g.tenant_id AND n.entity_id=g.id AND (n.kind='alias' OR n.language IN($3,$5))
+  UNION ALL SELECT coalesce((SELECT n.name FROM `+s.t.entityNames+` n WHERE n.tenant_id=g.tenant_id AND n.entity_id=g.id AND n.kind='name' ORDER BY n.language LIMIT 1),g.slug),false,''
+  WHERE NOT EXISTS(SELECT 1 FROM `+s.t.entityNames+` n WHERE n.tenant_id=g.tenant_id AND n.entity_id=g.id AND n.kind='name' AND n.language IN($3,$5))) k
+ WHERE g.tenant_id=c.tenant_id AND g.state='active' AND NOT g.internal AND g.id=ANY(`+s.qs+`.content_keyword_entity_ids(c.tenant_id,c.id))
+ ORDER BY k.alias,g.kind,g.slug,k.language=$3 DESC,k.name)
+ FROM `+s.t.items+` c JOIN LATERAL (
+  SELECT t.title,t.aliases,v.original_title FROM `+s.t.versions+` v LEFT JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id AND t.language=$3
+  WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released AND $3=ANY(v.languages)
+  ORDER BY v.position,v.id LIMIT 1) chosen ON true
+ WHERE c.tenant_id=$1 AND c.id=ANY($2) AND c.kind=$4 AND c.state='published'`, s.tenant, ids, language, kind, s.defaultLanguage())
 	if err != nil {
 		return nil, err
 	}

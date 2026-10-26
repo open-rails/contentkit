@@ -489,8 +489,9 @@ type order struct {
 }
 
 // titleKey is a content's title sort key in the display language's text.
-const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key, ''), x.title)) FROM %s x WHERE x.tenant_id = f.tenant_id AND x.content_id = f.content_id
- ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1), '')`
+const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key,''),x.title)) FROM %[1]s x JOIN %[2]s v ON v.tenant_id=x.tenant_id AND v.id=x.version_id
+ WHERE v.tenant_id=f.tenant_id AND v.content_id=f.content_id AND v.state<>'deleted'
+ ORDER BY coalesce(@d_display=ANY(v.languages),false) DESC,v.released DESC,v.position,x.language=@d_display DESC,x.language LIMIT 1),'')`
 
 func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, error) {
 	raw = s.sortName(raw, f.Kind)
@@ -506,7 +507,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	case SortNewest, SortOldest:
 		o.expr, o.cast, o.desc = "coalesce(f.published_at, 'epoch'::timestamptz)", "timestamptz", name == SortNewest
 	case SortTitle:
-		o.expr, o.cast, o.desc = fmt.Sprintf(titleKey, s.t.text), "text", false
+		o.expr, o.cast, o.desc = fmt.Sprintf(titleKey, s.t.versionText, s.t.versions), "text", false
 	case SortPopular:
 		window, err := popularity.WindowForPeriod(cmpOr(period, popularity.DefaultPeriod), s.now())
 		if err != nil {

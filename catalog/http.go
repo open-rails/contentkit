@@ -102,22 +102,12 @@ var routes = []httpapi.Route[*Store]{
 		Doc:       "Returns a published or scheduled content item to a draft." + editorsDoc,
 		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleUnpublish)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/text/{language}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Sets a content item's text in one language." + editorsDoc,
-		Request: Text{}, Responses: []httpapi.Reply{httpapi.OK(Content{})},
-		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
-		Serve: httpapi.H((*Store).handlePutText)},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/text/{language}", Resource: "contents", Auth: httpapi.Public,
-		Doc:       "Removes a content item's text in one language." + editorsDoc,
-		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
-		Serve: httpapi.H((*Store).handleDeleteText)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/creators", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Replaces a content item's creators." + editorsDoc,
 		Request: CreatorsInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handlePutCreators)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/images", Resource: "contents", Auth: httpapi.Public,
-		Doc: "Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, " +
-			"and returns the reference to store in the body and a URL that shows it to the editor now." + editorsDoc,
+		Doc:     "Returns a reference and editor preview for an inline image uploaded to the selected version. No sibling version is changed." + editorsDoc,
 		Request: BodyImageInput{}, Responses: []httpapi.Reply{httpapi.OK(InlineImage{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, "not_configured"}},
 		Serve: httpapi.H((*Store).handleImage)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/versions", Resource: "contents", Auth: httpapi.Public,
@@ -516,34 +506,6 @@ func (s *Store) handleUnpublish(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, r, http.StatusOK, r.PathValue("id"))
 }
 
-func (s *Store) handlePutText(w http.ResponseWriter, r *http.Request) {
-	actor, err := writer(r.Context())
-	var in Text
-	if err == nil {
-		err = decode(r, &in)
-	}
-	if err == nil {
-		err = s.PutText(r.Context(), actor, []TextPut{{ContentID: r.PathValue("id"), Language: r.PathValue("language"), Text: &in}})
-	}
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	s.respond(w, r, http.StatusOK, r.PathValue("id"))
-}
-
-func (s *Store) handleDeleteText(w http.ResponseWriter, r *http.Request) {
-	actor, err := writer(r.Context())
-	if err == nil {
-		err = s.PutText(r.Context(), actor, []TextPut{{ContentID: r.PathValue("id"), Language: r.PathValue("language")}})
-	}
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	s.respond(w, r, http.StatusOK, r.PathValue("id"))
-}
-
 func (s *Store) handlePutCreators(w http.ResponseWriter, r *http.Request) {
 	actor, err := writer(r.Context())
 	var in CreatorsInput
@@ -851,11 +813,10 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	return `SELECT c.id FROM ` + s.t.items + ` c WHERE c.tenant_id = $1 AND ` + state + `
  AND ($2 = '' OR c.kind = $2) AND ($3 = '' OR c.owner_entity_id = $3)
  AND ($4 OR $5 OR (c.created_by=$6 AND $6<>'' AND ((c.owner_entity_id IS NULL AND $12::boolean) OR c.owner_entity_id=ANY($13::text[]))))
- AND ($7 = '' OR strpos(lower(coalesce(c.original_title,'')),lower($7))>0 OR EXISTS (
- SELECT 1 FROM ` + s.t.versions + ` v JOIN ` + s.t.versionText + ` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND strpos(lower(t.title),lower($7))>0)
- OR EXISTS (SELECT 1 FROM ` + s.t.text + ` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
-  AND (strpos(lower(t.title), lower($7)) > 0 OR strpos(lower(t.description), lower($7)) > 0 OR strpos(lower(t.body), lower($7)) > 0)))
+ AND ($7='' OR EXISTS (SELECT 1 FROM ` + s.t.versions + ` v LEFT JOIN ` + s.t.versionText + ` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND
+ (strpos(lower(coalesce(v.original_title,'')),lower($7))>0 OR strpos(lower(coalesce(t.title,'')),lower($7))>0
+ OR strpos(lower(coalesce(t.description,'')),lower($7))>0 OR strpos(lower(coalesce(t.body,'')),lower($7))>0)))
  AND ($10 = '' OR EXISTS (SELECT 1 FROM ` + s.qs + `.content_codes k WHERE k.tenant_id = c.tenant_id AND k.content_kind = c.kind AND k.content_id = c.id AND k.code = $10))
  AND (cardinality($11::text[]) = 0 OR c.id = ANY($11::text[]))`,
 		[]any{s.tenant, q.Kind, q.Channel, rights.write, entity, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs), own.app, own.entities}, nil

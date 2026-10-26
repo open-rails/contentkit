@@ -46,10 +46,6 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 	if err != nil {
 		return nil, err
 	}
-	texts, err := s.readTexts(ctx, s.pool, visible)
-	if err != nil {
-		return nil, err
-	}
 	versions, err := s.readVersions(ctx, visible, vid)
 	if err != nil {
 		return nil, err
@@ -89,32 +85,19 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 		}
 	}
 	built := map[string]*Content{}
-	bodies := map[string]string{} // content -> the version whose body images it shows
 	for _, id := range visible {
 		iv, it := views[id], items[id]
 		if it == nil {
 			continue
 		}
-		c := &Content{ID: id, Kind: it.kind, State: it.state, OriginalTitle: it.originalTitle, OriginalLanguage: it.originalLanguage, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
+		c := &Content{ID: id, Kind: it.kind, State: it.state, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
 			Access: it.access, Restrictions: it.restrictions, Attributes: map[string]any{}, ChannelID: it.ownerEntity, Creators: orEmpty(creators[id]),
 			Entities: []EntitySummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
 			UpdatedAt: it.updatedAt, DeletedAt: it.deletedAt}
 		c.Live = v.itemLive(iv)
-		lang := s.pickLanguage(v.language, texts[id])
-		t := texts[id][lang]
-		c.Language, c.Title, c.Slug = lang, t.Title, t.Slug
-		if c.Decision = bundle(iv); c.Decision.Allowed {
-			c.Body = t.Body
-		}
-		show := func(p string) bool { return s.shows(it.kind, c.Decision, p) }
-		if show(kinds.ShowDescription) {
-			c.Description = t.Description
-		}
-		if show(kinds.ShowAttributes) {
+		c.Decision = bundle(iv)
+		if s.shows(it.kind, c.Decision, kinds.ShowAttributes) {
 			c.Attributes = it.attributes
-		}
-		if iv.editor {
-			c.Text = texts[id]
 		}
 		if l, ok := links[id]; ok {
 			page := contenturl.Prefix(s.cfg.Languages, v.language)
@@ -131,11 +114,9 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			out := *ver
 			out.Live = v.live(r) && !r.deleted && !r.contentDeleted
 			out.Decision = iv.decisions[r.versionID]
-			if vt, ok := ver.Text[lang]; ok {
-				out.Title, out.Description = vt.Title, vt.Description
-			}
-			if s.cfg.Kinds[it.kind].TitlePolicy == kinds.TitleOriginalAndVersion {
-				out.Title = editionTitle(ver, v.language, it.originalTitle, t.Title)
+			s.resolveVersionText(it.kind, &out, v.language)
+			if !out.Decision.Allowed && !iv.editor {
+				out.Body = ""
 			}
 			if !iv.editor {
 				out.Text, out.State, out.Access = nil, "", nil
@@ -151,14 +132,9 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 		}
 		if selected := DefaultVersion(c.Versions, v.language); selected != nil {
 			c.SelectedVersionID = selected.ID
-			if s.cfg.Kinds[it.kind].TitlePolicy == kinds.TitleOriginalAndVersion {
-				c.Title = selected.Title
-			}
-		} else if s.cfg.Kinds[it.kind].TitlePolicy == kinds.TitleOriginalAndVersion && it.originalTitle != "" {
-			c.Title = it.originalTitle
-		}
-		if b := bodyVersion(c, iv.editor, v.language); b != nil {
-			bodies[id] = b.ID
+			c.Title, c.Description, c.Body, c.Language = selected.Title, selected.Description, selected.Body, selected.Language
+			c.OriginalTitle, c.OriginalLanguage = selected.OriginalTitle, selected.OriginalLanguage
+			c.Decision = selected.Decision
 		}
 		built[id] = c
 	}
@@ -174,21 +150,27 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 		return nil, err
 	}
 	for id, c := range built {
-		// Body images are the opened version's private files, signed for its openers.
-		if names := imageNames(c.Body); len(names) > 0 && bodies[id] != "" && s.media != nil && s.media.Reader != nil {
-			ref, err := s.mediaRef(c.Kind, id, bodies[id])
-			var urls map[string]string
-			if err == nil {
-				urls, err = s.media.Reader.NamedURLs(ctx, ref, v.actor, names)
+		// Each edition resolves only its own private image references.
+		for i := range c.Versions {
+			edition := &c.Versions[i]
+			names := imageNames(edition.Body)
+			if len(names) == 0 || s.media == nil || s.media.Reader == nil {
+				continue
 			}
+			ref, err := s.mediaRef(c.Kind, id, edition.ID)
 			if err != nil {
-				s.log.WarnContext(ctx, "catalog: body image URLs unavailable", "content", id, "err", err)
+				return nil, err
 			}
-			for name, u := range urls {
-				c.images()[name] = u
+			urls, err := s.media.Reader.NamedURLs(ctx, ref, v.actor, names)
+			if err != nil {
+				s.log.WarnContext(ctx, "catalog: edition body image URLs unavailable", "content", id, "version", edition.ID, "err", err)
+				continue
+			}
+			edition.Images = urls
+			if edition.ID == c.SelectedVersionID {
+				c.Images = urls
 			}
 		}
-		c.Body = resolveBody(c.Body, c.Images)
 		if s.shows(c.Kind, c.Decision, kinds.ShowEntities) {
 			c.Entities = scopedEntities(scopes[entityScope{content: id}], names)
 		}
@@ -271,22 +253,6 @@ func (s *Store) lockVersion(kind string, v *Version) {
 	}
 }
 
-// bodyVersion is the version whose body images c's body shows: of the
-// versions its viewer opens (all for an editor), the one language opens by
-// default; nil without a body or such a version.
-func bodyVersion(c *Content, editor bool, language string) *Version {
-	if c.Body == "" {
-		return nil
-	}
-	var open []Version
-	for _, v := range c.Versions {
-		if editor || v.Decision.Allowed {
-			open = append(open, v)
-		}
-	}
-	return DefaultVersion(open, language)
-}
-
 // fillCovers resolves every version's cover in one call; a content's is its
 // default edition's in language.
 func (s *Store) fillCovers(ctx context.Context, built map[string]*Content, language string) error {
@@ -365,24 +331,8 @@ func released(ss []Segment) []Segment {
 	return out
 }
 
-func (s *Store) pickLanguage(want string, texts map[string]Text) string {
-	if _, ok := texts[want]; ok && want != "" {
-		return want
-	}
-	for _, l := range s.cfg.Languages {
-		if _, ok := texts[l]; ok {
-			return l
-		}
-	}
-	if want != "" {
-		return want
-	}
-	return s.defaultLanguage()
-}
-
 type itemRow struct {
 	kind, state, ownerEntity          string
-	originalTitle, originalLanguage   string
 	comments                          string
 	access                            access.Rule
 	restrictions                      []string
@@ -393,7 +343,7 @@ type itemRow struct {
 }
 
 func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.original_title, ''), coalesce(c.original_language, ''), coalesce(c.owner_entity_id, ''),
+	rows, err := s.pool.Query(ctx, `SELECT c.id, c.kind, c.state, coalesce(c.owner_entity_id, ''),
  c.access, c.restrictions, c.attributes, c.publish_at, c.published_at, c.deleted_at, c.created_at, c.updated_at,
  c.revision, c.comments
  FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
@@ -406,7 +356,7 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 		var id string
 		var r itemRow
 		var access, attrs []byte
-		if err := rows.Scan(&id, &r.kind, &r.state, &r.originalTitle, &r.originalLanguage, &r.ownerEntity, &access, &r.restrictions,
+		if err := rows.Scan(&id, &r.kind, &r.state, &r.ownerEntity, &access, &r.restrictions,
 			&attrs, &r.publishAt, &r.publishedAt, &r.deletedAt, &r.createdAt, &r.updatedAt, &r.revision, &r.comments); err != nil {
 			return nil, err
 		}
@@ -417,31 +367,6 @@ func (s *Store) readItems(ctx context.Context, ids []string) (map[string]*itemRo
 			return nil, err
 		}
 		out[id] = &r
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) readTexts(ctx context.Context, q Querier, ids []string) (map[string]map[string]Text, error) {
-	rows, err := q.Query(ctx, `SELECT content_id, language, title, slug, description, body, sort_key, aliases FROM `+s.t.text+`
- WHERE tenant_id = $1 AND content_id = ANY($2)`, s.tenant, ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]map[string]Text{}
-	for rows.Next() {
-		var id, l string
-		var t Text
-		if err := rows.Scan(&id, &l, &t.Title, &t.Slug, &t.Description, &t.Body, &t.SortKey, &t.Aliases); err != nil {
-			return nil, err
-		}
-		if len(t.Aliases) == 0 {
-			t.Aliases = nil
-		}
-		if out[id] == nil {
-			out[id] = map[string]Text{}
-		}
-		out[id][l] = t
 	}
 	return out, rows.Err()
 }
@@ -469,7 +394,7 @@ func (s *Store) readCreators(ctx context.Context, ids []string) (map[string][]Cr
 // or with a non-empty vid only those with that ID or version code.
 func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map[string]*Version, error) {
 	q := `SELECT id, code, position, languages, traits, label, state, publish_at, published_at, access, attributes,
- pages, duration_ms, width, height, has_audio, ordinal, coalesce(cover->>'image', ''),
+ pages, duration_ms, width, height, has_audio, ordinal, coalesce(cover->>'image', ''),coalesce(original_title,''),coalesce(original_language,''),
  (SELECT jsonb_build_object('id',r.id,'state',CASE WHEN r.state='retiring' THEN 'running'
           WHEN r.state='completed' AND coalesce((r.result->>'waiting')::boolean,false) THEN 'waiting' ELSE r.state END,
           'scheduled_at',r.scheduled_at,'completed_at',r.completed_at,'error',r.error)
@@ -493,7 +418,7 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
 		v := &Version{Segments: []Segment{}, Cover: &Cover{}}
 		var access, attrs, publication, readerSegments []byte
 		if err := rows.Scan(&v.ID, &v.Code, &v.Position, &v.Languages, &v.Traits, &v.Label, &v.State, &v.PublishAt, &v.PublishedAt, &access, &attrs,
-			&v.Pages, &v.DurationMS, &v.Width, &v.Height, &v.HasAudio, &v.Ordinal, &v.Cover.Image, &publication, &readerSegments); err != nil {
+			&v.Pages, &v.DurationMS, &v.Width, &v.Height, &v.HasAudio, &v.Ordinal, &v.Cover.Image, &v.OriginalTitle, &v.OriginalLanguage, &publication, &readerSegments); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -526,14 +451,14 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows, err = s.pool.Query(ctx, `SELECT version_id, language, title, description FROM `+s.t.versionText+` WHERE tenant_id = $1 AND version_id = ANY($2)`, s.tenant, vids)
+	rows, err = s.pool.Query(ctx, `SELECT version_id, language, title, description,slug,body,sort_key,aliases FROM `+s.t.versionText+` WHERE tenant_id = $1 AND version_id = ANY($2)`, s.tenant, vids)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var vid, l string
 		var t VersionText
-		if err := rows.Scan(&vid, &l, &t.Title, &t.Description); err != nil {
+		if err := rows.Scan(&vid, &l, &t.Title, &t.Description, &t.Slug, &t.Body, &t.SortKey, &t.Aliases); err != nil {
 			rows.Close()
 			return nil, err
 		}

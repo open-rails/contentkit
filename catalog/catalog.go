@@ -132,14 +132,14 @@ type Store struct {
 }
 
 type tables struct {
-	items, text, creators, versions, versionText, segments, facets, events string
-	entities, entityNames, memberships, prefs, counts, docs                string
-	reactions, favorites, comments, accessHistory                          string
+	items, creators, versions, versionText, segments, facets, events string
+	entities, entityNames, memberships, prefs, counts, docs          string
+	reactions, favorites, comments, accessHistory                    string
 }
 
 func catalogTables(schema string) tables {
 	q := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
-	return tables{items: q("content_items"), text: q("content_text"), creators: q("content_creators"), versions: q("content_versions"),
+	return tables{items: q("content_items"), creators: q("content_creators"), versions: q("content_versions"),
 		versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), events: q("content_events"),
 		entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
 		prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),

@@ -43,8 +43,6 @@ type Reader interface {
 type VersionMedia interface {
 	// Covers resolves versions' covers.
 	Covers(ctx context.Context, covers []versions.CoverOf) ([][]media.PublicRendition, error)
-	// CopyBodiesTx copies body images between a content's versions.
-	CopyBodiesTx(ctx context.Context, tx pgx.Tx, copies []versions.BodyCopy) error
 	// RepublishTx follows a change of a version's effective rule or segments.
 	RepublishTx(ctx context.Context, tx pgx.Tx, versions []versions.Target) error
 	// DeleteTx claims irreversible erasure under the eligibility row locks.
@@ -55,8 +53,6 @@ type VersionMedia interface {
 	ResumeDeletes(ctx context.Context, limit int) (int, error)
 	// CheckRestorableTx refuses restoration once irreversible erasure started.
 	CheckRestorableTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
-	// ForkTx fills new versions' media from siblings.
-	ForkTx(ctx context.Context, tx pgx.Tx, forks []versions.Fork) error
 	// PendingTx reports versions whose media is not ready to go live.
 	PendingTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) ([]versions.MediaPending, error)
 }
@@ -189,8 +185,7 @@ type BodyImageInput struct {
 }
 
 // BodyImage takes a body image an editor uploaded to a version (Upload.Body):
-// it queues the image's copy into every other version and returns its
-// reference and a URL that shows it to the editor now.
+// it returns its reference and an editor preview. No other version is changed.
 func (s *Store) BodyImage(ctx context.Context, actor access.Actor, contentID string, in BodyImageInput) (InlineImage, error) {
 	if in.Image == nil || !media.ValidNamed(*in.Image) {
 		return InlineImage{}, invalid("image must be an inline image name (i-{uuid})")
@@ -224,9 +219,6 @@ func (s *Store) BodyImage(ctx context.Context, actor access.Actor, contentID str
 	}
 	if !slices.Contains(ids, in.Version) {
 		return InlineImage{}, invalid("version %q is not a version of %s", in.Version, contentID)
-	}
-	if err := s.media.Versions.CopyBodiesTx(ctx, tx, []versions.BodyCopy{{Content: contentID, From: in.Version, To: ids, Names: []string{*in.Image}}}); err != nil {
-		return InlineImage{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return InlineImage{}, err

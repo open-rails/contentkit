@@ -161,13 +161,11 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 				}
 			}
 			args["ms_title_kinds"] = titleKinds
-			rows, err := s.pool.Query(ctx, `SELECT c.id,c.kind,coalesce(vt.title,CASE WHEN c.kind=ANY(@ms_title_kinds::text[]) THEN nullif(c.original_title,'') END,t.title,''),
- coalesce(vt.language,t.language,c.original_language,'') FROM `+s.t.items+` c
- LEFT JOIN LATERAL (SELECT title,language FROM `+s.t.text+` t WHERE t.tenant_id=c.tenant_id AND t.content_id=c.id
- ORDER BY t.language=@ms_language DESC,t.language=@ms_default DESC,t.language LIMIT 1) t ON true
- LEFT JOIN LATERAL (SELECT t.title,t.language FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND c.kind=ANY(@ms_title_kinds::text[]) AND t.title<>''
- ORDER BY t.language=@ms_language DESC,v.position,t.language LIMIT 1) vt ON true
+			rows, err := s.pool.Query(ctx, `SELECT c.id,c.kind,coalesce(vt.title,''),coalesce(vt.language,'') FROM `+s.t.items+` c
+ LEFT JOIN LATERAL (SELECT coalesce(nullif(t.title,''),CASE WHEN c.kind=ANY(@ms_title_kinds::text[]) THEN nullif(v.original_title,'') END,'') title,
+ coalesce(t.language,v.languages[1],'') language FROM `+s.t.versions+` v LEFT JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted'
+ ORDER BY coalesce(@ms_language=ANY(v.languages),false) DESC,v.released DESC,v.position,t.language=@ms_language DESC,t.language LIMIT 1) vt ON true
  WHERE c.tenant_id=@ms_tenant AND c.id=ANY(@ms_ids::text[]) AND c.state<>'deleted' AND `+allowed+`
  ORDER BY array_position(@ms_ids::text[],c.id)`, args)
 			if err != nil {

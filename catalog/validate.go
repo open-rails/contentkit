@@ -49,14 +49,11 @@ func (s *Store) checkLanguage(l string) error {
 
 // cleanText validates t and sanitizes its body; the slug defaults to the
 // title's.
-func (s *Store) cleanText(ctx context.Context, language string, t Text) (Text, error) {
+func (s *Store) cleanText(ctx context.Context, language string, t VersionText) (VersionText, error) {
 	if err := s.checkLanguage(language); err != nil {
 		return t, err
 	}
 	t.Title = strings.TrimSpace(t.Title)
-	if t.Title == "" {
-		return t, invalid("text %s: title is required", language)
-	}
 	if utf8.RuneCountInString(t.Title) > maxTitle || utf8.RuneCountInString(t.Description) > maxDescription ||
 		utf8.RuneCountInString(t.Body) > maxBody || len(t.Aliases) > maxAliases {
 		return t, invalid("text %s exceeds its limits", language)

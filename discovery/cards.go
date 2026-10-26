@@ -229,9 +229,9 @@ func (s *Service) cardRows(ctx context.Context, q *sel, picks []pick) ([]cardRow
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.entity_ids, coalesce(counts.likes, 0), coalesce(counts.dislikes, 0), coalesce(counts.favorites, 0),
  f.published_at, f.attributes, v.id, v.code, v.label, v.pages, v.duration_ms, v.has_audio,
- coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), CASE WHEN c.kind=ANY(@d_title_kinds::text[]) THEN nullif(c.original_title,'') END, t.title, ''),
- CASE WHEN nullif(vt.title,'') IS NOT NULL THEN vt.language WHEN c.kind=ANY(@d_title_kinds::text[]) AND nullif(c.original_title,'') IS NOT NULL THEN coalesce(nullif(c.original_language,''),t.language,'') ELSE coalesce(t.language,'') END,
- coalesce(nullif(vt.description, ''), t.description, ''), coalesce(t.body_excerpt, ''),
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), CASE WHEN c.kind=ANY(@d_title_kinds::text[]) THEN nullif(v.original_title,'') END, ''),
+ coalesce(vt.language,v.languages[1],''),
+ coalesce(vt.description,''),coalesce(vt.body_excerpt,''),
  coalesce(f.owner_entity_id, ''), @d_user <> '' AND EXISTS (SELECT 1 FROM %[7]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @d_user),
  coalesce((SELECT g.version_id FROM %[1]s g WHERE g.tenant_id = f.tenant_id AND g.content_id = f.content_id AND %[8]s
   ORDER BY %[9]s LIMIT 1) = f.version_id, true)
@@ -241,13 +241,10 @@ JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
 JOIN %[3]s v ON v.tenant_id = f.tenant_id AND v.id = f.version_id
 LEFT JOIN %[10]s counts ON counts.tenant_id = f.tenant_id AND counts.content_kind = f.kind AND counts.content_id = f.content_id AND counts.content_version_id IS NULL
 LEFT JOIN %[4]s cd ON cd.tenant_id = c.tenant_id AND cd.content_kind = c.kind AND cd.content_id = c.id
-LEFT JOIN LATERAL (SELECT x.title, x.language, left(x.description, 600) AS description, x.body_excerpt FROM %[5]s x WHERE x.tenant_id = c.tenant_id AND x.content_id = c.id
- ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1) t ON true
-LEFT JOIN LATERAL (SELECT x.title,x.description,x.language FROM %[6]s x
+LEFT JOIN LATERAL (SELECT x.title,left(x.description,600) description,x.language,x.body_excerpt FROM %[5]s x
  WHERE x.tenant_id=v.tenant_id AND x.version_id=v.id
- AND ((c.kind=ANY(@d_title_kinds::text[]) AND x.language=ANY(v.languages)) OR (NOT(c.kind=ANY(@d_title_kinds::text[])) AND x.language=t.language))
- ORDER BY (nullif(x.title,'') IS NOT NULL) DESC,x.language=@d_display DESC,array_position(v.languages,x.language),x.language LIMIT 1) vt ON true
-ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.versionText, s.t.creators, listed, edition.Order("g", "@d_display::text"), s.t.counts),
+ ORDER BY x.language=@d_display DESC,array_position(v.languages,x.language),x.language LIMIT 1) vt ON true
+ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.versionText, s.t.versionText, s.t.creators, listed, edition.Order("g", "@d_display::text"), s.t.counts),
 		args)
 	if err != nil {
 		return nil, err
