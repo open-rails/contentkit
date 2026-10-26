@@ -155,6 +155,8 @@ type Kind struct {
 	OwnerEntity *EntityRef `json:"owner_entity,omitempty" yaml:"owner_entity"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
+	// Popularity declares the prepared ranking choices, in display/default order.
+	Popularity []PopularityBucket `json:"popularity,omitempty" yaml:"popularity"`
 	// Locked is what a viewer who does not open its content sees of it;
 	// nil is DefaultLocked.
 	Locked *Locked `json:"locked,omitempty" yaml:"locked"`
@@ -479,6 +481,9 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, k := range c.Kinds {
+		if err := c.validatePopularity(name, k.Popularity); err != nil {
+			return err
+		}
 		if k.AccessScope != "" && k.AccessScope != AccessContent && k.AccessScope != AccessVersion {
 			return fmt.Errorf("%w: kind %s has invalid access_scope %q", ErrInvalid, name, k.AccessScope)
 		}

@@ -11,7 +11,7 @@ import { guestStanding, type GuestReadingItem } from "../client/guest-reading-hi
 import { recentSearchLimit } from "../client/browser-search-history.js";
 
 const page = (p: ContentPage) => ({ items: p.contents, next: p.next_cursor ?? null, metadata: p.summary });
-export interface UseContents extends UseList<Card, ContentPage["summary"]> { summary?: ContentPage["summary"] }
+export interface UseContents extends UseList<Card, ContentPage["summary"]> { summary?: ContentPage["summary"]; popularity?: ContentPage["popularity"] }
 const NO_SEARCHES: RecentSearch[] = [];
 const NO_READING: readonly GuestReadingItem[] = Object.freeze([]);
 
@@ -36,10 +36,11 @@ function useDisplay<T extends { display_language?: string }>(q: T | null): T | n
 export function useContents(q: ContentQuery | null, o: { client?: ContentKitClient } = {}): UseContents {
   const { client, store, scope } = useContentScope(o.client);
   const query = useDisplay(q);
-  const list = useList(store, query ? keyOf("cards", scope, "list", query) : null, { type: "cards" }, async (cursor, signal) =>
-    page(await client.discovery.list({ ...query, cursor: cursor as string | undefined, summary: cursor ? undefined : query?.summary }, signal)),
-  );
-  return { ...list, summary: list.metadata };
+  const list = useList<Card, Pick<ContentPage,"summary" | "popularity">>(store, query ? keyOf("cards", scope, "list", query) : null, { type: "cards" }, async (cursor, signal) => {
+    const out = await client.discovery.list({ ...query, cursor: cursor as string | undefined, summary: cursor ? undefined : query?.summary }, signal);
+    return {...page(out),metadata:{summary:out.summary,popularity:out.popularity}};
+  });
+  return { ...list, metadata:list.metadata?.summary, summary: list.metadata?.summary, popularity:list.metadata?.popularity };
 }
 
 /** One numbered page of a list or search: its cards and the selection's summary (total included). */

@@ -4980,7 +4980,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
+            "description": "newest, oldest, title, popular[:bucket], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
             "schema": {
               "type": "string"
             }
@@ -5004,22 +5004,6 @@
             "description": "selection-wide total, filtered and locked counts on the first page or every numbered page",
             "schema": {
               "type": "boolean"
-            }
-          },
-          {
-            "name": "activity_from",
-            "in": "query",
-            "description": "custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "activity_until",
-            "in": "query",
-            "description": "custom popularity activity window: exclusive UTC date YYYY-MM-DD; requires activity_from, kind and sort=popular",
-            "schema": {
-              "type": "string"
             }
           },
           {
@@ -13347,6 +13331,9 @@
       "ContentPage": {
         "type": "object",
         "properties": {
+          "popularity": {
+            "$ref": "#/components/schemas/PopularitySnapshot"
+          },
           "contents": {
             "type": "array",
             "items": {
@@ -15410,6 +15397,12 @@
           "sort": {
             "type": "string"
           },
+          "popularity": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PopularityBucket"
+            }
+          },
           "locked": {
             "$ref": "#/components/schemas/Locked"
           },
@@ -16718,6 +16711,79 @@
           }
         }
       },
+      "PopularityBucket": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "days": {
+            "type": "integer"
+          },
+          "from": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          },
+          "all": {
+            "type": "boolean"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PopularityScope"
+            }
+          },
+          "refresh_every": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "PopularityScope": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          }
+        }
+      },
+      "PopularitySnapshot": {
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "computed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "bucket",
+          "ready"
+        ]
+      },
       "PresetRule": {
         "type": "object",
         "properties": {
@@ -17602,6 +17668,9 @@
       "SearchPage": {
         "type": "object",
         "properties": {
+          "popularity": {
+            "$ref": "#/components/schemas/PopularitySnapshot"
+          },
           "contents": {
             "type": "array",
             "items": {

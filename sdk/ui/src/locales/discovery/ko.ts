@@ -80,6 +80,7 @@ export const discovery: typeof en = {
     removeRecent: "“{q}” 삭제",
   },
   listing: {
+    preparingPopularity: "이 순위를 준비하고 있습니다.",
     activityRange: "{from}부터 {until} 전까지의 활동 (UTC)",
     popularPeriod: "인기 집계 기간",
     pastDays_one: "최근 {count}일",

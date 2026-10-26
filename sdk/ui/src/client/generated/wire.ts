@@ -467,6 +467,7 @@ export interface ContentModel {
 }
 
 export interface ContentPage {
+  popularity?: PopularitySnapshot;
   contents: Card[];
   summary?: ListingSummary;
   next_cursor?: string;
@@ -1102,6 +1103,7 @@ export interface Kind {
   attributes?: Record<string, Attribute>;
   owner_entity?: EntityRef;
   sort?: string;
+  popularity?: PopularityBucket[];
   locked?: Locked;
   download?: Download;
 }
@@ -1500,6 +1502,30 @@ export interface PollVote {
   option_id: string;
 }
 
+export interface PopularityBucket {
+  id: string;
+  label?: string;
+  days?: number;
+  from?: string;
+  until?: string;
+  all?: boolean;
+  scopes?: PopularityScope[];
+  refresh_every?: number;
+}
+
+export interface PopularityScope {
+  domain?: string;
+  language?: string;
+}
+
+export interface PopularitySnapshot {
+  bucket: string;
+  ready: boolean;
+  from?: string;
+  until?: string;
+  computed_at?: string;
+}
+
 export interface PresetRule {
   kind: string;
   name: string;
@@ -1758,6 +1784,7 @@ export interface Rule {
 }
 
 export interface SearchPage {
+  popularity?: PopularitySnapshot;
   contents: Card[];
   summary?: ListingSummary;
   next_cursor?: string;

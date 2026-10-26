@@ -743,7 +743,7 @@
       "behavior": "Popular lists follow the stored ranking of their kind, period and reader scope",
       "status": "verified",
       "evidence": [
-        "Before its ranking is built a popular list shows only works with standing; once the refresh stores a ranking, the list follows its order."
+        "A configured bucket reads its stored order; an empty prepared ranking remains empty without unrelated standing scores."
       ],
       "cases": [
         "TestDiscoveryVisibility/CK-J07-S15_popular_list_follows_the_stored_ranking"
@@ -752,13 +752,13 @@
     {
       "id": "CK-J07-S16",
       "journey": "CK-J07",
-      "behavior": "Reader-chosen popularity ranges queue bounded ranking work",
+      "behavior": "Public popularity requests select declared buckets without creating work",
       "status": "verified",
       "evidence": [
-        "With fifty reader-chosen ranges requested, another range is not requested; after one is dropped, it is."
+        "Unknown bucket, kind, scope and arbitrary date requests are refused and leave the stored ranking inventory unchanged."
       ],
       "cases": [
-        "TestDiscoveryVisibility/CK-J07-S16_reader_chosen_ranges_are_bounded"
+        "TestDiscoveryVisibility/CK-J07-S16_public_requests_cannot_create_popularity_work"
       ]
     },
     {
@@ -1353,7 +1353,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner’s eligible content",
+      "behavior": "Owner ban affects only the owner\u2019s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
