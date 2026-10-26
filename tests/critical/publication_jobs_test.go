@@ -34,9 +34,8 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 	base := w.clock.now()
 	versionAt, parentAt, audienceAt := base.Add(30*time.Minute), base.Add(time.Hour), base.Add(2*time.Hour)
 	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery",
-		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: audienceAt, Level: access.Public}}},
-
-		Versions: []catalog.VersionInput{{State: "published", PublishAt: &versionAt, Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Embargoed version"}}}}})
+		Access:   &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: audienceAt, Level: access.Public}}},
+		Versions: []catalog.VersionInput{{State: "published", PublishAt: &versionAt, Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Embargoed version", Body: "Embargoed edition"}}}}})
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: &parentAt})
 	must(t, err)
