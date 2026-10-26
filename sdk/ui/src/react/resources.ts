@@ -208,7 +208,7 @@ export class ResourceStore {
     // Cards in lists (pages) and rails (arrays) show a content's counts and the viewer's state.
     const cards = (id: string, fn: (card: Card) => Card) =>
       patch<Page<Card> | Card[]>(
-        (t) => t.type === "cards" || t.type === "history",
+        (t) => t.type === "cards" || t.type === "history" || t.type === "channel-feed",
         (data) => {
           const each = (list: Card[]) => (list.some((x) => x.id === id) ? list.map((x) => (x.id === id ? fn(x) : x)) : list);
           if (Array.isArray(data)) return each(data);
@@ -314,7 +314,7 @@ export class ResourceStore {
         this.invalidate((t) => t.type.startsWith("entit") || t.type === "daily-releases");
         break;
       case "contentFilters.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates" || t.type === "daily-releases");
+        this.invalidate((t) => t.type === "cards" || t.type === "channel-feed" || t.type === "history" || t.type === "release-dates" || t.type === "daily-releases");
         break;
       case "access.changed":
         this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("entit") || t.type === "daily-releases" || t.type === "standing" || t.type.startsWith("channel"));

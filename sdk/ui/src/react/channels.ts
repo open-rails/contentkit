@@ -5,10 +5,10 @@ import type { ChannelQuery, ChannelContentsQuery, ChannelImageSlot } from "../cl
 import { useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource } from "./use-resource.js";
 
-export function useChannels(query: ChannelQuery = {}, options: { client?: ContentKitClient } = {}) {
+export function useChannels(query: ChannelQuery = {}, options: { client?: ContentKitClient; enabled?: boolean } = {}) {
   const { client, store, scope, language } = useContentScope(options.client);
   const q = { language, ...query };
-  return useList<ChannelCard>(store, keyOf("channels", scope, q), { type: "channels" }, async (cursor, signal) => {
+  return useList<ChannelCard>(store, options.enabled === false ? null : keyOf("channels", scope, q), { type: "channels" }, async (cursor, signal) => {
     const page = await client.channels.list({ ...q, cursor: cursor as string | undefined }, signal);
     return { items: page.channels, next: page.next_cursor ?? null };
   });

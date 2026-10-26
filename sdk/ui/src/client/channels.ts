@@ -24,7 +24,7 @@ export class ChannelsClient {
   update(id: string, patch: ChannelUpdate): Promise<Channel> {
     return this.write(call(this.http, "PATCH", "/channels/{id}", { params: { id }, body: patch }), id);
   }
-  remove(id: string): Promise<Channel> {
+  remove(id: string): Promise<void> {
     return this.write(call(this.http, "DELETE", "/channels/{id}", { params: { id } }), id);
   }
   mine(query: MyChannelQuery = {}, signal?: AbortSignal): Promise<MyChannelPage> {

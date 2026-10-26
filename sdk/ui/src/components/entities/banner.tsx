@@ -23,7 +23,7 @@ export interface EntityBannerProps {
   labels?: Labels;
   /** A entity's link (scope, scoped entities); default its canonical path. */
   href?: (entity: EntityLike) => string | undefined;
-  /** Beside the membership box: the host's actions (follow, share, edit). */
+  /** The host's actions (follow, share, edit). */
   children?: ReactNode;
   /** Show the cover across the top when the entity has one; false keeps the compact header. Default true. */
   cover?: boolean;
@@ -32,7 +32,7 @@ export interface EntityBannerProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** A entity's page head: its cover across, its avatar, scope, name, description, content count and membership, then the entities it scopes. */
+/** A entity's page head: its cover across, its avatar, scope, name, description, content count, then the entities it scopes. */
 export function EntityBanner(p: EntityBannerProps) {
   const m = useMessages();
   const read = useEntity(p.entity ? null : p.id, { language: p.language, client: p.client });
