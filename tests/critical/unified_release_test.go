@@ -66,6 +66,22 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 		return next
 	}
 	next := assertNext(initial, first)
+	// Reaccept unchanged publication while its future audience is pending.
+	// Completing an equivalent plan must retain the reader and rearm the date.
+	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+	must(t, err)
+	noop := currentReleaseJob(t, a, version)
+	if noop.Due.After(w.clock.now()) {
+		t.Fatal("unchanged publication did not accept immediate reconciliation")
+	}
+	runPublicationWorker(t, fleet, a)
+	next = assertNext(initial, first)
+	var noopCompleted bool
+	must(t, w.pool.QueryRow(t.Context(), `SELECT state='completed' AND result IS NOT NULL FROM `+w.schema+`.content_publication_requests
+ WHERE tenant_id=$1 AND id=$2`, publicationTenant(a), noop.ID).Scan(&noopCompleted))
+	if !noopCompleted || next.ID == noop.ID {
+		t.Fatal("no-op release did not complete and preserve a separate next obligation")
+	}
 	restart := func() {
 		t.Helper()
 		must(t, fleet.Stop(t.Context()))
