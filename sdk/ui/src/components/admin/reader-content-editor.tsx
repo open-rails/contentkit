@@ -33,7 +33,7 @@ import { ImageCropDialog } from "../image-crop-dialog.js";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { useDraft } from "../../react/use-draft.js";
 import { RuleFields, cleanRule, complete, VersionEditor, VersionStatus, SegmentsEditor, AddVersion, versionLabel, defaultAccessRule } from "../content/editors.js";
-import { saveEditionAccess, selectedEdition } from "../../client/edition-access.js";
+import { contentAccess, saveContentAccess, selectedEdition } from "../../client/edition-access.js";
 import { publicationOf } from "../../client/publication.js";
 import { ErrorLine, contentError, formatDate, useAction } from "../social/parts.js";
 import { localInput } from "../social/bans.js";
@@ -187,9 +187,9 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
         originalTitle: item?.original_title ?? "",
         comments: item?.comments ?? (!spec.comment_modes?.length || spec.comment_modes.includes("open") ? "open" : spec.comment_modes[0]!),
         attributes: formOf(spec.attributes ?? {}, item?.attributes ?? {}),
-        access: version?.access ?? defaultAccessRule(model, p.kind),
+        access: item ? contentAccess(item, version?.id) ?? defaultAccessRule(model, p.kind) : defaultAccessRule(model, p.kind),
       }),
-      [item?.original_title, item?.comments, item?.attributes, version?.access, spec.attributes, spec.comment_modes, model, p.kind],
+      [item, version?.id, spec.attributes, spec.comment_modes, model, p.kind],
     ),
   );
   const associations = useDraft(
@@ -481,8 +481,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
         if (changedDetails.includes("access")) {
           const target = version ? selectedEdition(content, version.id) : !item ? selectedEdition(content) : undefined;
           if (!target) throw new ValidationError(t("readerEditor.versionMissing"));
-          const saved = await saveEditionAccess(client.contents, content, cleanRule(snapshotDetails.access), target.id);
-          content = { ...content, versions: content.versions.map((edition) => edition.id === saved.id ? saved : edition) };
+          content = await saveContentAccess(client.contents, content, cleanRule(snapshotDetails.access), target.id);
         }
         if (!current()) return;
         if (originalAndVersion && (state.versionTexts.dirty.length || !version?.text?.[state.editionLanguage]?.title)) {
@@ -530,7 +529,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
         originalTitle: content.original_title ?? "",
         comments: content.comments,
         attributes: formOf(spec.attributes ?? {}, content.attributes),
-        access: selectedEdition(content, version?.id)?.access ?? snapshotDetails.access,
+        access: contentAccess(content, version?.id) ?? snapshotDetails.access,
       });
       if (!cleanTexts || !cleanVersionTexts || !cleanDetails || !cleanAssociations) throw new ValidationError(t("readerEditor.changedDuringSave"));
       // Files are the last draft mutation: a failed metadata section cannot
@@ -607,7 +606,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     setDraftGeneration((value) => value + 1);
     texts.checkpoint()(Object.fromEntries(languages.map((l) => [l.value, editableText(item, l.value)])));
     versionTexts.checkpoint()({});
-    details.checkpoint()({ originalTitle: item!.original_title ?? "", comments: item!.comments, attributes: formOf(spec.attributes ?? {}, item!.attributes ?? {}), access: version?.access ?? defaultAccessRule(model, p.kind) });
+    details.checkpoint()({ originalTitle: item!.original_title ?? "", comments: item!.comments, attributes: formOf(spec.attributes ?? {}, item!.attributes ?? {}), access: item ? contentAccess(item, version?.id) ?? defaultAccessRule(model, p.kind) : defaultAccessRule(model, p.kind) });
     publication.checkpoint()({ at: item!.publish_at ? localInput(new Date(item!.publish_at)) : "" });
     associations.checkpoint()({ memberships: membership.memberships.filter((a) => !a.version_id && sharedKinds.includes(membership.entities.get(a.group_id ?? "")?.kind ?? "")), create: [] });
     versionAssociations.checkpoint()({ memberships: [], create: [] });
@@ -938,7 +937,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
               onAdd={(input, from) => {
                 if (!item) return;
                 const content = item.id;
-                void addVersion.run(() => client.contents.addVersion(content, { ...input, access: version?.access ?? item.access })).then((v) => {
+                void addVersion.run(() => client.contents.addVersion(content, { ...input, ...(item.channel_id ? {} : { access: version?.access ?? item.access }) })).then((v) => {
                   if (!v || !current()) return;
                   if (from) startCopy(content, v, from);
                   else openVersion(v);

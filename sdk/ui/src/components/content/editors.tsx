@@ -1,7 +1,7 @@
 import { cn } from "cn";
 import { chapterRanges } from "../../client/chapters.js";
 import { publicationOf, publicationPhase } from "../../client/publication.js";
-import { saveEditionAccess, selectedEdition } from "../../client/edition-access.js";
+import { contentAccess, saveContentAccess, selectedEdition } from "../../client/edition-access.js";
 import { createPortal } from "react-dom";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Add01Icon } from "@hugeicons/core-free-icons";
@@ -383,7 +383,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
   const client = useContentKitClient(p.client);
   const { model } = useKind(content.kind, p.client);
   const version = selectedEdition(content);
-  const rule = useDraft(version?.access ?? (model ? defaultAccessRule(model, content.kind) : { level: "public" } as Rule));
+  const rule = useDraft(contentAccess(content) ?? (model ? defaultAccessRule(model, content.kind) : { level: "public" } as Rule));
   const reload = useEditorReload(content, p.client);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
@@ -394,10 +394,10 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
         className="grid gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!version) return;
+          if (!content.channel_id && !version) return;
           setSaved(false);
           const settle = rule.checkpoint();
-          void save.run(() => saveEditionAccess(client.contents, content, cleanRule(rule.value), version.id)).then((d) => d && setSaved(settle(d.access ?? rule.value)));
+          void save.run(() => saveContentAccess(client.contents, content, cleanRule(rule.value), version?.id)).then((d) => d && setSaved(settle(contentAccess(d, version?.id) ?? rule.value)));
         }}
       >
         <RuleFields value={rule.value} onChange={(r) => { rule.edit(r); setSaved(false); }} model={model} kind={content.kind} owner={content.channel_id} labels={p.labels} client={client} />
@@ -412,7 +412,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
               const settle = rule.checkpoint();
               void save.run(reload).then((d) => {
                 if (!d) return;
-                settle(d.versions.find((v) => v.id === version?.id)?.access ?? rule.value);
+                settle(contentAccess(d, version?.id) ?? rule.value);
                 setSaved(false);
               });
             }}
@@ -736,7 +736,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
     if(!valid)return false;
     setSaved(false);
     const settle=fields.checkpoint();
-    const accessChanged = fields.dirty.includes("rule");
+    const accessChanged = !content.channel_id && fields.dirty.includes("rule");
     const out=await save.run(()=>client.contents.updateVersion(content.id,v.id,{languages:langs,traits,publish_at:fromLocalInput(at),...(state?{state}:{}),...(accessChanged?{access:cleanRule(rule)}:{})}));
     if(!out)return false;
     const clean=settle(seed(out));setSaved(clean);return clean;
@@ -818,7 +818,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
             </fieldset>
           )}
           {scheduleTarget === undefined ? schedule : scheduleTarget && createPortal(schedule, scheduleTarget)}
-          <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.channel_id} labels={p.labels} client={client} />
+          {!content.channel_id && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} labels={p.labels} client={client} />}
           {publicationOf(v)?.error && <ErrorLine>{publicationOf(v)!.error}</ErrorLine>}
           <ErrorLine error={save.error} />
           <div className="flex flex-wrap items-center gap-3">

@@ -1,4 +1,4 @@
-import type { Channel, ChannelInput, ChannelUpdate, ChannelPage, MyChannelPage, ContentPage, EntityCard, ContentEntities, RefBody } from "./generated/wire.js";
+import type { Channel, ChannelInput, ChannelUpdate, ChannelPage, MyChannelPage, ContentPage, EntityCard, RefBody } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import type { MediaClient, NamedOptions } from "./media/client.js";
 import { call, type RouteQuery } from "./route.js";
@@ -46,8 +46,8 @@ export class ChannelsClient {
   entities(id: string, language?: string, signal?: AbortSignal): Promise<EntityCard[]> {
     return call(this.http, "GET", "/channels/{id}/entities", { params: { id }, query: { language }, signal });
   }
-  setEntities(id: string, set: ContentEntities, language?: string): Promise<EntityCard[]> {
-    return this.write(call(this.http, "PUT", "/channels/{id}/entities", { params: { id }, query: { language }, body: set }), id);
+  setEntities(id: string, ids: string[]): Promise<void> {
+    return this.write(call(this.http, "PUT", "/channels/{id}/entities", { params: { id }, body: ids }), id);
   }
   folder(id: string): RefBody { return { kind: "channel", id }; }
   async uploadImage(id: string, slot: ChannelImageSlot, file: Blob & { name?: string }, options: Omit<NamedOptions, "path"> = {}): Promise<Channel> {
