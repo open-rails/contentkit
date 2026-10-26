@@ -156,6 +156,15 @@ func (s *Store) merge(ctx context.Context, q Querier, src, dst Entity) (MergeRep
 	if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND entity_id = $2`, m), s.tenant, from); err != nil {
 		return r, err
 	}
+	// Channel metadata follows the same canonical survivor as content tags.
+	// The hierarchy lock serializes this move with SetChannelMetadata.
+	channelMetadata := s.table("content_channel_entities")
+	if _, err := q.Exec(ctx, `INSERT INTO `+channelMetadata+` (tenant_id,channel_id,entity_id) SELECT tenant_id,channel_id,$3 FROM `+channelMetadata+` WHERE tenant_id=$1 AND entity_id=$2 ON CONFLICT DO NOTHING`, s.tenant, from, into); err != nil {
+		return r, err
+	}
+	if _, err := q.Exec(ctx, `DELETE FROM `+channelMetadata+` WHERE tenant_id=$1 AND entity_id=$2`, s.tenant, from); err != nil {
+		return r, err
+	}
 	names := s.table("content_entity_names")
 	if tag, err = q.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s (tenant_id, entity_id, language, kind, name)
  SELECT tenant_id, $3, language, 'alias', name FROM %[1]s WHERE tenant_id = $1 AND entity_id = $2
