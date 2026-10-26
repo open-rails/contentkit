@@ -169,13 +169,13 @@ const editor = usePollEditor(pollId);                // staff
 A content editor puts `text.body` in its rich-text field and inserts what
 `uploadImage(file)` resolves: URLs that show the images now (the file for a
 fresh upload, public files, signed editor views of an unpublished item's
-images, read and refreshed as needed). `putText({ title, body })` stores each
+images, read and refreshed as needed). `saveText({ title, body })` stores each
 of those URLs as the image's reference (`storedBody(html)` does the same for
 a host's own save); `coverSrc` shows the cover, `imageSrc(name)` any image.
 
 ```tsx
 const editor = useContent(id, "blog", "en");
-<RichText value={editor.text?.body} onImage={editor.uploadImage} onSave={(html) => editor.putText({ title, body: html })} />
+<RichText value={editor.text?.body} onImage={editor.uploadImage} onSave={(html) => editor.saveText({ title, body: html })} />
 <img src={editor.coverSrc} alt="" />
 ```
 
@@ -715,24 +715,32 @@ version editing remain in the content editor. Site-specific import,
 review and publishing workflows can use the individual managers and media
 components without adopting this workbench.
 
-## Original and edition titles
+## Version-owned text
 
-A host can set `title_policy: original_and_version` on a content kind. The
-parent then carries optional `original_title` and `original_language`, while
-`version.text[language].title` is the edition's display title. The reader editor
-shows one shared Original title and a Display title bound to the selected
-version's language; changing one edition never rewrites sibling titles.
+Every edition owns its title, slug, summary, body, sort key, aliases and optional
+original title/language. Create an item with its initial version:
 
-The default `localized` policy retains generic `content.text[language]`
-behavior. Those stored texts are preserved under the edition policy too.
-Public titles resolve from the selected edition, then the original, then the
-legacy localized title. An original's language may remain unknown; do not label
-an existing English translation as the source title.
+```ts
+await client.contents.create({
+  kind: "blog",
+  versions: [{ languages: ["en"], text: { en: { title: "Hello", body: "<p>Welcome</p>" } } }],
+});
+```
 
-For existing content, `catalog.BackfillVersionTitles` is an explicit migration
-helper: it copies only missing titles from exactly matching content languages
-and does not overwrite existing edition text or invent source titles. Hosts
-call it from their migration command, rather than server startup.
+This also applies to a kind that hides its single version. To edit text, call
+`contents.updateVersion(contentId, versionId, { text })`; the map replaces that
+edition's localized text. `useContent(...).saveText` updates its selected edition
+and language. An added version begins empty and receives explicit uploads.
+
+`Content.title`, `Content.body` and other display fields are read-only projections
+of `selected_version_id`. Editors use `version.text`; there is no parent text
+map or sibling body fallback. Inline images resolve only against that edition's
+media. A host using `title_policy: original_and_version` displays that version's
+localized title or its own original title, never another version's title.
+
+The forward schema migration preserves existing text in its existing editions
+without moving or deleting any source images. Hosts use the normal migration
+command; no additional title-copy helper or background worker is needed.
 
 ## Daily readership statistics
 

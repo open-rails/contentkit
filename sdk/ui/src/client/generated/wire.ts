@@ -265,15 +265,6 @@ export interface CatalogCover {
   renditions?: PublicRendition[];
 }
 
-export interface CatalogText {
-  title: string;
-  slug?: string;
-  description?: string;
-  body?: string;
-  sort_key?: string;
-  aliases?: string[];
-}
-
 export interface Channel {
   id: string;
   slug: string;
@@ -502,7 +493,6 @@ export interface Content {
   selected_version_id?: string;
   viewer?: ViewerState;
   editor: boolean;
-  text?: Record<string, CatalogText>;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -541,9 +531,6 @@ export interface ContentFiltersUpdate {
 
 export interface ContentInput {
   kind: string;
-  text?: Record<string, CatalogText>;
-  original_title?: string;
-  original_language?: string;
   comments?: string;
   access?: Rule;
   restrictions?: string[];
@@ -576,8 +563,6 @@ export interface ContentPage {
 }
 
 export interface ContentPatch {
-  original_title?: string;
-  original_language?: string;
   comments?: string;
   access?: Rule;
   restrictions?: string[];
@@ -594,15 +579,12 @@ export interface ContentRecord {
   publish_at?: string;
   published_at?: string;
   deleted_at?: string;
-  original_title?: string;
-  original_language?: string;
   comments?: string;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;
   channel?: Ref;
   creators?: Creator[];
-  text?: Record<string, CatalogText>;
   versions?: VersionRecord[];
   code?: string;
   created_at?: string;
@@ -1090,12 +1072,6 @@ export interface ForegroundCue {
   file: string;
   page?: string;
   anchor?: string;
-}
-
-export interface ForkBody {
-  from: string;
-  playback?: boolean;
-  segments?: boolean;
 }
 
 export interface Frame {
@@ -1979,6 +1955,12 @@ export interface Version {
   label?: string;
   title?: string;
   description?: string;
+  language?: string;
+  slug?: string;
+  body?: string;
+  images?: Record<string, string>;
+  original_title?: string;
+  original_language?: string;
   state?: ContentState;
   publish_at?: string;
   published_at?: string;
@@ -2000,12 +1982,6 @@ export interface Version {
   viewer?: ViewerState;
 }
 
-export interface VersionFork {
-  from: string;
-  playback?: boolean;
-  segments?: boolean;
-}
-
 export interface VersionInput {
   languages?: string[];
   traits?: string[];
@@ -2019,7 +1995,8 @@ export interface VersionInput {
   segments?: SegmentInput[];
   ordinal?: number;
   cover?: string;
-  fork?: VersionFork;
+  original_title?: string;
+  original_language?: string;
 }
 
 export interface VersionRecord {
@@ -2038,6 +2015,8 @@ export interface VersionRecord {
   ordinal?: number;
   cover?: string;
   text?: Record<string, VersionText>;
+  original_title?: string;
+  original_language?: string;
   segments?: Segment[];
   created_at?: string;
   updated_at?: string;
@@ -2050,8 +2029,12 @@ export interface VersionRules {
 }
 
 export interface VersionText {
-  title?: string;
+  title: string;
+  slug?: string;
   description?: string;
+  body?: string;
+  sort_key?: string;
+  aliases?: string[];
 }
 
 export interface VideoLimits {

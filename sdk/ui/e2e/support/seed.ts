@@ -169,7 +169,7 @@ export async function seedContent(
   },
 ) {
   const text = Object.fromEntries(Object.entries(o.titles).map(([l, title]) => [l, { title }]));
-  const c = await ck.contents.create({ kind: o.kind, text, versions: o.versions, access: o.access, attributes: o.attributes });
+  const c = await ck.contents.create({ kind: o.kind, versions: o.versions.map((version) => ({ ...version, text: Object.fromEntries(version.languages.filter((language) => text[language]).map((language) => [language, text[language]!])) })), access: o.access, attributes: o.attributes });
   if (o.groups?.length) await ck.entities.setOfContent(c.id, { memberships: o.groups.map((group_id) => ({ group_id })) });
   return ck.contents.publish(c.id);
 }

@@ -5862,132 +5862,6 @@
         ]
       }
     },
-    "/v1/contents/{id}/text/{language}": {
-      "put": {
-        "tags": [
-          "contents"
-        ],
-        "summary": "Sets a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "language",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CatalogText"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Content"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "contents",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "conflict",
-          "forbidden",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:contents",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "contents"
-        ],
-        "summary": "Removes a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "language",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Content"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "contents",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "conflict",
-          "forbidden",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:contents",
-          "auth",
-          "request"
-        ]
-      }
-    },
     "/v1/contents/{id}/creators": {
       "put": {
         "tags": [
@@ -6053,7 +5927,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
+        "summary": "Returns a reference and editor preview for an inline image uploaded to the selected version. No sibling version is changed. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -9967,70 +9841,6 @@
         "x-contentkit-module": "versions",
         "x-contentkit-auth": "editor",
         "x-contentkit-permission": "root:content:write",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:versions",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/contents/{id}/versions/{version}/fork": {
-      "post": {
-        "tags": [
-          "reader"
-        ],
-        "summary": "Fills a version without media from a sibling (editors): its uploads with their outputs, reader metadata and optionally its audio and segments, in a durable job.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "version",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ForkBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Pending"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "versions",
-        "x-contentkit-auth": "user",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:versions",
@@ -14041,35 +13851,6 @@
           }
         }
       },
-      "CatalogText": {
-        "type": "object",
-        "properties": {
-          "title": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "body": {
-            "type": "string"
-          },
-          "sort_key": {
-            "type": "string"
-          },
-          "aliases": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "title"
-        ]
-      },
       "Channel": {
         "type": "object",
         "properties": {
@@ -14833,12 +14614,6 @@
           "editor": {
             "type": "boolean"
           },
-          "text": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/CatalogText"
-            }
-          },
           "revision": {
             "type": "integer"
           },
@@ -14986,18 +14761,6 @@
           "kind": {
             "type": "string"
           },
-          "text": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/CatalogText"
-            }
-          },
-          "original_title": {
-            "type": "string"
-          },
-          "original_language": {
-            "type": "string"
-          },
           "comments": {
             "type": "string"
           },
@@ -15124,12 +14887,6 @@
       "ContentPatch": {
         "type": "object",
         "properties": {
-          "original_title": {
-            "type": "string"
-          },
-          "original_language": {
-            "type": "string"
-          },
           "comments": {
             "type": "string"
           },
@@ -15184,12 +14941,6 @@
             "type": "string",
             "format": "date-time"
           },
-          "original_title": {
-            "type": "string"
-          },
-          "original_language": {
-            "type": "string"
-          },
           "comments": {
             "type": "string"
           },
@@ -15213,12 +14964,6 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Creator"
-            }
-          },
-          "text": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/CatalogText"
             }
           },
           "versions": {
@@ -16795,20 +16540,6 @@
         "required": [
           "file"
         ]
-      },
-      "ForkBody": {
-        "type": "object",
-        "properties": {
-          "from": {
-            "type": "string"
-          },
-          "playback": {
-            "type": "boolean"
-          },
-          "segments": {
-            "type": "boolean"
-          }
-        }
       },
       "Frame": {
         "type": "object",
@@ -19731,6 +19462,27 @@
           "description": {
             "type": "string"
           },
+          "language": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "images": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "original_title": {
+            "type": "string"
+          },
+          "original_language": {
+            "type": "string"
+          },
           "state": {
             "$ref": "#/components/schemas/ContentState"
           },
@@ -19815,20 +19567,6 @@
           "decision"
         ]
       },
-      "VersionFork": {
-        "type": "object",
-        "properties": {
-          "from": {
-            "type": "string"
-          },
-          "playback": {
-            "type": "boolean"
-          },
-          "segments": {
-            "type": "boolean"
-          }
-        }
-      },
       "VersionInput": {
         "type": "object",
         "properties": {
@@ -19882,8 +19620,11 @@
           "cover": {
             "type": "string"
           },
-          "fork": {
-            "$ref": "#/components/schemas/VersionFork"
+          "original_title": {
+            "type": "string"
+          },
+          "original_language": {
+            "type": "string"
           }
         }
       },
@@ -19948,6 +19689,12 @@
               "$ref": "#/components/schemas/VersionText"
             }
           },
+          "original_title": {
+            "type": "string"
+          },
+          "original_language": {
+            "type": "string"
+          },
           "segments": {
             "type": "array",
             "items": {
@@ -19990,10 +19737,28 @@
           "title": {
             "type": "string"
           },
+          "slug": {
+            "type": "string"
+          },
           "description": {
             "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "sort_key": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
-        }
+        },
+        "required": [
+          "title"
+        ]
       },
       "VideoLimits": {
         "type": "object",

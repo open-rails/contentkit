@@ -327,6 +327,9 @@ func newModel(fsys fs.FS, list []httpapi.Spec) (*model, error) {
 			if len(types) > 1 {
 				name = strings.ToUpper(pkgName(t)[:1]) + pkgName(t)[1:] + base
 			}
+			if pkgName(t) == "entities" && base == "Text" {
+				name = "EntitiesText"
+			}
 			if pkgName(t) == "discovery" && base == "Card" {
 				name = "Card"
 			}

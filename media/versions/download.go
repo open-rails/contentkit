@@ -819,14 +819,13 @@ func zipPages(k *media.Kind, z *media.Private, m *media.Manifest) ([]media.File,
 	return out, nil
 }
 
-// title is v's title (its own, else its content's in its language, else in
-// another), else its content's id, and its version code.
+// title is this version's localized title, then its original title, then
+// its content ID. A download never takes a sibling edition's title.
 func (s *Service) title(ctx context.Context, v version) (title, code string) {
-	_ = s.o.Pool.QueryRow(ctx, `SELECT COALESCE(NULLIF(vt.title, ''), ct.title, ''), cv.code FROM `+s.t.items+` c
-JOIN `+s.t.versions+` cv ON cv.tenant_id = c.tenant_id AND cv.id = $3
-LEFT JOIN `+pgxIdent(s.o.Schema, "content_text")+` ct ON ct.tenant_id = c.tenant_id AND ct.content_id = c.id
-LEFT JOIN `+pgxIdent(s.o.Schema, "content_version_text")+` vt ON vt.tenant_id = c.tenant_id AND vt.version_id = $3 AND vt.language = ct.language
-WHERE c.tenant_id = $1 AND c.id = $2 ORDER BY ct.language = $4 DESC, ct.language LIMIT 1`, s.o.Tenant, v.Content, v.Version, v.Language).Scan(&title, &code)
+	_ = s.o.Pool.QueryRow(ctx, `SELECT COALESCE(NULLIF(vt.title, ''), cv.original_title, ''), cv.code FROM `+s.t.versions+` cv
+LEFT JOIN `+pgxIdent(s.o.Schema, "content_version_text")+` vt ON vt.tenant_id = cv.tenant_id AND vt.version_id = cv.id
+WHERE cv.tenant_id = $1 AND cv.content_id = $2 AND cv.id = $3
+ORDER BY vt.language = $4 DESC NULLS LAST, vt.language LIMIT 1`, s.o.Tenant, v.Content, v.Version, v.Language).Scan(&title, &code)
 	if strings.TrimSpace(title) == "" {
 		title = v.Content
 	}

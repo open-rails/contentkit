@@ -1360,20 +1360,6 @@ func (c *Client) PostContentUnpublish(ctx context.Context, id string) (catalog.C
 	return out, err
 }
 
-// PutContentText is PUT /v1/contents/{id}/text/{language} (public). Sets a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
-func (c *Client) PutContentText(ctx context.Context, id string, language string, body catalog.Text) (catalog.Content, error) {
-	var out catalog.Content
-	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/text/{language}", "{id}", url.PathEscape(id), "{language}", url.PathEscape(language)), nil, body, &out)
-	return out, err
-}
-
-// DeleteContentText is DELETE /v1/contents/{id}/text/{language} (public). Removes a content item's text in one language. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
-func (c *Client) DeleteContentText(ctx context.Context, id string, language string) (catalog.Content, error) {
-	var out catalog.Content
-	err := c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/text/{language}", "{id}", url.PathEscape(id), "{language}", url.PathEscape(language)), nil, nil, &out)
-	return out, err
-}
-
 // PutContentCreators is PUT /v1/contents/{id}/creators (public). Replaces a content item's creators. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PutContentCreators(ctx context.Context, id string, body catalog.CreatorsInput) (catalog.Content, error) {
 	var out catalog.Content
@@ -1381,7 +1367,7 @@ func (c *Client) PutContentCreators(ctx context.Context, id string, body catalog
 	return out, err
 }
 
-// PostContentImages is POST /v1/contents/{id}/images (public). Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, and returns the reference to store in the body and a URL that shows it to the editor now. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
+// PostContentImages is POST /v1/contents/{id}/images (public). Returns a reference and editor preview for an inline image uploaded to the selected version. No sibling version is changed. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) PostContentImages(ctx context.Context, id string, body catalog.BodyImageInput) (catalog.InlineImage, error) {
 	var out catalog.InlineImage
 	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/images", "{id}", url.PathEscape(id)), nil, body, &out)
@@ -2388,13 +2374,6 @@ func (c *Client) GetContentVersionReader(ctx context.Context, id string, version
 // PutContentVersionReader is PUT /v1/contents/{id}/versions/{version}/reader (editor). Sets a version's reader metadata (editors and staff): anchors and audio cues on its pages and audio uploads.
 func (c *Client) PutContentVersionReader(ctx context.Context, id string, version string, body versions.ReaderMeta) error {
 	return c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{version}/reader", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, body, nil)
-}
-
-// PostContentVersionFork is POST /v1/contents/{id}/versions/{version}/fork (user). Fills a version without media from a sibling (editors): its uploads with their outputs, reader metadata and optionally its audio and segments, in a durable job.
-func (c *Client) PostContentVersionFork(ctx context.Context, id string, version string, body versions.ForkBody) (versions.Pending, error) {
-	var out versions.Pending
-	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/versions/{version}/fork", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, body, &out)
-	return out, err
 }
 
 // GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's for an already served file, or the existing archive transfer route's for a ZIP or internal original/rendition (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
