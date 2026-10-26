@@ -129,7 +129,7 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 		OriginalTitle: c.OriginalTitle, OriginalLanguage: c.OriginalLanguage, Comments: c.Comments, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes,
 		Creators: c.Creators, Text: c.Text, Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 	if c.OwnerEntity != nil {
-		if in.OwnerEntityID, err = r.ref(RecordEntity, *c.OwnerEntity); err != nil {
+		if in.ChannelID, err = r.ref(RecordEntity, *c.OwnerEntity); err != nil {
 			return nil, c.ExternalID, err
 		}
 	}

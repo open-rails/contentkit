@@ -210,7 +210,7 @@ func (s *Store) checkRuleEntities(ctx context.Context, q Querier, rules ...*acce
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := q.Query(ctx, `SELECT id, kind FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = ANY($2) AND state = 'active'`, s.tenant, ids)
+	rows, err := q.Query(ctx, `SELECT id, kind FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = ANY($2) AND state = 'active' AND kind='channel'`, s.tenant, ids)
 	if err != nil {
 		return err
 	}

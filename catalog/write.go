@@ -38,9 +38,9 @@ type ContentInput struct {
 	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions []string       `json:"restrictions,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"`
-	// OwnerEntityID is the home entity (a channel); its editors edit the item.
+	// ChannelID is the home entity (a channel); its editors edit the item.
 	// It never changes.
-	OwnerEntityID string `json:"owner_group_id,omitempty"`
+	ChannelID string `json:"channel_id,omitempty"`
 	// Creators nil credits the creating person as its author.
 	Creators *[]Creator `json:"creators,omitempty"`
 	// Versions: none gives the item one serving its text's languages (a
@@ -263,7 +263,7 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		if p.kind, err = s.kind(c.Kind); err != nil {
 			return nil, err
 		}
-		if p.OwnerEntityID, err = s.fixedOwner(ctx, s.pool, c.Kind, c.OwnerEntityID); err != nil {
+		if p.ChannelID, err = s.fixedOwner(ctx, s.pool, c.Kind, c.ChannelID); err != nil {
 			return nil, err
 		}
 		if p.OriginalTitle, p.OriginalLanguage, err = cleanOriginalTitle(p.OriginalTitle, p.OriginalLanguage); err != nil {
@@ -327,7 +327,7 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		if slices.ContainsFunc(p.versions, func(v VersionInput) bool { return v.Fork != nil }) {
 			return nil, invalid("a new item's versions have no sibling to fork")
 		}
-		owners = append(owners, p.OwnerEntityID)
+		owners = append(owners, p.ChannelID)
 		preps[i] = p
 	}
 	if err := s.authorizeCreate(ctx, s.pool, actor, owners); err != nil {
@@ -355,26 +355,26 @@ func (s *Store) createPreparedTx(ctx context.Context, tx pgx.Tx, actor access.Ac
 	for i, p := range preps {
 		// Revalidate under the write transaction: the configured channel may
 		// have been renamed or retired after PrepareCreate authorized it.
-		if _, err := s.fixedOwner(ctx, tx, p.Kind, p.OwnerEntityID); err != nil {
+		if _, err := s.fixedOwner(ctx, tx, p.Kind, p.ChannelID); err != nil {
 			return nil, err
 		}
 		if err := s.checkRuleEntities(ctx, tx, p.Access); err != nil {
 			return nil, err
 		}
-		if p.OwnerEntityID != "" {
+		if p.ChannelID != "" {
 			var ok bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = $2 AND state = 'active')`, s.tenant, p.OwnerEntityID).Scan(&ok); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = $2 AND state = 'active' AND kind='channel' AND auth_scope IS NOT NULL)`, s.tenant, p.ChannelID).Scan(&ok); err != nil {
 				return nil, err
 			}
 			if !ok {
-				return nil, invalid("owner group %s does not exist", p.OwnerEntityID)
+				return nil, invalid("owner group %s does not exist", p.ChannelID)
 			}
 		}
 		rule, _ := json.Marshal(p.Access)
 		attrs, _ := json.Marshal(p.Attributes)
 		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, original_title, original_language, access, restrictions, attributes, owner_entity_id, created_by, comments)
  VALUES ($1, $2, $3, nullif($4, ''), nullif($5, ''), $6, $7, $8, nullif($9, ''), nullif($10, ''), $11)`,
-			s.tenant, p.id, p.Kind, p.OriginalTitle, p.OriginalLanguage, rule, p.Restrictions, attrs, p.OwnerEntityID, viewerID(actor), p.Comments); err != nil {
+			s.tenant, p.id, p.Kind, p.OriginalTitle, p.OriginalLanguage, rule, p.Restrictions, attrs, p.ChannelID, viewerID(actor), p.Comments); err != nil {
 			return nil, err
 		}
 		if err := s.writeTexts(ctx, tx, p.id, p.Text, nil); err != nil {
@@ -1092,6 +1092,9 @@ type versionRow struct {
 }
 
 func (s *Store) versionRow(k kinds.Kind, kind string, v VersionInput, cur *versionRow) (versionRow, error) {
+	if k.Channel != nil && v.Access != nil {
+		return versionRow{}, invalid("channel content versions inherit their parent access rule")
+	}
 	var r versionRow
 	if cur != nil {
 		r = *cur

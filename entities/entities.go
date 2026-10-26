@@ -221,6 +221,7 @@ type OwnedContent interface {
 
 // Store is one tenant's entities.
 type Store struct {
+	channels    bool // private reserved-channel storage handle
 	pool        *pgxpool.Pool
 	tx          pgx.Tx
 	qs          string
@@ -263,6 +264,7 @@ func New(opts Options) (*Store, error) {
 	if err := opts.Kinds.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
+	opts.Kinds = opts.Kinds.StorageModel()
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
@@ -349,7 +351,7 @@ func mapPGError(err error) error {
 
 func (s *Store) entityKind(kind string) (kinds.EntityKind, error) {
 	gk, ok := s.cfg.EntityKinds[kind]
-	if !ok {
+	if !ok || (kind == "channel") != s.channels {
 		return gk, fmt.Errorf("%w: group kind %q is not configured", ErrInvalid, kind)
 	}
 	return gk, nil

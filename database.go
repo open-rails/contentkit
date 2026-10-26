@@ -118,15 +118,13 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, option
 		return err
 	}
 	for _, kind := range e.cfg.Content.Kinds {
-		if kind.OwnerEntity == nil {
+		if kind.Channel == nil || kind.Channel.Fixed == "" {
 			continue
 		}
 		if err := e.cfg.Content.Validate(); err != nil {
 			return err
 		}
-		if !e.cfg.Content.EntityKinds[kind.OwnerEntity.Kind].AuthScope {
-			continue
-		}
+
 		if opt.Scopes == nil {
 			return errors.New("contentkit: configured auth_scope owner requires MigrationOptions.Scopes")
 		}

@@ -33,6 +33,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
@@ -77,6 +78,7 @@ type Engine struct {
 	ownCH    clickhouse.Conn // opened from Config.ClickHouse
 	content  *content.Runtime
 	entities *entities.Store
+	channels *channels.Store
 	catalog  *catalog.Store
 	discover *discovery.Service
 	importer *importer.Service
@@ -419,11 +421,12 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	if e.entities, err = entities.New(opts); err != nil {
 		return err
 	}
+	e.channels = channels.FromStore(e.entities)
 	playable, err := e.playableKinds()
 	if err != nil {
 		return err
 	}
-	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities,
+	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
 		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences, PlayableKinds: playable,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
@@ -662,6 +665,9 @@ func (e *Engine) mount(deps Deps) error {
 	if e.modules[httpapi.Entities], err = e.entities.Handler(e.auth); err != nil {
 		return err
 	}
+	if e.modules[httpapi.Channels], err = e.channels.Handler(e.auth); err != nil {
+		return err
+	}
 	e.modules[httpapi.Contents] = e.catalog.Handler()
 	if err := e.mountDiscovery(deps); err != nil {
 		return err
@@ -697,7 +703,7 @@ func (e *Engine) mount(deps Deps) error {
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
-		Entities: e.entities, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
+		Entities: e.entities, Channels: e.channels, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
 		MeasuredEngagement: e.cfg.MeasuredEngagement, ActivityCohorts: e.cfg.ActivityCohorts}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if o.Candidates != nil && !e.hub.SignalsConfigured() {

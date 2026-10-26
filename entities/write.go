@@ -244,7 +244,7 @@ func (s *Store) checkLinks(ctx context.Context, q Querier, ids []string) error {
  UNION
  SELECT up.start, g.parent_id FROM up JOIN %[1]s g ON g.tenant_id = $1 AND g.id = up.id
  WHERE g.parent_id IS NOT NULL AND up.id <> up.start)
-SELECT coalesce((SELECT start FROM up WHERE id = start LIMIT 1), '')`, s.table("content_entities")), s.tenant, ids).Scan(&cycle)
+SELECT coalesce((SELECT start FROM up WHERE id = start LIMIT 1), '')`, s.table("content_entities"), s.domainPredicate("g")), s.tenant, ids).Scan(&cycle)
 	if err != nil {
 		return err
 	}
@@ -427,7 +427,7 @@ func (s *Store) insertText(ctx context.Context, q Querier, rows []textRow) error
 }
 
 func (s *Store) byIDs(ctx context.Context, q Querier, ids []string) (map[EntityID]Entity, error) {
-	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[])`, entityColumns, s.table("content_entities")), s.tenant, ids)
+	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) AND %s`, entityColumns, s.table("content_entities"), s.domainPredicate("g")), s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}

@@ -180,6 +180,7 @@ type AvatarsConfig struct {
 // and a host building its own worker gives it, with its hooks, to
 // media.NewRegistry.
 func (c Config) MediaKinds() (media.Config, error) {
+	c.Content = c.Content.StorageModel()
 	if c.Scope != nil && c.Media != nil && c.Media.LegacyLayout && (c.Avatars != nil || c.Accounts != nil && c.Accounts.Avatars != nil) {
 		return media.Config{}, errors.New("contentkit: rollback avatar workers require the saved legacy registry; the scoped engine resolves the account key at startup")
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
@@ -76,6 +77,7 @@ type Options struct {
 	// its Options.ContentChanged to Store.ContentChanged and its
 	// Options.NamesChanged to Store.EntitiesRenamed.
 	Entities Entities
+	Channels *channels.Store
 	// Body sanitizes text bodies; nil strips tags.
 	Body Sanitizer
 	// DeletedRetention: see DefaultDeletedRetention.
@@ -111,6 +113,7 @@ type Store struct {
 	guard           *gate.Gate
 	accessG         *access.Gate
 	entities        Entities
+	channels        *channels.Store
 	body            Sanitizer
 	media           *Media
 	publicationMu   sync.RWMutex
@@ -154,13 +157,14 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 	if err := opts.Kinds.Validate(); err != nil {
 		return nil, err
 	}
+	opts.Kinds = opts.Kinds.StorageModel()
 	if err := gate.Check(opts.Auth, access.ContentWrite, access.ContentViewRestricted); err != nil {
 		return nil, fmt.Errorf("catalog: Auth: %w", err)
 	}
 	s := &Store{
 		pool: opts.Pool, schema: opts.Schema, qs: pgx.Identifier{opts.Schema}.Sanitize(), tenant: opts.Tenant, cfg: opts.Kinds,
 		t:     catalogTables(opts.Schema),
-		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities,
+		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities, channels: opts.Channels,
 		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, afterPurge: opts.AfterPurge, documents: opts.DocumentsChanged, references: opts.References,
 		playable: slices.Sorted(slices.Values(opts.PlayableKinds)), now: opts.Now, log: opts.Logger,
 	}

@@ -36,17 +36,17 @@ type ImportContent struct {
 	OriginalTitle    *string
 	OriginalLanguage *string
 	// Comments is open (when empty), closed or hidden.
-	Comments      string
-	Access        *access.Rule
-	Restrictions  []string
-	Attributes    map[string]any
-	OwnerEntityID string
-	Creators      []Creator
-	Text          map[string]Text
-	Versions      []ImportVersion
-	Code          string
-	CreatedAt     *time.Time
-	UpdatedAt     *time.Time
+	Comments     string
+	Access       *access.Rule
+	Restrictions []string
+	Attributes   map[string]any
+	ChannelID    string
+	Creators     []Creator
+	Text         map[string]Text
+	Versions     []ImportVersion
+	Code         string
+	CreatedAt    *time.Time
+	UpdatedAt    *time.Time
 }
 
 // ImportVersion is one version of an ImportContent, positioned as listed.
@@ -97,7 +97,7 @@ type importItemRow struct {
 	Access           json.RawMessage `json:"access"`
 	Restrictions     []string        `json:"restrictions"`
 	Attributes       map[string]any  `json:"attributes"`
-	OwnerEntityID    *string         `json:"owner_entity_id"`
+	ChannelID        *string         `json:"owner_entity_id"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
@@ -183,11 +183,11 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 		if err := s.checkImport(ctx, &in[i]); err != nil {
 			return err
 		}
-		owner, err := s.fixedOwner(ctx, tx, in[i].Kind, in[i].OwnerEntityID)
+		owner, err := s.fixedOwner(ctx, tx, in[i].Kind, in[i].ChannelID)
 		if err != nil {
 			return err
 		}
-		in[i].OwnerEntityID = owner
+		in[i].ChannelID = owner
 		if slices.Contains(ids, in[i].ID) {
 			return invalid("content %s is imported twice", in[i].ID)
 		}
@@ -316,9 +316,9 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 		row.PublishAt, row.PublishedAt, row.DeletedAt = importTimes(c.State, c.PublishAt, c.PublishedAt, c.DeletedAt, oldp, now)
 		row.Access, _ = json.Marshal(c.Access)
 		rules = append(rules, c.Access)
-		if c.OwnerEntityID != "" {
-			row.OwnerEntityID = &c.OwnerEntityID
-			owners = append(owners, c.OwnerEntityID)
+		if c.ChannelID != "" {
+			row.ChannelID = &c.ChannelID
+			owners = append(owners, c.ChannelID)
 		}
 		row.CreatedAt, row.UpdatedAt = importStamps(c.CreatedAt, c.UpdatedAt, oldp, now)
 		b.items = append(b.items, row)
@@ -707,8 +707,8 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 			return invalid("%v", err)
 		}
 	}
-	if c.OwnerEntityID != "" {
-		if err := contentref.ValidateID(c.OwnerEntityID); err != nil {
+	if c.ChannelID != "" {
+		if err := contentref.ValidateID(c.ChannelID); err != nil {
 			return invalid("owner group: %v", err)
 		}
 	}

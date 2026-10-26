@@ -32,6 +32,8 @@ type Config struct {
 	ContentFilters ContentFilters        `json:"content_filters,omitempty" yaml:"content_filters"`
 	Kinds          map[string]Kind       `json:"content_kinds" yaml:"content_kinds"`
 	EntityKinds    map[string]EntityKind `json:"entity_kinds,omitempty" yaml:"entity_kinds"`
+	Channels       *Channels             `json:"channels,omitempty" yaml:"channels"`
+	channelStorage bool
 }
 
 // ContentFilters is one app's shared entity-filter policy. Filters apply to
@@ -148,11 +150,8 @@ type Kind struct {
 	// Entities are the entity kinds content of this kind may join.
 	Entities   []string             `json:"entities,omitempty" yaml:"entities"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
-	// OwnerEntity fixes this kind to one site-owned channel, resolved by kind
-	// and slug in the current app. Permissions and access are configured separately.
-	// The referenced channel must be provisioned explicitly before writes.
-	// Omitted preserves caller-selected ownership, including creator channels.
-	OwnerEntity *EntityRef `json:"owner_entity,omitempty" yaml:"owner_entity"`
+	// Channel declares the one channel governing the overall item and all versions.
+	Channel *ChannelPolicy `json:"channel,omitempty" yaml:"channel"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
 	// Locked is what a viewer who does not open its content sees of it;
@@ -433,6 +432,9 @@ func (c Config) Validate() error {
 		return nil
 	}
 	for name, gk := range c.EntityKinds {
+		if name == "channel" && !c.channelStorage {
+			return fmt.Errorf("%w: channel is configured through channels, not entity_kinds", ErrInvalid)
+		}
 		if !identRE.MatchString(name) {
 			return fmt.Errorf("%w: group kind %q", ErrInvalid, name)
 		}
@@ -476,6 +478,27 @@ func (c Config) Validate() error {
 		}
 		if err := validateAttributes("group kind "+name, gk.Attributes); err != nil {
 			return err
+		}
+	}
+	if ch := c.Channels; ch != nil {
+		if ch.Creation != "staff" && ch.Creation != "users" {
+			return fmt.Errorf("%w: channels.creation must be staff or users", ErrInvalid)
+		}
+		if !c.channelStorage {
+			if err := route("channels", ch.Route); err != nil {
+				return err
+			}
+		}
+		if ch.MaxPerOwner < 0 || ch.MaxPerOwner > 0 && ch.Creation != "users" {
+			return fmt.Errorf("%w: channels.max_per_owner requires users creation", ErrInvalid)
+		}
+		if u := ch.Uploads; u.FilesPerHour < 0 || u.BytesPerDay < 0 || u.QuotaBytes < 0 {
+			return fmt.Errorf("%w: channel upload limits must be nonnegative", ErrInvalid)
+		}
+		for _, name := range ch.Entities {
+			if _, ok := c.EntityKinds[name]; !ok || name == "channel" {
+				return fmt.Errorf("%w: unknown channel metadata kind %q", ErrInvalid, name)
+			}
 		}
 	}
 	for name, k := range c.Kinds {
@@ -530,11 +553,18 @@ func (c Config) Validate() error {
 				return fmt.Errorf("%w: kind %s names unknown group kind %q", ErrInvalid, name, g)
 			}
 		}
-		if ref := k.OwnerEntity; ref != nil {
-			owner, ok := c.EntityKinds[ref.Kind]
-			if !ok || strings.TrimSpace(ref.Slug) == "" || strings.TrimSpace(ref.Slug) != ref.Slug ||
-				owner.Owner == "user" || owner.ScopedBy != "" {
-				return fmt.Errorf("%w: kind %s owner_entity must name an unscoped site-owned entity", ErrInvalid, name)
+		if policy := k.Channel; policy != nil {
+			if c.Channels == nil {
+				return fmt.Errorf("%w: kind %s uses channels without channels configuration", ErrInvalid, name)
+			}
+			if policy.Fixed != "" && (strings.TrimSpace(policy.Fixed) != policy.Fixed || !routeRE.MatchString(policy.Fixed)) {
+				return fmt.Errorf("%w: kind %s has invalid fixed channel slug", ErrInvalid, name)
+			}
+			if policy.Fixed != "" && c.Channels.Creation == "users" {
+				return fmt.Errorf("%w: fixed channels require staff creation", ErrInvalid)
+			}
+			if k.AccessScope == AccessVersion {
+				return fmt.Errorf("%w: channel content uses parent-level access", ErrInvalid)
 			}
 		}
 		if e := k.PathEntity; e != "" && (!slices.Contains(k.Entities, e) || !c.EntityKinds[e].AllowsMembership(ContentScope)) {
