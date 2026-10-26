@@ -133,7 +133,7 @@ var routes = []httpapi.Route[handler]{
 				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams, []httpapi.Param{numberedPage}),
 		Responses: []httpapi.Reply{httpapi.OK(SearchPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
-		Doc: "Completes literal own title and entity-name/alias substrings while the reader types, with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
+		Doc: "Completes literal own title and entity-name/alias substrings while the reader types (name prefixes only under three characters), with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the partial query"), httpapi.Text("kind", "only contents of this kind"),
 			httpapi.List("entity_kinds", "the group kinds suggested; every kind with a page by default")}, readerParams,
 			[]httpapi.Param{httpapi.Int("limit", "per section: 8 by default, at most 20")}),

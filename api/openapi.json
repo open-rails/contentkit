@@ -9824,7 +9824,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Completes literal own title and entity-name/alias substrings while the reader types, with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
+        "summary": "Completes literal own title and entity-name/alias substrings while the reader types (name prefixes only under three characters), with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
         "parameters": [
           {
             "name": "q",
