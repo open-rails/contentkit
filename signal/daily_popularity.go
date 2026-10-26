@@ -38,6 +38,11 @@ func (st *Store) PrepareDailyPopularity(ctx context.Context, tenant, kind string
 		return report, nil
 	}
 	from, until := utcDay(availability.From), utcDay(availability.Until)
+	// Coverage begins at the first fully instrumented UTC day. This does not
+	// discard partial content launch days inside the trusted history.
+	if availability.From.After(from) {
+		from = from.AddDate(0, 0, 1)
+	}
 	if availability.Until.After(until) {
 		until = until.AddDate(0, 0, 1)
 	}
@@ -206,6 +211,36 @@ func (st *Store) insertPopularityDay(ctx context.Context, tenant, kind string, s
 		return fmt.Errorf("signal: prepare popularity day %s: %w", day.Format(time.DateOnly), err)
 	}
 	return nil
+}
+
+// DailyPopularityCoverage reads the actual prepared date range, including
+// checkpointed empty days. Until is exclusive; today's row is provisional.
+// Preparation walks days in order, so a failed first build exposes only its
+// completed prefix instead of claiming the requested full history.
+func (st *Store) DailyPopularityCoverage(ctx context.Context, tenant, kind string, scope ActivityScope) (Window, bool, error) {
+	if err := dailyPopularityScope(tenant, kind, scope); err != nil {
+		return Window{}, false, err
+	}
+	rows, err := st.conn.Query(ctx, `SELECT count(),min(day),max(day) FROM `+st.db+`.popularity_daily_prepared
+ WHERE tenant=? AND content_kind=? AND domain=? AND language=?`, tenant, kind, scope.Domain, scope.Language)
+	if err != nil {
+		return Window{}, false, fmt.Errorf("signal: daily popularity coverage: %w", err)
+	}
+	defer rows.Close()
+	var count uint64
+	var from, last time.Time
+	if rows.Next() {
+		if err := rows.Scan(&count, &from, &last); err != nil {
+			return Window{}, false, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Window{}, false, err
+	}
+	if count == 0 {
+		return Window{}, false, nil
+	}
+	return Between(utcDay(from), utcDay(last).AddDate(0, 0, 1)), true, nil
 }
 
 // DailyPopular reads only prepared anonymous day rows. Available days with no

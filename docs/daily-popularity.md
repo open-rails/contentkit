@@ -20,12 +20,16 @@ audience public; otherwise the available tiers are unioned. A person observed
 with any matching eligible tier at any time that UTC day belongs to the day's
 eligible audience. Public days include every observed active person. This
 deliberate whole-day model does not reconstruct noon access transitions. Unknown
-group/PPV audience sizes are not invented. Instrumentation coverage still bounds
-the history that can be prepared.
+group/PPV audience sizes are not invented. Instrumentation coverage bounds the history that can be prepared. The first
+trustworthy date is the first full UTC day after both catalog and population
+instrumentation began; an earlier partial instrumentation day is excluded.
 
 The existing worker calls `popularity.Prepare` once per kind/scope for its due
-bucket windows, then `Rank` reads only the daily scalars. Overlapping buckets
-share the prepared days. Today and yesterday remain provisional because activity
+history through the refresh-cycle time, then `Rank` reads only the daily
+scalars. Overlapping presets and arbitrary reader-chosen whole-day ranges share
+those prepared days. `DailyPopularityCoverage` exposes actual completed day
+checkpoints, including empty days; requests before or after that range are
+unavailable instead of silently clipped. A request never prepares raw data. Today and yesterday remain provisional because activity
 receipts are valid for 24 hours. A day gets one final calculation after its end
 plus that reporting window; a worker restart cannot leave an earlier provisional
 calculation permanently frozen. Finalized days are reused indefinitely.
@@ -41,3 +45,7 @@ Daily rows contain anonymous counts, not subjects. Account erasure continues to
 fence and remove canonical/per-subject state; historical anonymous counts may
 remain. Explicit rebuild honors those fences, and normal provisional refresh
 excludes erased subjects. Aggregate retention is independent of raw erasure.
+
+Purging a whole content item removes its daily scalar rows. Purging an edition
+keeps the work aggregate for its remaining editions. Purging a kind removes its
+aggregate rows and preparation checkpoints.

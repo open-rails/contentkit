@@ -764,13 +764,14 @@
     {
       "id": "CK-J07-S17",
       "journey": "CK-J07",
-      "behavior": "A ranking split by reader counts every reader exactly once",
+      "behavior": "Daily popularity counts each qualified person once per work and available UTC day",
       "status": "verified",
       "evidence": [
-        "A work with 25,000 readers, more than one batch holds, ranks with exactly 25,000 of 50,000 eligible readers, and a ten-reader work in another batch with exactly ten."
+        "A 25,000-reader work and a ten-reader work share exactly 50,000 eligible readers; six available zero-reader days remain in the seven-day mean. Canonical receipt revisions, edition deduplication, public/tier daily unions, finalization, explicit rebuild, erasure and purge boundaries are covered with real ClickHouse."
       ],
       "cases": [
-        "TestPopularRankingSplitsReadersExactly"
+        "TestDailyPopularityCountsReadersExactly",
+        "TestDailyParticipationPreparation"
       ]
     },
     {

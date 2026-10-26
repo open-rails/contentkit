@@ -64,7 +64,7 @@ func TestDailyParticipationPreparation(t *testing.T) {
 	}
 	assertRows := func(wantPublic uint64) {
 		t.Helper()
-		rows, err := a.deps.ClickHouse.Query(t.Context(), `SELECT content_id,day,readers,eligible FROM `+a.cfg.ClickHouse.Database+`.popularity_daily FINAL WHERE tenant=? ORDER BY content_id,day`, tenant)
+		rows, err := a.deps.ClickHouse.Query(t.Context(), `SELECT content_id,day,readers,eligible FROM `+a.cfg.ClickHouse.Database+`.popularity_daily FINAL WHERE tenant=? AND domain=? ORDER BY content_id,day`, tenant, scope.Domain)
 		must(t, err)
 		count := 0
 		for rows.Next() {
@@ -92,6 +92,26 @@ func TestDailyParticipationPreparation(t *testing.T) {
 		}
 	}
 	assertRows(2)
+	covered, known, err := store.DailyPopularityCoverage(t.Context(), tenant, "article", scope)
+	must(t, err)
+	if !known || !covered.From.Equal(day) || !covered.To.Equal(end) {
+		t.Fatalf("prepared coverage=%+v known=%v", covered, known)
+	}
+	// The first partially instrumented day is unavailable, while a partial
+	// content launch inside known history still counts in the assertion above.
+	partial := availability
+	partial.From = day.Add(12 * time.Hour)
+	partialScope := signal.ActivityScope{Domain: "partial", Language: "en"}
+	report, err = store.PrepareDailyPopularity(t.Context(), tenant, "article", partial, partialScope, false)
+	must(t, err)
+	if report.Prepared != 1 {
+		t.Fatalf("partial instrumentation included: %+v", report)
+	}
+	covered, known, err = store.DailyPopularityCoverage(t.Context(), tenant, "article", partialScope)
+	must(t, err)
+	if !known || !covered.From.Equal(day.AddDate(0, 0, 1)) || !covered.To.Equal(end) {
+		t.Fatalf("partial instrumentation coverage=%+v known=%v", covered, known)
+	}
 	hits, err := store.DailyPopular(t.Context(), tenant, "article", signal.Between(day, end), scope, 10)
 	must(t, err)
 	if len(hits) != 2 || hits[0].ContentID != premium.ContentID || math.Abs(hits[0].Score-2./22) > 1e-12 || math.Abs(hits[1].Score-(2./24)/2) > 1e-12 {
@@ -133,7 +153,7 @@ func TestDailyParticipationPreparation(t *testing.T) {
 	must(t, err)
 	_, err = store.PrepareDailyPopularity(t.Context(), tenant, "article", availability, scope, true)
 	must(t, err)
-	rows, err := a.deps.ClickHouse.Query(t.Context(), `SELECT readers,eligible FROM `+a.cfg.ClickHouse.Database+`.popularity_daily FINAL WHERE tenant=? AND content_id=? AND day=?`, tenant, public.ContentID, day)
+	rows, err := a.deps.ClickHouse.Query(t.Context(), `SELECT readers,eligible FROM `+a.cfg.ClickHouse.Database+`.popularity_daily FINAL WHERE tenant=? AND domain=? AND content_id=? AND day=?`, tenant, scope.Domain, public.ContentID, day)
 	must(t, err)
 	if !rows.Next() {
 		t.Fatal("rebuilt day missing")
@@ -155,4 +175,36 @@ func TestDailyParticipationPreparation(t *testing.T) {
 	if report.Reused != 1 || report.Prepared != 0 {
 		t.Fatalf("empty day recomputed: %+v", report)
 	}
+	// Edition purge preserves its work-level aggregate; full work/kind purge
+	// removes the anonymous rows without changing account-erasure semantics.
+	must(t, store.ForgetContents(t.Context(), tenant, []signal.ForgottenContent{{Kind: "article", ContentID: public.ContentID, VersionID: public.Version()}}))
+	countDaily := func() uint64 {
+		t.Helper()
+		rows, err := a.deps.ClickHouse.Query(t.Context(), `SELECT count() FROM `+a.cfg.ClickHouse.Database+`.popularity_daily FINAL WHERE tenant=? AND domain=?`, tenant, scope.Domain)
+		must(t, err)
+		defer rows.Close()
+		if !rows.Next() {
+			t.Fatal("missing daily count")
+		}
+		var count uint64
+		must(t, rows.Scan(&count))
+		return count
+	}
+	if got := countDaily(); got != 3 {
+		t.Fatalf("edition purge removed daily work: %d rows", got)
+	}
+	must(t, store.ForgetContents(t.Context(), tenant, []signal.ForgottenContent{{Kind: "article", ContentID: public.ContentID}}))
+	if got := countDaily(); got != 1 {
+		t.Fatalf("work purge kept daily rows: %d", got)
+	}
+	must(t, store.PurgeContentKinds(t.Context(), tenant, []string{"article"}))
+	if got := countDaily(); got != 0 {
+		t.Fatalf("kind purge kept daily rows: %d", got)
+	}
+	_, known, err = store.DailyPopularityCoverage(t.Context(), tenant, "article", scope)
+	must(t, err)
+	if known {
+		t.Fatal("kind purge kept preparation coverage")
+	}
+
 }

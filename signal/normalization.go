@@ -58,38 +58,3 @@ type Availability struct {
 	Until     time.Time
 	Known     bool
 }
-
-// NormalizationPriors smooth the quality observations within each access
-// interval. They carry no reach weighting; PriorWeight controls that separately.
-type NormalizationPriors struct {
-	Engagement       float64
-	EngagementWeight float64
-	Completion       float64
-	CompletionWeight float64
-	Approval         float64
-	ApprovalWeight   float64
-	RevisitWeight    float64
-}
-
-// NormalizationOptions select event-time audience normalization. The named v2
-// policy adds twenty pseudo-eligible nonreaders, a ranking heuristic rather than
-// a confidence interval.
-type NormalizationOptions struct {
-	Availability Availability
-	Scope        ActivityScope
-	PriorWeight  float64
-	Quality      NormalizationPriors
-}
-
-// NormalizationMetrics preserve the raw participation rate and the separate
-// quality contributions. Each quality term already includes the segment's
-// smoothed participation rate and duration weight, so differently sized free
-// and premium audiences cannot drown one another when a work changes access.
-type NormalizationMetrics struct {
-	RawRate    float64 `json:"raw_rate"`
-	Rate       float64 `json:"rate"`
-	Engagement float64 `json:"engagement"`
-	Completion float64 `json:"completion"`
-	Approval   float64 `json:"approval"`
-	Revisit    float64 `json:"revisit"`
-}

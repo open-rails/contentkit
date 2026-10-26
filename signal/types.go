@@ -462,25 +462,11 @@ func utcDay(t time.Time) time.Time {
 	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// PopularOptions controls Popular reads.
-type PopularOptions struct {
-	Window Window
-	Limit  int // default 20
-	// RankExpr is the policy's trusted ClickHouse expression over the
-	// normalized metric columns: normalized_rate, normalized_engagement,
-	// normalized_completion, normalized_approval, normalized_revisit.
-	RankExpr string
-	// Normalization supplies the trusted catalog availability intervals and
-	// reader scope the ranking normalizes by.
-	Normalization *NormalizationOptions
-}
-
-// PopularHit is one ranked work from Popular. Only works with at least one
-// qualified reader in the window rank; version rows never rank.
+// PopularHit is one ranked work from prepared daily participation. Only works
+// with at least one qualified reader in the window rank; editions never rank.
 type PopularHit struct {
 	ContentRef
-	Score         float64
-	Normalization NormalizationMetrics
+	Score float64
 }
 
 // CoEngagedOptions controls co-engagement queries ("subjects who engaged with
