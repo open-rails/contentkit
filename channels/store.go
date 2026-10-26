@@ -138,7 +138,7 @@ func (s *Store) get(ctx context.Context, id, language string, management bool) (
 
 func (s *Store) Create(ctx context.Context, in Input) (Channel, error) {
 	out, err := s.storage.CreateEntities(ctx, []entities.EntityInput{{Kind: "channel", Slug: in.Slug, Names: in.Names, Text: in.Text, Cover: in.Cover, Avatar: in.Avatar}})
-	if errors.Is(err, entities.ErrConflict) {
+	if errors.Is(err, entities.ErrConflict) || errors.Is(err, entities.ErrLimit) {
 		page, lookupErr := s.storage.List(ctx, entities.ListOptions{Kind: "channel", Slug: strings.TrimSpace(in.Slug), Limit: 2})
 		if lookupErr != nil {
 			return Channel{}, lookupErr
