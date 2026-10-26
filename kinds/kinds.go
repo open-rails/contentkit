@@ -474,7 +474,7 @@ func (c Config) Validate() error {
 		if gk.MaxPerOwner < 0 || gk.MaxPerOwner > 0 && gk.Owner != "user" {
 			return fmt.Errorf("%w: group kind %s: max_per_owner is a non-negative cap of user-owned groups", ErrInvalid, name)
 		}
-		if u := gk.Uploads; u.FilesPerHour < 0 || u.BytesPerDay < 0 || u.QuotaBytes < 0 || u != (UploadLimits{}) && gk.Owner != "user" {
+		if u := gk.Uploads; u.FilesPerHour < 0 || u.BytesPerDay < 0 || u.QuotaBytes < 0 || u != (UploadLimits{}) && gk.Owner != "user" && name != "channel" {
 			return fmt.Errorf("%w: group kind %s: uploads are non-negative limits of user-owned groups", ErrInvalid, name)
 		}
 		for _, r := range gk.Roles {

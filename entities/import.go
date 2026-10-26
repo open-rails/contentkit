@@ -185,7 +185,7 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
  ORDER BY r.ordinal
  ON CONFLICT (tenant_id, id) DO UPDATE SET slug = EXCLUDED.slug, internal = EXCLUDED.internal, scope_id = EXCLUDED.scope_id, parent_id = EXCLUDED.parent_id, state = EXCLUDED.state,
   attributes = EXCLUDED.attributes, cover = CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END,
-  avatar = EXCLUDED.avatar, owner_user_id = EXCLUDED.owner_user_id, auth_scope = coalesce(EXCLUDED.auth_scope, g.auth_scope),
+  avatar = EXCLUDED.avatar, owner_user_id = EXCLUDED.owner_user_id, auth_scope = CASE WHEN g.kind='channel' AND g.state IS DISTINCT FROM EXCLUDED.state THEN NULL ELSE coalesce(EXCLUDED.auth_scope,g.auth_scope) END,
   created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, revision = g.revision + 1
  WHERE (g.slug, g.internal, g.scope_id, g.parent_id, g.state, g.attributes, g.avatar, g.owner_user_id, g.auth_scope, g.created_at, g.cover)
   IS DISTINCT FROM (EXCLUDED.slug, EXCLUDED.internal, EXCLUDED.scope_id, EXCLUDED.parent_id, EXCLUDED.state, EXCLUDED.attributes, EXCLUDED.avatar, EXCLUDED.owner_user_id,
