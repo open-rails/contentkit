@@ -2,10 +2,13 @@ package critical_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/kinds"
 )
 
 // These are the approved public value contracts used in deployment files.
@@ -83,4 +86,83 @@ func TestPublicScopeValues(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Content model files distinguish content types from associated entity types.
+// The Go field remains Kinds; the discovery HTTP model has its own wire shape.
+func TestPublicContentKindsConfig(t *testing.T) {
+	model := kinds.Config{
+		Languages: []string{"en"},
+		Kinds: map[string]kinds.Kind{"blog": {
+			Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"},
+			OwnerEntity: &kinds.EntityRef{Kind: "channel", Slug: "blog"},
+		}},
+		EntityKinds: map[string]kinds.EntityKind{"channel": {Owner: "site"}},
+	}
+	must(t, model.Validate())
+	if _, routed := model.Routes()["channel"]; routed {
+		t.Fatal("internal blog ownership needs no public channel route")
+	}
+	for name, codec := range map[string]struct {
+		marshal   func(any) ([]byte, error)
+		unmarshal func([]byte, any) error
+	}{
+		"json": {json.Marshal, json.Unmarshal},
+		"yaml": {yaml.Marshal, yaml.Unmarshal},
+	} {
+		t.Run(name+"_round_trip", func(t *testing.T) {
+			encoded, err := codec.marshal(model)
+			must(t, err)
+			var fields map[string]any
+			must(t, codec.unmarshal(encoded, &fields))
+			if fields["content_kinds"] == nil || fields["entity_kinds"] == nil {
+				t.Fatalf("missing explicit kind families: %s", encoded)
+			}
+			if _, old := fields["kinds"]; old {
+				t.Fatalf("retired config key emitted: %s", encoded)
+			}
+			var decoded kinds.Config
+			must(t, codec.unmarshal(encoded, &decoded))
+			must(t, decoded.Validate())
+			// YAML normalizes omitted nil collections to empty collections; their
+			// configured representation must remain stable, not their Go allocation.
+			roundTrip, err := codec.marshal(decoded)
+			must(t, err)
+			if string(roundTrip) != string(encoded) {
+				t.Fatal("content model changed during configuration round trip")
+			}
+		})
+		for _, both := range []bool{false, true} {
+			label := "_reject_old_key"
+			if both {
+				label = "_reject_both_keys"
+			}
+			t.Run(name+label, func(t *testing.T) {
+				encoded, err := codec.marshal(model)
+				must(t, err)
+				var fields map[string]any
+				must(t, codec.unmarshal(encoded, &fields))
+				fields["kinds"] = fields["content_kinds"]
+				if !both {
+					delete(fields, "content_kinds")
+				}
+				bad, err := codec.marshal(fields)
+				must(t, err)
+				unchanged := model
+				if err := codec.unmarshal(bad, &unchanged); err == nil {
+					t.Fatal("retired kinds config silently accepted")
+				}
+				if !reflect.DeepEqual(unchanged, model) {
+					t.Fatal("rejected configuration changed the existing model")
+				}
+				// A permissive host wrapper must not bypass the model's strict decoder.
+				wrapped, err := codec.marshal(map[string]any{"content": fields})
+				must(t, err)
+				var host ck.Config
+				if err := codec.unmarshal(wrapped, &host); err == nil {
+					t.Fatal("host wrapper accepted the retired config key")
+				}
+			})
+		}
+	}
 }

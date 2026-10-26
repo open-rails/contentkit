@@ -239,7 +239,7 @@ The same boundary applies to embedded and HTTP deployments.
 A subscription-only app can restrict its content model to free and tier access:
 
 ```yaml
-kinds:
+content_kinds:
   gallery:
     # Other kind settings omitted.
     access_levels: [public, tier]
