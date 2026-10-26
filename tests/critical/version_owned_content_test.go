@@ -74,6 +74,14 @@ func TestVersionOwnedContent(t *testing.T) {
 	defer server.Close()
 	admin, public := engine.Client(), ck.NewClient(server.URL+"/content", nil)
 	must(engine.Start(ctx))
+	diagnose := func(id string) {
+		t.Helper()
+		for _, table := range []string{"content_versions", "content_publication_requests", "content_search_documents", "content_search_dirty", "content_search_invalid"} {
+			var rows string
+			err := pool.QueryRow(ctx, "SELECT coalesce(jsonb_agg(to_jsonb(t)),'[]'::jsonb)::text FROM "+pgx.Identifier{schema, table}.Sanitize()+" t WHERE content_id=$1", id).Scan(&rows)
+			t.Logf("%s: %s (%v)", table, rows, err)
+		}
+	}
 	create := func(kind, language, title, body string) catalog.Content {
 		t.Helper()
 		item, err := admin.PostContents(ctx, catalog.ContentInput{Kind: kind, Versions: []catalog.VersionInput{{Languages: []string{language}, Text: map[string]catalog.VersionText{language: {Title: title, Description: "Summary " + language, Body: body}}}}})
@@ -86,12 +94,20 @@ func TestVersionOwnedContent(t *testing.T) {
 		must(err)
 		until := time.Now().Add(20 * time.Second)
 		for time.Now().Before(until) {
-			got, err := public.GetContent(ctx, item.ID, ck.GetContentQuery{})
-			if err == nil && got.Live {
+			// Publication is per edition; an already-live default edition does
+			// not prove that a newly authored sibling has finished releasing.
+			got, err := admin.GetContent(ctx, item.ID, ck.GetContentQuery{})
+			must(err)
+			ready := len(got.Versions) > 0
+			for _, version := range got.Versions {
+				ready = ready && version.Live
+			}
+			if ready {
 				return got
 			}
 			time.Sleep(30 * time.Millisecond)
 		}
+		diagnose(item.ID)
 		t.Fatal("version publication did not complete")
 		return catalog.Content{}
 	}
@@ -131,6 +147,7 @@ func TestVersionOwnedContent(t *testing.T) {
 			page, err := public.GetContents(ctx, ck.GetContentsQuery{Kind: "post", Language: test.lang, DisplayLanguage: test.lang})
 			must(err)
 			if len(page.Contents) != 1 || page.Contents[0].Title != test.title || page.Contents[0].Excerpt != test.summary {
+				diagnose(item.ID)
 				t.Fatalf("wrong language card: %+v", page)
 			}
 		}
@@ -168,7 +185,9 @@ func TestVersionOwnedContent(t *testing.T) {
 		}})
 		must(err)
 		publish(searchable)
-		deadline := time.Now().Add(15 * time.Second)
+		// The existing search worker coalesces immediate updates and retains
+		// a 30-second backstop for a write that races a running sync.
+		deadline := time.Now().Add(45 * time.Second)
 		indexed := false
 		for time.Now().Before(deadline) {
 			var n int
@@ -180,6 +199,7 @@ func TestVersionOwnedContent(t *testing.T) {
 			time.Sleep(40 * time.Millisecond)
 		}
 		if !indexed {
+			diagnose(searchable.ID)
 			t.Fatal("version documents did not become searchable")
 		}
 		includeSummary := true
@@ -226,7 +246,7 @@ func TestVersionOwnedContent(t *testing.T) {
 		must(err)
 		waitKeyword := func(word string) {
 			t.Helper()
-			until := time.Now().Add(15 * time.Second)
+			until := time.Now().Add(45 * time.Second)
 			for time.Now().Before(until) {
 				page, err := public.GetSearch(ctx, ck.GetSearchQuery{Q: word, Kind: "post", Language: "en", Mode: "hide"})
 				must(err)
@@ -235,6 +255,7 @@ func TestVersionOwnedContent(t *testing.T) {
 				}
 				time.Sleep(40 * time.Millisecond)
 			}
+			diagnose(searchable.ID)
 			t.Fatal("edition-specific metadata did not select its own version: " + word)
 		}
 		waitKeyword("EditionMetadataNeedle")
