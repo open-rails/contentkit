@@ -18,30 +18,6 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// PublishDue catches up retained audience-release facts. Publication itself is
-// completed only by the durable publisher after its storage effects succeed.
-func (s *Store) PublishDue(ctx context.Context) (int, error) {
-	total := 0
-	deadline := time.Now().Add(purgeBudget)
-	for {
-		n, err := s.publishTextDue(ctx)
-		total += n
-		if err != nil {
-			return total, err
-		}
-		if n < 200 || time.Now().After(deadline) {
-			break
-		}
-	}
-	for {
-		n, err := s.recordDueReleases(ctx)
-		total += n
-		if err != nil || n < releaseBatch || time.Now().After(deadline) {
-			return total, err
-		}
-	}
-}
-
 // ReconcileFacets explicitly refreshes every item's facets and search-document
 // marks from current catalog state, recording the current access snapshot.
 // Use it to repair stale projections after upgrading a writer; ordinary
@@ -508,18 +484,6 @@ const Queue = "contentkit_catalog"
 // QueueFor isolates workers bound to different catalog/application scopes.
 func QueueFor(catalog string) string { return jobqueue.For(Queue, catalog) }
 
-type publishDueArgs struct {
-	Content string    `json:"content,omitempty"`
-	Version string    `json:"version,omitempty"`
-	Due     time.Time `json:"due,omitempty"`
-}
-
-func (publishDueArgs) Kind() string { return "contentkit_content_publish_due" }
-
-// KindAliases preserve queued jobs from before the content terminology change.
-// Remove these aliases once those jobs and their retries have drained.
-func (publishDueArgs) KindAliases() []string { return []string{"contentkit_catalog_publish_due"} }
-
 type purgeDeletedArgs struct{}
 
 func (purgeDeletedArgs) Kind() string          { return "contentkit_content_purge_deleted" }
@@ -538,10 +502,8 @@ func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
 	return err
 }
 
-// RiverJobs contributes content's periodic jobs to the engine's River
-// client: retained audience-release facts (every 5m), event log retention
-// and permanent purging of deleted content (4h). Actual publication is owned
-// by durable per-request work; this periodic recorder never activates files.
+// RiverJobs contributes retention and permanent deletion work. Publication
+// belongs to the version release service and has no recurring catalog sweep.
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-content", func(_ context.Context, cfg *river.Config) error {
 		queue := QueueFor(s.tenant)
@@ -557,32 +519,16 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 				return args, &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: unique}
 			}, &river.PeriodicJobOpts{ID: jobqueue.For(id, s.tenant), RunOnStart: true})
 		}
-		for _, add := range []func() error{
-			func() error { return river.AddWorkerSafely(cfg.Workers, &jobWorker[publishDueArgs]{run: s.PublishDue}) },
-			func() error {
-				return river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted, timeout: 15 * time.Minute})
-			},
-		} {
-			if err := add(); err != nil {
-				return err
-			}
+		if err := river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted, timeout: 15 * time.Minute}); err != nil {
+			return err
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,
-			periodic("contentkit_content_publish_due", 5*time.Minute, publishDueArgs{}),
 			periodic("contentkit_content_purge_deleted", 4*time.Hour, purgeDeletedArgs{}))
 		return nil
 	}, func(_ context.Context, binding riverhelpers.Binding) error {
 		if binding.Pool != s.pool {
 			return errors.New("catalog: River must use the catalog pool")
 		}
-		s.publicationMu.Lock()
-		s.publicationJobs = binding.Client
-		s.publicationMu.Unlock()
 		return nil
-	}, func() error {
-		s.publicationMu.Lock()
-		s.publicationJobs = nil
-		s.publicationMu.Unlock()
-		return nil
-	})
+	}, func() error { return nil })
 }

@@ -49,7 +49,7 @@ function Staff() {
             <CommentModeration contentKinds={[{ value: "video", label: "Videos" }, { value: "blog", label: "Posts" }]} itemHref={(i) => `#${i.kind}/${i.id}`} />
           </section>
           <section data-demo="poll-editor" style={panel}>
-            <PollEditor languages={[{ value: "en", label: "English" }, { value: "ja", label: "日本語" }]} freeText />
+            <PollEditor languages={[{ value: "en", label: "English" }, { value: "ja", label: "日本語" }]} />
           </section>
           <section data-demo="poll-edit" style={panel}>
             <PollEditor poll={poll} />

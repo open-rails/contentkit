@@ -663,14 +663,14 @@ func (c *Client) GetPollsAdmin(ctx context.Context, q GetPollsAdminQuery) ([]con
 	return out, err
 }
 
-// GetPoll is GET /v1/polls/{id} (public). A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders.
+// GetPoll is GET /v1/polls/{id} (public). A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders.
 func (c *Client) GetPoll(ctx context.Context, id string) (content.Poll, error) {
 	var out content.Poll
 	err := c.call(ctx, http.MethodGet, expand("/v1/polls/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PostPolls is POST /v1/polls (staff). Creates a poll with its options; a free-text poll needs an AnswerClassifier.
+// PostPolls is POST /v1/polls (staff). Creates a poll with at least two predefined options; only multiple_choice is supported.
 func (c *Client) PostPolls(ctx context.Context, body content.PollInput) (content.Poll, error) {
 	var out content.Poll
 	err := c.call(ctx, http.MethodPost, "/v1/polls", nil, body, &out)
@@ -693,13 +693,6 @@ func (c *Client) DeletePoll(ctx context.Context, id string) error {
 func (c *Client) PostPollVote(ctx context.Context, id string, body content.PollVote) (content.Poll, error) {
 	var out content.Poll
 	err := c.call(ctx, http.MethodPost, expand("/v1/polls/{id}/vote", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// PostPollAnswer is POST /v1/polls/{id}/answer (user). Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply.
-func (c *Client) PostPollAnswer(ctx context.Context, id string, body content.PollAnswerInput) (content.Poll, error) {
-	var out content.Poll
-	err := c.call(ctx, http.MethodPost, expand("/v1/polls/{id}/answer", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 

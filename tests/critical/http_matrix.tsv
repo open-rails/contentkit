@@ -37,7 +37,6 @@ CK-API-035	GET	/v1/polls/{id}	public		partial-security-only; positive/full funct
 CK-API-036	PATCH	/v1/polls/{id}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
 CK-API-037	DELETE	/v1/polls/{id}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
 CK-API-038	POST	/v1/polls/{id}/vote	public		partial-security-only; positive/full functionality deferred P1
-CK-API-039	POST	/v1/polls/{id}/answer	user		partial-security-only; positive/full functionality deferred P1
 CK-API-040	PUT	/v1/polls/{id}/image	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
 CK-API-041	POST	/v1/polls/{id}/options	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
 CK-API-042	PATCH	/v1/polls/{id}/options/{oid}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1

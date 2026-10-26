@@ -17,16 +17,14 @@ export interface UsePoll {
   loading: boolean;
   error?: ContentKitError;
   reload: () => void;
-  /** A vote or answer is in flight. */
+  /** A vote is in flight. */
   pending: boolean;
   /** Votes at once (a vote is final); rolled back if the server refuses it. */
   vote: (option: string) => Promise<void>;
-  /** Stores or replaces the signed-in caller's free-text answer. */
-  answer: (text: string) => Promise<void>;
 }
 
 /**
- * A poll with the caller's vote or answer. Without an id it is the newest
+ * A poll with the caller's vote. Without an id it is the newest
  * live poll (in language): the one a home page shows.
  */
 export function usePoll(id?: string | null, o: { initial?: Poll; language?: string; client?: ContentKitClient } = {}): UsePoll {
@@ -59,19 +57,7 @@ export function usePoll(id?: string | null, o: { initial?: Poll; language?: stri
     },
     [client, store, key, poll],
   );
-  const answer = useCallback(
-    async (text: string) => {
-      if (!poll) return;
-      setPending(true);
-      try {
-        await client.polls.answer(poll.id, text);
-      } finally {
-        setPending(false);
-      }
-    },
-    [client, poll],
-  );
-  return { poll, loading: r.loading || (!r.loaded && o.initial === undefined), error: r.error, reload: r.reload, pending, vote, answer };
+  return { poll, loading: r.loading || (!r.loaded && o.initial === undefined), error: r.error, reload: r.reload, pending, vote };
 }
 
 export interface PollFilter {

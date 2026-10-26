@@ -1,7 +1,7 @@
 import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useContext, useId, useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import type { Poll as PollData } from "../../client/generated/wire.js";
@@ -13,7 +13,6 @@ import { usePoll } from "../../react/polls.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
-import { Textarea } from "#ckui/ui/textarea";
 import { ErrorLine, formatDate } from "./parts.js";
 
 export interface PollProps {
@@ -26,21 +25,13 @@ export interface PollProps {
   onSignIn?: () => void;
   /** Shown when there is no live poll; default nothing. */
   empty?: ReactNode;
-  /** Longest free-text answer. Default 280. */
-  maxLength?: number;
   client?: ContentKitClient;
   onError?: ContentKitErrorHandler;
   className?: string;
   appearance?: ContentKitUiAppearance;
 }
 
-/**
- * A poll: vote (at once, final) and results scaled to the leading option, or a
- * free-text answer and its groups. Question and option images, the closing
- * date and the closed state come from the poll. Signed out, visitors vote
- * where the server allows it (`Config.anonymous.votes`) and are asked to sign
- * in elsewhere; free-text answers always need a signed-in visitor.
- */
+/** A predefined-choice poll with final votes, results and question/option images. */
 export function Poll(p: PollProps) {
   const m = useMessages();
   const { t } = m;
@@ -81,7 +72,7 @@ export function Poll(p: PollProps) {
   const poll = r.poll;
   if (!poll) return p.empty ? <>{p.empty}</> : null;
 
-  const fail = (e: unknown, op: "poll.vote" | "poll.answer") => {
+  const fail = (e: unknown, op: "poll.vote") => {
     const err = toContentKitError(e);
     if (err.code === "unauthorized" && signIn) return signIn();
     setError(err);
@@ -108,24 +99,14 @@ export function Poll(p: PollProps) {
   return root(
     <>
       {header}
-      {poll.kind === "free_text" ? (
-        <FreeText poll={poll} pending={r.pending} maxLength={p.maxLength ?? 280} results={p.results} onAnswer={(text) =>
-            r.answer(text).then(
-              () => true,
-              (e) => (fail(e, "poll.answer"), false),
-            )
-          }
-        />
-      ) : (
-        <Choices
-          poll={poll}
-          results={p.results === "always" || poll.voted || poll.closed}
-          canVote={!poll.voted && !poll.closed && !r.pending && (!mustSignIn || !!signIn)}
-          onVote={vote}
-        />
-      )}
+      <Choices
+        poll={poll}
+        results={p.results === "always" || poll.voted || poll.closed}
+        canVote={!poll.voted && !poll.closed && !r.pending && (!mustSignIn || !!signIn)}
+        onVote={vote}
+      />
       <ErrorLine error={error} />
-      {!poll.voted && !poll.closed && mustSignIn && poll.kind !== "free_text" && (signIn ? (
+      {!poll.voted && !poll.closed && mustSignIn && (signIn ? (
         <Button size="sm" className="justify-self-start" onClick={signIn}>
           {t("poll.signIn")}
         </Button>
@@ -188,82 +169,6 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
         <time dateTime={poll.live_at}>{formatDate(m, poll.live_at, false)}</time>
         {results && <span>{m.plural("poll.votes", total)}</span>}
       </p>
-    </>
-  );
-}
-
-function FreeText({ poll, pending, maxLength, results, onAnswer }: { poll: PollData; pending: boolean; maxLength: number; results?: "voted" | "always"; onAnswer: (text: string) => Promise<boolean> }) {
-  const m = useMessages();
-  const { t } = m;
-  const ids = useId();
-  const mine = poll.my_answer;
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(mine?.text ?? "");
-  const open = !poll.closed;
-  const groups = [...(poll.groups ?? [])].sort((a, b) => b.count - a.count);
-  const lead = Math.max(1, ...groups.map((g) => g.count));
-  const showEntities = groups.length > 0 && (!!mine || poll.closed || results === "always");
-  return (
-    <>
-      {open && (!mine || editing) ? (
-        <form
-          className="grid gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!text.trim()) return;
-            void onAnswer(text.trim()).then((ok) => ok && setEditing(false));
-          }}
-        >
-          <label htmlFor={`${ids}-answer`} className="sr-only">
-            {t("poll.answerPlaceholder")}
-          </label>
-          <Textarea id={`${ids}-answer`} rows={2} maxLength={maxLength} placeholder={t("poll.answerPlaceholder")} value={text} disabled={pending} onChange={(e) => setText(e.target.value)} />
-          <div className="flex justify-end gap-2">
-            {editing && (
-              <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
-                {t("common.cancel")}
-              </Button>
-            )}
-            <Button type="submit" size="sm" disabled={pending || !text.trim()}>
-              {t(mine ? "poll.updateAnswer" : "poll.answer")}
-            </Button>
-          </div>
-        </form>
-      ) : (
-        mine && (
-          <div className="grid gap-1 rounded-md bg-muted p-3">
-            <p className="text-xs text-muted-foreground">{t("poll.yourAnswer")}</p>
-            <p className="break-words whitespace-pre-wrap">{mine.text}</p>
-            {open && (
-              <Button
-                variant="link"
-                size="xs"
-                className="justify-self-start px-0"
-                onClick={() => {
-                  setText(mine.text);
-                  setEditing(true);
-                }}
-              >
-                {t("poll.editAnswer")}
-              </Button>
-            )}
-          </div>
-        )
-      )}
-      {showEntities && (
-        <>
-          <ul className="grid gap-2" aria-labelledby={`poll-${poll.id}`}>
-            {groups.map((g) => (
-              <li key={g.id} className="relative flex items-center gap-2 rounded-md px-2 py-1.5">
-                <span aria-hidden className="absolute inset-y-0 start-0 rounded-md bg-muted" style={{ width: `${(g.count / lead) * 100}%` }} />
-                <span className="relative min-w-0 flex-1 break-words">{g.label}</span>
-                <span className="relative tabular-nums text-muted-foreground">{m.plural("poll.answers", g.count)}</span>
-              </li>
-            ))}
-          </ul>
-          {poll.answer_count !== undefined && <p className="text-xs text-muted-foreground">{m.plural("poll.answers", poll.answer_count)}</p>}
-        </>
-      )}
     </>
   );
 }

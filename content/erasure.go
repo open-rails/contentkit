@@ -14,9 +14,8 @@ import (
 	"github.com/open-rails/contentkit/internal/versionid"
 )
 
-// ProviderDataEraser deletes personal data retained by optional moderator and
-// classifier implementations. Success means a durable tenant/subject fence is
-// installed: Classify/Screen calls begun before erasure cannot recreate data
+// ProviderDataEraser deletes personal data retained by optional moderation providers. Success means a durable tenant/subject fence is
+// installed: Screen calls begun before erasure cannot recreate data
 // when they complete later. Merely queuing a delete is not success. Calls are
 // idempotent; implementations must preserve fences across restore/restart.
 // A host using multiple retaining providers must implement a composite eraser.

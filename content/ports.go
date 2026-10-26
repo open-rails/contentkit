@@ -78,42 +78,6 @@ type ContentModerator interface {
 	Screen(ctx context.Context, in ModerationInput) (Verdict, error)
 }
 
-// Answer is one free-text poll answer handed to the AnswerClassifier.
-type Answer struct {
-	Tenant     string
-	QuestionID string
-	AnswerID   string
-	Revision   int64  // monotonic per answer; retries retain this revision
-	SubjectID  string // opaque authenticated actor, never an IP
-	Text       string
-}
-
-// GroupAssignment is the group an answer was placed in at store time.
-type GroupAssignment struct {
-	GroupID string
-	Label   string
-}
-
-// AnswerGroup is one answer group of a free-text poll with its current size.
-// The ContentKit owns current assignments and counts, so delayed provider side
-// effects cannot rewrite results.
-type AnswerGroup struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Count int    `json:"count"`
-}
-
-// AnswerClassifier groups free-text poll answers. Classify runs when an
-// answer is stored or edited. Poll results come from source assignments. Without a
-// registered classifier a free-text poll cannot be created.
-// Classify must be idempotent by (Tenant, AnswerID, Revision), ignore older
-// revisions. ContentKit accepts assignments only by source-revision CAS;
-// the stored result is the sole authority for current membership and labels.
-// A classifier retaining personal data needs Options.ProviderDataEraser.
-type AnswerClassifier interface {
-	Classify(ctx context.Context, a Answer) (GroupAssignment, error)
-}
-
 // StatelessPolicy explicitly declares that a policy implementation retains no
 // personal data outside this process. Built-in deterministic policies satisfy
 // this marker; retaining providers must instead configure ProviderDataEraser.

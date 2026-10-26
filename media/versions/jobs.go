@@ -13,7 +13,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// Queue is the River queue of versions' media jobs.
+// Queue is the River queue of version publication and optional media jobs.
 const Queue = "contentkit_versions"
 
 // poll is how soon a job waiting on the media worker runs again.
@@ -33,16 +33,24 @@ func (a publishArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 // the host's River composition, beside media's own.
 func (s *Service) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-versions", func(_ context.Context, cfg *river.Config) error {
+		if s.o.MediaConfigured && s.m.Manifests == nil {
+			return errors.New("versions: configured media must be bound before River jobs")
+		}
+		if err := s.addReleaseWorker(cfg.Workers); err != nil {
+			return err
+		}
+		if _, ok := cfg.Queues[QueueFor(s.o.Tenant)]; !ok {
+			cfg.Queues[QueueFor(s.o.Tenant)] = river.QueueConfig{MaxWorkers: 2}
+		}
+		if s.m.Manifests == nil {
+			return nil
+		}
 		for _, add := range []func(*river.Workers) error{
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &publishWorker{s: s}) },
-			s.addReleaseWorker,
 		} {
 			if err := add(cfg.Workers); err != nil {
 				return err
 			}
-		}
-		if _, ok := cfg.Queues[QueueFor(s.o.Tenant)]; !ok {
-			cfg.Queues[QueueFor(s.o.Tenant)] = river.QueueConfig{MaxWorkers: 2}
 		}
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
