@@ -2268,6 +2268,18 @@
         "Real account anonymization is repeated, the retained repost still references the original with no actor ID, late repost attempts are fenced and immutable event payloads omit erasable actor identity.",
         "Reviewed executable scenario; exact integrated execution is required."
       ]
+    },
+    {
+      "id": "CK-J03-S73",
+      "journey": "CK-J03",
+      "behavior": "Channel metadata follows a merged descriptive entity without changing channel authority",
+      "status": "verified",
+      "evidence": [
+        "Public create/link/merge/read journey requires the surviving metadata identity exactly once. Final combined execution remains required."
+      ],
+      "cases": [
+        "TestChannelMetadataMerge/CK-J03-S73_channel_metadata_survives_canonical_entity_merge"
+      ]
     }
   ],
   "review_notes": {

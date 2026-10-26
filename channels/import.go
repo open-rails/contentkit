@@ -24,7 +24,8 @@ type Import struct {
 	UpdatedAt   *time.Time
 }
 
-// ImportTx joins the import transaction and its durable scope lifecycle work.
+// ImportTx stores identities in the import transaction. Call Finish after
+// commit to apply the corresponding AuthKit operation synchronously.
 func (s *Store) ImportTx(ctx context.Context, tx pgx.Tx, in []Import, provision bool) error {
 	rows := make([]entities.ImportEntity, len(in))
 	for i, v := range in {

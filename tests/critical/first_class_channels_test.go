@@ -151,7 +151,7 @@ func TestChannelMetadataMerge(t *testing.T) {
 	_, token, channel := ownedChannel(t, w, a, "Described channel")
 	tags, err := a.engine.Client().PostEntities(t.Context(), []entities.EntityInput{{Kind: "tag", Slug: "old-topic", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Old topic"}}}, {Kind: "tag", Slug: "canonical-topic", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Canonical topic"}}}})
 	must(t, err)
-	t.Run("CK-J03-S71_channel_metadata_survives_canonical_entity_merge", func(t *testing.T) {
+	t.Run("CK-J03-S73_channel_metadata_survives_canonical_entity_merge", func(t *testing.T) {
 		must(t, a.client(token).PutChannelEntities(t.Context(), channel.ID, []string{string(tags[0].ID), string(tags[1].ID)}))
 		_, err := a.engine.Client().PostEntityMerge(t.Context(), string(tags[0].ID), entities.MergeInput{Into: tags[1].ID})
 		must(t, err)
