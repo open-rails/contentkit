@@ -248,6 +248,15 @@ export async function runMediaContracts(group, fixture) {
     assert.equal(exposed.decision.allowed, true);
     assert.equal(typeof exposed.images[inline.name], "string");
     assert(exposed.body.includes(exposed.images[inline.name]));
+    assert(!exposed.body.includes(inline.ref));
+    const selected = exposed.versions.find((version) => version.id === imageRef.version);
+    assert.equal(selected.body, exposed.body);
+    assert.equal(selected.images[inline.name], exposed.images[inline.name]);
+    const authored = await owner.contents.version(imageRef.id, imageRef.version);
+    assert.equal(authored.text.en.body, "Text ![inline](" + inline.ref + ")", "rendering must not overwrite the stored image reference");
+    const exact = await anonymous.contents.getByVersion(imageRef.version, "en");
+    assert.equal(exact.selected_version_id, imageRef.version);
+    assert(exact.body.includes(exact.images[inline.name]), "direct edition reads must resolve their own inline images too");
     const bodyOriginal = (
       await owner.media.read(imageRef, { editor: true, prefix: "body/" })
     ).files.find((x) => x.path === inline.path);
@@ -270,6 +279,7 @@ export async function runMediaContracts(group, fixture) {
     const after = await publishedInline(exposed.images[inline.name]);
     assert.equal(after.decision.allowed, true);
     assert(after.body.includes(after.images[inline.name]));
+    assert(!after.body.includes(exposed.images[inline.name]), "a processed edit must refresh the URL in the rendered body");
     proved("MediaClient.uploadInline");
     await owner.media.put(file, {
       ref,

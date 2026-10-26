@@ -167,8 +167,10 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 				continue
 			}
 			edition.Images = urls
+			edition.Body = resolveBody(edition.Body, urls)
 			if edition.ID == c.SelectedVersionID {
 				c.Images = urls
+				c.Body = edition.Body
 			}
 		}
 		if s.shows(c.Kind, c.Decision, kinds.ShowEntities) {

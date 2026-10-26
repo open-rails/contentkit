@@ -215,7 +215,7 @@ type Content struct {
 	Slug        string            `json:"slug,omitempty"`
 	Slugs       map[string]string `json:"slugs,omitempty"`
 	Description string            `json:"description,omitempty"`
-	// Body shows each inline image with a current public file as its URL;
+	// Body shows each inline image with its selected edition's signed URL;
 	// only editors and viewers Decision allows get it. Description is the
 	// teaser everyone reads.
 	Body string `json:"body,omitempty"`
