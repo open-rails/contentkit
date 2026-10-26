@@ -85,7 +85,7 @@ jobs:
       run: |
         pnpm install --frozen-lockfile --ignore-scripts
         pnpm contract:check
-        pnpm typecheck && pnpm lint && pnpm build
+        pnpm typecheck && pnpm lint && pnpm test:read-refresh && pnpm build
         pnpm pack --pack-destination "$RUNNER_TEMP"
         python3 ../../.github/scripts/check-npm-package.py "$RUNNER_TEMP/openrails-contentkit-ui-0.0.0.tgz" 0.0.0
         pnpm exec vite build --config ../../tests/critical/browser/vite.config.mjs

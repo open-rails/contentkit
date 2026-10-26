@@ -30,7 +30,7 @@ jobs:
         go-version-file: go.mod
     - run: pnpm install --frozen-lockfile --ignore-scripts
     - run: pnpm contract:check
-    - run: pnpm typecheck && pnpm lint && pnpm build
+    - run: pnpm typecheck && pnpm lint && pnpm test:read-refresh && pnpm build
     - name: Verify actual package exports, types and styles
       run: |
         pnpm pack --pack-destination "$RUNNER_TEMP"
