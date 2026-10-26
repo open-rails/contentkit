@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/goccy/go-yaml"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/kinds"
 	"strings"
@@ -138,5 +139,28 @@ func TestChannelRepostAnonymization(t *testing.T) {
 				t.Fatal("immutable repost event retained erasable account attribution")
 			}
 		}
+	})
+}
+
+func TestChannelMetadataMerge(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) {
+		cfg.Content.EntityKinds["tag"] = kinds.EntityKind{}
+		cfg.Content.Channels.Entities = []string{"tag"}
+	})
+	a := w.apps[0]
+	_, token, channel := ownedChannel(t, w, a, "Described channel")
+	tags, err := a.engine.Client().PostEntities(t.Context(), []entities.EntityInput{{Kind: "tag", Slug: "old-topic", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Old topic"}}}, {Kind: "tag", Slug: "canonical-topic", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Canonical topic"}}}})
+	must(t, err)
+	t.Run("CK-J03-S71_channel_metadata_survives_canonical_entity_merge", func(t *testing.T) {
+		must(t, a.client(token).PutChannelEntities(t.Context(), channel.ID, []string{string(tags[0].ID), string(tags[1].ID)}))
+		_, err := a.engine.Client().PostEntityMerge(t.Context(), string(tags[0].ID), entities.MergeInput{Into: tags[1].ID})
+		must(t, err)
+		got, err := a.client("").GetChannelEntities(t.Context(), channel.ID, ck.GetChannelEntitiesQuery{})
+		must(t, err)
+		if len(got) != 1 || got[0].ID != tags[1].ID {
+			t.Fatalf("channel metadata did not follow canonical survivor: %+v", got)
+		}
+		_, err = a.client("").GetEntity(t.Context(), channel.ID, ck.GetEntityQuery{})
+		requireError(t, err, 404, "not_found")
 	})
 }
