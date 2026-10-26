@@ -4728,60 +4728,6 @@
       ]
     },
     {
-      "id": "CK-API-082",
-      "method": "PUT",
-      "path": "/v1/contents/{id}/text/{language}",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/foreign_app_key"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-082_PUT_/v1/contents/{id}/text/{language}/foreign_app_key"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-083",
-      "method": "DELETE",
-      "path": "/v1/contents/{id}/text/{language}",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/foreign_app_key"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-083_DELETE_/v1/contents/{id}/text/{language}/foreign_app_key"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
       "id": "CK-API-084",
       "method": "PUT",
       "path": "/v1/contents/{id}/creators",
@@ -6184,35 +6130,6 @@
         "TestHTTPAuthenticationMatrix/CK-API-136_PUT_/v1/contents/{id}/versions/{version}/reader/wrong_issuer",
         "TestHTTPAuthenticationMatrix/CK-API-136_PUT_/v1/contents/{id}/versions/{version}/reader/foreign_app_key",
         "TestHTTPAuthenticationMatrix/CK-API-136_PUT_/v1/contents/{id}/versions/{version}/reader/anonymous_protected_operation"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-137",
-      "method": "POST",
-      "path": "/v1/contents/{id}/versions/{version}/fork",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/anonymous_protected_operation"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-137_POST_/v1/contents/{id}/versions/{version}/fork/anonymous_protected_operation"
       ],
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
@@ -10848,6 +10765,39 @@
         "The shipped ChannelsClient.uploadImage and folder methods upload a real avatar through the three-step media flow and SSE and read its persisted channel identity; rendered RepostButton and ChannelFeed then create and remove the reference.",
         "Reviewed contract; exact integrated execution remains required."
       ]
+    }
+  ],
+  "retired_contracts": [
+    {
+      "issue": "contentkit#259",
+      "reason": "Removed parent-text mutation and version-fork product operations; version text uses existing authenticated PATCHversion. Ordinary media processing retained.",
+      "operations": [
+        {
+          "id": "CK-API-082",
+          "method": "PUT",
+          "path": "/v1/contents/{id}/text/{language}",
+          "auth": "public",
+          "permission": "",
+          "day1_status": "partial-security-only; positive/full functionality deferred P1"
+        },
+        {
+          "id": "CK-API-083",
+          "method": "DELETE",
+          "path": "/v1/contents/{id}/text/{language}",
+          "auth": "public",
+          "permission": "",
+          "day1_status": "partial-security-only; positive/full functionality deferred P1"
+        },
+        {
+          "id": "CK-API-137",
+          "method": "POST",
+          "path": "/v1/contents/{id}/versions/{version}/fork",
+          "auth": "user",
+          "permission": "",
+          "day1_status": "partial-security-only; positive/full functionality deferred P1"
+        }
+      ],
+      "bindings": []
     }
   ]
 }
