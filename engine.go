@@ -576,7 +576,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 // kind sets any.
 func (e *Engine) entityLimiter() (*media.PGLimiter, error) {
 	limits := map[string]kinds.UploadLimits{}
-	for name, gk := range e.cfg.Content.EntityKinds {
+	for name, gk := range e.cfg.Content.StorageModel().EntityKinds {
 		if gk.Uploads != (kinds.UploadLimits{}) {
 			limits[name] = gk.Uploads
 		}

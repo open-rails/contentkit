@@ -16,6 +16,32 @@ func (e *Engine) codeVisibility(req *http.Request, links []contenturl.Link) ([]c
 	if err != nil {
 		return nil, err
 	}
+	channelIndices := map[string][]int{}
+	var channelIDs []string
+	for i, link := range links {
+		if link.ContentKind != "channel" {
+			continue
+		}
+		visible[i] = contenturl.Hidden
+		if e.cfg.Content.Channels == nil || link.TenantID != e.cfg.Tenant {
+			continue
+		}
+		if _, ok := channelIndices[link.ContentID]; !ok {
+			channelIDs = append(channelIDs, link.ContentID)
+		}
+		channelIndices[link.ContentID] = append(channelIndices[link.ContentID], i)
+	}
+	if len(channelIDs) > 0 {
+		cards, err := e.channels.As(e.auth, gate.Actor(req.Context())).Cards(req.Context(), channelIDs, "")
+		if err != nil {
+			return nil, err
+		}
+		for _, card := range cards {
+			for _, i := range channelIndices[card.ID] {
+				visible[i] = contenturl.Visible
+			}
+		}
+	}
 	indices := map[entities.EntityID][]int{}
 	var ids []entities.EntityID
 	for i, link := range links {

@@ -21,6 +21,7 @@ const AvatarPreset = "avatar"
 // every entity kind without one declared gets GroupKind's. No other kind has
 // versions.
 func ForContent(c Config, k kinds.Config) (Config, error) {
+	k = k.StorageModel()
 	out := c
 	out.Kinds = slices.Clone(c.Kinds)
 	for i := range out.Kinds {
