@@ -239,7 +239,7 @@ func (c *Client) GetCommentReplies(ctx context.Context, cid string, q GetComment
 	return out, err
 }
 
-// PatchComment is PATCH /v1/comments/{cid} (public). Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text.
+// PatchComment is PATCH /v1/comments/{cid} (public). Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. Its author can't edit it while it is held or rejected.
 func (c *Client) PatchComment(ctx context.Context, cid string, body content.CommentEdit) (content.Comment, error) {
 	var out content.Comment
 	err := c.call(ctx, http.MethodPatch, expand("/v1/comments/{cid}", "{cid}", url.PathEscape(cid)), nil, body, &out)

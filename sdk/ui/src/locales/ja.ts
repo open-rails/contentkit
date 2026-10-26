@@ -300,6 +300,7 @@ export const ja: ContentKitUiMessageBundle = {
     resume_mismatch: "保存されたアップロードは別のファイルのものです。もう一度ファイルを選んでください。",
     moderation_rejected: "モデレーションにより拒否されました。",
     comment_banned: "ここではコメントできません。",
+    comment_moderated: "確認中または非公開のコメントは編集できません。",
     comments_closed: "ここのコメントは締め切られています。",
     comments_locked: "コメントを見たり書いたりするにはロックを解除してください。",
     not_joinable: "現在このグループには参加できません。",

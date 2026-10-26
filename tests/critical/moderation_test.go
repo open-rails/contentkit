@@ -57,6 +57,30 @@ func assertCommentVisibility(t *testing.T, c *ck.Client, id, cid string, visible
 	}
 }
 
+func ownComment(t *testing.T, c *ck.Client, id, cid string) content.Comment {
+	t.Helper()
+	comments, err := c.GetContentComments(t.Context(), id, ck.GetContentCommentsQuery{})
+	must(t, err)
+	for _, comment := range comments {
+		if comment.ID == cid {
+			return comment
+		}
+	}
+	t.Fatalf("comment %s missing from its author's thread: %+v", cid, comments)
+	return content.Comment{}
+}
+
+func threadBodies(t *testing.T, c *ck.Client, id string) map[string]string {
+	t.Helper()
+	comments, err := c.GetContentComments(t.Context(), id, ck.GetContentCommentsQuery{})
+	must(t, err)
+	out := map[string]string{}
+	for _, comment := range comments {
+		out[comment.ID] = comment.Body
+	}
+	return out
+}
+
 func TestCommentModerationBoundaries(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
 	a, sibling := w.apps[0], w.apps[1]
@@ -347,6 +371,96 @@ func TestCommentModerationBoundaries(t *testing.T) {
 			if strings.Contains(word.Word, "illicit") {
 				t.Fatal("unauthorized rule persisted")
 			}
+		}
+	})
+	t.Run("CK-J20-S07_author_edit_cannot_undo_hold_or_rejection", func(t *testing.T) {
+		_, writerToken := w.person(t, 0)
+		_, otherToken := w.person(t, 0)
+		item := publishedArticle(t, a, "Edits after moderation")
+		author, other, public, admin := a.client(writerToken), a.client(otherToken), a.client(""), a.engine.Client()
+		held := postComment(t, author, item.ID, "Held original")
+		rejected := postComment(t, author, item.ID, "Rejected original")
+		must(t, managerClient.PostCommentHold(t.Context(), held.ID))
+		must(t, managerClient.PostCommentHold(t.Context(), rejected.ID))
+		queue, err := admin.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: content.KindComment})
+		must(t, err)
+		var revision int64
+		for _, row := range queue.Items {
+			if row.ID == rejected.ID {
+				revision = row.Revision
+			}
+		}
+		_, err = admin.PostModerationResolve(t.Context(), content.KindComment, rejected.ID, content.ResolveInput{Decision: content.DecisionReject, Revision: revision, Reason: "Off topic"})
+		must(t, err)
+		before := threadBodies(t, public, item.ID)
+		for _, refused := range []struct {
+			name    string
+			comment content.Comment
+		}{{"held", held}, {"rejected", rejected}} {
+			t.Run(refused.name, func(t *testing.T) {
+				_, err := author.PatchComment(t.Context(), refused.comment.ID, content.CommentEdit{Body: "Edited back onto the thread"})
+				requireError(t, err, 403, "comment_moderated")
+				if mine := ownComment(t, author, item.ID, refused.comment.ID); mine.Body != refused.comment.Body || mine.Moderation != refused.name {
+					t.Fatalf("refused edit changed the %s comment: %+v", refused.name, mine)
+				}
+			})
+		}
+		if after := threadBodies(t, public, item.ID); fmt.Sprint(after) != fmt.Sprint(before) {
+			t.Fatalf("refused edits changed the public thread: %v; want %v", after, before)
+		}
+		_, err = other.PatchComment(t.Context(), held.ID, content.CommentEdit{Body: "Not mine"})
+		requireError(t, err, 403, "forbidden")
+		approved := postComment(t, author, item.ID, "Approved original")
+		_, err = other.PatchComment(t.Context(), approved.ID, content.CommentEdit{Body: "Not mine"})
+		requireError(t, err, 403, "forbidden")
+		changed, err := author.PatchComment(t.Context(), approved.ID, content.CommentEdit{Body: "Approved edit"})
+		must(t, err)
+		if changed.Body != "Approved edit" || changed.Moderation != "" || threadBodies(t, public, item.ID)[approved.ID] != "Approved edit" {
+			t.Fatalf("approved edit not published: %+v", changed)
+		}
+		must(t, managerClient.PostCommentRelease(t.Context(), held.ID))
+		changed, err = author.PatchComment(t.Context(), held.ID, content.CommentEdit{Body: "Edited after release"})
+		must(t, err)
+		if changed.Body != "Edited after release" || changed.Moderation != "" || threadBodies(t, public, item.ID)[held.ID] != "Edited after release" {
+			t.Fatalf("released comment not editable: %+v", changed)
+		}
+		if _, ok := threadBodies(t, public, item.ID)[rejected.ID]; ok {
+			t.Fatal("rejected comment reached the public thread")
+		}
+		staffEdited := postComment(t, author, item.ID, "Held for staff")
+		must(t, managerClient.PostCommentHold(t.Context(), staffEdited.ID))
+		changed, err = managerClient.PatchComment(t.Context(), staffEdited.ID, content.CommentEdit{Body: "Staff correction"})
+		must(t, err)
+		if changed.Moderation != "" || threadBodies(t, public, item.ID)[staffEdited.ID] != "Staff correction" {
+			t.Fatalf("moderator edit of a held comment not screened and published: %+v", changed)
+		}
+		own := postComment(t, managerClient, item.ID, "Moderator's own")
+		must(t, managerClient.PostCommentHold(t.Context(), own.ID))
+		_, err = managerClient.PatchComment(t.Context(), own.ID, content.CommentEdit{Body: "Self-released"})
+		requireError(t, err, 403, "comment_moderated")
+	})
+}
+
+func TestCommentEditAllowance(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Comment = []ck.Rate{{Count: 2, Per: time.Hour}} })
+	a := w.apps[0]
+	t.Run("CK-J20-S08_author_edits_spend_the_comment_allowance", func(t *testing.T) {
+		_, token := w.person(t, 0)
+		manager, managerToken := w.person(t, 0)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(manager.ID), w.commentManager)
+		client := a.client(token)
+		item := publishedArticle(t, a, "Edit allowance")
+		comment := postComment(t, client, item.ID, "First")
+		_, err := client.PatchComment(t.Context(), comment.ID, content.CommentEdit{Body: "Second"})
+		must(t, err)
+		_, err = client.PatchComment(t.Context(), comment.ID, content.CommentEdit{Body: "Third"})
+		requireError(t, err, 429, "rate_limited")
+		if body := threadBodies(t, a.client(""), item.ID)[comment.ID]; body != "Second" {
+			t.Fatalf("limited edit changed the comment: %q", body)
+		}
+		for i := range 3 {
+			_, err := a.client(managerToken).PatchComment(t.Context(), comment.ID, content.CommentEdit{Body: fmt.Sprint("Moderated ", i)})
+			must(t, err)
 		}
 	})
 }

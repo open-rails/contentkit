@@ -608,14 +608,25 @@ func (c *comments) attachMine(ctx context.Context, actor access.Actor, list []Co
 }
 
 // edit re-sanitizes, re-screens and updates a comment's body: the verdict on
-// the new text sets its state, so a held comment publishes on approval and a
-// published one is withdrawn on review. Allowed for the owner or a
-// moderator; an owner banned in the content's scope, or who can't open the
-// content, may not. 404 if missing or soft-deleted.
+// the new text sets its state, so a published one is withdrawn on review and
+// a held one a moderator edits publishes on approval. Allowed for the owner
+// or a moderator; an owner banned in the content's scope, or who can't open
+// the content, may not, nor may the owner of a held or rejected comment
+// (only a reviewer's approval publishes it). 404 if missing or soft-deleted.
 func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody string) (Comment, error) {
 	target, err := c.loadForWrite(ctx, actor, cid, false)
 	if err != nil {
 		return Comment{}, err
+	}
+	author := deref(target.ownerID)
+	own := author != "" && author == viewerID(actor)
+	if own {
+		if target.state != ModerationApproved {
+			return Comment{}, errCommentModerated
+		}
+		if err := c.rt.limit(ctx, ActionComment, actor); err != nil {
+			return Comment{}, err
+		}
 	}
 	if err := c.rt.checkIPBan(ctx, actor); err != nil {
 		return Comment{}, err
@@ -627,7 +638,7 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	if err != nil {
 		return Comment{}, err
 	}
-	if author := deref(target.ownerID); author != "" && author == viewerID(actor) {
+	if own {
 		if err := c.rt.commentsLocked(target.ref, res); err != nil {
 			return Comment{}, err
 		}
@@ -736,10 +747,11 @@ func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid strin
 }
 
 // writeTarget is what loadForWrite resolves: the owner (nil for an anonymous
-// comment) and the content the comment belongs to.
+// comment), its moderation state and the content the comment belongs to.
 type writeTarget struct {
 	revision int64
 	ownerID  *string
+	state    string
 	ref      contentref.ContentRef
 }
 
@@ -769,8 +781,8 @@ func (c *comments) loadComment(ctx context.Context, cid string) (writeTarget, er
 	var t writeTarget
 	var k contentref.ContentKey
 	var deletedAt *time.Time
-	row := c.s.pool.QueryRow(ctx, `SELECT user_id, `+keyCols+`, deleted_at, moderation_revision FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2`, cid, c.s.tenant)
-	if err := row.Scan(&t.ownerID, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID), &deletedAt, &t.revision); err != nil {
+	row := c.s.pool.QueryRow(ctx, `SELECT user_id, `+keyCols+`, deleted_at, moderation_revision, moderation FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2`, cid, c.s.tenant)
+	if err := row.Scan(&t.ownerID, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID), &deletedAt, &t.revision, &t.state); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return writeTarget{}, ErrNotFound
 		}
@@ -924,10 +936,10 @@ var otherCommentRoutes = []httpapi.Route[*comments]{
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]Comment{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*comments).handleReplies)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
-		Doc:       "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text.",
+		Doc:       "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. Its author can't edit it while it is held or rejected.",
 		Request:   CommentEdit{},
 		Responses: []httpapi.Reply{httpapi.OK(Comment{}), httpapi.Accepted(Comment{})},
-		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
+		Errors:    []string{CodeCommentBanned, CodeCommentModerated, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited}},
 		Serve: httpapi.H((*comments).handleEdit)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
 		Doc:       "Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder.",

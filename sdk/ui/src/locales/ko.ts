@@ -300,6 +300,7 @@ export const ko: ContentKitUiMessageBundle = {
     resume_mismatch: "저장된 업로드가 다른 파일의 것입니다. 파일을 다시 선택하세요.",
     moderation_rejected: "검토 결과 거부되었습니다.",
     comment_banned: "여기에는 댓글을 달 수 없습니다.",
+    comment_moderated: "검토 중이거나 게시되지 않은 댓글은 수정할 수 없습니다.",
     comments_closed: "여기는 댓글이 닫혀 있습니다.",
     comments_locked: "댓글을 보고 쓰려면 잠금을 해제하세요.",
     not_joinable: "지금은 이 그룹에 가입할 수 없습니다.",
