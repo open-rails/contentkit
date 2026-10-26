@@ -31,7 +31,7 @@ export function ProfileImageEditor({ value, slot, crop = true, uploadImage, upda
   const [file, setFile] = useState<File | null>(null);
   const shown = value;
   const set = slot === "cover" ? !!shown.cover?.image || (!!shown.cover?.content_id && !shown.cover.auto) : !!shown.avatar?.image;
-  const upload = (f: Blob & { name?: string }, edit?: Edit) => save.run(() => uploadImage(slot, f, { wait: false, edit }));
+  const upload = (f: Blob & { name?: string }, edit?: Edit) => save.run(() => uploadImage(slot, f, { wait: true, edit }));
   const close = () => {
     source?.revoke?.();
     setSource(null);

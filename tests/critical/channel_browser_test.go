@@ -30,7 +30,7 @@ func TestShippedChannelBrowser(t *testing.T) {
 		cfg.Content.Kinds["article"] = kind
 	})
 	a := w.apps[0]
-	startPublicationRuntime(t, a)
+	attachMedia(t, w, a)
 	alice, aliceToken := w.person(t, 0)
 	_, bobToken := w.person(t, 0)
 	originalChannel, err := a.client(bobToken).PostChannels(t.Context(), channels.Input{Slug: "browser-original", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Original channel"}}})
@@ -46,12 +46,16 @@ func TestShippedChannelBrowser(t *testing.T) {
 	must(t, err)
 	mux := http.NewServeMux()
 	mux.Handle("/content/", httputil.NewSingleHostReverseProxy(base))
+	mux.HandleFunc("/fixture.png", func(out http.ResponseWriter, _ *http.Request) {
+		out.Header().Set("Content-Type", "image/png")
+		_, _ = out.Write(imageBytes(t))
+	})
 	mux.Handle("/", http.FileServer(http.Dir(".browser-dist")))
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	fixture, err := json.Marshal(map[string]string{"url": server.URL, "item": original.ID, "alice": alice.ID, "aliceToken": aliceToken, "originalChannel": originalChannel.ID, "destination": destination.ID})
 	must(t, err)
-	command := exec.CommandContext(t.Context(), "node", "browser/driver.mjs", "CK-J29-S07")
+	command := exec.CommandContext(t.Context(), "node", "browser/driver.mjs", "CK-J29-S08")
 	command.Env = append(os.Environ(), "CONTENTKIT_BROWSER_FIXTURE="+string(fixture))
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -62,7 +66,7 @@ func TestShippedChannelBrowser(t *testing.T) {
 		Status   string `json:"status"`
 	}
 	must(t, json.Unmarshal([]byte(strings.TrimSpace(string(output))), &receipt))
-	if receipt.Scenario != "CK-J29-S07" || receipt.Status != "passed" {
+	if receipt.Scenario != "CK-J29-S08" || receipt.Status != "passed" {
 		t.Fatalf("channel browser journey not executed: %s", output)
 	}
 }
