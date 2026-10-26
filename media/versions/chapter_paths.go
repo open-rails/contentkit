@@ -70,7 +70,7 @@ func validateChapterPaths(ctx context.Context, q querier, table, tenant, version
 			marker = next
 		}
 		if slices.Contains(removed, marker) {
-			return fmt.Errorf("%w: choose a new chapter start before removing %q", ErrInvalid, marker)
+			return fmt.Errorf("%w: %w", ErrInvalid, &media.UploadError{Code: media.CodeInvalid, Message: fmt.Sprintf("choose a new chapter start before removing %q", marker)})
 		}
 	}
 	return rows.Err()

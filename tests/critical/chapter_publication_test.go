@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 )
 
 func chapterImage(t *testing.T, seed uint8) []byte {
@@ -217,4 +219,103 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 		_, paths, err := readPaths()
 		return err == nil && slices.Equal(paths, []string{"reader/01.webp", "reader/17.webp", "reader/20.webp", "reader/40.webp", "reader/19b.webp"})
 	})
+}
+
+func TestHiddenChapterStartKeepsPublishing(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	attachMedia(t, w, a, func(c *ck.Config) {
+		k := &c.Media.Kinds[0]
+		k.Uploads[0].Max = 20
+		k.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
+	})
+	admin, viewer := a.engine.Client(), a.client("")
+	ref := galleryRef(t, admin, "Hidden chapter start")
+	images := map[string][]byte{}
+	var files []ck.MediaFile
+	for i, path := range []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png"} {
+		images[path] = chapterImage(t, uint8(9+i*29))
+		files = append(files, ck.MediaFile{Path: path, Type: "image/png", Body: bytes.NewReader(images[path])})
+	}
+	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), files)
+	must(t, err)
+	awaitMediaReady(t, admin, ref)
+	future := w.clock.now().Add(time.Hour)
+	_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, catalog.SegmentsInput{Segments: []catalog.SegmentInput{
+		{Position: 0, Title: "One", StartPage: "pages/01.png"},
+		{Position: 1, Title: "Two", StartPage: "pages/10.png", ReleaseAt: &future},
+	}})
+	must(t, err)
+	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+	must(t, err)
+	awaitPaths := func(want ...string) media.ReadResult {
+		t.Helper()
+		var got media.ReadResult
+		waitForWithin(t, 45*time.Second, func() bool {
+			time.Sleep(550 * time.Millisecond)
+			read, err := viewer.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+			var paths []string
+			for _, f := range read.Files {
+				if f.URL != "" {
+					paths = append(paths, f.Path)
+				}
+			}
+			got = read
+			return err == nil && slices.Equal(paths, want)
+		})
+		reply, err := viewer.GetContentVersionReader(t.Context(), ref.ID, ref.Version)
+		must(t, err)
+		if reply.Status != http.StatusOK {
+			t.Fatalf("reader plan returned %d: %s", reply.Status, reply.Body)
+		}
+		for _, file := range got.Files {
+			if file.URL != "" {
+				response, err := http.Get(file.URL)
+				must(t, err)
+				response.Body.Close()
+				if response.StatusCode != http.StatusOK {
+					t.Fatalf("%s returned %d", file.Path, response.StatusCode)
+				}
+			}
+		}
+		return got
+	}
+	awaitPaths("reader/01.webp", "reader/02.webp")
+
+	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpRemove, Path: "pages/10.png"}}})
+	if err == nil || !strings.Contains(err.Error(), "choose a new chapter start") {
+		t.Fatalf("removing a chapter start: %v", err)
+	}
+	awaitPaths("reader/01.webp", "reader/02.webp")
+
+	// An identical page named earlier hides chapter two's start as a duplicate.
+	// Chapter one keeps publishing and chapter two keeps its date from 11.
+	op := stageFile(t, admin, ref, "pages/03.png", images["pages/10.png"])
+	index := 2
+	op.Index = &index
+	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{op}})
+	must(t, err)
+	awaitPaths("reader/01.webp", "reader/02.webp", "reader/03.webp")
+	notices, err := admin.GetContentVersionPageNotices(t.Context(), ref.ID, ref.Version)
+	must(t, err)
+	if !slices.ContainsFunc(notices.Notices, func(n versions.PageNotice) bool {
+		return n.Kind == "removed" && slices.ContainsFunc(n.Pages, func(p versions.NoticePage) bool { return p.SourceName == "10.png" && p.Reason == "duplicate" })
+	}) {
+		t.Fatalf("hidden chapter start is not flagged to editors: %+v", notices.Notices)
+	}
+
+	waitForWithin(t, 45*time.Second, func() bool {
+		var pending int
+		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+`
+ WHERE kind IN ('contentkit_version_publish','contentkit_version_release')
+ AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&pending))
+		return pending == 0
+	})
+	w.clock.set(future)
+	waitForWithin(t, 45*time.Second, func() bool {
+		wakeDuePublicationJobs(t, a)
+		read, err := viewer.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+		return err == nil && slices.ContainsFunc(read.Files, func(f media.FileInfo) bool { return f.Path == "reader/11.webp" && f.URL != "" })
+	})
+	awaitPaths("reader/01.webp", "reader/02.webp", "reader/03.webp", "reader/11.webp")
 }

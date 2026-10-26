@@ -275,7 +275,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 		if err != nil {
 			return nil, err
 		}
-		chapters, err := resolveChapterStarts(groups[t.Version], ordering)
+		chapters, err := resolveChapterStarts(readableStarts(groups[t.Version], sourcePages(k, m)), ordering)
 		if err != nil {
 			return nil, err
 		}

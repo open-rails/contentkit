@@ -88,6 +88,42 @@ func resolveChapterStarts(segs []segment, pages []page) ([]segment, error) {
 	return out, nil
 }
 
+// readableStarts moves a marker whose source page is excluded from reading to
+// the next included page, so every included page keeps its chapter. A moved
+// chapter left with no included page is dropped; other markers pass through.
+func readableStarts(segs []segment, source []media.File) []segment {
+	at := make(map[string]int, len(source))
+	next := make([]string, len(source))
+	following := ""
+	for i := len(source) - 1; i >= 0; i-- {
+		at[source[i].Path] = i
+		if media.PageIncluded(source[i]) {
+			following = source[i].Path
+		}
+		next[i] = following
+	}
+	from := make([]int, len(segs))
+	owner := map[string]int{}
+	out := slices.Clone(segs)
+	for i := range out {
+		g := &out[i]
+		from[i] = -1
+		if index, ok := at[g.StartPage]; ok {
+			from[i], g.StartPage = index, next[index]
+			if prior, taken := owner[g.StartPage]; !taken || from[prior] < index {
+				owner[g.StartPage] = i
+			}
+		}
+	}
+	keep := out[:0]
+	for i, g := range out {
+		if from[i] < 0 || g.StartPage == segs[i].StartPage || g.StartPage != "" && owner[g.StartPage] == i {
+			keep = append(keep, g)
+		}
+	}
+	return keep
+}
+
 func sourcePageHash(p page) string {
 	if p.SourceHash != "" {
 		return p.SourceHash

@@ -397,6 +397,7 @@
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
         "TestPublicationWithoutWorkers/CK-J05-S04_public_audience_release_opens_without_a_grant",
         "TestCopiedPageChapterPlacement",
+        "TestHiddenChapterStartKeepsPublishing",
         "TestIndependentChaptersSkipUnreleasedMiddle",
         "TestCompletedPublicationReader",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange"
