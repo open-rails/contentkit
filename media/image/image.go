@@ -169,6 +169,36 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 	return fmt.Errorf("media/image: manifest of %s kept changing", job.Ref)
 }
 
+// FailPending records an exhausted job's remaining sources, preserving completed work.
+func (p *Processor) FailPending(ctx context.Context, job media.ProcessJob, cause error) error {
+	item, err := p.reg.Item(job.Ref)
+	if err != nil {
+		return err
+	}
+	job.Force = false
+	_, err = p.c.Manifests.EditExisting(ctx, job.Ref, func(cur *media.Manifest) error {
+		todo, err := p.todo(ctx, item, cur, job)
+		if err != nil {
+			return err
+		}
+		for _, w := range todo {
+			cur.SetFailed(w.src.Path, cause)
+		}
+		if job.Editor {
+			for _, f := range cur.Files {
+				if f.Fail() == nil && p.reg.EditorFingerprint(f) != "" && p.reg.EditorView(f) == "" {
+					cur.SetFailed(f.Path, cause)
+				}
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, media.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
 // work is one upload's image outputs to render.
 type work struct {
 	src     media.File

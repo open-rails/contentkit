@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
+	"github.com/riverqueue/river"
 )
 
 // A releasePlan is a frozen storage attempt. Chapter membership is derived
@@ -635,7 +636,8 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 		return err
 	}
 	defer func() {
-		if resultErr != nil && ctx.Err() == nil {
+		var snooze *river.JobSnoozeError
+		if resultErr != nil && ctx.Err() == nil && !errors.As(resultErr, &snooze) {
 			_ = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 				if err := s.lockTarget(ctx, tx, t); err != nil {
 					return err
@@ -666,8 +668,8 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				current = false
 				return nil
 			}
-			if due.After(s.o.Now()) {
-				return fmt.Errorf("%w: publication is not due", ErrNotReady)
+			if wait := due.Sub(s.o.Now()); wait > 0 {
+				return river.JobSnooze(wait)
 			}
 			if len(raw) > 0 && string(raw) != "null" {
 				return json.Unmarshal(raw, &plan)

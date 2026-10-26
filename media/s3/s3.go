@@ -19,6 +19,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -100,6 +101,9 @@ func New(cfg Config) (*Store, error) {
 	}
 	creds := credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, "")
 	client := s3.New(s3.Options{
+		HTTPClient: awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
+			t.ResponseHeaderTimeout = 30 * time.Second
+		}),
 		Region:       cfg.Region,
 		Credentials:  creds,
 		BaseEndpoint: aws.String(cfg.Endpoint),
