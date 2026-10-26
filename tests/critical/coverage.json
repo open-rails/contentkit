@@ -774,6 +774,20 @@
       ]
     },
     {
+      "id": "CK-J07-S19",
+      "journey": "CK-J07",
+      "behavior": "Observed search query and absolute result rank join to exact clicked visits across same-tab and native new-tab navigation",
+      "status": "verified",
+      "evidence": [
+        "Built shared SearchResults, SearchBox, ordinary ContentGrid and useReadingEngagement run in Chromium against real AuthKit/API/PostgreSQL/ClickHouse. Rendered and visible query/rank records join through exact click IDs to observed visits; opaque hrefs, direct returns, repeated tabs and snapshot retries preserve identity.",
+        "Real ClickHouse exports exclude origins with another subject, item or tenant, combine one visit across editions without receipt inflation, and reflect normal column TTL after an owned-table materialization. Recent-search clearing remains distinct from subject erasure. Execution receipts qualify the actual selected candidate separately."
+      ],
+      "cases": [
+        "TestBrowserSearchEngagementAttribution",
+        "TestSearchAttributionUsesExactOriginScope"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
