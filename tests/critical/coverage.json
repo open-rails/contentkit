@@ -441,6 +441,8 @@
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
         "TestPublicationQueuesIsolateSharedCatalogApps",
         "TestPublicationQueueMigrationPreservesOwners",
+        "TestUnifiedReleaseMigration",
+        "TestUnifiedReleaseMigrationKeepsCompletedRequest",
         "TestSupersededPublicCopyReturnsToPrivate",
         "TestImportChaptersRequiresManifestLockingWriter",
         "TestPublicationSchedulingLocksParentBeforeRequest",
