@@ -636,7 +636,7 @@ intends to remove the subject's contributions instead of anonymizing them.
 `ck.EraseSubjects(ctx, subjects)` erases subjects from every configured
 plane: signals ([completion contract](#subject-erasure-completion-contract)),
 ContentKit interaction data, avatars (on the avatar primary; see Avatars)
-and data retained by moderator/classifier providers. A
+and data retained by moderation providers. A
 deliberately disabled signal plane is absent, not unfinished. Any
 configured-plane failure returns an error and an incomplete report: keep the
 host's obligation pending and retry (calls are idempotent). The host may
@@ -648,7 +648,7 @@ Content erasure commits atomically:
 - a permanent tenant/subject fence in `content_erased_subjects`; later writes by
   that subject fail with `content.ErrSubjectErased`;
 - removal of the subject's authenticated reactions, favorites, poll votes and
-  answers, with exact counter decrements, and of comment bans of them or in
+  historical free-text answers, with exact counter decrements, and of comment bans of them or in
   their owner scope (global bans they set stay, without their id);
 - redaction of the subject's unpublished payloads (held/rejected comments)
   and their moderation metadata. An item with a previously approved payload keeps it
@@ -666,7 +666,7 @@ READ default.
 
 ### Provider data
 
-Moderators/classifiers that retain personal data must configure
+Moderators that retain personal data must configure
 `content.Options.ProviderDataEraser`. Its `EraseSubjects(ctx, tenant, actorIDs)`
 runs after the SQL commit and must durably fence those subjects and remove
 retained data, including against calls already in flight; a queued delete is
