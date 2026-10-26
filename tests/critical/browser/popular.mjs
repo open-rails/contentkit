@@ -26,6 +26,7 @@ try {
   const text = await page.locator("[data-ckui=popular-grid]").innerText();
   assert(text.includes(fixture.from) && text.includes(fixture.last), "display did not show inclusive activity dates");
   assert(!text.includes(fixture.until), "display exposed the exclusive next day as included history");
+  assert(text.includes("Recent activity is still updating"), "recent activity was not marked provisional");
   const cutoff = await page.evaluate(({ before, until }) => window.popular.cutoff(before, until), fixture);
   assert.equal(cutoff.status, 400);
   assert.equal(cutoff.details?.available_from, fixture.from);

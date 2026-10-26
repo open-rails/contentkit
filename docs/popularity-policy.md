@@ -21,6 +21,10 @@ participation = U / (N + 20)
 bucket_score = mean(participation over the item's available days in the bucket)
 ```
 
+Round the bucket score to twelve decimal places before sorting, with content ID
+as the tie breaker. The full-size query reproduced tiny floating-point changes
+that otherwise reordered mathematically equal scores between identical reads.
+
 The additional 20 eligible nonparticipants are a reliability prior. They keep a
 single reader in a tiny audience from dominating the ranking. Available days
 with no readers contribute zero. Days before publication or outside trusted
@@ -147,7 +151,11 @@ an end-to-end raw-engagement benchmark.
 
 Daily source preparation is measured separately. A 60,000-user day with ten
 distinct items per person means 600,000 user/item-days, before multiple receipts
-and revisions. Reducing that day's raw data is reusable work; combining a date
+and revisions. The actual preparation method reduced a synthetic day with
+3.6 million delivered receipt rows in 34.86 seconds, with all 100,000 item counts
+verified. Reusing that finalized day read only its checkpoint in 14–25ms; this
+excludes the worker's separate PostgreSQL availability-history read.
+Reducing that day's raw data is reusable work; combining a date
 range does not revisit those receipts. More configured scopes increase
 preparation and storage work. Raw data, finalized daily counts and prepared
 rankings have distinct costs and must be reported separately.

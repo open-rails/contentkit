@@ -213,8 +213,8 @@ type popularRefreshArgs struct{}
 
 func (popularRefreshArgs) Kind() string { return "contentkit_popular_refresh" }
 
-// popularRefreshWorker builds requested popular rankings and refreshes stale
-// ones.
+// popularRefreshWorker prepares reusable daily participation and refreshes
+// host-declared popular rankings independently of public requests.
 type popularRefreshWorker struct {
 	river.WorkerDefaults[popularRefreshArgs]
 	e *Engine
