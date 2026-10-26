@@ -216,7 +216,7 @@ func TestMediaFailureRecovery(t *testing.T) {
 			// kill in-flight jobs and exercise their rescue path.
 			queue := m.queue(t)
 			waitFor(t, func() bool {
-				jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.ImageArgs{}).Kind()).States(
+				jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.DerivativeArgs{}).Kind()).States(
 					rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled).First(1))
 				must(t, err)
 				return len(jobs.Jobs) == 0
@@ -305,7 +305,7 @@ func newResilientMedia(t *testing.T, configure ...func(*ck.Config)) *resilientMe
 			t.Errorf("stop media host before storage cleanup: %v", err)
 		}
 	})
-	return &resilientMedia{world: w, app: a, storage: m, wire: wire, config: worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: store, Kinds: registry, Threads: 1, ImageWorkers: 1, ImageSources: 1, VideoWorkers: 1, ShutdownGrace: time.Second}}
+	return &resilientMedia{world: w, app: a, storage: m, wire: wire, config: worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second}}
 }
 
 func TestMediaClientResumption(t *testing.T) {
@@ -539,7 +539,7 @@ type mediaAfterImage struct {
 }
 
 func (h *mediaAfterImage) WorkEnd(ctx context.Context, job *rivertype.JobRow, workErr error) error {
-	if workErr != nil || job.Kind != (workqueue.ImageArgs{}).Kind() {
+	if workErr != nil || job.Kind != (workqueue.DerivativeArgs{}).Kind() {
 		return workErr
 	}
 	park := false
@@ -574,7 +574,7 @@ func TestMediaWorkerProcess(t *testing.T) {
 	must(t, err)
 	registry, err := media.NewRegistry(c.Kinds)
 	must(t, err)
-	config := worker.Config{Pool: pool, Schema: c.Schema, ContentSchema: c.ContentSchema, HostSchema: c.HostSchema, Store: store, Kinds: registry, Threads: 1, ImageWorkers: 1, ImageSources: 1, VideoWorkers: 1, ShutdownGrace: time.Second, MaxPixels: c.MaxPixels}
+	config := worker.Config{Pool: pool, Schema: c.Schema, ContentSchema: c.ContentSchema, HostSchema: c.HostSchema, Store: store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, MaxPixels: c.MaxPixels}
 	if c.AfterImage != "" {
 		config.RiverHooks = []rivertype.Hook{&mediaAfterImage{path: c.AfterImage}}
 	}
@@ -739,7 +739,7 @@ func TestMediaWorkerRecovery(t *testing.T) {
 		queue := m.queue(t)
 		var finished *rivertype.JobRow
 		waitForWithin(t, 30*time.Second, func() bool {
-			jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.ImageArgs{}).Kind()))
+			jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.DerivativeArgs{}).Kind()))
 			must(t, err)
 			for _, job := range jobs.Jobs {
 				if job.State == rivertype.JobStateRetryable {
@@ -790,7 +790,7 @@ func TestMediaWorkerRecovery(t *testing.T) {
 			t.Fatal("worker did not reach output storage boundary")
 		}
 		queue := m.queue(t)
-		jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.ImageArgs{}).Kind()).States(rivertype.JobStateRunning))
+		jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.DerivativeArgs{}).Kind()).States(rivertype.JobStateRunning))
 		must(t, err)
 		if len(jobs.Jobs) != 1 {
 			t.Fatalf("expected actual executing image job, got %d", len(jobs.Jobs))

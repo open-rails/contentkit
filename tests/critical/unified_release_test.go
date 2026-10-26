@@ -34,7 +34,7 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article",
 		Access: &access.Rule{Level: access.PPV, Releases: []access.Release{
 			{At: first, Level: access.TierLevel, Tiers: []string{"gold"}}, {At: second, Level: access.Public},
-		}}, Text: map[string]catalog.Text{"en": {Title: "A post through two releases", Body: "No storage service is configured."}},
+		}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "A post through two releases", Body: "No storage service is configured."}}}},
 	})
 	must(t, err)
 	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
