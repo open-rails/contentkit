@@ -28,7 +28,8 @@ func TestPreparedPopularityBuckets(t *testing.T) {
 	// Instrumentation began partway through the day before yesterday. Only
 	// yesterday onward is fully trustworthy, even when a preset asks for a week.
 	tenant := a.cfg.Scope.AppID.String()
-	_, seedErr := w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.content_access_history_start SET started_at=$1 WHERE tenant_id=$2`, day.AddDate(0, 0, -3), tenant)
+	_, seedErr := w.pool.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_access_history_start (started_at,tenant_id) VALUES($1,$2)
+ ON CONFLICT(tenant_id) DO UPDATE SET started_at=excluded.started_at`, day.AddDate(0, 0, -3), tenant)
 	must(t, seedErr)
 	must(t, a.deps.ClickHouse.Exec(t.Context(), `INSERT INTO `+a.cfg.ClickHouse.Database+`.measured_population_coverage (tenant,content_kind,domain,language,started_at) VALUES(?,?,?,?,?)`, tenant, "article", "", "", day.AddDate(0, 0, -2).Add(12*time.Hour)))
 	var err error
@@ -61,7 +62,7 @@ func TestPreparedPopularityBuckets(t *testing.T) {
 	ready, err := client.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular"})
 	must(t, err)
 	if ready.Popularity == nil || !ready.Popularity.Ready || len(ready.Contents) != 0 {
-		t.Fatalf("prepared empty bucket is not ready: %+v", ready)
+		t.Fatalf("prepared empty bucket is not ready: %+v", ready.Popularity)
 	}
 	before := *ready.Popularity
 	if before.AvailableFrom == nil || !before.AvailableFrom.Equal(day.AddDate(0, 0, -1)) || before.From == nil || !before.From.Equal(*before.AvailableFrom) {

@@ -56,6 +56,13 @@ func (s *Service) rankingSnapshot(ctx context.Context, key popularRanking) (*Pop
 	if errors.Is(err, pgx.ErrNoRows) {
 		return snapshot, nil
 	}
+	// PostgreSQL timestamps may decode in the host's local zone. These public
+	// boundaries are UTC calendar dates regardless of the process time zone.
+	for _, at := range []*time.Time{snapshot.WindowFrom, snapshot.WindowUntil, snapshot.From, snapshot.Until, snapshot.AvailableFrom, snapshot.ComputedAt} {
+		if at != nil {
+			*at = at.UTC()
+		}
+	}
 	snapshot.Ready = snapshot.ComputedAt != nil && snapshot.From != nil
 	return snapshot, err
 }

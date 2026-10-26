@@ -69,10 +69,10 @@ type popularityRangeError struct{ From, Until *time.Time }
 func (e *popularityRangeError) Error() string {
 	message := "popularity range is outside prepared activity"
 	if e.From != nil {
-		message += "; available_from=" + e.From.Format(time.DateOnly)
+		message += "; available_from=" + e.From.UTC().Format(time.DateOnly)
 	}
 	if e.Until != nil {
-		message += "; available_until=" + e.Until.Format(time.DateOnly) + " (exclusive)"
+		message += "; available_until=" + e.Until.UTC().Format(time.DateOnly) + " (exclusive)"
 	}
 	return message
 }

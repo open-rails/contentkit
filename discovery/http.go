@@ -529,10 +529,10 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.As(err, &rangeError) {
 		details := map[string]string{}
 		if rangeError.From != nil {
-			details["available_from"] = rangeError.From.Format(time.DateOnly)
+			details["available_from"] = rangeError.From.UTC().Format(time.DateOnly)
 		}
 		if rangeError.Until != nil {
-			details["available_until"] = rangeError.Until.Format(time.DateOnly)
+			details["available_until"] = rangeError.Until.UTC().Format(time.DateOnly)
 		}
 		body["details"] = details
 	}
