@@ -681,7 +681,7 @@ func (e *Engine) mount(deps Deps) error {
 	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c, e.hub.SignalPlane, avatars); err != nil {
 		return err
 	}
-	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities,
+	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
 	}
