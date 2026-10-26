@@ -20,7 +20,6 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -51,9 +50,6 @@ type Card struct {
 	Viewer      *catalog.ViewerState `json:"viewer,omitempty"`
 	PublishedAt *time.Time           `json:"published_at,omitempty"`
 	Attributes  map[string]any       `json:"attributes"`
-	// Ranking is present for a population-normalized popular result. Raw
-	// participation is retained alongside its single reliability adjustment.
-	Ranking *ContentRanking `json:"ranking,omitempty"`
 	// UpdatedAt is when the work last gained something after this card's
 	// version was published: a newer version, or pages added to this one
 	// (new chapters); absent until then.
@@ -63,12 +59,6 @@ type Card struct {
 	// Excerpt is a post kind's plain-text summary, about 300 characters: its
 	// description, else its body's opening for readers who open it.
 	Excerpt string `json:"excerpt,omitempty"`
-}
-
-type ContentRanking struct {
-	Score                 float64 `json:"score"`
-	Participation         float64 `json:"participation"`
-	AdjustedParticipation float64 `json:"adjusted_participation"`
 }
 
 // CardVersion is the version a card shows; Code selects it on the card's
@@ -126,8 +116,7 @@ type ContentPage struct {
 	Contents []Card          `json:"contents"`
 	Summary  *ListingSummary `json:"summary,omitempty"`
 	// NextCursor pages on; empty on the last page.
-	NextCursor string                  `json:"next_cursor,omitempty"`
-	Ranking    *popularity.RankingInfo `json:"ranking,omitempty"`
+	NextCursor string `json:"next_cursor,omitempty"`
 }
 
 // cardOptions shape hydration.

@@ -28,7 +28,6 @@ import (
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -81,23 +80,19 @@ type Options struct {
 	// Tenure supplies elapsed access to configured tiers; nil omits it from
 	// account statistics. Billing adapters may implement access.TenureReader.
 	Tenure access.TenureReader
-	// Policy ranks popular sorts; zero is popularity.PolicyV2 with an explicit
-	// whole-query legacy fallback when trusted population history is absent.
-	Policy popularity.Policy
 	Logger *slog.Logger
 	Now    func() time.Time
 }
 
 // Service serves discovery for one tenant.
 type Service struct {
-	o          Options
-	t          tables
-	historical *popularity.Ranker
-	summaries  summaryCache
+	o         Options
+	t         tables
+	summaries summaryCache
 }
 
 type tables struct {
-	facets, items, versions, versionText, text, codes, memberships, entities, prefs, favorites, reactions, counts, searches, searchMarks, erased, creators, comments, entityNames, normalize, reposts string
+	facets, items, versions, versionText, text, codes, memberships, entities, prefs, favorites, reactions, counts, searches, searchMarks, erased, creators, comments, entityNames, normalize, reposts, rankings string
 }
 
 // New validates o.
@@ -114,12 +109,6 @@ func New(o Options) (*Service, error) {
 	if err := signal.ValidateActivityCohorts(o.ActivityCohorts); err != nil {
 		return nil, err
 	}
-	if o.Policy.Name == "" {
-		o.Policy = popularity.PolicyV2
-	}
-	if err := o.Policy.Validate(); err != nil {
-		return nil, err
-	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
@@ -132,13 +121,7 @@ func New(o Options) (*Service, error) {
 		entities: q("content_entities"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"), counts: q("content_interaction_counts"),
 		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments:    q("content_comments"),
-		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), reposts: q("content_channel_reposts")}}
-	var err error
-	s.historical, err = popularity.New(popularity.Config{Source: o.Hub, Policy: o.Policy, Availability: s,
-		Cache: popularity.NewMemoryCache(0), MaxDepth: PopularityDepth})
-	if err != nil {
-		return nil, err
-	}
+		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), rankings: q("content_popular_rankings"), reposts: q("content_channel_reposts")}}
 	if o.Candidates != nil && !o.Hub.SignalsConfigured() {
 		return nil, errors.New("discovery: Candidates needs the signal plane")
 	}
