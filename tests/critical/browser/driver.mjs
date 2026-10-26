@@ -52,6 +52,7 @@ try {
   } else if(scenario==="CK-J09-S01") {
     assert.match(await page.evaluate(()=>window.critical.imageUpload()),/^[a-f0-9-]{36}$/);
   } else if(scenario==="CK-J29-S07") {
+    assert.equal(await page.evaluate(()=>window.critical.uploadChannelImage()),fixture.destination);
     await page.evaluate(()=>window.critical.mountChannel());
     await page.locator("#empty-channel").waitFor();
     await page.getByRole("button", {name:"Repost",exact:true}).click();

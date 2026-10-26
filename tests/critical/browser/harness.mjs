@@ -26,6 +26,14 @@ window.critical = {
         React.createElement(RepostButton, { contentId: fixture.item, originalChannelId: fixture.originalChannel }),
         React.createElement(ChannelFeed, { channelId: fixture.destination, query: { language: "en" }, empty: React.createElement("p", { id: "empty-channel" }, "Empty channel") })));
   },
+  async uploadChannelImage() {
+    const ref=client.channels.folder(fixture.destination);
+    if(ref.kind!=="channel"||ref.id!==fixture.destination)throw Error("channel media reference changed identity");
+    const blob=await(await fetch("/fixture.png")).blob();
+    const updated=await client.channels.uploadImage(fixture.destination,"avatar",new File([blob],"avatar.png",{type:"image/png"}),{timeout:20000});
+    if(!updated.avatar?.renditions?.length)throw Error("channel avatar did not complete processing");
+    return updated.id;
+  },
   switchToBob() {
     window.leaks=[];
     window.observer=new MutationObserver(()=>{const view=document.querySelector("#favorite");if(view?.dataset.viewer===fixture.bob&&view.textContent==="true")window.leaks.push(view.textContent);});

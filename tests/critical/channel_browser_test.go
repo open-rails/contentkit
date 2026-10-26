@@ -30,7 +30,7 @@ func TestShippedChannelBrowser(t *testing.T) {
 		cfg.Content.Kinds["article"] = kind
 	})
 	a := w.apps[0]
-	startPublicationRuntime(t, a)
+	attachMedia(t, w, a)
 	alice, aliceToken := w.person(t, 0)
 	_, bobToken := w.person(t, 0)
 	originalChannel, err := a.client(bobToken).PostChannels(t.Context(), channels.Input{Slug: "browser-original", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Original channel"}}})
@@ -46,6 +46,10 @@ func TestShippedChannelBrowser(t *testing.T) {
 	must(t, err)
 	mux := http.NewServeMux()
 	mux.Handle("/content/", httputil.NewSingleHostReverseProxy(base))
+	mux.HandleFunc("/fixture.png", func(out http.ResponseWriter, _ *http.Request) {
+		out.Header().Set("Content-Type", "image/png")
+		_, _ = out.Write(imageBytes(t))
+	})
 	mux.Handle("/", http.FileServer(http.Dir(".browser-dist")))
 	server := httptest.NewServer(mux)
 	defer server.Close()
