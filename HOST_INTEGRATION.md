@@ -1558,13 +1558,14 @@ not grants. Imported content without `created_by` remains staff/channel-managed.
 App-level own-post permissions never authorize access to arbitrary channels.
 OpenRails continues to own paid audience entitlements and their expiration.
 
-### Retiring old classification jobs
+### Retiring removed periodic jobs
 
-The removed `contentkit_reclassify` jobs used empty arguments on the shared
+The removed `contentkit_reclassify` and `contentkit_projection_repair` jobs used
+empty arguments on the shared
 `contentkit` queue. Their app ownership cannot be inferred. If these jobs remain,
 startup and ordinary migration report the exact blocking ID without cancelling
 anything. Stop the owning old fleet and review its job IDs, then pass those IDs
 in `MigrationOptions.RetireObsoleteJobs` to the explicit
 `MigratePostgres` command. Only matching waiting rows are cancelled; running,
 foreign or ambiguous selections are refused and terminal history remains.
-Installations with no old classification jobs need no new configuration.
+Installations with neither retired job kind need no new configuration.

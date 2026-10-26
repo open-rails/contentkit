@@ -11,7 +11,7 @@ import (
 
 // Retired periodic jobs used empty args and a shared queue. Neither identifies
 // an app, so only an operator's exact reviewed IDs authorize retirement.
-var obsoletePeriodicJobKinds = []string{"contentkit_reclassify"}
+var obsoletePeriodicJobKinds = []string{"contentkit_reclassify", "contentkit_projection_repair"}
 
 func (e *Engine) obsoletePeriodicJobsTable(ctx context.Context) (string, error) {
 	return removedJobsTable(ctx, e.pool, e.riverSchema, []string{e.cfg.Tenant})
