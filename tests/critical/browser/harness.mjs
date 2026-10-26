@@ -11,6 +11,8 @@ let fixture, bearer, currentViewer, client, root;
 const target = () => ({ type: "contents", id: fixture.item });
 function FavoriteView() {
   const state = useFavorite(target());
+  window.favoriteSamples ??= [];
+  window.favoriteSamples.push({viewer:currentViewer,loading:state.loading,favorited:state.favorited,error:state.error?.code});
   return React.createElement("output", { id: "favorite", "data-viewer": currentViewer, "data-loading": String(state.loading) }, state.error?.code ?? String(state.favorited));
 }
 function VersionReader({ version }) {
