@@ -21,6 +21,9 @@ type PermissionTarget struct {
 }
 
 func (e *Engine) validateEntityScopes(provider entities.Scopes) error {
+	if e.cfg.Content.Channels != nil && provider == nil {
+		return errors.New("contentkit: channels require Deps.Scopes")
+	}
 	if e.scope == nil {
 		return nil
 	}
