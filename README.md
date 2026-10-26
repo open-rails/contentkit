@@ -110,7 +110,7 @@ for _, r := range routes {
 - With `Database.SkipMigrations: true`, `New` checks prepared storage read-only.
   Run the explicit host migration command first; it calls the applicable
   PostgreSQL, media and ClickHouse migration stages. `MigratePostgres` also
-  provisions configured fixed owner entities and their groups through
+  provisions configured fixed channels and their groups through
   `MigrationOptions.Scopes`; hosts need no separate seeding code. The default `false` retains
   embedded startup migrations. Catalog tables use `Database.Schema` (default
   `contentkit`); account tables can use a separately shared schema. PGroonga and
@@ -700,15 +700,30 @@ Channel access uses `access.ChannelLevel`, `access.ChannelPPV` and
 encodings so saved policies, frozen plans and purchases retain their identities.
 These are channel membership rules, not permission granted by descriptive tags.
 
-## Content
+## Content and versions
+
+An overall item holds shared identity, its primary channel/editorial authority,
+creators and inherited entity associations. Every edition owns its authored title,
+summary, body/HTML, language, original title and media. An English gallery and a
+Chinese edition can use completely different image bytes while inheriting the
+same artist/series/tag associations. Each edition can add its own associations.
+
+Create initial editions through `ContentInput.Versions` and edit their text/media
+through the version interface. Omitting initial versions creates one empty
+edition; adding another version starts empty. There is no automatic body-image
+propagation or copy-version operation. Reader `Content` and discovery cards
+project the selected edition's presentation, identified by `selected_version_id`;
+that convenience does not put content back onto the parent or borrow a sibling's
+text/files. See [import](docs/import.md) and [migration](docs/migration.md).
+
 
 `catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
 Writes are batches; each transaction keeps `content_facets` current (rules
 through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
 documents dirty, queues `content_events` and calls media (republish,
 delete). Content edits do not rename or reprice billing products. Published with a
-future `publish_at` becomes visible when that time arrives; the periodic job
-records publication and runs its side effects. A deleted item
+future `publish_at` is publication intent; readers see the completed release
+after its deadline and required media preparation finish. A deleted item
 stays readable to holders of its own keys; its media is erased after
 `DeletedRetention`. OpenRails retains product and purchase identity after
 content and media are gone; deleting content does not delete billing history. A
