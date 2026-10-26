@@ -10,6 +10,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 )
 
 // The public media read API is rate limited. Observe publication at under two
@@ -104,19 +105,54 @@ func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 	// future boundary. Once due, the normal reconciliation publishes it again.
 	_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, input)
 	must(t, err)
+	var jobID int64
+	var requestID string
+	waitFor(t, func() bool {
+		return w.pool.QueryRow(t.Context(), `SELECT j.id,r.id::text
+ FROM `+w.schema+`_river.river_job j JOIN `+w.schema+`.content_publication_requests r ON j.args->>'id'=r.id::text
+ WHERE j.kind='contentkit_version_release' AND r.tenant_id=$1 AND r.version_id=$2 AND r.current
+ AND r.scheduled_at=$3 AND j.state='scheduled' ORDER BY j.id DESC LIMIT 1`, a.cfg.Scope.AppID.String(), ref.Version, future).Scan(&jobID, &requestID) == nil
+	})
+	wake := func() {
+		_, err := w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job
+ SET scheduled_at=clock_timestamp(),state='available' WHERE id=$1 AND state IN ('scheduled','retryable')`, jobID)
+		must(t, err)
+	}
+	// Pass the queue's due check, then rewind the controlled clock while the
+	// release waits for its source lock, exercising the second due check.
+	unlock, err := versions.LockSource(t.Context(), w.pool, a.cfg.Scope.AppID.String(), ref.Version)
+	must(t, err)
+	t.Cleanup(unlock)
+	beforeDue := w.clock.now()
 	w.clock.set(future.Add(time.Second))
-	_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, input)
-	must(t, err)
-	// The injected catalog clock advances independently of River's wall clock.
-	// Wake this exact durable request; advancing the reader clock is not a
-	// substitute for running its publication worker.
-	_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job j
- SET scheduled_at=clock_timestamp(),state='available'
- FROM `+w.schema+`.content_publication_requests r
- WHERE j.kind='contentkit_version_release' AND j.args->>'id'=r.id::text
- AND r.tenant_id=$1 AND r.version_id=$2 AND r.current
- AND j.state IN ('scheduled','retryable')`, a.cfg.Scope.AppID.String(), ref.Version)
-	must(t, err)
+	wake()
+	waitFor(t, func() bool {
+		var waiting bool
+		must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS (
+ SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted
+ AND ((classid::bigint << 32) | objid::bigint)=hashtextextended($1,0))
+ AND EXISTS (SELECT 1 FROM `+w.schema+`_river.river_job WHERE id=$2 AND state='running')`,
+			"contentkit:media:contentkit:versions:"+a.cfg.Scope.AppID.String()+":"+ref.Version, jobID).Scan(&waiting))
+		return waiting
+	})
+	w.clock.set(beforeDue)
+	unlock()
+	waitFor(t, func() bool {
+		var state string
+		must(t, w.pool.QueryRow(t.Context(), `SELECT state FROM `+w.schema+`_river.river_job WHERE id=$1`, jobID).Scan(&state))
+		if state == "completed" || state == "discarded" || state == "cancelled" {
+			t.Fatalf("early release job ended instead of snoozing: %s", state)
+		}
+		return state == "scheduled"
+	})
+	var state, failure string
+	must(t, w.pool.QueryRow(t.Context(), `SELECT state,coalesce(error,'') FROM `+w.schema+`.content_publication_requests WHERE id=$1`, requestID).Scan(&state, &failure))
+	if state == "failed" || failure != "" {
+		t.Fatalf("early wake failed the publication request: %s %s", state, failure)
+	}
+	// River uses wall time; wake the same snoozed job at the catalog deadline.
+	w.clock.set(future.Add(time.Second))
+	wake()
 	waitForChapterPublication(t, func() bool {
 		view, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 		if err != nil {

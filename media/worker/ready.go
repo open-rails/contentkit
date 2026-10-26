@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
@@ -29,9 +31,15 @@ func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err
 	var snooze *river.JobSnoozeError
 	var cancel *rivertype.JobCancelError
 	checkpoint := errors.As(err, &snooze) && snooze.Duration == 0 && ctx.Err() == nil
-	settled := errors.As(err, &cancel) && ctx.Err() == nil
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	settled := errors.As(err, &cancel) && (ctx.Err() == nil || timedOut)
 	if err != nil && !checkpoint && !settled || job.Kind != (workqueue.IngestArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
+	}
+	if settled && timedOut {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
 	}
 	defer func() { result = media.SnoozeUnavailable(ctx, h.manifests.Store(), job, result) }()
 	var args struct {
@@ -73,4 +81,78 @@ func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err
 		return err
 	}
 	return workErr
+}
+
+func (c Config) checkAttemptBudget(ctx context.Context, job *rivertype.JobRow, fail func(context.Context, error) error) error {
+	if job.Attempt <= workqueue.MaxAttempts {
+		return nil
+	}
+	return c.cancelFailedAttempt(ctx, job, fmt.Errorf("media/worker: %d failed attempts", job.Attempt-1), fail)
+}
+
+func (c Config) finishAttempt(ctx context.Context, job *rivertype.JobRow, err error, fail func(context.Context, error) error) error {
+	if errors.Is(ctx.Err(), context.Canceled) && !errors.Is(context.Cause(ctx), river.ErrJobCancelledRemotely) {
+		return river.JobSnooze(0)
+	}
+	err = media.SnoozeUnavailable(ctx, c.Store, job, err)
+	var snooze *river.JobSnoozeError
+	var cancel *river.JobCancelError
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	if err == nil || (ctx.Err() != nil && !timedOut) || job.Attempt < min(job.MaxAttempts, workqueue.MaxAttempts) || errors.As(err, &snooze) || errors.As(err, &cancel) {
+		return err
+	}
+	if timedOut {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+	}
+	return c.cancelFailedAttempt(ctx, job, err, fail)
+}
+
+func (c Config) cancelFailedAttempt(ctx context.Context, job *rivertype.JobRow, err error, fail func(context.Context, error) error) error {
+	if failure := fail(ctx, err); failure != nil {
+		var cancel *river.JobCancelError
+		if errors.As(failure, &cancel) {
+			return failure
+		}
+		// Snoozes do not spend attempts, so bound failure-record retries separately.
+		var meta struct {
+			Snoozes int `json:"contentkit_failure_record_snoozes"`
+		}
+		_ = json.Unmarshal(job.Metadata, &meta)
+		if meta.Snoozes < 10 {
+			if setErr := river.MetadataSet(ctx, "contentkit_failure_record_snoozes", meta.Snoozes+1); setErr == nil {
+				return river.JobSnooze(media.UnavailableSnooze)
+			} else {
+				failure = errors.Join(failure, setErr)
+			}
+		}
+		c.Logger.Error("media-worker: could not record final failure", "job_id", job.ID, "error", failure.Error())
+		return river.JobCancel(errors.Join(err, fmt.Errorf("record final failure: %w", failure)))
+	}
+	return river.JobCancel(err)
+}
+
+// Rescued hard kills did not return a failure and do not spend the retry budget.
+func (c Config) restoreRescuedAttempt(ctx context.Context, job *rivertype.JobRow) error {
+	failures := 0
+	for _, attempt := range job.Errors {
+		if attempt.Error != "Stuck job rescued by JobRescuer" {
+			failures++
+		}
+	}
+	want := failures + 1
+	if job.Attempt <= want {
+		return nil
+	}
+	result, err := c.Pool.Exec(ctx, `UPDATE `+pgx.Identifier{c.Schema, "river_job"}.Sanitize()+`
+SET attempt = $2 WHERE id = $1 AND state = 'running' AND attempt = $3`, job.ID, want, job.Attempt)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf("media/worker: job %d changed while restoring rescued attempt", job.ID)
+	}
+	job.Attempt = want
+	return nil
 }

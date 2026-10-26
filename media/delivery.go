@@ -253,12 +253,18 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 		if d.Ready || d.Adopted {
 			return nil
 		}
+		keys := make([]string, 0, 2*len(d.Files))
 		for _, f := range d.Files {
 			source, _ := item.Blob(f.Source)
 			destination, _ := item.Blob(f.Blob)
-			if err := m.checkAllocationsIn(ctx, item, []string{source, destination}, current.Incarnation); err != nil {
-				return err
-			}
+			keys = append(keys, source, destination)
+		}
+		if err := m.checkAllocationsIn(ctx, item, keys, current.Incarnation); err != nil {
+			return err
+		}
+		for _, f := range d.Files {
+			source, _ := item.Blob(f.Source)
+			destination, _ := item.Blob(f.Blob)
 			if err := m.verifyDelivery(ctx, destination, f); err == nil {
 				continue
 			} else if !errors.Is(err, ErrNotFound) {
