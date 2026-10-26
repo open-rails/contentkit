@@ -10,10 +10,10 @@ go:Client.GetGlobalCommentBans	go	Go generated Client route	Client.GetGlobalComm
 go:Client.GetGlobalCommentBan	go	Go generated Client route	Client.GetGlobalCommentBan	client_gen.go	included-critical
 go:Client.PutGlobalCommentBan	go	Go generated Client route	Client.PutGlobalCommentBan	client_gen.go	included-critical
 go:Client.DeleteGlobalCommentBan	go	Go generated Client route	Client.DeleteGlobalCommentBan	client_gen.go	included-critical
-go:Client.GetEntityHeldComments	go	Go generated Client route	Client.GetEntityHeldComments	client_gen.go	included-critical
-go:Client.GetEntityCommentBans	go	Go generated Client route	Client.GetEntityCommentBans	client_gen.go	included-critical
-go:Client.PutEntityCommentBan	go	Go generated Client route	Client.PutEntityCommentBan	client_gen.go	included-critical
-go:Client.DeleteEntityCommentBan	go	Go generated Client route	Client.DeleteEntityCommentBan	client_gen.go	included-critical
+go:Client.GetChannelHeldComments	go	Go generated Client route	Client.GetChannelHeldComments	client_gen.go	included-critical
+go:Client.GetChannelCommentBans	go	Go generated Client route	Client.GetChannelCommentBans	client_gen.go	included-critical
+go:Client.PutChannelCommentBan	go	Go generated Client route	Client.PutChannelCommentBan	client_gen.go	included-critical
+go:Client.DeleteChannelCommentBan	go	Go generated Client route	Client.DeleteChannelCommentBan	client_gen.go	included-critical
 go:Client.GetContentCanComment	go	Go generated Client route	Client.GetContentCanComment	client_gen.go	included-critical
 go:Client.GetEntityCanComment	go	Go generated Client route	Client.GetEntityCanComment	client_gen.go	included-critical
 go:Client.GetModerationHeld	go	Go generated Client route	Client.GetModerationHeld	client_gen.go	included-critical
@@ -47,7 +47,7 @@ go:Client.PatchEntity	go	Go generated Client route	Client.PatchEntity	client_gen
 go:Client.DeleteEntity	go	Go generated Client route	Client.DeleteEntity	client_gen.go	included-critical
 go:Client.GetManageEntities	go	Go generated Client route	Client.GetManageEntities	client_gen.go	included-critical
 go:Client.GetManageEntity	go	Go generated Client route	Client.GetManageEntity	client_gen.go	included-critical
-go:Client.GetMeEntities	go	Go generated Client route	Client.GetMeEntities	client_gen.go	included-critical
+go:Client.GetMeChannels	go	Go generated Client route	Client.GetMeChannels	client_gen.go	included-critical
 go:Client.GetContentVersionDownload	go	Go generated Client route	Client.GetContentVersionDownload	client_gen.go	included-critical
 go:Client.GetContentVersionArchive	go	Go generated Client route	Client.GetContentVersionArchive	client_gen.go	included-critical
 go:Client.GetMeLibrary	go	Go generated Client route	Client.GetMeLibrary	client_gen.go	included-critical
@@ -138,7 +138,6 @@ ts:DiscoveryClient.releases	ts	TS class member	DiscoveryClient.releases	sdk/ui/s
 ts:EntitiesClient.create	ts	TS class member	EntitiesClient.create	sdk/ui/src/client/entities.ts	included-critical
 ts:EntitiesClient.update	ts	TS class member	EntitiesClient.update	sdk/ui/src/client/entities.ts	included-critical
 ts:EntitiesClient.remove	ts	TS class member	EntitiesClient.remove	sdk/ui/src/client/entities.ts	included-critical
-ts:EntitiesClient.mine	ts	TS class member	EntitiesClient.mine	sdk/ui/src/client/entities.ts	included-critical
 ts:ContentKitError.refusal	ts	TS class member	ContentKitError.refusal	sdk/ui/src/client/errors.ts	included-critical
 ts:ContentKitError.isLimit	ts	TS class member	ContentKitError.isLimit	sdk/ui/src/client/errors.ts	included-critical
 ts:ContentKitError.isCeiling	ts	TS class member	ContentKitError.isCeiling	sdk/ui/src/client/errors.ts	included-critical
@@ -226,3 +225,38 @@ ts:MediaProcessingPanel	ts	TS exported component	MediaProcessingPanel	sdk/ui/src
 go:Source.RetireInboxSync	go	Go explicit migration method	Source.RetireInboxSync	notification/openrails/retire.go	included-critical
 go:authkit.MigrationScopes	go	Go AuthKit migration adapter	authkit.MigrationScopes	adapters/authkit/migration.go	included-critical
 go:kinds.Config	go	Go content model configuration	kinds.Config	kinds/kinds.go	included-critical
+go:Client.GetChannelComments	go	Go generated Client route	Client.GetChannelComments	client_gen.go	included-critical channel253 contract
+go:Client.PostChannelComments	go	Go generated Client route	Client.PostChannelComments	client_gen.go	included-critical channel253 contract
+go:Client.PostChannelLike	go	Go generated Client route	Client.PostChannelLike	client_gen.go	included-critical channel253 contract
+go:Client.PostChannelDislike	go	Go generated Client route	Client.PostChannelDislike	client_gen.go	included-critical channel253 contract
+go:Client.DeleteChannelReaction	go	Go generated Client route	Client.DeleteChannelReaction	client_gen.go	included-critical channel253 contract
+go:Client.GetChannelReaction	go	Go generated Client route	Client.GetChannelReaction	client_gen.go	included-critical channel253 contract
+go:Client.PostChannelFavorite	go	Go generated Client route	Client.PostChannelFavorite	client_gen.go	included-critical channel253 contract
+go:Client.DeleteChannelFavorite	go	Go generated Client route	Client.DeleteChannelFavorite	client_gen.go	included-critical channel253 contract
+go:Client.GetChannelFavorite	go	Go generated Client route	Client.GetChannelFavorite	client_gen.go	included-critical channel253 contract
+go:Client.GetChannelCanComment	go	Go generated Client route	Client.GetChannelCanComment	client_gen.go	included-critical channel253 contract
+go:Client.PutChannelRepost	go	Go generated Client route	Client.PutChannelRepost	client_gen.go	included-critical channel253 contract
+go:Client.DeleteChannelRepost	go	Go generated Client route	Client.DeleteChannelRepost	client_gen.go	included-critical channel253 contract
+go:Client.GetManageChannels	go	Go generated Client route	Client.GetManageChannels	client_gen.go	included-critical channel253 contract
+go:Client.GetChannels	go	Go generated Client route	Client.GetChannels	client_gen.go	included-critical channel253 contract
+go:Client.PostChannels	go	Go generated Client route	Client.PostChannels	client_gen.go	included-critical channel253 contract
+go:Client.GetChannel	go	Go generated Client route	Client.GetChannel	client_gen.go	included-critical channel253 contract
+go:Client.PatchChannel	go	Go generated Client route	Client.PatchChannel	client_gen.go	included-critical channel253 contract
+go:Client.DeleteChannel	go	Go generated Client route	Client.DeleteChannel	client_gen.go	included-critical channel253 contract
+go:Client.GetManageChannel	go	Go generated Client route	Client.GetManageChannel	client_gen.go	included-critical channel253 contract
+go:Client.GetChannelEntities	go	Go generated Client route	Client.GetChannelEntities	client_gen.go	included-critical channel253 contract
+go:Client.PutChannelEntities	go	Go generated Client route	Client.PutChannelEntities	client_gen.go	included-critical channel253 contract
+go:Client.GetChannelContents	go	Go generated Client route	Client.GetChannelContents	client_gen.go	included-critical channel253 contract
+ts:ChannelsClient.mine	ts	TS channel client method	ChannelsClient.mine	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.create	ts	TS channel client method	ChannelsClient.create	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.get	ts	TS channel client method	ChannelsClient.get	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.list	ts	TS channel client method	ChannelsClient.list	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.update	ts	TS channel client method	ChannelsClient.update	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.entities	ts	TS channel client method	ChannelsClient.entities	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.setEntities	ts	TS channel client method	ChannelsClient.setEntities	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.repost	ts	TS channel client method	ChannelsClient.repost	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.removeRepost	ts	TS channel client method	ChannelsClient.removeRepost	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.contents	ts	TS channel client method	ChannelsClient.contents	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.remove	ts	TS channel client method	ChannelsClient.remove	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.folder	ts	TS channel media method	ChannelsClient.folder	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:ChannelsClient.uploadImage	ts	TS channel media method	ChannelsClient.uploadImage	sdk/ui/src/client/channels.ts	included-critical channel253 contract
