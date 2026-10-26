@@ -260,7 +260,7 @@
         "tags": [
           "comments"
         ],
-        "summary": "The top-level comments on a group with reply counts; the caller also sees its own held and rejected ones.",
+        "summary": "The top-level comments on an entity with reply counts; the caller also sees its own held and rejected ones.",
         "parameters": [
           {
             "name": "id",
@@ -352,7 +352,176 @@
         "tags": [
           "comments"
         ],
-        "summary": "Comments on a group in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
+        "summary": "Comments on an entity in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "comment_banned",
+          "comment_too_long",
+          "comments_closed",
+          "comments_locked",
+          "forbidden",
+          "moderation_rejected",
+          "not_found",
+          "rate_limited",
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels/{id}/comments": {
+      "get": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "The top-level comments on a channel with reply counts; the caller also sees its own held and rejected ones.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only this language's comments; every language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "likes (most liked), best (Wilson lower bound) or newest (the default)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Comment"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Comments on a channel in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
         "parameters": [
           {
             "name": "id",
@@ -1318,7 +1487,7 @@
         "tags": [
           "reactions"
         ],
-        "summary": "Likes a group.",
+        "summary": "Likes an entity.",
         "parameters": [
           {
             "name": "id",
@@ -1371,7 +1540,7 @@
         "tags": [
           "reactions"
         ],
-        "summary": "Dislikes a group.",
+        "summary": "Dislikes an entity.",
         "parameters": [
           {
             "name": "id",
@@ -1424,7 +1593,7 @@
         "tags": [
           "reactions"
         ],
-        "summary": "Clears the caller's reaction to a group.",
+        "summary": "Clears the caller's reaction to an entity.",
         "parameters": [
           {
             "name": "id",
@@ -1475,7 +1644,223 @@
         "tags": [
           "reactions"
         ],
-        "summary": "The like and dislike counts of a group and the caller's own reaction.",
+        "summary": "The like and dislike counts of an entity and the caller's own reaction.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels/{id}/like": {
+      "post": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Likes a channel.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited",
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels/{id}/dislike": {
+      "post": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Dislikes a channel.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited",
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels/{id}/reaction": {
+      "delete": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Clears the caller's reaction to a channel.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited",
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "get": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "The like and dislike counts of a channel and the caller's own reaction.",
         "parameters": [
           {
             "name": "id",
@@ -1715,7 +2100,7 @@
         "tags": [
           "favorites"
         ],
-        "summary": "Favorites a group the caller sees; favoriting again is a no-op. Answers the state with its favorite count.",
+        "summary": "Favorites an entity the caller sees; favoriting again is a no-op. Answers the state with its favorite count.",
         "parameters": [
           {
             "name": "id",
@@ -1763,7 +2148,7 @@
         "tags": [
           "favorites"
         ],
-        "summary": "Unfavorites a group, also one no longer visible. Answers the state with its favorite count.",
+        "summary": "Unfavorites an entity, also one no longer visible. Answers the state with its favorite count.",
         "parameters": [
           {
             "name": "id",
@@ -1812,7 +2197,164 @@
         "tags": [
           "favorites"
         ],
-        "summary": "The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible).",
+        "summary": "The favorite count of an entity and whether the caller favorited it (never, signed out: then it must be visible).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "invalid_request",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels/{id}/favorite": {
+      "post": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Favorites a channel the caller sees; favoriting again is a no-op. Answers the state with its favorite count.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Unfavorites a channel, also one no longer visible. Answers the state with its favorite count.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
+      "get": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "The favorite count of a channel and whether the caller favorited it (never, signed out: then it must be visible).",
         "parameters": [
           {
             "name": "id",
@@ -3045,7 +3587,7 @@
         ]
       }
     },
-    "/v1/entities/{id}/held-comments": {
+    "/v1/channels/{id}/held-comments": {
       "get": {
         "tags": [
           "moderation"
@@ -3110,7 +3652,7 @@
         ]
       }
     },
-    "/v1/entities/{id}/comment-bans": {
+    "/v1/channels/{id}/comment-bans": {
       "get": {
         "tags": [
           "bans"
@@ -3178,7 +3720,7 @@
         ]
       }
     },
-    "/v1/entities/{id}/comment-bans/{user}": {
+    "/v1/channels/{id}/comment-bans/{user}": {
       "put": {
         "tags": [
           "bans"
@@ -3373,7 +3915,74 @@
         "tags": [
           "bans"
         ],
-        "summary": "Whether the caller may comment on a group, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.",
+        "summary": "Whether the caller may comment on an entity, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only this language's thread; all languages by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentStanding"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels/{id}/can-comment": {
+      "get": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "Whether the caller may comment on a channel, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.",
         "parameters": [
           {
             "name": "id",
@@ -4364,7 +4973,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.",
+        "summary": "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's original posts when they currently edit that channel.",
         "parameters": [
           {
             "name": "state",
@@ -4375,9 +4984,9 @@
             }
           },
           {
-            "name": "owner_group",
+            "name": "channel_id",
             "in": "query",
-            "description": "only this owner group's, which the caller edits",
+            "description": "only this primary channel's content, which the caller edits",
             "schema": {
               "type": "string"
             }
@@ -4520,9 +5129,9 @@
             }
           },
           {
-            "name": "owner_group",
+            "name": "channel_id",
             "in": "query",
-            "description": "only this owner group's, which the caller edits",
+            "description": "only this primary channel's content, which the caller edits",
             "schema": {
               "type": "string"
             }
@@ -4667,9 +5276,9 @@
             }
           },
           {
-            "name": "owner_group",
+            "name": "channel_id",
             "in": "query",
-            "description": "only this owner group's, which the caller edits",
+            "description": "only this primary channel's content, which the caller edits",
             "schema": {
               "type": "string"
             }
@@ -4844,9 +5453,9 @@
             }
           },
           {
-            "name": "owner_group",
+            "name": "channel_id",
             "in": "query",
-            "description": "owner group ids (channels): only content one of them owns",
+            "description": "primary channel ids: only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -5677,6 +6286,114 @@
         ],
         "x-contentkit-module": "contents",
         "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:contents",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels/{id}/reposts/{content_id}": {
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Idempotently reposts a published original into a channel the caller may post to; original ownership and access remain unchanged.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "content_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelRepost"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "contents",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:contents",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Removes only the destination repost reference. Requires destination editorship or the original reposter's current posting permission.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "content_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "contents",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
           "forbidden",
           "not_found"
@@ -7382,84 +8099,6 @@
         ]
       }
     },
-    "/v1/me/entities": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "The viewer's active entities: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the entity's AuthKit scope, or hold the key of, each saying which, as GET /entities lists them.",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "query",
-            "description": "only entities of this kind",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "language",
-            "in": "query",
-            "description": "the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "name (the default), count or newest",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "the previous page's next_cursor",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "page size: 50 by default, at most 200",
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MyEntityPage"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "entities",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:entities",
-          "auth",
-          "request"
-        ]
-      }
-    },
     "/v1/entities/{id}/names": {
       "put": {
         "tags": [
@@ -8349,6 +8988,678 @@
         ]
       }
     },
+    "/v1/manage/channels": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Lists channel administration records, including deleted channels during retention.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "display language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "query",
+            "description": "canonical channel slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "substring of a channel name or slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "previous next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "maximum results, at most 200",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "name, count or newest",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "active or deleted",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:channels:write",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Lists public channels independently of metadata entities.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "display language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "query",
+            "description": "canonical channel slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "substring of a channel name or slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "previous next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "maximum results, at most 200",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "name, count or newest",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Creates a channel under the configured staff or user creation policy.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:channels:write",
+        "x-contentkit-errors": [
+          "conflict",
+          "limit_reached"
+        ],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels/{id}": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Reads a channel, its metadata and the viewer's membership standing.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "display language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      },
+      "patch": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Edits channel identity as staff or a current channel manager.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:channels:write",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Soft-deletes the channel and synchronously retires its authoring group and original content; retained media follows the existing purge policy.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:channels:write",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/manage/channels/{id}": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Reads channel administration identity, including a deleted channel during retention.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "display language",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:channels:write",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/channels": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Lists the caller's channels and their current authoring permissions.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "display language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "query",
+            "description": "canonical channel slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "substring of a channel name or slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "previous next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "maximum results, at most 200",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "name, count or newest",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyChannelPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/channels/{id}/entities": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Lists descriptive channel metadata; these associations confer no access or authoring authority.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "display language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EntityCard"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      },
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Replaces channel metadata with the given entity IDs, as a channel manager.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "channels",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:channels:write",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:channels",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/contents/{id}/versions/{version}/page-notices": {
       "get": {
         "tags": [
@@ -8988,6 +10299,105 @@
         ]
       }
     },
+    "/v1/channels/{id}/contents": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Lists a channel's published originals and repost references, once per original. Original publication, read, language, and domain policies always apply; reposting grants no editing or reading rights.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 24 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/me/library": {
       "get": {
         "tags": [
@@ -9197,9 +10607,9 @@
             }
           },
           {
-            "name": "owner_group",
+            "name": "channel_id",
             "in": "query",
-            "description": "owner group ids (channels): only content one of them owns",
+            "description": "primary channel ids: only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -9571,9 +10981,9 @@
             }
           },
           {
-            "name": "owner_group",
+            "name": "channel_id",
             "in": "query",
-            "description": "owner group ids (channels): only content one of them owns",
+            "description": "primary channel ids: only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -9990,9 +11400,9 @@
             }
           },
           {
-            "name": "owner_group",
+            "name": "channel_id",
             "in": "query",
-            "description": "owner group ids (channels): only content one of them owns",
+            "description": "primary channel ids: only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -10252,9 +11662,9 @@
             }
           },
           {
-            "name": "owner_group",
+            "name": "channel_id",
             "in": "query",
-            "description": "owner group ids (channels): only content one of them owns",
+            "description": "primary channel ids: only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -10510,9 +11920,9 @@
             }
           },
           {
-            "name": "owner_group",
+            "name": "channel_id",
             "in": "query",
-            "description": "owner group ids (channels): only content one of them owns",
+            "description": "primary channel ids: only content one of them owns",
             "style": "form",
             "explode": false,
             "schema": {
@@ -11130,12 +12540,12 @@
         "tags": [
           "discovery"
         ],
-        "summary": "The content items (as their listing shows them) or groups the reader favorited, most recent first.",
+        "summary": "The content items (as their listing shows them) entities or channels the reader favorited, most recent first.",
         "parameters": [
           {
             "name": "target",
             "in": "query",
-            "description": "contents (the default) or entities",
+            "description": "contents (the default), entities or channels",
             "schema": {
               "type": "string"
             }
@@ -12334,6 +13744,12 @@
               "$ref": "#/components/schemas/EntityRecord"
             }
           },
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelRecord"
+            }
+          },
           "contents": {
             "type": "array",
             "items": {
@@ -12465,8 +13881,11 @@
               }
             }
           },
-          "owner": {
-            "$ref": "#/components/schemas/EntityCard"
+          "channel": {
+            "$ref": "#/components/schemas/ChannelCard"
+          },
+          "repost": {
+            "$ref": "#/components/schemas/ChannelRepost"
           },
           "counts": {
             "$ref": "#/components/schemas/Counts"
@@ -12649,6 +14068,341 @@
         },
         "required": [
           "title"
+        ]
+      },
+      "Channel": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "cover": {
+            "$ref": "#/components/schemas/EntitiesCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "access": {
+            "$ref": "#/components/schemas/EntityAccess"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ChannelState"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitiesText"
+            }
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Count"
+            }
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityCard"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "count",
+          "created_at",
+          "state",
+          "revision",
+          "updated_at",
+          "names",
+          "text",
+          "counts",
+          "entities"
+        ]
+      },
+      "ChannelCard": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "cover": {
+            "$ref": "#/components/schemas/EntitiesCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "access": {
+            "$ref": "#/components/schemas/EntityAccess"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "count",
+          "created_at"
+        ]
+      },
+      "ChannelInput": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitiesText"
+            }
+          },
+          "cover": {
+            "$ref": "#/components/schemas/EntitiesCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          }
+        }
+      },
+      "ChannelPage": {
+        "type": "object",
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelCard"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channels"
+        ]
+      },
+      "ChannelPolicy": {
+        "type": "object",
+        "properties": {
+          "fixed": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ChannelRecord": {
+        "type": "object",
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitiesText"
+            }
+          },
+          "cover_image": {
+            "type": "string"
+          },
+          "cover_content": {
+            "$ref": "#/components/schemas/Ref"
+          },
+          "avatar": {
+            "type": "string"
+          },
+          "owner_user_id": {
+            "type": "string"
+          },
+          "auth_scope": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ChannelRepost": {
+        "type": "object",
+        "properties": {
+          "channel_id": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "can_remove": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channel_id",
+          "created_at",
+          "can_remove"
+        ]
+      },
+      "ChannelUpdate": {
+        "type": "object",
+        "properties": {
+          "owner_user_id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "text": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntitiesText"
+            }
+          },
+          "cover": {
+            "$ref": "#/components/schemas/EntitiesCover"
+          },
+          "avatar": {
+            "$ref": "#/components/schemas/Avatar"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ChannelState"
+          }
+        }
+      },
+      "Channels": {
+        "type": "object",
+        "properties": {
+          "creation": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "entitled": {
+            "type": "boolean"
+          },
+          "max_per_owner": {
+            "type": "integer"
+          },
+          "uploads": {
+            "$ref": "#/components/schemas/UploadLimits"
+          }
+        },
+        "required": [
+          "creation"
         ]
       },
       "Chip": {
@@ -13046,11 +14800,11 @@
             "type": "object",
             "additionalProperties": {}
           },
-          "owner_group_id": {
+          "channel_id": {
             "type": "string"
           },
-          "owner": {
-            "$ref": "#/components/schemas/EntityCard"
+          "channel": {
+            "$ref": "#/components/schemas/ChannelCard"
           },
           "creators": {
             "type": "array",
@@ -13260,7 +15014,7 @@
             "type": "object",
             "additionalProperties": {}
           },
-          "owner_group_id": {
+          "channel_id": {
             "type": "string"
           },
           "creators": {
@@ -13305,6 +15059,9 @@
       "ContentModel": {
         "type": "object",
         "properties": {
+          "channels": {
+            "$ref": "#/components/schemas/Channels"
+          },
           "languages": {
             "type": "array",
             "items": {
@@ -13449,7 +15206,7 @@
             "type": "object",
             "additionalProperties": {}
           },
-          "owner_group": {
+          "channel": {
             "$ref": "#/components/schemas/Ref"
           },
           "creators": {
@@ -13988,12 +15745,6 @@
           "avatar": {
             "$ref": "#/components/schemas/Avatar"
           },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -14146,12 +15897,6 @@
           "avatar": {
             "$ref": "#/components/schemas/Avatar"
           },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -14264,12 +16009,6 @@
           "avatar": {
             "$ref": "#/components/schemas/Avatar"
           },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
-          },
           "names": {
             "type": "array",
             "items": {
@@ -14299,22 +16038,7 @@
           "scoped_by": {
             "type": "string"
           },
-          "owner": {
-            "type": "string"
-          },
-          "max_per_owner": {
-            "type": "integer"
-          },
           "avatar": {
-            "type": "boolean"
-          },
-          "uploads": {
-            "$ref": "#/components/schemas/UploadLimits"
-          },
-          "entitled": {
-            "type": "boolean"
-          },
-          "auth_scope": {
             "type": "boolean"
           },
           "membership_scopes": {
@@ -14419,12 +16143,6 @@
           "avatar": {
             "type": "string"
           },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
-          },
           "edges": {
             "type": "array",
             "items": {
@@ -14443,21 +16161,6 @@
             "format": "date-time"
           }
         }
-      },
-      "EntityRef": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string"
-          },
-          "slug": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "kind",
-          "slug"
-        ]
       },
       "EntitySummary": {
         "type": "object",
@@ -14520,12 +16223,6 @@
           },
           "avatar": {
             "$ref": "#/components/schemas/Avatar"
-          },
-          "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
-            "type": "string"
           },
           "names": {
             "type": "array",
@@ -15309,6 +17006,9 @@
       "Interaction": {
         "type": "object",
         "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/ChannelCard"
+          },
           "content": {
             "$ref": "#/components/schemas/Card"
           },
@@ -15404,8 +17104,8 @@
               "$ref": "#/components/schemas/Attribute"
             }
           },
-          "owner_entity": {
-            "$ref": "#/components/schemas/EntityRef"
+          "channel": {
+            "$ref": "#/components/schemas/ChannelPolicy"
           },
           "sort": {
             "type": "string"
@@ -15793,25 +17493,13 @@
           "max_parts"
         ]
       },
-      "MyEntity": {
+      "MyChannel": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string"
           },
-          "kind": {
-            "type": "string"
-          },
           "slug": {
-            "type": "string"
-          },
-          "internal": {
-            "type": "boolean"
-          },
-          "scope_id": {
-            "type": "string"
-          },
-          "parent_id": {
             "type": "string"
           },
           "name": {
@@ -15834,10 +17522,6 @@
           },
           "count": {
             "type": "integer"
-          },
-          "attributes": {
-            "type": "object",
-            "additionalProperties": {}
           },
           "access": {
             "$ref": "#/components/schemas/EntityAccess"
@@ -15870,12 +17554,9 @@
         },
         "required": [
           "id",
-          "kind",
           "slug",
-          "internal",
           "name",
           "count",
-          "attributes",
           "created_at",
           "owner",
           "editor",
@@ -15886,13 +17567,13 @@
           "member"
         ]
       },
-      "MyEntityPage": {
+      "MyChannelPage": {
         "type": "object",
         "properties": {
-          "entities": {
+          "channels": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/MyEntity"
+              "$ref": "#/components/schemas/MyChannel"
             }
           },
           "next_cursor": {
@@ -15900,7 +17581,7 @@
           }
         },
         "required": [
-          "entities"
+          "channels"
         ]
       },
       "MyStats": {
@@ -17875,6 +19556,9 @@
           "group": {
             "$ref": "#/components/schemas/Ref"
           },
+          "channel": {
+            "$ref": "#/components/schemas/Ref"
+          },
           "comment": {
             "$ref": "#/components/schemas/Ref"
           }
@@ -18408,6 +20092,13 @@
           "count"
         ]
       },
+      "ChannelState": {
+        "type": "string",
+        "enum": [
+          "active",
+          "deleted"
+        ]
+      },
       "ErrorCode": {
         "type": "string",
         "enum": [
@@ -18564,6 +20255,7 @@
     "media": "/v1/media",
     "codes": "/v1/codes",
     "entities": "/v1",
+    "channels": "/v1",
     "versions": "/v1",
     "discovery": "/v1",
     "import": "/v1"
@@ -18606,6 +20298,7 @@
     "module:entities": [
       "internal_error"
     ],
+    "module:channels": null,
     "module:versions": [
       "internal_error",
       "not_found",

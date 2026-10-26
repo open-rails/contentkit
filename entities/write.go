@@ -31,9 +31,9 @@ type EntityInput struct {
 	Cover      *Cover         `json:"cover,omitempty"`
 	Avatar     *Avatar        `json:"avatar,omitempty"`
 	// OwnerUserID owns a user-owned entity; a person creating one owns it.
-	OwnerUserID string `json:"owner_user_id,omitempty"`
+	OwnerUserID string `json:"-"`
 	// AuthScope is staff's (an import's); ContentKit provisions it otherwise.
-	AuthScope string `json:"auth_scope,omitempty"`
+	AuthScope string `json:"-"`
 	Names     []Name `json:"names,omitempty"`
 	Text      []Text `json:"text,omitempty"`
 }
@@ -56,8 +56,8 @@ type EntityUpdate struct {
 	// Avatar selects the entity's avatar (kinds with avatars); an empty one returns to
 	// the first.
 	Avatar      *Avatar `json:"avatar,omitempty"`
-	OwnerUserID *string `json:"owner_user_id,omitempty"`
-	AuthScope   *string `json:"auth_scope,omitempty"`
+	OwnerUserID *string `json:"-"`
+	AuthScope   *string `json:"-"`
 	// Names replaces every name and alias.
 	Names []Name `json:"names,omitempty"`
 	// Text replaces the text of every language.
@@ -282,7 +282,7 @@ func (s *Store) hierarchyKey() string {
 // user-owned kind and the person's own, within the kind's MaxPerOwner
 // (ErrLimit), linked only to entities the person edits; anything else is
 // ErrForbidden. An auth_scope kind's entity gets its AuthKit scope (Scopes)
-// after commit, else from the scope sync job.
+// synchronously after commit; provider failures are returned for caller retry.
 func (s *Store) CreateEntities(ctx context.Context, inputs []EntityInput) ([]Entity, error) {
 	if len(inputs) == 0 {
 		return []Entity{}, nil
@@ -296,6 +296,9 @@ func (s *Store) CreateEntities(ctx context.Context, inputs []EntityInput) ([]Ent
 	var texts []textRow
 	ids := make([]string, len(inputs))
 	for i, in := range inputs {
+		if !s.channels && (in.OwnerUserID != "" || in.AuthScope != "") {
+			return nil, fmt.Errorf("%w: metadata has no authoring owner or scope", ErrInvalid)
+		}
 		kind := strings.TrimSpace(in.Kind)
 		gk, err := s.entityKind(kind)
 		if err != nil {
@@ -404,7 +407,7 @@ func (s *Store) CreateEntities(ctx context.Context, inputs []EntityInput) ([]Ent
 		if err := s.markDirty(ctx, q, out); err != nil {
 			return err
 		}
-		return s.queueSync(ctx, q, s.unscoped(out))
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -427,7 +430,7 @@ func (s *Store) insertText(ctx context.Context, q Querier, rows []textRow) error
 }
 
 func (s *Store) byIDs(ctx context.Context, q Querier, ids []string) (map[EntityID]Entity, error) {
-	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[])`, entityColumns, s.table("content_entities")), s.tenant, ids)
+	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) AND %s`, entityColumns, s.table("content_entities"), s.domainPredicate("g")), s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -497,6 +500,9 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 	}
 	ids := make([]EntityID, len(updates))
 	for i, u := range updates {
+		if !s.channels && (u.OwnerUserID != nil || u.AuthScope != nil) {
+			return nil, fmt.Errorf("%w: metadata has no authoring owner or scope", ErrInvalid)
+		}
 		ids[i] = u.ID
 	}
 	list, err := uniqueIDs(ids)
@@ -506,9 +512,26 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 	if len(list) != len(updates) {
 		return nil, fmt.Errorf("%w: a group is updated twice", ErrInvalid)
 	}
+	// Channel permission providers may share this pool. Resolve the current
+	// grants before holding a SQL connection, then fence the authorized identity.
+	authorized := map[EntityID]Entity{}
+	if s.channels && !staff {
+		before, err := s.Entities(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		if len(before) != len(ids) {
+			return nil, ErrNotFound
+		}
+		if err := s.mayEdit(ctx, before); err != nil {
+			return nil, err
+		}
+		for _, g := range before {
+			authorized[g.ID] = g
+		}
+	}
 	topology := slices.ContainsFunc(updates, func(u EntityUpdate) bool { return u.ParentID != nil || u.State != nil })
 	out := make([]Entity, len(updates))
-	var changed []string
 	err = s.run(ctx, func(q Querier) error {
 		if topology {
 			if err := s.lockHierarchy(ctx, q); err != nil {
@@ -519,7 +542,14 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		if err != nil {
 			return err
 		}
-		if err := s.mayEdit(ctx, locked); err != nil {
+		if s.channels && !staff {
+			for _, g := range locked {
+				prior, ok := authorized[g.ID]
+				if !ok || prior.Revision != g.Revision || prior.AuthScope != g.AuthScope || prior.State != g.State {
+					return ErrConflict
+				}
+			}
+		} else if err := s.mayEdit(ctx, locked); err != nil {
 			return err
 		}
 		current := map[EntityID]Entity{}
@@ -529,7 +559,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		var rows []updateRow
 		var texts []textRow
 		var names []nameRow
-		changed = changed[:0]
 		var textIDs, nameIDs, reach []string
 		var restored []entityRow
 		var relabeled []string
@@ -556,10 +585,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 				reach = append(reach, string(g.ID))
 			}
 			if u.State != nil && *u.State != g.State {
-				gk := s.cfg.EntityKinds[g.Kind]
-				if gk.AuthScope || g.AuthScope != "" || gk.Owner == "user" {
-					changed = append(changed, string(g.ID))
-				}
 				if *u.State == StateActive {
 					tx, ok := q.(pgx.Tx)
 					if !ok {
@@ -667,12 +692,15 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		if err := s.markDirty(ctx, q, out); err != nil {
 			return err
 		}
-		return s.queueSync(ctx, q, changed)
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.syncAfter(ctx, out, changed)
+	if s.channels {
+		return s.syncAfter(ctx, out, list)
+	}
+	return out, nil
 }
 
 // updateRow is groupRow plus the state an update writes.
@@ -754,6 +782,9 @@ func (s *Store) apply(g Entity, u EntityUpdate) (updateRow, bool, error) {
 	}
 	if u.AuthScope != nil {
 		row.AuthScope = optional(*u.AuthScope)
+	}
+	if s.channels && u.State != nil && *u.State != g.State {
+		row.AuthScope = nil
 	}
 	if err := s.fields(gk, g.Kind, &row.entityRow); err != nil {
 		return row, false, err

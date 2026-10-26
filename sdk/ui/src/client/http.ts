@@ -23,6 +23,8 @@ export interface ContentKitMounts {
   upload?: Mount;
   /** Content-code lookup. Default `{baseUrl}/v1/codes`. */
   codes?: string;
+  /** Channels and their repost feeds. Default `{baseUrl}/v1`. */
+  channels?: string;
   /** Entities. Default `{baseUrl}/v1`. */
   entities?: string;
   /** The site's content model. Default `{baseUrl}/v1`. */

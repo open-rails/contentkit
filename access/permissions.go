@@ -33,6 +33,8 @@ const (
 	// EntitiesWrite: create, edit, merge and delete entities, and set content's
 	// memberships.
 	EntitiesWrite Permission = "root:entities:write"
+	// ChannelsWrite: manage channel identity, lifecycle and configuration.
+	ChannelsWrite Permission = "root:channels:write"
 	// NotificationsPublish: publish notices to users' inboxes (a host service).
 	NotificationsPublish Permission = "root:notifications:publish"
 	// ImportWrite: bulk-import content, entities, interactions and signals (a
@@ -46,7 +48,7 @@ const (
 
 // Permissions is every application permission; hosts choose which roles hold them.
 func Permissions() []Permission {
-	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
+	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, ChannelsWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
 }
 
 func (p Permission) String() string { return string(p) }
@@ -60,35 +62,25 @@ func Names(ps ...Permission) []string {
 	return out
 }
 
-// Entity-scoped permissions are held in an entity's AuthKit scope
-// (entities' auth_scope), whose persona is the entity kind:
-// "{kind}:<resource>:<action>". A host's persona of that name declares them
-// (EntityPermissions).
+// Channel permissions are held in the primary channel's AuthKit group.
+// Metadata associations never carry authority. Hosts compose roles from these
+// capabilities and assign them to a channel group.
+const (
+	// ChannelContentCreate permits creating one's own posts in a channel.
+	ChannelContentCreate = "channel:content:create"
+	// ChannelContentEditOwn permits editing and publishing one's own channel posts.
+	ChannelContentEditOwn = "channel:content:edit-own"
+	// ChannelContentWrite permits editing every post and version in the channel.
+	ChannelContentWrite = "channel:content:write"
+	// ChannelSettingsManage permits changing channel settings and lifecycle.
+	ChannelSettingsManage = "channel:settings:manage"
+	// ChannelMediaWrite permits uploading and editing the channel's media.
+	ChannelMediaWrite = "channel:media:write"
+	// ChannelCommentsModerate permits moderating comments on the channel and its posts.
+	ChannelCommentsModerate = "channel:comments:moderate"
+)
 
-// EntityContentCreate: create personal posts in this channel, without editing
-// other people's posts or managing the channel.
-func EntityContentCreate(kind string) string { return kind + ":content:create" }
-
-// EntityContentEditOwn: edit and publish this account's posts in a channel.
-func EntityContentEditOwn(kind string) string { return kind + ":content:edit-own" }
-
-// EntityContentWrite: create, edit, publish and delete the content the entity
-// owns (owner_entity), and see its drafts.
-func EntityContentWrite(kind string) string { return kind + ":content:write" }
-
-// EntitySettingsManage: edit the entity itself, delete or restore it, and
-// manage its settings.
-func EntitySettingsManage(kind string) string { return kind + ":settings:manage" }
-
-// EntityMediaWrite: upload and edit the entity's media.
-func EntityMediaWrite(kind string) string { return kind + ":media:write" }
-
-// EntityCommentsModerate: delete, hold and release comments on the entity and
-// the content it owns, and ban commenters from them.
-func EntityCommentsModerate(kind string) string { return kind + ":comments:moderate" }
-
-// EntityPermissions is every permission ContentKit checks in an entity kind's
-// AuthKit scopes.
-func EntityPermissions(kind string) []string {
-	return []string{EntityContentCreate(kind), EntityContentEditOwn(kind), EntityContentWrite(kind), EntitySettingsManage(kind), EntityMediaWrite(kind), EntityCommentsModerate(kind)}
+// ChannelPermissions lists the capabilities hosts may bundle into channel roles.
+func ChannelPermissions() []string {
+	return []string{ChannelContentCreate, ChannelContentEditOwn, ChannelContentWrite, ChannelSettingsManage, ChannelMediaWrite, ChannelCommentsModerate}
 }

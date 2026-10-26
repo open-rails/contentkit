@@ -104,13 +104,8 @@ func (s *Store) Merge(ctx context.Context, merges []Merge) ([]MergeReport, error
 		if err := s.markDirty(ctx, q, marks); err != nil {
 			return err
 		}
-		var sync []string
-		for _, g := range marks {
-			if g.State != StateActive && g.AuthScope != "" {
-				sync = append(sync, string(g.ID))
-			}
-		}
-		return s.queueSync(ctx, q, sync)
+
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -159,6 +154,15 @@ func (s *Store) merge(ctx context.Context, q Querier, src, dst Entity) (MergeRep
 	}
 	r.MembershipsMoved = tag.RowsAffected()
 	if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND entity_id = $2`, m), s.tenant, from); err != nil {
+		return r, err
+	}
+	// Channel metadata follows the same canonical survivor as content tags.
+	// The hierarchy lock serializes this move with SetChannelMetadata.
+	channelMetadata := s.table("content_channel_entities")
+	if _, err := q.Exec(ctx, `INSERT INTO `+channelMetadata+` (tenant_id,channel_id,entity_id) SELECT tenant_id,channel_id,$3 FROM `+channelMetadata+` WHERE tenant_id=$1 AND entity_id=$2 ON CONFLICT DO NOTHING`, s.tenant, from, into); err != nil {
+		return r, err
+	}
+	if _, err := q.Exec(ctx, `DELETE FROM `+channelMetadata+` WHERE tenant_id=$1 AND entity_id=$2`, s.tenant, from); err != nil {
 		return r, err
 	}
 	names := s.table("content_entity_names")

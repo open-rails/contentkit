@@ -198,19 +198,19 @@ func (s *Store) checkRuleEntities(ctx context.Context, q Querier, rules ...*acce
 		if r == nil {
 			continue
 		}
-		if r.Entity != "" && !slices.Contains(ids, r.Entity) {
-			ids = append(ids, r.Entity)
+		if r.ChannelID != "" && !slices.Contains(ids, r.ChannelID) {
+			ids = append(ids, r.ChannelID)
 		}
 		for _, release := range r.Releases {
-			if release.Entity != "" && !slices.Contains(ids, release.Entity) {
-				ids = append(ids, release.Entity)
+			if release.ChannelID != "" && !slices.Contains(ids, release.ChannelID) {
+				ids = append(ids, release.ChannelID)
 			}
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := q.Query(ctx, `SELECT id, kind FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = ANY($2) AND state = 'active'`, s.tenant, ids)
+	rows, err := q.Query(ctx, `SELECT id, kind FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = ANY($2) AND state = 'active' AND kind='channel'`, s.tenant, ids)
 	if err != nil {
 		return err
 	}
@@ -372,4 +372,22 @@ func validChapterPath(p string) bool {
 		path.Clean(p) == p && !strings.HasPrefix(p, "/") &&
 		p != ".." && !strings.HasPrefix(p, "../") &&
 		!strings.Contains(p, "\\") && strings.IndexFunc(p, unicode.IsControl) < 0
+}
+
+// checkChannelRule binds channel membership audiences to the original's sole
+// primary channel. Metadata and repost destinations never supply read grants.
+func (s *Store) checkChannelRule(parent string, rule *access.Rule) error {
+	if rule == nil {
+		return nil
+	}
+	ids := []string{rule.ChannelID}
+	for _, release := range rule.Releases {
+		ids = append(ids, release.ChannelID)
+	}
+	for _, id := range ids {
+		if id != "" && (parent == "" || id != parent) {
+			return invalid("channel access must name the content item's primary channel")
+		}
+	}
+	return nil
 }

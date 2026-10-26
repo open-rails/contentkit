@@ -176,7 +176,7 @@ func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int)
 }
 
 // heldComments pages held comments, of g and the content it owns when set.
-func (rt *Runtime) heldComments(ctx context.Context, page *HeldPage, after time.Time, afterID string, limit int, g *resolve.OwnerEntity) error {
+func (rt *Runtime) heldComments(ctx context.Context, page *HeldPage, after time.Time, afterID string, limit int, g *resolve.Channel) error {
 	var kind, id string
 	if g != nil {
 		kind, id = g.Kind, g.ID

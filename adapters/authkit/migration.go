@@ -43,10 +43,13 @@ func (s migrationScopes) Provision(ctx context.Context, scopes []entities.Scope)
 		return err
 	}
 	for _, scope := range scopes {
+		if scope.Kind != "channel" {
+			return errors.New("contentkit/authkit: configured authorization groups are only for channels")
+		}
 		if scope.Owner != "" || scope.Restore {
 			return errors.New("contentkit/authkit: configured groups cannot assign owners or restore retired groups")
 		}
-		id, err := EntityScopeID(s.scope, scope.ID)
+		id, err := ChannelScopeID(s.scope, scope.ID)
 		if err != nil {
 			return err
 		}

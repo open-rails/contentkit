@@ -51,6 +51,7 @@ type enum struct {
 }
 
 var enums = []enum{
+	{"ChannelState", []string{"active", "deleted"}, []string{"channels.Channel.state", "channels.Update.state"}},
 	{"ErrorCode", errorCodeNames(), []string{"contract.ErrorReply.code", "media.Failure.code"}},
 	{"OpName", []string{media.OpPut, media.OpEdit, media.OpMove, media.OpRename, media.OpRemove, media.OpAttach,
 		media.OpCopy, media.OpFrame, media.OpMeta, media.OpRegenerate}, []string{"media.Op.op"}},
@@ -325,6 +326,14 @@ func newModel(fsys fs.FS, list []httpapi.Spec) (*model, error) {
 			name := base
 			if len(types) > 1 {
 				name = strings.ToUpper(pkgName(t)[:1]) + pkgName(t)[1:] + base
+			}
+			if pkgName(t) == "discovery" && base == "Card" {
+				name = "Card"
+			}
+			if pkgName(t) == "channels" {
+				if mapped, ok := map[string]string{"Card": "ChannelCard", "Page": "ChannelPage", "Mine": "MyChannel", "MyPage": "MyChannelPage", "Input": "ChannelInput", "Update": "ChannelUpdate", "Repost": "ChannelRepost"}[base]; ok {
+					name = mapped
+				}
 			}
 			if other, dup := m.objects[name]; dup {
 				return nil, fmt.Errorf("contract: %s and %s are both named %s on the wire", other.t, t, name)

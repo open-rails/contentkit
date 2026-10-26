@@ -20,7 +20,7 @@ export function useManagedContents(f: ManageFilter = {}, o: { client?: ContentKi
   const size = pageSize ?? 20;
   return useList(
     store,
-    keyOf("contents", scope, q.kind, q.state, q.owner_group, q.q, q.language, size),
+    keyOf("contents", scope, q.kind, q.state, q.channel_id, q.q, q.language, size),
     { type: "contents", scope: q.state === "deleted" ? "deleted" : undefined },
     offsetPages(size, (page, signal) => client.contents.manage({ ...q, ...page }, signal)),
   );

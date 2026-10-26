@@ -13,28 +13,28 @@ import (
 )
 
 // Level is a rule's access level. The stored group/group_ppv spellings remain
-// stable encodings for entity access, including already recorded releases.
+// stable encodings for channel access, including already recorded releases.
 type Level string
 
 const (
-	Public      Level = "public"    // anyone
-	TierLevel   Level = "tier"      // holders of any of Rule.Tiers
-	EntityLevel Level = "group"     // holders of Rule.Entity's key: members-only content
-	PPV         Level = "ppv"       // buyers of this version
-	EntityPPV   Level = "group_ppv" // buyers; buying needs Rule.Entity's key first
+	Public       Level = "public"    // anyone
+	TierLevel    Level = "tier"      // holders of any of Rule.Tiers
+	ChannelLevel Level = "group"     // holders of Rule.ChannelID's key: members-only content
+	PPV          Level = "ppv"       // buyers of this version
+	ChannelPPV   Level = "group_ppv" // buyers; buying needs Rule.ChannelID's key first
 )
 
 // ErrRule is a rule outside the grammar or naming an undeclared tier.
 var ErrRule = errors.New("access: invalid rule")
 
-// Rule is the access rule stored as JSON on content (content_items.access), on
-// a version as its override (content_versions.access) and on an entity. Whatever the level, a version also opens to
-// holders of its exact version key and the key of any entity
-// holding it.
+// Rule is stored as JSON on content and its versions. Channel-owned content
+// keeps its editable rule on the overall item; publication
+// snapshots each version's effective rule. A version also opens to holders of
+// its exact version key. Metadata associations never grant access.
 type Rule struct {
-	Level  Level    `json:"level"`
-	Tiers  []string `json:"tiers,omitempty"`    // TierLevel: any of these configured tiers
-	Entity string   `json:"group_id,omitempty"` // EntityLevel, EntityPPV; retained JSON field
+	Level     Level    `json:"level"`
+	Tiers     []string `json:"tiers,omitempty"`    // TierLevel: any of these configured tiers
+	ChannelID string   `json:"group_id,omitempty"` // Stable stored/wire encoding for ChannelLevel and ChannelPPV.
 	// Preview is the part a viewer who does not open it may still read.
 	Preview *Preview `json:"preview,omitempty"`
 	// Releases add audiences at their release time; earlier rights remain.
@@ -58,15 +58,15 @@ func (r *Rule) UnmarshalJSON(b []byte) error {
 }
 
 // Validate checks r against cfg: a known level with exactly its own fields,
-// configured tiers, a valid entity id, and options only on a rule that locks.
+// configured tiers, a valid channel id, and options only on a rule that locks.
 func (r Rule) Validate(cfg kinds.Config) error {
 	switch r.Level {
 	case Public, PPV:
-		if len(r.Tiers) > 0 || r.Entity != "" {
+		if len(r.Tiers) > 0 || r.ChannelID != "" {
 			return fmt.Errorf("%w: level %s takes no tiers or group_id", ErrRule, r.Level)
 		}
 	case TierLevel:
-		if len(r.Tiers) == 0 || r.Entity != "" {
+		if len(r.Tiers) == 0 || r.ChannelID != "" {
 			return fmt.Errorf("%w: level tier needs tiers and no group_id", ErrRule)
 		}
 		for i, t := range r.Tiers {
@@ -74,11 +74,11 @@ func (r Rule) Validate(cfg kinds.Config) error {
 				return fmt.Errorf("%w: tier %q is not configured or repeated", ErrRule, t)
 			}
 		}
-	case EntityLevel, EntityPPV:
+	case ChannelLevel, ChannelPPV:
 		if len(r.Tiers) > 0 {
 			return fmt.Errorf("%w: level %s takes no tiers", ErrRule, r.Level)
 		}
-		if err := contentref.ValidateID(r.Entity); err != nil {
+		if err := contentref.ValidateID(r.ChannelID); err != nil {
 			return fmt.Errorf("%w: level %s group_id: %w", ErrRule, r.Level, err)
 		}
 	default:
@@ -129,10 +129,10 @@ func (r Rule) Previewed(k kinds.Kind) Rule {
 // Facet is a rule as the content_facets listing projection stores it:
 // access_level, access_tiers, access_group_id and access_releases.
 type Facet struct {
-	Level    Level
-	Tiers    []string
-	EntityID *string
-	Releases []Release
+	Level     Level
+	Tiers     []string
+	ChannelID *string
+	Releases  []Release
 }
 
 // Facet projects r onto content_facets' access columns.
@@ -144,9 +144,9 @@ func (r Rule) Facet() Facet {
 	if f.Tiers == nil {
 		f.Tiers = []string{}
 	}
-	if r.Entity != "" {
-		g := r.Entity
-		f.EntityID = &g
+	if r.ChannelID != "" {
+		g := r.ChannelID
+		f.ChannelID = &g
 	}
 	return f
 }

@@ -18,26 +18,26 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 	}
 	collect := func(d Decision) {
 		for _, release := range d.Releases {
-			add(release.Entity)
+			add(release.ChannelID)
 		}
 		for _, raw := range append(append([]string{}, d.Sell...), d.Requires) {
-			if key, err := access.ParseKey(raw); err == nil && key.Kind() == access.KeyEntity {
-				add(key.Entity())
+			if key, err := access.ParseKey(raw); err == nil && key.Kind() == access.KeyChannel {
+				add(key.Channel())
 			}
 		}
 	}
 	for _, c := range items {
-		add(c.OwnerEntityID)
-		add(c.Access.Entity)
+		add(c.ChannelID)
+		add(c.Access.ChannelID)
 		for _, release := range c.Access.Releases {
-			add(release.Entity)
+			add(release.ChannelID)
 		}
 		collect(c.Decision)
 		for _, v := range c.Versions {
 			if v.Access != nil {
-				add(v.Access.Entity)
+				add(v.Access.ChannelID)
 				for _, release := range v.Access.Releases {
-					add(release.Entity)
+					add(release.ChannelID)
 				}
 			}
 			collect(v.Decision)
@@ -64,10 +64,10 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 	}
 	privateKey := func(raw string) bool {
 		key, err := access.ParseKey(raw)
-		return err == nil && key.Kind() == access.KeyEntity && internal[key.Entity()]
+		return err == nil && key.Kind() == access.KeyChannel && internal[key.Channel()]
 	}
 	redact := func(d *Decision) {
-		d.Releases = slices.DeleteFunc(slices.Clone(d.Releases), func(r access.Release) bool { return internal[r.Entity] })
+		d.Releases = slices.DeleteFunc(slices.Clone(d.Releases), func(r access.Release) bool { return internal[r.ChannelID] })
 		if privateKey(d.Requires) {
 			// No offered purchase may skip this required membership.
 			d.Sell, d.Requires = nil, ""
@@ -79,8 +79,8 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 		if r == nil {
 			return
 		}
-		r.Releases = slices.DeleteFunc(slices.Clone(r.Releases), func(r access.Release) bool { return internal[r.Entity] })
-		if !internal[r.Entity] {
+		r.Releases = slices.DeleteFunc(slices.Clone(r.Releases), func(r access.Release) bool { return internal[r.ChannelID] })
+		if !internal[r.ChannelID] {
 			return
 		}
 		// The public shape says only that access is locked. The original entity
@@ -88,8 +88,8 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 		*r = access.Rule{Level: access.PPV, Preview: r.Preview, Releases: r.Releases}
 	}
 	for _, c := range items {
-		if internal[c.OwnerEntityID] {
-			c.OwnerEntityID, c.Owner = "", nil
+		if internal[c.ChannelID] {
+			c.ChannelID, c.Channel = "", nil
 		}
 		rule(&c.Access)
 		redact(&c.Decision)

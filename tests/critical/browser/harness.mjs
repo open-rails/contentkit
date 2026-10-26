@@ -4,6 +4,7 @@ import { createRoot } from "../../../sdk/ui/node_modules/react-dom/client.js";
 import { createContentKitClient } from "../../../sdk/ui/dist/client.js";
 import { ContentKitProvider } from "../../../sdk/ui/dist/react/provider.js";
 import { useFavorite } from "../../../sdk/ui/dist/react/engagement.js";
+import { ChannelFeed, RepostButton } from "../../../sdk/ui/dist/index.js";
 
 let fixture, bearer, currentViewer, client, root;
 const target = () => ({ type: "contents", id: fixture.item });
@@ -18,6 +19,21 @@ function render() {
 window.critical = {
   initialize(input) { fixture=input; bearer=input.aliceToken; currentViewer=input.alice; client=createContentKitClient({baseUrl:"/content",token:()=>bearer}); window.client=client; },
   mount() { render(); },
+  mountChannel() {
+    root ??= createRoot(document.querySelector("#root"));
+    root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" },
+      React.createElement(React.Fragment, null,
+        React.createElement(RepostButton, { contentId: fixture.item, originalChannelId: fixture.originalChannel }),
+        React.createElement(ChannelFeed, { channelId: fixture.destination, query: { language: "en" }, empty: React.createElement("p", { id: "empty-channel" }, "Empty channel") }))));
+  },
+  async uploadChannelImage() {
+    const ref=client.channels.folder(fixture.destination);
+    if(ref.kind!=="channel"||ref.id!==fixture.destination)throw Error("channel media reference changed identity");
+    const blob=await(await fetch("/fixture.png")).blob();
+    const updated=await client.channels.uploadImage(fixture.destination,"avatar",new File([blob],"avatar.png",{type:"image/png"}),{timeout:20000});
+    if(!updated.avatar?.renditions?.length)throw Error("channel avatar did not complete processing");
+    return updated.id;
+  },
   switchToBob() {
     window.leaks=[];
     window.observer=new MutationObserver(()=>{const view=document.querySelector("#favorite");if(view?.dataset.viewer===fixture.bob&&view.textContent==="true")window.leaks.push(view.textContent);});

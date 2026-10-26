@@ -21,6 +21,7 @@ const AvatarPreset = "avatar"
 // every entity kind without one declared gets GroupKind's. No other kind has
 // versions.
 func ForContent(c Config, k kinds.Config) (Config, error) {
+	k = k.StorageModel()
 	out := c
 	out.Kinds = slices.Clone(c.Kinds)
 	for i := range out.Kinds {
@@ -119,4 +120,10 @@ func EntityKind(name string, gk kinds.EntityKind) Kind {
 			Widths: []int{64, 128, 256}, Image: Image{Aspect: Square, Quality: 85}})
 	}
 	return k
+}
+
+// ChannelKind is the media declaration for a first-class channel's public cover
+// and avatar. It preserves the established channel storage identity.
+func ChannelKind(c kinds.Channels) Kind {
+	return EntityKind("channel", (kinds.Config{Channels: &c}).StorageModel().EntityKinds["channel"])
 }

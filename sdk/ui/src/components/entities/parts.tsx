@@ -7,8 +7,7 @@ import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useContentKitClient } from "../../react/context.js";
 import { useTypeahead } from "../../react/discovery.js";
 import { Input } from "#ckui/ui/input";
-import { useScopeProps } from "../../scope.js";
-import { RenditionImg } from "../rendition-img.js";
+import { ProfileImage } from "../profile-image.js";
 import { ErrorLine } from "../social/parts.js";
 
 /** A entity as covers and links need it. */
@@ -31,30 +30,14 @@ export interface EntityCoverProps {
   className?: string;
 }
 
-/** A entity's cover or avatar image; its own styling root, so it renders anywhere in the host. */
-function EntityImage({ entity, src, className, shape, slot }: EntityCoverProps & { shape: string; slot: "entity-cover" | "entity-avatar" }) {
-  const scope = useScopeProps();
-  const box = cn(scope.className, "overflow-hidden bg-muted", shape, className);
-  const root = { "data-ckui-theme": scope["data-ckui-theme"], style: scope.style, "data-ckui": slot };
-  const initial = (
-    <span {...root} className={cn(box, "grid place-items-center font-semibold text-muted-foreground", slot === "entity-cover" && "text-lg")}>
-      {(entity.name || entity.slug).trim().charAt(0).toUpperCase() || "?"}
-    </span>
-  );
-  if (src) return <img {...root} src={src} alt="" className={cn(box, "object-cover")} />;
-  const renditions = (slot === "entity-cover" ? entity.cover : entity.avatar)?.renditions;
-  if (renditions?.length) return <RenditionImg {...root} outputs={renditions} fit="cover" skeleton className={box} fallback={initial} />;
-  return initial;
+/** A metadata entity's cover. */
+export function EntityCover({ entity, ...props }: EntityCoverProps) {
+  return <ProfileImage {...props} value={entity} slot="cover" marker="entity-cover" />;
 }
 
-/** A entity's cover: its renditions, else its initial on a muted tile. */
-export function EntityCover(p: EntityCoverProps) {
-  return <EntityImage {...p} shape="rounded-md" slot="entity-cover" />;
-}
-
-/** A entity's avatar: its renditions, else its initial in a circle. */
-export function EntityAvatar(p: EntityCoverProps) {
-  return <EntityImage {...p} shape="aspect-square rounded-full" slot="entity-avatar" />;
+/** A metadata entity's avatar. */
+export function EntityAvatar({ entity, ...props }: EntityCoverProps) {
+  return <ProfileImage {...props} value={entity} slot="avatar" marker="entity-avatar" />;
 }
 
 /** A link to a entity's page: `href`, else its canonical path; in-app through the provider's navigate. */

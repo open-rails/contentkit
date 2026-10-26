@@ -137,6 +137,9 @@ func (rt *Runtime) eraseSubjects(ctx context.Context, actorIDs []string, account
 			return err
 		}
 	}
+	if _, err := tx.Exec(ctx, `UPDATE `+pgx.Identifier{rt.schema, "content_channel_reposts"}.Sanitize()+` SET actor_id=NULL WHERE tenant_id=$1 AND actor_id=ANY($2)`, rt.tenant, ids); err != nil {
+		return err
+	}
 	if err := rt.eraseInteractions(ctx, tx, ids); err != nil {
 		return err
 	}

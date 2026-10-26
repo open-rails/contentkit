@@ -52,7 +52,7 @@ func (s *Store) entityAllowed(ctx context.Context, q Querier, actor access.Actor
 		return out, nil
 	}
 	rows, err := q.Query(ctx, `SELECT id, kind, coalesce(owner_user_id, ''), coalesce(auth_scope, '') FROM `+s.t.entities+`
- WHERE tenant_id = $1 AND id = ANY($2) AND state = 'active' AND (owner_user_id IS NOT NULL OR auth_scope IS NOT NULL)`, s.tenant, entityIDs)
+ WHERE tenant_id = $1 AND id = ANY($2) AND kind = 'channel' AND state = 'active' AND auth_scope IS NOT NULL`, s.tenant, entityIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -72,14 +72,14 @@ func (s *Store) entityAllowed(ctx context.Context, q Querier, actor access.Actor
 		return nil, err
 	}
 	for id, g := range found {
-		if s.cfg.EntityKinds[g.kind].AuthScope && g.scope == "" {
+		if g.kind != "channel" || g.scope == "" {
 			continue
 		}
-		permissions := []string{access.EntityContentWrite(g.kind)}
+		permissions := []string{access.ChannelContentWrite}
 		if creating {
-			permissions = append(permissions, access.EntityContentCreate(g.kind))
+			permissions = append(permissions, access.ChannelContentCreate)
 		}
-		ok, err := gate.EntityEditor(ctx, s.guard.Auth, actor, g.owner, g.scope, permissions...)
+		ok, err := gate.ChannelEditor(ctx, s.guard.Auth, actor, g.scope, permissions...)
 		if err != nil {
 			return nil, &AuthError{err}
 		}

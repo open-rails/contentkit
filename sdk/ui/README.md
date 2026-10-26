@@ -599,7 +599,7 @@ Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
 
 ## Entities
 
-Tags, artists, series, characters, channels and rails: the kinds the site's
+Tags, artists, series, characters and rails: the kinds the site's
 content model declares. `useKinds()` reads it (`GET /v1/kinds`); until that
 route is served, pass the host's model as `initial` (and `kinds` to the
 components below).
@@ -627,6 +627,38 @@ const content = useContentEntities(contentId); // content.set(memberships, kinds
 - `labels` names kinds, attributes, roles and values by identifier; others
   show humanized. Covers render `cover.renditions`; `renderCover` stands in
   until entity reads carry them.
+
+## Channels and reposts
+
+Channels own a content item's authoring permissions across all its versions.
+Metadata entities describe items or channels and never grant editing rights.
+A fixed staff blog uses the same interface as creator channels; its configured
+`channel: {fixed: blog}` hides the channel choice in `ContentEditor`.
+
+```tsx
+const channel = useChannel(id);
+const mine = useMyChannels(); // live can_post, writer, owner and other permission flags
+await client.channels.create({ slug: "studio", names: [{ language: "en", kind: "name", name: "Studio" }] });
+await client.channels.repost(destinationId, contentId);
+await client.channels.removeRepost(destinationId, contentId); // leaves the original intact
+
+<ChannelBanner channel={channel.channel} onCheckout={openBilling} />
+<ChannelFeed channelId={id} renderCard={(card) => <PostCard card={card} />} />
+<ContentEditor kind="post" id={null} channelId={id} />
+<RepostButton contentId={post.id} originalChannelId={post.channel_id} />
+```
+
+`ChannelDirectory`, `ChannelAvatar`, `ChannelCover` and `ChannelImageEditor`
+provide the public channel and image UI. `ChannelPicker` chooses a channel for
+an access rule; `SearchBox channels` includes channel-name suggestions.
+`ChannelMembershipBox` delegates purchases to the host's OpenRails flow.
+The client owns no billing catalog or entitlement-expiry worker.
+
+`client.channels.contents()` includes originals and repost references, retaining
+the original content ID, versions, comments and reactions. Every read still
+checks the original's publication and access. Reposting grants no editorial or
+reading authority. Destination choices come from `/me/channels`, so callers do
+not need to assume that AuthKit group IDs and channel IDs are equal.
 
 ## Reference administration workbench
 
@@ -1197,7 +1229,7 @@ OpenRails owns products, prices, purchases and entitlement grants. The access
 and version editors change content rules; they do not edit a second billing
 catalog. Use OpenRails or billing-ui directly for product and price management.
 
-`Paywall` and `MembershipBox` call the host's `onCheckout({ key })` with an
+`Paywall` and `ChannelMembershipBox` call the host's `onCheckout({ key })` with an
 entitlement key. The host resolves it through OpenRails and opens its billing
 flow. These components never create free grants or infer a price. The purchased
 content library remains available as `client.discovery.library()`.

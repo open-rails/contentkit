@@ -84,6 +84,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 	t.Run("discovery_entities", func(t *testing.T) {
 		w := newWorld(t, func(c *ck.Config) {
 			c.Content.EntityKinds["tag"] = kinds.EntityKind{Route: "tags", MembershipScopes: []kinds.MembershipScope{kinds.ContentScope}}
+			c.Content.Channels.Entities = []string{"tag"}
 			kind := c.Content.Kinds["article"]
 			kind.Entities = []string{"tag"}
 			c.Content.Kinds["article"] = kind
@@ -98,7 +99,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		must(t, err)
 		a.server = mountEngine(t, a.engine)
 		startPublicationRuntime(t, a)
-		owner, token, channel := ownedEntity(t, w, a, "TypeScript owned channel")
+		owner, token, channel := ownedChannel(t, w, a, "TypeScript owned channel")
 		reader, readerToken := w.person(t, 0)
 		persona, err := w.auth.Persona("app")
 		must(t, err)
@@ -123,7 +124,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		}
 		foreign := publishedArticle(t, w.apps[1], "TypeScriptNeedle foreign app")
 		runTypeScriptContract(t, "discovery_entities", map[string]any{"base": a.server.URL + "/content", "owner": token, "reader": readerToken, "ownerID": owner.ID, "channel": string(channel.ID), "foreign": foreign.ID, "paid": paid.ID, "paidVersion": paid.Versions[0].ID}, []string{
-			"EntitiesClient.create", "EntitiesClient.update", "EntitiesClient.remove", "EntitiesClient.mine", "DiscoveryClient.library", "DiscoveryClient.list", "DiscoveryClient.knownCards", "DiscoveryClient.search", "DiscoveryClient.typeahead", "DiscoveryClient.adminSuggestions", "DiscoveryClient.similar", "DiscoveryClient.recommendations", "DiscoveryClient.releaseDates", "DiscoveryClient.releases",
+			"EntitiesClient.create", "EntitiesClient.update", "EntitiesClient.remove", "ChannelsClient.mine", "ChannelsClient.create", "ChannelsClient.get", "ChannelsClient.list", "ChannelsClient.update", "ChannelsClient.entities", "ChannelsClient.setEntities", "ChannelsClient.repost", "ChannelsClient.removeRepost", "ChannelsClient.contents", "ChannelsClient.remove", "DiscoveryClient.library", "DiscoveryClient.list", "DiscoveryClient.knownCards", "DiscoveryClient.search", "DiscoveryClient.typeahead", "DiscoveryClient.adminSuggestions", "DiscoveryClient.similar", "DiscoveryClient.recommendations", "DiscoveryClient.releaseDates", "DiscoveryClient.releases",
 		})
 	})
 

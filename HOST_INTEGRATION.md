@@ -55,16 +55,15 @@ ContentKit names its staff permissions, always the full
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
 | `access.EntitiesWrite` | `root:entities:write` | create, edit, merge and delete entities, and set memberships |
 
-A site-owned or user-owned entity kind with `auth_scope` (channels) has its own
-permissions, held in each entity's AuthKit scope, whose persona declares
-`access.EntityPermissions(kind)`: `{kind}:content:create` (own submissions),
-`{kind}:content:edit-own` (own posts), `{kind}:content:write` (all its content),
-`{kind}:settings:manage` (the entity),
-`{kind}:media:write` and `{kind}:comments:moderate` (delete, hold, release
-and ban on the entity's content). The host defines roles and assignments. For
-scoped entities, current AuthKit grants determine authority; an owner attribution
-alone grants nothing. See [Posts and channels](docs/posts-and-channels.md) for
-contributor, editor and moderator policies.
+Channels have their own AuthKit group in the `channel` persona. Declare
+`access.ChannelPermissions()` and compose host-defined contributor, editor and
+moderator roles from those capabilities. `channel:content:create` permits own
+submissions, `channel:content:edit-own` manages own posts, and
+`channel:content:write` manages all content/versions in that channel. Settings,
+channel media and comment moderation have separate capabilities. Current grants
+determine authority; metadata associations and owner attribution grant nothing.
+See [Posts and channels](docs/posts-and-channels.md) for the complete configuration,
+normal migration call and fixed-blog/creator-channel examples.
 
 Declare them in the auth's roles from the constants, so a rename breaks the
 build instead of drifting:
@@ -303,7 +302,7 @@ Detail, cards (lists, search, typeahead, rails, similar, recommendations,
 entity pages, `me` favorites and history), the reader plan and interactions
 apply it; the media read API lists a locked item's public files alone (its
 cover, and previews where named), never its private files or their count.
-Staff, creators and owner-entity editors see everything. Sitemaps,
+Staff, creators and primary-channel editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
 
@@ -828,7 +827,7 @@ layouts.
   such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
   writes).
 - **Content versions.** `media/versions` answers media's hooks from the
-  content model: editors (staff, creators, owner-entity editors) upload, a
+  content model: editors (staff, creators, primary-channel editors) upload, a
   person their own avatar; reads follow the catalog's
   visibility, plus segments' release and the rule's preview;
   a version's media writes its pages, duration, size and
@@ -1408,14 +1407,15 @@ the host's periodic jobs. The worker migrates its schema itself.
 
 ## Entities
 
-`entities.Store` owns the app's artists, tags, series, characters, channels and
+`entities.Store` owns the app's artists, tags, series, characters and
 collections; their kinds come from `kinds.Config.EntityKinds`. Shared and
 version-level associations are replaced independently. Writes refresh association
 facets in the same transaction. Entity counts and automatic covers are derived
 on reads, so edits and release times take effect without a recount job.
-Creator-owned or permission-scoped entity changes enqueue exact durable lifecycle
-sync; ordinary staff-managed entities need no lifecycle worker. The entity routes
-remain `/v1/entities…` and `/v1/contents/{id}/entities`.
+Channels have a separate `/channels` interface and cannot be read or changed
+through ordinary metadata operations. Channel lifecycle changes call AuthKit synchronously and return failures;
+descriptive entities need no authorization lifecycle worker.
+The entity routes remain `/v1/entities…` and `/v1/contents/{id}/entities`.
 
 Keyword documents enrich content with active associations and their ancestors.
 Collection associations remain active until explicitly changed; subscription
@@ -1424,7 +1424,9 @@ and rental expiry belong to the entitlement provider.
 Legacy HTTP fields (`group_id`, `groups`, `exclude_groups`, `owner_group_id`),
 access values (`group`, `group_ppv`), billing key namespaces (`:group:`) and
 AuthKit permission strings and deterministic scope identities retain their
-encodings. They refer to entities; real AuthKit permission groups remain groups.
+encodings. Descriptive membership fields refer to entities; access-rule `group_id` and
+`group`/`group_ppv` refer to paid channel membership. Real AuthKit permission
+groups hold editorial roles independently of those read entitlements.
 
 ## Preference boundary (reactions and favorites into the signal plane)
 
@@ -1531,19 +1533,20 @@ Nothing reads cached facet scores. See
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
 
-Entity lifecycle changes enqueue `contentkit_entity_sync` in the same transaction
-as the entity write, including imports and writes made before local workers start.
-That job provisions or retires channel editor groups and follows channel deletion
-or restoration into its owned content. There is no periodic entity reconciliation
-scan. River retains failed work for explicit retry after its normal attempt limit.
-Standalone entity stores must point `entities.Options.RiverSchema` at migrated
-River tables (by default, `<entity-schema>_river`).
+Channel create/delete/restore calls the existing AuthKit client synchronously.
+The same channel/group identity makes caller retries safe, including a lost
+remote response after commit. Incomplete/deleted channels grant no authority.
+There is no `contentkit_entity_sync` or replacement lifecycle job. Imports finish
+their channel calls after committing identity, then report provider failures per
+record so replay uses the same external IDs. Explicit upgrade preflight requires
+old actionable lifecycle work completed by the previous version before retiring
+its remaining no-op queued rows; terminal history and foreign work are retained.
 
 ## Post contributors and attribution
 
 A host grants typed capabilities through its AuthKit roles. `ContentCreate`
-permits personal posts outside channels; `EntityContentCreate(kind)` permits
-posting in one channel. `ContentEditOwn` and `EntityContentEditOwn(kind)` permit
+permits personal posts outside channels; `ChannelContentCreate` permits
+posting in one channel. `ContentEditOwn` and `ChannelContentEditOwn` permit
 editing and publishing the caller's own posts. A normal contributor role grants
 both create and edit-own. A submission-only role can grant create alone: its
 author can read the submitted draft but cannot edit, publish or upload media.
@@ -1551,14 +1554,15 @@ Current create or edit-own authority is required for an author's private reads;
 edit-own is required for mutations. Removing those grants applies on the next
 request, even when the account remains recorded as the author.
 
-`ContentWrite` and `EntityContentWrite(kind)` retain broad staff/team-editor
+`ContentWrite` and `ChannelContentWrite` retain broad staff/team-editor
 semantics. Read-restricted auditors can see drafts but are not media editors.
-For a scoped channel, AuthKit's current owner/team roles are authoritative;
-`owner_user_id` metadata does not bypass revoked grants. A host that deliberately
-uses a user-owned kind without an auth scope retains its direct-owner model.
-Site-owned channels can also have an auth scope to delegate settings, media,
-content or comment moderation to a group; site ownership alone doesn't grant
-ordinary users access. Creating site-owned channels stays staff-only.
+For every channel, AuthKit's current owner/team roles are authoritative;
+`owner_user_id` attribution does not bypass revoked grants. A missing or retired
+authoring group grants no direct-owner fallback. Fixed staff blogs use the same
+channel model as creator feeds, with `creation: staff` and optional delegated
+blog-editor assignments. Channel-bearing items share their parent channel and
+read policy across all versions; channel-free kinds retain their configured
+version access behavior.
 
 Personal authority also requires immutable `content_items.created_by`, set from
 the authenticated tenant account. Editable creator credits are display metadata,

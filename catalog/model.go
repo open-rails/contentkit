@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -230,18 +230,17 @@ type Content struct {
 	Cover *Cover `json:"cover,omitempty"`
 	State string `json:"state"`
 	// Comments is open, closed or hidden.
-	Comments      string         `json:"comments"`
-	PublishAt     *time.Time     `json:"publish_at,omitempty"`
-	PublishedAt   *time.Time     `json:"published_at,omitempty"`
-	Live          bool           `json:"live"`
-	Access        access.Rule    `json:"access"`
-	Restrictions  []string       `json:"restrictions"`
-	Attributes    map[string]any `json:"attributes"`
-	OwnerEntityID string         `json:"owner_group_id,omitempty"`
-	// Owner is the owner entity's card (a channel's name, path, avatar and
-	// cover) while it is active.
-	Owner    *entities.EntityCard `json:"owner,omitempty"`
-	Creators []Creator            `json:"creators"`
+	Comments     string         `json:"comments"`
+	PublishAt    *time.Time     `json:"publish_at,omitempty"`
+	PublishedAt  *time.Time     `json:"published_at,omitempty"`
+	Live         bool           `json:"live"`
+	Access       access.Rule    `json:"access"`
+	Restrictions []string       `json:"restrictions"`
+	Attributes   map[string]any `json:"attributes"`
+	ChannelID    string         `json:"channel_id,omitempty"`
+	// Channel identifies the original's primary authoring channel while active.
+	Channel  *channels.Card `json:"channel,omitempty"`
+	Creators []Creator      `json:"creators"`
 	// Entities are shared/null-version memberships. Version-specific entities
 	// are carried by each Version.Entities, never merged across editions here.
 	Entities []EntitySummary `json:"entities"`

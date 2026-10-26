@@ -27,7 +27,8 @@ import (
 // product access, including its persisted time window and revocation history.
 func TestCommerceEntitlementBoundaries(t *testing.T) {
 	w := newWorld(t, func(c *ck.Config) {
-		c.Content.EntityKinds["tag"] = kinds.EntityKind{Route: "tags", Entitled: true, MembershipScopes: []kinds.MembershipScope{kinds.ContentScope}}
+		c.Content.Channels.Entitled = true
+		c.Content.EntityKinds["tag"] = kinds.EntityKind{Route: "tags", MembershipScopes: []kinds.MembershipScope{kinds.ContentScope}}
 		kind := c.Content.Kinds["article"]
 		kind.Versions.Hidden, kind.Entities = false, []string{"tag"}
 		c.Content.Kinds["article"] = kind
@@ -65,17 +66,29 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	tier := create("Gold tier", access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}})
 	tags, err := admin.PostEntities(t.Context(), []entities.EntityInput{{Kind: "tag", Slug: "paid-collection", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Paid collection"}}}})
 	must(t, err)
-	entityItem := create("Entity article", access.Rule{Level: access.EntityLevel, Entity: string(tags[0].ID)})
+	_, _, channel := ownedChannel(t, w, a, "Paid channel")
+	channelRule := access.Rule{Level: access.ChannelLevel, ChannelID: channel.ID}
+	entityItem, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: channel.ID, Access: &channelRule,
+		Text: map[string]catalog.Text{"en": {Title: "Channel article", Body: "Protected manuscript"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}}})
+	must(t, err)
+	_, err = admin.PostContentPublish(t.Context(), entityItem.ID, catalog.PublishInput{})
+	must(t, err)
+	for _, v := range entityItem.Versions {
+		awaitEditionPublication(t, a, admin, entityItem.ID, v.ID)
+	}
+	_, err = admin.PutContentEntitiesShared(t.Context(), one.ID, entities.ContentEntities{Memberships: []entities.Membership{{EntityID: tags[0].ID}}}, ck.PutContentEntitiesSharedQuery{})
+	must(t, err)
 	keyOf := func(key access.Key, err error) string { must(t, err); return key.String() }
 	contentKey := keyOf(access.ContentKey(a.cfg.Scope.AppID.String(), one.ID))
 	versionKey := keyOf(access.VersionKey(a.cfg.Scope.AppID.String(), one.ID, one.Versions[0].ID))
-	entityKey := keyOf(access.EntityKey(a.cfg.Scope.AppID.String(), string(tags[0].ID)))
+	entityKey := keyOf(access.ChannelKey(a.cfg.Scope.AppID.String(), channel.ID))
+	metadataKey := keyOf(access.ChannelKey(a.cfg.Scope.AppID.String(), string(tags[0].ID)))
 	product := func(key string) billing.Product {
 		p, err := b.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: "critical-" + uuid.NewString(), DisplayName: "Critical access", Entitlements: []string{key}})
 		must(t, err)
 		return *p
 	}
-	products := map[string]billing.Product{"content": product(contentKey), "version": product(versionKey), "entity": product(entityKey), "tier": product("gold")}
+	products := map[string]billing.Product{"content": product(contentKey), "version": product(versionKey), "entity": product(entityKey), "tier": product("gold"), "metadata": product(metadataKey)}
 	newReader := func(t *testing.T) (*ck.Client, billing.CustomerID) {
 		u, credential := w.person(t, 0)
 		id, err := billing.ParseCustomerID(u.ID)
@@ -101,7 +114,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		}
 	}
 	t.Run("CK-J06-S01_content_version_entity_and_tier_grants_are_scoped", func(t *testing.T) {
-		for _, name := range []string{"content", "version", "entity", "tier"} {
+		for _, name := range []string{"content", "version", "entity", "tier", "metadata"} {
 			t.Run(name, func(t *testing.T) {
 				reader, id := newReader(t)
 				assertVersion(t, reader, one, 0, false)
@@ -272,6 +285,25 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		if len(page.Items) != 1 || page.Items[0].ContentID != foreign.ID {
 			t.Fatalf("sibling library crossed app boundary: %+v", page)
 		}
+	})
+	t.Run("CK-J06-S04_deleted_channel_retains_only_exact_edition_purchase", func(t *testing.T) {
+		reader, customer := newReader(t)
+		exact := keyOf(access.VersionKey(a.cfg.Scope.AppID.String(), entityItem.ID, entityItem.Versions[0].ID))
+		window := grant(t, customer, product(exact), nil)
+		assertVersion(t, reader, entityItem, 0, true)
+		must(t, admin.DeleteChannel(t.Context(), channel.ID))
+		retained, err := reader.GetVersion(t.Context(), entityItem.Versions[0].ID, ck.GetVersionQuery{})
+		must(t, err)
+		if !retained.Decision.Allowed || retained.Body != "Protected manuscript" {
+			t.Fatal("deleted channel discarded a retained exact-edition purchase")
+		}
+		_, err = reader.GetVersion(t.Context(), entityItem.Versions[1].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
+		_, err = a.client("").GetVersion(t.Context(), entityItem.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
+		must(t, b.merchant.RevokeProductAccess(t.Context(), window.ID, billing.RevokeProductAccessParams{Reason: "End retained purchase"}))
+		_, err = reader.GetVersion(t.Context(), entityItem.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
 	})
 	t.Run("CK-J06-S05_unavailable_entitlement_authority_refuses_protected_access", func(t *testing.T) {
 		reader, id := newReader(t)

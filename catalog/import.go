@@ -36,17 +36,17 @@ type ImportContent struct {
 	OriginalTitle    *string
 	OriginalLanguage *string
 	// Comments is open (when empty), closed or hidden.
-	Comments      string
-	Access        *access.Rule
-	Restrictions  []string
-	Attributes    map[string]any
-	OwnerEntityID string
-	Creators      []Creator
-	Text          map[string]Text
-	Versions      []ImportVersion
-	Code          string
-	CreatedAt     *time.Time
-	UpdatedAt     *time.Time
+	Comments     string
+	Access       *access.Rule
+	Restrictions []string
+	Attributes   map[string]any
+	ChannelID    string
+	Creators     []Creator
+	Text         map[string]Text
+	Versions     []ImportVersion
+	Code         string
+	CreatedAt    *time.Time
+	UpdatedAt    *time.Time
 }
 
 // ImportVersion is one version of an ImportContent, positioned as listed.
@@ -97,7 +97,7 @@ type importItemRow struct {
 	Access           json.RawMessage `json:"access"`
 	Restrictions     []string        `json:"restrictions"`
 	Attributes       map[string]any  `json:"attributes"`
-	OwnerEntityID    *string         `json:"owner_entity_id"`
+	ChannelID        *string         `json:"owner_entity_id"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
@@ -183,11 +183,24 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 		if err := s.checkImport(ctx, &in[i]); err != nil {
 			return err
 		}
-		owner, err := s.fixedOwner(ctx, tx, in[i].Kind, in[i].OwnerEntityID)
+		owner, err := s.fixedOwner(ctx, tx, in[i].Kind, in[i].ChannelID)
 		if err != nil {
 			return err
 		}
-		in[i].OwnerEntityID = owner
+		in[i].ChannelID = owner
+		for _, v := range in[i].Versions {
+			if owner != "" && v.Access != nil {
+				return invalid("channel versions use parent access")
+			}
+			if owner == "" {
+				if err := s.checkChannelRule("", v.Access); err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.checkChannelRule(owner, in[i].Access); err != nil {
+			return err
+		}
 		if slices.Contains(ids, in[i].ID) {
 			return invalid("content %s is imported twice", in[i].ID)
 		}
@@ -203,6 +216,20 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
  WHERE tenant_id = $1 AND id = ANY($2) ORDER BY id FOR UPDATE`, ids)
 	if err != nil {
 		return err
+	}
+	// The primary channel is immutable once the original exists. Import replay
+	// can update content, but cannot silently transfer editorial ownership.
+	for _, record := range in {
+		if _, exists := items[record.ID]; !exists {
+			continue
+		}
+		var owner string
+		if err := tx.QueryRow(ctx, `SELECT coalesce(owner_entity_id,'') FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, record.ID).Scan(&owner); err != nil {
+			return err
+		}
+		if owner != record.ChannelID {
+			return invalid("content %s cannot change its primary channel", record.ID)
+		}
 	}
 	hidden, err := s.hiddenVersions(ctx, tx, in)
 	if err != nil {
@@ -236,6 +263,20 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	changed, err := s.writeImport(ctx, tx, b)
 	if err != nil {
 		return err
+	}
+	// Channel audience intent belongs to the parent, including versions omitted
+	// from this import batch. Reader release snapshots remain unchanged until
+	// the normal publication operation completes.
+	channelRows, err := tx.Query(ctx, `UPDATE `+s.t.versions+` v SET access=c.access,revision=v.revision+1,updated_at=clock_timestamp() FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND c.id=ANY($2::text[]) AND c.owner_entity_id IS NOT NULL AND v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND v.access IS DISTINCT FROM c.access RETURNING v.content_id`, s.tenant, ids)
+	if err != nil {
+		return err
+	}
+	channelChanged, err := pgx.CollectRows(channelRows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, id := range channelChanged {
+		changed[id] = true
 	}
 	var versionParents []string
 	for _, version := range b.versions {
@@ -316,9 +357,9 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 		row.PublishAt, row.PublishedAt, row.DeletedAt = importTimes(c.State, c.PublishAt, c.PublishedAt, c.DeletedAt, oldp, now)
 		row.Access, _ = json.Marshal(c.Access)
 		rules = append(rules, c.Access)
-		if c.OwnerEntityID != "" {
-			row.OwnerEntityID = &c.OwnerEntityID
-			owners = append(owners, c.OwnerEntityID)
+		if c.ChannelID != "" {
+			row.ChannelID = &c.ChannelID
+			owners = append(owners, c.ChannelID)
 		}
 		row.CreatedAt, row.UpdatedAt = importStamps(c.CreatedAt, c.UpdatedAt, oldp, now)
 		b.items = append(b.items, row)
@@ -374,7 +415,9 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 				}
 			}
 			vr.PublishAt, vr.PublishedAt, vr.DeletedAt = importTimes(v.State, v.PublishAt, v.PublishedAt, v.DeletedAt, op, now)
-			if v.Access != nil {
+			if c.ChannelID != "" {
+				vr.Access, _ = json.Marshal(c.Access)
+			} else if v.Access != nil {
 				vr.Access, _ = json.Marshal(v.Access)
 				rules = append(rules, v.Access)
 			} else if had && len(op.access) > 0 {
@@ -707,8 +750,8 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 			return invalid("%v", err)
 		}
 	}
-	if c.OwnerEntityID != "" {
-		if err := contentref.ValidateID(c.OwnerEntityID); err != nil {
+	if c.ChannelID != "" {
+		if err := contentref.ValidateID(c.ChannelID); err != nil {
 			return invalid("owner group: %v", err)
 		}
 	}
@@ -745,6 +788,7 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 
 func (s *Store) checkImportVersion(kind string, parentDeleted bool, v *ImportVersion) error {
 	k := s.cfg.Kinds[kind]
+
 	if err := contentref.ValidateID(v.ID); err != nil {
 		return invalid("version id: %v", err)
 	}
@@ -878,7 +922,7 @@ func (s *Store) checkOwners(ctx context.Context, q Querier, ids []string) error 
 	}
 	var missing string
 	if err := q.QueryRow(ctx, `SELECT coalesce(min(u.id), '') FROM unnest($2::text[]) AS u(id)
- WHERE NOT EXISTS (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id = $1 AND g.id = u.id AND g.state = 'active')`, s.tenant, ids).Scan(&missing); err != nil {
+ WHERE NOT EXISTS (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id = $1 AND g.id = u.id AND g.state = 'active' AND g.kind='channel' AND g.auth_scope IS NOT NULL)`, s.tenant, ids).Scan(&missing); err != nil {
 		return err
 	}
 	if missing != "" {

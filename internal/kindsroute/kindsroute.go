@@ -14,6 +14,7 @@ import (
 
 // ContentModel is the public part of kinds.Config.
 type ContentModel struct {
+	Channels    *kinds.Channels             `json:"channels,omitempty"`
 	Languages   []string                    `json:"languages"`
 	Tiers       []string                    `json:"tiers"`
 	Kinds       map[string]kinds.Kind       `json:"kinds"`
@@ -32,7 +33,7 @@ type ContentModel struct {
 // Public is c's public part, with empty lists and maps rather than null and
 // each kind's locked view spelled out.
 func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentModel {
-	m := ContentModel{Languages: c.Languages, Tiers: c.Tiers, Kinds: map[string]kinds.Kind{}, EntityKinds: c.EntityKinds,
+	m := ContentModel{Channels: c.Channels, Languages: c.Languages, Tiers: c.Tiers, Kinds: map[string]kinds.Kind{}, EntityKinds: c.EntityKinds,
 		Signals: signals, Avatars: avatars}
 	for name, k := range c.Kinds {
 		l := k.LockedView()

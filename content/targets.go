@@ -20,6 +20,7 @@ type TargetType string
 const (
 	TargetContent TargetType = "contents"
 	TargetEntity  TargetType = "entities"
+	TargetChannel TargetType = "channels"
 )
 
 // A content item's comments setting (resolve.Resolution.Comments); entities'
@@ -56,7 +57,7 @@ func commentsOpen(res resolve.Resolution) error {
 }
 
 // TargetTypes are the route families interactions are served under.
-var TargetTypes = []TargetType{TargetContent, TargetEntity}
+var TargetTypes = []TargetType{TargetContent, TargetEntity, TargetChannel}
 
 // versionParam names one version of a content target.
 var versionParam = httpapi.Text("version", "one version of the content item; the item itself by default")
@@ -77,11 +78,11 @@ func (rt *Runtime) target(req *http.Request, typ TargetType) (contentref.Content
 	if contentref.ValidateID(id) != nil {
 		return contentref.ContentRef{}, ErrNotFound
 	}
-	if typ == TargetEntity && version != "" {
-		return contentref.ContentRef{}, badRequest("a group has no versions")
+	if typ != TargetContent && version != "" {
+		return contentref.ContentRef{}, badRequest("only content has versions")
 	}
 	table := rt.store.t.items
-	if typ == TargetEntity {
+	if typ != TargetContent {
 		table = rt.store.t.entities
 	}
 	var kind string
@@ -102,6 +103,9 @@ func (rt *Runtime) target(req *http.Request, typ TargetType) (contentref.Content
 func (rt *Runtime) targetType(kind string) (TargetType, bool) {
 	if _, ok := rt.cfg.Kinds[kind]; ok {
 		return TargetContent, true
+	}
+	if kind == "channel" {
+		return TargetChannel, rt.cfg.Channels != nil
 	}
 	if _, ok := rt.cfg.EntityKinds[kind]; ok {
 		return TargetEntity, true

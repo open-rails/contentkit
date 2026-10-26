@@ -124,6 +124,9 @@ func (e *Engine) Routes(selection Routes) ([]Route, error) {
 			modules[m] = e.modules[m]
 		}
 	}
+	if selection.Groups&EntityRoutes != 0 && e.modules[httpapi.Channels] != nil {
+		modules[httpapi.Channels] = e.modules[httpapi.Channels]
+	}
 	return []Route{{Path: prefix + httpapi.Version + "/", Handler: e.dispatch(prefix, modules)}}, nil
 }
 

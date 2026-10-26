@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
@@ -125,17 +126,60 @@ func (q GetEntityCommentsQuery) values() url.Values {
 	return v
 }
 
-// GetEntityComments is GET /v1/entities/{id}/comments (public). The top-level comments on a group with reply counts; the caller also sees its own held and rejected ones.
+// GetEntityComments is GET /v1/entities/{id}/comments (public). The top-level comments on an entity with reply counts; the caller also sees its own held and rejected ones.
 func (c *Client) GetEntityComments(ctx context.Context, id string, q GetEntityCommentsQuery) ([]content.Comment, error) {
 	var out []content.Comment
 	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// PostEntityComments is POST /v1/entities/{id}/comments (public). Comments on a group in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
+// PostEntityComments is POST /v1/entities/{id}/comments (public). Comments on an entity in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
 func (c *Client) PostEntityComments(ctx context.Context, id string, body content.CommentInput) (content.Comment, error) {
 	var out content.Comment
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/comments", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// GetChannelCommentsQuery is the query of GetChannelComments.
+type GetChannelCommentsQuery struct {
+	// only this language's comments; every language by default
+	Language string
+	// likes (most liked), best (Wilson lower bound) or newest (the default)
+	Sort string
+	// page size: 20 by default, at most 100
+	Limit int
+	// items to skip
+	Offset int
+}
+
+func (q GetChannelCommentsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Sort != "" {
+		v.Set("sort", q.Sort)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Offset != 0 {
+		v.Set("offset", fmt.Sprint(q.Offset))
+	}
+	return v
+}
+
+// GetChannelComments is GET /v1/channels/{id}/comments (public). The top-level comments on a channel with reply counts; the caller also sees its own held and rejected ones.
+func (c *Client) GetChannelComments(ctx context.Context, id string, q GetChannelCommentsQuery) ([]content.Comment, error) {
+	var out []content.Comment
+	err := c.call(ctx, http.MethodGet, expand("/v1/channels/{id}/comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// PostChannelComments is POST /v1/channels/{id}/comments (public). Comments on a channel in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
+func (c *Client) PostChannelComments(ctx context.Context, id string, body content.CommentInput) (content.Comment, error) {
+	var out content.Comment
+	err := c.call(ctx, http.MethodPost, expand("/v1/channels/{id}/comments", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
@@ -366,31 +410,59 @@ func (c *Client) GetContentReaction(ctx context.Context, id string, q GetContent
 	return out, err
 }
 
-// PostEntityLike is POST /v1/entities/{id}/like (public). Likes a group.
+// PostEntityLike is POST /v1/entities/{id}/like (public). Likes an entity.
 func (c *Client) PostEntityLike(ctx context.Context, id string) (content.ReactionCounts, error) {
 	var out content.ReactionCounts
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/like", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// PostEntityDislike is POST /v1/entities/{id}/dislike (public). Dislikes a group.
+// PostEntityDislike is POST /v1/entities/{id}/dislike (public). Dislikes an entity.
 func (c *Client) PostEntityDislike(ctx context.Context, id string) (content.ReactionCounts, error) {
 	var out content.ReactionCounts
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/dislike", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// DeleteEntityReaction is DELETE /v1/entities/{id}/reaction (public). Clears the caller's reaction to a group.
+// DeleteEntityReaction is DELETE /v1/entities/{id}/reaction (public). Clears the caller's reaction to an entity.
 func (c *Client) DeleteEntityReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
 	var out content.ReactionCounts
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// GetEntityReaction is GET /v1/entities/{id}/reaction (public). The like and dislike counts of a group and the caller's own reaction.
+// GetEntityReaction is GET /v1/entities/{id}/reaction (public). The like and dislike counts of an entity and the caller's own reaction.
 func (c *Client) GetEntityReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
 	var out content.ReactionCounts
 	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// PostChannelLike is POST /v1/channels/{id}/like (public). Likes a channel.
+func (c *Client) PostChannelLike(ctx context.Context, id string) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodPost, expand("/v1/channels/{id}/like", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// PostChannelDislike is POST /v1/channels/{id}/dislike (public). Dislikes a channel.
+func (c *Client) PostChannelDislike(ctx context.Context, id string) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodPost, expand("/v1/channels/{id}/dislike", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// DeleteChannelReaction is DELETE /v1/channels/{id}/reaction (public). Clears the caller's reaction to a channel.
+func (c *Client) DeleteChannelReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodDelete, expand("/v1/channels/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// GetChannelReaction is GET /v1/channels/{id}/reaction (public). The like and dislike counts of a channel and the caller's own reaction.
+func (c *Client) GetChannelReaction(ctx context.Context, id string) (content.ReactionCounts, error) {
+	var out content.ReactionCounts
+	err := c.call(ctx, http.MethodGet, expand("/v1/channels/{id}/reaction", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
@@ -457,24 +529,45 @@ func (c *Client) GetContentFavorite(ctx context.Context, id string, q GetContent
 	return out, err
 }
 
-// PostEntityFavorite is POST /v1/entities/{id}/favorite (user). Favorites a group the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
+// PostEntityFavorite is POST /v1/entities/{id}/favorite (user). Favorites an entity the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
 func (c *Client) PostEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
 	var out content.FavoriteState
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// DeleteEntityFavorite is DELETE /v1/entities/{id}/favorite (user). Unfavorites a group, also one no longer visible. Answers the state with its favorite count.
+// DeleteEntityFavorite is DELETE /v1/entities/{id}/favorite (user). Unfavorites an entity, also one no longer visible. Answers the state with its favorite count.
 func (c *Client) DeleteEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
 	var out content.FavoriteState
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
-// GetEntityFavorite is GET /v1/entities/{id}/favorite (public). The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible).
+// GetEntityFavorite is GET /v1/entities/{id}/favorite (public). The favorite count of an entity and whether the caller favorited it (never, signed out: then it must be visible).
 func (c *Client) GetEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
 	var out content.FavoriteState
 	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// PostChannelFavorite is POST /v1/channels/{id}/favorite (user). Favorites a channel the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
+func (c *Client) PostChannelFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
+	var out content.FavoriteState
+	err := c.call(ctx, http.MethodPost, expand("/v1/channels/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// DeleteChannelFavorite is DELETE /v1/channels/{id}/favorite (user). Unfavorites a channel, also one no longer visible. Answers the state with its favorite count.
+func (c *Client) DeleteChannelFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
+	var out content.FavoriteState
+	err := c.call(ctx, http.MethodDelete, expand("/v1/channels/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
+// GetChannelFavorite is GET /v1/channels/{id}/favorite (public). The favorite count of a channel and whether the caller favorited it (never, signed out: then it must be visible).
+func (c *Client) GetChannelFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
+	var out content.FavoriteState
+	err := c.call(ctx, http.MethodGet, expand("/v1/channels/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
 	return out, err
 }
 
@@ -726,15 +819,15 @@ func (c *Client) DeleteGlobalCommentBan(ctx context.Context, user string) error 
 	return c.call(ctx, http.MethodDelete, expand("/v1/global-comment-bans/{user}", "{user}", url.PathEscape(user)), nil, nil, nil)
 }
 
-// GetEntityHeldCommentsQuery is the query of GetEntityHeldComments.
-type GetEntityHeldCommentsQuery struct {
+// GetChannelHeldCommentsQuery is the query of GetChannelHeldComments.
+type GetChannelHeldCommentsQuery struct {
 	// the previous page's next
 	Cursor string
 	// page size: 20 by default, at most 100
 	Limit int
 }
 
-func (q GetEntityHeldCommentsQuery) values() url.Values {
+func (q GetChannelHeldCommentsQuery) values() url.Values {
 	v := url.Values{}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -745,22 +838,22 @@ func (q GetEntityHeldCommentsQuery) values() url.Values {
 	return v
 }
 
-// GetEntityHeldComments is GET /v1/entities/{id}/held-comments (person). Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.
-func (c *Client) GetEntityHeldComments(ctx context.Context, id string, q GetEntityHeldCommentsQuery) (content.HeldPage, error) {
+// GetChannelHeldComments is GET /v1/channels/{id}/held-comments (person). Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.
+func (c *Client) GetChannelHeldComments(ctx context.Context, id string, q GetChannelHeldCommentsQuery) (content.HeldPage, error) {
 	var out content.HeldPage
-	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/held-comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/channels/{id}/held-comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// GetEntityCommentBansQuery is the query of GetEntityCommentBans.
-type GetEntityCommentBansQuery struct {
+// GetChannelCommentBansQuery is the query of GetChannelCommentBans.
+type GetChannelCommentBansQuery struct {
 	// page size: 20 by default, at most 100
 	Limit int
 	// items to skip
 	Offset int
 }
 
-func (q GetEntityCommentBansQuery) values() url.Values {
+func (q GetChannelCommentBansQuery) values() url.Values {
 	v := url.Values{}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
@@ -771,23 +864,23 @@ func (q GetEntityCommentBansQuery) values() url.Values {
 	return v
 }
 
-// GetEntityCommentBans is GET /v1/entities/{id}/comment-bans (person). The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators.
-func (c *Client) GetEntityCommentBans(ctx context.Context, id string, q GetEntityCommentBansQuery) ([]content.CommentBan, error) {
+// GetChannelCommentBans is GET /v1/channels/{id}/comment-bans (person). The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators.
+func (c *Client) GetChannelCommentBans(ctx context.Context, id string, q GetChannelCommentBansQuery) ([]content.CommentBan, error) {
 	var out []content.CommentBan
-	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/comment-bans", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	err := c.call(ctx, http.MethodGet, expand("/v1/channels/{id}/comment-bans", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
-// PutEntityCommentBan is PUT /v1/entities/{id}/comment-bans/{user} (person). Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators.
-func (c *Client) PutEntityCommentBan(ctx context.Context, id string, user string, body content.BanInput) (content.CommentBan, error) {
+// PutChannelCommentBan is PUT /v1/channels/{id}/comment-bans/{user} (person). Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators.
+func (c *Client) PutChannelCommentBan(ctx context.Context, id string, user string, body content.BanInput) (content.CommentBan, error) {
 	var out content.CommentBan
-	err := c.call(ctx, http.MethodPut, expand("/v1/entities/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, body, &out)
+	err := c.call(ctx, http.MethodPut, expand("/v1/channels/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, body, &out)
 	return out, err
 }
 
-// DeleteEntityCommentBan is DELETE /v1/entities/{id}/comment-bans/{user} (person). Lifts a user's ban on a user-owned group and its content.
-func (c *Client) DeleteEntityCommentBan(ctx context.Context, id string, user string) error {
-	return c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, nil, nil)
+// DeleteChannelCommentBan is DELETE /v1/channels/{id}/comment-bans/{user} (person). Lifts a user's ban on a user-owned group and its content.
+func (c *Client) DeleteChannelCommentBan(ctx context.Context, id string, user string) error {
+	return c.call(ctx, http.MethodDelete, expand("/v1/channels/{id}/comment-bans/{user}", "{id}", url.PathEscape(id), "{user}", url.PathEscape(user)), nil, nil, nil)
 }
 
 // GetContentCanCommentQuery is the query of GetContentCanComment.
@@ -830,10 +923,31 @@ func (q GetEntityCanCommentQuery) values() url.Values {
 	return v
 }
 
-// GetEntityCanComment is GET /v1/entities/{id}/can-comment (public). Whether the caller may comment on a group, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.
+// GetEntityCanComment is GET /v1/entities/{id}/can-comment (public). Whether the caller may comment on an entity, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.
 func (c *Client) GetEntityCanComment(ctx context.Context, id string, q GetEntityCanCommentQuery) (content.CommentStanding, error) {
 	var out content.CommentStanding
 	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetChannelCanCommentQuery is the query of GetChannelCanComment.
+type GetChannelCanCommentQuery struct {
+	// only this language's thread; all languages by default
+	Language string
+}
+
+func (q GetChannelCanCommentQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetChannelCanComment is GET /v1/channels/{id}/can-comment (public). Whether the caller may comment on a channel, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.
+func (c *Client) GetChannelCanComment(ctx context.Context, id string, q GetChannelCanCommentQuery) (content.CommentStanding, error) {
+	var out content.CommentStanding
+	err := c.call(ctx, http.MethodGet, expand("/v1/channels/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
@@ -1042,8 +1156,8 @@ func (c *Client) GetContentVersion(ctx context.Context, id string, vid string, q
 type GetManageQuery struct {
 	// draft, scheduled, published (live) or deleted; every state but deleted by default
 	State string
-	// only this owner group's, which the caller edits
-	OwnerEntity string
+	// only this primary channel's content, which the caller edits
+	ChannelId string
 	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
 	Access string
 	// only items whose rule names this configured tier
@@ -1067,8 +1181,8 @@ func (q GetManageQuery) values() url.Values {
 	if q.State != "" {
 		v.Set("state", q.State)
 	}
-	if q.OwnerEntity != "" {
-		v.Set("owner_group", q.OwnerEntity)
+	if q.ChannelId != "" {
+		v.Set("channel_id", q.ChannelId)
 	}
 	if q.Access != "" {
 		v.Set("access", q.Access)
@@ -1097,7 +1211,7 @@ func (q GetManageQuery) values() url.Values {
 	return v
 }
 
-// GetManage is GET /v1/manage (public). Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.
+// GetManage is GET /v1/manage (public). Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's original posts when they currently edit that channel.
 func (c *Client) GetManage(ctx context.Context, q GetManageQuery) ([]catalog.Content, error) {
 	var out []catalog.Content
 	err := c.call(ctx, http.MethodGet, "/v1/manage", q.values(), nil, &out)
@@ -1108,8 +1222,8 @@ func (c *Client) GetManage(ctx context.Context, q GetManageQuery) ([]catalog.Con
 type GetManageKindQuery struct {
 	// draft, scheduled, published or deleted
 	State string
-	// only this owner group's, which the caller edits
-	OwnerEntity string
+	// only this primary channel's content, which the caller edits
+	ChannelId string
 	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
 	Access string
 	// only items whose rule names this configured tier
@@ -1133,8 +1247,8 @@ func (q GetManageKindQuery) values() url.Values {
 	if q.State != "" {
 		v.Set("state", q.State)
 	}
-	if q.OwnerEntity != "" {
-		v.Set("owner_group", q.OwnerEntity)
+	if q.ChannelId != "" {
+		v.Set("channel_id", q.ChannelId)
 	}
 	if q.Access != "" {
 		v.Set("access", q.Access)
@@ -1174,8 +1288,8 @@ func (c *Client) GetManageKind(ctx context.Context, kind string, q GetManageKind
 type GetManageCountQuery struct {
 	// draft, scheduled, published or deleted
 	State string
-	// only this owner group's, which the caller edits
-	OwnerEntity string
+	// only this primary channel's content, which the caller edits
+	ChannelId string
 	// only items whose own rule has this level: public, tier, group, ppv or group_ppv
 	Access string
 	// only items whose rule names this configured tier
@@ -1189,8 +1303,8 @@ func (q GetManageCountQuery) values() url.Values {
 	if q.State != "" {
 		v.Set("state", q.State)
 	}
-	if q.OwnerEntity != "" {
-		v.Set("owner_group", q.OwnerEntity)
+	if q.ChannelId != "" {
+		v.Set("channel_id", q.ChannelId)
 	}
 	if q.Access != "" {
 		v.Set("access", q.Access)
@@ -1305,6 +1419,18 @@ func (c *Client) PutContentVersionSegments(ctx context.Context, id string, vid s
 	var out catalog.Version
 	err := c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{vid}/segments", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, body, &out)
 	return out, err
+}
+
+// PutChannelRepost is PUT /v1/channels/{id}/reposts/{content_id} (editor). Idempotently reposts a published original into a channel the caller may post to; original ownership and access remain unchanged.
+func (c *Client) PutChannelRepost(ctx context.Context, id string, contentId string) (channels.Repost, error) {
+	var out channels.Repost
+	err := c.call(ctx, http.MethodPut, expand("/v1/channels/{id}/reposts/{content_id}", "{id}", url.PathEscape(id), "{content_id}", url.PathEscape(contentId)), nil, nil, &out)
+	return out, err
+}
+
+// DeleteChannelRepost is DELETE /v1/channels/{id}/reposts/{content_id} (editor). Removes only the destination repost reference. Requires destination editorship or the original reposter's current posting permission.
+func (c *Client) DeleteChannelRepost(ctx context.Context, id string, contentId string) error {
+	return c.call(ctx, http.MethodDelete, expand("/v1/channels/{id}/reposts/{content_id}", "{id}", url.PathEscape(id), "{content_id}", url.PathEscape(contentId)), nil, nil, nil)
 }
 
 // PostMediaUploadPresign is POST /v1/media/upload/presign (editor). Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket.
@@ -1811,47 +1937,6 @@ func (c *Client) GetManageEntity(ctx context.Context, id string, q GetManageEnti
 	return out, err
 }
 
-// GetMeEntitiesQuery is the query of GetMeEntities.
-type GetMeEntitiesQuery struct {
-	// only entities of this kind
-	Kind string
-	// the language names, text and slugs resolve in, counts are scoped to and paths are prefixed with
-	Language string
-	// name (the default), count or newest
-	Sort string
-	// the previous page's next_cursor
-	Cursor string
-	// page size: 50 by default, at most 200
-	Limit int
-}
-
-func (q GetMeEntitiesQuery) values() url.Values {
-	v := url.Values{}
-	if q.Kind != "" {
-		v.Set("kind", q.Kind)
-	}
-	if q.Language != "" {
-		v.Set("language", q.Language)
-	}
-	if q.Sort != "" {
-		v.Set("sort", q.Sort)
-	}
-	if q.Cursor != "" {
-		v.Set("cursor", q.Cursor)
-	}
-	if q.Limit != 0 {
-		v.Set("limit", fmt.Sprint(q.Limit))
-	}
-	return v
-}
-
-// GetMeEntities is GET /v1/me/entities (user). The viewer's active entities: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the entity's AuthKit scope, or hold the key of, each saying which, as GET /entities lists them.
-func (c *Client) GetMeEntities(ctx context.Context, q GetMeEntitiesQuery) (entities.MyEntityPage, error) {
-	var out entities.MyEntityPage
-	err := c.call(ctx, http.MethodGet, "/v1/me/entities", q.values(), nil, &out)
-	return out, err
-}
-
 // PostEntities is POST /v1/entities (editor). Creates entities with their names and text; an auth_scope kind's gets its AuthKit scope. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
 func (c *Client) PostEntities(ctx context.Context, body []entities.EntityInput) ([]entities.Entity, error) {
 	var out []entities.Entity
@@ -2046,6 +2131,236 @@ func (c *Client) PutContentVersionEntities(ctx context.Context, id string, vid s
 	return out, err
 }
 
+// GetManageChannelsQuery is the query of GetManageChannels.
+type GetManageChannelsQuery struct {
+	// display language
+	Language string
+	// canonical channel slug
+	Slug string
+	// substring of a channel name or slug
+	Q string
+	// previous next_cursor
+	Cursor string
+	// maximum results, at most 200
+	Limit int
+	// name, count or newest
+	Sort string
+	// active or deleted
+	State string
+}
+
+func (q GetManageChannelsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Slug != "" {
+		v.Set("slug", q.Slug)
+	}
+	if q.Q != "" {
+		v.Set("q", q.Q)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Sort != "" {
+		v.Set("sort", q.Sort)
+	}
+	if q.State != "" {
+		v.Set("state", q.State)
+	}
+	return v
+}
+
+// GetManageChannels is GET /v1/manage/channels (staff). Lists channel administration records, including deleted channels during retention.
+func (c *Client) GetManageChannels(ctx context.Context, q GetManageChannelsQuery) (channels.Page, error) {
+	var out channels.Page
+	err := c.call(ctx, http.MethodGet, "/v1/manage/channels", q.values(), nil, &out)
+	return out, err
+}
+
+// GetChannelsQuery is the query of GetChannels.
+type GetChannelsQuery struct {
+	// display language
+	Language string
+	// canonical channel slug
+	Slug string
+	// substring of a channel name or slug
+	Q string
+	// previous next_cursor
+	Cursor string
+	// maximum results, at most 200
+	Limit int
+	// name, count or newest
+	Sort string
+}
+
+func (q GetChannelsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Slug != "" {
+		v.Set("slug", q.Slug)
+	}
+	if q.Q != "" {
+		v.Set("q", q.Q)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Sort != "" {
+		v.Set("sort", q.Sort)
+	}
+	return v
+}
+
+// GetChannels is GET /v1/channels (public). Lists public channels independently of metadata entities.
+func (c *Client) GetChannels(ctx context.Context, q GetChannelsQuery) (channels.Page, error) {
+	var out channels.Page
+	err := c.call(ctx, http.MethodGet, "/v1/channels", q.values(), nil, &out)
+	return out, err
+}
+
+// GetChannelQuery is the query of GetChannel.
+type GetChannelQuery struct {
+	// display language
+	Language string
+}
+
+func (q GetChannelQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetChannel is GET /v1/channels/{id} (public). Reads a channel, its metadata and the viewer's membership standing.
+func (c *Client) GetChannel(ctx context.Context, id string, q GetChannelQuery) (channels.Channel, error) {
+	var out channels.Channel
+	err := c.call(ctx, http.MethodGet, expand("/v1/channels/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetManageChannelQuery is the query of GetManageChannel.
+type GetManageChannelQuery struct {
+	// display language
+	Language string
+}
+
+func (q GetManageChannelQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetManageChannel is GET /v1/manage/channels/{id} (staff). Reads channel administration identity, including a deleted channel during retention.
+func (c *Client) GetManageChannel(ctx context.Context, id string, q GetManageChannelQuery) (channels.Channel, error) {
+	var out channels.Channel
+	err := c.call(ctx, http.MethodGet, expand("/v1/manage/channels/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetMeChannelsQuery is the query of GetMeChannels.
+type GetMeChannelsQuery struct {
+	// display language
+	Language string
+	// canonical channel slug
+	Slug string
+	// substring of a channel name or slug
+	Q string
+	// previous next_cursor
+	Cursor string
+	// maximum results, at most 200
+	Limit int
+	// name, count or newest
+	Sort string
+}
+
+func (q GetMeChannelsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Slug != "" {
+		v.Set("slug", q.Slug)
+	}
+	if q.Q != "" {
+		v.Set("q", q.Q)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Sort != "" {
+		v.Set("sort", q.Sort)
+	}
+	return v
+}
+
+// GetMeChannels is GET /v1/me/channels (user). Lists the caller's channels and their current authoring permissions.
+func (c *Client) GetMeChannels(ctx context.Context, q GetMeChannelsQuery) (channels.MyPage, error) {
+	var out channels.MyPage
+	err := c.call(ctx, http.MethodGet, "/v1/me/channels", q.values(), nil, &out)
+	return out, err
+}
+
+// PostChannels is POST /v1/channels (editor). Creates a channel under the configured staff or user creation policy.
+func (c *Client) PostChannels(ctx context.Context, body channels.Input) (channels.Channel, error) {
+	var out channels.Channel
+	err := c.call(ctx, http.MethodPost, "/v1/channels", nil, body, &out)
+	return out, err
+}
+
+// PatchChannel is PATCH /v1/channels/{id} (editor). Edits channel identity as staff or a current channel manager.
+func (c *Client) PatchChannel(ctx context.Context, id string, body channels.Update) (channels.Channel, error) {
+	var out channels.Channel
+	err := c.call(ctx, http.MethodPatch, expand("/v1/channels/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// DeleteChannel is DELETE /v1/channels/{id} (editor). Soft-deletes the channel and synchronously retires its authoring group and original content; retained media follows the existing purge policy.
+func (c *Client) DeleteChannel(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodDelete, expand("/v1/channels/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
+}
+
+// GetChannelEntitiesQuery is the query of GetChannelEntities.
+type GetChannelEntitiesQuery struct {
+	// display language
+	Language string
+}
+
+func (q GetChannelEntitiesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// GetChannelEntities is GET /v1/channels/{id}/entities (public). Lists descriptive channel metadata; these associations confer no access or authoring authority.
+func (c *Client) GetChannelEntities(ctx context.Context, id string, q GetChannelEntitiesQuery) ([]entities.EntityCard, error) {
+	var out []entities.EntityCard
+	err := c.call(ctx, http.MethodGet, expand("/v1/channels/{id}/entities", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// PutChannelEntities is PUT /v1/channels/{id}/entities (editor). Replaces channel metadata with the given entity IDs, as a channel manager.
+func (c *Client) PutChannelEntities(ctx context.Context, id string, body []string) error {
+	return c.call(ctx, http.MethodPut, expand("/v1/channels/{id}/entities", "{id}", url.PathEscape(id)), nil, body, nil)
+}
+
 // GetContentVersionPageNotices is GET /v1/contents/{id}/versions/{version}/page-notices (editor). Editors: the version's undismissed notes about automatic page changes: pages removed as blank, duplicate or covered by a two-page spread, and archives reordered into natural name order. They never block saving or publishing.
 func (c *Client) GetContentVersionPageNotices(ctx context.Context, id string, version string) (versions.PageNotices, error) {
 	var out versions.PageNotices
@@ -2161,6 +2476,47 @@ func (c *Client) GetContentVersionArchive(ctx context.Context, id string, versio
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/archive", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil)
 }
 
+// GetChannelContentsQuery is the query of GetChannelContents.
+type GetChannelContentsQuery struct {
+	// only content with a live version in this language
+	Language string
+	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
+	DisplayLanguage string
+	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
+	Mode string
+	// the previous page's next_cursor
+	Cursor string
+	// page size: 24 by default, at most 100
+	Limit int
+}
+
+func (q GetChannelContentsQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.DisplayLanguage != "" {
+		v.Set("display_language", q.DisplayLanguage)
+	}
+	if q.Mode != "" {
+		v.Set("mode", q.Mode)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetChannelContents is GET /v1/channels/{id}/contents (public). Lists a channel's published originals and repost references, once per original. Original publication, read, language, and domain policies always apply; reposting grants no editing or reading rights.
+func (c *Client) GetChannelContents(ctx context.Context, id string, q GetChannelContentsQuery) (discovery.ContentPage, error) {
+	var out discovery.ContentPage
+	err := c.call(ctx, http.MethodGet, expand("/v1/channels/{id}/contents", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
 // GetMeLibraryQuery is the query of GetMeLibrary.
 type GetMeLibraryQuery struct {
 	// title language
@@ -2214,8 +2570,8 @@ type GetReleasesQuery struct {
 	Entities []string
 	// group ids no listed version is in
 	ExcludeEntities []string
-	// owner group ids (channels): only content one of them owns
-	OwnerEntity []string
+	// primary channel ids: only content one of them owns
+	ChannelId []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2260,8 +2616,8 @@ func (q GetReleasesQuery) values() url.Values {
 	if len(q.ExcludeEntities) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerEntity) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
+	if len(q.ChannelId) > 0 {
+		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -2376,8 +2732,8 @@ type GetContentsQuery struct {
 	Entities []string
 	// group ids no listed version is in
 	ExcludeEntities []string
-	// owner group ids (channels): only content one of them owns
-	OwnerEntity []string
+	// primary channel ids: only content one of them owns
+	ChannelId []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2434,8 +2790,8 @@ func (q GetContentsQuery) values() url.Values {
 	if len(q.ExcludeEntities) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerEntity) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
+	if len(q.ChannelId) > 0 {
+		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -2519,8 +2875,8 @@ type GetSearchQuery struct {
 	Entities []string
 	// group ids no listed version is in
 	ExcludeEntities []string
-	// owner group ids (channels): only content one of them owns
-	OwnerEntity []string
+	// primary channel ids: only content one of them owns
+	ChannelId []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2580,8 +2936,8 @@ func (q GetSearchQuery) values() url.Values {
 	if len(q.ExcludeEntities) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerEntity) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
+	if len(q.ChannelId) > 0 {
+		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -2714,8 +3070,8 @@ type GetContentSimilarQuery struct {
 	Entities []string
 	// group ids no listed version is in
 	ExcludeEntities []string
-	// owner group ids (channels): only content one of them owns
-	OwnerEntity []string
+	// primary channel ids: only content one of them owns
+	ChannelId []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2762,8 +3118,8 @@ func (q GetContentSimilarQuery) values() url.Values {
 	if len(q.ExcludeEntities) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerEntity) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
+	if len(q.ChannelId) > 0 {
+		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -2830,8 +3186,8 @@ type GetRecommendationsQuery struct {
 	Entities []string
 	// group ids no listed version is in
 	ExcludeEntities []string
-	// owner group ids (channels): only content one of them owns
-	OwnerEntity []string
+	// primary channel ids: only content one of them owns
+	ChannelId []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2878,8 +3234,8 @@ func (q GetRecommendationsQuery) values() url.Values {
 	if len(q.ExcludeEntities) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerEntity) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
+	if len(q.ChannelId) > 0 {
+		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -2948,8 +3304,8 @@ type GetReleaseDatesQuery struct {
 	Entities []string
 	// group ids no listed version is in
 	ExcludeEntities []string
-	// owner group ids (channels): only content one of them owns
-	OwnerEntity []string
+	// primary channel ids: only content one of them owns
+	ChannelId []string
 	// user ids: only content one of them is credited on
 	Creators []string
 	// public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them
@@ -2997,8 +3353,8 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	if len(q.ExcludeEntities) > 0 {
 		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
 	}
-	if len(q.OwnerEntity) > 0 {
-		v.Set("owner_group", strings.Join(q.OwnerEntity, ","))
+	if len(q.ChannelId) > 0 {
+		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
 	if len(q.Creators) > 0 {
 		v.Set("creators", strings.Join(q.Creators, ","))
@@ -3212,7 +3568,7 @@ func (c *Client) PostExposures(ctx context.Context, body discovery.Exposures) er
 
 // GetMeFavoritesQuery is the query of GetMeFavorites.
 type GetMeFavoritesQuery struct {
-	// contents (the default) or entities
+	// contents (the default), entities or channels
 	Target string
 	// only this content kind or group kind
 	Kind string
@@ -3264,7 +3620,7 @@ func (q GetMeFavoritesQuery) values() url.Values {
 	return v
 }
 
-// GetMeFavorites is GET /v1/me/favorites (user). The content items (as their listing shows them) or groups the reader favorited, most recent first.
+// GetMeFavorites is GET /v1/me/favorites (user). The content items (as their listing shows them) entities or channels the reader favorited, most recent first.
 func (c *Client) GetMeFavorites(ctx context.Context, q GetMeFavoritesQuery) (discovery.InteractionPage, error) {
 	var out discovery.InteractionPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/favorites", q.values(), nil, &out)

@@ -85,7 +85,7 @@ func (s *Store) fill(ctx context.Context, list []shown, language string) error {
 		keys := make([]access.Key, len(entitledIDs))
 		for i, id := range entitledIDs {
 			var err error
-			keys[i], err = access.EntityKey(s.tenant, id)
+			keys[i], err = access.ChannelKey(s.tenant, id)
 			if err != nil {
 				return err
 			}
@@ -138,12 +138,12 @@ func (s *Store) contentEditors(ctx context.Context, ids []string) map[string]boo
 		var held map[string][]string
 		if held, err = s.heldScopes(ctx, v, ""); err == nil {
 			for _, g := range scoped {
-				out[g.id] = slices.Contains(held[g.scope], access.EntityContentWrite(g.kind))
+				out[g.id] = slices.Contains(held[g.scope], access.ChannelContentWrite)
 			}
 		}
 	} else if err == nil {
 		for _, g := range scoped {
-			if out[g.id], err = gate.EntityEditor(ctx, s.as.auth, v, "", g.scope, access.EntityContentWrite(g.kind)); err != nil {
+			if out[g.id], err = gate.ChannelEditor(ctx, s.as.auth, v, g.scope, access.ChannelContentWrite); err != nil {
 				break
 			}
 		}

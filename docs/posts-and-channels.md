@@ -1,8 +1,11 @@
 # Posts and channels
 
 A post is a normal ContentKit content item, with its title/body, creator credits,
-comments, reactions, visibility and one or more media versions. A channel is an
-entity that owns posts. Channel ownership does not require paid access.
+comments, reactions, visibility and one or more versions. A channel is the
+authoring home of the overall item. It is a distinct concept from descriptive
+entities such as tags, artists or series. Channel ownership does not require paid
+access. English and Chinese editions of one post share its primary channel and
+editorial authority; each version retains its own text, media and publication.
 
 Hosts configure the same primitives for different products:
 
@@ -24,7 +27,7 @@ serving a protected post. Expiration needs no ContentKit collection timer.
 
 ## Host-defined channel roles
 
-With `auth_scope: true`, each channel has a distinct AuthKit group in the
+Each channel has a distinct AuthKit group in the
 `channel` persona. The adapter derives an app-isolated group identity, so a role
 in one channel or app grants nothing in another. AuthKit stores role assignments;
 ContentKit stores the group reference, not a copy of its permissions.
@@ -47,7 +50,7 @@ not automatically grant any of these authoring permissions. A scoped owner's
 permissions come from their current AuthKit owner role, not an owner-ID shortcut.
 Changing a channel's owner attribution does not transfer AuthKit roles: the host
 must explicitly grant/revoke the corresponding group roles. A required scope that
-has not been provisioned grants no authority while its lifecycle work retries.
+has not been provisioned grants no authority; its caller can retry the failed operation.
 
 Own-post rights require immutable `created_by` plus a current grant in the
 appropriate group. Editable author credits remain attribution. Without a channel,
@@ -59,50 +62,41 @@ Personal account comment bans apply to unowned personal posts. Channel posts use
 the channel's moderation scope, so an author's personal block cannot govern a
 community or official blog.
 
-The optional channel lifecycle job provisions/retires the AuthKit group and
-handles channel deletion/restoration. It is exact durable work triggered by a
-change, not permission copying or periodic reconciliation. Unscoped site blogs
-may deliberately rely on their existing app staff roles instead.
+Channel creation, deletion and restoration call AuthKit synchronously. A failed
+call is reported to the caller, who can retry the same operation with the same
+channel/group identity. This also covers a remote AuthKit response lost after
+committing. Incomplete or deleted channels grant no editorial authority.
+There is no entity-sync or channel-lifecycle River job. App staff retain their
+normal authority; a dedicated blog-editor role grants only one channel's
+capabilities. Physical retention cleanup remains in the content-purge sweep. An existing exact-version purchase keeps its normal deleted-content retention access until purge or entitlement expiry/revocation. This does not restore public listings, channel membership access, reposts or editorial rights.
 
 ## One fixed official channel
 
-A site blog can fix a post kind to a site-owned channel:
+Doujins and Hentai0 each declare one internal staff blog. The channel needs no
+public route or selector; the posts retain their normal blog URLs:
 
 ```yaml
+channels:
+  creation: staff
 content_kinds:
   blog:
     route: blog
     presentation: post
     versions: {languages: one, hidden: true}
     access_levels: [public]
-    owner_entity: {kind: channel, slug: blog}
+    channel: {fixed: blog}
 entity_kinds:
-  channel: {owner: site}
+  tag: {}
 ```
 
-The channel needs no public route or channel selector: it is the fixed ownership
-group behind the blog. Its posts keep their normal blog URLs. This example
-channel has no user owner, delegated editor scope or billing entitlement; normal
-app content editors manage its posts. Those are host policy
-choices. A fixed site channel may instead use `auth_scope: true` and host-defined
-AuthKit roles, or `entitled: true` with an appropriate post access policy.
-`owner_entity` chooses a destination; it does not grant permissions or force
-public access. It is enforced by the
-server for ordinary creation and imports: an omitted owner is filled, and a
-conflicting owner is rejected. A channel in another app cannot satisfy the
-reference, even with an identical slug. The normal explicit `MigratePostgres`
-call ensures that each configured channel exists. There is no separate seed
-command or host-specific blog bootstrap. Ordinary `New`/`Start` never provision
-these declarations, even when embedded compatibility mode migrates SQL schemas.
+`channel.fixed` chooses a required destination; it does not grant users roles or
+force public access. Here `access_levels: [public]` separately makes the blog free.
+An omitted channel is filled on creation/import; a conflicting channel is
+rejected. Another app's identically named channel does not satisfy the reference.
 
-For an unscoped channel, the ordinary migration call is sufficient:
-
-```go
-err := contentkit.MigratePostgres(ctx, pool, cfg)
-```
-
-For `auth_scope: true`, pass the same app-bound scope provider used at runtime,
-or use the AuthKit migration adapter with the host's existing store/role config:
+The normal explicit migration call creates missing configured channels and their
+AuthKit groups. Pass the same app-bound scope provider used at runtime, or the
+narrow migration adapter using the host's existing AuthKit configuration:
 
 ```go
 scopes, err := ckauth.MigrationScopes(pool, authConfig, *cfg.Scope)
@@ -110,28 +104,78 @@ if err != nil { return err }
 err = contentkit.MigratePostgres(ctx, pool, cfg, contentkit.MigrationOptions{Scopes: scopes})
 ```
 
-The adapter uses AuthKit's normal group operations without constructing another
-AuthKit runtime or requiring signing keys, senders or workers. AuthKit storage
-must already be migrated. ContentKit creates the configured owner entity and
-its group, then attaches previously unowned posts. User editor assignments are
-not configuration and are never invented or replaced by migration.
+AuthKit storage must already be migrated. There is no second AuthKit runtime,
+extra seed command, signing-key setup or per-site bootstrap function. Ordinary
+`New`/`Start` does not provision these declarations. Assigning actual editors
+remains an explicit authorization operation, not configuration.
 
-With writers stopped, migration validates existing post/version access and
-ownership before reserving any missing entity. It records stable entity IDs,
-ensures their groups without holding a catalog transaction, and rechecks the
-records before attaching posts. A lost provider response is retried with those
-same IDs. Failure leaves an unprovisioned channel unavailable for authoring;
-rerun the normal migration command to finish. Concurrent migrators converge.
+With writers stopped, migration validates existing content ownership/access,
+reserves stable channel IDs, ensures the groups without holding a catalog
+transaction, then rechecks and attaches previously unowned items. A lost provider
+response is retried with the same IDs. Concurrent migrations converge. Failure
+leaves incomplete channels unavailable for authoring; repeat the normal migrate
+command to finish. A deleted/conflicting channel or group, foreign app provider,
+or incompatible existing post policy is an error, never permission to transfer
+someone else's content or make it public.
 
-New channels use their configured slug as their initial canonical display name.
-Existing names, titles, author credits, groups and role assignments are preserved.
-A deleted/conflicting entity or group, a foreign app provider, or content outside
-current ownership/access policy causes an error; migration never revives retired
-teams, moves somebody else's posts or makes private content public. The former
-`MigrateFixedOwners` seed helper is removed; callers use `MigratePostgres` only.
+Names, URLs, AuthKit groups/grants, media and billing identity survive adoption.
+New fixed channels use their slug as the initial name; existing display names
+are retained. The previous `owner_entity` and generic metadata-authority config
+are replaced by the channel declaration.
 
-Omit `owner_entity` for creator-selected channels, as OnlyDemo does. Channel
-ownership and optional editor teams then use the existing channel permissions.
+## Creator channels and descriptive metadata
+
+An app such as OnlyDemo can permit users to create channels and require each
+post to name one:
+
+```yaml
+channels:
+  creation: users
+  route: channels
+  entitled: true
+  entities: [tag]
+content_kinds:
+  post:
+    route: posts
+    presentation: post
+    versions: {languages: one}
+    channel: {required: true}
+entity_kinds:
+  tag: {}
+```
+
+`entitled` enables channel membership as a read entitlement. It does not lock
+all posts: the overall post still chooses its public/member access policy.
+OpenRails owns the products, prices and grants. AuthKit editor membership is
+separate from a reader's paid membership.
+
+A content kind without `channel` has no owning channel. An empty channel policy
+allows a channel but does not require one. Channel-free galleries retain their
+configured version-specific access behavior. Channel-bearing content uses one
+parent access policy across its versions; a version must not weaken it.
+
+Tags on a channel describe the channel. Tags on an item or version describe that
+content. None of those associations grants authoring rights or changes its
+primary channel. Channel operations use `/channels`; metadata operations use
+`/entities`. A channel cannot be managed by treating it as an ordinary entity.
+
+## Reposts
+
+A repost is an idempotent reference from a destination channel to an existing
+overall item. The actor must have permission to publish in that destination.
+The original channel remains the only authoring home; the destination's editors
+cannot edit the original or its versions merely because they reposted it.
+
+The destination feed resolves the original through its normal publication and
+read checks. A repost cannot expose a draft, revive a withdrawn/deleted item,
+or bypass a subscription or version entitlement. It uses the original media,
+comments, reactions and version selection, with no duplicated content or new
+media job. Original withdrawal applies on reads without fan-out work.
+
+Removing a repost only removes the destination reference. Repeated reposts and
+ownership/repost overlap do not produce duplicate cards for the same original.
+This first implementation is limited to one app; cross-app/tenant reposts,
+quoted commentary and co-author invitations are separate features.
 
 ## Per-post attachment limits
 

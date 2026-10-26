@@ -127,7 +127,7 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
 		if !begin.Before(end) {
 			continue
 		}
-		rule := access.Rule{Level: row.state.Level, Tiers: row.state.Tiers, Entity: row.state.Entity, Releases: row.state.Releases}
+		rule := access.Rule{Level: row.state.Level, Tiers: row.state.Tiers, ChannelID: row.state.Entity, Releases: row.state.Releases}
 		appendPart := func(a, b time.Time) {
 			_, audience, tiers := activityAudience(rule, a)
 			if a.Before(b) {

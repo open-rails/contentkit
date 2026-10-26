@@ -70,11 +70,7 @@ var routes = []httpapi.Route[handler]{
 		httpapi.Text("slug", "only the entity with this slug"), httpapi.Text("q", "match a canonical name, alias or slug"), httpapi.Text("letter", "only sort names starting with this letter"), language,
 		httpapi.Text("content_kind", "count contents of this kind"), httpapi.Text("sort", "name, count or newest"), httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: at most 200")),
 	staff(httpapi.GET, "/manage/entities/{id}", "An entity's administration view, including internal classifications and their relationships.", nil, httpapi.OK(EntityDetail{}), httpapi.H(handler.manageDetail), notFound, language),
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/entities", Resource: "entities", Auth: httpapi.User,
-		Doc: "The viewer's active entities: those they own, edit ({kind}:settings:manage), write content of ({kind}:content:write) or moderate comments of ({kind}:comments:moderate) through the entity's AuthKit scope, or hold the key of, each saying which, as GET /entities lists them.",
-		Query: []httpapi.Param{httpapi.Text("kind", "only entities of this kind"), language, httpapi.Text("sort", "name (the default), count or newest"),
-			httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 50 by default, at most 200")},
-		Responses: []httpapi.Reply{httpapi.OK(MyEntityPage{})}}, Serve: httpapi.H(handler.mine)},
+
 	editor(httpapi.POST, "/entities", "Creates entities with their names and text; an auth_scope kind's gets its AuthKit scope."+editors, []EntityInput{}, httpapi.Created([]Entity{}),
 		httpapi.H(handler.create), creates),
 	editor(httpapi.PATCH, "/entities/{id}", "Updates a entity's given fields; state restores or deletes it."+editors, EntityUpdate{}, httpapi.OK(Entity{}), httpapi.H(handler.update), creates),

@@ -267,7 +267,7 @@ export function useRecentSearches(o: { limit?: number; enabled?: boolean; client
 /** A favorite or reaction with its content's or group's id. */
 export type MyInteraction = Interaction & { id: string };
 
-const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.entity?.id ?? "" })), next: p.next_cursor ?? null, metadata: p.summary });
+const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.entity?.id ?? x.channel?.id ?? "" })), next: p.next_cursor ?? null, metadata: p.summary });
 
 export interface UseInteractions extends UseList<MyInteraction, InteractionPage["summary"]> { summary?: InteractionPage["summary"] }
 
