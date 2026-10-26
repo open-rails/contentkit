@@ -36,8 +36,13 @@ a matched speedup comparison.
   partial-day eligibility semantics are outside this experiment.
 - Rounding to 12 decimal places makes the prototype's score/tie precision
   explicit. An initial unrounded Float64 experiment produced differing result
-  hashes across identical runs. This is not a proposed production scoring rule;
-  the initial run and later byte comparisons remain in `.task/`.
+  hashes across identical runs. Decoding twelve additional unrounded 7-day
+  runs found **identical ordered IDs in all twelve**; seven runs differed only
+  in score low bits, by at most 4.34e-19. The original first two outputs retain
+  hashes only, so their ID ordering cannot be reconstructed. There is no
+  observed ordering flip supporting production rounding. This prototype's
+  rounding is not a proposed production scoring rule; full comparisons remain
+  in `.task/` and `receipts/unrounded-repeat-comparison.json`.
 - `all` means all history in this fixture: initially 365 days, then 366 days in
   the next-day refresh. It is not a multi-year growth measurement.
 
@@ -107,12 +112,100 @@ Scopes are processed sequentially here. Additional independently stored scopes
 multiply aggregate input and preparation work; there is no claim of free
 cross-scope reuse.
 
+## Actual source receipts to daily preparation
+
+A second experiment calls the implementation's **actual**
+`signal.Store.PrepareDailyPopularity` and `DailyPopular` methods at source
+`d5e6dc73` plus `2a480be9`. It does not substitute a benchmark SQL formulation.
+It uses the exact relevant table definitions from that source's migrations,
+with a new isolated database on the same ClickHouse/Keeper fixture.
+
+One historical UTC day contains:
+
+- 60,000 people, ten distinct works per person: **600,000 person/work-days**.
+- Five reads per person are drawn from 1,000 hot items, five from the remaining
+  99,000. IDs are UUID-shaped strings matching the actual schema's String keys.
+- Three stable receipt identities per visit, two cumulative revisions each:
+  **3,600,000 delivered source rows**, **1,800,000 canonical receipts**.
+  Revision 2 arrives before revision 1 initially. Full replay inserts them in
+  the opposite order using the same identities.
+- 90% of people have 400 ms per final receipt, totaling 1,200 ms per edition;
+  10% have only 300 ms total and do not qualify. Every receipt has a nonempty
+  coverage array. This intentionally exercises qualification, not opening.
+- Half the available items are public; half require Gold. Independent audience
+  observations cover all 60,000 people. Half gain Gold in their second same-day
+  observation. Each of the two observations is delivered twice: **240,000
+  population rows**. Public N is 60,000; Gold N is 30,000.
+
+All **100,000 daily item U/N pairs** were checked against an independently
+calculated Go oracle before and after replay/rebuild. The resulting eligible,
+qualified participation totals **360,000** person/item-days; 60,000 items have a
+positive count. The later raw `FINAL` read confirms 1.8m receipts, 600k distinct
+person/item pairs, 60k people, and 666m active milliseconds. Population `FINAL`
+contains 120k distinct observations for 60k people. Replaying the same sources
+changed none of those canonical values or prepared counts.
+
+| Actual method phase | Wall time | Main SQL time | Logical rows / bytes read | Query peak memory |
+|---|---:|---:|---:|---:|
+| First daily preparation | **34.860 s** | 34.083 s | 2.34m / 780.26 MB | 357.4 MiB |
+| Reuse finalized day | **14 ms** | 12 ms | 1 / 103 bytes | 0.86 MiB |
+| Reuse after full reordered replay | **25 ms** | 21 ms | 1 / 103 bytes | 0.86 MiB |
+| Explicit rebuild after replay | **47.113 s** | 45.377 s | 4.14m / 1,529.06 MB | 370.5 MiB |
+| Rank that prepared day, 60k positive IDs | **233 ms** | 182 ms | 100k / 6.60 MB | 29.4 MiB |
+
+Initial preparation's main query consumed **58.85 CPU-user seconds + 2.34
+CPU-system seconds**, consistent with two parallel threads over about 34 wall
+seconds. Rebuild consumed 79.47 + 3.05 CPU seconds. The initial method issued
+three statements: checkpoint read, actual projection INSERT, checkpoint write.
+Closed reuse issued **one checkpoint read and no raw-source query**. Explicit
+rebuild added a synchronous day deletion (85 ms), as intended; ordinary first
+preparation did not delete existing rows.
+
+`ReplacingMergeTree` background merges run normally. Consequently query-log
+read counts can be below delivered source counts, and the replayed rebuild saw
+more unmerged rows than the initial preparation. No merges or caches were
+stopped or flushed to manufacture either timing. These measurements are a
+single full-day run plus replay/rebuild, not a distribution of repeated daily
+loads. They show a roughly 35-second once-per-day preparation cost for these
+inputs, followed by cheap finalized reuse. They do not establish that 365-day
+initial raw backfill is inexpensive or that all possible audience cohorts have
+this cost.
+
+Synthetic source insertion itself is separate: twelve bounded 300k-row INSERTs
+took 20.411 seconds wall and delivered 3.6m rows; population insertion took
+1.068 seconds. A first attempted single INSERT exceeded the **1 GiB** query
+limit during fixture generation, before the projection method ran. Its failed
+receipt/database remain retained. The successful driver bounds setup and does
+not increase the production query limit. The earlier 1k-person pilot also
+verified all 100k available-item rows and took 1.619 seconds to prepare.
+
+Run the actual-method phase after integrating the cited source commits:
+
+```sh
+GOWORK=off go build -p 1 -o .task/raw-daily benchmarks/daily-participation/raw/main.go
+. /path/to/owned/fixtures.env
+.task/raw-daily --users 1000 --output .task/raw-pilot-new
+.task/raw-daily --users 60000 --output .task/raw-full-new
+```
+
+The driver uses `CONTENTKIT_CRITICAL_CH_ADDR`, `_USER`, and `_PASSWORD` without
+printing them. It creates a unique database and retains it, records every real
+query ID/SQL and phase result, and obtains server metrics from `system.query_log`.
+It performs direct synthetic table inserts; it does **not** benchmark the HTTP
+receipt ingestion path, authorization, media serving or a production migration.
+Versioned `receipts/raw-*` preserve the full successful run; `.task/raw-*` also
+contains the pilot and failed setup attempt.
+
 ## Environment and measurement limits
 
 Measured 2026-10-26 in the task-owned `ck254-contracts-ch` fixture, ClickHouse
 **25.8.33.6**, UTC, Linux x86-64, Intel **Core i9-13950HX**, 32 logical CPUs.
-Every query used **max_threads=2**, inserts used **max_insert_threads=2**, and
-max_memory_usage was 2 GiB. Container CPU/memory were otherwise uncapped. Other
+The scalar experiment used **max_threads=2**, **max_insert_threads=2**, and
+max_memory_usage=2 GiB. The actual-source daily method and its driver used two
+threads and a **1 GiB** query limit, with external grouping/sort thresholds at
+128 MiB. The host had **62.5 GiB physical RAM** (67,097,427,968 bytes); the recorded
+post-run snapshot had about 39 GiB available. Container CPU/memory were otherwise
+uncapped. Other
 workspace work shared the host, so these are observed timings, not an isolated
 capacity guarantee.
 
