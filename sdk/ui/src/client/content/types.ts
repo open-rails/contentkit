@@ -1,8 +1,8 @@
 import type { CommentBan, CommentStanding, Comment, Content, Poll, ReactionCounts, ResolveInput } from "../generated/wire.js";
 
-/** What an interaction targets: a content item (optionally one of its versions) or a group. */
+/** What an interaction targets: a content item (optionally one of its versions), metadata entity or channel. */
 export interface Target {
-  type: "contents" | "entities";
+  type: "contents" | "entities" | "channels";
   id: string;
   /** One version of a content item. */
   version?: string;

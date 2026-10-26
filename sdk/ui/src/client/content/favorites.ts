@@ -28,7 +28,7 @@ export class FavoritesClient {
   /** The target's favorite count and whether the caller favorited it (never, signed out). */
   get(t: Target, signal?: AbortSignal): Promise<FavoriteState> {
     const o = { params: { id: t.id }, signal };
-    return t.type === "entities" ? call(this.http, "GET", "/entities/{id}/favorite", o) : call(this.http, "GET", "/contents/{id}/favorite", { ...o, query: { version: t.version } });
+    return call(this.http, "GET", `/${t.type}/{id}/favorite`, { ...o, ...(t.type === "contents" ? { query: { version: t.version } } : {}) });
   }
   /** Favorites or unfavorites the target (signed in); repeating is a no-op. Resolves with the new state and count. */
   async set(t: Target, favorited: boolean): Promise<FavoriteState> {
@@ -36,7 +36,7 @@ export class FavoritesClient {
     const method = favorited ? "POST" : "DELETE";
     const o = { params: { id: t.id } };
     const state: FavoriteState =
-      t.type === "entities" ? await call(this.http, method, "/entities/{id}/favorite", o) : await call(this.http, method, "/contents/{id}/favorite", { ...o, query: { version: t.version } });
+      await call(this.http, method, `/${t.type}/{id}/favorite`, { ...o, ...(t.type === "contents" ? { query: { version: t.version } } : {}) });
     emit({ type: "favorite.changed", target: t, favorited: state.favorited, count: state.count });
     return state;
   }
