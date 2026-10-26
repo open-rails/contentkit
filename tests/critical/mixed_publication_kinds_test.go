@@ -68,6 +68,20 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 			return complete
 		})
 	}
+	// A completed SQL receipt is insufficient if the configured empty post is
+	// still hidden or its body is redacted by the public reader.
+	for _, post := range []catalog.Content{emptyPost, attachedPost} {
+		got, err := reader.GetContent(t.Context(), post.ID, ck.GetContentQuery{})
+		must(t, err)
+		if !got.Live || !got.Decision.Allowed || got.Body != post.Body {
+			t.Fatalf("completed post is not publicly readable: %+v", got)
+		}
+		edition, err := reader.GetVersion(t.Context(), post.Versions[0].ID, ck.GetVersionQuery{})
+		must(t, err)
+		if !edition.Live || !edition.Decision.Allowed || edition.Body != post.Body {
+			t.Fatalf("completed post edition is not publicly readable: %+v", edition)
+		}
+	}
 	view, err := reader.GetMediaVersion(t.Context(), postRef.Kind, postRef.ID, postRef.Version, ck.GetMediaVersionQuery{})
 	must(t, err)
 	readable := 0
