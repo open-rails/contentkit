@@ -201,7 +201,9 @@ func TestPostAttachmentPolicies(t *testing.T) {
 	must(t, err)
 	images, videos = 0, 0
 	for _, file := range publicMedia.Files {
-		if !file.Upload {
+		// Upload is editor-only metadata. Public readers identify these
+		// explicitly served originals by their configured attachment paths.
+		if !strings.HasPrefix(file.Path, "images/") && !strings.HasPrefix(file.Path, "videos/") {
 			continue
 		}
 		if file.URL == "" {
