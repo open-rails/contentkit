@@ -107,12 +107,12 @@ export function useSearch(q: SearchQuery | null, o: { client?: ContentKitClient 
   const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q?.q.trim() ? q : null);
   const isCurrent = useCurrentDiscoveryScope(client, scope);
-  const list = useList<Card, Pick<SearchPage, "summary" | "entities">>(store, query ? keyOf("cards", scope, "search", query) : null, { type: "cards" }, async (cursor, signal) => {
+  const list = useList<Card, Pick<SearchPage, "summary" | "entities" | "popularity">>(store, query ? keyOf("cards", scope, "search", query) : null, { type: "cards" }, async (cursor, signal) => {
     const out = await client.discovery.search({ ...query!, cursor: cursor as string | undefined, summary: cursor ? undefined : query?.summary }, signal);
     if (!cursor && viewer === null && !signal.aborted && isCurrent()) client.discovery.browserSearches.record(query!.q, out.contents.length);
-    return { items: out.contents, next: out.next_cursor ?? null, metadata: { summary: out.summary, entities: out.entities } };
+    return { items: out.contents, next: out.next_cursor ?? null, metadata: { summary: out.summary, entities: out.entities, popularity:out.popularity } };
   });
-  return { ...list, metadata: list.metadata?.summary, summary: list.metadata?.summary, entities: list.metadata?.entities ?? NO_ENTITIES };
+  return { ...list, metadata: list.metadata?.summary, summary: list.metadata?.summary, popularity:list.metadata?.popularity, entities: list.metadata?.entities ?? NO_ENTITIES };
 }
 
 export interface UseRail {
