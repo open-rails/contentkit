@@ -29,14 +29,13 @@ type publishArgs struct {
 func (publishArgs) Kind() string                      { return "contentkit_version_publish" }
 func (a publishArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-// RiverJobs contributes the versions' workers, queue and recovery pass to
+// RiverJobs contributes the version release workers and queue to
 // the host's River composition, beside media's own.
 func (s *Service) RiverJobs() riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-versions", func(_ context.Context, cfg *river.Config) error {
 		for _, add := range []func(*river.Workers) error{
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &publishWorker{s: s}) },
 			s.addReleaseWorker,
-			func(w *river.Workers) error { return river.AddWorkerSafely(w, &playableWorker{s: s}) },
 		} {
 			if err := add(cfg.Workers); err != nil {
 				return err
@@ -45,12 +44,6 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 		if _, ok := cfg.Queues[QueueFor(s.o.Tenant)]; !ok {
 			cfg.Queues[QueueFor(s.o.Tenant)] = river.QueueConfig{MaxWorkers: 2}
 		}
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, 24*time.Hour,
-			func() (river.JobArgs, *river.InsertOpts) {
-				unique := media.PendingOnce
-				unique.ByQueue = true
-				return playableArgs{}, &river.InsertOpts{Queue: QueueFor(s.o.Tenant), UniqueOpts: unique}
-			}, &river.PeriodicJobOpts{ID: "contentkit_version_playable:" + QueueFor(s.o.Tenant), RunOnStart: true}))
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
 		if b.Pool != s.o.Pool {
