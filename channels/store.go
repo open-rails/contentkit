@@ -9,8 +9,6 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
-	"reflect"
-	"slices"
 	"strings"
 )
 
@@ -250,25 +248,7 @@ func (s *Store) Finish(ctx context.Context, ids []string) error {
 }
 
 func sameInput(current entities.EntityDetail, in Input) bool {
-	names := func(ns []entities.Name) []entities.Name {
-		out := slices.Clone(ns)
-		slices.SortFunc(out, func(a, b entities.Name) int {
-			return strings.Compare(a.Language+"\x00"+string(a.Kind)+"\x00"+a.Name, b.Language+"\x00"+string(b.Kind)+"\x00"+b.Name)
-		})
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	}
-	texts := func(ts []entities.Text) []entities.Text {
-		out := slices.Clone(ts)
-		slices.SortFunc(out, func(a, b entities.Text) int { return strings.Compare(a.Language, b.Language) })
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	}
-	if !reflect.DeepEqual(names(current.Names), names(in.Names)) || !reflect.DeepEqual(texts(current.Text), texts(in.Text)) {
+	if !current.MatchesIdentity(in.Names, in.Text) {
 		return false
 	}
 	if in.Cover != nil && (current.Cover == nil || in.Cover.Image != current.Cover.Image || in.Cover.ContentID != current.Cover.ContentID || in.Cover.Auto != current.Cover.Auto) {
