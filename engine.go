@@ -665,8 +665,10 @@ func (e *Engine) mount(deps Deps) error {
 	if e.modules[httpapi.Entities], err = e.entities.Handler(e.auth); err != nil {
 		return err
 	}
-	if e.modules[httpapi.Channels], err = e.channels.Handler(e.auth); err != nil {
-		return err
+	if e.cfg.Content.Channels != nil {
+		if e.modules[httpapi.Channels], err = e.channels.Handler(e.auth); err != nil {
+			return err
+		}
 	}
 	e.modules[httpapi.Contents] = e.catalog.Handler()
 	if err := e.mountDiscovery(deps); err != nil {
