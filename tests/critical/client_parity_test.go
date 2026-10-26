@@ -24,7 +24,7 @@ func TestClientEquivalentStaffOperations(t *testing.T) {
 	t.Run("CK-J29-S01_embedded_host_and_remote_staff_match_shared_operations", func(t *testing.T) {
 		// Host and organization key are both non-human staff. Compare operations
 		// for which their effective authority is identical; neither is a user.
-		item, err := embedded.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Shared client result", Body: "Draft body"}}})
+		item, err := embedded.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Shared client result", Body: "Draft body"}}}}})
 		must(t, err)
 		local, err := embedded.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)

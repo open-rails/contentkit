@@ -50,7 +50,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	admin := a.engine.Client()
 	create := func(title string, rule access.Rule) catalog.Content {
 		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &rule,
-			Text: map[string]catalog.Text{"en": {Title: title, Body: "Protected manuscript"}}, Versions: []catalog.VersionInput{
+			Versions: []catalog.VersionInput{
 				{Languages: []string{"en"}, Access: &rule, Text: map[string]catalog.VersionText{"en": {Title: title + " English"}}},
 				{Languages: []string{"de"}, Access: &rule, Text: map[string]catalog.VersionText{"de": {Title: title + " German"}}},
 			}})
@@ -69,7 +69,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	_, _, channel := ownedChannel(t, w, a, "Paid channel")
 	channelRule := access.Rule{Level: access.ChannelLevel, ChannelID: channel.ID}
 	entityItem, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: channel.ID, Access: &channelRule,
-		Text: map[string]catalog.Text{"en": {Title: "Channel article", Body: "Protected manuscript"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}}})
+		Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Channel article", Body: "Protected manuscript"}}}, {Languages: []string{"de"}, Text: map[string]catalog.VersionText{"en": {Title: "Channel article", Body: "Protected manuscript"}}}}})
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), entityItem.ID, catalog.PublishInput{})
 	must(t, err)

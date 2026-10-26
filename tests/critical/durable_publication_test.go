@@ -25,9 +25,9 @@ func TestDurableTextPublication(t *testing.T) {
 		must(t, fleet.Stop(ctx))
 	})
 	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
-	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{
+	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{
 		"en": {Title: "Durable release", Body: "Publication follows completed work"},
-	}})
+	}}}})
 	must(t, err)
 	due := w.clock.now().Add(time.Hour)
 	queued, err := admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: &due})
@@ -131,8 +131,7 @@ func TestDurableTextPublication(t *testing.T) {
 	})
 	publicAt := actual.Add(time.Hour)
 	protected, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery",
-		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: publicAt, Level: access.Public}}},
-		Text:   map[string]catalog.Text{"en": {Title: "Audience promotion", Body: "Still protected until publication work completes"}},
+		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: publicAt, Level: access.Public}}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Audience promotion", Body: "Still protected until publication work completes"}}}},
 	})
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), protected.ID, catalog.PublishInput{})

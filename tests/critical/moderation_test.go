@@ -20,7 +20,7 @@ import (
 func authoredArticle(t *testing.T, a *application, author *ck.Client, entity string) catalog.Content {
 	t.Helper()
 	startPublicationRuntime(t, a)
-	in := catalog.ContentInput{Kind: "article", ChannelID: entity, Text: map[string]catalog.Text{"en": {Title: "Moderated thread", Body: "Readable article"}}}
+	in := catalog.ContentInput{Kind: "article", ChannelID: entity, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Moderated thread", Body: "Readable article"}}}}}
 	if author == nil {
 		author = a.engine.Client()
 	}

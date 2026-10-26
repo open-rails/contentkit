@@ -46,8 +46,7 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 	base := w.clock.now()
 	newDraft := func(t *testing.T, rule *access.Rule) catalog.Content {
 		t.Helper()
-		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: rule,
-			Text: map[string]catalog.Text{"en": {Title: "Scheduled article", Body: "Embargoed manuscript"}}})
+		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: rule, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Scheduled article", Body: "Embargoed manuscript"}}}}})
 		must(t, err)
 		return item
 	}
@@ -177,7 +176,7 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 		anonymous := ck.NewClient(srv.URL, nil)
 		future, past := time.Now().Add(time.Hour), time.Now().Add(-time.Hour)
 		rule := &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: future, Level: access.Public}}}
-		item, err := engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: rule, Text: map[string]catalog.Text{"en": {Title: "Wall clock", Body: "Wall-clock body"}}})
+		item, err := engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: rule, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Wall clock", Body: "Wall-clock body"}}}}})
 		must(t, err)
 		_, err = engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)

@@ -64,7 +64,7 @@ func TestMediaModernFallbackAndSoundtrack(t *testing.T) {
 	data, err := os.ReadFile(source)
 	must(t, err)
 	client := m.app.engine.Client()
-	item, err := client.PostContents(t.Context(), catalog.ContentInput{Kind: "clip", Text: map[string]catalog.Text{"en": {Title: "Both codecs and a soundtrack"}}})
+	item, err := client.PostContents(t.Context(), catalog.ContentInput{Kind: "clip", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Both codecs and a soundtrack"}}}}})
 	must(t, err)
 	if len(item.Versions) != 1 {
 		t.Fatal("clip has no unique default version")

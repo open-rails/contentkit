@@ -77,7 +77,7 @@ func TestMetadataManifestReadsUseTransactions(t *testing.T) {
 		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
 	})
 	client := a.engine.Client()
-	item, err := client.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Sibling metadata under bounded pool"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}}})
+	item, err := client.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Sibling metadata under bounded pool"}}}, {Languages: []string{"de"}, Text: map[string]catalog.VersionText{"en": {Title: "Sibling metadata under bounded pool"}}}}})
 	must(t, err)
 	refs := []media.RefBody{{Kind: "gallery", ID: item.ID, Version: item.Versions[0].ID}, {Kind: "gallery", ID: item.ID, Version: item.Versions[1].ID}}
 	for i, ref := range refs {

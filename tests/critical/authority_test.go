@@ -27,7 +27,7 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 	alice, token := w.person(t, 0)
 	_, stranger := w.person(t, 1)
 	a := w.apps[0]
-	input := catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Owned draft", Body: "Private app-bound body"}}}
+	input := catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Owned draft", Body: "Private app-bound body"}}}}}
 	t.Run("CK-J02-S01_unauthorized_mutation_has_no_visible_effect", func(t *testing.T) {
 		before, err := a.engine.Client().GetManage(t.Context(), ck.GetManageQuery{})
 		must(t, err)

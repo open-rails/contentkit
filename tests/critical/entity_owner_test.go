@@ -58,7 +58,7 @@ func TestEntityOwnerAssignmentBoundary(t *testing.T) {
 		_, err = a.client(localToken).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID)})
 		requireError(t, err, 403, "forbidden") // metadata is not a scoped permission grant.
 		authtest.GrantRole(t, w.tenant[0], iam.GroupByID(groupID), iam.UserSubject(local.ID), w.channelWriter)
-		item, err := a.client(localToken).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Accepted tenant owner"}}})
+		item, err := a.client(localToken).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Accepted tenant owner"}}}}})
 		must(t, err)
 		if item.ChannelID != string(entity.ID) {
 			t.Fatalf("real tenant owner wrote outside assigned entity: %+v", item)

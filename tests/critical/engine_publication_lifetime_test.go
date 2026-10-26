@@ -32,9 +32,9 @@ func TestEnginePublicationLifetime(t *testing.T) {
 	// Start's caller can return or lose its request. Publication admitted
 	// afterward must still be executed by the engine-owned background runtime.
 	admin, reader := a.engine.Client(), a.client("")
-	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{
+	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{
 		"en": {Title: "Publication after startup caller returned", Body: "Engine.Close owns worker lifetime."},
-	}})
+	}}}})
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)

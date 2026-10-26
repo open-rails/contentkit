@@ -124,7 +124,7 @@ CREATE CONSTRAINT TRIGGER critical_reject AFTER INSERT ON `+qs+`.content_items D
 			_, err := w.pool.Exec(context.Background(), `DROP TRIGGER critical_reject ON `+qs+`.content_items; DROP FUNCTION `+qs+`.critical_reject()`)
 			must(t, err)
 		}()
-		_, err = admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", OriginalTitle: "rollback-fixture"})
+		_, err = admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, OriginalTitle: "rollback-fixture"}}})
 		requireError(t, err, 500, "internal_error")
 		items, err := admin.GetManage(t.Context(), ck.GetManageQuery{Q: "rollback-fixture"})
 		must(t, err)

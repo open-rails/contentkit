@@ -61,7 +61,7 @@ func TestInheritedAuthorityCredentialCeilings(t *testing.T) {
 				limited, err := w.auth.CreateAPIKey(t.Context(), who, sample.group, iam.NewAPIKey{Name: "Read-only critical key", Role: sample.limited})
 				must(t, err)
 				full, narrow := a.client(credential), a.client(limited.Secret)
-				input := catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: sample.name + " writer", Body: "Real owned content"}}}
+				input := catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: sample.name + " writer", Body: "Real owned content"}}}}}
 				item, err := full.PostContents(t.Context(), input)
 				must(t, err)
 				events, err := narrow.ListEvents(t.Context(), catalog.EventQuery{})

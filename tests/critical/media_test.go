@@ -226,7 +226,7 @@ func TestRealMediaIngest(t *testing.T) {
 		}
 	})
 	t.Run("CK-J09-S01_real_image_upload_produces_a_readable_rendition", func(t *testing.T) {
-		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Image processing"}}})
+		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Image processing"}}}}})
 		must(t, err)
 		if len(item.Versions) != 1 {
 			t.Fatal("gallery fixture lacks its edition")
