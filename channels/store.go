@@ -177,7 +177,27 @@ func (s *Store) Update(ctx context.Context, id string, in Update) (Channel, erro
 // Delete only withdraws the channel. Existing durable lifecycle processing
 // applies its content-retention policy; no new cleanup worker is introduced.
 func (s *Store) Delete(ctx context.Context, id string) error {
-	_, err := s.storage.DeleteEntities(ctx, []entities.EntityID{entities.EntityID(id)})
+	current, err := s.Raw(ctx, id)
+	if err != nil {
+		return err
+	}
+	// The committed tombstone already records the authorized deletion. Its
+	// original account may finish a lost acknowledgement without acquiring the
+	// retired group's powers or being allowed to restore/edit the channel.
+	if current.State == entities.StateDeleted && s.actor.Member() && current.OwnerUserID == s.actor.AccountID() {
+		if err := s.Finish(ctx, []string{id}); err != nil {
+			return err
+		}
+		now, err := s.Raw(ctx, id)
+		if err != nil {
+			return err
+		}
+		if now.State != entities.StateDeleted {
+			return entities.ErrConflict
+		}
+		return nil
+	}
+	_, err = s.storage.DeleteEntities(ctx, []entities.EntityID{entities.EntityID(id)})
 	return err
 }
 
