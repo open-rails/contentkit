@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import { chromium } from "../../../sdk/ui/node_modules/@playwright/test/index.mjs";
+import { resolveInlineImageReferences } from "../../../sdk/ui/dist/client.js";
 const fixture=JSON.parse(process.env.CONTENTKIT_BROWSER_FIXTURE);
 const scenario=process.argv[2];
 const browser=await chromium.launch({headless:true, ...(process.env.CONTENTKIT_CRITICAL_CHROMIUM?{executablePath:process.env.CONTENTKIT_CRITICAL_CHROMIUM}:{})});
 try {
   const page=await browser.newPage();
+  const debug=[];
+  const account=request=>{const bearer=request.headers().authorization;return bearer===`Bearer ${fixture.aliceToken}`?"alice":bearer===`Bearer ${fixture.bobToken}`?"bob":"other";};
+  page.on("request",request=>{if(request.url().includes("/favorite"))debug.push({event:"request",method:request.method(),account:account(request)});});
+  page.on("requestfailed",request=>{if(request.url().includes("/favorite"))debug.push({event:"failed",account:account(request),error:request.failure()?.errorText});});
+  page.on("response",response=>{if(response.url().includes("/favorite"))debug.push({event:"response",status:response.status(),account:account(response.request())});});
+  page.on("pageerror",error=>debug.push({event:"pageerror",error:String(error)}));
   await page.goto(fixture.url);
   await page.waitForFunction(()=>!!window.critical);
   await page.evaluate(input=>window.critical.initialize(input),fixture);
@@ -32,7 +39,12 @@ try {
     await page.evaluate(()=>window.critical.mount());await held.seen;
     await page.evaluate(()=>window.critical.switchToBob());
     held.release();await held.done;
+    try {
     await page.waitForFunction(bob=>{const view=document.querySelector("#favorite");return view?.dataset.viewer===bob&&view.dataset.loading==="false"&&view.textContent==="false";},fixture.bob);
+    } catch (error) {
+      const rendered=await page.locator("#favorite").evaluate(view=>({text:view.textContent,viewer:view.dataset.viewer,loading:view.dataset.loading}));
+      throw new Error(`Account-switch favorite did not settle: ${JSON.stringify({rendered,debug,samples:await page.evaluate(()=>window.favoriteSamples),leaks:await page.evaluate(()=>window.leaks)})}`,{cause:error});
+    }
     // A fresh new-scope HTTP read confirms the rendered value is Bob's.
     assert.equal(await page.evaluate(id=>window.client.favorites.get({type:"contents",id}).then(x=>x.favorited),fixture.item),false);
     assert.deepEqual(await page.evaluate(()=>window.leaks),[],"Alice's late state appeared transiently in Bob's view");
@@ -73,6 +85,42 @@ try {
     assert.equal(original.id,fixture.item);
     assert.equal(original.channel_id,fixture.originalChannel);
     assert.equal(original.editor,false,"reposting must not grant editing authority");
+  } else if(scenario==="CK-J29-S09") {
+    const serverHTML='<img src="contentkit:i-11111111-1111-4111-8111-111111111111">';
+    assert.equal(typeof DOMParser,"undefined");
+    assert.equal(resolveInlineImageReferences(serverHTML,{}),serverHTML,"server rendering must not require DOMParser");
+    const inline=await page.evaluate(()=>window.critical.inlineImages());
+    assert.deepEqual(inline.en.sources,[inline.enURL,null]);
+    assert.deepEqual(inline.zh.sources,[inline.zhURL,null]);
+    for(const unsafe of inline.unsafe)assert.deepEqual(unsafe.sources,[null,null]);
+    assert.equal(inline.plain,inline.plainHTML,"ordinary markup must remain unchanged");
+    assert.deepEqual(inline.en.handlers,[null,null]);
+    assert.equal(inline.en.text,`keep literal contentkit:${inline.id}`);
+    assert.deepEqual(inline.quill.ops,[{insert:{image:inline.zhURL}},{insert:`literal contentkit:${inline.id}`}]);
+    assert.deepEqual(JSON.parse(resolveInlineImageReferences(JSON.stringify({ops:[{insert:{image:`contentkit:${inline.id}`}}]}),{[inline.id]:inline.enURL},"quill")),{ops:[{insert:{image:inline.enURL}}]},"Quill resolution must also work during server rendering");
+    await page.evaluate(()=>window.critical.mountVersionEditor());
+    const title=page.getByRole("textbox",{name:"Title",exact:true});
+    const body=page.getByRole("textbox",{name:"Body",exact:true});
+    await page.waitForFunction(()=>document.querySelector('[aria-label="Body"]')?.value==="English body only");
+    assert.equal(await title.inputValue(),"English edition");
+    await page.getByRole("combobox",{name:"Versions",exact:true}).click();
+    await page.getByRole("option",{name:"Chinese",exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[aria-label="Body"]')?.value==="中文内容");
+    assert.equal(await title.inputValue(),"中文版本");
+    await title.fill("中文编辑");await body.fill("只有中文更新");
+    const saved=page.waitForResponse(response=>response.request().method()==="PATCH" && response.url().includes(`/versions/${fixture.zhVersion}`));
+    await page.getByRole("button",{name:"Save",exact:true}).first().click();
+    assert.equal((await saved).status(),200);
+    await page.getByRole("combobox",{name:"Versions",exact:true}).click();
+    await page.getByRole("option",{name:"English",exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[aria-label="Body"]')?.value==="English body only");
+    assert.equal(await title.inputValue(),"English edition");
+    const editions=await page.evaluate(async fixture=>({en:await window.client.contents.getByVersion(fixture.enVersion,"en"),zh:await window.client.contents.getByVersion(fixture.zhVersion,"zh")}),fixture);
+    assert.equal(editions.en.body,"English body only");assert.equal(editions.zh.body,"只有中文更新");
+    await page.evaluate(version=>window.critical.mountVersionReader(version),fixture.zhVersion);
+    await page.waitForFunction(version=>{const el=document.querySelector("#version-reader");return el?.dataset.version===version&&el.dataset.loading==="false"&&el.textContent==="只有中文更新";},fixture.zhVersion);
+    await page.evaluate(version=>window.critical.mountVersionReader(version),fixture.enVersion);
+    await page.waitForFunction(version=>{const el=document.querySelector("#version-reader");return el?.dataset.version===version&&el.dataset.loading==="false"&&el.textContent==="English body only";},fixture.enVersion);
   } else throw Error(`unknown browser scenario ${scenario}`);
   console.log(JSON.stringify({scenario,status:"passed"}));
 } finally {await browser.close();}

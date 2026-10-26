@@ -132,24 +132,30 @@ func effectiveRule(content, override []byte) (access.Rule, error) {
 	return access.Effective(c, &o), nil
 }
 
-// markDocuments queues the content items' keyword documents in every language
-// they have text or a document in; the worker rebuilds or deletes each.
+// markDocuments marks each edition's text plus existing documents that may
+// need removal. Parent-scoped documents are retired during the hard cut.
 func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) error {
-	rows, err := q.Query(ctx, `SELECT c.kind, c.id, l.language FROM `+s.t.items+` c CROSS JOIN LATERAL (
- SELECT t.language FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
- UNION SELECT d.language FROM `+s.t.docs+` d WHERE d.tenant_id = c.tenant_id AND d.content_kind = c.kind AND d.content_id = c.id AND d.content_version_id IS NULL) l
- WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
+	rows, err := q.Query(ctx, `SELECT c.kind,c.id,v.id,l.language FROM `+s.t.items+` c
+ JOIN `+s.t.versions+` v ON v.tenant_id=c.tenant_id AND v.content_id=c.id
+ CROSS JOIN LATERAL (SELECT t.language FROM `+s.t.versionText+` t WHERE t.tenant_id=v.tenant_id AND t.version_id=v.id
+ UNION SELECT unnest(v.languages)) l
+ WHERE c.tenant_id=$1 AND c.id=ANY($2)
+ UNION SELECT d.content_kind,d.content_id,d.content_version_id,d.language FROM `+s.t.docs+` d
+ WHERE d.tenant_id=$1 AND d.content_id=ANY($2) AND EXISTS(SELECT 1 FROM `+s.t.items+` c WHERE c.tenant_id=d.tenant_id AND c.id=d.content_id AND c.kind=d.content_kind)`, s.tenant, ids)
 	if err != nil {
 		return err
 	}
 	var marks []search.DirtyMark
 	for rows.Next() {
 		var kind, id, language string
-		if err := rows.Scan(&kind, &id, &language); err != nil {
+		var version *string
+		if err := rows.Scan(&kind, &id, &version, &language); err != nil {
 			rows.Close()
 			return err
 		}
-		marks = append(marks, search.DirtyMark{DocumentKey: search.DocumentKey{ContentRef: s.Ref(kind, id), Language: language}, Reason: "catalog"})
+		ref := s.Ref(kind, id)
+		ref.ContentVersionID = version
+		marks = append(marks, search.DirtyMark{DocumentKey: search.DocumentKey{ContentRef: ref, Language: language}, Deleted: version == nil, Reason: "catalog"})
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -161,23 +167,18 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 	return s.documents(ctx, q)
 }
 
-// EntitiesRenamed is entities.Options.NamesChanged: it queues, in one statement,
-// the search documents of every item whose facets name one of the entities
-// (ancestors included), since their keywords are those entities' names. It
-// locks no content and leaves facets and revisions alone.
+// EntitiesRenamed reindexes editions whose effective shared/version metadata
+// contains the renamed entity, using the normal transaction-local admission.
 func (s *Store) EntitiesRenamed(ctx context.Context, q entities.Querier, entityIDs []string) error {
-	tag, err := q.Exec(ctx, `INSERT INTO `+s.qs+`.content_search_dirty (tenant_id, content_kind, content_id, language, reason)
- SELECT c.tenant_id, c.kind, c.id, l.language, 'catalog' FROM `+s.t.items+` c CROSS JOIN LATERAL (
- SELECT t.language FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
- UNION SELECT d.language FROM `+s.t.docs+` d WHERE d.tenant_id = c.tenant_id AND d.content_kind = c.kind AND d.content_id = c.id AND d.content_version_id IS NULL) l
- WHERE c.tenant_id = $1 AND c.id IN (SELECT f.content_id FROM `+s.t.facets+` f WHERE f.tenant_id = $1 AND f.entity_ids && $2::text[])
- ORDER BY c.kind, c.id, l.language
- ON CONFLICT (tenant_id, content_kind, content_id, content_version_id, language) DO UPDATE SET is_deleted = false, reason = EXCLUDED.reason, updated_at = now()`,
-		s.tenant, entityIDs)
-	if err != nil || tag.RowsAffected() == 0 || s.documents == nil {
+	rows, err := q.Query(ctx, `SELECT DISTINCT f.content_id FROM `+s.t.facets+` f WHERE f.tenant_id=$1 AND f.entity_ids && $2::text[] ORDER BY f.content_id`, s.tenant, entityIDs)
+	if err != nil {
 		return err
 	}
-	return s.documents(ctx, q)
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || len(ids) == 0 {
+		return err
+	}
+	return s.markDocuments(ctx, q, ids)
 }
 
 // ContentChanged is entities.Options.ContentChanged: after the entities module

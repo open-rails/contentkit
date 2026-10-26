@@ -230,7 +230,7 @@ func (c *Client) searchGroups(ctx context.Context, userText string, opts SearchO
 	return groups, truncated, nil
 }
 
-// KeywordMatch is the SQL selecting every content item matching userText in
+// KeywordMatch selects matching (content_id, content_version_id) pairs in
 // the languages opts selects; see search.KeywordMatch. opts.Limit, Offset,
 // CandidateLimit and Eligibility are ignored.
 func (c *Client) KeywordMatch(ctx context.Context, userText string, opts SearchOptions) (search.Match, error) {

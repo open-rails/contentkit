@@ -102,11 +102,11 @@ func TestPublicationQueueMigrationPreservesOwners(t *testing.T) {
 		must(t, err)
 		return job.Job.ID
 	}
-	jA := insert("contentkit_version_publish", versions.Queue, map[string]string{"content": ia.ID, "version": ia.Versions[0].ID})
-	jB := insert("contentkit_version_publish", versions.Queue, map[string]string{"content": ib.ID, "version": ib.Versions[0].ID})
-	foreign := insert("contentkit_version_publish", "other_application_queue", map[string]string{"content": ia.ID, "version": ia.Versions[0].ID})
+	jA := insert("contentkit_content_purge_deleted", catalog.Queue, map[string]string{"content": ia.ID, "version": ia.Versions[0].ID})
+	jB := insert("contentkit_content_purge_deleted", catalog.Queue, map[string]string{"content": ib.ID, "version": ib.Versions[0].ID})
+	foreign := insert("contentkit_content_purge_deleted", "other_application_queue", map[string]string{"content": ia.ID, "version": ia.Versions[0].ID})
 	periodic := insert("contentkit_content_publish_due", catalog.Queue, map[string]string{})
-	completed := insert("contentkit_version_publish", versions.Queue, map[string]string{"content": ia.ID, "version": ia.Versions[0].ID})
+	completed := insert("contentkit_content_purge_deleted", catalog.Queue, map[string]string{"content": ia.ID, "version": ia.Versions[0].ID})
 	_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job SET state='completed',finalized_at=now() WHERE id=$1`, completed)
 	must(t, err)
 	_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job SET state='running',attempted_at=now() WHERE id=$1`, jA)
@@ -119,8 +119,8 @@ func TestPublicationQueueMigrationPreservesOwners(t *testing.T) {
 	must(t, err)
 	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
 	for id, queue := range map[int64]string{
-		jA: versions.QueueFor(a.cfg.Scope.AppID.String()), jB: versions.QueueFor(b.cfg.Scope.AppID.String()),
-		foreign: "other_application_queue", completed: versions.Queue,
+		jA: catalog.QueueFor(a.cfg.Scope.AppID.String()), jB: catalog.QueueFor(b.cfg.Scope.AppID.String()),
+		foreign: "other_application_queue", completed: catalog.Queue,
 	} {
 		job, err := client.JobGet(t.Context(), id)
 		must(t, err)

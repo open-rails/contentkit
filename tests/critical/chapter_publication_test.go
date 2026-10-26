@@ -115,7 +115,7 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 		defer cancel()
 		for _, query := range []string{
 			`SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'state',state,'current',current,'due',scheduled_at,'error',error,'plan_fingerprint',plan->>'fingerprint','result_fingerprint',result->>'fingerprint')),'[]') FROM ` + pgx.Identifier{w.schema, "content_publication_requests"}.Sanitize(),
-			`SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'kind',kind,'state',state,'args',args,'errors',errors,'due',scheduled_at)),'[]') FROM ` + pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize() + ` WHERE kind IN ('contentkit_version_publish','contentkit_version_release') AND state NOT IN ('completed','cancelled')`,
+			`SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'kind',kind,'state',state,'args',args,'errors',errors,'due',scheduled_at)),'[]') FROM ` + pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize() + ` WHERE kind='contentkit_version_release' AND state NOT IN ('completed','cancelled')`,
 		} {
 			var state string
 			err := w.pool.QueryRow(ctx, query).Scan(&state)
@@ -206,7 +206,7 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 	waitForWithin(t, 45*time.Second, func() bool {
 		var pending int
 		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+`
- WHERE kind IN ('contentkit_version_publish','contentkit_version_release')
+ WHERE kind='contentkit_version_release'
  AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&pending))
 		return pending == 0
 	})

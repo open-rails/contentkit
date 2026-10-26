@@ -1,16 +1,23 @@
 // Exercise the built package, so stale exports and bundle drift are observable.
 import React from "../../../sdk/ui/node_modules/react/index.js";
 import { createRoot } from "../../../sdk/ui/node_modules/react-dom/client.js";
-import { createContentKitClient } from "../../../sdk/ui/dist/client.js";
+import { createContentKitClient, resolveInlineImageReferences } from "../../../sdk/ui/dist/client.js";
 import { ContentKitProvider } from "../../../sdk/ui/dist/react/provider.js";
+import { useContentDetail } from "../../../sdk/ui/dist/react/detail.js";
 import { useFavorite } from "../../../sdk/ui/dist/react/engagement.js";
-import { ChannelFeed, RepostButton } from "../../../sdk/ui/dist/index.js";
+import { ChannelFeed, RepostButton, ContentEditor } from "../../../sdk/ui/dist/index.js";
 
 let fixture, bearer, currentViewer, client, root;
 const target = () => ({ type: "contents", id: fixture.item });
 function FavoriteView() {
   const state = useFavorite(target());
+  window.favoriteSamples ??= [];
+  window.favoriteSamples.push({viewer:currentViewer,loading:state.loading,favorited:state.favorited,error:state.error?.code});
   return React.createElement("output", { id: "favorite", "data-viewer": currentViewer, "data-loading": String(state.loading) }, state.error?.code ?? String(state.favorited));
+}
+function VersionReader({ version }) {
+  const detail = useContentDetail(fixture.item, { version, language: "en" });
+  return React.createElement("output", { id: "version-reader", "data-loading": String(detail.loading), "data-version": detail.version?.id }, detail.content?.body ?? "");
 }
 function render() {
   root ??= createRoot(document.querySelector("#root"));
@@ -19,6 +26,31 @@ function render() {
 window.critical = {
   initialize(input) { fixture=input; bearer=input.aliceToken; currentViewer=input.alice; client=createContentKitClient({baseUrl:"/content",token:()=>bearer}); window.client=client; },
   mount() { render(); },
+  mountVersionEditor() {
+    root ??= createRoot(document.querySelector("#root"));
+    root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" },
+      React.createElement(ContentEditor, { id: fixture.item, kind: "article", languages: [{value:"en",label:"English"},{value:"zh",label:"Chinese"}] })));
+  },
+  inlineImages() {
+    const id="i-11111111-1111-4111-8111-111111111111", missing="i-22222222-2222-4222-8222-222222222222";
+    const html=`<p>keep literal contentkit:${id}</p><img src="contentkit:${id}" alt="version image"><img src="contentkit:${missing}">`;
+    const inspect=(value)=>{const doc=new DOMParser().parseFromString(value,"text/html");return {text:doc.querySelector("p").textContent,sources:[...doc.querySelectorAll("img")].map(image=>image.getAttribute("src")),handlers:[...doc.querySelectorAll("img")].map(image=>image.getAttribute("onerror"))};};
+    const en=`/english.png?sig=a&hint="quoted"`, zh="/chinese.png?sig=other";
+    const plainHTML='<p>Plain &amp; unchanged</p><img src="/ordinary.png?a=1&amp;b=2">';
+    const quill=JSON.stringify({ops:[{insert:{image:`contentkit:${id}`}},{insert:{image:`contentkit:${missing}`}},{insert:`literal contentkit:${id}`} ]});
+    return {
+      en:inspect(resolveInlineImageReferences(html,{[id]:en})),
+      zh:inspect(resolveInlineImageReferences(html,{[id]:zh})),
+      unsafe:["javascript:alert(1)","data:image/svg+xml,<svg/>","//example.test/image.png","/\\example.test/image.png"].map(url=>inspect(resolveInlineImageReferences(html,{[id]:url}))),
+      plain:resolveInlineImageReferences(plainHTML,{}),plainHTML,
+      quill:JSON.parse(resolveInlineImageReferences(quill,{[id]:zh},"quill")),
+      enURL:en,zhURL:zh,id,
+    };
+  },
+  mountVersionReader(version) {
+    root ??= createRoot(document.querySelector("#root"));
+    root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" }, React.createElement(VersionReader, {version})));
+  },
   mountChannel() {
     root ??= createRoot(document.querySelector("#root"));
     root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" },

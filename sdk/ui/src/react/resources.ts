@@ -123,7 +123,10 @@ export class ResourceStore {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
         const error = toContentKitError(e);
-        if (error.code !== "aborted") this.update(s, { loading: false, loaded: true, error });
+        // A superseded request returned above. An abort from the still-current
+        // fetch must settle too; otherwise no request remains but loading stays
+        // true forever. Keep the error until an explicit retry succeeds.
+        this.update(s, { loading: false, loaded: true, error });
       },
     );
   }

@@ -11,7 +11,7 @@ import type { Content, EntityCard, EntityDetail, ManageCount, Rule, Version } fr
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
-import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
+import { useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { useContent } from "../../react/contents.js";
 import { useKinds } from "../../react/entities.js";
 import { keyOf, useContentScope, usePaged, useResource } from "../../react/use-resource.js";
@@ -740,7 +740,7 @@ export function ContentEditor(p:ContentEditorProps){
 }
 
 function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, channelId, entities, onCreated, onDeleted, onCancel, onError, management, noun }: ContentEditorProps) {
-  const client = useContentKitClient(own);
+  const { client, store, scope } = useContentScope(own);
   const m = useMessages();
   const { t } = m;
   const ids = useId();
@@ -760,9 +760,15 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   const [notice, setNotice] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
   const item = ed.content;
+  const parentID = id ?? item?.id;
+  // An exact-edition response deliberately contains only that edition. Keep
+  // the parent's visible edition index for navigation and shared metadata.
+  const parent = useResource<Content>(store, parentID ? keyOf("content", scope, parentID, language, undefined) : null,
+    { type: "content", id: parentID }, (signal) => client.contents.get(parentID!, language, signal));
+  const whole = parent.data ?? item;
   const versionChoices = useMemo(
-    () => (item?.versions ?? []).map((v) => ({ id: v.id, label: versionLabel(v, languageName, labels) })),
-    [item?.versions, languageName, labels],
+    () => (whole?.versions ?? []).map((v) => ({ id: v.id, languages: v.languages, label: versionLabel(v, languageName, labels) })),
+    [whole?.versions, languageName, labels],
   );
   useEffect(() => {
     if (!item) return;
@@ -985,7 +991,9 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                   <span className="font-mono text-xs">{item.code}</span>
                   {!hidden && versionChoices.length > 1 && <Select value={ed.version?.id ?? ""} onValueChange={async (value) => {
                     if (dirty && !(await confirm({ title: t("contentManager.switchLanguage"), description: t("contentManager.discardLanguageEdits"), confirm: t("readerEditor.discard") }))) return;
+                    const chosen = versionChoices.find((version) => version.id === value);
                     setSelectedVersion(String(value));
+                    if (chosen?.languages[0]) setLanguage(chosen.languages[0]);
                     setForm(null);
                   }}>
                     <SelectTrigger size="sm" aria-label={t("contentEditor.versions")}><SelectValue>{(value: string) => versionChoices.find((v) => v.id === value)?.label ?? value}</SelectValue></SelectTrigger>
@@ -1150,7 +1158,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
           {/* Versions Container (outside form for HTML5 valid nesting) */}
           {item && (
             <div data-ckui="content-versions">
-              <VersionsEditor content={item} client={client} onError={onError} labels={labels} />
+              <VersionsEditor content={whole ?? item} client={client} onError={onError} labels={labels} />
             </div>
           )}
         </div>

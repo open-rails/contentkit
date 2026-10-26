@@ -618,11 +618,13 @@ versions expire after one day; permanent noncurrent versions retain the host's
 configured restore window. Lifecycle execution is asynchronous. Backends that
 do not implement multipart-abort lifecycle rules need equivalent server settings.
 
-Media has three processing jobs: ingest, image and video. Ingest validates an
-entire ZIP before attaching pages in bounded, replayable batches; image work
-commits bounded source batches. Those processors append retained progress facts
-directly after their commits and complete with real version metadata work.
-Declared public files stay public independently of publication and billing.
+Media has two processing jobs: ingest and derivatives. Ingest validates an
+entire ZIP before attaching pages in bounded, replayable batches. The derivative
+job handles image presets and resumable video outputs for the same version,
+recording progress as work completes. Generated outputs wait in `future/`;
+publication waits for every required output before delivery and activation.
+The gateway's `public/` area stays public and `private/` stays token-protected.
+See [media jobs](docs/media-jobs.md).
 
 For upgrades from the old per-folder timers, stop old media hosts and workers,
 run the host's normal `MigratePostgres` command, then start the new cohort. The

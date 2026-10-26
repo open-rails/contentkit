@@ -31,6 +31,9 @@ var (
 	errContentChanged = httpError{status: http.StatusConflict, msg: "content changed while being screened; retry the edit"}
 	errUnauthorized   = httpError{status: http.StatusUnauthorized, msg: "authentication required"}
 	errForbidden      = httpError{status: http.StatusForbidden, msg: "forbidden"}
+	// errCommentModerated refuses an author's edit of their held or rejected
+	// comment. -> 403 comment_moderated
+	errCommentModerated = errors.New("content: comment is held or rejected")
 )
 
 // AuthError is a permission check the host's auth could not answer: 401
@@ -74,6 +77,9 @@ const (
 	// CodeCommentsLocked: the caller can't open the content and its kind's
 	// locked view hides comments, so they take no writes from them. -> 403
 	CodeCommentsLocked = "comments_locked"
+	// CodeCommentModerated: the comment is held or rejected, so its author
+	// can't edit it; a reviewer's approval makes it editable again. -> 403
+	CodeCommentModerated = "comment_moderated"
 	// CodeCommentTooLong: the comment is longer than Options.CommentMaxLength;
 	// details.max is the limit in characters. -> 422
 	CodeCommentTooLong = "comment_too_long"
@@ -163,6 +169,8 @@ func classifyErr(err error) (status int, code, msg string) {
 		return http.StatusForbidden, CodeCommentsClosed, "comments are closed here"
 	case errors.Is(err, ErrCommentsLocked):
 		return http.StatusForbidden, CodeCommentsLocked, "open the content to see and write its comments"
+	case errors.Is(err, errCommentModerated):
+		return http.StatusForbidden, CodeCommentModerated, "a held or rejected comment can't be edited"
 	case errors.Is(err, ErrNotFound), errors.Is(err, ErrNotVisible):
 		return http.StatusNotFound, CodeNotFound, "not found"
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrSubjectErased):
