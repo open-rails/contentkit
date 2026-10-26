@@ -69,7 +69,7 @@ may deliberately rely on their existing app staff roles instead.
 A site blog can fix a post kind to a site-owned channel:
 
 ```yaml
-kinds:
+content_kinds:
   blog:
     route: blog
     presentation: post
@@ -77,11 +77,13 @@ kinds:
     access_levels: [public]
     owner_entity: {kind: channel, slug: blog}
 entity_kinds:
-  channel: {route: channels, owner: site}
+  channel: {owner: site}
 ```
 
-This example channel has no user owner, delegated editor scope or billing
-entitlement; normal app content editors manage its posts. Those are host policy
+The channel needs no public route or channel selector: it is the fixed ownership
+group behind the blog. Its posts keep their normal blog URLs. This example
+channel has no user owner, delegated editor scope or billing entitlement; normal
+app content editors manage its posts. Those are host policy
 choices. A fixed site channel may instead use `auth_scope: true` and host-defined
 AuthKit roles, or `entitled: true` with an appropriate post access policy.
 `owner_entity` chooses a destination; it does not grant permissions or force

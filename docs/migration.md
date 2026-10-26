@@ -24,6 +24,14 @@ declared version owner, then clear the old metadata and rerun migrations.
 Preparation remains applied so the operator can resume; an interrupted copy
 never causes the schema migration to discard the original cover.
 
+## Content model configuration
+
+Content model files use `content_kinds` alongside `entity_kinds`. Rename the old
+`kinds` configuration key before loading this release; YAML and JSON decoding
+reject it rather than silently ignoring it or accepting a legacy alias. The Go
+member remains `kinds.Config.Kinds`. This does not rename the `kinds` field in the
+public `GET /kinds` discovery response or any HTTP query parameters.
+
 ## ContentKit's own schema
 
 Hosts run `MigratePostgres(ctx, pool, cfg)` and
