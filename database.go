@@ -15,6 +15,8 @@ import (
 	"github.com/open-rails/migratekit"
 	"github.com/open-rails/migratekit/chmigrate"
 
+	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
@@ -77,6 +79,10 @@ func (e *Engine) configureStorage() error {
 // MigrationOptions controls the explicit migration command. Runtime startup
 // validation is unaffected and still requires every configured schema.
 type MigrationOptions struct {
+	// Scopes is the same app-bound provider used by Deps.Scopes. It is required
+	// only when a configured fixed owner has auth_scope enabled. Migration
+	// ensures those groups without changing their existing role assignments.
+	Scopes entities.ScopeProvisioner
 	// SkipQueues skips main River and media-worker queue migrations, matching
 	// a host command's --skip-river option. Account/catalog migrations still run.
 	SkipQueues bool
@@ -89,8 +95,9 @@ type MigrationOptions struct {
 // MigratePostgres prepares all configured ContentKit PostgreSQL storage and
 // records the configured scope binding. Call it from a host migration command,
 // before New with Database.SkipMigrations=true. The flag never skips this
-// explicit operation. No runtime authorization or object-store dependencies are
-// constructed, and the caller retains ownership of pool.
+// explicit operation. Configured fixed owners and their authorization groups are
+// provisioned using options.Scopes; no runtime or object-store client is started.
+// The caller retains ownership of pool.
 // When adopting an existing account inbox, run authkit.MigrateNotifications
 // first. ContentKit validates and adopts that storage but never migrates it.
 func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, options ...MigrationOptions) error {
@@ -111,8 +118,28 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, option
 	if err := e.configureStorage(); err != nil {
 		return err
 	}
+	for _, kind := range e.cfg.Content.Kinds {
+		if kind.OwnerEntity == nil {
+			continue
+		}
+		if err := e.cfg.Content.Validate(); err != nil {
+			return err
+		}
+		if !e.cfg.Content.EntityKinds[kind.OwnerEntity.Kind].AuthScope {
+			continue
+		}
+		if opt.Scopes == nil {
+			return errors.New("contentkit: configured auth_scope owner requires MigrationOptions.Scopes")
+		}
+		if err := e.validateScopeBinding(opt.Scopes); err != nil {
+			return err
+		}
+	}
 	opt.explicit = true
-	return e.migratePostgres(ctx, opt)
+	if err := e.migratePostgres(ctx, opt); err != nil {
+		return err
+	}
+	return catalog.InitializeFixedOwners(ctx, pool, e.schema, e.cfg.Tenant, e.cfg.Content, opt.Scopes)
 }
 
 // MigrateClickHouse creates the configured signal database before applying its

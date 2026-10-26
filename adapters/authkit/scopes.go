@@ -80,8 +80,8 @@ func (s scopes) providerID(id string) (string, error) {
 
 // Provision creates each scope as a group of its kind's persona, its owner
 // seeded with the persona's owner role; one that exists live is kept as it
-// is. A scope retired before (soft-deleted) is purged and created anew: a
-// restored group starts a new team with its owner.
+// is. A scope retired before is refused unless Restore is explicit; restoring
+// a group starts a new team with its owner.
 func (s scopes) Provision(ctx context.Context, list []entities.Scope) error {
 	for _, sc := range list {
 		id, err := s.providerID(sc.ID)
@@ -107,7 +107,7 @@ func (s scopes) Provision(ctx context.Context, list []entities.Scope) error {
 		if errors.Is(err, iam.ErrGroupConflict) {
 			ref := iam.GroupByID(id)
 			old, gerr := s.c.Group(ctx, ref)
-			if gerr != nil || old.DeletedAt == nil || old.Persona != persona || s.app != nil && old.TenantID != g.TenantID {
+			if !sc.Restore || gerr != nil || old.DeletedAt == nil || old.Persona != persona || s.app != nil && old.TenantID != g.TenantID {
 				return errors.Join(fmt.Errorf("authkit: scope %s is another group", sc.ID), err, gerr)
 			}
 			if err = s.c.PurgeGroup(ctx, ref); err == nil {

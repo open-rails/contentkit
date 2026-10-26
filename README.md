@@ -108,7 +108,9 @@ for _, r := range routes {
 
 - With `Database.SkipMigrations: true`, `New` checks prepared storage read-only.
   Run the explicit host migration command first; it calls the applicable
-  PostgreSQL, media and ClickHouse migration stages. The default `false` retains
+  PostgreSQL, media and ClickHouse migration stages. `MigratePostgres` also
+  provisions configured fixed owner entities and their groups through
+  `MigrationOptions.Scopes`; hosts need no separate seeding code. The default `false` retains
   embedded startup migrations. Catalog tables use `Database.Schema` (default
   `contentkit`); account tables can use a separately shared schema. PGroonga and
   pg_trgm live in `public`. See [migration instructions](docs/migration.md).

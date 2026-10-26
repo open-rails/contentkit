@@ -28,14 +28,24 @@ func (e *Engine) validateEntityScopes(provider entities.Scopes) error {
 		if !kind.AuthScope {
 			continue
 		}
-		bound, ok := provider.(entities.AppBinding)
-		if !ok {
-			return errors.New("contentkit: scoped authorization groups require an app-bound Scopes provider")
-		}
-		tenant, app := bound.ContentKitScope()
-		if tenant != e.scope.TenantID.String() || app != e.scope.AppID.String() {
-			return errors.New("contentkit: Scopes provider belongs to another tenant or app")
-		}
+		return e.validateScopeBinding(provider)
+	}
+	return nil
+}
+
+// validateScopeBinding is shared by runtime and explicit provisioning; neither
+// may use another app's authorization-group identities.
+func (e *Engine) validateScopeBinding(provider entities.ScopeProvisioner) error {
+	if e.scope == nil {
+		return nil
+	}
+	bound, ok := provider.(entities.AppBinding)
+	if !ok {
+		return errors.New("contentkit: scoped authorization groups require an app-bound Scopes provider")
+	}
+	tenant, app := bound.ContentKitScope()
+	if tenant != e.scope.TenantID.String() || app != e.scope.AppID.String() {
+		return errors.New("contentkit: Scopes provider belongs to another tenant or app")
 	}
 	return nil
 }

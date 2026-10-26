@@ -33,6 +33,18 @@ scope bindings and queues; `MigrationOptions{SkipQueues: true}` skips queue
 DDL when the caller manages that separately. The ClickHouse entrypoint creates
 its target database before applying the signal lineage.
 
+The PostgreSQL call also realizes fixed `owner_entity` declarations from the
+content model. It creates missing site-owned channels and binds eligible unowned
+posts, preserving existing names, identities, grants and access. If a declared
+owner has `auth_scope: true`, provide `MigrationOptions.Scopes` using the existing
+runtime provider or `adapters/authkit.MigrationScopes(pool, authConfig, scope)`.
+The latter needs only migrated AuthKit storage and the host's role configuration,
+not a full authentication runtime. No fixed owners means no provisioning or extra
+authorization dependency. See [configured channels](posts-and-channels.md#one-fixed-official-channel)
+for retry and conflict behavior. This provisioning runs only through the explicit
+migration call, never ordinary runtime initialization.
+
+
 Set `Config.Database.SkipMigrations = true` for application startup. `New`
 then checks prepared storage without applying migrations, including when the
 signal plane reconnects. Missing migrations produce an actionable error; an

@@ -88,29 +88,45 @@ AuthKit roles, or `entitled: true` with an appropriate post access policy.
 public access. It is enforced by the
 server for ordinary creation and imports: an omitted owner is filled, and a
 conflicting owner is rejected. A channel in another app cannot satisfy the
-reference, even with an identical slug. The referenced channel must be seeded
-explicitly; startup never creates it.
+reference, even with an identical slug. The normal explicit `MigratePostgres`
+call ensures that each configured channel exists. There is no separate seed
+command or host-specific blog bootstrap. Ordinary `New`/`Start` never provision
+these declarations, even when embedded compatibility mode migrates SQL schemas.
 
-After schema migrations, with writers stopped, the host migration command calls:
+For an unscoped channel, the ordinary migration call is sufficient:
 
 ```go
-changed, err := contentkit.MigrateFixedOwners(ctx, pool, cfg, []entities.EntityInput{{
-    Kind: "channel", Slug: "blog",
-    Names: []entities.Name{{Language: "en", Kind: "name", Name: "Official blog"}},
-}})
+err := contentkit.MigratePostgres(ctx, pool, cfg)
 ```
 
-The helper uses the same normalized app scope/schema as `MigratePostgres`, without
-starting AuthKit, billing, media or workers. It creates an absent configured
-channel and binds unowned existing posts atomically. Existing names, titles,
-author credits and access rules remain unchanged. A conflicting channel owner or
-a post/version access rule outside current policy rejects the transaction; the
-operator must resolve that explicitly. Repeating the migration is harmless.
+For `auth_scope: true`, pass the same app-bound scope provider used at runtime,
+or use the AuthKit migration adapter with the host's existing store/role config:
 
-The database-only helper can create channels without an authorization scope.
-For `auth_scope: true`, provision the channel through the normal AuthKit-backed
-entity API first, then call the helper to bind existing posts. The helper refuses
-a missing or unprovisioned scope; it never invents permissions or boots AuthKit.
+```go
+scopes, err := ckauth.MigrationScopes(pool, authConfig, *cfg.Scope)
+if err != nil { return err }
+err = contentkit.MigratePostgres(ctx, pool, cfg, contentkit.MigrationOptions{Scopes: scopes})
+```
+
+The adapter uses AuthKit's normal group operations without constructing another
+AuthKit runtime or requiring signing keys, senders or workers. AuthKit storage
+must already be migrated. ContentKit creates the configured owner entity and
+its group, then attaches previously unowned posts. User editor assignments are
+not configuration and are never invented or replaced by migration.
+
+With writers stopped, migration validates existing post/version access and
+ownership before reserving any missing entity. It records stable entity IDs,
+ensures their groups without holding a catalog transaction, and rechecks the
+records before attaching posts. A lost provider response is retried with those
+same IDs. Failure leaves an unprovisioned channel unavailable for authoring;
+rerun the normal migration command to finish. Concurrent migrators converge.
+
+New channels use their configured slug as their initial canonical display name.
+Existing names, titles, author credits, groups and role assignments are preserved.
+A deleted/conflicting entity or group, a foreign app provider, or content outside
+current ownership/access policy causes an error; migration never revives retired
+teams, moves somebody else's posts or makes private content public. The former
+`MigrateFixedOwners` seed helper is removed; callers use `MigratePostgres` only.
 
 Omit `owner_entity` for creator-selected channels, as OnlyDemo does. Channel
 ownership and optional editor teams then use the existing channel permissions.
