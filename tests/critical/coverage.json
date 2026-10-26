@@ -780,7 +780,7 @@
       "status": "verified",
       "evidence": [
         "Built shared SearchResults, SearchBox, ordinary ContentGrid and useReadingEngagement run in Chromium against real AuthKit/API/PostgreSQL/ClickHouse. Rendered and visible query/rank records join through exact click IDs to observed visits; opaque hrefs, direct returns, repeated tabs and snapshot retries preserve identity.",
-        "Real ClickHouse exports exclude origins with another subject, item or tenant, combine one visit across editions without receipt inflation, and reflect normal column TTL after an owned-table materialization. Recent-search clearing remains distinct from subject erasure. Execution receipts qualify the actual selected candidate separately."
+        "Real ClickHouse exports exclude origins with another subject, item or tenant, combine one visit across editions without receipt inflation, and retain historical analytics query text without age expiry. Recent-search clearing remains distinct from subject erasure. Execution receipts qualify the actual selected candidate separately."
       ],
       "cases": [
         "TestBrowserSearchEngagementAttribution",

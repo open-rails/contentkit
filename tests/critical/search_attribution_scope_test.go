@@ -70,28 +70,27 @@ func TestSearchAttributionUsesExactOriginScope(t *testing.T) {
 	if joined.VisitID != visit || joined.ActiveMS != 3000 || joined.Coverage != 1 || !joined.Completed || len(joined.VersionIDs) != 2 || !slices.Contains(joined.VersionIDs, ref.Version()) || !slices.Contains(joined.VersionIDs, otherVersion.Version()) {
 		t.Fatalf("one visit across versions duplicated or borrowed engagement: %+v", joined)
 	}
-	// Query retention is ClickHouse's ordinary asynchronous column TTL. Force
-	// that maintenance only on this owned fixture, then check persisted bytes
-	// and the export; no request-time expiry guard is required.
+	// Analytics query text has no age expiry, just like the engagement it
+	// explains. The separate recent-search autocomplete list expires after
+	// 180 days of last use; that rule does not remove historical attribution.
 	old := at.Add(-181 * 24 * time.Hour)
 	oldRender := uuid.NewString()
-	must(t, store.RecordExposures(t.Context(), tenant, []signal.Exposure{{RenderID: oldRender, QueryID: uuid.NewString(), SearchQuery: "expired private query",
+	must(t, store.RecordExposures(t.Context(), tenant, []signal.Exposure{{RenderID: oldRender, QueryID: uuid.NewString(), SearchQuery: "retained historical query",
 		Surface: signal.SurfaceSearch, Language: "en", Subject: otherUser, Stage: signal.StageVisible, Revision: 1, OccurredAt: old,
 		Shown: []signal.Placement{{ContentRef: ref, Position: 2, Access: accessAt(old)}},
 	}}))
-	must(t, a.deps.ClickHouse.Exec(t.Context(), "ALTER TABLE "+a.cfg.ClickHouse.Database+".exposures MATERIALIZE TTL SETTINGS mutations_sync=2"))
 	rows, err := a.deps.ClickHouse.Query(t.Context(), "SELECT search_query FROM "+a.cfg.ClickHouse.Database+".exposures FINAL WHERE tenant=? AND render_id=?", tenant, oldRender)
 	must(t, err)
 	if !rows.Next() {
 		rows.Close()
-		t.Fatal("query column TTL removed its entire exposure")
+		t.Fatal("historical analytics exposure was removed")
 	}
 	var expired string
 	must(t, rows.Scan(&expired))
 	must(t, rows.Err())
 	rows.Close()
-	if expired != "" {
-		t.Fatalf("materialized column TTL retained query text: %q", expired)
+	if expired != "retained historical query" {
+		t.Fatalf("historical analytics query did not retain its source text: %q", expired)
 	}
 	all, err := store.Attribution(t.Context(), tenant, signal.AttributionOptions{Stage: signal.StageVisible})
 	must(t, err)
@@ -99,12 +98,12 @@ func TestSearchAttributionUsesExactOriginScope(t *testing.T) {
 	for _, r := range all.Renders {
 		if r.RenderID == oldRender {
 			found = true
-			if r.SearchQuery != "" {
-				t.Fatal("expired query text remained exportable after its TTL merge")
+			if r.SearchQuery != "retained historical query" {
+				t.Fatalf("historical query disappeared from attribution export: %q", r.SearchQuery)
 			}
 		}
 	}
 	if !found {
-		t.Fatal("query TTL removed the entire historical exposure instead of its text")
+		t.Fatal("historical query exposure was absent from attribution export")
 	}
 }
