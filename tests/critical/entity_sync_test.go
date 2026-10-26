@@ -136,6 +136,27 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 				t.Fatalf("idempotent import failed: %+v", result)
 			}
 		}
+		deletion := importer.Batch{Source: batch.Source, Deletes: []importer.DeleteRecord{{Entity: importer.RecordChannel, ExternalID: "retained"}}}
+		provider.retire.Store(true)
+		failed, err := a.engine.Client().PostImport(t.Context(), deletion)
+		must(t, err)
+		if len(failed.Failed) != 1 || failed.Written[importer.SectionDeletes] != 0 {
+			t.Fatalf("import deletion hid failed retirement: %+v", failed)
+		}
+		for range 2 {
+			result, err := a.engine.Client().PostImport(t.Context(), deletion)
+			must(t, err)
+			if len(result.Failed) != 0 || result.Written[importer.SectionDeletes] != 1 {
+				t.Fatalf("import deletion retry failed: %+v", result)
+			}
+		}
+		groupID, err := ckauth.ChannelScopeID(*a.cfg.Scope, channel.ID)
+		must(t, err)
+		group, err := w.auth.Group(t.Context(), iam.GroupByID(groupID))
+		must(t, err)
+		if group.DeletedAt == nil {
+			t.Fatal("import deletion returned before retiring channel group")
+		}
 		noLifecycleJobs()
 	})
 }
