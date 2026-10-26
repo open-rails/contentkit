@@ -110,7 +110,8 @@ export class ResourceStore {
     s.moreCtl?.abort();
     s.moreCtl = undefined;
     const ctl = (s.ctl = new AbortController());
-    this.update(s, { loading: true, loadingMore: false, error: undefined });
+    // The last failure stays until this fetch settles: a retry must not blink an error away.
+    this.update(s, { loading: true, loadingMore: false });
     binding.fetcher(ctl.signal).then(
       (data) => {
         if (s.ctl !== ctl) return;
