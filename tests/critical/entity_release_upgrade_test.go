@@ -112,7 +112,7 @@ func TestReleasedEntityJobUpgrade(t *testing.T) {
 	}
 	t.Run("CK-J01-S02_preflight_precedes_schema_changes", func(t *testing.T) {
 		err := ck.MigratePostgres(t.Context(), w.pool, cfg)
-		if err == nil || !strings.Contains(err.Error(), "ownership is ambiguous") {
+		if err == nil || !strings.Contains(err.Error(), "ambiguous ownership") {
 			t.Fatalf("tenantless released projection was not refused: %v", err)
 		}
 		if ledger() != oldLedger {
