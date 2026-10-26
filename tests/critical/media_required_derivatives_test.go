@@ -26,9 +26,9 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	m := newResilientMedia(t, func(c *ck.Config) {
 		c.Content.Kinds["mixed"] = kinds.Kind{Route: "mixed", Presentation: "player", Versions: kinds.VersionRules{Languages: "one", Hidden: true}}
 		c.Media.Config.Kinds = append(c.Media.Config.Kinds, media.Kind{Name: "mixed", KeepOriginals: true,
-			Uploads: []media.Upload{{Path: "images/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}, {Path: "source", Types: []string{"video/mp4"}, MaxBytes: 10 << 20}},
-			Private: []media.Private{{Name: "low", From: "images/{name}", To: "low/{name}.webp", Image: &media.Image{Width: 48, Height: 48}}, {Name: "stream", From: "source", To: "streams/", HLS: &media.HLS{Ladder: []int{144}}}},
-			Public:  []media.Public{{Name: "thumb", From: "images/{name}", To: "thumb-{name}-{w}.webp", Widths: []int{24}, Image: media.Image{Aspect: media.Square}}},
+			Uploads: []media.Upload{{Path: "image", Types: []string{"image/png"}, MaxBytes: 1 << 20}, {Path: "source", Types: []string{"video/mp4"}, MaxBytes: 10 << 20}},
+			Private: []media.Private{{Name: "low", From: "image", To: "low.webp", Image: &media.Image{Width: 48, Height: 48}}, {Name: "stream", From: "source", To: "streams/", HLS: &media.HLS{Ladder: []int{144}}}},
+			Public:  []media.Public{{Name: "thumb", From: "image", To: "thumb-{w}.webp", Widths: []int{24}, Image: media.Image{Aspect: media.Square}}},
 		})
 	})
 	source := filepath.Join(t.TempDir(), "source.mp4")
@@ -42,7 +42,7 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "mixed", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "All required outputs"}}}}})
 	must(t, err)
 	ref := media.RefBody{Kind: "mixed", ID: item.ID, Version: item.Versions[0].ID}
-	_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "images/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}, {Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(video)}})
+	_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "image.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}, {Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(video)}})
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
@@ -80,7 +80,7 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	must(t, err)
 	imageReady := false
 	for _, f := range editor.Files {
-		if f.Path == "low/one.webp" {
+		if f.Path == "low.webp" {
 			imageReady = true
 		}
 	}
@@ -118,7 +118,7 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	})
 	before, err := m.app.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 	must(t, err)
-	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpEdit, Path: "images/one.png", Edit: &media.Edit{Rotate: 90}}}})
+	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpEdit, Path: "image.png", Edit: &media.Edit{Rotate: 90}}}})
 	must(t, err)
 	select {
 	case <-hold.arrived:
