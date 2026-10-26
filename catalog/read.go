@@ -96,7 +96,7 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			continue
 		}
 		c := &Content{ID: id, Kind: it.kind, State: it.state, OriginalTitle: it.originalTitle, OriginalLanguage: it.originalLanguage, Comments: it.comments, PublishAt: it.publishAt, PublishedAt: it.publishedAt,
-			Access: it.access, Restrictions: it.restrictions, Attributes: map[string]any{}, OwnerEntityID: it.ownerEntity, Creators: orEmpty(creators[id]),
+			Access: it.access, Restrictions: it.restrictions, Attributes: map[string]any{}, ChannelID: it.ownerEntity, Creators: orEmpty(creators[id]),
 			Entities: []EntitySummary{}, Versions: []Version{}, Editor: iv.editor, Revision: it.revision, CreatedAt: it.createdAt,
 			UpdatedAt: it.updatedAt, DeletedAt: it.deletedAt}
 		c.Live = v.itemLive(iv)
@@ -222,26 +222,26 @@ func (v *Viewer) itemLive(iv *itemView) bool {
 // fillOwners attaches the items' owner entities' cards, avatars and covers
 // resolved, in one call.
 func (s *Store) fillOwners(ctx context.Context, language string, built map[string]*Content, management bool) error {
-	if s.entities == nil {
+	if s.channels == nil {
 		return nil
 	}
-	var ids []entities.EntityID
+	var ids []string
 	for _, c := range built {
-		if c.OwnerEntityID != "" && !slices.Contains(ids, entities.EntityID(c.OwnerEntityID)) {
-			ids = append(ids, entities.EntityID(c.OwnerEntityID))
+		if c.ChannelID != "" && !slices.Contains(ids, c.ChannelID) {
+			ids = append(ids, c.ChannelID)
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	cards, err := s.entities.Cards(ctx, ids, entities.CardOptions{Language: language, Covers: true, IncludeInternal: management})
+	cards, err := s.channels.Cards(ctx, ids, language)
 	if err != nil {
 		return err
 	}
 	for _, c := range built {
 		for i := range cards {
-			if string(cards[i].ID) == c.OwnerEntityID {
-				c.Owner = &cards[i]
+			if string(cards[i].ID) == c.ChannelID {
+				c.Channel = &cards[i]
 			}
 		}
 	}

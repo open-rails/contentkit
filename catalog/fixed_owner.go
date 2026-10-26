@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/kinds"
 )
 
 var errFixedOwnerUnavailable = errors.New("configured content channel unavailable")
@@ -14,10 +15,20 @@ var errFixedOwnerUnavailable = errors.New("configured content channel unavailabl
 // Ordinary creator-owned kinds are unchanged. Transactional callers retain
 // the row lock until their content write commits.
 func (s *Store) fixedOwner(ctx context.Context, q Querier, kind, supplied string) (string, error) {
-	ref := s.cfg.Kinds[kind].OwnerEntity
-	if ref == nil {
+	policy := s.cfg.Kinds[kind].Channel
+	if policy == nil {
+		if supplied != "" {
+			return "", invalid("kind %s does not use channels", kind)
+		}
+		return "", nil
+	}
+	if policy.Fixed == "" {
+		if policy.Required && supplied == "" {
+			return "", invalid("kind %s requires a channel", kind)
+		}
 		return supplied, nil
 	}
+	ref := kinds.EntityRef{Kind: "channel", Slug: policy.Fixed}
 	var id string
 	err := q.QueryRow(ctx, `SELECT id FROM `+s.t.entities+`
  WHERE tenant_id=$1 AND kind=$2 AND slug=$3 AND state='active'

@@ -89,12 +89,7 @@ func (s *Store) unscoped(gs []Entity) []string {
 // Hosts commonly install Owned for ordinary catalog writes without configuring
 // any user-owned kinds; those hosts have no asynchronous ownership work.
 func (s *Store) needsSync() bool {
-	for _, kind := range s.cfg.EntityKinds {
-		if kind.AuthScope && s.scopes != nil || kind.Owner == "user" && s.owned != nil {
-			return true
-		}
-	}
-	return false
+	return s.cfg.Channels != nil && s.scopes != nil
 }
 
 // queueSync records exact lifecycle work in the entity write's transaction.
@@ -107,6 +102,14 @@ func (s *Store) queueSync(ctx context.Context, q Querier, ids []string) error {
 	if !ok {
 		return errors.New("entities: lifecycle synchronization requires a transaction")
 	}
+	rows, err := tx.Query(ctx, `SELECT id FROM `+s.table("content_entities")+` WHERE tenant_id=$1 AND kind='channel' AND id=ANY($2::text[]) ORDER BY id`, s.tenant, ids)
+	if err != nil {
+		return err
+	}
+	ids, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || len(ids) == 0 {
+		return err
+	}
 	client := s.river.bound()
 	if client == nil {
 		var err error
@@ -115,7 +118,7 @@ func (s *Store) queueSync(ctx context.Context, q Querier, ids []string) error {
 			return err
 		}
 	}
-	_, err := client.InsertTx(ctx, tx, syncArgs{Tenant: s.tenant, Entities: ids}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 10})
+	_, err = client.InsertTx(ctx, tx, channelLifecycleArgs{Tenant: s.tenant, Channels: ids}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 10})
 	return err
 }
 

@@ -68,7 +68,7 @@ var groupModules = []struct {
 	{UploadRoutes, []httpapi.Module{httpapi.Upload}, "upload"},
 	{MediaRoutes, []httpapi.Module{httpapi.Media, httpapi.Versions}, "media"},
 	{CodeRoutes, []httpapi.Module{httpapi.Codes}, "codes"},
-	{EntityRoutes, []httpapi.Module{httpapi.Entities}, "entities"},
+	{EntityRoutes, []httpapi.Module{httpapi.Entities, httpapi.Channels}, "entities"},
 	{DiscoveryRoutes, []httpapi.Module{httpapi.Discovery}, "discovery"},
 	{ImportRoutes, []httpapi.Module{httpapi.Import}, "import"},
 }

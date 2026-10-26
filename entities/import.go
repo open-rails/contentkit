@@ -284,21 +284,15 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 	if err := s.markDirty(ctx, q, marks); err != nil {
 		return err
 	}
-	// Scope changes and owned-content deletion/restoration are admitted with
-	// the imported entity, even when no workers run in this process.
-	var sync []string
-	for _, g := range marks {
-		before, exists := stored[string(g.ID)]
-		ownedChanged := s.cfg.EntityKinds[g.Kind].Owner == "user" && (!exists || before.State != g.State)
-		if ownedChanged || g.State != StateActive && g.AuthScope != "" || provision && slices.Contains(s.unscoped([]Entity{g}), string(g.ID)) {
-			sync = append(sync, string(g.ID))
-		}
-	}
-	return s.queueSync(ctx, q, sync)
+
+	return nil
 }
 
 // checkImport validates one entity's own fields against its kind.
 func (s *Store) checkImport(g *ImportEntity) (importRow, error) {
+	if !s.channels && (g.OwnerUserID != "" || g.AuthScope != "") {
+		return importRow{}, fmt.Errorf("%w: metadata has no authoring owner or scope", ErrInvalid)
+	}
 	kind := strings.TrimSpace(g.Kind)
 	gk, err := s.entityKind(kind)
 	if err != nil {

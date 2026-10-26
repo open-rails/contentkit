@@ -31,9 +31,9 @@ type EntityInput struct {
 	Cover      *Cover         `json:"cover,omitempty"`
 	Avatar     *Avatar        `json:"avatar,omitempty"`
 	// OwnerUserID owns a user-owned entity; a person creating one owns it.
-	OwnerUserID string `json:"owner_user_id,omitempty"`
+	OwnerUserID string `json:"-"`
 	// AuthScope is staff's (an import's); ContentKit provisions it otherwise.
-	AuthScope string `json:"auth_scope,omitempty"`
+	AuthScope string `json:"-"`
 	Names     []Name `json:"names,omitempty"`
 	Text      []Text `json:"text,omitempty"`
 }
@@ -56,8 +56,8 @@ type EntityUpdate struct {
 	// Avatar selects the entity's avatar (kinds with avatars); an empty one returns to
 	// the first.
 	Avatar      *Avatar `json:"avatar,omitempty"`
-	OwnerUserID *string `json:"owner_user_id,omitempty"`
-	AuthScope   *string `json:"auth_scope,omitempty"`
+	OwnerUserID *string `json:"-"`
+	AuthScope   *string `json:"-"`
 	// Names replaces every name and alias.
 	Names []Name `json:"names,omitempty"`
 	// Text replaces the text of every language.
@@ -296,6 +296,9 @@ func (s *Store) CreateEntities(ctx context.Context, inputs []EntityInput) ([]Ent
 	var texts []textRow
 	ids := make([]string, len(inputs))
 	for i, in := range inputs {
+		if !s.channels && (in.OwnerUserID != "" || in.AuthScope != "") {
+			return nil, fmt.Errorf("%w: metadata has no authoring owner or scope", ErrInvalid)
+		}
 		kind := strings.TrimSpace(in.Kind)
 		gk, err := s.entityKind(kind)
 		if err != nil {
@@ -404,7 +407,7 @@ func (s *Store) CreateEntities(ctx context.Context, inputs []EntityInput) ([]Ent
 		if err := s.markDirty(ctx, q, out); err != nil {
 			return err
 		}
-		return s.queueSync(ctx, q, s.unscoped(out))
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -427,7 +430,7 @@ func (s *Store) insertText(ctx context.Context, q Querier, rows []textRow) error
 }
 
 func (s *Store) byIDs(ctx context.Context, q Querier, ids []string) (map[EntityID]Entity, error) {
-	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[])`, entityColumns, s.table("content_entities")), s.tenant, ids)
+	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) AND %s`, entityColumns, s.table("content_entities"), s.domainPredicate("g")), s.tenant, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -497,6 +500,9 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 	}
 	ids := make([]EntityID, len(updates))
 	for i, u := range updates {
+		if !s.channels && (u.OwnerUserID != nil || u.AuthScope != nil) {
+			return nil, fmt.Errorf("%w: metadata has no authoring owner or scope", ErrInvalid)
+		}
 		ids[i] = u.ID
 	}
 	list, err := uniqueIDs(ids)
@@ -667,12 +673,15 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		if err := s.markDirty(ctx, q, out); err != nil {
 			return err
 		}
-		return s.queueSync(ctx, q, changed)
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.syncAfter(ctx, out, changed)
+	if s.channels {
+		return s.syncAfter(ctx, out, list)
+	}
+	return out, nil
 }
 
 // updateRow is groupRow plus the state an update writes.

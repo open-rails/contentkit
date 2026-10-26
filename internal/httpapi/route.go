@@ -39,6 +39,7 @@ const (
 	Codes Module = "codes"
 	// Entities is entity listings, pages and writes.
 	Entities Module = "entities"
+	Channels Module = "channels"
 	// Kinds is the site's public content model.
 	Kinds Module = "kinds"
 	// Versions is content versions' reader plan, reader metadata, forks and
@@ -53,7 +54,7 @@ const (
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Entities, Versions, Discovery, Import}
+var Modules = []Module{Kinds, Content, Contents, Upload, Media, Codes, Entities, Channels, Versions, Discovery, Import}
 
 // Prefix is the module's sub-path under the host's prefix: Version, then
 // content, groups, versions and kinds at its root and the others beneath their own
@@ -73,7 +74,7 @@ func (m Module) Prefix() string {
 // Reserved is the first path segments the non-content modules take: a content
 // kind with one of these names would be unreachable under the host's prefix.
 func Reserved() []string {
-	return []string{"media", "codes", "entities", "contents", "kinds", "me", "catalog", "events", "notifications",
+	return []string{"media", "codes", "entities", "channels", "contents", "kinds", "me", "catalog", "events", "notifications",
 		"search", "typeahead", "recommendations", "release-dates", "releases", "signals", "exposures", "import", "sitemap", "stats", "content-filters"}
 }
 

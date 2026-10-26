@@ -27,7 +27,7 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 		}
 	}
 	for _, c := range items {
-		add(c.OwnerEntityID)
+		add(c.ChannelID)
 		add(c.Access.Entity)
 		for _, release := range c.Access.Releases {
 			add(release.Entity)
@@ -88,8 +88,8 @@ func (s *Store) redactInternalEntities(ctx context.Context, items map[string]*Co
 		*r = access.Rule{Level: access.PPV, Preview: r.Preview, Releases: r.Releases}
 	}
 	for _, c := range items {
-		if internal[c.OwnerEntityID] {
-			c.OwnerEntityID, c.Owner = "", nil
+		if internal[c.ChannelID] {
+			c.ChannelID, c.Channel = "", nil
 		}
 		rule(&c.Access)
 		redact(&c.Decision)
