@@ -174,8 +174,8 @@ func (s *Store) Update(ctx context.Context, id string, in Update) (Channel, erro
 	return s.Get(ctx, id, "")
 }
 
-// Delete only withdraws the channel. Existing durable lifecycle processing
-// applies its content-retention policy; no new cleanup worker is introduced.
+// Delete withdraws the channel and completes its group/content lifecycle
+// synchronously. Retained media remains owned by the existing purge sweep.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	current, err := s.Raw(ctx, id)
 	if err != nil {

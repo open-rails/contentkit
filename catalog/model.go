@@ -238,8 +238,7 @@ type Content struct {
 	Restrictions []string       `json:"restrictions"`
 	Attributes   map[string]any `json:"attributes"`
 	ChannelID    string         `json:"channel_id,omitempty"`
-	// Owner is the owner entity's card (a channel's name, path, avatar and
-	// cover) while it is active.
+	// Channel identifies the original's primary authoring channel while active.
 	Channel  *channels.Card `json:"channel,omitempty"`
 	Creators []Creator      `json:"creators"`
 	// Entities are shared/null-version memberships. Version-specific entities
