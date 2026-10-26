@@ -149,7 +149,7 @@ function useLink(url: string | undefined, before?: () => void) {
   return useCallback(
     (e: MouseEvent<HTMLAnchorElement>) => {
       if (e.defaultPrevented || e.button !== 0) return;
-      const target = renewOriginLink(e.currentTarget.href, true);
+      const target = renewOriginLink(e.currentTarget.getAttribute("href") ?? url ?? "", true);
       e.currentTarget.href = target;
       before?.();
       if (!navigate || !url || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;

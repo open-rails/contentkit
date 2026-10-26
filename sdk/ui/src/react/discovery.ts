@@ -567,8 +567,15 @@ export function useExposure(items: readonly { id: string; position?: number; ver
     (el as HTMLElement).dataset.exposurePosition = String(position);
     observer.observe(el);
   }, [observer]);
-  const links = useMemo(() => new Map<string, string>(), [renderId]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => () => { for (const link of links.values()) forgetOriginLink(link); }, [links]);
+  const linkState = useMemo(() => ({ links: new Map<string, string>(), revision: 0 }), [renderId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const links = linkState.links;
+  useEffect(() => {
+    linkState.revision++;
+    return () => {
+      const revision = ++linkState.revision;
+      queueMicrotask(() => { if (linkState.revision === revision) for (const link of links.values()) forgetOriginLink(link); });
+    };
+  }, [linkState, links]);
   const href = useCallback((content: string, position: number, url: string | undefined) => {
     if (!url || !base.search_query || !isCurrent()) return url;
     const key = `${content}\u0000${position}\u0000${url}`;
