@@ -337,12 +337,83 @@ func TestDiscoveryVisibility(t *testing.T) {
 		before := w.clock.now()
 		w.clock.set(before.Add(time.Hour))
 		t.Cleanup(func() { w.clock.set(before) })
-		page, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular:7d", Mode: "hide"})
-		must(t, err)
-		for _, card := range page.Contents {
-			if strings.HasPrefix(card.ID, "unread-") {
-				t.Fatalf("popular list returned an unread synthetic content: %s", card.ID)
+		popular := func() {
+			page, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular:7d", Mode: "hide"})
+			must(t, err)
+			for _, card := range page.Contents {
+				if strings.HasPrefix(card.ID, "unread-") {
+					t.Fatalf("popular list returned an unread synthetic content: %s", card.ID)
+				}
 			}
+		}
+		popular()
+		refreshPopularRankings(t, w)
+		var built bool
+		must(t, w.pool.QueryRow(t.Context(), `SELECT computed_at IS NOT NULL FROM `+w.schema+`.content_popular_rankings
+ WHERE kind='article' AND period='7d' AND domain='main' AND language=''`).Scan(&built))
+		if !built {
+			t.Fatal("refresh left the requested ranking unbuilt")
+		}
+		popular()
+	})
+	t.Run("CK-J07-S15_popular_list_follows_the_stored_ranking", func(t *testing.T) {
+		listed, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Mode: "hide"})
+		must(t, err)
+		if len(listed.Contents) < 2 {
+			t.Fatalf("fixture lists %d articles; want at least two", len(listed.Contents))
+		}
+		var ranked []string
+		for i := len(listed.Contents) - 1; i >= 0; i-- {
+			ranked = append(ranked, listed.Contents[i].ID)
+		}
+		popular := func() []string {
+			t.Helper()
+			page, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular:30d", Mode: "hide"})
+			must(t, err)
+			var ids []string
+			for _, card := range page.Contents {
+				ids = append(ids, card.ID)
+			}
+			return ids
+		}
+		if got := popular(); len(got) != 0 {
+			t.Fatalf("popular list before its ranking is built lists %v; want only works with standing (none)", got)
+		}
+		tag, err := w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.content_popular_rankings SET computed_at=now(),content_ids=$1
+ WHERE kind='article' AND period='30d' AND domain='main' AND language=''`, ranked)
+		must(t, err)
+		if tag.RowsAffected() != 1 {
+			t.Fatalf("the first popular request recorded %d rankings; want one", tag.RowsAffected())
+		}
+		if got := popular(); !reflect.DeepEqual(got, ranked) {
+			t.Fatalf("popular list order %v; want the stored ranking %v", got, ranked)
+		}
+	})
+	t.Run("CK-J07-S16_reader_chosen_ranges_are_bounded", func(t *testing.T) {
+		rankings := w.schema + ".content_popular_rankings"
+		_, err := w.pool.Exec(t.Context(), `INSERT INTO `+rankings+` (tenant_id,kind,period,domain,language,preset,requested_at)
+ SELECT (SELECT tenant_id FROM `+rankings+` LIMIT 1),'article',to_char(date '2025-01-01'+n,'YYYY-MM-DD')||'/2025-12-31','main','',false,now()
+ FROM generate_series(1,50) n`)
+		must(t, err)
+		t.Cleanup(func() {
+			_, err := w.pool.Exec(context.Background(), `DELETE FROM `+rankings+` WHERE NOT preset`)
+			must(t, err)
+		})
+		requested := func() bool {
+			t.Helper()
+			_, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular", ActivityFrom: "2026-01-01", ActivityUntil: "2026-01-08", Mode: "hide"})
+			must(t, err)
+			var n int
+			must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+rankings+` WHERE period='2026-01-01/2026-01-08'`).Scan(&n))
+			return n == 1
+		}
+		if requested() {
+			t.Fatal("a reader-chosen range was requested beyond the bound")
+		}
+		_, err = w.pool.Exec(t.Context(), `DELETE FROM `+rankings+` WHERE period LIKE '2025-01-02/%'`)
+		must(t, err)
+		if !requested() {
+			t.Fatal("a reader-chosen range was not requested under the bound")
 		}
 	})
 	t.Run("CK-J07-S12_search_tolerates_one_edit_per_word", func(t *testing.T) {

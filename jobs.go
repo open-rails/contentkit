@@ -53,6 +53,7 @@ const (
 	repairEvery         = time.Hour
 	reclassifyEvery     = 10 * time.Minute
 	searchPruneEvery    = time.Hour
+	popularRefreshEvery = 5 * time.Minute
 )
 
 func (j *jobs) contribution() riverhelpers.Contribution {
@@ -76,6 +77,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &popularRefreshWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -97,6 +99,11 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{})
 			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true})
 			periodic("contentkit_projection_repair", repairEvery, repairArgs{})
+			// A refresh can outlast its period; it never runs twice at once.
+			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, popularRefreshEvery,
+				func() (river.JobArgs, *river.InsertOpts) {
+					return popularRefreshArgs{}, &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
+				}, &river.PeriodicJobOpts{ID: "contentkit_popular_refresh", RunOnStart: true}))
 		}
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
@@ -268,4 +275,25 @@ func ignoreDisabled(err error) error {
 		return nil
 	}
 	return err
+}
+
+type popularRefreshArgs struct{}
+
+func (popularRefreshArgs) Kind() string { return "contentkit_popular_refresh" }
+
+// popularRefreshWorker builds requested popular rankings and refreshes stale
+// ones.
+type popularRefreshWorker struct {
+	river.WorkerDefaults[popularRefreshArgs]
+	e *Engine
+}
+
+// Each ranking is stored as it completes, so a run cut short resumes with
+// the rest on the next.
+func (w *popularRefreshWorker) Timeout(*river.Job[popularRefreshArgs]) time.Duration {
+	return time.Hour
+}
+
+func (w *popularRefreshWorker) Work(ctx context.Context, _ *river.Job[popularRefreshArgs]) error {
+	return w.e.discover.RefreshPopularRankings(ctx)
 }
