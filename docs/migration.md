@@ -56,6 +56,25 @@ and moves imported channel identifiers into their own record category. It does
 not move source media or rewrite published SQL. Reposts reference their original
 item and retain its access, versions and editorial authority.
 
+## Authored content belongs to versions
+
+Migration `0055_version_content` moves retained parent-localized text and source
+titles into existing version records, preserving already-authored version titles
+and summaries. Existing IDs, media and files stay in place. The parent text table
+and original-title columns are then removed. This one-time adoption preserves old
+translations; it does not create automatic copying between future editions.
+
+Write initial text through `ContentInput.versions[].text` and update an edition
+through `PATCH /contents/{id}/versions/{vid}`. The former parent-text routes and
+version-fork endpoint are removed. Hidden-version post kinds still create one
+version; callers may supply that initial version explicitly. Additional versions
+start empty. The content reader's title/body/image fields are read-only projections
+from its `selected_version_id`, with no parent or sibling content fallback.
+
+Finish any accepted old body-copy/fork work using the previous version before
+cutover. No replacement copy job or obsolete-job scan is introduced. Existing
+copied files are preserved, not deleted merely because the feature was removed.
+
 ## ContentKit's own schema
 
 Hosts run `MigratePostgres(ctx, pool, cfg)` and

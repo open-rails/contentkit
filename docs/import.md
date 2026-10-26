@@ -8,7 +8,7 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
 ## Identity and convergence
 
 - Every record with an identity carries `external_id`, scoped by the batch's
-  `source` and its entity (`content`, `version`, `group`, `comment`, `poll`,
+  `source` and its entity (`content`, `version`, `group`, `channel`, `comment`, `poll`,
   `poll_option`) in `content_external_ids`. Re-sending a record updates what
   changed and writes nothing when nothing did; it is never duplicated.
 - `id` (a UUIDv7) is kept when the external id is new; derive it with
@@ -16,8 +16,8 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
   store. An external id already imported under another id is a `conflict`.
 - References name a record by `id` or `external_id`
   (`{"external_id": "folder:123"}`); `target` names a `content`, `version`,
-  `group` or `comment`, as the section allows.
-- Collections given replace what is stored (text, creators, version text,
+  `group`, `channel` or `comment`, as the section allows.
+- Collections given replace what is stored (creators, version text,
   names, group text, edges, poll options); omitted ones stay.
   Versions not listed stay. `memberships` replace a content item's
   memberships in the group `kinds` they name.
@@ -37,11 +37,14 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
 - Imported content is trusted: not screened, approved. Reactions and
   favorites take fresh preference revisions; `preference_floor` first raises
   the sequence past a retained signal plane (also the restore step).
-- A group of an `auth_scope` kind names its `auth_scope`, or the batch sets
-  `provision_scopes` and ContentKit's scope job creates it.
+- Import authoring channels through `channels`, separately from descriptive
+  `entities`. A channel names its `auth_scope`, or the batch enables
+  `provision_scopes`. ContentKit calls AuthKit synchronously after committing
+  channel identity; a provider failure is reported for that record. Retry the
+  same external ID to finish without creating another channel or group.
 - Records of erased subjects fail (`erased`).
 - A record gone from the source is deleted only by a `deletes` record
-  (`entity`: content, version, group, comment or poll; `external_id`), never
+  (`entity`: content, version, group, channel, comment or poll; `external_id`), never
   by its absence from a batch. It deletes as the delete route does; one
   already deleted (or since erased) stays as it is, so re-sending converges.
   An external id never imported fails `not_found`.
@@ -53,7 +56,7 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
 
 ## Order and failures
 
-Sections are written in order: entities, contents, memberships,
+Sections are written in order: entities, channels, contents, memberships,
 aliases, comments, reactions, favorites, polls, votes, signals,
 deletes; a
 record may name what an earlier section or call wrote. Each section runs in
@@ -71,7 +74,8 @@ and prices are managed through OpenRails, not the ContentKit import.
 Imports update content facets and interaction counts in their writing
 transactions, and queue search-document updates. Entity counts and automatic
 covers derive from current facets on reads; there is no periodic recount.
-Creator-channel lifecycle changes retain exact durable sync work.
+Channel lifecycle changes finish through direct idempotent AuthKit calls. There
+is no channel-sync worker. Incomplete channels remain unavailable for authoring.
 
 ## Media
 
@@ -90,8 +94,8 @@ commits the folder in one operation; sending the files again (a new
 names a key of the media bucket outside ContentKit's namespaces (a legacy
 export staged there) is copied server-side instead (`POST
 /v1/media/upload/copy`, `root:import:write`), so no byte passes through the
-importer. Publication, renditions and version facts (pages, duration) follow
-from the media jobs.
+importer. Derivative processing follows upload commit. Publication is separate intent and
+waits for required media before making the completed version reader-visible.
 
 Import content and source media first, then write chapter start markers with
 `PUT /v1/contents/{id}/versions/{vid}/segments` (`Client.PutContentVersionSegments`).
@@ -107,15 +111,29 @@ each `VersionRecord.cover` names that version's copy, sent once the files are
 in. Body images go into each version's folder too (its `Body` upload),
 named as the body references them.
 
+## Version-owned text
+
+The parent record has shared identity, creators, channel and metadata. Titles,
+summaries, bodies, aliases and original-language titles belong to each version.
+An import specifies them under `versions[].text[language]`, along with that
+version's explicit `external_id`. Existing editions retain their IDs on replay.
+New editions start empty unless the import explicitly supplies content; no sibling
+text or files are copied automatically. A reader response may expose convenient
+selected-version fields, but those are read-only projections.
+
+An English gallery and Chinese gallery edition can have wholly different image
+bytes. Shared memberships omit `version`; edition-specific memberships name it.
+Each edition's body resolves inline images only from that edition's uploads.
+
 ## Record shapes
 
 | Section | Record | Keys |
 |---|---|---|
-| `entities` | `EntityRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `edges`, `code`, times |
-| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `listing`, `comments` (open, closed, hidden), `access`, `restrictions`, `attributes`, `owner_group`, `creators`, `text`, `versions`, `code`, times |
-| | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `text` |
+| `entities` | `EntityRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `edges`, `code`, times |
+| `channels` | `ChannelRecord` | `external_id`, `slug`, `state`, `names`, `text`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `code`, times |
+| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `comments` (open, closed, hidden), `access`, `restrictions`, `attributes`, `channel`, `creators`, `versions`, `code`, times |
+| | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `original_title`, `original_language`, `text` |
 | `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `state`) |
-| `offers` | `OfferRecord` | `target` (content, version, group), `terms` |
 | `aliases` | `AliasRecord` | `kind`, `key`, `locator`, `target` (content, group) |
 | `comments` | `CommentRecord` | `external_id`, `target` (content, version), `language`, `reply_to`, `user_id` / `anon_name`, `body`, `deleted_at`, times |
 | `reactions` | `ReactionRecord` | `target` (content, version, comment, group), `user_id` / `ip`, `value` |

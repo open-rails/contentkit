@@ -35,7 +35,7 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
 	fa, fb := makeFleet(a), makeFleet(b)
 	create := func(app *application, name string) catalog.Content {
 		t.Helper()
-		item, err := app.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: name, Body: name}}})
+		item, err := app.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: name, Body: name}}}}})
 		must(t, err)
 		_, err = app.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
@@ -87,7 +87,7 @@ func TestPublicationQueueMigrationPreservesOwners(t *testing.T) {
 	a, b := w.apps[0], w.apps[1]
 	create := func(app *application) catalog.Content {
 		t.Helper()
-		item, err := app.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Queue migration"}}})
+		item, err := app.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Queue migration"}}}}})
 		must(t, err)
 		return item
 	}

@@ -32,7 +32,7 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 	admin, reader := a.engine.Client(), a.client("")
 	create := func(kind, title string) catalog.Content {
 		t.Helper()
-		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: kind, Text: map[string]catalog.Text{"en": {Title: title, Body: title}}})
+		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: kind, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title, Body: title}}}}})
 		must(t, err)
 		return item
 	}

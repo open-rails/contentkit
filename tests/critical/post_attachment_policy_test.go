@@ -41,7 +41,7 @@ func TestPostAttachmentPolicies(t *testing.T) {
 	key, err := w.tenant[0].CreateAPIKey(t.Context(), iam.SystemIdentity(), a.group, iam.NewAPIKey{Name: "Attachment policy editor", Role: persona.OwnerRole()})
 	must(t, err)
 	client := a.client(key.Secret)
-	item, err := client.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Independent attachment ceilings", Body: "A mixed-media post"}}})
+	item, err := client.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Independent attachment ceilings", Body: "A mixed-media post"}}}}})
 	must(t, err)
 	ref := media.RefBody{Kind: "article", ID: item.ID, Version: item.Versions[0].ID}
 	payload := imageBytes(t)

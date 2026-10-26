@@ -123,7 +123,7 @@ func TestCommerceControlsContentAccess(t *testing.T) {
 	startPublicationRuntime(t, a)
 	user, credential := w.person(t, 0)
 	viewer := a.client(credential)
-	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}, Text: map[string]catalog.Text{"en": {Title: "Purchased article", Body: "Purchased body"}}})
+	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Purchased article", Body: "Purchased body"}}}}})
 	must(t, err)
 	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)

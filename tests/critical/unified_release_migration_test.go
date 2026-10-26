@@ -28,7 +28,7 @@ func TestUnifiedReleaseMigration(t *testing.T) {
 	jobs := pgx.Identifier{publicationRiverSchema(a), "river_job"}.Sanitize()
 	create := func(app *application, name string) catalog.Content {
 		t.Helper()
-		item, err := app.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: name, Body: name}}})
+		item, err := app.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: name, Body: name}}}}})
 		must(t, err)
 		return item
 	}
@@ -233,7 +233,7 @@ func TestUnifiedReleaseMigrationKeepsCompletedRequest(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	fleet := publicationOnlyFleet(t, a)
-	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Already unified", Body: "A completed empty-file plan."}}})
+	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Already unified", Body: "A completed empty-file plan."}}}}})
 	must(t, err)
 	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)

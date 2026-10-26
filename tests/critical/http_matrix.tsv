@@ -79,8 +79,6 @@ CK-API-078	GET	/v1/contents	public		included-critical functionality and security
 CK-API-079	POST	/v1/contents/{id}/restore	public		included-critical functionality and security
 CK-API-080	POST	/v1/contents/{id}/publish	public		included-critical functionality and security
 CK-API-081	POST	/v1/contents/{id}/unpublish	public		included-critical functionality and security
-CK-API-082	PUT	/v1/contents/{id}/text/{language}	public		partial-security-only; positive/full functionality deferred P1
-CK-API-083	DELETE	/v1/contents/{id}/text/{language}	public		partial-security-only; positive/full functionality deferred P1
 CK-API-084	PUT	/v1/contents/{id}/creators	public		partial-security-only; positive/full functionality deferred P1
 CK-API-085	POST	/v1/contents/{id}/images	public		partial-security-only; positive/full functionality deferred P1
 CK-API-086	POST	/v1/contents/{id}/versions	public		partial-security-only; positive/full functionality deferred P1
@@ -128,7 +126,6 @@ CK-API-133	POST	/v1/contents/{id}/versions/{version}/page-notices/{notice}/dismi
 CK-API-134	POST	/v1/contents/{id}/versions/{version}/page-notices/{notice}/restore	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
 CK-API-135	GET	/v1/contents/{id}/versions/{version}/reader	public		partial-security-only; positive/full functionality deferred P1
 CK-API-136	PUT	/v1/contents/{id}/versions/{version}/reader	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
-CK-API-137	POST	/v1/contents/{id}/versions/{version}/fork	user		partial-security-only; positive/full functionality deferred P1
 CK-API-138	GET	/v1/contents/{id}/versions/{version}/download	public		included-critical functionality and security
 CK-API-139	GET	/v1/contents/{id}/versions/{version}/archive	public		included-critical functionality and security
 CK-API-140	GET	/v1/me/library	user		included-critical functionality and security

@@ -68,7 +68,7 @@ func TestEntityCountsAndCoversWithoutWorkers(t *testing.T) {
 	must(t, fleet.Stop(t.Context()))
 	link(one.ID, child.ID, parent.ID) // inherited and explicit parent count once.
 	check(1, one.ID)
-	future, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Future", Body: "Not released"}}})
+	future, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Future", Body: "Not released"}}}}})
 	must(t, err)
 	link(future.ID, child.ID)
 	at := time.Now().Add(time.Second)

@@ -28,7 +28,7 @@ func TestPostContributorAuthority(t *testing.T) {
 	author, credited := a.client(aliceToken), a.client(bobToken)
 	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.contributor)
 	newPost := func(title, channel string) catalog.ContentInput {
-		return catalog.ContentInput{Kind: "article", ChannelID: channel, Text: map[string]catalog.Text{"en": {Title: title, Body: "Private contributor source"}}}
+		return catalog.ContentInput{Kind: "article", ChannelID: channel, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title, Body: "Private contributor source"}}}}}
 	}
 	t.Run("CK-J03-S01_app_create_is_personal_and_credits_are_not_authority", func(t *testing.T) {
 		input := newPost("Personal contributor draft", "")
@@ -46,7 +46,7 @@ func TestPostContributorAuthority(t *testing.T) {
 		}
 		_, err = credited.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
-		_, err = credited.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Credit cannot overwrite", Body: "no"})
+		_, err = credited.PatchContentVersion(t.Context(), item.ID, item.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Credit cannot overwrite", Body: "no"}}})
 		requireError(t, err, 403, "forbidden")
 		_, err = credited.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		requireError(t, err, 403, "forbidden")
@@ -63,7 +63,7 @@ func TestPostContributorAuthority(t *testing.T) {
 		}
 		_, err = author.PutContentCreators(t.Context(), item.ID, catalog.CreatorsInput{Creators: []catalog.Creator{}})
 		must(t, err)
-		_, err = author.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Still owned", Body: "Ownership survives removing credits"})
+		_, err = author.PatchContentVersion(t.Context(), item.ID, item.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Still owned", Body: "Ownership survives removing credits"}}})
 		must(t, err)
 		_, err = author.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
@@ -87,12 +87,12 @@ func TestPostContributorAuthority(t *testing.T) {
 		if item.Editor {
 			t.Fatal("create-only grant conferred editing")
 		}
-		_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Must refuse", Body: "no"})
+		_, err = caller.PatchContentVersion(t.Context(), item.ID, item.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Must refuse", Body: "no"}}})
 		requireError(t, err, 403, "forbidden")
 		_, err = caller.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		requireError(t, err, 403, "forbidden")
 		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.contributor)
-		_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Current edit grant", Body: "yes"})
+		_, err = caller.PatchContentVersion(t.Context(), item.ID, item.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Current edit grant", Body: "yes"}}})
 		must(t, err)
 		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
 		own, err := caller.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
@@ -100,7 +100,7 @@ func TestPostContributorAuthority(t *testing.T) {
 		if own.Editor || own.Body != "yes" {
 			t.Fatal("create-only draft read was lost or retained write")
 		}
-		_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Revoked", Body: "no"})
+		_, err = caller.PatchContentVersion(t.Context(), item.ID, item.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Revoked", Body: "no"}}})
 		requireError(t, err, 403, "forbidden")
 		authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
 		_, err = caller.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
@@ -135,11 +135,11 @@ func TestPostContributorAuthority(t *testing.T) {
 		}
 		own, err := author.PostContents(t.Context(), newPost("Contributor post", string(channel.ID)))
 		must(t, err)
-		_, err = author.PutContentText(t.Context(), own.ID, "en", catalog.Text{Title: "Own edit", Body: "Only this post"})
+		_, err = author.PatchContentVersion(t.Context(), own.ID, own.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Own edit", Body: "Only this post"}}})
 		must(t, err)
 		_, err = author.GetContent(t.Context(), existing.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
-		_, err = author.PutContentText(t.Context(), existing.ID, "en", catalog.Text{Title: "Cannot edit owner", Body: "no"})
+		_, err = author.PatchContentVersion(t.Context(), existing.ID, existing.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Cannot edit owner", Body: "no"}}})
 		requireError(t, err, 403, "forbidden")
 		slug := "cannot-manage-channel"
 		_, err = author.PatchChannel(t.Context(), string(channel.ID), channels.Update{Slug: &slug})
@@ -155,10 +155,10 @@ func TestPostContributorAuthority(t *testing.T) {
 		authtest.RevokeRole(t, w.tenant[0], scope, iam.UserSubject(alice.ID), w.channelContributor)
 		_, err = author.GetContent(t.Context(), draft.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
-		_, err = author.PutContentText(t.Context(), own.ID, "en", catalog.Text{Title: "Cannot use app grant here", Body: "no"})
+		_, err = author.PatchContentVersion(t.Context(), own.ID, own.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Cannot use app grant here", Body: "no"}}})
 		requireError(t, err, 403, "forbidden")
 		authtest.GrantRole(t, w.tenant[0], scope, iam.UserSubject(bob.ID), w.channelWriter)
-		_, err = credited.PutContentText(t.Context(), existing.ID, "en", catalog.Text{Title: "Team editor still works", Body: "Team edit"})
+		_, err = credited.PatchContentVersion(t.Context(), existing.ID, existing.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Team editor still works", Body: "Team edit"}}})
 		must(t, err)
 		persona, err := w.auth.Persona("channel")
 		must(t, err)
@@ -238,7 +238,7 @@ func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 	_, err = client.PatchChannel(t.Context(), string(channel.ID), channels.Update{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Revoked manager"}}})
 	requireError(t, err, 403, "forbidden")
 	authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(manager.ID), w.channelWriter)
-	input := catalog.ContentInput{Kind: "article", ChannelID: string(channel.ID), Text: map[string]catalog.Text{"en": {Title: "Official post", Body: "Public"}}}
+	input := catalog.ContentInput{Kind: "article", ChannelID: string(channel.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Official post", Body: "Public"}}}}}
 	item, err := client.PostContents(t.Context(), input)
 	must(t, err)
 	_, err = client.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
@@ -284,7 +284,7 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 	if current.AuthScope != "" {
 		t.Fatal("pending channel advertised authorization readiness")
 	}
-	input := catalog.ContentInput{Kind: "article", ChannelID: id, Text: map[string]catalog.Text{"en": {Title: "Retryable channel post", Body: "One post"}}}
+	input := catalog.ContentInput{Kind: "article", ChannelID: id, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Retryable channel post", Body: "One post"}}}}}
 	_, err = caller.PostContents(t.Context(), input)
 	requireError(t, err, 403, "forbidden")
 	_, err = caller.PatchChannel(t.Context(), id, channels.Update{})

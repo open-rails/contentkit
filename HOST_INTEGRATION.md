@@ -1413,7 +1413,8 @@ Keyword documents enrich content with active associations and their ancestors.
 Collection associations remain active until explicitly changed; subscription
 and rental expiry belong to the entitlement provider.
 
-Legacy HTTP fields (`group_id`, `groups`, `exclude_groups`, `owner_group_id`),
+Stable descriptive membership fields (`groups`, `exclude_groups`) and channel
+access-rule fields (`group_id`),
 access values (`group`, `group_ppv`), billing key namespaces (`:group:`) and
 AuthKit permission strings and deterministic scope identities retain their
 encodings. Descriptive membership fields refer to entities; access-rule `group_id` and
@@ -1533,6 +1534,23 @@ their channel calls after committing identity, then report provider failures per
 record so replay uses the same external IDs. Explicit upgrade preflight requires
 old actionable lifecycle work completed by the previous version before retiring
 its remaining no-op queued rows; terminal history and foreign work are retained.
+
+## Authored content and editions
+
+The parent item carries shared identity, channel/editorial policy, creator credits
+and inherited metadata associations. `VersionInput.Text` owns titles, summaries,
+rich body text and aliases; source/original titles and uploaded files also belong
+to the edition. The version's languages determine which edition a language-specific
+feed selects. Shared metadata is combined with that edition's own metadata for
+presentation without mutating siblings.
+
+Hosts create an initial edition with `ContentInput.Versions`, including hidden
+single-edition post kinds, and edit it through the normal version interface.
+New additional versions have no inherited text/media. `Content.title`, `body`,
+`description` and `images` are read-only projections from `selected_version_id`,
+not parent storage or another writable surface. Parent text routes and version
+fork/copy controls are removed. Ordinary source uploads and derivative processing
+remain observable through the existing media progress interface.
 
 ## Post contributors and attribution
 

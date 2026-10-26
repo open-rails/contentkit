@@ -34,7 +34,7 @@ func mountEngine(t *testing.T, engine *ck.Engine) *httptest.Server {
 
 func galleryRef(t *testing.T, client *ck.Client, title string) media.RefBody {
 	t.Helper()
-	item, err := client.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: title}}})
+	item, err := client.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title}}}}})
 	must(t, err)
 	if len(item.Versions) != 1 {
 		t.Fatal("new gallery must have its initial edition")

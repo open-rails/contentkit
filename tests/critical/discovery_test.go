@@ -86,7 +86,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 	}
 	public, wide := reader("restricted.invalid", ""), reader("wide.invalid", "")
 	create := func(title string, membership []entities.EntityID, publishAt *time.Time, publish bool) catalog.Content {
-		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "CriticalVis " + title, Body: "Private source body " + title}}})
+		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "CriticalVis " + title, Body: "Private source body " + title}}}}})
 		must(t, err)
 		links := []entities.Membership{}
 		for _, id := range membership {

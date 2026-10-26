@@ -127,7 +127,7 @@ func (f *tinyHLSFixture) addSiteClip(t *testing.T) media.RefBody {
 func (f *tinyHLSFixture) addClip(t *testing.T, title string, publish ...bool) media.RefBody {
 	t.Helper()
 	admin := f.app.engine.Client()
-	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "clip", Text: map[string]catalog.Text{"en": {Title: title}}})
+	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "clip", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title}}}}})
 	must(t, err)
 	if len(item.Versions) != 1 {
 		t.Fatal("clip must have its single hidden version")

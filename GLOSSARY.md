@@ -76,12 +76,14 @@ A channel has a permission group for its authors and editors. The group holds
 current authorization grants; the channel holds its public identity and posts.
 
 **Content item**:
-The overall work, with shared metadata and at most one primary channel. Its
-versions share that channel's editorial authority and parent access policy.
+The shared identity to which versions and inherited metadata belong, with at
+most one primary channel. It stores no authored text or media. Its versions
+share that channel's editorial authority and parent access policy.
 
 **Version**:
-One edition of an item, such as an English or Chinese post. Versions retain
-independent text, attachments and publication state. Channel-free content may
+One edition of an item, such as an English or Chinese post. All authored content
+(title, summary, body/HTML, original title and media) belongs to its version.
+Versions retain independent language, files and publication state. Channel-free content may
 also use the application's configured per-version access policy.
 
 **Channel**:
