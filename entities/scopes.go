@@ -187,9 +187,9 @@ func (s *Store) finishChannelScope(ctx context.Context, id string) error {
 			}
 			err = s.scopes.Retire(ctx, []string{target})
 		}
-		if err != nil {
-			return fmt.Errorf("channels: apply authorization group for %s: %w", id, err)
-		}
+		// Provider errors can be lost acknowledgements after the remote write.
+		// Still inspect concurrent state before returning the original error.
+		providerErr := err
 		done := false
 		staleActive := false
 		err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -215,6 +215,9 @@ func (s *Store) finishChannelScope(ctx context.Context, id string) error {
 				}
 				return nil
 			}
+			if providerErr != nil {
+				return nil
+			}
 			desired := ""
 			if after.state == StateActive {
 				desired = id
@@ -227,6 +230,9 @@ func (s *Store) finishChannelScope(ctx context.Context, id string) error {
 			done = true
 			return nil
 		})
+		if providerErr != nil {
+			return errors.Join(fmt.Errorf("channels: apply authorization group for %s: %w", id, providerErr), err)
+		}
 		if err != nil {
 			return err
 		}
