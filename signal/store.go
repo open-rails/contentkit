@@ -213,20 +213,6 @@ WHERE %s`, st.db, strings.Join(rows[start:end], " UNION ALL "), st.notErased())
 	return nil
 }
 
-// canonicalEvents selects, per logical event of the filtered keys, the
-// highest-version row as c = (occurred_at, revision, duration_s, progress,
-// progress_max, value, score, completed, resume) plus its winning raw version.
-// Superseded and duplicate rows never count, whether or not ClickHouse has
-// merged them.
-func (st *Store) canonicalEvents(filter string) string {
-	return fmt.Sprintf(`SELECT %[3]s, subject_kind, subject, signal_type, event_id,
-        argMax(tuple(occurred_at, revision, value), version) AS c,
-        max(version) AS ver
-    FROM %[1]s.signals
-    WHERE tenant = ? AND %[2]s AND %[4]s
-    GROUP BY %[3]s, subject_kind, subject, signal_type, event_id`, st.db, filter, refColumns, st.notErased())
-}
-
 // RepairOptions bounds one RepairProjections call.
 type RepairOptions struct {
 	// Window limits candidate keys to those with an event on these days
