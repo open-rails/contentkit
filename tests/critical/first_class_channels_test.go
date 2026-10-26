@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/goccy/go-yaml"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/kinds"
 	"strings"
 	"testing"
@@ -103,6 +104,18 @@ func TestChannelRepostAnonymization(t *testing.T) {
 	if posted.ActorID != user.ID {
 		t.Fatal("repost did not record initial attribution")
 	}
+	t.Run("CK-J03-S70_import_cannot_reassign_original_channel", func(t *testing.T) {
+		result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "channel-transfer", Contents: []importer.ContentRecord{{ExternalID: "original", ID: original.ID, Kind: "article", State: "published", Channel: &importer.Ref{ID: destination.ID}}}})
+		must(t, err)
+		if len(result.Failed) != 1 {
+			t.Fatalf("import changed original channel: %+v", result)
+		}
+		still, err := a.client("").GetContent(t.Context(), original.ID, ck.GetContentQuery{})
+		must(t, err)
+		if still.ChannelID != source.ID {
+			t.Fatal("failed import changed primary channel")
+		}
+	})
 	t.Run("CK-J24-S07_terminal_account_event_unlinks_repost_attribution", func(t *testing.T) {
 		must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
 		must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
