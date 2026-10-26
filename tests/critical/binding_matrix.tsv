@@ -260,3 +260,4 @@ ts:ChannelsClient.contents	ts	TS channel client method	ChannelsClient.contents	s
 ts:ChannelsClient.remove	ts	TS channel client method	ChannelsClient.remove	sdk/ui/src/client/channels.ts	included-critical channel253 contract
 ts:ChannelsClient.folder	ts	TS channel media method	ChannelsClient.folder	sdk/ui/src/client/channels.ts	included-critical channel253 contract
 ts:ChannelsClient.uploadImage	ts	TS channel media method	ChannelsClient.uploadImage	sdk/ui/src/client/channels.ts	included-critical channel253 contract
+ts:resolveInlineImageReferences	ts	TS inline media helper	resolveInlineImageReferences	sdk/ui/src/client/inline-images.ts	included-critical edition259 contract
