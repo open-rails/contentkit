@@ -64,10 +64,11 @@ func TestLegacyMediaStorageMigration(t *testing.T) {
 			Ref     media.RefBody    `json:"ref"`
 			Read    media.ReadResult `json:"read"`
 			Payload string           `json:"payload"`
+			Bare    catalog.Content  `json:"bare"`
 		}
 		must(t, json.Unmarshal(output, &old))
 		const payload = "Real ContentKit v0.112.1 nested version media.\n"
-		if old.Version != "v0.112.1" || old.Content.ID == "" || old.Ref.ID != old.Content.ID || len(old.Content.Versions) != 1 || old.Content.Versions[0].ID != old.Ref.Version || len(old.Read.Files) != 1 || old.Payload != payload {
+		if old.Version != "v0.112.1" || old.Content.ID == "" || old.Ref.ID != old.Content.ID || len(old.Content.Versions) != 1 || old.Content.Versions[0].ID != old.Ref.Version || len(old.Read.Files) != 1 || old.Payload != payload || len(old.Bare.Versions) != 1 {
 			t.Fatalf("initializer did not produce the pinned public legacy media: %+v", old)
 		}
 		readBytes := func(address string) {
@@ -148,18 +149,19 @@ func TestLegacyMediaStorageMigration(t *testing.T) {
 		}
 		publication, err := ck.MigratePublicationStorage(t.Context(), w.pool, cfg, m.store)
 		must(t, err)
-		if publication.Staged != 1 || publication.Queued != 1 {
-			t.Fatalf("publication conversion did not stage and durably queue the edition: %+v", publication)
+		// The media-less version gets its manifest and publication too.
+		if publication.Staged != 1 || publication.Queued != 2 {
+			t.Fatalf("publication conversion did not stage and durably queue the editions: %+v", publication)
 		}
 		engine, err := ck.New(t.Context(), cfg, deps)
 		must(t, err)
 		defer func() { must(t, engine.Close(context.Background())) }()
 		must(t, engine.Start(t.Context()))
 		waitForWithin(t, 45*time.Second, func() bool {
-			var released bool
-			err := w.pool.QueryRow(t.Context(), `SELECT released AND release_id IS NOT NULL FROM `+pgx.Identifier{schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, cfg.Tenant, old.Ref.Version).Scan(&released)
+			var released int
+			err := w.pool.QueryRow(t.Context(), `SELECT count(*) FILTER (WHERE released AND release_id IS NOT NULL) FROM `+pgx.Identifier{schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id = ANY($2)`, cfg.Tenant, []string{old.Ref.Version, old.Bare.Versions[0].ID}).Scan(&released)
 			must(t, err)
-			return released
+			return released == 2
 		})
 		server := mountEngine(t, engine)
 		client := ck.NewClient(server.URL+"/content", nil)

@@ -80,6 +80,11 @@ func main() {
 	}
 	item, err = engine.Client().PostContentPublish(ctx, item.ID, catalog.PublishInput{})
 	check(err)
+	// A published version that never received media has no manifest.
+	bare, err := engine.Client().PostContents(ctx, catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "No media", Body: "A version without uploads."}}})
+	check(err)
+	bare, err = engine.Client().PostContentPublish(ctx, bare.ID, catalog.PublishInput{})
+	check(err)
 	read, err := engine.Client().GetMediaVersion(ctx, ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 	check(err)
 	if len(read.Files) != 1 || read.Files[0].Staged || read.Files[0].URL == "" {
@@ -99,7 +104,8 @@ func main() {
 		Ref     media.RefBody    `json:"ref"`
 		Read    media.ReadResult `json:"read"`
 		Payload string           `json:"payload"`
-	}{version, item, ref, read, payload}))
+		Bare    catalog.Content  `json:"bare"`
+	}{version, item, ref, read, payload, bare}))
 }
 
 func check(err error) {
