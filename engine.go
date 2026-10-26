@@ -314,6 +314,12 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return err
 	}
 	if options.explicit {
+		// Finish declared owners before the historical lifecycle handoff scans
+		// pending scopes. A retry after a lost provider reply must converge here,
+		// not enqueue redundant background provisioning for the reserved entity.
+		if err := catalog.InitializeFixedOwners(ctx, e.pool, e.schema, e.cfg.Tenant, e.cfg.Content, options.Scopes); err != nil {
+			return err
+		}
 		if err := e.adoptCommentNoticeIdentities(ctx); err != nil {
 			return err
 		}

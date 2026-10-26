@@ -124,6 +124,11 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	if retained.OwnerEntityID != id || retained.Body != post.Body || !reflect.DeepEqual(retained.Access, post.Access) {
 		t.Fatal("migration lost content identity, body or access")
 	}
+	var queuedAfter int
+	must(t, pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()).Scan(&queuedAfter))
+	if queuedAfter != queuedBefore {
+		t.Fatal("initial provisioning enqueued redundant lifecycle jobs")
+	}
 	member, _ := w.person(t, 0)
 	authtest.GrantRole(t, w.tenant[0], iam.GroupByID(groupID), iam.UserSubject(member.ID), w.channelWriter)
 	label := []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Staff-selected name"}}
@@ -133,6 +138,9 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	must(t, err)
 	memberships, err := w.auth.ListMemberships(ctx, iam.UserSubject(member.ID), iam.PageRequest{})
 	must(t, err)
+	// The ordinary entity edit above may have its own lifecycle work; compare
+	// only the migration calls, not that separate application mutation.
+	must(t, pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()).Scan(&queuedBefore))
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for range 2 {
@@ -156,7 +164,6 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	if after.Revision != before.Revision || !reflect.DeepEqual(after.Names, before.Names) || newGroup.ID != group.ID || !reflect.DeepEqual(newMemberships, memberships) {
 		t.Fatal("repeated/concurrent provisioning changed names, identities or editor assignments")
 	}
-	var queuedAfter int
 	must(t, pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()).Scan(&queuedAfter))
 	if queuedAfter != queuedBefore {
 		t.Fatal("explicit provisioning enqueued redundant lifecycle jobs")

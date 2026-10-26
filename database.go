@@ -15,7 +15,6 @@ import (
 	"github.com/open-rails/migratekit"
 	"github.com/open-rails/migratekit/chmigrate"
 
-	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/workqueue"
@@ -136,10 +135,7 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, option
 		}
 	}
 	opt.explicit = true
-	if err := e.migratePostgres(ctx, opt); err != nil {
-		return err
-	}
-	return catalog.InitializeFixedOwners(ctx, pool, e.schema, e.cfg.Tenant, e.cfg.Content, opt.Scopes)
+	return e.migratePostgres(ctx, opt)
 }
 
 // MigrateClickHouse creates the configured signal database before applying its
