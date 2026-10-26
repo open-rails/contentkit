@@ -12,26 +12,26 @@ import (
 )
 
 // DefaultQueue holds the current entity state work.
-const DefaultQueue = "contentkit_entities"
+const DefaultQueue = "contentkit_channels"
 
-type syncArgs struct {
+type channelLifecycleArgs struct {
 	Tenant   string   `json:"tenant"`
-	Entities []string `json:"groups"`
+	Channels []string `json:"channels"`
 }
 
-func (syncArgs) Kind() string { return "contentkit_entity_sync" }
+func (channelLifecycleArgs) Kind() string { return "contentkit_channel_lifecycle" }
 
-type syncWorker struct {
-	river.WorkerDefaults[syncArgs]
+type channelLifecycleWorker struct {
+	river.WorkerDefaults[channelLifecycleArgs]
 	s *Store
 }
 
-func (w *syncWorker) Work(ctx context.Context, job *river.Job[syncArgs]) error {
+func (w *channelLifecycleWorker) Work(ctx context.Context, job *river.Job[channelLifecycleArgs]) error {
 	if job.Args.Tenant != w.s.tenant {
 		return river.JobCancel(fmt.Errorf("entities: job of tenant %q", job.Args.Tenant))
 	}
-	ids := make([]EntityID, len(job.Args.Entities))
-	for i, id := range job.Args.Entities {
+	ids := make([]EntityID, len(job.Args.Channels))
+	for i, id := range job.Args.Channels {
 		ids[i] = EntityID(id)
 	}
 	return w.s.Sync(ctx, ids)
@@ -56,7 +56,7 @@ func (b *riverBinding) bound() *river.Client[pgx.Tx] {
 func (s *Store) RiverJobs() riverhelpers.Contribution {
 	b := s.river
 	claimed := false
-	return riverhelpers.NewContribution("contentkit-entities", func(_ context.Context, cfg *river.Config) error {
+	return riverhelpers.NewContribution("contentkit-channels", func(_ context.Context, cfg *river.Config) error {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if b.composed {
@@ -69,7 +69,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 		if _, ok := cfg.Queues[s.queue]; !ok {
 			cfg.Queues[s.queue] = river.QueueConfig{MaxWorkers: 1}
 		}
-		if err := river.AddWorkerSafely(cfg.Workers, &syncWorker{s: s}); err != nil {
+		if err := river.AddWorkerSafely(cfg.Workers, &channelLifecycleWorker{s: s}); err != nil {
 			return err
 		}
 		return nil

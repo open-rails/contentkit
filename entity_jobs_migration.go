@@ -15,7 +15,7 @@ import (
 const obsoleteEntityJobs = `args->>'tenant'=$2 AND (
  (kind IN ('contentkit_groups','contentkit_entity_projection') AND queue=$1)
  OR (kind IN ('contentkit_group_reconcile','contentkit_entity_reconcile','contentkit_group_sync') AND queue IN ('contentkit_groups','contentkit_entities'))
- OR (kind='contentkit_entity_sync' AND queue='contentkit_groups'))`
+ OR (kind='contentkit_entity_sync' AND queue IN ('contentkit_groups','contentkit_entities')))`
 
 const ambiguousEntityJobs = `kind IN ('contentkit_groups','contentkit_entity_projection') AND queue=$1 AND coalesce(args->>'tenant','')=''`
 
@@ -27,7 +27,7 @@ func (e *Engine) migrateEntityJobsTx(ctx context.Context, tx pgx.Tx, jobs string
 		return err
 	}
 	// Preserve exact old sync work; the broad pollers and derived-count jobs end.
-	if _, err := tx.Exec(ctx, `UPDATE `+jobs+` SET kind='contentkit_entity_sync',queue=$3,unique_key=NULL
+	if _, err := tx.Exec(ctx, `UPDATE `+jobs+` SET kind='contentkit_channel_lifecycle',queue=$3,unique_key=NULL,args=(args-'groups') || jsonb_build_object('channels',coalesce(args->'groups','[]'::jsonb))
  WHERE state IN ('available','pending','retryable','scheduled') AND kind IN ('contentkit_group_sync','contentkit_entity_sync') AND (`+obsoleteEntityJobs+`)`, QueueContentKit, e.cfg.Tenant, entities.DefaultQueue); err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func (e *Engine) migrateEntityJobsTx(ctx context.Context, tx pgx.Tx, jobs string
 // before retiring the old scan. Subsequent writes admit their own work atomically.
 func (e *Engine) admitPendingEntityLifecycles(ctx context.Context, tx pgx.Tx) error {
 	var scopes, owned []string
-	for name, kind := range e.cfg.Content.EntityKinds {
+	for name, kind := range e.cfg.Content.StorageModel().EntityKinds {
 		if kind.AuthScope {
 			scopes = append(scopes, name)
 		}
@@ -69,7 +69,7 @@ func (e *Engine) admitPendingEntityLifecycles(ctx context.Context, tx pgx.Tx) er
 	}
 	for len(ids) > 0 {
 		n := min(len(ids), 100)
-		_, err = client.InsertTx(ctx, tx, entityLifecycleArgs{Tenant: e.cfg.Tenant, Entities: ids[:n]}, &river.InsertOpts{Queue: entities.DefaultQueue, MaxAttempts: 10, UniqueOpts: river.UniqueOpts{ByArgs: true}})
+		_, err = client.InsertTx(ctx, tx, channelLifecycleArgs{Tenant: e.cfg.Tenant, Channels: ids[:n]}, &river.InsertOpts{Queue: entities.DefaultQueue, MaxAttempts: 10, UniqueOpts: river.UniqueOpts{ByArgs: true}})
 		if err != nil {
 			return err
 		}
@@ -78,12 +78,12 @@ func (e *Engine) admitPendingEntityLifecycles(ctx context.Context, tx pgx.Tx) er
 	return nil
 }
 
-type entityLifecycleArgs struct {
+type channelLifecycleArgs struct {
 	Tenant   string   `json:"tenant"`
-	Entities []string `json:"groups"`
+	Channels []string `json:"channels"`
 }
 
-func (entityLifecycleArgs) Kind() string { return "contentkit_entity_sync" }
+func (channelLifecycleArgs) Kind() string { return "contentkit_channel_lifecycle" }
 
 func (e *Engine) validateEntityJobHandoff(ctx context.Context, jobs string) error {
 	var pending bool
