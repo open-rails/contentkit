@@ -13775,6 +13775,9 @@
           "visit_id": {
             "type": "string"
           },
+          "origin_click_id": {
+            "type": "string"
+          },
           "segment_id": {
             "type": "string"
           },
@@ -14624,6 +14627,9 @@
             "type": "integer"
           },
           "query_id": {
+            "type": "string"
+          },
+          "search_query": {
             "type": "string"
           },
           "surface": {

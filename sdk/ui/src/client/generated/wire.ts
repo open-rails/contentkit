@@ -631,6 +631,7 @@ export interface EngagementSnapshot {
   content_id: string;
   version_id?: string;
   visit_id: string;
+  origin_click_id?: string;
   segment_id: string;
   revision: number;
   activity_token: string;
@@ -877,6 +878,7 @@ export interface ExposureInput {
   stage: string;
   revision?: number;
   query_id?: string;
+  search_query?: string;
   surface?: string;
   ranker?: string;
   language?: string;
