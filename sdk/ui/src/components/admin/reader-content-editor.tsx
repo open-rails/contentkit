@@ -4,7 +4,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { parseAttributes } from "../../client/entity-fields.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { CatalogText, Content, ContentModel, FileInfo, ForkBody, EntityCard, Membership, NewEntity, RefBody, Version, VersionText } from "../../client/generated/wire.js";
+import type { CatalogText, Content, ContentModel, FileInfo, EntityCard, Membership, NewEntity, RefBody, Version, VersionText } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
 import { ruleFor, uploadRules } from "../../client/media/rules.js";
@@ -56,30 +56,6 @@ const textOf = (text: CatalogText): CatalogText => ({
   description: text.description?.trim(),
 });
 class ValidationError extends Error {}
-
-/** A copy's failure receipt (versions' fork_failed), naming the fork to try again. */
-interface ForkFailure {
-  from: string;
-  playback?: boolean;
-  segments?: boolean;
-  reason: "destination" | "source" | "error";
-  at: string;
-}
-
-/** A version's copy in its media metadata: the barrier while copying, the receipt once copied, or the last failure. */
-function forkState(meta: Record<string, unknown> | undefined) {
-  return { copyingFrom: (meta?.fork as { from: string } | undefined)?.from, copied: !!meta?.forked, failed: meta?.fork_failed as ForkFailure | undefined };
-}
-
-function CopyFailed({ failure, version, pending, onRetry }: { failure: ForkFailure; version: string; pending: boolean; onRetry: (failure: ForkFailure) => void }) {
-  const { t } = useMessages();
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <ErrorLine>{t("readerEditor.copyFailedFrom", { version, reason: t(`readerEditor.copyFailure_${failure.reason}`) })}</ErrorLine>
-      <Button size="sm" variant="outline" disabled={pending} onClick={() => onRetry(failure)}>{t("common.retry")}</Button>
-    </div>
-  );
-}
 
 // Without a visible title, label names the section for assistive technology.
 function Panel({ title, label, children, className = "" }: { title?: ReactNode; label?: string; children: ReactNode; className?: string }) {
@@ -274,10 +250,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const ref = useMemo(() => (item && version ? { kind: p.kind, id: item.id, version: version.id } : null), [p.kind, item, version]);
   const cover = useAction("content.save", p.onError);
   const addVersion = useAction("content.save", p.onError);
-  const fork = useAction("content.save", p.onError);
-  // A version added from a sibling, followed until its copy (a job) ends, also
-  // once the dialog is closed. retried is the failure receipt a retry replaces.
-  const [copy, setCopy] = useState<{ version: Version; body: ForkBody; accepted?: boolean; failed?: ForkFailure; retried?: string } | null>(null);
   const actions = useAction("content.save", p.onError);
   const sourceFolder = useMediaFolder(ref, { commit: version?.live || editionDeleted ? "manual" : "auto", client, onError: p.onError });
   const sourceFolderRef = useRef(sourceFolder);
@@ -293,68 +265,9 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     else setChosen(v.code);
   };
   const openVersion = (v: Version) => {
-    setCopy(null);
     setAddingVersion(false);
     showVersion(v);
   };
-  // A copy ending in the dialog opens its version, or shows its failure there.
-  // Ended after the dialog closed, the workspace shows the version's receipt.
-  const endCopy = (v: Version, failed?: ForkFailure) => {
-    if (!addingVersion) setCopy(null);
-    else if (failed) setCopy((c) => (c?.version.id === v.id ? { ...c, failed } : c));
-    else openVersion(v);
-  };
-  const endCopied = useRef(endCopy);
-  endCopied.current = endCopy;
-  const startCopy = (content: string, v: Version, body: ForkBody, retried?: string) => {
-    setCopy({ version: v, body, retried });
-    void fork.run(() => client.versions.fork(content, v.id, body)).then((ok) => ok && current() && setCopy((c) => (c?.version.id === v.id ? { ...c, accepted: true } : c)));
-  };
-  const copying = copy && !copy.failed && !fork.error ? copy : null;
-  const copied = copying?.accepted ? copying.version : null;
-  const retried = copying?.retried;
-  const contentKey = item?.id;
-  useEffect(() => {
-    if (!copied || !contentKey) return;
-    const ctrl = new AbortController();
-    // The copy's receipt, or its failure's, in the new version's media metadata.
-    const check = () => void client.media.read({ kind: p.kind, id: contentKey, version: copied.id }, { editor: true, limit: 1, signal: ctrl.signal })
-      .then((r) => {
-        const state = forkState(r.meta);
-        if (ctrl.signal.aborted) return;
-        if (state.failed && state.failed.at !== retried) endCopied.current(copied, state.failed);
-        else if (state.copied && !state.failed) endCopied.current(copied);
-      }, () => {});
-    check();
-    const timer = setInterval(check, 2000);
-    return () => {
-      ctrl.abort();
-      clearInterval(timer);
-    };
-  }, [copied, retried, contentKey, p.kind, client]);
-  // This version's copy: the one followed here, else its barrier (the page
-  // was reloaded) or the last copy's failure.
-  const received = forkState(folder.read.read?.meta);
-  const copyingFrom = copying && copying.version.id === version?.id ? copying.body.from : received.copyingFrom;
-  const copyFailure = copyingFrom ? undefined : received.failed;
-  const refreshFiles = folder.read.refresh;
-  const reloadFiles = folder.read.reload;
-  const reloadContent = ed.reload;
-  const wasCopying = useRef(false);
-  useEffect(() => {
-    if (!copyingFrom) {
-      // Copied files, and chapters, which are the content's: read them again.
-      if (wasCopying.current) {
-        reloadFiles();
-        reloadContent();
-      }
-      wasCopying.current = false;
-      return;
-    }
-    wasCopying.current = true;
-    const timer = setInterval(refreshFiles, 2500);
-    return () => clearInterval(timer);
-  }, [copyingFrom, refreshFiles, reloadFiles, reloadContent]);
   const notices = usePageNotices(item?.id, version?.id, { client });
   const reloadNotices = notices.reload;
   // A ZIP's pages appear after its commit. Media updates alone do not
@@ -600,7 +513,6 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   // The host's label for a language, unless it is only the code.
   const nameOf = (l: string) => { const label = languages.find((x) => x.value === l)?.label; return label && label !== l ? label : languageName(l); };
   const versionChoices = versions.map((v) => ({ id: v.id, label: versionLabel(v, nameOf, p.labels) + (v.state === "deleted" ? ` · ${t("contentManager.deleted")}` : "") }));
-  const choiceLabel = (id: string) => versionChoices.find((v) => v.id === id)?.label ?? "";
   const discardLocalEdits = () => {
     folder.discard();
     fileDraft.discard();
@@ -778,20 +690,16 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 confirmRemove={false}
                 label={false}
                 layout="grid"
-                disabled={saving || !!copyingFrom}
+                disabled={saving}
                 inputLabel={t("readerEditor.files")}
                 selectedPage={page?.path ?? null}
                 onSelectPage={setPage}
               />
               {folder.read.error && <LoadFailed error={folder.read.error} message={t("contentManager.loadFailed")} retry={folder.read.reload} />}
-              {(copyingFrom || mediaFailed || filesPending || (!folder.read.error && selectedPages === 0)) && (
+              {(mediaFailed || filesPending || (!folder.read.error && selectedPages === 0)) && (
                 <p role="status" className="text-sm text-muted-foreground">
-                  {copyingFrom ? t("readerEditor.copying", { version: choiceLabel(copyingFrom) }) : mediaFailed ? t("readerEditor.filesFailed") : filesPending ? t("readerEditor.processing") : t("readerEditor.addPages")}
+                  {mediaFailed ? t("readerEditor.filesFailed") : filesPending ? t("readerEditor.processing") : t("readerEditor.addPages")}
                 </p>
-              )}
-              {copyFailure && item && version && (
-                <CopyFailed failure={copyFailure} version={choiceLabel(copyFailure.from)} pending={fork.pending}
-                  onRetry={(f) => startCopy(item.id, version, { from: f.from, playback: f.playback, segments: f.segments }, f.at)} />
               )}
               {item && version && <PageNotices content={item.id} version={version.id} client={client} onError={p.onError} />}
             </Panel>
@@ -923,38 +831,17 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
             <ErrorLine error={cover.error} />
           </DialogContent>
         </Dialog>
-        {/* Closed during a copy, the dialog shows the added version, which follows the copy. */}
-        <Dialog open={addingVersion} onOpenChange={(open) => {
-          if (open || !copy) setAddingVersion(open);
-          else if (copying) {
-            setAddingVersion(false);
-            showVersion(copy.version);
-          } else openVersion(copy.version);
-        }}>
+        <Dialog open={addingVersion} onOpenChange={setAddingVersion}>
           <DialogContent>
             <DialogHeader><DialogTitle>{t("contentEditor.addVersion")}</DialogTitle></DialogHeader>
-            <AddVersion heading={false} languages={model.languages} many={spec.versions.languages === "many"} pending={addVersion.pending || !!copying}
-              sources={versions.filter((v) => v.state !== "deleted").map((v) => ({ id: v.id, label: versionChoices.find((c) => c.id === v.id)?.label ?? v.code, audio: v.has_audio, chapters: !!spec.segments && v.segments.length > 0 }))}
-              onAdd={(input, from) => {
+            <AddVersion heading={false} languages={model.languages} many={spec.versions.languages === "many"} pending={addVersion.pending}
+              onAdd={(input) => {
                 if (!item) return;
-                const content = item.id;
-                void addVersion.run(() => client.contents.addVersion(content, { ...input, access: version?.access ?? item.access })).then((v) => {
-                  if (!v || !current()) return;
-                  if (from) startCopy(content, v, from);
-                  else openVersion(v);
+                void addVersion.run(() => client.contents.addVersion(item.id, { ...input, access: version?.access ?? item.access })).then((v) => {
+                  if (v && current()) openVersion(v);
                 });
               }} />
             <ErrorLine error={addVersion.error} />
-            {copy && (copy.failed ? (
-              <CopyFailed failure={copy.failed} version={choiceLabel(copy.body.from)} pending={fork.pending} onRetry={(f) => item && startCopy(item.id, copy.version, copy.body, f.at)} />
-            ) : fork.error ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <ErrorLine>{t("readerEditor.copyFailed", { error: contentError(m, fork.error) })}</ErrorLine>
-                <Button size="sm" variant="outline" disabled={fork.pending} onClick={() => item && startCopy(item.id, copy.version, copy.body, copy.retried)}>{t("common.retry")}</Button>
-              </div>
-            ) : (
-              <p role="status" className="text-sm text-pretty text-muted-foreground">{t("readerEditor.copying", { version: choiceLabel(copy.body.from) })}</p>
-            ))}
           </DialogContent>
         </Dialog>
         {dialog}

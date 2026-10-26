@@ -110,7 +110,7 @@ operation. This does not change the operation's result or its authentication.
   `media.uploadNamed(ref, file)` resolves the name content routes take
   (`contents.setCover(id, version, name)`: every file of a content lives in a
   version); `media.uploadInline({kind, id, version}, file)` puts a body image
-  in the version's private files, copied into the other versions, and
+  in that version's private files only, and
   resolves its reference (`ref`, `contentkit:i-{uuid}`, what the body stores:
   `imageRef(name)`) and a URL that shows it now; `polls.uploadImage` and
   `polls.uploadOptionImage` do both steps. Reads resolve references: a

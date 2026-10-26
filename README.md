@@ -154,7 +154,7 @@ normalization and the editor's reversible [page review](docs/api/uploads.md#page
 |---|---|---|
 | `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), content items and versions (`/v1/contents`, `/v1/manage or /v1/manage/{kind}`), catalog totals, comments, reactions, favorites, polls, comment bans, moderation | always |
 | `UploadRoutes` | `/v1/media/upload` | `Config.Media` |
-| `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, fork, download | `Config.Media` |
+| `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, download | `Config.Media` |
 | `CodeRoutes` | `/v1/codes/{code}` | always |
 | `EntityRoutes` | `/v1/entities`, `/v1/contents/{id}/entities`: listings and pages, writes for `root:entities:write` | always |
 | `DiscoveryRoutes` | public lists/search, history and `/v1/me/library` for purchased content | always; purchased access uses `Deps.Billing` |
@@ -696,7 +696,7 @@ their encodings so saved policies, grants and purchases keep working.
 Writes are batches; each transaction keeps `content_facets` current (rules
 through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
 documents dirty, queues `content_events` and calls media (republish,
-fork, delete). Content edits do not rename or reprice billing products. Published with a
+delete). Content edits do not rename or reprice billing products. Published with a
 future `publish_at` becomes visible when that time arrives; the periodic job
 records publication and runs its side effects. A deleted item
 stays readable to holders of its own keys; its media is erased after

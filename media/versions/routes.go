@@ -21,13 +21,6 @@ import (
 
 func init() { httpapi.Register(httpapi.Versions, routes) }
 
-// ForkBody forks a version from a sibling (Fork).
-type ForkBody struct {
-	From     string `json:"from"`
-	Playback bool   `json:"playback,omitempty"`
-	Segments bool   `json:"segments,omitempty"`
-}
-
 // Pending answers a version whose media is still being prepared: retry.
 type Pending struct {
 	Status string `json:"status"` // "pending"
@@ -57,11 +50,6 @@ var routes = []httpapi.Route[handler]{
 		Request:   ReaderMeta{},
 		Responses: []httpapi.Reply{httpapi.NoContent}},
 		Serve: httpapi.H(handler.setMeta)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/versions/{version}/fork", Resource: "reader", Auth: httpapi.User,
-		Doc:       "Fills a version without media from a sibling (editors): its uploads with their outputs, reader metadata and optionally its audio and segments, in a durable job.",
-		Request:   ForkBody{},
-		Responses: []httpapi.Reply{httpapi.Accepted(Pending{})}},
-		Serve: httpapi.H(handler.fork)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/download", Resource: "reader", Auth: httpapi.Public,
 		Doc:       "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's for an already served file, or the existing archive transfer route's for a ZIP or internal original/rendition (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
 		Responses: []httpapi.Reply{httpapi.OK(FileDownload{}), httpapi.Accepted(Pending{})},
@@ -159,20 +147,6 @@ func (h handler) replyNotices(w http.ResponseWriter, r *http.Request, out PageNo
 		http.SetCookie(w, out.Cookie)
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-func (h handler) fork(w http.ResponseWriter, r *http.Request) {
-	var b ForkBody
-	if err := decode(r, &b); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	if err := h.s.RequestFork(r.Context(), gate.Actor(r.Context()), Fork{Version: target(r), From: b.From, Playback: b.Playback,
-		Segments: b.Segments}); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, Pending{Status: "pending"})
 }
 
 func (h handler) download(w http.ResponseWriter, r *http.Request) {

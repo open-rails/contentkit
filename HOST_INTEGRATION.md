@@ -414,13 +414,13 @@ their publication going current; headless publishing already waits.
 **Content and poll images.** Every file of a content lives in a version,
 `{tenant}/{kind}/{id}/{version}/`: there is no content-level item, and
 versions share no files. A version's cover is one of its uploads with a
-public preset (shown while locked). Its copy of the body's images is its
+public preset (shown while locked). Its body images are its
 `Body` uploads (`Named`, with a private image preset and no public one, of a
 kind that publishes nothing): private files behind the version's item token,
 so a locked version's body images reach nobody else, and its openers, free or
 paid, are signed them as they are pages. A body image taken by `POST
-/contents/{id}/images` is copied into every other version, and a new version
-copies its sibling's (its fork source, else the first version). Poll images
+/contents/{id}/images` belongs only to its selected version. New versions begin
+empty and receive explicit uploads; no sibling text or images are copied. Poll images
 live in `{tenant}/poll/{poll_id}/`. Each is a `Named` upload (the server
 names it `i-{uuid}`).
 
@@ -836,7 +836,7 @@ layouts.
   kind reaches viewers only through `{kind}.published` items: one per
   segment of its pages, a locked version's previews (its rule's, else its
   kind's `preview`), and one playback item,
-  planned by `GET /v1/contents/{id}/versions/{vid}/reader`. Forks, page-archive
+  planned by `GET /v1/contents/{id}/versions/{vid}/reader`. Page-archive
   imports, reader metadata and downloads (a host watermark, quota buckets)
   complete it. A reader version with no cover of its own gets its leading
   released page as its cover (an upload marked `auto_cover`); a cover an

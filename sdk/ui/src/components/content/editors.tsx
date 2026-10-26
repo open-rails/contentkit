@@ -593,32 +593,17 @@ function LanguageFields({ languages, value, many, onChange }: { languages: reado
   );
 }
 
-/** A sibling a new version may start from, and what it has to copy. */
-export interface VersionSource {
-  id: string;
-  label: string;
-  audio: boolean;
-  chapters: boolean;
-}
-
-export function AddVersion({ languages, many, pending, sources, onAdd, heading = true, collapsible = false }: {
+export function AddVersion({ languages, many, pending, onAdd, heading = true, collapsible = false }: {
   languages: readonly string[];
   many: boolean;
   pending: boolean;
-  /** Offers "Start from" one of these: the new version copies its files, and its audio and chapters when ticked. */
-  sources?: readonly VersionSource[];
-  onAdd: (v: { languages: string[] }, from?: { from: string; playback: boolean; segments: boolean }) => void;
+  onAdd: (v: { languages: string[] }) => void;
   heading?: boolean;
   collapsible?: boolean;
 }) {
   const { t } = useMessages();
-  const id = useId();
   const [shown, setShown] = useState(!collapsible);
   const [langs, setLangs] = useState<string[]>([]);
-  const [from, setFrom] = useState(NONE);
-  const [audio, setAudio] = useState(true);
-  const [chapters, setChapters] = useState(false);
-  const source = sources?.find((s) => s.id === from);
   // In its own card section it gets a divider; inside a dialog (heading off) the dialog frames it.
   const frame = cn("grid gap-3", heading && "border-t border-border pt-4");
   if (!shown)
@@ -639,41 +624,6 @@ export function AddVersion({ languages, many, pending, sources, onAdd, heading =
         </div>
       )}
       <LanguageFields languages={languages} value={langs} many={many} onChange={setLangs} />
-      {!!sources?.length && (
-        <div className="grid w-full gap-2" data-ckui="add-version-source">
-          <Label htmlFor={`${id}-from`}>{t("readerEditor.startFrom")}</Label>
-          <Select value={from} onValueChange={(v) => setFrom(String(v ?? NONE))}>
-            <SelectTrigger id={`${id}-from`} size="sm" className="w-fit">
-              <SelectValue>{(v: string) => sources.find((s) => s.id === v)?.label ?? t("readerEditor.startEmpty")}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NONE}>{t("readerEditor.startEmpty")}</SelectItem>
-              {sources.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-sm text-pretty text-muted-foreground">{t("readerEditor.startFromHelp")}</p>
-          {source && (source.audio || source.chapters) && (
-            <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-              {source.audio && (
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" className="size-4 accent-primary" checked={audio} onChange={(e) => setAudio(e.target.checked)} />
-                  {t("readerEditor.copyAudio")}
-                </label>
-              )}
-              {source.chapters && (
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" className="size-4 accent-primary" checked={chapters} onChange={(e) => setChapters(e.target.checked)} />
-                  {t("readerEditor.copyChapters")}
-                </label>
-              )}
-            </div>
-          )}
-        </div>
-      )}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
@@ -681,7 +631,7 @@ export function AddVersion({ languages, many, pending, sources, onAdd, heading =
           variant="outline"
           disabled={pending || !langs.length}
           onClick={() => {
-            onAdd({ languages: langs }, source && { from: source.id, playback: source.audio && audio, segments: source.chapters && chapters });
+            onAdd({ languages: langs });
             setLangs([]);
             if (collapsible) setShown(false);
           }}

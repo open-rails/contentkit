@@ -29,17 +29,6 @@ type publishArgs struct {
 func (publishArgs) Kind() string                      { return "contentkit_version_publish" }
 func (a publishArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-// forkArgs fills a version from a sibling (Fork).
-type forkArgs struct {
-	Content  string `json:"content"`
-	Version  string `json:"version"`
-	From     string `json:"from"`
-	Playback bool   `json:"playback,omitempty"`
-	Segments bool   `json:"segments,omitempty"`
-}
-
-func (forkArgs) Kind() string { return "contentkit_version_fork" }
-
 // RiverJobs contributes the versions' workers, queue and recovery pass to
 // the host's River composition, beside media's own.
 func (s *Service) RiverJobs() riverhelpers.Contribution {
@@ -47,8 +36,6 @@ func (s *Service) RiverJobs() riverhelpers.Contribution {
 		for _, add := range []func(*river.Workers) error{
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &publishWorker{s: s}) },
 			s.addReleaseWorker,
-			func(w *river.Workers) error { return river.AddWorkerSafely(w, &forkWorker{s: s}) },
-			func(w *river.Workers) error { return river.AddWorkerSafely(w, &bodyCopyWorker{s: s}) },
 			func(w *river.Workers) error { return river.AddWorkerSafely(w, &playableWorker{s: s}) },
 		} {
 			if err := add(cfg.Workers); err != nil {
@@ -158,38 +145,4 @@ func (s *Service) publish(ctx context.Context, t Target) error {
 	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 		return s.SchedulePublicationTx(ctx, tx, []Target{t})
 	})
-}
-
-type forkWorker struct {
-	river.WorkerDefaults[forkArgs]
-	s *Service
-}
-
-func (w *forkWorker) Timeout(*river.Job[forkArgs]) time.Duration { return time.Hour }
-
-func (w *forkWorker) Work(ctx context.Context, job *river.Job[forkArgs]) error {
-	err := w.s.fork(ctx, job.Args)
-	reason := ""
-	switch {
-	case errors.Is(err, errForkConflict):
-		reason = "destination"
-	case errors.Is(err, errForkSource):
-		reason = "source"
-	default:
-		err = outcome(err)
-		var cancel *rivertype.JobCancelError
-		var snooze *rivertype.JobSnoozeError
-		if err == nil || job.Attempt < job.MaxAttempts || errors.As(err, &cancel) || errors.As(err, &snooze) {
-			return err
-		}
-		// River discards the job after this attempt.
-		if ferr := w.s.forkFailed(ctx, job.Args, "error"); ferr != nil {
-			return errors.Join(err, ferr)
-		}
-		return err
-	}
-	if ferr := w.s.forkFailed(ctx, job.Args, reason); ferr != nil {
-		return ferr
-	}
-	return river.JobCancel(err)
 }

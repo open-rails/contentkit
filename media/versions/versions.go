@@ -3,9 +3,8 @@
 // its own. This package answers media's
 // hooks from the content model (who uploads, who reads, the facts a
 // version's media yields), records immutable ready-file snapshots for viewers
-// (chapter metadata, signed previews and playback), forks and imports versions' media, copies body
-// images between versions, and serves the reader plan, reader metadata and
-// downloads.
+// (chapter metadata, signed previews and playback), and serves the reader plan,
+// reader metadata and downloads. Each version receives its own explicit uploads.
 //
 // Whether a viewer sees, opens or edits a content or a version is the
 // catalog's decision over the access gate, ContentKit's own
@@ -258,8 +257,7 @@ var (
 	// ErrNotFound is a content or version that does not exist, or that the
 	// viewer may not see.
 	ErrNotFound = errors.New("versions: not found")
-	// ErrNotReady is a version whose media is still processing, being
-	// forked or imported, or not yet published.
+	// ErrNotReady is a version whose media is still processing or not yet published.
 	ErrNotReady = errors.New("versions: media not ready")
 	// ErrNoDownload is a version without the file its kind's download
 	// serves: nothing uploaded, or an upload that failed or was dropped.

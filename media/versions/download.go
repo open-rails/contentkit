@@ -713,7 +713,7 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 	} else if err != nil {
 		return media.Item{}, nil, err
 	}
-	if m.Meta[forkMeta] != nil || !m.PublicationLayoutReady() {
+	if !m.PublicationLayoutReady() {
 		return media.Item{}, nil, ErrNotReady
 	}
 	active, err := s.activeRelease(ctx, s.o.Pool, t)
