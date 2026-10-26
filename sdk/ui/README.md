@@ -733,7 +733,9 @@ and language. An added version begins empty and receives explicit uploads.
 
 `Content.title`, `Content.body` and other display fields are read-only projections
 of `selected_version_id`. Editors use `version.text`; there is no parent text
-map or sibling body fallback. Inline images resolve only against that edition's
+map or sibling body fallback. `useContentDetail` retains the visible edition index
+for navigation while resolving text and image URLs from the exact selected
+edition. Inline images resolve only against that edition's
 media. A host using `title_policy: original_and_version` displays that version's
 localized title or its own original title, never another version's title.
 
@@ -828,9 +830,9 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
 
 For reader content, each version has a canonical editor URL under the manager:
 `<basePath>/<contentCode>/versions/<versionCode>`. An older content-only URL
-opens its first version. Shared gallery text and entities are explicitly marked;
-version traits, credits, files, chapters and reading metadata edit only the
-selected version. Version navigation warns before discarding unsaved changes.
+opens its first version. The overall item holds shared entities and channel authority;
+titles, summaries, bodies, traits, credits, files, chapters and reading metadata
+edit only the selected version. Version navigation warns before discarding unsaved changes.
 The host still owns navigation outside the flow, including browser Back handling.
 
 - **`ContentManager`**: the items of one `kind` the caller manages, by
