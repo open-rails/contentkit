@@ -512,6 +512,24 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 	if len(list) != len(updates) {
 		return nil, fmt.Errorf("%w: a group is updated twice", ErrInvalid)
 	}
+	// Channel permission providers may share this pool. Resolve the current
+	// grants before holding a SQL connection, then fence the authorized identity.
+	authorized := map[EntityID]Entity{}
+	if s.channels && !staff {
+		before, err := s.Entities(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		if len(before) != len(ids) {
+			return nil, ErrNotFound
+		}
+		if err := s.mayEdit(ctx, before); err != nil {
+			return nil, err
+		}
+		for _, g := range before {
+			authorized[g.ID] = g
+		}
+	}
 	topology := slices.ContainsFunc(updates, func(u EntityUpdate) bool { return u.ParentID != nil || u.State != nil })
 	out := make([]Entity, len(updates))
 	err = s.run(ctx, func(q Querier) error {
@@ -524,7 +542,14 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		if err != nil {
 			return err
 		}
-		if err := s.mayEdit(ctx, locked); err != nil {
+		if s.channels && !staff {
+			for _, g := range locked {
+				prior, ok := authorized[g.ID]
+				if !ok || prior.Revision != g.Revision || prior.AuthScope != g.AuthScope || prior.State != g.State {
+					return ErrConflict
+				}
+			}
+		} else if err := s.mayEdit(ctx, locked); err != nil {
 			return err
 		}
 		current := map[EntityID]Entity{}
