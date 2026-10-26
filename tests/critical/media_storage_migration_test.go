@@ -153,6 +153,17 @@ func TestLegacyMediaStorageMigration(t *testing.T) {
 		if publication.Staged != 1 || publication.Queued != 2 {
 			t.Fatalf("publication conversion did not stage and durably queue the editions: %+v", publication)
 		}
+		// The migration itself admits runnable release requests. Metadata jobs
+		// cannot supply them later because startup validates before workers run.
+		var accepted int
+		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{schema, "content_publication_requests"}.Sanitize()+` r
+ WHERE r.tenant_id=$1 AND r.version_id=ANY($2) AND r.current AND r.state='pending'
+ AND EXISTS(SELECT 1 FROM `+pgx.Identifier{schema + "_river", "river_job"}.Sanitize()+` j
+ WHERE j.kind='contentkit_version_release' AND j.args->>'id'=r.id::text AND j.state IN ('available','scheduled'))`,
+			cfg.Tenant, []string{old.Ref.Version, old.Bare.Versions[0].ID}).Scan(&accepted))
+		if accepted != 2 {
+			t.Fatalf("migration returned before accepting both release requests: %d", accepted)
+		}
 		engine, err := ck.New(t.Context(), cfg, deps)
 		must(t, err)
 		defer func() { must(t, engine.Close(context.Background())) }()
