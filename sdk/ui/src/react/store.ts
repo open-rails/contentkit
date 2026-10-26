@@ -193,7 +193,14 @@ export class ReadStore {
       (e) => {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
-        this.update(s, { read: null, loading: false, loaded: true, error: toContentKitError(e) });
+        const error = toContentKitError(e);
+        const before = s.entry.read;
+        // A fault, unlike a refusal, leaves the previous grant usable until it
+        // expires; the refresh timer retries it meanwhile.
+        const fault = error.transient || error.status >= 500 || error.status === 408 || error.code === "rate_limited" || error.code === "aborted";
+        const keep = fault && !!before && (!before.expires || before.expires * 1000 > Date.now());
+        this.update(s, { read: keep ? before : null, loading: false, loaded: true, error });
+        if (keep) this.schedule(s);
       },
     );
   }
