@@ -688,8 +688,9 @@ Likes and favorites keep their existing atomic counters.
 The engine builds separate entity and channel interfaces from `Config.Content`.
 Metadata operations use `/entities`; channel operations use `/channels`. Channels
 retain their editor teams and optional billing entitlements. Their lifecycle
-changes enqueue exact durable sync work in the writing transaction, including
-when no local worker is running. Ordinary tags and series need no lifecycle work.
+operations call AuthKit directly, report failures and support idempotent caller
+retries. No entity/channel sync worker is registered. Physical deletion stays
+with the content-purge sweep. Ordinary tags and series need no lifecycle work.
 One primary channel governs the overall item and all of its versions; a repost
 only references that original from another channel and grants no editing rights.
 

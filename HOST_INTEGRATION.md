@@ -1413,8 +1413,8 @@ version-level associations are replaced independently. Writes refresh associatio
 facets in the same transaction. Entity counts and automatic covers are derived
 on reads, so edits and release times take effect without a recount job.
 Channels have a separate `/channels` interface and cannot be read or changed
-through ordinary metadata operations. Channel lifecycle changes enqueue exact
-durable work; descriptive entities need no authorization lifecycle worker.
+through ordinary metadata operations. Channel lifecycle changes call AuthKit synchronously and return failures;
+descriptive entities need no authorization lifecycle worker.
 The entity routes remain `/v1/entities…` and `/v1/contents/{id}/entities`.
 
 Keyword documents enrich content with active associations and their ancestors.
@@ -1533,13 +1533,14 @@ Nothing reads cached facet scores. See
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
 
-Entity lifecycle changes enqueue `contentkit_entity_sync` in the same transaction
-as the entity write, including imports and writes made before local workers start.
-That job provisions or retires channel editor groups and follows channel deletion
-or restoration into its owned content. There is no periodic entity reconciliation
-scan. River retains failed work for explicit retry after its normal attempt limit.
-Standalone entity stores must point `entities.Options.RiverSchema` at migrated
-River tables (by default, `<entity-schema>_river`).
+Channel create/delete/restore calls the existing AuthKit client synchronously.
+The same channel/group identity makes caller retries safe, including a lost
+remote response after commit. Incomplete/deleted channels grant no authority.
+There is no `contentkit_entity_sync` or replacement lifecycle job. Imports finish
+their channel calls after committing identity, then report provider failures per
+record so replay uses the same external IDs. Explicit upgrade preflight requires
+old actionable lifecycle work completed by the previous version before retiring
+its remaining no-op queued rows; terminal history and foreign work are retained.
 
 ## Post contributors and attribution
 

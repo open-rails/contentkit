@@ -62,10 +62,13 @@ Personal account comment bans apply to unowned personal posts. Channel posts use
 the channel's moderation scope, so an author's personal block cannot govern a
 community or official blog.
 
-The channel lifecycle job provisions/retires the AuthKit group and handles
-channel deletion/restoration. It is exact durable work triggered by a change,
-not permission copying or periodic reconciliation. App staff retain their normal
-authority; a dedicated blog-editor role can grant only one channel's capabilities.
+Channel creation, deletion and restoration call AuthKit synchronously. A failed
+call is reported to the caller, who can retry the same operation with the same
+channel/group identity. This also covers a remote AuthKit response lost after
+committing. Incomplete or deleted channels grant no editorial authority.
+There is no entity-sync or channel-lifecycle River job. App staff retain their
+normal authority; a dedicated blog-editor role grants only one channel's
+capabilities. Physical retention cleanup remains in the content-purge sweep.
 
 ## One fixed official channel
 
