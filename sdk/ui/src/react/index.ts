@@ -74,7 +74,6 @@ export {
   useEntities,
   useEntitiesPage,
   useKinds,
-  useMyEntities,
   type EntityFilter,
   type EntitySort,
   type Member,

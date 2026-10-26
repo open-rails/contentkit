@@ -12,7 +12,6 @@ import type {
   MemberRef,
   Membership,
   MergeReport,
-  MyEntityPage,
   Name,
   RefBody,
   Written,
@@ -25,8 +24,6 @@ import { call, type RouteQuery } from "./route.js";
 export type EntityQuery = RouteQuery<"GET", "/entities">;
 /** Staff entity listing, including internal entities. */
 export type ManageEntityQuery = RouteQuery<"GET", "/manage/entities">;
-/** GET /me/entities filters. */
-export type MyEntityQuery = RouteQuery<"GET", "/me/entities">;
 /** An entity's image slots: every kind's cover, a user-owned kind's avatar. */
 export type EntityImageSlot = "cover" | "avatar";
 /** GET /entities/{id}/members paging. */
@@ -84,10 +81,6 @@ export class EntitiesClient {
   async uploadImage(entity: { kind: string; id: string }, slot: EntityImageSlot, file: Blob & { name?: string }, o: Omit<NamedOptions, "path"> = {}): Promise<Entity> {
     const up = await this.media.uploadNamed(this.folder(entity), file, { ...o, path: `${slot}/${file.name || slot}` });
     return this.update(entity.id, { [slot]: { image: up.name } });
-  }
-  /** Entities the signed-in person owns, edits or belongs to. */
-  mine(q: MyEntityQuery = {}, signal?: AbortSignal): Promise<MyEntityPage> {
-    return call(this.http, "GET", "/me/entities", { query: q, signal });
   }
   merge(id: string, into: string): Promise<MergeReport> {
     return this.write(call(this.http, "POST", "/entities/{id}/merge", { params: { id }, body: { into } }));

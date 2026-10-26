@@ -462,20 +462,20 @@ if (group === "catalog_publication") {
   assert.equal(removed.id, tags[1].id);
   assert.equal(removed.state, "deleted");
   await refused(() => anonymous.entities.get(tags[1].id), 404, "not_found");
-  const mine = await owner.entities.mine({ kind: "channel" });
+  const mine = await owner.channels.mine();
   assert.deepEqual(
-    mine.entities.map((x) => x.id),
+    mine.channels.map((x) => x.id),
     [fixture.channel],
   );
   assert.deepEqual(
-    (await reader.entities.mine({ kind: "channel" })).entities,
+    (await reader.channels.mine()).channels,
     [],
   );
   proved(
     "EntitiesClient.create",
     "EntitiesClient.update",
     "EntitiesClient.remove",
-    "EntitiesClient.mine",
+    "ChannelsClient.mine",
   );
   const secret = (
     await owner.entities.create([
@@ -612,6 +612,34 @@ if (group === "catalog_publication") {
   assert.deepEqual((await owner.discovery.library()).items, []);
   await refused(() => anonymous.discovery.library(), 401, "unauthorized");
   proved("DiscoveryClient.library");
+
+  const channel = await owner.channels.get(fixture.channel);
+  assert.equal(channel.id, fixture.channel);
+  assert(!("kind" in channel), "channel is not a metadata entity");
+  const destination = await reader.channels.create({ slug: "typescript-repost-home", names: [{ language: "en", kind: "name", name: "Repost Home" }] });
+  assert.equal((await reader.channels.mine()).channels.find((entry) => entry.id === destination.id)?.can_post, true);
+  assert.deepEqual((await anonymous.channels.list({ slug: destination.slug })).channels.map((entry) => entry.id), [destination.id]);
+  await reader.channels.update(destination.id, { names: [{ language: "en", kind: "name", name: "Updated Repost Home" }] });
+  assert.equal((await anonymous.channels.get(destination.id)).name, "Updated Repost Home");
+  await reader.channels.setEntities(destination.id, [tags[0].id]);
+  assert.deepEqual((await anonymous.channels.entities(destination.id)).map((entry) => entry.id), [tags[0].id]);
+  const original = await owner.contents.create({ kind: "article", channel_id: channel.id, text: { en: { title: "A canonical channel original", body: "One original across destinations" } } });
+  await owner.contents.publish(original.id);
+  await released(original.id);
+  await reader.channels.repost(destination.id, original.id);
+  await reader.channels.repost(destination.id, original.id);
+  const feed = await reader.channels.contents(destination.id, { language: "en" });
+  assert.deepEqual(ids(feed), [original.id], "retries must not duplicate a repost");
+  assert.equal(feed.contents[0].channel.id, channel.id, "repost retains the original channel");
+  assert.equal(feed.contents[0].repost.channel_id, destination.id);
+  assert.equal(feed.contents[0].repost.can_remove, true);
+  await refused(() => reader.contents.update(original.id, { access: { level: "public" } }), 403, "forbidden");
+  await reader.channels.removeRepost(destination.id, original.id);
+  assert.deepEqual(ids(await anonymous.channels.contents(destination.id)), []);
+  assert.equal((await anonymous.contents.get(original.id)).id, original.id, "removing a repost must keep the original");
+  await reader.channels.remove(destination.id);
+  await refused(() => anonymous.channels.get(destination.id), 404, "not_found");
+  proved("ChannelsClient.create", "ChannelsClient.get", "ChannelsClient.list", "ChannelsClient.update", "ChannelsClient.entities", "ChannelsClient.setEntities", "ChannelsClient.repost", "ChannelsClient.removeRepost", "ChannelsClient.contents", "ChannelsClient.remove");
 } else if (group.startsWith("media_")) {
   bindings.push(...(await runMediaContracts(group, fixture)));
 } else throw new Error(`Unknown contract group ${group}`);

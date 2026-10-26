@@ -4,6 +4,7 @@ import { createRoot } from "../../../sdk/ui/node_modules/react-dom/client.js";
 import { createContentKitClient } from "../../../sdk/ui/dist/client.js";
 import { ContentKitProvider } from "../../../sdk/ui/dist/react/provider.js";
 import { useFavorite } from "../../../sdk/ui/dist/react/engagement.js";
+import { ChannelFeed, RepostButton } from "../../../sdk/ui/dist/index.js";
 
 let fixture, bearer, currentViewer, client, root;
 const target = () => ({ type: "contents", id: fixture.item });
@@ -18,6 +19,13 @@ function render() {
 window.critical = {
   initialize(input) { fixture=input; bearer=input.aliceToken; currentViewer=input.alice; client=createContentKitClient({baseUrl:"/content",token:()=>bearer}); window.client=client; },
   mount() { render(); },
+  mountChannel() {
+    root ??= createRoot(document.querySelector("#root"));
+    root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" },
+      React.createElement(React.Fragment, null,
+        React.createElement(RepostButton, { contentId: fixture.item, originalChannelId: fixture.originalChannel }),
+        React.createElement(ChannelFeed, { channelId: fixture.destination, query: { language: "en" }, empty: React.createElement("p", { id: "empty-channel" }, "Empty channel") })));
+  },
   switchToBob() {
     window.leaks=[];
     window.observer=new MutationObserver(()=>{const view=document.querySelector("#favorite");if(view?.dataset.viewer===fixture.bob&&view.textContent==="true")window.leaks.push(view.textContent);});
