@@ -774,6 +774,21 @@
       ]
     },
     {
+      "id": "CK-J07-S18",
+      "journey": "CK-J07",
+      "behavior": "Canonical measured engagement is accepted despite derived summary failure; future interactions or explicit rebuild refresh summaries without automatic repair",
+      "status": "verified",
+      "evidence": [
+        "Actual ClickHouse INSERT constraints independently fail state, daily and canonical tables in disposable databases. Source receipts, revision deduplication, stale public state/activity reads, next-interaction convergence and explicit repair errors are asserted against real persisted data.",
+        "Signal schema recovery runs through the real engine callback with an unstarted River fleet: preference catch-up proves recovery occurred, while projection repair is neither enqueued nor registered. Focused and full execution receipts remain separate qualification gates."
+      ],
+      "cases": [
+        "TestEngagementSummaryFailuresAreBestEffort",
+        "TestEngagementCanonicalFailuresRemainErrors",
+        "TestSignalRecoveryDoesNotScheduleProjectionRepair"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
