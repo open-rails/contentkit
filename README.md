@@ -71,7 +71,7 @@ A reference to another catalog is an error, never remapped. See [scope.go](scope
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `catalog` | content items of the configured kinds (a blog is kind `blog`): shared identity and creators; versions own localized text, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
-| `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and entities; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
+| `content` | comments (in language threads), reactions, favorites, polls with predefined choices and their counts on content items, versions and entities; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) port, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | Indexed keyword search (exact/alias/substring/prefix/typo, EN/ZH/JA/KO) with eligibility, documents and dirty queue, RRF |
 | `entities` | storage for content entities by kind (`kinds.Config.EntityKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles and positions; effective entities for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
@@ -121,7 +121,7 @@ for _, r := range routes {
   versions' (`media.ForContent`, the `media/versions` service). All content
   belongs to ContentKit: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
-  projection repair, publication events, event retention and content purge,
+  popularity refresh, publication events, event retention and content purge,
   and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and
@@ -567,7 +567,7 @@ Personalized, watermarked archives stream per request with
 Ordinary reader archives use the bounded, on-demand private cache described
 above; only non-reader ZIP processing presets are generated ahead of time.
 
-**Video** (`media/video`): one `contentkit_media_video` job on `media_video` owns
+**Video** (`media/video`): the unified `contentkit_media_derivatives` job on `media_derivatives` owns
 planning, conversion and publication. It checkpoints bounded encoded ranges,
 yields between them so shorter videos can run, and resumes successful ranges
 after shutdown. An `HLS` preset encodes the ladder (rung = short
@@ -786,8 +786,9 @@ routes (signals, exposures, history, popular, similar, recommend) land with
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract)
   and, for interaction data, [interaction erasure](HOST_INTEGRATION.md#interaction-erasure).
 - Reactions and favorites reach the signal plane from their own revisioned
-  rows: the engine's preference job syncs them (watermark with a commit
-  overlap) and re-sends them daily; see
+  rows: the engine's preference job syncs changes every five minutes using a
+  revision watermark with a five-minute commit overlap, and re-sends all rows
+  daily; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 
 ## Testing

@@ -66,7 +66,7 @@ func videoFamily(p *media.Private) bool { return isEncode(p) || p.Subtitles != n
 
 // planVideo probes stale sources and prepares durable conversion checkpoints.
 // It also converts subtitles and refreshes generated frames.
-func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoArgs) error {
+func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.DerivativeArgs) error {
 	e := c.Encoder
 	item, err := e.ms.Registry().Item(args.Ref)
 	if err != nil {

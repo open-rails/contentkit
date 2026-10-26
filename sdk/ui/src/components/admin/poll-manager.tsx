@@ -24,8 +24,6 @@ type Choice = string | { value: string; label: string };
 export interface PollManagerProps extends AdminFlowProps, AdminRouteProps {
   /** Languages to filter by and write in: codes, or codes with labels; the first is a new poll's. */
   languages?: readonly Choice[];
-  /** Offer free-text polls (the host registered an answer classifier). */
-  freeText?: boolean;
   /** Most options per poll. Default 10. */
   maxOptions?: number;
   pageSize?: number;
@@ -85,7 +83,6 @@ function Polls({ basePath, navigation, ...p }: Inner) {
       {isNew ? (
         <PollEditor
           languages={languages.length ? languages : undefined}
-          freeText={p.freeText}
           maxOptions={p.maxOptions}
           client={p.client}
           onError={p.onError}
@@ -235,7 +232,6 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
           </li>
           {list.items.map((poll) => {
             const s = pollState(poll);
-            const free = poll.kind === "free_text";
             return (
               <li
                 key={poll.id}
@@ -249,14 +245,13 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
                   </button>
                   <span className="text-xs text-muted-foreground">
                     {languageName(poll.language)}
-                    {free && ` · ${t("pollEditor.freeText")}`}
                   </span>
                 </div>
                 <div>
                   <PollStateDot state={s} />
                 </div>
-                <div className="text-muted-foreground tabular-nums" title={free ? m.plural("poll.answers", poll.answer_count ?? 0) : m.plural("poll.votes", poll.total_votes)}>
-                  {count.format(free ? (poll.answer_count ?? 0) : poll.total_votes)}
+                <div className="text-muted-foreground tabular-nums" title={m.plural("poll.votes", poll.total_votes)}>
+                  {count.format(poll.total_votes)}
                 </div>
                 <div className="grid text-muted-foreground">
                   <span>{s === "closed" && poll.closes_at ? t("pollManager.closedOn", { date: formatDate(m, poll.closes_at, false) }) : t(s === "scheduled" ? "pollManager.goesLive" : "pollManager.wentLive", { date: formatDate(m, poll.live_at, false) })}</span>

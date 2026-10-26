@@ -44,7 +44,7 @@ export interface ContentKitClient {
   readonly reactions: ReactionsClient;
   /** The signed-in caller's favorites. */
   readonly favorites: FavoritesClient;
-  /** Polls: votes, free-text answers and the staff editor. */
+  /** Polls: predefined choices, final votes and the staff editor. */
   readonly polls: PollsClient;
   /** Comment bans, owner and global. */
   readonly bans: BansClient;

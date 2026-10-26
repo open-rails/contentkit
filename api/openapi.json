@@ -2504,7 +2504,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Creates a poll with its options; a free-text poll needs an AnswerClassifier.",
+        "summary": "Creates a poll with at least two predefined options; only multiple_choice is supported.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2539,7 +2539,7 @@
         "x-contentkit-auth": "staff",
         "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
-          "not_configured"
+          "invalid_request"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -2651,7 +2651,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders.",
+        "summary": "A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders.",
         "parameters": [
           {
             "name": "id",
@@ -2856,68 +2856,6 @@
           "not_found",
           "rate_limited",
           "unauthorized"
-        ],
-        "x-contentkit-error-sets": [
-          "module:content",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/polls/{id}/answer": {
-      "post": {
-        "tags": [
-          "polls"
-        ],
-        "summary": "Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PollAnswerInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Poll"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "content",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "comment_banned",
-          "forbidden",
-          "moderation_rejected",
-          "not_found",
-          "rate_limited"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -13324,47 +13262,6 @@
           "votes"
         ]
       },
-      "AnswerGroup": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "count": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "label",
-          "count"
-        ]
-      },
-      "AnswerRecord": {
-        "type": "object",
-        "properties": {
-          "poll": {
-            "$ref": "#/components/schemas/Ref"
-          },
-          "user_id": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
       "ArchiveStatus": {
         "type": "object",
         "properties": {
@@ -13606,12 +13503,6 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/VoteRecord"
-            }
-          },
-          "answers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AnswerRecord"
             }
           },
           "legacy_reading": {
@@ -17842,18 +17733,6 @@
           },
           "my_option": {
             "type": "string"
-          },
-          "answer_count": {
-            "type": "integer"
-          },
-          "groups": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AnswerGroup"
-            }
-          },
-          "my_answer": {
-            "$ref": "#/components/schemas/PollAnswer"
           }
         },
         "required": [
@@ -17868,38 +17747,6 @@
           "options",
           "voted"
         ]
-      },
-      "PollAnswer": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "classified": {
-            "type": "boolean"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "id",
-          "text",
-          "classified",
-          "updated_at"
-        ]
-      },
-      "PollAnswerInput": {
-        "type": "object",
-        "properties": {
-          "text": {
-            "type": "string"
-          }
-        }
       },
       "PollImage": {
         "type": "object",
@@ -19956,8 +19803,7 @@
       "PollKind": {
         "type": "string",
         "enum": [
-          "multiple_choice",
-          "free_text"
+          "multiple_choice"
         ]
       },
       "ModerationState": {

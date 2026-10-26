@@ -46,10 +46,11 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
 	ib, ia := create(b, "App B publication"), create(a, "App A publication")
 	var qa, qb string
 	for id, queue := range map[string]*string{ia.ID: &qa, ib.ID: &qb} {
-		must(t, w.pool.QueryRow(t.Context(), `SELECT queue FROM `+w.schema+`_river.river_job
- WHERE kind='contentkit_content_publish_due' AND args->>'content'=$1 ORDER BY id LIMIT 1`, id).Scan(queue))
+		must(t, w.pool.QueryRow(t.Context(), `SELECT j.queue FROM `+w.schema+`_river.river_job j
+ JOIN `+w.schema+`.content_publication_requests r ON r.id::text=j.args->>'id'
+ WHERE j.kind='contentkit_version_release' AND r.content_id=$1 ORDER BY j.id LIMIT 1`, id).Scan(queue))
 	}
-	if qa != catalog.QueueFor(a.cfg.Scope.AppID.String()) || qb != catalog.QueueFor(b.cfg.Scope.AppID.String()) || qa == qb {
+	if qa != versions.QueueFor(publicationTenant(a)) || qb != versions.QueueFor(publicationTenant(b)) || qa == qb {
 		t.Fatalf("publication queues do not preserve app ownership: A=%s B=%s", qa, qb)
 	}
 	must(t, fa.Start(t.Context()))
@@ -60,8 +61,9 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
 	_, err := b.client("").GetContent(t.Context(), ib.ID, ck.GetContentQuery{})
 	requireError(t, err, 404, "not_found")
 	var state rivertype.JobState
-	must(t, w.pool.QueryRow(t.Context(), `SELECT state FROM `+w.schema+`_river.river_job
- WHERE kind='contentkit_content_publish_due' AND args->>'content'=$1 ORDER BY id LIMIT 1`, ib.ID).Scan(&state))
+	must(t, w.pool.QueryRow(t.Context(), `SELECT j.state FROM `+w.schema+`_river.river_job j
+ JOIN `+w.schema+`.content_publication_requests r ON r.id::text=j.args->>'id'
+ WHERE j.kind='contentkit_version_release' AND r.content_id=$1 ORDER BY j.id LIMIT 1`, ib.ID).Scan(&state))
 	if state != rivertype.JobStateAvailable && state != rivertype.JobStateScheduled {
 		t.Fatalf("app A consumed app B's durable publication: %s", state)
 	}
@@ -131,11 +133,17 @@ func TestPublicationQueueMigrationPreservesOwners(t *testing.T) {
 	if old.State != rivertype.JobStateCancelled {
 		t.Fatalf("unscoped periodic row was not retired after replacement: %s", old.State)
 	}
-	var count int
-	must(t, w.pool.QueryRow(t.Context(), `SELECT count(DISTINCT queue) FROM `+w.schema+`_river.river_job
- WHERE kind='contentkit_content_publish_due' AND queue<>$1 AND state='available'`, catalog.Queue).Scan(&count))
-	if count != len(w.apps) {
-		t.Fatalf("periodic obligation assigned to %d app queues, want %d", count, len(w.apps))
+	// Each application explicitly converts only its owned publication obligations.
+	for _, app := range w.apps {
+		must(t, ck.MigratePostgres(t.Context(), w.pool, app.cfg))
+	}
+	var oldJobs, requests int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job
+ WHERE kind IN ('contentkit_content_publish_due','contentkit_catalog_publish_due')
+ AND state IN ('available','pending','retryable','scheduled')`).Scan(&oldJobs))
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_publication_requests`).Scan(&requests))
+	if oldJobs != 0 || requests != 0 {
+		t.Fatalf("retired sweep created work for draft editions: old jobs=%d requests=%d", oldJobs, requests)
 	}
 	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
 }

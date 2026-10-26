@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
@@ -31,28 +30,6 @@ type WorkerConfig struct {
 	Logger      *slog.Logger
 }
 
-// Contribution registers the video worker and queue for
-// riverhelpers.New on a client with c.Schema.
-func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
-	if c.Encoder == nil || c.Pool == nil {
-		return riverhelpers.Contribution{}, errors.New("media/video: WorkerConfig needs an Encoder and a Pool")
-	}
-	if err := workqueue.ValidSchema(c.Schema); err != nil {
-		return riverhelpers.Contribution{}, err
-	}
-	c = c.defaults()
-	return riverhelpers.NewContribution("contentkit-media-video", func(_ context.Context, cfg *river.Config) error {
-		if cfg.Schema != c.Schema {
-			return fmt.Errorf("media/video: River schema must be %q, not %q", c.Schema, cfg.Schema)
-		}
-		if _, ok := cfg.Queues[workqueue.VideoQueue]; ok {
-			return fmt.Errorf("media/video: queue %q already registered", workqueue.VideoQueue)
-		}
-		cfg.Queues[workqueue.VideoQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
-		return river.AddWorkerSafely(cfg.Workers, &videoWorker{c: c})
-	}, nil, nil), nil
-}
-
 func (c WorkerConfig) defaults() WorkerConfig {
 	if c.MaxWorkers <= 0 {
 		c.MaxWorkers = 1
@@ -66,32 +43,21 @@ func (c WorkerConfig) defaults() WorkerConfig {
 	return c
 }
 
-// ClientConfig is a River client configuration running only c's video jobs.
-func ClientConfig(c WorkerConfig) *river.Config {
+// Run performs one resumable video step inside the item's derivative job.
+// The media worker also runs image producers; no video River handler is registered.
+func (c WorkerConfig) Run(ctx context.Context, job *river.Job[workqueue.DerivativeArgs]) error {
 	c = c.defaults()
-	return &river.Config{Schema: c.Schema, JobTimeout: time.Hour,
-		RescueStuckJobsAfter: 2 * time.Hour, Logger: c.Logger}
-}
-
-type videoWorker struct {
-	river.WorkerDefaults[workqueue.VideoArgs]
-	c WorkerConfig
-}
-
-func (w *videoWorker) Timeout(*river.Job[workqueue.VideoArgs]) time.Duration { return time.Hour }
-
-func (w *videoWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoArgs]) error {
-	defer w.c.clearProgress(ctx, job.ID)
-	if err := w.c.Encoder.ms.Recover(ctx, job.Args.Ref); err != nil {
+	defer c.clearProgress(ctx, job.ID)
+	if err := c.Encoder.ms.Recover(ctx, job.Args.Ref); err != nil {
 		return err
 	}
-	return w.c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return w.c.convert(ctx, job) })
+	return c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return c.convert(ctx, job) })
 }
 
 // convert owns the whole conversion. Each attempt checkpoints at most one
 // bounded chunk and publishes a finished rung before yielding the same job.
 // The item lock prevents duplicate requests from encoding the same chunk.
-func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.VideoArgs]) error {
+func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.DerivativeArgs]) error {
 	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:video:"+job.Args.Ref.String(), false)
 	if err != nil {
 		return err

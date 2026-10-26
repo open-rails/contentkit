@@ -204,9 +204,8 @@ func (e *Engine) connectSignals(ctx context.Context, host signal.Conn) (signal.C
 	return conn, nil
 }
 
-// signalsBack queues what the signal plane missed while it was down:
-// preferences and projection repair. Before Start the periodic jobs' first
-// runs do it.
+// signalsBack queues preferences the signal plane missed while it was down.
+// Before Start the periodic preference job's first run does it.
 func (e *Engine) signalsBack() {
 	c := e.jobs.bound()
 	if c == nil {
@@ -215,7 +214,7 @@ func (e *Engine) signalsBack() {
 	opts := &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
 	ctx, cancel := context.WithTimeout(context.Background(), signalCheckWait)
 	defer cancel()
-	if _, err := c.InsertMany(ctx, []river.InsertManyParams{{Args: preferenceSyncArgs{}, InsertOpts: opts}, {Args: repairArgs{}, InsertOpts: opts}}); err != nil {
-		e.log.Warn("contentkit: could not queue the signal plane's catch-up; the periodic jobs will", "err", err)
+	if _, err := c.Insert(ctx, preferenceSyncArgs{}, opts); err != nil {
+		e.log.Warn("contentkit: could not queue preference catch-up; the periodic sync will", "err", err)
 	}
 }

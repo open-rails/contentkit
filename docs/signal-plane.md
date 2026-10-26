@@ -47,6 +47,20 @@ stalls and unobserved timer gaps do not become watched time.
 
 `POST /engagement` accepts those snapshots with their server-issued activity
 receipt. `POST /signals` accepts explicit clicks, not progress or raw opens.
+Measured engagement is accepted when its canonical snapshots are saved.
+ContentKit then attempts the existing state and daily summaries inline. If that
+derived step fails, it logs the failure and still accepts the saved engagement.
+Canonical validation and insert failures remain errors; batches can retain rows
+accepted before a later failure. Exact receipt/revision retries remain idempotent.
+
+Resume position, progress/completion counts and daily activity can stay stale
+until another successful interaction for the same user/item recomputes them.
+An untouched item may remain stale indefinitely. There is no automatic repair
+job or reconnect-triggered rebuild. Operators can call `RepairProjections`
+explicitly for a known incident or calculation change, following `Next` with
+`After` until complete. That operation reports its errors. Subject erasure,
+content forgetting and subject rekeying retain their existing failure reporting.
+
 Positive short measurements accumulate; qualification requires at least one second
 of active attention. Pages need one second of attention before their covered units
 count toward reading completion. Quality is bounded by actual coverage and eight
@@ -71,3 +85,6 @@ writers. Upgrade all writers and erasure executors, enforce erasures, then perfo
 the explicit operator cleanup before activation; see
 [measured-engagement-rollout.md](measured-engagement-rollout.md). Startup never
 performs this destructive retirement.
+
+Old queued `contentkit_projection_repair` rows follow River's ordinary unknown-kind
+attempt handling; they do not block startup. See [removed periodic jobs](../HOST_INTEGRATION.md#removed-periodic-jobs).

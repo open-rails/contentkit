@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -89,15 +88,6 @@ type ImportVote struct {
 	UserID    string
 	IP        string
 	CreatedAt *time.Time
-}
-
-// ImportAnswer is one person's free-text answer, classified later.
-type ImportAnswer struct {
-	PollID    string
-	UserID    string
-	Text      string
-	CreatedAt *time.Time
-	UpdatedAt *time.Time
 }
 
 type keyRow struct {
@@ -590,15 +580,12 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []ImportPoll) 
 		switch r.Kind {
 		case "":
 			r.Kind = PollMultipleChoice
-		case PollMultipleChoice, PollFreeText:
+		case PollMultipleChoice:
 		default:
 			return invalidImport("poll kind %q", p.Kind)
 		}
 		if r.Question == "" {
 			return invalidImport("poll %s has no question", p.ID)
-		}
-		if r.Kind == PollFreeText && len(p.Options) > 0 {
-			return invalidImport("a free-text poll takes no options")
 		}
 		r.CreatedAt = stamp(p.CreatedAt, now)
 		r.UpdatedAt = stamp(p.UpdatedAt, r.CreatedAt)
@@ -624,6 +611,13 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []ImportPoll) 
 	}
 	if foreign != "" {
 		return fmt.Errorf("%w: poll %s belongs to another tenant", ErrConflict, foreign)
+	}
+	var unsupported string
+	if err := tx.QueryRow(ctx, `SELECT coalesce(min(id::text), '') FROM `+s.t.pollQuestions+` WHERE tenant_id=$1 AND id=ANY($2::uuid[]) AND kind<>$3`, rt.tenant, ids, PollMultipleChoice).Scan(&unsupported); err != nil {
+		return err
+	}
+	if unsupported != "" {
+		return invalidImport("poll %s has an unsupported historical kind", unsupported)
 	}
 	data, err := json.Marshal(rows)
 	if err != nil {
@@ -748,67 +742,6 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []ImportVote) 
  FROM `+s.t.pollOptions+` x LEFT JOIN (SELECT option_id, count(*)::int AS votes FROM `+s.t.pollVotes+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[])
   GROUP BY option_id) c ON c.option_id = x.id WHERE x.tenant_id = $2 AND x.question_id = ANY($1::uuid[])) n
  WHERE o.tenant_id = $2 AND o.id = n.id AND o.vote_count <> n.votes`, slices.Compact(slices.Sorted(slices.Values(polls))), rt.tenant)
-	return err
-}
-
-// ImportAnswers writes free-text answers in tx (one per person per poll);
-// a changed text awaits the classifier again.
-func (rt *Runtime) ImportAnswers(ctx context.Context, tx pgx.Tx, in []ImportAnswer) error {
-	if len(in) == 0 {
-		return nil
-	}
-	type row struct {
-		PollID    string    `json:"poll_id"`
-		UserID    string    `json:"user_id"`
-		Text      string    `json:"text"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-	}
-	now := time.Now()
-	index := map[string]int{}
-	var rows []row
-	var users []string
-	for _, a := range in {
-		if err := contentref.ValidateID(a.PollID); err != nil {
-			return invalidImport("an answer names its poll by id")
-		}
-		x := row{PollID: a.PollID, UserID: strings.TrimSpace(a.UserID), Text: strings.TrimSpace(a.Text), CreatedAt: stamp(a.CreatedAt, now)}
-		x.UpdatedAt = stamp(a.UpdatedAt, x.CreatedAt)
-		if x.UserID == "" || x.Text == "" || utf8.RuneCountInString(x.Text) > maxAnswerLen {
-			return invalidImport("an answer needs a user_id and a text of at most %d characters", maxAnswerLen)
-		}
-		users = append(users, x.UserID)
-		id := x.PollID + "\x00" + x.UserID
-		if i, ok := index[id]; ok {
-			rows[i] = x
-			continue
-		}
-		index[id] = len(rows)
-		rows = append(rows, x)
-	}
-	if err := rt.fenceSubjects(ctx, tx, users); err != nil {
-		return err
-	}
-	data, err := json.Marshal(rows)
-	if err != nil {
-		return err
-	}
-	s := rt.store
-	var bad string
-	if err := tx.QueryRow(ctx, `SELECT coalesce(min(r.poll_id), '') FROM jsonb_to_recordset($1::jsonb) AS r(poll_id text)
- WHERE NOT EXISTS (SELECT 1 FROM `+s.t.pollQuestions+` q WHERE q.id = r.poll_id::uuid AND q.tenant_id = $2 AND q.kind = $3)`,
-		string(data), rt.tenant, PollFreeText).Scan(&bad); err != nil {
-		return err
-	}
-	if bad != "" {
-		return fmt.Errorf("%w: free-text poll %s", ErrNotFound, bad)
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO `+s.t.pollAnswers+` AS a (tenant_id, question_id, actor_id, text, created_at, updated_at)
- SELECT $1, r.poll_id::uuid, r.user_id, r.text, r.created_at, r.updated_at
- FROM jsonb_to_recordset($2::jsonb) AS r(poll_id text, user_id text, text text, created_at timestamptz, updated_at timestamptz)
- ON CONFLICT (tenant_id, question_id, actor_id) DO UPDATE SET text = EXCLUDED.text, revision = a.revision + 1, group_id = NULL, group_label = NULL,
-  classified_at = NULL, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
- WHERE a.text <> EXCLUDED.text`, rt.tenant, string(data))
 	return err
 }
 

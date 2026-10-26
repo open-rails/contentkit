@@ -323,18 +323,6 @@ func (v *Viewer) privileged(alias string) string {
 		" authored WHERE authored.tenant_id = " + alias + ".tenant_id AND authored.id = " + alias + ".content_id AND authored.created_by = @cv_user AND ((authored.owner_entity_id IS NULL AND @cv_own_app::boolean) OR authored.owner_entity_id=ANY(@cv_own_channels::text[])))))"
 }
 
-// Playable is a boolean SQL predicate over the content_facets row aliased
-// alias, to AND with Listed (it uses Listed's args): versions that play, or
-// that the viewer may see before they do as staff, channel editor or
-// creator. Browsing applies it; a reader's own history and saved items do
-// not.
-func (v *Viewer) Playable(alias string) string {
-	if v.staff {
-		return "true"
-	}
-	return "(NOT " + alias + ".unplayable OR " + v.privileged(alias) + ")"
-}
-
 // Indexable is a boolean SQL predicate over the content_facets row aliased
 // alias: the versions a site lists to anyone, as its sitemaps name them:
 // live, not deleted, playable and in the viewer's site scope.
@@ -343,8 +331,7 @@ func (v *Viewer) Playable(alias string) string {
 func (v *Viewer) Indexable(alias string) (string, pgx.NamedArgs) {
 	scope, args := v.policies.SQL(alias, "ci_domain")
 	args["ci_now"] = v.now
-	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND NOT " + alias +
-		".unplayable AND " + scope + " AND " + v.channelReady(alias) + ")", args
+	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND " + scope + " AND " + v.channelReady(alias) + ")", args
 }
 
 // facetRow is one version as the visibility rule reads it.

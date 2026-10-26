@@ -34,14 +34,13 @@ import (
 // sharing a database must not share one, or one host's worker takes the
 // other's jobs. Queue names are fixed within a schema.
 const (
-	IngestQueue = "media_ingest" // staged placement and ZIP expansion before renditions
-	ImageQueue  = "media_image"  // image variants, slots and inline images
-	VideoQueue  = "media_video"  // resumable video conversion
-	MaxAttempts = 5
+	IngestQueue     = "media_ingest"      // staged placement and ZIP expansion before renditions
+	DerivativeQueue = "media_derivatives" // image and video outputs for one media item
+	MaxAttempts     = 5
 	// River counts a rescued hard kill before Work can restore the attempt.
 	// Workers enforce MaxAttempts on actual failures inside Work instead.
 	riverMaxAttempts      = 32767
-	VideoRiverMaxAttempts = riverMaxAttempts
+	DerivativeMaxAttempts = riverMaxAttempts
 )
 
 //go:embed migrations/*.sql
@@ -102,32 +101,21 @@ func (IngestArgs) Kind() string { return "contentkit_media_ingest" }
 
 func (a IngestArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-// ImageArgs runs an item's image producers (Image and Zip presets, public
-// presets, editor views): media.ProcessJob's fields.
-type ImageArgs struct {
+// DerivativeArgs generates all configured image/video outputs for one media
+// item. Video conversion can yield the same job between durable chunks.
+type DerivativeArgs struct {
 	Ref    contentref.ContentRef `json:"ref"`
 	Preset string                `json:"preset,omitempty"`
 	Force  bool                  `json:"force,omitempty"`
 	Editor bool                  `json:"editor,omitempty"`
-	After  int64                 `json:"after,omitempty"` // the running job this one follows
-}
-
-func (ImageArgs) Kind() string { return "contentkit_media_image" }
-
-func (a ImageArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
-
-// VideoArgs converts an item's stale video presets. One River job owns
-// planning, checkpointed encoding, progressive publication and frames.
-type VideoArgs struct {
-	Ref    contentref.ContentRef `json:"ref"`
-	Preset string                `json:"preset,omitempty"`
-	Force  bool                  `json:"force,omitempty"`
 	Class  media.VideoJobClass   `json:"class,omitempty"`
+	After  int64                 `json:"after,omitempty"`
 }
 
-func (VideoArgs) Kind() string { return "contentkit_media_video" }
+func (DerivativeArgs) Kind() string                      { return "contentkit_media_derivatives" }
+func (a DerivativeArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-var EncodeKinds = []string{VideoArgs{}.Kind()}
+var ProcessingKinds = []string{DerivativeArgs{}.Kind()}
 
 // Queue is the host's insert-only client for the worker's jobs; it is the
 // uploads' media.ProcessQueue.
@@ -159,10 +147,9 @@ func New(pool *pgxpool.Pool, kinds *media.Registry, schema string) (*Queue, erro
 // Schema is the worker schema the queue inserts into.
 func (q *Queue) Schema() string { return q.schema }
 
-// Enqueue asks the worker to process job: one job per producer family the
-// kind (or job.Preset) uses, or with job.Place one place job that enqueues
-// them once the item's staged uploads are placed. Image and place jobs are
-// one pending per job, with a follow-up behind a running one.
+// Enqueue asks the worker to process job: one derivative job handles every producer family of the
+// kind (or selected preset). Ingest runs first for staged uploads. Equal pending
+// work coalesces; a running attempt receives a follow-up for newer changes.
 func (q *Queue) Enqueue(ctx context.Context, job media.ProcessJob) error {
 	q = q.forRef(job.Ref)
 	return q.enqueue(ctx, q.client.Insert, job)
@@ -211,26 +198,14 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 			river.InsertOpts{Queue: IngestQueue, MaxAttempts: riverMaxAttempts})
 	}
 	f := FamiliesOf(item.Kind(), job.Preset)
-	if f.Image || job.Editor {
-		if err := media.InsertOnce(ctx, insert, ImageArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Editor: job.Editor},
-			river.InsertOpts{Queue: ImageQueue, MaxAttempts: riverMaxAttempts}); err != nil {
-			return err
-		}
+	if !f.Image && !f.Video && !job.Editor {
+		return nil
 	}
-	// Not unique: River's uniqueness always covers running jobs, which would
-	// drop the job for a source replaced mid-encode. Duplicates serialize on
-	// the worker's per-manifest lock and are no-ops once the manifest is fresh.
-	if f.Video {
-		if _, err := insert(ctx, VideoArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Class: job.Class}, VideoInsertOpts(job.Class)); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return media.InsertOnce(ctx, insert, DerivativeArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Editor: job.Editor, Class: job.Class}, *DerivativeInsertOpts(job.Class))
 }
 
-// VideoInsertOpts are a video plan's insert options.
-func VideoInsertOpts(class media.VideoJobClass) *river.InsertOpts {
+// DerivativeInsertOpts keep interactive uploads ahead of requested re-encodes.
+func DerivativeInsertOpts(class media.VideoJobClass) *river.InsertOpts {
 	priority := 1
 	switch class {
 	case media.VideoReencode:
@@ -238,7 +213,7 @@ func VideoInsertOpts(class media.VideoJobClass) *river.InsertOpts {
 	case media.VideoBackfill:
 		priority = 4
 	}
-	return &river.InsertOpts{Queue: VideoQueue, Priority: priority, MaxAttempts: VideoRiverMaxAttempts}
+	return &river.InsertOpts{Queue: DerivativeQueue, Priority: priority, MaxAttempts: DerivativeMaxAttempts}
 }
 
 // Cancel cancels ref's queued and running image and video jobs, every stage.
@@ -282,7 +257,7 @@ FROM targets WHERE r.id = targets.id`, refJSON); err != nil {
 	rows, err := tx.Query(ctx, `SELECT id FROM `+jobs(q.schema)+`
 WHERE kind = ANY($1) AND args @> $2 AND args->'ref' = $2::jsonb->'ref' AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 ORDER BY id`,
-		append([]string{IngestArgs{}.Kind(), ImageArgs{}.Kind()}, EncodeKinds...), match)
+		[]string{IngestArgs{}.Kind(), DerivativeArgs{}.Kind()}, match)
 	if err != nil {
 		return 0, err
 	}
@@ -373,7 +348,7 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 	if err != nil {
 		return st, err
 	}
-	rows, err := s.pool.Query(ctx, s.sql, EncodeKinds, match)
+	rows, err := s.pool.Query(ctx, s.sql, ProcessingKinds, match)
 	if err != nil {
 		return st, err
 	}
@@ -425,7 +400,7 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 	if err != nil {
 		return st, err
 	}
-	runs, err := s.pool.Query(ctx, s.runSQL, refJSON, (VideoArgs{}).Kind())
+	runs, err := s.pool.Query(ctx, s.runSQL, refJSON, (DerivativeArgs{}).Kind())
 	if err != nil {
 		return st, err
 	}

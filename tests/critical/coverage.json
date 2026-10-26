@@ -359,7 +359,8 @@
       "cases": [
         "TestPublicationWithoutWorkers/CK-J05-S01_immediate_publication_is_visible",
         "TestDurableTextPublication",
-        "TestMediaApplicationPublishesTextKinds"
+        "TestMediaApplicationPublishesTextKinds",
+        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -440,6 +441,8 @@
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
         "TestPublicationQueuesIsolateSharedCatalogApps",
         "TestPublicationQueueMigrationPreservesOwners",
+        "TestUnifiedReleaseMigration",
+        "TestUnifiedReleaseMigrationKeepsCompletedRequest",
         "TestSupersededPublicCopyReturnsToPrivate",
         "TestImportChaptersRequiresManifestLockingWriter",
         "TestPublicationSchedulingLocksParentBeforeRequest",
@@ -773,6 +776,21 @@
       ],
       "cases": [
         "TestPopularRankingSplitsReadersExactly"
+      ]
+    },
+    {
+      "id": "CK-J07-S18",
+      "journey": "CK-J07",
+      "behavior": "Canonical measured engagement is accepted despite derived summary failure; future interactions or explicit rebuild refresh summaries without automatic repair",
+      "status": "verified",
+      "evidence": [
+        "Actual ClickHouse INSERT constraints independently fail state, daily and canonical tables in disposable databases. Source receipts, revision deduplication, stale public state/activity reads, next-interaction convergence and explicit repair errors are asserted against real persisted data.",
+        "Signal schema recovery runs through the real engine callback with an unstarted River fleet: preference catch-up proves recovery occurred, while projection repair is neither enqueued nor registered. Focused and full execution receipts remain separate qualification gates."
+      ],
+      "cases": [
+        "TestEngagementSummaryFailuresAreBestEffort",
+        "TestEngagementCanonicalFailuresRemainErrors",
+        "TestSignalRecoveryDoesNotScheduleProjectionRepair"
       ]
     },
     {
@@ -1525,15 +1543,14 @@
     {
       "id": "CK-J23-S07",
       "journey": "CK-J23",
-      "behavior": "Projection rebuild/reclassification and delayed writes remain fenced",
+      "behavior": "Historical poll answers and measured projection rebuilds remain fenced by account erasure",
       "status": "verified",
       "evidence": [
-        "An actual River reclassifier waits on a stateless HTTP provider while erasure deletes its pending answer. The delayed reply cannot restore it; a direct late measured signal is fenced, and a nonempty real CH projection rebuild preserves only the live control.",
-        "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
+        "A real historical free-text answer and live same-app/sibling controls remain stored after feature retirement. Repeated app erasure deletes only the target app answer; direct late measured ingestion remains fenced and a nonempty ClickHouse projection rebuild retains only the live signal control."
       ],
       "cases": [
         "TestClickHouseErasureRetry/CK-J23-S07_late_signal_cannot_rebuild_erased_subject",
-        "TestErasedProjectionAndReclassification/CK-J23-S07_delayed_classifier_and_projection_rebuild_cannot_resurrect_erased_subject"
+        "TestErasedProjectionAndHistoricalAnswers/CK-J23-S07_historical_answers_and_projection_rebuild_remain_erased"
       ]
     },
     {
@@ -2317,6 +2334,34 @@
       ],
       "cases": [
         "TestChannelMetadataMerge/CK-J03-S73_channel_metadata_survives_canonical_entity_merge"
+
+      ]
+    },
+    {
+      "id": "CK-J30-S01",
+      "journey": "CK-J30",
+      "behavior": "Only predefined-choice polls accept creation, import and votes; scope, closure, final-vote and erasure counts remain correct",
+      "status": "verified",
+      "evidence": [
+        "Real public Go/HTTP poll operations exercise rejected free-text creation/import/submission, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls, preserved historical rows and repeated account erasure."
+      ],
+      "cases": [
+        "TestChoicePolls/CK-J30-S01_predefined_choices_reject_retired_writes",
+        "TestChoicePolls/CK-J30-S01_duplicate_votes_scope_and_erasure_keep_counts",
+        "TestChoicePolls/CK-J30-S01_closed_scheduled_and_historical_polls_stay_inert",
+        "TestAnonymousChoicePolls"
+      ]
+    },
+    {
+      "id": "CK-J30-S02",
+      "journey": "CK-J30",
+      "behavior": "Obsolete classifier and projection-repair jobs do not block startup and exhaust their stored River attempt limits",
+      "status": "verified",
+      "evidence": [
+        "Actual Engine startup and migration accept old empty-argument rows. Real River execution discards both obsolete kinds after their three attempts while ordinary search work completes; foreign queues and terminal history remain unchanged."
+      ],
+      "cases": [
+        "TestObsoletePeriodicJobsDoNotBlockStartup/CK-J30-S02_unknown_jobs_fail_finitely_while_supported_work_continues"
       ]
     },
     {
@@ -3448,35 +3493,6 @@
         "TestHTTPAuthenticationMatrix/CK-API-038_POST_/v1/polls/{id}/vote/expired_credential",
         "TestHTTPAuthenticationMatrix/CK-API-038_POST_/v1/polls/{id}/vote/wrong_issuer",
         "TestHTTPAuthenticationMatrix/CK-API-038_POST_/v1/polls/{id}/vote/foreign_app_key"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-039",
-      "method": "POST",
-      "path": "/v1/polls/{id}/answer",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/anonymous_protected_operation"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-039_POST_/v1/polls/{id}/answer/anonymous_protected_operation"
       ],
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",

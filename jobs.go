@@ -11,10 +11,8 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
-	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // QueueContentKit is the queue RiverJobs contributes. Hosts may set its
@@ -48,10 +46,8 @@ func (j *jobs) bound() *river.Client[pgx.Tx] {
 // The engine's schedules; each periodic run is unique per its period.
 const (
 	searchSyncEvery     = 30 * time.Second // documents trail their writes by at most this
-	preferenceSyncEvery = 30 * time.Second
+	preferenceSyncEvery = 5 * time.Minute
 	resyncEvery         = 24 * time.Hour
-	repairEvery         = time.Hour
-	reclassifyEvery     = 10 * time.Minute
 	searchPruneEvery    = time.Hour
 	popularRefreshEvery = 5 * time.Minute
 )
@@ -74,8 +70,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &popularRefreshWorker{e: e}) },
 		} {
@@ -92,13 +86,9 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{})
 		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{})
-		if e.classifier {
-			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{})
-		}
 		if e.hub.SignalsConfigured() { // their runs skip while it is down
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{})
 			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true})
-			periodic("contentkit_projection_repair", repairEvery, repairArgs{})
 			// A refresh can outlast its period; it never runs twice at once.
 			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, popularRefreshEvery,
 				func() (river.JobArgs, *river.InsertOpts) {
@@ -120,10 +110,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		j.mu.Unlock()
 		return nil
 	})
-	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs()}
-	if e.media != nil {
-		parts = append(parts, e.media.versions.RiverJobs())
-	}
+	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs(), e.versions.RiverJobs()}
 	return riverhelpers.Group(parts...)
 }
 
@@ -219,64 +206,6 @@ func (w *preferenceSyncWorker) Work(ctx context.Context, job *river.Job[preferen
 		return err
 	}
 	_, err := w.e.content.SyncPreferences(ctx, h.SendPreferences)
-	return err
-}
-
-type repairArgs struct{}
-
-func (repairArgs) Kind() string { return "contentkit_projection_repair" }
-
-// repairWorker repairs projections of keys ingested since the last runs:
-// crash repair, overlapping two periods.
-type repairWorker struct {
-	river.WorkerDefaults[repairArgs]
-	e *Engine
-}
-
-func (w *repairWorker) Timeout(*river.Job[repairArgs]) time.Duration { return 30 * time.Minute }
-
-func (w *repairWorker) Work(ctx context.Context, job *river.Job[repairArgs]) error {
-	opts := signal.RepairOptions{IngestedSince: job.CreatedAt.Add(-2 * repairEvery)}
-	for {
-		res, err := w.e.hub.RepairProjections(ctx, opts)
-		if err != nil || res.Next == nil {
-			return ignoreDisabled(err)
-		}
-		opts.After = res.Next
-	}
-}
-
-type reclassifyArgs struct{}
-
-func (reclassifyArgs) Kind() string { return "contentkit_reclassify" }
-
-// reclassifyWorker retries free-text poll answers the classifier failed,
-// sweeping every pending answer once per run.
-type reclassifyWorker struct {
-	river.WorkerDefaults[reclassifyArgs]
-	e *Engine
-}
-
-func (w *reclassifyWorker) Timeout(*river.Job[reclassifyArgs]) time.Duration { return 30 * time.Minute }
-
-func (w *reclassifyWorker) Work(ctx context.Context, _ *river.Job[reclassifyArgs]) error {
-	var errs []error
-	for after := ""; ; {
-		page, err := w.e.content.ReclassifyPending(ctx, after, 100)
-		if err != nil {
-			errs = append(errs, err)
-		}
-		if page.Next == "" || page.Next == after || ctx.Err() != nil {
-			return errors.Join(errs...)
-		}
-		after = page.Next
-	}
-}
-
-func ignoreDisabled(err error) error {
-	if errors.Is(err, hub.ErrSignalPlaneDisabled) {
-		return nil
-	}
 	return err
 }
 

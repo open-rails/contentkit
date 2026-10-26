@@ -5,7 +5,7 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "rea
 import type { ContentKitClient } from "../../client/client.js";
 import type { PollState } from "../../client/content/polls.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
-import type { Poll, PollKind, PollOption, PollUpdate } from "../../client/generated/wire.js";
+import type { Poll, PollOption, PollUpdate } from "../../client/generated/wire.js";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
@@ -30,8 +30,6 @@ export interface PollEditorProps {
   languages?: readonly (string | { value: string; label: string })[];
   /** A new poll's language. Default the first offered, else "en". */
   defaultLanguage?: string;
-  /** Offer free-text polls (the host registered an answer classifier). Default false. */
-  freeText?: boolean;
   /** Most options. Default 10. */
   maxOptions?: number;
   onCreated?: (poll: Poll) => void;
@@ -129,7 +127,7 @@ export function PollEditor(p: PollEditorProps) {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
               <PollStateDot state={pollState(ed.poll)} />
               <span aria-hidden>·</span>
-              <span className="tabular-nums">{ed.poll.kind === "free_text" ? m.plural("poll.answers", ed.poll.answer_count ?? 0) : m.plural("poll.votes", ed.poll.total_votes)}</span>
+              <span className="tabular-nums">{m.plural("poll.votes", ed.poll.total_votes)}</span>
             </div>
           </div>
           <DropdownMenu>
@@ -172,7 +170,6 @@ export function PollEditor(p: PollEditorProps) {
           saving={ed.saving}
           languages={p.languages}
           defaultLanguage={p.defaultLanguage}
-          freeText={!!p.freeText}
           maxOptions={p.maxOptions ?? 10}
           status={status}
           onCancel={p.onCancel}
@@ -215,7 +212,6 @@ function CreateFields(p: {
   saving: boolean;
   languages?: PollEditorProps["languages"];
   defaultLanguage?: string;
-  freeText: boolean;
   maxOptions: number;
   status: ReactNode;
   onCancel?: () => void;
@@ -228,7 +224,6 @@ function CreateFields(p: {
   const langs = useMemo(() => (p.languages ?? []).map((l) => (typeof l === "string" ? { value: l, label: languageName(l) } : l)), [p.languages, languageName]);
   const [question, setQuestion] = useState("");
   const [language, setLanguage] = useState(p.defaultLanguage ?? langs[0]?.value ?? "en");
-  const [kind, setKind] = useState<PollKind>("multiple_choice");
   const [liveAt, setLiveAt] = useState(() => localInput(new Date()));
   const [closesAt, setClosesAt] = useState("");
   const [image, setImage] = useState<File | null>(null);
@@ -243,28 +238,27 @@ function CreateFields(p: {
       next.splice(to, 0, ...next.splice(from, 1));
       return next;
     });
-  const choice = kind === "multiple_choice";
   const kept = options.filter((o) => o.label.trim() || o.image);
   // Shown after the first Create and gone as soon as the field is fixed.
   const questionError = tried && !question.trim() ? t("pollEditor.questionRequired") : null;
   const unlabelled = kept.some((o) => !o.label.trim());
   const tooFew = !unlabelled && kept.length < 2;
-  const optionsError = !tried || !choice ? null : unlabelled ? t("pollEditor.optionRequired") : tooFew ? t("pollEditor.minOptions") : null;
+  const optionsError = !tried ? null : unlabelled ? t("pollEditor.optionRequired") : tooFew ? t("pollEditor.minOptions") : null;
   const submit = () => {
     p.onAttempt();
     setTried(true);
     if (!question.trim()) return questionRef.current?.focus();
-    if (choice && (unlabelled || tooFew)) return;
+    if (unlabelled || tooFew) return;
     void p.onCreate(
       {
-        kind,
+        kind: "multiple_choice",
         question: question.trim(),
         language,
         live_at: toISO(liveAt),
         closes_at: toISO(closesAt),
-        options: choice ? kept.map((o, position) => ({ label: o.label.trim(), position })) : undefined,
+        options: kept.map((o, position) => ({ label: o.label.trim(), position })),
       },
-      { question: image, options: choice ? kept.map((o) => o.image) : [] },
+      { question: image, options: kept.map((o) => o.image) },
     );
   };
   return (
@@ -293,71 +287,45 @@ function CreateFields(p: {
           </Field>
           <ImageField label={t("pollEditor.image")} url={imageUrl} onPick={setImage} onRemove={() => setImage(null)} />
         </Card>
-        <Card
-          title={t("pollEditor.options")}
-          hint={choice ? t("pollEditor.optionsHint") : t("pollEditor.freeTextHelp")}
-          ckui="poll-options"
-          aside={
-            p.freeText && (
-              <div className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md border border-border bg-muted/50 p-0.5" role="group" aria-label={t("pollEditor.kind")}>
-                {(["multiple_choice", "free_text"] as const).map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    aria-pressed={kind === k}
-                    onClick={() => setKind(k)}
-                    className={cn(
-                      "h-7 rounded-[5px] px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                      kind === k ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {t(k === "free_text" ? "pollEditor.freeText" : "pollEditor.multipleChoice")}
-                  </button>
-                ))}
-              </div>
-            )
-          }
-        >
-          {choice && (
-            <fieldset className="grid gap-2" aria-describedby={optionsError ? `${ids}-options-error` : undefined}>
-              <legend className="sr-only">{t("pollEditor.options")}</legend>
-              <SortableList
-                items={options}
-                id={(o) => o.key}
-                name={(o) => o.label || t("pollEditor.option", { index: options.indexOf(o) + 1 })}
-                onMove={move}
-                label={t("pollEditor.options")}
-                className="gap-2"
-                row={() => ({ className: OPTION_ROW, "data-ckui": "poll-option" })}
-              >
-                {(o, handle, i) => (
-                  <OptionRow
-                    handle={handle}
-                    index={i}
-                    label={o.label}
-                    image={o.image}
-                    invalid={!!optionsError && !o.label.trim() && (tooFew || !!o.image)}
-                    onLabel={(label) => set(o.key, { label })}
-                    onImage={(image) => set(o.key, { image })}
-                    onRemove={options.length > 2 ? () => setOptions((os) => os.filter((x) => x.key !== o.key)) : undefined}
-                  />
-                )}
-              </SortableList>
-              {options.length < p.maxOptions ? (
-                <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => setOptions((os) => [...os, draft()])}>
-                  <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
-                  {t("pollEditor.addOption")}
-                </Button>
-              ) : (
-                <p className="text-xs text-muted-foreground">{t("pollEditor.maxOptions", { max: p.maxOptions })}</p>
+        <Card title={t("pollEditor.options")} hint={t("pollEditor.optionsHint")} ckui="poll-options">
+          <fieldset className="grid gap-2" aria-describedby={optionsError ? `${ids}-options-error` : undefined}>
+            <legend className="sr-only">{t("pollEditor.options")}</legend>
+            <SortableList
+              items={options}
+              id={(o) => o.key}
+              name={(o) => o.label || t("pollEditor.option", { index: options.indexOf(o) + 1 })}
+              onMove={move}
+              label={t("pollEditor.options")}
+              className="gap-2"
+              row={() => ({ className: OPTION_ROW, "data-ckui": "poll-option" })}
+            >
+              {(o, handle, i) => (
+                <OptionRow
+                  handle={handle}
+                  index={i}
+                  label={o.label}
+                  image={o.image}
+                  invalid={!!optionsError && !o.label.trim() && (tooFew || !!o.image)}
+                  onLabel={(label) => set(o.key, { label })}
+                  onImage={(image) => set(o.key, { image })}
+                  onRemove={options.length > 2 ? () => setOptions((os) => os.filter((x) => x.key !== o.key)) : undefined}
+                />
               )}
-              {optionsError && (
-                <FieldError id={`${ids}-options-error`} alert>
-                  {optionsError}
-                </FieldError>
-              )}
-            </fieldset>
-          )}
+            </SortableList>
+            {options.length < p.maxOptions ? (
+              <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => setOptions((os) => [...os, draft()])}>
+                <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+                {t("pollEditor.addOption")}
+              </Button>
+            ) : (
+              <p className="text-xs text-muted-foreground">{t("pollEditor.maxOptions", { max: p.maxOptions })}</p>
+            )}
+            {optionsError && (
+              <FieldError id={`${ids}-options-error`} alert>
+                {optionsError}
+              </FieldError>
+            )}
+          </fieldset>
         </Card>
         <Card title={t("pollEditor.schedule")} hint={t("pollEditor.scheduleHint")} ckui="poll-schedule">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -407,7 +375,6 @@ function CreateFields(p: {
         question={question}
         imageUrl={imageUrl}
         state={pollState({ is_active: true, live_at: toISO(liveAt) ?? new Date().toISOString(), closes_at: toISO(closesAt) })}
-        freeText={!choice}
         options={options.map((o, i) => ({ key: o.key, label: o.label.trim() || t("pollEditor.option", { index: i + 1 }), empty: !o.label.trim() }))}
         closesAt={toISO(closesAt)}
       />
@@ -455,7 +422,6 @@ function EditFields(p: {
     if (!question.trim()) return questionRef.current?.focus();
     if (dirty) act(async () => p.onSaved(await editor.update(patch)));
   };
-  const free = poll.kind === "free_text";
   return (
     <div className={LAYOUT} data-ckui="poll-edit">
       <div className="grid min-w-0 gap-5">
@@ -473,59 +439,55 @@ function EditFields(p: {
           </Field>
           <ImageField label={t("pollEditor.image")} url={poll.image_url} disabled={p.saving} onPick={(f) => act(() => editor.setImage(f))} onRemove={() => act(() => editor.setImage(null))} />
         </Card>
-        <Card title={t("pollEditor.options")} hint={free ? t("pollEditor.freeTextHelp") : t("pollEditor.optionsLive")} ckui="poll-options">
-          {free ? (
-            <p className="text-muted-foreground">{m.plural("poll.answers", poll.answer_count ?? 0)}</p>
-          ) : (
-            <fieldset className="grid gap-2">
-              <legend className="sr-only">{t("pollEditor.options")}</legend>
-              <SortableList
-                items={options}
-                id={(o) => o.id}
-                name={(o) => o.label}
-                disabled={p.saving}
-                onMove={(from, to) => act(() => editor.moveOption(options[from]!.id, to))}
-                label={t("pollEditor.options")}
-                className="gap-2"
-                row={() => ({ className: OPTION_ROW, "data-ckui": "poll-option" })}
-              >
-                {(o, handle, i) => (
-                  <OptionRow
-                    handle={handle}
-                    index={i}
-                    label={o.label}
-                    url={o.image_url}
-                    votes={o.vote_count}
-                    disabled={p.saving}
-                    onCommit={(label) => label.trim() && label.trim() !== o.label && act(() => editor.renameOption(o.id, label.trim()))}
-                    onImage={(f) => act(() => editor.setOptionImage(o.id, f))}
-                    onRemove={options.length > 2 ? () => setRemoving(o) : undefined}
-                  />
-                )}
-              </SortableList>
-              {options.length < p.maxOptions ? (
-                <form
-                  className="flex gap-2"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (!added.trim()) return;
-                    act(async () => {
-                      await editor.addOption(added.trim());
-                      setAdded("");
-                    });
-                  }}
-                >
-                  <Input className="h-10" value={added} placeholder={t("pollEditor.newOption")} aria-label={t("pollEditor.newOption")} onChange={(e) => setAdded(e.target.value)} />
-                  <Button type="submit" variant="outline" className="h-10" disabled={!added.trim() || p.saving}>
-                    <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
-                    {t("pollEditor.addOption")}
-                  </Button>
-                </form>
-              ) : (
-                <p className="text-xs text-muted-foreground">{t("pollEditor.maxOptions", { max: p.maxOptions })}</p>
+        <Card title={t("pollEditor.options")} hint={t("pollEditor.optionsLive")} ckui="poll-options">
+          <fieldset className="grid gap-2">
+            <legend className="sr-only">{t("pollEditor.options")}</legend>
+            <SortableList
+              items={options}
+              id={(o) => o.id}
+              name={(o) => o.label}
+              disabled={p.saving}
+              onMove={(from, to) => act(() => editor.moveOption(options[from]!.id, to))}
+              label={t("pollEditor.options")}
+              className="gap-2"
+              row={() => ({ className: OPTION_ROW, "data-ckui": "poll-option" })}
+            >
+              {(o, handle, i) => (
+                <OptionRow
+                  handle={handle}
+                  index={i}
+                  label={o.label}
+                  url={o.image_url}
+                  votes={o.vote_count}
+                  disabled={p.saving}
+                  onCommit={(label) => label.trim() && label.trim() !== o.label && act(() => editor.renameOption(o.id, label.trim()))}
+                  onImage={(f) => act(() => editor.setOptionImage(o.id, f))}
+                  onRemove={options.length > 2 ? () => setRemoving(o) : undefined}
+                />
               )}
-            </fieldset>
-          )}
+            </SortableList>
+            {options.length < p.maxOptions ? (
+              <form
+                className="flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!added.trim()) return;
+                  act(async () => {
+                    await editor.addOption(added.trim());
+                    setAdded("");
+                  });
+                }}
+              >
+                <Input className="h-10" value={added} placeholder={t("pollEditor.newOption")} aria-label={t("pollEditor.newOption")} onChange={(e) => setAdded(e.target.value)} />
+                <Button type="submit" variant="outline" className="h-10" disabled={!added.trim() || p.saving}>
+                  <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+                  {t("pollEditor.addOption")}
+                </Button>
+              </form>
+            ) : (
+              <p className="text-xs text-muted-foreground">{t("pollEditor.maxOptions", { max: p.maxOptions })}</p>
+            )}
+          </fieldset>
         </Card>
         <Card title={t("pollEditor.schedule")} hint={t("pollEditor.scheduleHint")} ckui="poll-schedule">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -568,8 +530,6 @@ function EditFields(p: {
         question={question.trim() || poll.question}
         imageUrl={poll.image_url}
         state={pollState({ is_active: active, live_at: toISO(liveAt) ?? poll.live_at, closes_at: toISO(closesAt) })}
-        freeText={free}
-        answers={poll.answer_count}
         total={poll.total_votes}
         options={options.map((o) => ({ key: o.id, label: o.label, votes: o.vote_count, image: o.image_url }))}
         closesAt={toISO(closesAt)}
@@ -591,8 +551,6 @@ function Preview(p: {
   question: string;
   imageUrl?: string;
   state: PollState;
-  freeText: boolean;
-  answers?: number;
   total?: number;
   options: { key: string; label: string; empty?: boolean; votes?: number; image?: string }[];
   closesAt?: string;
@@ -611,27 +569,23 @@ function Preview(p: {
         <div className="grid gap-4 p-5">
           {p.imageUrl && <img src={p.imageUrl} alt="" className="aspect-video w-full rounded-md border border-border object-cover" />}
           <p className={cn("font-semibold break-words", !p.question.trim() && "text-muted-foreground")}>{p.question.trim() || t("pollEditor.questionPlaceholder")}</p>
-          {p.freeText ? (
-            <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">{t("pollEditor.freeTextHelp")}</div>
-          ) : (
-            <ul className="grid gap-2">
-              {p.options.map((o) => {
-                const share = total ? (o.votes ?? 0) / total : 0;
-                return (
-                  <li key={o.key} className="relative overflow-hidden rounded-md border border-border px-3 py-2">
-                    {total > 0 && <span aria-hidden className="absolute inset-y-0 start-0 bg-primary/15" style={{ width: `${share * 100}%` }} />}
-                    <span className="relative flex items-center gap-2">
-                      {o.image && <img src={o.image} alt="" className="size-6 shrink-0 rounded object-cover" />}
-                      <span className={cn("min-w-0 flex-1 truncate", o.empty && "text-muted-foreground")}>{o.label}</span>
-                      {total > 0 && <span className="text-xs tabular-nums text-muted-foreground">{percent.format(share)}</span>}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          <ul className="grid gap-2">
+            {p.options.map((o) => {
+              const share = total ? (o.votes ?? 0) / total : 0;
+              return (
+                <li key={o.key} className="relative overflow-hidden rounded-md border border-border px-3 py-2">
+                  {total > 0 && <span aria-hidden className="absolute inset-y-0 start-0 bg-primary/15" style={{ width: `${share * 100}%` }} />}
+                  <span className="relative flex items-center gap-2">
+                    {o.image && <img src={o.image} alt="" className="size-6 shrink-0 rounded object-cover" />}
+                    <span className={cn("min-w-0 flex-1 truncate", o.empty && "text-muted-foreground")}>{o.label}</span>
+                    {total > 0 && <span className="text-xs tabular-nums text-muted-foreground">{percent.format(share)}</span>}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
           <p className="text-xs text-muted-foreground">
-            {p.freeText ? m.plural("poll.answers", p.answers ?? 0) : m.plural("poll.votes", total)}
+            {m.plural("poll.votes", total)}
             {p.closesAt && ` · ${t("poll.closes", { date: formatDate(m, p.closesAt) })}`}
           </p>
         </div>

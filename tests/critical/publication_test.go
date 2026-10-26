@@ -13,24 +13,15 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
 )
 
 // runPublicationWorker executes the real registered durable worker, then stops
 // it so the next clock-only assertion cannot be satisfied by a running worker.
-func runPublicationWorker(t *testing.T, fleet *river.Client[pgx.Tx], queue string) {
+func runPublicationWorker(t *testing.T, fleet *river.Client[pgx.Tx], app *application) {
 	t.Helper()
-	job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: queue})
-	must(t, err)
+	wakeDuePublicationJobs(t, app)
 	must(t, fleet.Start(t.Context()))
-	waitFor(t, func() bool {
-		row, err := fleet.JobGet(t.Context(), job.Job.ID)
-		must(t, err)
-		if row.State == rivertype.JobStateDiscarded {
-			t.Fatalf("durable publication failed: %+v", row.Errors)
-		}
-		return row.State == rivertype.JobStateCompleted
-	})
+	awaitDuePublications(t, app)
 	must(t, fleet.Stop(t.Context()))
 }
 
@@ -42,7 +33,6 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 	must(t, err)
 	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 	t.Cleanup(func() { must(t, fleet.Stop(context.Background())) })
-	queue := catalog.QueueFor(a.cfg.Scope.AppID.String())
 	base := w.clock.now()
 	newDraft := func(t *testing.T, rule *access.Rule) catalog.Content {
 		t.Helper()
@@ -62,7 +52,7 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 		}
 		_, err = reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
-		runPublicationWorker(t, fleet, queue)
+		runPublicationWorker(t, fleet, a)
 		got, err := reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 		if !got.Decision.Allowed || got.Body != "Embargoed manuscript" {
@@ -93,7 +83,7 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 			_, err = reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 			requireError(t, err, 404, "not_found")
 		}
-		runPublicationWorker(t, fleet, queue)
+		runPublicationWorker(t, fleet, a)
 		got, err := reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 		if !got.Live || !got.Decision.Allowed || got.Body != "Embargoed manuscript" {
@@ -115,7 +105,7 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 		item := newDraft(t, &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: at, Level: access.Public}}})
 		_, err := admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
-		runPublicationWorker(t, fleet, queue)
+		runPublicationWorker(t, fleet, a)
 		for _, now := range []time.Time{at.Add(-time.Microsecond), at} {
 			w.clock.set(now)
 			locked, err := reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
@@ -124,7 +114,7 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 				t.Fatal("clock opened an uncompleted audience promotion")
 			}
 		}
-		runPublicationWorker(t, fleet, queue)
+		runPublicationWorker(t, fleet, a)
 		open, err := reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 		if !open.Decision.Allowed || open.Body != "Embargoed manuscript" {
@@ -136,12 +126,12 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 		item := newDraft(t, nil)
 		_, err := admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
-		runPublicationWorker(t, fleet, queue)
+		runPublicationWorker(t, fleet, a)
 		_, err = admin.PostContentUnpublish(t.Context(), item.ID)
 		must(t, err)
 		_, err = reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
-		runPublicationWorker(t, fleet, queue)
+		runPublicationWorker(t, fleet, a)
 		at := base.Add(2 * time.Hour)
 		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: &at})
 		must(t, err)
@@ -150,7 +140,7 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 			_, err = reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 			requireError(t, err, 404, "not_found")
 		}
-		runPublicationWorker(t, fleet, queue)
+		runPublicationWorker(t, fleet, a)
 		_, err = reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 	})
@@ -180,7 +170,7 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 		must(t, err)
 		_, err = engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
-		runPublicationWorker(t, liveFleet, queue)
+		runPublicationWorker(t, liveFleet, &application{cfg: cfg, deps: deps})
 		locked, err := anonymous.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 		if locked.Decision.Allowed || locked.Body != "" {
@@ -194,7 +184,7 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 		if locked.Decision.Allowed || locked.Body != "" {
 			t.Fatal("policy edit bypassed durable audience publication")
 		}
-		runPublicationWorker(t, liveFleet, queue)
+		runPublicationWorker(t, liveFleet, &application{cfg: cfg, deps: deps})
 		open, err := anonymous.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)
 		if !open.Decision.Allowed || open.Body != "Wall-clock body" {

@@ -103,7 +103,7 @@ func (s *Service) History(ctx context.Context, o HistoryOptions) (ContentPage, e
 		if err != nil {
 			return empty, err
 		}
-		out.Summary, err = s.listingSummary(ctx, Filter{Kind: o.Kind, keepUnplayable: true}, q, sort, &summaryCandidates{visible: all, relaxed: all, truncated: len(history) == summaryLimit})
+		out.Summary, err = s.listingSummary(ctx, Filter{Kind: o.Kind}, q, sort, &summaryCandidates{visible: all, relaxed: all, truncated: len(history) == summaryLimit})
 		if err != nil {
 			return empty, err
 		}

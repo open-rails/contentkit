@@ -46,7 +46,6 @@ type Batch struct {
 	Favorites       []FavoriteRecord      `json:"favorites,omitempty"`
 	Polls           []PollRecord          `json:"polls,omitempty"`
 	Votes           []VoteRecord          `json:"votes,omitempty"`
-	Answers         []AnswerRecord        `json:"answers,omitempty"`
 	LegacyReading   []LegacyReadingRecord `json:"legacy_reading,omitempty"`
 	Signals         []SignalRecord        `json:"signals,omitempty"`
 	// Deletes, written last, remove records gone from the source. Records
@@ -266,7 +265,7 @@ type FavoriteRecord struct {
 type PollRecord struct {
 	ExternalID string `json:"external_id"`
 	ID         string `json:"id,omitempty"`
-	// Kind is multiple_choice (the default) or free_text.
+	// Kind is multiple_choice (the default and only supported kind).
 	Kind     string `json:"kind,omitempty"`
 	Question string `json:"question"`
 	Language string `json:"language,omitempty"`
@@ -295,16 +294,6 @@ type VoteRecord struct {
 	UserID    string     `json:"user_id,omitempty"`
 	IP        string     `json:"ip,omitempty"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
-}
-
-// AnswerRecord is one person's free-text answer to a poll; the classifier
-// entities it later.
-type AnswerRecord struct {
-	Poll      Ref        `json:"poll"`
-	UserID    string     `json:"user_id"`
-	Text      string     `json:"text"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // LegacyReadingRecord preserves source bookmarks/progress as legacy state,
@@ -360,7 +349,6 @@ const (
 	SectionFavorites     = "favorites"
 	SectionPolls         = "polls"
 	SectionVotes         = "votes"
-	SectionAnswers       = "answers"
 	SectionLegacyReading = "legacy_reading"
 	SectionSignals       = "signals"
 	SectionDeletes       = "deletes"
