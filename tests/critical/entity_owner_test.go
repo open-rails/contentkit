@@ -10,7 +10,6 @@ import (
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/channels"
-	"github.com/open-rails/contentkit/entities"
 )
 
 func TestEntityOwnerAssignmentBoundary(t *testing.T) {
