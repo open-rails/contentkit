@@ -188,10 +188,13 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 			return err
 		}
 		in[i].ChannelID = owner
-		if owner != "" {
-			for _, v := range in[i].Versions {
-				if v.Access != nil {
-					return invalid("channel versions use parent access")
+		for _, v := range in[i].Versions {
+			if owner != "" && v.Access != nil {
+				return invalid("channel versions use parent access")
+			}
+			if owner == "" {
+				if err := s.checkChannelRule("", v.Access); err != nil {
+					return err
 				}
 			}
 		}
