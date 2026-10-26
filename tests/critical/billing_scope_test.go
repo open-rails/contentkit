@@ -51,8 +51,8 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	create := func(title string, rule access.Rule) catalog.Content {
 		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &rule,
 			Versions: []catalog.VersionInput{
-				{Languages: []string{"en"}, Access: &rule, Text: map[string]catalog.VersionText{"en": {Title: title + " English"}}},
-				{Languages: []string{"de"}, Access: &rule, Text: map[string]catalog.VersionText{"de": {Title: title + " German"}}},
+				{Languages: []string{"en"}, Access: &rule, Text: map[string]catalog.VersionText{"en": {Title: title + " English", Body: "Protected English manuscript"}}},
+				{Languages: []string{"de"}, Access: &rule, Text: map[string]catalog.VersionText{"de": {Title: title + " German", Body: "Protected German manuscript"}}},
 			}})
 		must(t, err)
 		item, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
