@@ -56,7 +56,7 @@ func (st *Store) PrepareDailyPopularity(ctx context.Context, tenant, kind string
 			report.Reused++
 			continue
 		}
-		if err := st.preparePopularityDay(ctx, tenant, kind, scope, day, availability.Intervals); err != nil {
+		if err := st.preparePopularityDay(ctx, tenant, kind, scope, day, availability.Intervals, rebuild); err != nil {
 			return report, err
 		}
 		report.Prepared++
@@ -120,12 +120,15 @@ func popularityDayAudiences(day time.Time, intervals []AccessInterval) map[strin
 	return out
 }
 
-func (st *Store) preparePopularityDay(ctx context.Context, tenant, kind string, scope ActivityScope, day time.Time, intervals []AccessInterval) error {
+func (st *Store) preparePopularityDay(ctx context.Context, tenant, kind string, scope ActivityScope, day time.Time, intervals []AccessInterval, rebuild bool) error {
 	audiences := popularityDayAudiences(day, intervals)
-	// Removing one day also removes items no longer available after an explicit
-	// correction. Failed work returns an error; the existing ranking remains.
-	if err := st.mutate(ctx, "popularity_daily", "tenant=? AND content_kind=? AND domain=? AND language=? AND day=?", tenant, kind, scope.Domain, scope.Language, day); err != nil {
-		return err
+	// Ordinary refresh appends replacements: immutable history retains every
+	// item available at any point that day. Only an explicit correction can
+	// retract that history, so only rebuild physically removes the old day.
+	if rebuild {
+		if err := st.mutate(ctx, "popularity_daily", "tenant=? AND content_kind=? AND domain=? AND language=? AND day=?", tenant, kind, scope.Domain, scope.Language, day); err != nil {
+			return err
+		}
 	}
 	if len(audiences) > 0 {
 		if err := st.insertPopularityDay(ctx, tenant, kind, scope, day, audiences); err != nil {
@@ -178,7 +181,7 @@ func (st *Store) insertPopularityDay(ctx context.Context, tenant, kind string, s
  WHERE tenant=? AND content_kind=? AND observed_at>=? AND observed_at<? AND %[2]s
  AND (?='' OR domain=?) AND (?='' OR language=?) GROUP BY subject_kind,subject
  ), qualified AS (
- SELECT r.content_id,r.content_version_id,r.subject_kind,r.subject
+ SELECT r.content_id AS content_id,r.content_version_id AS content_version_id,r.subject_kind AS subject_kind,r.subject AS subject
  FROM canonical r INNER JOIN contentkit_daily_audiences a ON r.content_id=a.content_id
  INNER JOIN people p ON p.subject_kind=r.subject_kind AND p.subject=r.subject
  WHERE JSONExtractString(r.fact.3,'viewer_access')='full'

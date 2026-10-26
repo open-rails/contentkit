@@ -105,6 +105,22 @@ func TestDailyParticipationPreparation(t *testing.T) {
 		t.Fatalf("closed days recomputed: %+v", report)
 	}
 	assertRows(2)
+	// A day prepared before its receipt window closed still needs one final
+	// pass after a worker restart, even though it is now older than yesterday.
+	must(t, a.deps.ClickHouse.Exec(t.Context(), `ALTER TABLE `+a.cfg.ClickHouse.Database+`.popularity_daily_prepared DELETE WHERE tenant=? AND day=? SETTINGS mutations_sync=2`, tenant, day))
+	must(t, a.deps.ClickHouse.Exec(t.Context(), `INSERT INTO `+a.cfg.ClickHouse.Database+`.popularity_daily_prepared
+ (tenant,content_kind,domain,language,day,computed_at) VALUES(?,?,?,?,?,?)`, tenant, "article", scope.Domain, scope.Language, day, day.Add(30*time.Hour)))
+	report, err = store.PrepareDailyPopularity(t.Context(), tenant, "article", availability, scope, false)
+	must(t, err)
+	if report.Prepared != 1 || report.Reused != 1 {
+		t.Fatalf("missed final day=%+v", report)
+	}
+	assertRows(3)
+	report, err = store.PrepareDailyPopularity(t.Context(), tenant, "article", availability, scope, false)
+	must(t, err)
+	if report.Prepared != 0 || report.Reused != 2 {
+		t.Fatalf("finalized day was not frozen: %+v", report)
+	}
 	report, err = store.PrepareDailyPopularity(t.Context(), tenant, "article", availability, scope, true)
 	must(t, err)
 	if report.Prepared != 2 {
@@ -127,5 +143,16 @@ func TestDailyParticipationPreparation(t *testing.T) {
 	rows.Close()
 	if readers != 2 || eligible != 3 {
 		t.Fatalf("explicit rebuild ignored erasure: U=%d N=%d", readers, eligible)
+	}
+	empty := signal.Availability{Known: true, From: end, Until: end.AddDate(0, 0, 1)}
+	report, err = store.PrepareDailyPopularity(t.Context(), tenant, "article", empty, scope, false)
+	must(t, err)
+	if report.Prepared != 1 {
+		t.Fatalf("empty day was not prepared: %+v", report)
+	}
+	report, err = store.PrepareDailyPopularity(t.Context(), tenant, "article", empty, scope, false)
+	must(t, err)
+	if report.Reused != 1 || report.Prepared != 0 {
+		t.Fatalf("empty day recomputed: %+v", report)
 	}
 }
