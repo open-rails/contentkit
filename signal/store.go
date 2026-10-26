@@ -110,12 +110,6 @@ func projectionKeyContext(ctx context.Context, keys []ProjectionKey) (context.Co
 	return clickhouse.Context(ctx, clickhouse.WithExternalTable(table)), nil
 }
 
-// RecordSignals appends source events, then rebuilds the compact state and
-// daily projections of every touched subject × content reference from its
-// canonical events. Replays, reordering and revisions converge; nothing is
-// incremented. Signals of erased subjects (EraseSubjects) are dropped. If the
-// process stops between the insert and the projections, the events are durable
-// and RepairProjections restores the projections.
 // insertChunk bounds the rows of one inlined INSERT ... SELECT, and
 // insertBytes the bytes those rows take once the driver inlines their
 // arguments: ClickHouse rejects a statement over max_query_size (256 KiB by
@@ -125,6 +119,13 @@ const (
 	insertBytes = 240 << 10
 )
 
+// RecordSignals appends canonical source events. Measured engagement then
+// attempts state/daily summaries inline; a summary failure is logged without
+// rejecting accepted receipts. Another interaction for the same key or explicit
+// RepairProjections recomputes them. Untouched summaries may remain stale.
+// Validation and canonical insert errors are returned; a failed batch can have
+// accepted earlier rows. Replays/revisions converge without incrementing counts.
+// Signals of erased subjects are dropped, and erasure checks remain required.
 func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Signal) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
@@ -238,7 +239,7 @@ type RepairResult struct {
 	Next *ProjectionKey
 }
 
-// RepairProjections is the owned projection repair. It examines up to Limit
+// RepairProjections is an explicit projection repair. It examines up to Limit
 // candidate keys in key order and rebuilds those whose state or daily
 // projection is missing or behind its canonical generation, or whose positive
 // daily rows do not cover exactly the canonical days (all keys with Rebuild).

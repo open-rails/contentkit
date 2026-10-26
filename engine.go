@@ -69,7 +69,6 @@ type Engine struct {
 	log             *slog.Logger
 	auth            auth.Authenticator
 	gate            *access.Gate
-	classifier      bool // free-text answers to reclassify
 
 	hub      *hub.Hub
 	signals  *signalPlane // nil without ClickHouse
@@ -78,6 +77,7 @@ type Engine struct {
 	content  *content.Runtime
 	entities *entities.Store
 	catalog  *catalog.Store
+	versions *versions.Service
 	discover *discovery.Service
 	importer *importer.Service
 	media    *engineMedia
@@ -129,7 +129,7 @@ func NewForErasureReplay(ctx context.Context, cfg Config, deps Deps) (*Engine, e
 }
 
 func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *Engine, err error) {
-	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, classifier: deps.Classifier != nil, erasureRecovery: recovery}
+	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, erasureRecovery: recovery}
 	if e.log == nil {
 		e.log = slog.Default()
 	}
@@ -165,6 +165,9 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		return nil, err
 	}
 	if err := e.newCatalog(ctx, deps, now); err != nil {
+		return nil, err
+	}
+	if err := e.newVersions(deps, now); err != nil {
 		return nil, err
 	}
 	if cfg.Media != nil {
@@ -291,6 +294,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := preflightPublishingJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
 		return err
 	}
+	if err := e.preflightUnifiedReleases(ctx); err != nil {
+		return err
+	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
@@ -336,13 +342,25 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return err
 	}
 	if options.SkipQueues {
-		return e.validateCatalogEventHandoff(ctx)
+		return errors.Join(e.validateCatalogEventHandoff(ctx), e.validateUnifiedReleases(ctx))
 	}
 	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
-	if err := e.migratePublicationQueues(ctx); err != nil {
-		return err
+	if options.explicit {
+		if err := e.migratePublicationQueues(ctx); err != nil {
+			return err
+		}
+		if err := e.migrateUnifiedReleases(ctx); err != nil {
+			return err
+		}
+	} else {
+		if err := e.validatePublicationQueues(ctx); err != nil {
+			return err
+		}
+		if err := e.validateUnifiedReleases(ctx); err != nil {
+			return err
+		}
 	}
 	if err := e.migrateCatalogEvents(ctx); err != nil {
 		return err
@@ -453,24 +471,35 @@ func (e *Engine) playableKinds() ([]string, error) {
 	return out, nil
 }
 
+// newVersions binds the one publication service before optional media storage.
+func (e *Engine) newVersions(deps Deps, now func() time.Time) error {
+	opts := versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool,
+		Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
+		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
+		Policy: deps.Downloads, Logger: e.log, Now: now, MediaConfigured: e.cfg.Media != nil}
+	if mc := e.cfg.Media; mc != nil {
+		opts.Downloads = versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User,
+			Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis}
+	}
+	var err error
+	if e.versions, err = versions.New(opts); err != nil {
+		return err
+	}
+	return e.catalog.BindPublication(e.versions)
+}
+
 func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) (*engineMedia, error) {
 	mc := e.cfg.Media
 	reg, err := e.cfg.MediaKinds()
 	if err != nil {
 		return nil, err
 	}
-	m := &engineMedia{store: deps.Store}
+	m := &engineMedia{store: deps.Store, versions: e.versions}
 	declared := map[string]bool{}
 	for _, k := range reg.Kinds {
 		declared[k.Name] = true
 	}
 	m.polls = declared[pollFolder]
-	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
-		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
-		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis},
-		Policy:    deps.Downloads, Logger: e.log, Now: now}); err != nil {
-		return nil, err
-	}
 	reg.Hooks = m.versions.Hooks()
 	if m.reg, err = media.NewRegistry(reg); err != nil {
 		return nil, err
@@ -609,7 +638,7 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		NotificationPublisher: deps.Notifications,
 		EraseAccountReceipts:  e.eraseAccountReceipts,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
-		Classifier: deps.Classifier, ProviderDataEraser: deps.ProviderDataEraser,
+		ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
@@ -736,7 +765,7 @@ func WithRiverClient(fleet *river.Client[pgx.Tx]) StartOption {
 }
 
 // Start starts ContentKit's background work: search indexing, preference
-// sync, projection repair, erasure and the media jobs. With no
+// sync, popularity refresh, erasure and the media jobs. With no
 // options it builds and runs ContentKit's own River client in
 // Config.Database.RiverSchema; with WithRiverClient the jobs run on the host's
 // fleet. It runs no DDL; ctx ending stops nothing: Close stops what Start
@@ -893,7 +922,7 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 // recent searches, inboxes, people's avatars (on the avatar primary only:
 // another site's people's avatars are the primary's, which its own
 // EraseSubjects erases; see AvatarsConfig) and data
-// retained by moderation and classifier providers; approved authored content
+// retained by moderation providers; approved authored content
 // stays (content.EraseSubjects). Retry while error != nil or
 // !report.Complete(); Remaining names a plane that could not finish
 // (content_plane, media_plane, signal_plane). Without a signal plane only the

@@ -54,7 +54,7 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
 ## Order and failures
 
 Sections are written in order: entities, contents, memberships,
-aliases, comments, reactions, favorites, polls, votes, answers, signals,
+aliases, comments, reactions, favorites, polls, votes, signals,
 deletes; a
 record may name what an earlier section or call wrote. Each section runs in
 transactions of up to 1000 records: all at once, else each in its own
@@ -122,7 +122,9 @@ named as the body references them.
 | `favorites` | `FavoriteRecord` | `target` (content, version), `user_id` |
 | `polls` | `PollRecord` | `external_id`, `kind`, `question`, `language`, `active`, `live_at`, `closes_at`, `deleted_at`, `options` |
 | `votes` | `VoteRecord` | `poll`, `option`, `user_id` / `ip` |
-| `answers` | `AnswerRecord` | `poll`, `user_id`, `text` |
 | `signals` | `SignalRecord` | `target` (content, version), `user_id` / `anon_key`, `type` (click), `event_id`, `revision`, `occurred_at` |
 | `legacy_reading` | `LegacyReadingRecord` | `target` (content, version), `user_id` / `anon_key`, `first_read_at`, `last_read_at`, `progress`, `progress_max`, `completed`, `resume`, `revision` |
 | `deletes` | `DeleteRecord` | `entity` (content, version, group, comment, poll), `external_id` |
+
+Poll imports support `multiple_choice` only. Free-text polls and the removed
+`answers` section are rejected; historical free-text records are not converted.

@@ -300,6 +300,7 @@ export const de: ContentKitUiMessageBundle = {
     resume_mismatch: "Der gespeicherte Upload gehört zu einer anderen Datei. Bitte wähle die Datei erneut.",
     moderation_rejected: "Dies wurde von der Moderation abgelehnt.",
     comment_banned: "Du kannst hier nicht kommentieren.",
+    comment_moderated: "Ein Kommentar, der geprüft wird oder nicht veröffentlicht ist, kann nicht bearbeitet werden.",
     comments_closed: "Die Kommentare sind hier geschlossen.",
     comments_locked: "Schalte das frei, um Kommentare zu sehen und zu schreiben.",
     not_joinable: "Dieser Gruppe kann man gerade nicht beitreten.",

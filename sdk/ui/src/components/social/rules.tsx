@@ -28,7 +28,7 @@ export function wordsOf(text: string): string[] {
 }
 
 /**
- * Staff: the banned words every comment and free-text answer meets: add
+ * Staff: the banned words every comment meets: add
  * several at once (comma-separated), mask them (the default) or refuse the
  * text, switch what one does, or unban it.
  */

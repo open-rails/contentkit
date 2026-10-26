@@ -390,7 +390,6 @@ Ports (in `content` unless qualified):
 | `Media` | no | poll images and avatars in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment bodies (default strips tags) |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment publishes; absent = publish (see Moderation) |
-| `AnswerClassifier` | no | `Classify(Answer) → GroupAssignment` when a free-text answer revision is stored; results are source-owned; absent = free-text polls are refused (see Free-text polls) |
 
 **Authors.** Comments, replies, the latest-comments feed, held items and
 bans show each author as `{id, name, username, avatar, avatar_srcset}`:
@@ -473,8 +472,10 @@ owners. The verdict sets the comment's `moderation` state:
 - `review` stores the item `held` (`202` on create): it is not counted, not
   indexed, cannot be replied to or reacted to, and is invisible to every reader
   except its author, who sees it with `moderation: "held"` and
-  `moderation_reason`. An edit re-screens: a held item publishes on approval, a
-  published one is withdrawn on review (`202`).
+  `moderation_reason`. An edit re-screens: a published one is withdrawn on
+  review (`202`). Its author can't edit a held or rejected comment
+  (`403 comment_moderated`), so only a reviewer's approval or a release
+  publishes it; a moderator's edit of a held one publishes on approval.
 - A moderator error or an unknown decision **fails closed to `review`** with
   the reason "awaiting review"; the error is kept for the reviewer. Nothing is
   ever published unscreened and no submission is lost.
@@ -501,7 +502,7 @@ Banned words and IP bans are data staff edit (`root:comments:moderate`):
 the default, replaces each word containing it with asterisks; `reject`
 refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
 (`{"network", "reason", "until"}`: an address or CIDR network). They apply to
-every comment and free-text answer before the moderator; an IP-banned write
+every comment before the moderator; an IP-banned write
 answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
 
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
@@ -588,29 +589,22 @@ when both scopes apply it reports the one lasting longer
 commenters have no identity to ban. `EraseSubjects` removes the bans of an
 erased user and of their owner scope, and blanks them as `banned_by`.
 
-## Free-text polls
+## Polls
 
-`content_poll_questions.kind` is `multiple_choice` (options + votes, as
-before) or `free_text`: one answer per signed-in actor in
-`content_poll_answers`, editable until the poll closes. `closes_at` (optional,
-`PATCH`-able, `null` clears it) and `is_active = false` close a poll for votes and answers alike
-(`400 poll is closed`); results stay readable. Anonymous actors cannot answer
-(an IP-keyed editable answer would let NAT neighbours overwrite each other).
+Polls accept predefined choices only. `kind` defaults to `multiple_choice`;
+other kinds, including `free_text`, are rejected with `400 invalid_request`.
+Create a poll with at least two options, then vote through
+`POST /polls/{id}/vote`. A vote is final: concurrent retries never add another
+vote. Signed-out voting follows `Config.anonymous.votes`.
 
-Creating a free-text poll without `Options.Classifier` is refused (`501`,
-`content.ErrNoClassifier`). Each stored or edited answer is classified right
-after commit; a classifier failure keeps the answer with `classified: false`
-and the engine's reclassify job retries every pending answer every 10
-minutes, each sweep from the start. The classifier
-returns a group id and label for an immutable `(tenant, answer_id, revision)`.
-ContentKit CAS-persists that assignment only while the revision is current.
-Membership, labels and counts are read from these durable assignments:
-`GET /polls/{id}` (and the list) returns `answer_count`, `groups`
-(`[{id, label, count}]`, sorted by count desc, label, id) and the caller's
-`my_answer`. There is no provider results-read dependency. Identical answer
-retries retain revision/time and completed classification. An edit clears the
-old assignment until the new revision is classified; late old results cannot win.
-`POST /polls/{id}/answer {"text"}` creates or replaces the caller's answer.
+`closes_at` (optional, `PATCH`-able, `null` clears it) and `is_active = false`
+close a poll for voting; its results remain readable. Scheduled questions are
+visible only to staff until their opening time.
+
+Free-text submission, automatic grouping and classifier dependencies are
+removed. Historical free-text questions and answers remain stored but are not
+exposed by current poll routes or modified by imports. Account erasure still
+removes a subject's historical answers. No classification worker is registered.
 
 ## Account lifecycle and interaction erasure
 
@@ -644,7 +638,7 @@ intends to remove the subject's contributions instead of anonymizing them.
 `ck.EraseSubjects(ctx, subjects)` erases subjects from every configured
 plane: signals ([completion contract](#subject-erasure-completion-contract)),
 ContentKit interaction data, avatars (on the avatar primary; see Avatars)
-and data retained by moderator/classifier providers. A
+and data retained by moderation providers. A
 deliberately disabled signal plane is absent, not unfinished. Any
 configured-plane failure returns an error and an incomplete report: keep the
 host's obligation pending and retry (calls are idempotent). The host may
@@ -656,7 +650,7 @@ Content erasure commits atomically:
 - a permanent tenant/subject fence in `content_erased_subjects`; later writes by
   that subject fail with `content.ErrSubjectErased`;
 - removal of the subject's authenticated reactions, favorites, poll votes and
-  answers, with exact counter decrements, and of comment bans of them or in
+  historical free-text answers, with exact counter decrements, and of comment bans of them or in
   their owner scope (global bans they set stay, without their id);
 - redaction of the subject's unpublished payloads (held/rejected comments)
   and their moderation metadata. An item with a previously approved payload keeps it
@@ -674,7 +668,7 @@ READ default.
 
 ### Provider data
 
-Moderators/classifiers that retain personal data must configure
+Moderators that retain personal data must configure
 `content.Options.ProviderDataEraser`. Its `EraseSubjects(ctx, tenant, actorIDs)`
 runs after the SQL commit and must durably fence those subjects and remove
 retained data, including against calls already in flight; a queued delete is
@@ -1524,7 +1518,7 @@ Nothing reads cached facet scores. See
 - Create and reuse one `contentkit.Engine` per tenant.
 - Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
 - Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
-- Wire `Options.Moderator`, `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
+- Wire `Options.Moderator` when comments require screening and grant `root:moderation:review` to reviewers. Polls use predefined choices.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
@@ -1565,3 +1559,16 @@ the authenticated tenant account. Editable creator credits are display metadata,
 not grants. Imported content without `created_by` remains staff/channel-managed.
 App-level own-post permissions never authorize access to arbitrary channels.
 OpenRails continues to own paid audience entitlements and their expiration.
+
+### Removed periodic jobs
+
+`contentkit_reclassify` and `contentkit_projection_repair` are no longer
+registered or scheduled. Existing rows do not block startup or migrations.
+River handles an unknown kind as an ordinary failed attempt and discards the
+job when its stored attempt limit is exhausted (three for these former timers).
+No application handler runs. Terminal history remains, and queues the fleet
+does not consume are unaffected.
+
+No special ContentKit cleanup option is required. An operator who wants to
+remove queue noise can use River's existing cancellation tools on reviewed
+exact job IDs; empty arguments on the shared queue do not establish app ownership.

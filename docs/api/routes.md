@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (160). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, entities `/v1`, versions `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (159). `contentkit.Engine.Routes` returns them under the host's prefix (`contentkit.Routes.Prefix`), each module a route group at its sub-path: kinds `/v1`, content `/v1`, contents `/v1`, upload `/v1/media/upload`, media `/v1/media`, codes `/v1/codes`, entities `/v1`, versions `/v1`, discovery `/v1`, import `/v1`. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`), `editor` (signed in, else 401 `unauthorized`; staff holding the permission named, or the target's own editors: its creators, a user-owned group's owner and holders of `{kind}:settings:manage` in its AuthKit scope, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -29,7 +29,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | GET | `/v1/comments/admin` | staff `root:comments:moderate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `author`, `limit`, `offset`. |
 | POST | `/v1/comments/{cid}/restore` | staff `root:comments:moderate` | — | 200 `Restored` | Restores a deleted comment. |
 | GET | `/v1/comments/{cid}/replies` | public | — | 200 `Comment[]` | A comment's replies, oldest first; withheld (empty) where the caller can't open the content. Query: `limit`, `offset`. |
-| PATCH | `/v1/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. |
+| PATCH | `/v1/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. Its author can't edit it while it is held or rejected. |
 | DELETE | `/v1/comments/{cid}` | public | — | 204 — | Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder. |
 | POST | `/v1/comments/{cid}/like` | public | — | 200 `ReactionCounts` | Likes a comment. |
 | POST | `/v1/comments/{cid}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a comment. |
@@ -52,12 +52,11 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | GET | `/v1/entities/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a group and whether the caller favorited it (never, signed out: then it must be visible). |
 | GET | `/v1/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
 | GET | `/v1/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `state`, `q`, `limit`, `offset`. |
-| GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders. |
-| POST | `/v1/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
+| GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders. |
+| POST | `/v1/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with at least two predefined options; only multiple_choice is supported. |
 | PATCH | `/v1/polls/{id}` | staff `root:polls:write` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
 | DELETE | `/v1/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll and its media folder. |
 | POST | `/v1/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
-| POST | `/v1/polls/{id}/answer` | user | `PollAnswerInput` | 200 `Poll` | Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply. |
 | PUT | `/v1/polls/{id}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
 | POST | `/v1/polls/{id}/options` | staff `root:polls:write` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |
 | PATCH | `/v1/polls/{id}/options/{oid}` | staff `root:polls:write` | `PollOptionPatch` | 200 `PollOption` | Updates an option's label or position. |
@@ -231,6 +230,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `animation_unsupported` | 415 | An AVIF or HEIF image sequence, which is decoded as one frame. |
 | `checksum_mismatch` | 422 | The stored bytes differ from the declared SHA-256. |
 | `comment_banned` | 403 | The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends. |
+| `comment_moderated` | 403 | The comment is held for review or was rejected, so its author can't edit it; a reviewer's approval makes a held one editable again. |
 | `comment_too_long` | 422 | The comment is longer than the site allows; `details.max` is the limit in characters. |
 | `comments_closed` | 403 | The target's comments are closed or hidden: existing ones may show, new ones and edits are refused. |
 | `comments_locked` | 403 | The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them. |

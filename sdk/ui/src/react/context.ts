@@ -37,7 +37,6 @@ export type SocialOperation =
   | "favorite.save"
   | "poll.load"
   | "poll.vote"
-  | "poll.answer"
   | "poll.save"
   | "post.load"
   | "content.save"

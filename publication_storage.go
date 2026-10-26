@@ -119,7 +119,9 @@ func MigratePublicationStorage(ctx context.Context, pool *pgxpool.Pool, cfg Conf
 			}
 		}
 		if len(batch) < 100 {
-			return report, nil
+			// The metadata job runs only after startup. Admit the release request
+			// now so the explicit handoff is complete before startup validates it.
+			return report, e.migrateUnifiedReleases(ctx)
 		}
 	}
 }

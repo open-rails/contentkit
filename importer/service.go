@@ -115,7 +115,7 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 // content versions and poll options. Importers can use it to size their batches.
 func (b Batch) RecordCount() int {
 	n := len(b.Entities) + len(b.Memberships) + len(b.Aliases) + len(b.Comments) + len(b.Reactions) + len(b.Favorites) +
-		len(b.Votes) + len(b.Answers) + len(b.LegacyReading) + len(b.Signals) + len(b.Deletes)
+		len(b.Votes) + len(b.LegacyReading) + len(b.Signals) + len(b.Deletes)
 	for _, c := range b.Contents {
 		n += 1 + len(c.Versions)
 	}

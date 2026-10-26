@@ -322,9 +322,9 @@ func (h *Hub) SetSignals(s *signal.Store) { h.store.Store(s) }
 // SignalsConfigured reports whether the hub has a signal plane, up or down.
 func (h *Hub) SignalsConfigured() bool { return h.configured }
 
-// RepairProjections is the bounded, host-scheduled projection repair (see
-// signal.Store.RepairProjections): run it periodically with IngestedSince for
-// crash repair, and with Rebuild over a window after projection changes.
+// RepairProjections is the bounded explicit projection repair (see
+// signal.Store.RepairProjections). Use IngestedSince for a known interruption
+// or Rebuild over a window after projection changes. Failures reach the caller.
 func (h *Hub) RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error) {
 	store, err := h.requireStore()
 	if err != nil {
