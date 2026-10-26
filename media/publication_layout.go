@@ -68,6 +68,11 @@ func (m *Manifests) MigratePublicationLayout(ctx context.Context, ref contentref
 	if errors.Is(err, pgx.ErrNoRows) {
 		var current *Manifest
 		current, _, err = m.Get(ctx, ref)
+		if errors.Is(err, ErrNotFound) {
+			// A version that never received media: its first manifest is
+			// already in the publication layout.
+			current, err = m.Edit(ctx, ref, func(*Manifest) error { return nil })
+		}
 		if err != nil {
 			return err
 		}

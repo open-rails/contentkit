@@ -74,15 +74,18 @@ func MigratePublicationStorage(ctx context.Context, pool *pgxpool.Pool, cfg Conf
 			if err != nil {
 				return report, err
 			}
+			operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("contentkit-publication-layout:"+ref.String())).String()
 			m, _, err := manifests.Get(ctx, ref)
 			if errors.Is(err, media.ErrNotFound) {
-				m, err = manifests.Edit(ctx, ref, func(*media.Manifest) error { return nil })
+				// The layout migration creates a media-less version's manifest.
+				if err = manifests.MigratePublicationLayout(ctx, ref, operation); err == nil {
+					m, _, err = manifests.Get(ctx, ref)
+				}
 			}
 			if err != nil {
 				return report, fmt.Errorf("publication layout %s: %w", version.ID, err)
 			}
 			if !m.Deleted && !m.PublicationLayoutReady() {
-				operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("contentkit-publication-layout:"+ref.String())).String()
 				if err := manifests.MigratePublicationLayout(ctx, ref, operation); err != nil {
 					return report, fmt.Errorf("publication layout %s: %w", version.ID, err)
 				}
