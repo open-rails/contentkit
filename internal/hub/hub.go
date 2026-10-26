@@ -421,6 +421,24 @@ func (h *Hub) ReadContent(ctx context.Context, kind string, window signal.Window
 	return store.ReadContent(ctx, h.tenant, kind, window)
 }
 
+// PrepareDailyPopularity is explicit worker/admin preparation, not a request
+// cache or background loop. Closed daily aggregates are reused unless rebuilt.
+func (h *Hub) PrepareDailyPopularity(ctx context.Context, kind string, availability signal.Availability, scope signal.ActivityScope, rebuild bool) (signal.DailyPopularityPreparation, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return signal.DailyPopularityPreparation{}, err
+	}
+	return store.PrepareDailyPopularity(ctx, h.tenant, kind, availability, scope, rebuild)
+}
+
+func (h *Hub) DailyPopular(ctx context.Context, kind string, window signal.Window, scope signal.ActivityScope, limit int) ([]signal.PopularHit, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.DailyPopular(ctx, h.tenant, kind, window, scope, limit)
+}
+
 // --- Discovery plane ---
 
 func (h *Hub) History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error) {
