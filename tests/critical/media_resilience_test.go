@@ -46,6 +46,7 @@ type mediaWire struct {
 	hold                *mediaRequestHold
 	webpPuts            int
 	failManifest        bool
+	failWebP            bool
 	refusedManifestPuts int
 }
 
@@ -76,7 +77,9 @@ func newMediaWire(t *testing.T) *mediaWire {
 		if refuse {
 			w.refusedManifestPuts++
 		}
-		if r.Method == http.MethodPut && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp") {
+		webp := r.Method == http.MethodPut && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
+		failWebP := w.failWebP && webp
+		if webp {
 			w.webpPuts++
 		}
 		hold := w.hold
@@ -86,6 +89,12 @@ func newMediaWire(t *testing.T) *mediaWire {
 			hold = nil
 		}
 		w.mu.Unlock()
+		if failWebP {
+			out.Header().Set("Content-Type", "application/xml")
+			out.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(out, `<Error><Code>AccessDenied</Code><Message>Owned fixture rendition write refused</Message></Error>`)
+			return
+		}
 		if refuse {
 			out.Header().Set("Content-Type", "application/xml")
 			out.WriteHeader(http.StatusServiceUnavailable)
@@ -717,6 +726,54 @@ func settledPreparedOutputs(t *testing.T, m *resilientMedia, client *ck.Client, 
 }
 
 func TestMediaWorkerRecovery(t *testing.T) {
+	t.Run("exhausted-image-job-records-failure-and-cancels", func(t *testing.T) {
+		m := newResilientMedia(t)
+		client := m.app.engine.Client()
+		ref := galleryRef(t, client, "Rendition retries exhausted")
+		m.wire.mu.Lock()
+		m.wire.failWebP = true
+		m.wire.mu.Unlock()
+		m.start(t)
+		_, err := client.IngestMedia(t.Context(), nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
+		must(t, err)
+		queue := m.queue(t)
+		var finished *rivertype.JobRow
+		waitForWithin(t, 30*time.Second, func() bool {
+			jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.ImageArgs{}).Kind()))
+			must(t, err)
+			for _, job := range jobs.Jobs {
+				if job.State == rivertype.JobStateRetryable {
+					_, err := queue.JobRetry(t.Context(), job.ID)
+					must(t, err)
+				}
+				if job.State == rivertype.JobStateCancelled || job.State == rivertype.JobStateDiscarded || job.State == rivertype.JobStateCompleted {
+					finished = job
+					return true
+				}
+			}
+			return false
+		})
+		if finished.State != rivertype.JobStateCancelled || finished.Attempt != workqueue.MaxAttempts {
+			t.Fatalf("exhausted image job: state=%s attempt=%d errors=%+v", finished.State, finished.Attempt, finished.Errors)
+		}
+		read, err := client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Status: true})
+		must(t, err)
+		if read.Status == nil || read.Status.State != media.StateFailed || read.Status.FailureCount != 1 || len(read.Status.Failures) != 1 || read.Status.Failures[0].Path != "pages/one.png" {
+			t.Fatalf("exhausted rendition remained pending: %+v", read.Status)
+		}
+		logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+		must(t, err)
+		journal, err := media.NewPGJournal(m.pool, m.schema, nil)
+		must(t, err)
+		manifests, err := media.NewManifests(m.storage.store, m.config.Kinds, media.ManifestOptions{Locker: media.PGLocker(m.pool), Journal: journal})
+		must(t, err)
+		snapshot, _, err := manifests.Get(t.Context(), logical)
+		must(t, err)
+		page, ok := snapshot.Get("pages/one.png")
+		if !ok || page.Fail() == nil || len(page.Pending) != 0 {
+			t.Fatalf("page failure was not persisted: %+v", page)
+		}
+	})
 	t.Run("CK-J11-S04_process_death_before_output_checkpoint_retries_one_visible_rendition", func(t *testing.T) {
 		m := newResilientMedia(t)
 		client := m.app.engine.Client()

@@ -39,8 +39,9 @@ const (
 	VideoQueue  = "media_video"  // resumable video conversion
 	MaxAttempts = 5
 	// River counts a rescued hard kill before Work can restore the attempt.
-	// Video jobs enforce MaxAttempts on actual failures inside Work instead.
-	VideoRiverMaxAttempts = 32767
+	// Workers enforce MaxAttempts on actual failures inside Work instead.
+	riverMaxAttempts      = 32767
+	VideoRiverMaxAttempts = riverMaxAttempts
 )
 
 //go:embed migrations/*.sql
@@ -207,12 +208,12 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 	}
 	if job.Place || job.Commit != "" {
 		return media.InsertOnce(ctx, insert, IngestArgs{Ref: job.Ref, Commit: job.Commit, Preset: job.Preset, Force: job.Force},
-			river.InsertOpts{Queue: IngestQueue, MaxAttempts: MaxAttempts})
+			river.InsertOpts{Queue: IngestQueue, MaxAttempts: riverMaxAttempts})
 	}
 	f := FamiliesOf(item.Kind(), job.Preset)
 	if f.Image || job.Editor {
 		if err := media.InsertOnce(ctx, insert, ImageArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Editor: job.Editor},
-			river.InsertOpts{Queue: ImageQueue, MaxAttempts: MaxAttempts}); err != nil {
+			river.InsertOpts{Queue: ImageQueue, MaxAttempts: riverMaxAttempts}); err != nil {
 			return err
 		}
 	}

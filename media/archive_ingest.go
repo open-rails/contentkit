@@ -85,6 +85,26 @@ func (m *Manifests) IngestArchives(ctx context.Context, ref contentref.ContentRe
 	return nil
 }
 
+// FailIngest settles uploads that placement or archive ingestion left unfinished.
+func (m *Manifests) FailIngest(ctx context.Context, ref contentref.ContentRef, cause error) error {
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	_, err = m.EditExisting(ctx, ref, func(cur *Manifest) error {
+		for _, f := range cur.Files {
+			if f.IsUpload() && f.Fail() == nil && (f.Staged != "" || statusArchivePending(item.Kind(), f)) {
+				cur.SetFailed(f.Path, cause)
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
 type archivePageSource struct {
 	file                       string
 	entry                      *zip.File

@@ -30,7 +30,7 @@ type Config struct {
 	TokenClaims    []string              `json:"token_claims,omitempty" yaml:"token_claims"`
 	Restrictions   []string              `json:"restrictions,omitempty" yaml:"restrictions"`
 	ContentFilters ContentFilters        `json:"content_filters,omitempty" yaml:"content_filters"`
-	Kinds          map[string]Kind       `json:"kinds" yaml:"kinds"`
+	Kinds          map[string]Kind       `json:"content_kinds" yaml:"content_kinds"`
 	EntityKinds    map[string]EntityKind `json:"entity_kinds,omitempty" yaml:"entity_kinds"`
 }
 
