@@ -8,7 +8,7 @@ Media processing uses three worker job kinds: ingest, image and video. Original 
 
 `contentkit_media_derivatives` runs on `media_derivatives`. One River row owns image generation and video conversion for a media item through planning, encoding and rendition publication. Chunking is an internal checkpoint mechanism, not a separate River job graph.
 
-Each attempt validates the current source/preset, completes bounded missing work and records successful outputs. Completed chunks survive interruption. Finished lower renditions become playable before later renditions finish. The same job yields at chunk boundaries so shorter waiting conversions get a turn; worker resource limits still bound CPU and scratch use. A force request is consumed once, and progressive readiness is delivered even when the job yields.
+Each attempt validates the current source/preset, completes bounded missing work and records successful outputs. Completed chunks survive interruption. Finished renditions contribute editor progress while later renditions finish; they are not released to readers until all required outputs are ready. The same job yields at chunk boundaries so shorter waiting conversions get a turn; worker resource limits still bound CPU and scratch use. A force request is consumed once, and progressive readiness is delivered even when the job yields.
 
 Keep the existing durable encoding checkpoints and source/incarnation checks. Remove child-job fan-out, separate assembly scheduling, light/encode queue aliases and unused one-shot worker selection. Preserve cancellation, stale-source rejection, temporary-output recovery and idempotent publication.
 
