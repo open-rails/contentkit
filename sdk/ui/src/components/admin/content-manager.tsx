@@ -11,7 +11,7 @@ import type { Content, EntityCard, EntityDetail, ManageCount, Rule, Version } fr
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
-import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
+import { useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { useContent } from "../../react/contents.js";
 import { useKinds } from "../../react/entities.js";
 import { keyOf, useContentScope, usePaged, useResource } from "../../react/use-resource.js";

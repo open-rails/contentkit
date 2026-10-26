@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { Content, Decision, Version } from "../client/generated/wire.js";
@@ -80,6 +80,8 @@ export function useContentDetail(id: string | null | undefined, o: ContentDetail
   // The parent supplies the visible edition index. Text and image URLs must
   // come from the exact selected edition, never a sibling's projection.
   const content = exact ? edition.data ?? null : parent;
+  const reloadParent = r.reload, reloadEdition = edition.reload;
+  const reload = useCallback(() => { reloadParent(); if (exact) reloadEdition(); }, [reloadParent, reloadEdition, exact]);
   return useMemo(() => {
     const version = exact ? content?.versions.find((v) => v.id === picked?.id) ?? null : picked;
     return {
@@ -90,7 +92,7 @@ export function useContentDetail(id: string | null | undefined, o: ContentDetail
       languages: [...new Set(versions.flatMap((v) => v.languages))],
       loading: !!key && (r.loading || !r.loaded || exact && (edition.loading || !edition.loaded)),
       error: r.error ?? (exact ? edition.error : undefined),
-      reload: () => { r.reload(); if (exact) edition.reload(); },
+      reload,
     };
-  }, [content, versions, picked, exact, language, key, r.loading, r.loaded, r.error, r.reload, edition.loading, edition.loaded, edition.error, edition.reload]);
+  }, [content, versions, picked, exact, key, r.loading, r.loaded, r.error, edition.loading, edition.loaded, edition.error, reload]);
 }
