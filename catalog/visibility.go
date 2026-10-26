@@ -309,9 +309,11 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 }
 
 // channelReady keeps incomplete or withdrawn authoring homes out of public
-// readers and discovery. Explicit staff management still inspects their records.
+// readers and discovery. Deleted rows may still reach the existing exact-version
+// purchase retention check; this predicate alone never grants access. Explicit
+// staff management still inspects pending records.
 func (v *Viewer) channelReady(alias string) string {
-	return "(" + alias + ".owner_entity_id IS NULL OR EXISTS(SELECT 1 FROM " + v.s.t.entities + " source_channel WHERE source_channel.tenant_id=" + alias + ".tenant_id AND source_channel.id=" + alias + ".owner_entity_id AND source_channel.kind='channel' AND source_channel.state='active' AND source_channel.auth_scope IS NOT NULL))"
+	return "(" + alias + ".owner_entity_id IS NULL OR EXISTS(SELECT 1 FROM " + v.s.t.entities + " source_channel WHERE source_channel.tenant_id=" + alias + ".tenant_id AND source_channel.id=" + alias + ".owner_entity_id AND source_channel.kind='channel' AND ((source_channel.state='active' AND source_channel.auth_scope IS NOT NULL) OR (source_channel.state='deleted' AND " + alias + ".deleted))))"
 }
 
 // privileged is the SQL test, over Listed's args, of a row whose channel the
