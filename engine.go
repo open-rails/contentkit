@@ -78,6 +78,7 @@ type Engine struct {
 	content  *content.Runtime
 	entities *entities.Store
 	catalog  *catalog.Store
+	versions *versions.Service
 	discover *discovery.Service
 	importer *importer.Service
 	media    *engineMedia
@@ -165,6 +166,9 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		return nil, err
 	}
 	if err := e.newCatalog(ctx, deps, now); err != nil {
+		return nil, err
+	}
+	if err := e.newVersions(deps, now); err != nil {
 		return nil, err
 	}
 	if cfg.Media != nil {
@@ -291,6 +295,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := preflightPublishingJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
 		return err
 	}
+	if err := e.preflightUnifiedReleases(ctx); err != nil {
+		return err
+	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
@@ -336,12 +343,19 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return err
 	}
 	if options.SkipQueues {
-		return e.validateCatalogEventHandoff(ctx)
+		return errors.Join(e.validateCatalogEventHandoff(ctx), e.validateUnifiedReleases(ctx))
 	}
 	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
 	if err := e.migratePublicationQueues(ctx); err != nil {
+		return err
+	}
+	if options.explicit {
+		if err := e.migrateUnifiedReleases(ctx); err != nil {
+			return err
+		}
+	} else if err := e.validateUnifiedReleases(ctx); err != nil {
 		return err
 	}
 	if err := e.migrateCatalogEvents(ctx); err != nil {
@@ -453,24 +467,35 @@ func (e *Engine) playableKinds() ([]string, error) {
 	return out, nil
 }
 
+// newVersions binds the one publication service before optional media storage.
+func (e *Engine) newVersions(deps Deps, now func() time.Time) error {
+	opts := versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool,
+		Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
+		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
+		Policy: deps.Downloads, Logger: e.log, Now: now, MediaConfigured: e.cfg.Media != nil}
+	if mc := e.cfg.Media; mc != nil {
+		opts.Downloads = versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User,
+			Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis}
+	}
+	var err error
+	if e.versions, err = versions.New(opts); err != nil {
+		return err
+	}
+	return e.catalog.BindPublication(e.versions)
+}
+
 func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) (*engineMedia, error) {
 	mc := e.cfg.Media
 	reg, err := e.cfg.MediaKinds()
 	if err != nil {
 		return nil, err
 	}
-	m := &engineMedia{store: deps.Store}
+	m := &engineMedia{store: deps.Store, versions: e.versions}
 	declared := map[string]bool{}
 	for _, k := range reg.Kinds {
 		declared[k.Name] = true
 	}
 	m.polls = declared[pollFolder]
-	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
-		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
-		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis},
-		Policy:    deps.Downloads, Logger: e.log, Now: now}); err != nil {
-		return nil, err
-	}
 	reg.Hooks = m.versions.Hooks()
 	if m.reg, err = media.NewRegistry(reg); err != nil {
 		return nil, err
