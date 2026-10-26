@@ -188,6 +188,16 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 			return err
 		}
 		in[i].ChannelID = owner
+		if owner != "" {
+			for _, v := range in[i].Versions {
+				if v.Access != nil {
+					return invalid("channel versions use parent access")
+				}
+			}
+		}
+		if err := s.checkChannelRule(owner, in[i].Access); err != nil {
+			return err
+		}
 		if slices.Contains(ids, in[i].ID) {
 			return invalid("content %s is imported twice", in[i].ID)
 		}
@@ -236,6 +246,20 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	changed, err := s.writeImport(ctx, tx, b)
 	if err != nil {
 		return err
+	}
+	// Channel audience intent belongs to the parent, including versions omitted
+	// from this import batch. Reader release snapshots remain unchanged until
+	// the normal publication operation completes.
+	channelRows, err := tx.Query(ctx, `UPDATE `+s.t.versions+` v SET access=c.access,revision=v.revision+1,updated_at=clock_timestamp() FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND c.id=ANY($2::text[]) AND c.owner_entity_id IS NOT NULL AND v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND v.access IS DISTINCT FROM c.access RETURNING v.content_id`, s.tenant, ids)
+	if err != nil {
+		return err
+	}
+	channelChanged, err := pgx.CollectRows(channelRows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	for _, id := range channelChanged {
+		changed[id] = true
 	}
 	var versionParents []string
 	for _, version := range b.versions {
@@ -374,7 +398,9 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 				}
 			}
 			vr.PublishAt, vr.PublishedAt, vr.DeletedAt = importTimes(v.State, v.PublishAt, v.PublishedAt, v.DeletedAt, op, now)
-			if v.Access != nil {
+			if c.ChannelID != "" {
+				vr.Access, _ = json.Marshal(c.Access)
+			} else if v.Access != nil {
 				vr.Access, _ = json.Marshal(v.Access)
 				rules = append(rules, v.Access)
 			} else if had && len(op.access) > 0 {
@@ -745,6 +771,7 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 
 func (s *Store) checkImportVersion(kind string, parentDeleted bool, v *ImportVersion) error {
 	k := s.cfg.Kinds[kind]
+
 	if err := contentref.ValidateID(v.ID); err != nil {
 		return invalid("version id: %v", err)
 	}

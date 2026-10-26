@@ -15,7 +15,7 @@ import (
 )
 
 func (s *Store) Handler(a auth.Authenticator) (http.Handler, error) {
-	if err := gate.Check(a, access.EntitiesWrite); err != nil {
+	if err := gate.Check(a, access.ChannelsWrite); err != nil {
 		return nil, err
 	}
 	mux := http.NewServeMux()
@@ -34,21 +34,22 @@ func (h handler) as(r *http.Request) *Store { return h.s.As(h.auth, gate.Actor(r
 
 var listQuery = []httpapi.Param{httpapi.Text("language", "display language"), httpapi.Text("slug", "canonical channel slug"), httpapi.Text("q", "substring of a channel name or slug"), httpapi.Text("cursor", "previous next_cursor"), httpapi.Int("limit", "maximum results, at most 200"), httpapi.Text("sort", "name, count or newest")}
 var routes = []httpapi.Route[handler]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/channels", Resource: "channels", Auth: httpapi.Staff, Perm: string(access.ChannelsWrite), Doc: "Lists channel administration records, including deleted channels during retention.", Query: append(append([]httpapi.Param{}, listQuery...), httpapi.Text("state", "active or deleted")), Responses: []httpapi.Reply{httpapi.OK(Page{})}}, Serve: httpapi.H(handler.manageList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/channels", Resource: "channels", Auth: httpapi.Public, Doc: "Lists public channels independently of metadata entities.", Query: listQuery, Responses: []httpapi.Reply{httpapi.OK(Page{})}}, Serve: httpapi.H(handler.list)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/channels/{id}", Resource: "channels", Auth: httpapi.Public, Doc: "Reads a channel, its metadata and the viewer's membership standing.", Query: []httpapi.Param{httpapi.Text("language", "display language")}, Responses: []httpapi.Reply{httpapi.OK(Channel{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.get)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/channels/{id}", Resource: "channels", Auth: httpapi.Staff, Perm: string(access.EntitiesWrite), Doc: "Reads channel administration identity, including a deleted channel during retention.", Query: []httpapi.Param{httpapi.Text("language", "display language")}, Responses: []httpapi.Reply{httpapi.OK(Channel{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.manage)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/channels/{id}", Resource: "channels", Auth: httpapi.Staff, Perm: string(access.ChannelsWrite), Doc: "Reads channel administration identity, including a deleted channel during retention.", Query: []httpapi.Param{httpapi.Text("language", "display language")}, Responses: []httpapi.Reply{httpapi.OK(Channel{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.manage)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/channels", Resource: "channels", Auth: httpapi.User, Doc: "Lists the caller's channels and their current authoring permissions.", Query: listQuery, Responses: []httpapi.Reply{httpapi.OK(MyPage{})}}, Serve: httpapi.H(handler.mine)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/channels", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.EntitiesWrite), Doc: "Creates a channel under the configured staff or user creation policy.", Request: Input{}, Responses: []httpapi.Reply{httpapi.Created(Channel{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeLimitReached}}, Serve: httpapi.H(handler.create)},
-	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/channels/{id}", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.EntitiesWrite), Doc: "Edits channel identity as staff or a current channel manager.", Request: Update{}, Responses: []httpapi.Reply{httpapi.OK(Channel{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}}, Serve: httpapi.H(handler.update)},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/channels/{id}", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.EntitiesWrite), Doc: "Soft-deletes the channel using its existing content-retention lifecycle.", Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.remove)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/channels", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.ChannelsWrite), Doc: "Creates a channel under the configured staff or user creation policy.", Request: Input{}, Responses: []httpapi.Reply{httpapi.Created(Channel{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeLimitReached}}, Serve: httpapi.H(handler.create)},
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/channels/{id}", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.ChannelsWrite), Doc: "Edits channel identity as staff or a current channel manager.", Request: Update{}, Responses: []httpapi.Reply{httpapi.OK(Channel{})}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}}, Serve: httpapi.H(handler.update)},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/channels/{id}", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.ChannelsWrite), Doc: "Soft-deletes the channel using its existing content-retention lifecycle.", Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.remove)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/channels/{id}/entities", Resource: "channels", Auth: httpapi.Public, Doc: "Lists descriptive channel metadata; these associations confer no access or authoring authority.", Query: []httpapi.Param{httpapi.Text("language", "display language")}, Responses: []httpapi.Reply{httpapi.OK([]entities.EntityCard{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.metadata)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/channels/{id}/entities", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.EntitiesWrite), Doc: "Replaces channel metadata with the given entity IDs, as a channel manager.", Request: []string{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}}, Serve: httpapi.H(handler.setMetadata)},
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/channels/{id}/entities", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.ChannelsWrite), Doc: "Replaces channel metadata with the given entity IDs, as a channel manager.", Request: []string{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound, httpapi.CodeConflict}}, Serve: httpapi.H(handler.setMetadata)},
 }
 
 func opts(r *http.Request) ListOptions {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	return ListOptions{Language: q.Get("language"), Slug: q.Get("slug"), Query: q.Get("q"), Cursor: q.Get("cursor"), Limit: limit, Sort: entities.Sort(q.Get("sort"))}
+	return ListOptions{Language: q.Get("language"), Slug: q.Get("slug"), Query: q.Get("q"), Cursor: q.Get("cursor"), Limit: limit, Sort: entities.Sort(q.Get("sort")), State: q.Get("state")}
 }
 func (h handler) list(w http.ResponseWriter, r *http.Request) {
 	v, e := h.as(r).List(r.Context(), opts(r))
@@ -140,4 +141,9 @@ func reply(w http.ResponseWriter, status int, out any, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (h handler) manageList(w http.ResponseWriter, r *http.Request) {
+	v, e := h.as(r).ManagementList(r.Context(), opts(r))
+	reply(w, 200, v, e)
 }

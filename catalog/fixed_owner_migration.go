@@ -34,6 +34,9 @@ func InitializeFixedOwners(ctx context.Context, pool *pgxpool.Pool, schema, tena
 			fixedKinds = append(fixedKinds, kind)
 		}
 	}
+	if err := validateChannelModel(ctx, pool, schema, tenant, model); err != nil {
+		return err
+	}
 	if len(refs) == 0 {
 		return nil
 	}
@@ -216,6 +219,30 @@ func (s *Store) bindFixedOwnerContents(ctx context.Context, tx pgx.Tx, model kin
 			return err
 		}
 		if err := s.markDocuments(ctx, tx, ids); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateChannelModel(ctx context.Context, pool *pgxpool.Pool, schema, tenant string, model kinds.Config) error {
+	if model.Channels == nil {
+		return nil
+	}
+	if pool == nil {
+		return errors.New("catalog: channel migration requires a pool")
+	}
+	q := pgx.Identifier{schema}.Sanitize()
+	for kind, k := range model.Kinds {
+		if k.Channel == nil {
+			continue
+		}
+		var bad string
+		err := pool.QueryRow(ctx, `SELECT v.id FROM `+q+`.content_versions v JOIN `+q+`.content_items c ON c.tenant_id=v.tenant_id AND c.id=v.content_id WHERE c.tenant_id=$1 AND c.kind=$2 AND c.state<>'deleted' AND v.state<>'deleted' AND (c.owner_entity_id IS NOT NULL OR $3) AND v.access IS DISTINCT FROM c.access LIMIT 1`, tenant, kind, k.Channel.Fixed != "").Scan(&bad)
+		if err == nil {
+			return invalid("channel version %s has a distinct audience rule; resolve it before changing to shared parent access", bad)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 	}

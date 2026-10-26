@@ -52,6 +52,16 @@ func (s *Store) SetChannelMetadata(ctx context.Context, id EntityID, ids []Entit
 	if err != nil {
 		return err
 	}
+	before, err := s.Entities(ctx, []EntityID{id})
+	if err != nil {
+		return err
+	}
+	if len(before) != 1 {
+		return ErrNotFound
+	}
+	if err := s.mayEdit(ctx, before); err != nil {
+		return err
+	}
 	return s.run(ctx, func(q Querier) error {
 		locked, err := s.lock(ctx, q, []string{string(id)})
 		if err != nil {
@@ -60,8 +70,8 @@ func (s *Store) SetChannelMetadata(ctx context.Context, id EntityID, ids []Entit
 		if locked[0].State != StateActive {
 			return ErrNotFound
 		}
-		if err := s.mayEdit(ctx, locked); err != nil {
-			return err
+		if locked[0].Revision != before[0].Revision || locked[0].AuthScope != before[0].AuthScope {
+			return ErrConflict
 		}
 		metadata := *s
 		metadata.channels = false

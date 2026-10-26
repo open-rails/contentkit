@@ -15,13 +15,13 @@ direct AS (
  SELECT v.version_id, m.entity_id FROM v
  JOIN %[2]s m ON m.tenant_id = $1 AND m.content_id = v.content_id AND (m.version_id IS NULL OR m.version_id = v.version_id)
   AND m.state = 'active'
- JOIN %[3]s g ON g.tenant_id = $1 AND g.id = m.entity_id AND g.state = 'active'),
+ JOIN %[3]s g ON g.tenant_id = $1 AND g.id = m.entity_id AND g.state = 'active' AND g.kind <> 'channel'),
 up (version_id, entity_id) AS (
  SELECT version_id, entity_id FROM direct
  UNION
  SELECT up.version_id, p.id FROM up
  JOIN %[3]s c ON c.tenant_id = $1 AND c.id = up.entity_id
- JOIN %[3]s p ON p.tenant_id = $1 AND p.id = c.parent_id AND p.state = 'active'),
+ JOIN %[3]s p ON p.tenant_id = $1 AND p.id = c.parent_id AND p.state = 'active' AND p.kind <> 'channel'),
 eff AS (
  SELECT v.version_id, coalesce(array_agg(DISTINCT up.entity_id ORDER BY up.entity_id) FILTER (WHERE up.entity_id IS NOT NULL), '{}'::text[]) AS entity_ids
  FROM v LEFT JOIN up ON up.version_id = v.version_id GROUP BY v.version_id)`,

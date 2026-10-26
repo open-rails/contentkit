@@ -2,17 +2,22 @@ package channels
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
+	"reflect"
+	"slices"
+	"strings"
 )
 
 // Store is a catalog's channels. Existing persisted identity, media and scope
 // bytes are retained; callers only see this typed channel interface.
 type Store struct {
+	actor    access.Actor
 	storage  *entities.Store
 	metadata *entities.Store
 }
@@ -41,7 +46,7 @@ func FromStore(storage *entities.Store) *Store {
 }
 
 func (s *Store) As(a auth.Authenticator, actor access.Actor) *Store {
-	return &Store{storage: s.storage.As(a, actor), metadata: s.metadata.As(a, actor)}
+	return &Store{storage: s.storage.As(a, actor), metadata: s.metadata.As(a, actor), actor: actor}
 }
 
 type ListOptions struct {
@@ -51,14 +56,30 @@ type ListOptions struct {
 	Cursor   string
 	Limit    int
 	Sort     entities.Sort
+	State    string
 }
 
 func options(in ListOptions) entities.ListOptions {
 	return entities.ListOptions{Kind: "channel", Language: in.Language, Slug: in.Slug, Query: in.Query, Cursor: in.Cursor, Limit: in.Limit, Sort: in.Sort}
 }
 
+func (s *Store) ManagementList(ctx context.Context, in ListOptions) (Page, error) {
+	o := options(in)
+	o.IncludeInternal = true
+	switch in.State {
+	case "", "active":
+	case "deleted":
+		o.Deleted = true
+	default:
+		return Page{}, fmt.Errorf("%w: channel state must be active or deleted", entities.ErrInvalid)
+	}
+	return s.list(ctx, o)
+}
 func (s *Store) List(ctx context.Context, in ListOptions) (Page, error) {
-	p, err := s.storage.List(ctx, options(in))
+	return s.list(ctx, options(in))
+}
+func (s *Store) list(ctx context.Context, in entities.ListOptions) (Page, error) {
+	p, err := s.storage.List(ctx, in)
 	out := Page{Channels: []Card{}, NextCursor: p.NextCursor, Total: p.Total}
 	for _, e := range p.Entities {
 		out.Channels = append(out.Channels, card(e))
@@ -107,7 +128,9 @@ func (s *Store) get(ctx context.Context, id, language string, management bool) (
 	}
 	out := Channel{Card: Card{ID: string(e.ID), Slug: e.Slug, Name: e.Name, NameLanguage: e.NameLanguage, Code: e.Code, Path: e.Path, Cover: e.Cover, Avatar: e.Avatar, Access: e.Access, CreatedAt: e.CreatedAt}, State: e.State, OwnerUserID: e.OwnerUserID, AuthScope: e.AuthScope, Revision: e.Revision, UpdatedAt: e.UpdatedAt, Names: e.Names, Text: e.Text, Counts: e.Counts, Entities: []entities.EntityCard{}}
 	for _, count := range e.Counts {
-		out.Count += count.Count
+		if count.Language == language {
+			out.Count += count.Count
+		}
 	}
 	out.Entities, err = s.Metadata(ctx, id, language)
 	return out, err
@@ -115,6 +138,25 @@ func (s *Store) get(ctx context.Context, id, language string, management bool) (
 
 func (s *Store) Create(ctx context.Context, in Input) (Channel, error) {
 	out, err := s.storage.CreateEntities(ctx, []entities.EntityInput{{Kind: "channel", Slug: in.Slug, Names: in.Names, Text: in.Text, Cover: in.Cover, Avatar: in.Avatar}})
+	if errors.Is(err, entities.ErrConflict) {
+		page, lookupErr := s.storage.List(ctx, entities.ListOptions{Kind: "channel", Slug: strings.TrimSpace(in.Slug), Limit: 2})
+		if lookupErr != nil {
+			return Channel{}, lookupErr
+		}
+		if len(page.Entities) == 1 {
+			current, lookupErr := s.storage.Detail(ctx, page.Entities[0].ID, "")
+			if lookupErr != nil {
+				return Channel{}, lookupErr
+			}
+			staff, _ := s.storage.PrepareStaffWrite(ctx)
+			if (staff || current.OwnerUserID != "" && current.OwnerUserID == s.actor.AccountID()) && sameInput(current, in) {
+				if err := s.Finish(ctx, []string{string(current.ID)}); err != nil {
+					return Channel{}, err
+				}
+				return s.Get(ctx, string(current.ID), "")
+			}
+		}
+	}
 	if err != nil {
 		return Channel{}, err
 	}
@@ -174,4 +216,45 @@ func (s *Store) RawMany(ctx context.Context, ids []string) ([]entities.Entity, e
 		raw[i] = entities.EntityID(id)
 	}
 	return s.storage.Entities(ctx, raw)
+}
+
+// Finish completes synchronous cross-store lifecycle operations after a
+// caller-owned import transaction commits. Retrying the same IDs is safe.
+func (s *Store) Finish(ctx context.Context, ids []string) error {
+	raw := make([]entities.EntityID, len(ids))
+	for i, id := range ids {
+		raw[i] = entities.EntityID(id)
+	}
+	return s.storage.FinishChannels(ctx, raw)
+}
+
+func sameInput(current entities.EntityDetail, in Input) bool {
+	names := func(ns []entities.Name) []entities.Name {
+		out := slices.Clone(ns)
+		slices.SortFunc(out, func(a, b entities.Name) int {
+			return strings.Compare(a.Language+"\x00"+string(a.Kind)+"\x00"+a.Name, b.Language+"\x00"+string(b.Kind)+"\x00"+b.Name)
+		})
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	texts := func(ts []entities.Text) []entities.Text {
+		out := slices.Clone(ts)
+		slices.SortFunc(out, func(a, b entities.Text) int { return strings.Compare(a.Language, b.Language) })
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	if !reflect.DeepEqual(names(current.Names), names(in.Names)) || !reflect.DeepEqual(texts(current.Text), texts(in.Text)) {
+		return false
+	}
+	if in.Cover != nil && (current.Cover == nil || in.Cover.Image != current.Cover.Image || in.Cover.ContentID != current.Cover.ContentID || in.Cover.Auto != current.Cover.Auto) {
+		return false
+	}
+	if in.Avatar != nil && (current.Avatar == nil || in.Avatar.Image != current.Avatar.Image) {
+		return false
+	}
+	return true
 }

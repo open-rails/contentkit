@@ -113,7 +113,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		j.mu.Unlock()
 		return nil
 	})
-	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs(), e.entities.RiverJobs()}
+	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs()}
 	if e.media != nil {
 		parts = append(parts, e.media.versions.RiverJobs())
 	}

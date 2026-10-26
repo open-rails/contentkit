@@ -44,7 +44,7 @@ func (s *Store) contentAuthorityEntities(ctx context.Context, a auth.Authenticat
 	}
 	err = s.read(ctx, func(q Querier) error {
 		rows, err := q.Query(ctx, `SELECT id,kind,coalesce(auth_scope,''),coalesce(owner_user_id=$2,false) FROM `+s.table("content_entities")+`
- WHERE tenant_id=$1 AND state='active' AND (owner_user_id=$2 OR auth_scope=ANY($3::text[])) ORDER BY id`, s.tenant, actor.AccountID(), scopeIDs)
+ WHERE tenant_id=$1 AND kind='channel' AND state='active' AND auth_scope IS NOT NULL AND (owner_user_id=$2 OR auth_scope=ANY($3::text[])) ORDER BY id`, s.tenant, actor.AccountID(), scopeIDs)
 		if err != nil {
 			return err
 		}
@@ -56,7 +56,7 @@ func (s *Store) contentAuthorityEntities(ctx context.Context, a auth.Authenticat
 			if err := rows.Scan(&id, &kind, &scope, &owner); err != nil {
 				return err
 			}
-			if scope == "" && owner && !s.cfg.EntityKinds[kind].AuthScope || slices.ContainsFunc(permissions(kind), func(permission string) bool { return slices.Contains(held[scope], permission) }) {
+			if slices.ContainsFunc(permissions(kind), func(permission string) bool { return slices.Contains(held[scope], permission) }) {
 				out = append(out, id)
 			}
 		}

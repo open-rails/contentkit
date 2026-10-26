@@ -48,7 +48,13 @@ func (s *Store) staff(ctx context.Context) (bool, error) {
 	if w == nil {
 		return true, nil
 	}
-	w.once.Do(func() { w.staff, w.err = gate.Can(ctx, w.auth, w.actor, string(access.EntitiesWrite)) })
+	w.once.Do(func() {
+		permission := access.EntitiesWrite
+		if s.channels {
+			permission = access.ChannelsWrite
+		}
+		w.staff, w.err = gate.Can(ctx, w.auth, w.actor, string(permission))
+	})
 	return w.staff, w.err
 }
 

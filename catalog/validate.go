@@ -373,3 +373,21 @@ func validChapterPath(p string) bool {
 		p != ".." && !strings.HasPrefix(p, "../") &&
 		!strings.Contains(p, "\\") && strings.IndexFunc(p, unicode.IsControl) < 0
 }
+
+// checkChannelRule binds channel membership audiences to the original's sole
+// primary channel. Metadata and repost destinations never supply read grants.
+func (s *Store) checkChannelRule(parent string, rule *access.Rule) error {
+	if rule == nil {
+		return nil
+	}
+	ids := []string{rule.Entity}
+	for _, release := range rule.Releases {
+		ids = append(ids, release.Entity)
+	}
+	for _, id := range ids {
+		if id != "" && (parent == "" || id != parent) {
+			return invalid("channel access must name the content item's primary channel")
+		}
+	}
+	return nil
+}

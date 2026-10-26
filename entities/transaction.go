@@ -18,8 +18,8 @@ func (s *Store) AddMembershipsTx(ctx context.Context, tx pgx.Tx, in []Membership
 }
 
 // CreateEntitiesTx is CreateEntities in a caller-owned transaction. A store bound
-// with As retains that actor and all its ordinary authorization checks. Scope
-// provisioning is left to the existing transactional sync job after commit.
+// with As retains that actor and all its ordinary authorization checks. Channels require an explicit FinishChannels call after the caller commits;
+// this method never starts background work.
 func (s *Store) CreateEntitiesTx(ctx context.Context, tx pgx.Tx, in []EntityInput) ([]Entity, error) {
 	if tx == nil {
 		return nil, errors.New("entities: transaction is required")

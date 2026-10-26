@@ -327,6 +327,9 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		if slices.ContainsFunc(p.versions, func(v VersionInput) bool { return v.Fork != nil }) {
 			return nil, invalid("a new item's versions have no sibling to fork")
 		}
+		if err := s.checkChannelRule(p.ChannelID, p.Access); err != nil {
+			return nil, err
+		}
 		owners = append(owners, p.ChannelID)
 		preps[i] = p
 	}
@@ -483,6 +486,9 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 					return fx, errStale
 				}
 			}
+			if err := s.checkChannelRule(o.ownerEntity, u.Access); err != nil {
+				return fx, err
+			}
 			if err := s.checkRuleEntities(ctx, tx, u.Access); err != nil {
 				return fx, err
 			}
@@ -522,7 +528,7 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 				}
 			}
 			if u.Access != nil {
-				inheriting, err := s.inheritingVersions(ctx, tx, u.ID)
+				inheriting, err := s.inheritingVersions(ctx, tx, u.ID, o.ownerEntity != "")
 				if err != nil {
 					return fx, err
 				}
@@ -535,8 +541,13 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 }
 
 // inheritingVersions are the versions of content id that follow its rule.
-func (s *Store) inheritingVersions(ctx context.Context, tx pgx.Tx, id string) ([]versions.Target, error) {
-	rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND access IS NULL AND state <> 'deleted' ORDER BY id`, s.tenant, id)
+func (s *Store) inheritingVersions(ctx context.Context, tx pgx.Tx, id string, channel bool) ([]versions.Target, error) {
+	if channel {
+		if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` v SET access=c.access,revision=v.revision+1,updated_at=clock_timestamp() FROM `+s.t.items+` c WHERE v.tenant_id=$1 AND v.content_id=$2 AND c.tenant_id=v.tenant_id AND c.id=v.content_id AND v.state<>'deleted' AND v.access IS DISTINCT FROM c.access`, s.tenant, id); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND ($3 OR access IS NULL) AND state <> 'deleted' ORDER BY id`, s.tenant, id, channel)
 	if err != nil {
 		return nil, err
 	}
@@ -1092,9 +1103,6 @@ type versionRow struct {
 }
 
 func (s *Store) versionRow(k kinds.Kind, kind string, v VersionInput, cur *versionRow) (versionRow, error) {
-	if k.Channel != nil && v.Access != nil {
-		return versionRow{}, invalid("channel content versions inherit their parent access rule")
-	}
 	var r versionRow
 	if cur != nil {
 		r = *cur
@@ -1175,6 +1183,9 @@ func (s *Store) versionRow(k kinds.Kind, kind string, v VersionInput, cur *versi
 }
 
 func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind string, k kinds.Kind, v VersionInput) (string, error) {
+	if err := s.checkVersionChannel(ctx, tx, contentID, v.Access); err != nil {
+		return "", err
+	}
 	r, err := s.versionRow(k, kind, v, nil)
 	if err != nil {
 		return "", err
@@ -1269,6 +1280,9 @@ func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, raw []byte) err
 }
 
 func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind string, k kinds.Kind, id string, v VersionInput) error {
+	if err := s.checkVersionChannel(ctx, tx, contentID, v.Access); err != nil {
+		return err
+	}
 	var cur versionRow
 	err := tx.QueryRow(ctx, `SELECT languages, traits, label, state, publish_at, access, attributes, ordinal, cover FROM `+s.t.versions+`
  WHERE tenant_id = $1 AND content_id = $2 AND id = $3 FOR UPDATE`, s.tenant, contentID, id).
@@ -1288,6 +1302,13 @@ func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	r, err := s.versionRow(k, kind, v, &cur)
 	if err != nil {
 		return err
+	}
+	var channelAccess []byte
+	if err := tx.QueryRow(ctx, `SELECT CASE WHEN owner_entity_id IS NOT NULL THEN access END FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, contentID).Scan(&channelAccess); err != nil {
+		return err
+	}
+	if len(channelAccess) > 0 {
+		r.access = channelAccess
 	}
 	// ClearAccess copies the current creation default once. An edition never
 	// inherits later gallery-parent policy edits dynamically.
@@ -1413,4 +1434,18 @@ func (s *Store) OrderVersions(ctx context.Context, actor access.Actor, contentID
 		fx.events = append(fx.events, Event{Type: EventContentUpdated, Kind: got[contentID].kind, ContentID: contentID})
 		return fx, nil
 	})
+}
+
+func (s *Store) checkVersionChannel(ctx context.Context, q Querier, contentID string, rule *access.Rule) error {
+	if rule == nil {
+		return nil
+	}
+	var owner string
+	if err := q.QueryRow(ctx, `SELECT coalesce(owner_entity_id,'') FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, contentID).Scan(&owner); err != nil {
+		return err
+	}
+	if owner != "" {
+		return invalid("channel versions use the parent access rule")
+	}
+	return s.checkChannelRule("", rule)
 }

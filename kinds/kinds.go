@@ -333,21 +333,21 @@ type EntityKind struct {
 	ScopedBy string `json:"scoped_by,omitempty" yaml:"scoped_by"`
 	// Owner is "site" (staff-managed) or "user" (channels, playlists): a
 	// signed-in person creates a user-owned entity and owns it.
-	Owner string `json:"owner,omitempty" yaml:"owner"`
+	Owner string `json:"-" yaml:"-"`
 	// MaxPerOwner caps the active entities of the kind one person owns; 0 is
 	// no cap. Staff are not capped.
-	MaxPerOwner int `json:"max_per_owner,omitempty" yaml:"max_per_owner"`
+	MaxPerOwner int `json:"-" yaml:"-"`
 	// Avatar gives site-owned entities a square avatar beside their cover;
 	// user-owned kinds always have one.
 	Avatar bool `json:"avatar,omitempty" yaml:"avatar"`
 	// Uploads limit what editors other than staff upload to a user-owned
 	// entity's media.
-	Uploads UploadLimits `json:"uploads,omitzero" yaml:"uploads"`
+	Uploads UploadLimits `json:"-" yaml:"-"`
 	// Entitled entities expose membership backed by their stable entitlement key.
-	Entitled bool `json:"entitled,omitempty" yaml:"entitled"`
+	Entitled bool `json:"-" yaml:"-"`
 	// AuthScope entities name an AuthKit group whose permissions govern their
 	// content (OnlyDemo channels).
-	AuthScope bool `json:"auth_scope,omitempty" yaml:"auth_scope"`
+	AuthScope bool `json:"-" yaml:"-"`
 	// MembershipScopes declares where this entity kind can be attached.
 	// Omitted keeps the legacy default: content, or version with VersionLevel.
 	MembershipScopes []MembershipScope `json:"membership_scopes,omitempty" yaml:"membership_scopes"`
@@ -432,6 +432,9 @@ func (c Config) Validate() error {
 		return nil
 	}
 	for name, gk := range c.EntityKinds {
+		if name != "channel" && (gk.Owner == "user" || gk.AuthScope || gk.Entitled || gk.MaxPerOwner != 0 || gk.Uploads != (UploadLimits{})) {
+			return fmt.Errorf("%w: authoring ownership, scopes and paid membership belong to channels, not metadata kind %s", ErrInvalid, name)
+		}
 		if name == "channel" && !c.channelStorage {
 			return fmt.Errorf("%w: channel is configured through channels, not entity_kinds", ErrInvalid)
 		}
@@ -458,6 +461,9 @@ func (c Config) Validate() error {
 			seenScopes[scope] = true
 		}
 		for _, ref := range []string{gk.Parent, gk.ScopedBy} {
+			if ref == "channel" {
+				return fmt.Errorf("%w: metadata does not parent or scope channels", ErrInvalid)
+			}
 			if _, ok := c.EntityKinds[ref]; ref != "" && !ok {
 				return fmt.Errorf("%w: group kind %s names unknown group kind %q", ErrInvalid, name, ref)
 			}
@@ -549,7 +555,7 @@ func (c Config) Validate() error {
 			}
 		}
 		for _, g := range k.Entities {
-			if _, ok := c.EntityKinds[g]; !ok {
+			if _, ok := c.EntityKinds[g]; !ok || g == "channel" {
 				return fmt.Errorf("%w: kind %s names unknown group kind %q", ErrInvalid, name, g)
 			}
 		}
@@ -746,6 +752,9 @@ func (a Attribute) normalize(v any) (any, error) {
 // first path segment of its pages (contenturl.Routes).
 func (c Config) Routes() map[string]string {
 	out := map[string]string{}
+	if c.Channels != nil && c.Channels.Route != "" {
+		out["channel"] = c.Channels.Route
+	}
 	for name, k := range c.Kinds {
 		out[name] = k.Route
 	}
