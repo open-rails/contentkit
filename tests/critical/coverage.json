@@ -1370,7 +1370,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner’s eligible content",
+      "behavior": "Owner ban affects only the owner\u2019s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
@@ -2226,13 +2226,13 @@
     {
       "id": "CK-J30-S02",
       "journey": "CK-J30",
-      "behavior": "Retired classifier and projection-repair jobs require explicit exact IDs and preserve foreign and terminal work",
+      "behavior": "Obsolete classifier and projection-repair jobs do not block startup and exhaust their stored River attempt limits",
       "status": "verified",
       "evidence": [
-        "Real PostgreSQL/River rows prove startup and implicit migration refuse tenantless work, a foreign selection changes nothing, running jobs refuse, and repeat explicit retirement cancels only reviewed waiting classifier and projection-repair jobs together."
+        "Actual Engine startup and migration accept old empty-argument rows. Real River execution discards both obsolete kinds after their three attempts while ordinary search work completes; foreign queues and terminal history remain unchanged."
       ],
       "cases": [
-        "TestClassificationJobRetirement/CK-J30-S02_retirement_requires_exact_reviewed_stopped_work"
+        "TestObsoletePeriodicJobsDoNotBlockStartup/CK-J30-S02_unknown_jobs_fail_finitely_while_supported_work_continues"
       ]
     }
   ],

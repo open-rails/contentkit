@@ -1558,14 +1558,15 @@ not grants. Imported content without `created_by` remains staff/channel-managed.
 App-level own-post permissions never authorize access to arbitrary channels.
 OpenRails continues to own paid audience entitlements and their expiration.
 
-### Retiring removed periodic jobs
+### Removed periodic jobs
 
-The removed `contentkit_reclassify` and `contentkit_projection_repair` jobs used
-empty arguments on the shared
-`contentkit` queue. Their app ownership cannot be inferred. If these jobs remain,
-startup and ordinary migration report the exact blocking ID without cancelling
-anything. Stop the owning old fleet and review its job IDs, then pass those IDs
-in `MigrationOptions.RetireObsoleteJobs` to the explicit
-`MigratePostgres` command. Only matching waiting rows are cancelled; running,
-foreign or ambiguous selections are refused and terminal history remains.
-Installations with neither retired job kind need no new configuration.
+`contentkit_reclassify` and `contentkit_projection_repair` are no longer
+registered or scheduled. Existing rows do not block startup or migrations.
+River handles an unknown kind as an ordinary failed attempt and discards the
+job when its stored attempt limit is exhausted (three for these former timers).
+No application handler runs. Terminal history remains, and queues the fleet
+does not consume are unaffected.
+
+No special ContentKit cleanup option is required. An operator who wants to
+remove queue noise can use River's existing cancellation tools on reviewed
+exact job IDs; empty arguments on the shared queue do not establish app ownership.

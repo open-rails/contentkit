@@ -86,7 +86,5 @@ the explicit operator cleanup before activation; see
 [measured-engagement-rollout.md](measured-engagement-rollout.md). Startup never
 performs this destructive retirement.
 
-Old queued `contentkit_projection_repair` work follows the explicit
-[removed-job retirement](../HOST_INTEGRATION.md#retiring-removed-periodic-jobs)
-procedure. Empty arguments on the shared queue do not identify an app; only
-reviewed exact IDs may be retired after the old fleet stops.
+Old queued `contentkit_projection_repair` rows follow River's ordinary unknown-kind
+attempt handling; they do not block startup. See [removed periodic jobs](../HOST_INTEGRATION.md#removed-periodic-jobs).

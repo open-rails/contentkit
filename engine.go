@@ -297,9 +297,6 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := e.preflightUnifiedReleases(ctx); err != nil {
 		return err
 	}
-	if err := e.preflightObsoletePeriodicJobs(ctx, options.RetireObsoleteJobs); err != nil {
-		return err
-	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
@@ -355,9 +352,6 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 			return err
 		}
 		if err := e.migrateUnifiedReleases(ctx); err != nil {
-			return err
-		}
-		if err := e.retireObsoletePeriodicJobs(ctx, options.RetireObsoleteJobs); err != nil {
 			return err
 		}
 	} else {
