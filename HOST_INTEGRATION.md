@@ -543,7 +543,7 @@ in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
-| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies), `PATCH /comments/{cid}` by its author | 5 per 5 minutes and 20 per hour |
+| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
 | `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
 | `favorite` | `POST` and `DELETE /{contents\|entities}/{id}/favorite` | 20 per minute |

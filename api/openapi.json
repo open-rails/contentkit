@@ -769,8 +769,7 @@
           "conflict",
           "forbidden",
           "moderation_rejected",
-          "not_found",
-          "rate_limited"
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",

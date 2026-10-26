@@ -1410,19 +1410,6 @@
       ]
     },
     {
-      "id": "CK-J20-S08",
-      "journey": "CK-J20",
-      "behavior": "An author's comment edits spend the comment allowance; a moderator's do not",
-      "status": "verified",
-      "evidence": [
-        "With a two-per-hour comment allowance, a create and one edit pass and the author's next edit answers 429 rate_limited without changing the published body; a comment moderator then edits the same comment three times.",
-        "Executed in a focused local run against real PostgreSQL and AuthKit; failed with the edit limit removed."
-      ],
-      "cases": [
-        "TestCommentEditAllowance/CK-J20-S08_author_edits_spend_the_comment_allowance"
-      ]
-    },
-    {
       "id": "CK-J23-S01",
       "journey": "CK-J23",
       "behavior": "Erasure fences reads before physical cleanup finishes",

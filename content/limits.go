@@ -18,7 +18,7 @@ import (
 type Action string
 
 const (
-	ActionComment         Action = "comment"          // comment create (top-level or reply) and its author's edit
+	ActionComment         Action = "comment"          // comment create, top-level or reply
 	ActionCommentReaction Action = "comment_reaction" // like, dislike, neutral on a comment
 	ActionReaction        Action = "reaction"         // like, dislike, neutral on content
 	ActionFavorite        Action = "favorite"         // favorite and unfavorite
@@ -36,7 +36,7 @@ type Rate struct {
 // neutral) costs the same as doing. A nil field takes its default; an action
 // with several rates must pass all of them.
 type Limits struct {
-	Comment         []Rate // creates and authors' edits; default 5 per 5 minutes and 20 per hour
+	Comment         []Rate // default 5 per 5 minutes and 20 per hour
 	CommentReaction []Rate // default 30 per minute
 	Reaction        []Rate // default 30 per minute
 	Favorite        []Rate // default 20 per minute

@@ -517,6 +517,11 @@ function Composer(p: ComposerProps) {
       thread.report(err, p.operation);
       if (err.code === "comment_banned" && err.ban) thread.onBanned(err.ban);
       else if (err.code === "comments_locked") thread.onLocked();
+      else if (err.code === "comment_moderated") {
+        // Held or rejected since this page loaded: show why and refresh the row.
+        setError(contentError(m, err));
+        thread.comments.reload();
+      }
       else if (err.code === "rate_limited") setError(err.retryAfter ? t("comments.rateLimited", { seconds: err.retryAfter }) : t("comments.rateLimitedSoon"));
       else setError(contentError(m, err));
     } finally {

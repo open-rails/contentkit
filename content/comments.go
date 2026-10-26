@@ -620,13 +620,8 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	}
 	author := deref(target.ownerID)
 	own := author != "" && author == viewerID(actor)
-	if own {
-		if target.state != ModerationApproved {
-			return Comment{}, errCommentModerated
-		}
-		if err := c.rt.limit(ctx, ActionComment, actor); err != nil {
-			return Comment{}, err
-		}
+	if own && target.state != ModerationApproved {
+		return Comment{}, errCommentModerated
 	}
 	if err := c.rt.checkIPBan(ctx, actor); err != nil {
 		return Comment{}, err
@@ -939,7 +934,7 @@ var otherCommentRoutes = []httpapi.Route[*comments]{
 		Doc:       "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. Its author can't edit it while it is held or rejected.",
 		Request:   CommentEdit{},
 		Responses: []httpapi.Reply{httpapi.OK(Comment{}), httpapi.Accepted(Comment{})},
-		Errors:    []string{CodeCommentBanned, CodeCommentModerated, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited}},
+		Errors:    []string{CodeCommentBanned, CodeCommentModerated, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleEdit)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
 		Doc:       "Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder.",

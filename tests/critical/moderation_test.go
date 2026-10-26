@@ -440,31 +440,6 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		requireError(t, err, 403, "comment_moderated")
 	})
 }
-
-func TestCommentEditAllowance(t *testing.T) {
-	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Comment = []ck.Rate{{Count: 2, Per: time.Hour}} })
-	a := w.apps[0]
-	t.Run("CK-J20-S08_author_edits_spend_the_comment_allowance", func(t *testing.T) {
-		_, token := w.person(t, 0)
-		manager, managerToken := w.person(t, 0)
-		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(manager.ID), w.commentManager)
-		client := a.client(token)
-		item := publishedArticle(t, a, "Edit allowance")
-		comment := postComment(t, client, item.ID, "First")
-		_, err := client.PatchComment(t.Context(), comment.ID, content.CommentEdit{Body: "Second"})
-		must(t, err)
-		_, err = client.PatchComment(t.Context(), comment.ID, content.CommentEdit{Body: "Third"})
-		requireError(t, err, 429, "rate_limited")
-		if body := threadBodies(t, a.client(""), item.ID)[comment.ID]; body != "Second" {
-			t.Fatalf("limited edit changed the comment: %q", body)
-		}
-		for i := range 3 {
-			_, err := a.client(managerToken).PatchComment(t.Context(), comment.ID, content.CommentEdit{Body: fmt.Sprint("Moderated ", i)})
-			must(t, err)
-		}
-	})
-}
-
 // Only this owned pool's search path changes the provider clock; AuthKit,
 // sibling apps and every other fixture keep the ordinary PostgreSQL clock.
 func useModerationDatabaseClock(t *testing.T, w *world, a *application) func(time.Time) {
