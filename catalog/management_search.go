@@ -141,7 +141,6 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 		}
 		args := pgx.NamedArgs{"ms_staff": rights.write, "ms_account": actor.AccountID(), "ms_groups": editorEntities, "ms_own_app": own.app, "ms_own_channels": own.entities}
 		allowed := `(@ms_staff OR (c.created_by=@ms_account AND @ms_account<>'' AND ((c.owner_entity_id IS NULL AND @ms_own_app::boolean) OR c.owner_entity_id=ANY(@ms_own_channels::text[])))
- OR EXISTS (SELECT 1 FROM ` + s.t.entities + ` og WHERE og.tenant_id=c.tenant_id AND og.id=c.owner_entity_id AND og.state='active' AND og.auth_scope IS NULL AND og.owner_user_id=@ms_account AND @ms_account<>'')
  OR c.owner_entity_id=ANY(@ms_groups::text[]))`
 		eligible := &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.items + ` c
  WHERE c.tenant_id=sd.tenant_id AND c.id=sd.content_id AND c.kind=sd.content_kind AND c.state<>'deleted' AND ` + allowed + `)`, Args: args}

@@ -36,7 +36,7 @@ const (
 func OwnerScope(ownerID string) string { return ownerScope + ownerID }
 
 // EntityScope is the scope of a user-owned entity and the content it owns
-// (Resolution.OwnerEntity), managed by the entity's comment moderators.
+// (Resolution.Channel), managed by the entity's comment moderators.
 func EntityScope(entityID string) string { return entityScope + entityID }
 
 const (
@@ -97,7 +97,7 @@ func (rt *Runtime) checkCommentBan(ctx context.Context, userID string, res resol
 	if res.Owner != "" {
 		scopes = append(scopes, OwnerScope(res.Owner))
 	}
-	if g := res.OwnerEntity; g != nil {
+	if g := res.Channel; g != nil {
 		scopes = append(scopes, EntityScope(g.ID))
 	}
 	var n BanNotice

@@ -76,9 +76,9 @@ type Filter struct {
 	// ViewStatus is unseen, in_progress or completed: the signed-in
 	// reader's own.
 	ViewStatus string
-	// OwnerEntities keeps content one of these entities owns (a channel's feed);
+	// ChannelIDs keeps content one of these channels owns (the original feed);
 	// owning is not membership and opens nothing.
-	OwnerEntities []string
+	ChannelIDs []string
 	// Creators keeps content one of these users is credited on.
 	Creators []string
 	// Access keeps content at one of these levels: public is what anyone
@@ -172,7 +172,7 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 			return nil, fmt.Errorf("%w: time zone %q", ErrInvalid, f.TimeZone)
 		}
 	}
-	owners, err := uniqueIDs("owner_group", f.OwnerEntities)
+	owners, err := uniqueIDs("channel_id", f.ChannelIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +315,7 @@ func (s *Service) accessFilter(q *sel, levels, tiers []string) error {
 		return err
 	}
 	for _, l := range levels {
-		if !slices.Contains([]access.Level{access.Public, access.TierLevel, access.EntityLevel, access.PPV, access.EntityPPV}, access.Level(l)) {
+		if !slices.Contains([]access.Level{access.Public, access.TierLevel, access.ChannelLevel, access.PPV, access.ChannelPPV}, access.Level(l)) {
 			return fmt.Errorf("%w: access %q is public, tier, group, ppv or group_ppv", ErrInvalid, l)
 		}
 	}

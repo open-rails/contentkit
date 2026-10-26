@@ -48,11 +48,11 @@ type Resolution struct {
 	// (access.GroupCommentsModerate in its scope, and its owner) moderate the
 	// item's comments: a content item's owner group, or the group itself;
 	// nil when none.
-	OwnerEntity *OwnerEntity
+	Channel *Channel
 }
 
 // OwnerGroup names a user-owned group with what its permission checks need.
-type OwnerEntity struct {
+type Channel struct {
 	Kind, ID, Owner, Scope string
 }
 

@@ -116,7 +116,7 @@ func (s *Service) ActivityContexts(ctx context.Context, actor access.Actor, in A
 		}
 		f := selected[i]
 		refs[i] = contentref.NewVersion(s.o.Tenant, f.kind, t.ContentID, f.version)
-		items[i] = access.Item{Content: t.ContentID, Version: f.version, Rule: f.rule.Previewed(s.o.Kinds.Kinds[f.kind]), Entities: f.entities}
+		items[i] = access.Item{Content: t.ContentID, Version: f.version, Rule: f.rule.Previewed(s.o.Kinds.Kinds[f.kind])}
 	}
 	visible, err := s.o.Resolver.Resolve(ctx, refs, actor)
 	if err != nil {

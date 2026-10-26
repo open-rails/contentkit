@@ -18,16 +18,16 @@ import (
 
 // A user-owned entity's comment moderators, its owner and the holders of
 // {kind}:comments:moderate in its AuthKit scope, moderate the comments on the
-// entity and on the content it owns (resolve.Resolution.OwnerEntity): they
+// entity and on the content it owns (resolve.Resolution.Channel): they
 // delete, hold and release them and ban commenters in the entity's scope.
 // Each is asked only when it acts, never on reads.
 
 // groupModerator admits actor as a comment moderator of g.
-func (rt *Runtime) entityModerator(ctx context.Context, actor access.Actor, g *resolve.OwnerEntity) error {
+func (rt *Runtime) entityModerator(ctx context.Context, actor access.Actor, g *resolve.Channel) error {
 	if g == nil {
 		return errForbidden
 	}
-	ok, err := gate.EntityEditor(ctx, rt.guard.Auth, actor, g.Owner, g.Scope, access.EntityCommentsModerate(g.Kind))
+	ok, err := gate.ChannelEditor(ctx, rt.guard.Auth, actor, g.Owner, g.Scope, access.ChannelCommentsModerate)
 	switch {
 	case err != nil:
 		return &AuthError{Err: err}
@@ -43,7 +43,7 @@ func (rt *Runtime) moderates(ctx context.Context, actor access.Actor, ref conten
 	if err != nil {
 		return err
 	}
-	return rt.entityModerator(ctx, actor, res.OwnerEntity)
+	return rt.entityModerator(ctx, actor, res.Channel)
 }
 
 // loadForModeration resolves a live comment for a moderator: a
@@ -138,20 +138,20 @@ func (c *comments) handleRelease(w http.ResponseWriter, req *http.Request) {
 }
 
 var entityModerationRoutes = []httpapi.Route[*Runtime]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities/{id}/held-comments", Resource: "moderation", Auth: httpapi.Person,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/channels/{id}/held-comments", Resource: "moderation", Auth: httpapi.Person,
 		Doc:       "Held comments on a user-owned group and the content it owns, oldest first: for root:moderation:review holders and the group's comment moderators.",
 		Query:     []httpapi.Param{httpapi.Text("cursor", "the previous page's next"), httpapi.Int("limit", "page size: 20 by default, at most 100")},
 		Responses: []httpapi.Reply{httpapi.OK(HeldPage{})}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleEntityHeld)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities/{id}/comment-bans", Resource: "bans", Auth: httpapi.Person,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/channels/{id}/comment-bans", Resource: "bans", Auth: httpapi.Person,
 		Doc:   "The bans on commenting on a user-owned group and the content it owns, newest first, expired ones included: for root:comments:ban holders and the group's comment moderators.",
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]CommentBan{})}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleEntityBans)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/entities/{id}/comment-bans/{user}", Resource: "bans", Auth: httpapi.Person,
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/channels/{id}/comment-bans/{user}", Resource: "bans", Auth: httpapi.Person,
 		Doc:     "Bans a user from commenting on a user-owned group and the content it owns, or replaces the ban: for root:comments:ban holders and the group's comment moderators.",
 		Request: BanInput{}, Responses: []httpapi.Reply{httpapi.OK(CommentBan{})}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleEntityBan)},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/entities/{id}/comment-bans/{user}", Resource: "bans", Auth: httpapi.Person,
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/channels/{id}/comment-bans/{user}", Resource: "bans", Auth: httpapi.Person,
 		Doc:       "Lifts a user's ban on a user-owned group and its content.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*Runtime).handleEntityUnban)},
@@ -159,13 +159,13 @@ var entityModerationRoutes = []httpapi.Route[*Runtime]{
 
 // groupModeration resolves the route's user-owned entity and admits the
 // caller: a holder of staff, or one of the entity's comment moderators.
-func (rt *Runtime) entityModeration(req *http.Request, staff access.Permission) (access.Actor, *resolve.OwnerEntity, error) {
+func (rt *Runtime) entityModeration(req *http.Request, staff access.Permission) (access.Actor, *resolve.Channel, error) {
 	ctx := req.Context()
 	actor, err := rt.requireActor(ctx)
 	if err != nil {
 		return actor, nil, err
 	}
-	ref, err := rt.target(req, TargetEntity)
+	ref, err := rt.target(req, TargetChannel)
 	if err != nil {
 		return actor, nil, err
 	}
@@ -173,7 +173,7 @@ func (rt *Runtime) entityModeration(req *http.Request, staff access.Permission) 
 	if err != nil {
 		return actor, nil, err
 	}
-	g := res.OwnerEntity
+	g := res.Channel
 	if !res.Visible || g == nil {
 		return actor, nil, ErrNotFound
 	}

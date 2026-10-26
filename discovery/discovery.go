@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/resolve"
@@ -66,6 +67,8 @@ type Options struct {
 	ActivityCohorts []signal.ActivityCohort
 	// Entities names the entities on cards and in typeahead.
 	Entities *entities.Store
+	// Channels resolves the primary authoring home independently of metadata.
+	Channels *channels.Store
 	// Media resolves cards' covers and ladders; nil leaves them out.
 	Media Media
 	// Hub is the keyword search client and the signal plane. Without a

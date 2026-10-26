@@ -63,7 +63,7 @@ var (
 		httpapi.List("ids", "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters"),
 		httpapi.List("groups", "group ids every listed version is in; a position sort orders by the first"),
 		httpapi.List("exclude_groups", "group ids no listed version is in"),
-		httpapi.List("owner_group", "owner group ids (channels): only content one of them owns"),
+		httpapi.List("channel_id", "primary channel ids: only content one of them owns"),
 		httpapi.List("creators", "user ids: only content one of them is credited on"),
 		httpapi.List("access", "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them"),
 		httpapi.List("tiers", "configured tiers: only content locked behind one of them"),
@@ -230,7 +230,7 @@ func filterOf(r *http.Request) Filter {
 	}
 	return Filter{Kind: q.Get("kind"), IDs: ids, Entities: list(q.Get("groups")), ExcludeEntities: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
 		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), PublishedWithin: q.Get("published_within"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
-		OwnerEntities: list(q.Get("owner_group")), Creators: list(q.Get("creators")), Access: list(q.Get("access")), Tiers: list(q.Get("tiers"))}
+		ChannelIDs: list(q.Get("channel_id")), Creators: list(q.Get("creators")), Access: list(q.Get("access")), Tiers: list(q.Get("tiers"))}
 }
 
 func (h handler) releases(w http.ResponseWriter, r *http.Request) {
