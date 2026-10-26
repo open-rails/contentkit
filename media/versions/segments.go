@@ -125,69 +125,70 @@ func readableStarts(segs []segment, source []media.File) []segment {
 }
 
 // standIns maps each included page showing an excluded page's content (the
-// same bytes or pixels, or a spread overlapping its page range) to the
-// excluded page's chapter, by source order. It also waits for that date.
+// same bytes or pixels, or an overlapping page range where either is a
+// spread) to the excluded page's chapter, by source order. It also waits for
+// that chapter's date.
 func standIns(segs []segment, source []media.File) map[string][]segment {
 	at := make(map[string]int, len(source))
 	for i, f := range source {
 		at[f.Path] = i
 	}
-	var markers []segment
+	starts := map[int]segment{}
 	for _, g := range segs {
-		if _, ok := at[g.StartPage]; ok {
-			markers = append(markers, g)
+		if i, ok := at[g.StartPage]; ok {
+			starts[i] = g
 		}
 	}
-	slices.SortFunc(markers, func(a, b segment) int { return at[a.StartPage] - at[b.StartPage] })
-	keys := func(f media.File) []string {
-		digest := pageDigest(f)
-		out := []string{"bytes:" + digest}
-		if a := pageMeta(f).Analysis; a != nil && a.Recipe == media.PageAnalysisRecipe && a.Status == "complete" && a.SourceSHA256 == digest && a.PixelSHA256 != "" {
-			out = append(out, "pixels:"+a.PixelSHA256)
+	keys := make([][]string, len(source))
+	spans := make([]*PageSpan, len(source))
+	for i, f := range source {
+		meta := pageMeta(f)
+		if digest := pageDigest(f); digest != "" {
+			keys[i] = append(keys[i], "bytes:"+digest)
+			if a := meta.Analysis; a != nil && a.Recipe == media.PageAnalysisRecipe && a.Status == "complete" && a.SourceSHA256 == digest && a.PixelSHA256 != "" {
+				keys[i] = append(keys[i], "pixels:"+a.PixelSHA256)
+			}
 		}
-		return out
+		spans[i] = meta.Span
 	}
 	shown := map[string][]string{}
-	var spreads []media.File
-	for _, f := range source {
+	var spanned []int
+	for i, f := range source {
 		if !media.PageIncluded(f) {
 			continue
 		}
-		for _, key := range keys(f) {
+		for _, key := range keys[i] {
 			shown[key] = append(shown[key], f.Path)
 		}
-		if span := pageMeta(f).Span; span != nil && span.From < span.To {
-			spreads = append(spreads, f)
+		if spans[i] != nil {
+			spanned = append(spanned, i)
 		}
 	}
 	holds := map[string][]segment{}
+	var chapter *segment
 	for i, f := range source {
-		chapter := -1
-		for j, g := range markers {
-			if at[g.StartPage] <= i {
-				chapter = j
-			}
+		if g, ok := starts[i]; ok {
+			chapter = &g
 		}
-		if media.PageIncluded(f) || chapter < 0 {
+		if media.PageIncluded(f) || chapter == nil {
 			continue
 		}
 		held := map[string]bool{}
-		for _, key := range keys(f) {
-			if !strings.HasSuffix(key, ":") {
-				for _, path := range shown[key] {
-					held[path] = true
-				}
+		for _, key := range keys[i] {
+			for _, path := range shown[key] {
+				held[path] = true
 			}
 		}
-		if span := pageMeta(f).Span; span != nil {
-			for _, spread := range spreads {
-				if over := pageMeta(spread).Span; over.From <= span.To && span.From <= over.To {
-					held[spread.Path] = true
+		if span := spans[i]; span != nil {
+			for _, j := range spanned {
+				over := spans[j]
+				if (span.From < span.To || over.From < over.To) && over.From <= span.To && span.From <= over.To {
+					held[source[j].Path] = true
 				}
 			}
 		}
 		for path := range held {
-			holds[path] = append(holds[path], markers[chapter])
+			holds[path] = append(holds[path], *chapter)
 		}
 	}
 	return holds
