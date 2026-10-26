@@ -761,8 +761,9 @@ routes (signals, exposures, history, popular, similar, recommend) land with
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract)
   and, for interaction data, [interaction erasure](HOST_INTEGRATION.md#interaction-erasure).
 - Reactions and favorites reach the signal plane from their own revisioned
-  rows: the engine's preference job syncs them (watermark with a commit
-  overlap) and re-sends them daily; see
+  rows: the engine's preference job syncs changes every five minutes using a
+  revision watermark with a five-minute commit overlap, and re-sends all rows
+  daily; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 
 ## Testing

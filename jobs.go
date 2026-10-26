@@ -48,7 +48,7 @@ func (j *jobs) bound() *river.Client[pgx.Tx] {
 // The engine's schedules; each periodic run is unique per its period.
 const (
 	searchSyncEvery     = 30 * time.Second // documents trail their writes by at most this
-	preferenceSyncEvery = 30 * time.Second
+	preferenceSyncEvery = 5 * time.Minute
 	resyncEvery         = 24 * time.Hour
 	repairEvery         = time.Hour
 	reclassifyEvery     = 10 * time.Minute
