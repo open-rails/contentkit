@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     # Leave room for cold race compilation and artifact collection around the
     # suite's own bounded Go test timeout.
-    timeout-minutes: 45
+    timeout-minutes: 55
     services:
       postgres:
         image: groonga/pgroonga:4.1.0-debian-18
