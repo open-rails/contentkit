@@ -473,8 +473,10 @@ owners. The verdict sets the comment's `moderation` state:
 - `review` stores the item `held` (`202` on create): it is not counted, not
   indexed, cannot be replied to or reacted to, and is invisible to every reader
   except its author, who sees it with `moderation: "held"` and
-  `moderation_reason`. An edit re-screens: a held item publishes on approval, a
-  published one is withdrawn on review (`202`).
+  `moderation_reason`. An edit re-screens: a published one is withdrawn on
+  review (`202`). Its author can't edit a held or rejected comment
+  (`403 comment_moderated`), so only a reviewer's approval or a release
+  publishes it; a moderator's edit of a held one publishes on approval.
 - A moderator error or an unknown decision **fails closed to `review`** with
   the reason "awaiting review"; the error is kept for the reviewer. Nothing is
   ever published unscreened and no submission is lost.
