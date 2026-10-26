@@ -326,6 +326,7 @@ export const admin: typeof en = {
     reason_blank: "空白",
     reason_duplicate: "重复",
     reason_spread: "包含在跨页中",
+    chapterStart: "第{chapter}章的首页",
     restore: "恢复",
     dismiss: "忽略",
     more: "另外 {count} 个",

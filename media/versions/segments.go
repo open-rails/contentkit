@@ -91,7 +91,9 @@ func resolveChapterStarts(segs []segment, pages []page) ([]segment, error) {
 // readableStarts moves a marker whose source page is excluded from reading to
 // the next included page, so every included page keeps its chapter. A moved
 // chapter left with no included page is dropped; other markers pass through.
-func readableStarts(segs []segment, source []media.File) []segment {
+// An included page standing in for a hidden start (its duplicate or covering
+// spread) is returned with that start's chapter: it also waits for its date.
+func readableStarts(k *media.Kind, segs []segment, source []media.File) ([]segment, map[string][]segment) {
 	at := make(map[string]int, len(source))
 	next := make([]string, len(source))
 	following := ""
@@ -102,6 +104,7 @@ func readableStarts(segs []segment, source []media.File) []segment {
 		}
 		next[i] = following
 	}
+	holds := map[string][]segment{}
 	from := make([]int, len(segs))
 	owner := map[string]int{}
 	out := slices.Clone(segs)
@@ -109,6 +112,13 @@ func readableStarts(segs []segment, source []media.File) []segment {
 		g := &out[i]
 		from[i] = -1
 		if index, ok := at[g.StartPage]; ok {
+			if d := pageMeta(source[index]).Decision; d != nil && !media.PageIncluded(source[index]) {
+				for _, f := range source {
+					if media.PageIncluded(f) && slices.Contains(d.Related, k.PageID(f)) {
+						holds[f.Path] = append(holds[f.Path], segs[i])
+					}
+				}
+			}
 			from[i], g.StartPage = index, next[index]
 			if prior, taken := owner[g.StartPage]; !taken || from[prior] < index {
 				owner[g.StartPage] = i
@@ -121,7 +131,7 @@ func readableStarts(segs []segment, source []media.File) []segment {
 			keep = append(keep, g)
 		}
 	}
-	return keep
+	return keep, holds
 }
 
 func sourcePageHash(p page) string {

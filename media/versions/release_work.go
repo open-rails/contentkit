@@ -275,9 +275,21 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 		if err != nil {
 			return nil, err
 		}
-		chapters, err := resolveChapterStarts(readableStarts(groups[t.Version], sourcePages(k, m)), ordering)
+		starts, holds := readableStarts(k, groups[t.Version], sourcePages(k, m))
+		chapters, err := resolveChapterStarts(starts, ordering)
 		if err != nil {
 			return nil, err
+		}
+		dueOf := func(chapter *segment) time.Time {
+			if chapter != nil && chapter.ReleasedAt == nil && chapter.ReleaseAt != nil && chapter.ReleaseAt.After(itemDue) {
+				return *chapter.ReleaseAt
+			}
+			return itemDue
+		}
+		wake := func(due time.Time) {
+			if state == "published" && parentState == "published" && due.After(now) && (plan.NextAt == nil || due.Before(*plan.NextAt)) {
+				plan.NextAt = &due
+			}
 		}
 		for _, span := range spans(chapters, len(ordering)) {
 			var chapter *segment
@@ -289,19 +301,20 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 					}
 				}
 			}
-			due := itemDue
-			if chapter != nil && chapter.ReleasedAt == nil && chapter.ReleaseAt != nil && chapter.ReleaseAt.After(due) {
-				due = *chapter.ReleaseAt
-			}
+			due := dueOf(chapter)
 			if !live || due.After(now) {
-				if state == "published" && parentState == "published" && due.After(now) && (plan.NextAt == nil || due.Before(*plan.NextAt)) {
-					plan.NextAt = &due
-				}
+				wake(due)
 				continue
 			}
 			selected := map[string]bool{}
 			for _, p := range ordering[span.Start:span.End] {
 				selected[p.Path] = true
+				for _, held := range holds[p.Path] {
+					if at := dueOf(&held); at.After(now) {
+						delete(selected, p.Path)
+						wake(at)
+					}
+				}
 			}
 			part := m.Clone()
 			part.Files = slices.DeleteFunc(part.Files, func(f media.File) bool {

@@ -75,6 +75,7 @@ type NoticePage struct {
 	Reason     string `json:"reason,omitempty"`
 	From       int    `json:"from,omitempty"`
 	To         int    `json:"to,omitempty"`
+	Chapter    int    `json:"chapter,omitempty"` // a removed page still named as this chapter's start
 	PreviewURL string `json:"preview_url,omitempty"`
 }
 
@@ -439,12 +440,37 @@ func (s *Service) PageNotices(ctx context.Context, actor access.Actor, t Target)
 			out.Notices = append(out.Notices, n)
 		}
 	}
-	if len(out.Notices) == 0 || s.m.Reader == nil {
+	if len(out.Notices) == 0 {
 		return out, nil
 	}
-	byPath := map[string]string{}
+	byPath, hidden := map[string]string{}, map[string]string{}
 	for _, f := range sourcePages(k, m) {
 		byPath[f.Path] = pageID(k, f)
+	}
+	for _, p := range selectionOf(k, m).Pages {
+		if !p.Included {
+			hidden[p.Path] = p.ID
+		}
+	}
+	segments, err := s.segments(ctx, s.o.Pool, []string{t.Version})
+	if err != nil {
+		return PageNotices{}, err
+	}
+	starts := map[string]int{}
+	for _, g := range segments[t.Version] {
+		if id := hidden[g.StartPage]; id != "" {
+			starts[id] = g.Position + 1
+		}
+	}
+	for i := range out.Notices {
+		if out.Notices[i].Kind == "removed" {
+			for j := range out.Notices[i].Pages {
+				out.Notices[i].Pages[j].Chapter = starts[out.Notices[i].Pages[j].ID]
+			}
+		}
+	}
+	if s.m.Reader == nil {
+		return out, nil
 	}
 	previews := map[string]string{}
 	for offset := 0; ; {

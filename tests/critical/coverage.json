@@ -398,6 +398,7 @@
         "TestPublicationWithoutWorkers/CK-J05-S04_public_audience_release_opens_without_a_grant",
         "TestCopiedPageChapterPlacement",
         "TestHiddenChapterStartKeepsPublishing",
+        "TestHiddenChapterStartSpreadWaits",
         "TestIndependentChaptersSkipUnreleasedMiddle",
         "TestCompletedPublicationReader",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange"

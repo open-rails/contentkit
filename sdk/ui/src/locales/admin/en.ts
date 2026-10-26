@@ -325,6 +325,7 @@ export const admin = {
     reason_blank: "blank",
     reason_duplicate: "duplicate",
     reason_spread: "in a two-page spread",
+    chapterStart: "started chapter {chapter}",
     restore: "Restore",
     dismiss: "Dismiss",
     more: "+{count} more",

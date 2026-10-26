@@ -326,6 +326,7 @@ export const admin: typeof en = {
     reason_blank: "빈 페이지",
     reason_duplicate: "중복",
     reason_spread: "양면 펼침에 포함",
+    chapterStart: "{chapter}장의 첫 페이지",
     restore: "복원",
     dismiss: "닫기",
     more: "외 {count}개",
