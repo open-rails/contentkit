@@ -514,7 +514,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 	}
 	topology := slices.ContainsFunc(updates, func(u EntityUpdate) bool { return u.ParentID != nil || u.State != nil })
 	out := make([]Entity, len(updates))
-	var changed []string
 	err = s.run(ctx, func(q Querier) error {
 		if topology {
 			if err := s.lockHierarchy(ctx, q); err != nil {
@@ -535,7 +534,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		var rows []updateRow
 		var texts []textRow
 		var names []nameRow
-		changed = changed[:0]
 		var textIDs, nameIDs, reach []string
 		var restored []entityRow
 		var relabeled []string
@@ -562,10 +560,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 				reach = append(reach, string(g.ID))
 			}
 			if u.State != nil && *u.State != g.State {
-				gk := s.cfg.EntityKinds[g.Kind]
-				if gk.AuthScope || g.AuthScope != "" || gk.Owner == "user" {
-					changed = append(changed, string(g.ID))
-				}
 				if *u.State == StateActive {
 					tx, ok := q.(pgx.Tx)
 					if !ok {
@@ -763,6 +757,9 @@ func (s *Store) apply(g Entity, u EntityUpdate) (updateRow, bool, error) {
 	}
 	if u.AuthScope != nil {
 		row.AuthScope = optional(*u.AuthScope)
+	}
+	if s.channels && u.State != nil && *u.State != g.State {
+		row.AuthScope = nil
 	}
 	if err := s.fields(gk, g.Kind, &row.entityRow); err != nil {
 		return row, false, err

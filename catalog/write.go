@@ -942,10 +942,8 @@ func (s *Store) RestoreOwned(ctx context.Context, entities []string) error {
 func (s *Store) followOwned(ctx context.Context, query string, entities []string, typ string,
 	write func(ctx context.Context, tx pgx.Tx, ids, causes []string) error) error {
 	var userKinds []string
-	for name, gk := range s.cfg.EntityKinds {
-		if gk.Owner == "user" {
-			userKinds = append(userKinds, name)
-		}
+	if s.cfg.Channels != nil {
+		userKinds = []string{"channel"}
 	}
 	if len(userKinds) == 0 {
 		return nil
