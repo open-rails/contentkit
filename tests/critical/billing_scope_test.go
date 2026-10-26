@@ -17,7 +17,6 @@ import (
 	"github.com/open-rails/contentkit/access"
 	ckbilling "github.com/open-rails/contentkit/adapters/openrails"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/openrails"
@@ -66,8 +65,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	tier := create("Gold tier", access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}})
 	tags, err := admin.PostEntities(t.Context(), []entities.EntityInput{{Kind: "tag", Slug: "paid-collection", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Paid collection"}}}})
 	must(t, err)
-	channel, err := admin.PostChannels(t.Context(), channels.Input{Slug: "paid-channel", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Paid channel"}}})
-	must(t, err)
+	_, _, channel := ownedChannel(t, w, a, "Paid channel")
 	channelRule := access.Rule{Level: access.ChannelLevel, ChannelID: channel.ID}
 	entityItem, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: channel.ID, Access: &channelRule,
 		Text: map[string]catalog.Text{"en": {Title: "Channel article", Body: "Protected manuscript"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}}})
@@ -286,6 +284,25 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		if len(page.Items) != 1 || page.Items[0].ContentID != foreign.ID {
 			t.Fatalf("sibling library crossed app boundary: %+v", page)
 		}
+	})
+	t.Run("CK-J06-S04_deleted_channel_retains_only_exact_edition_purchase", func(t *testing.T) {
+		reader, customer := newReader(t)
+		exact := keyOf(access.VersionKey(a.cfg.Scope.AppID.String(), entityItem.ID, entityItem.Versions[0].ID))
+		window := grant(t, customer, product(exact), nil)
+		assertVersion(t, reader, entityItem, 0, true)
+		must(t, admin.DeleteChannel(t.Context(), channel.ID))
+		retained, err := reader.GetVersion(t.Context(), entityItem.Versions[0].ID, ck.GetVersionQuery{})
+		must(t, err)
+		if !retained.Decision.Allowed || retained.Body != "Protected manuscript" {
+			t.Fatal("deleted channel discarded a retained exact-edition purchase")
+		}
+		_, err = reader.GetVersion(t.Context(), entityItem.Versions[1].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
+		_, err = a.client("").GetVersion(t.Context(), entityItem.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
+		must(t, b.merchant.RevokeProductAccess(t.Context(), window.ID, billing.RevokeProductAccessParams{Reason: "End retained purchase"}))
+		_, err = reader.GetVersion(t.Context(), entityItem.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
 	})
 	t.Run("CK-J06-S05_unavailable_entitlement_authority_refuses_protected_access", func(t *testing.T) {
 		reader, id := newReader(t)

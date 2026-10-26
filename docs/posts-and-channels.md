@@ -68,7 +68,7 @@ channel/group identity. This also covers a remote AuthKit response lost after
 committing. Incomplete or deleted channels grant no editorial authority.
 There is no entity-sync or channel-lifecycle River job. App staff retain their
 normal authority; a dedicated blog-editor role grants only one channel's
-capabilities. Physical retention cleanup remains in the content-purge sweep.
+capabilities. Physical retention cleanup remains in the content-purge sweep. An existing exact-version purchase keeps its normal deleted-content retention access until purge or entitlement expiry/revocation. This does not restore public listings, channel membership access, reposts or editorial rights.
 
 ## One fixed official channel
 

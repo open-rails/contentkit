@@ -503,7 +503,8 @@
       "status": "verified",
       "evidence": [
         "Actual product-access revocation and exact expiry remove body and purchased-library access plus fresh media URLs and download grants. A real ZIP is readable before loss of access; a still-unexpired signed archive ticket also refuses after revocation/expiry.",
-        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5.",
+        "Deleting a primary channel preserves the existing retained exact-version purchase read, while a sibling edition and anonymous reader remain hidden; revocation removes that retained read. Final candidate execution is required."
       ],
       "cases": [
         "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants",
@@ -511,7 +512,8 @@
         "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants/revoke",
         "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access",
         "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/expire",
-        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/revoke"
+        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/revoke",
+        "TestCommerceEntitlementBoundaries/CK-J06-S04_deleted_channel_retains_only_exact_edition_purchase"
       ]
     },
     {
@@ -1355,7 +1357,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner’s eligible content",
+      "behavior": "Owner ban affects only the owner\u2019s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
