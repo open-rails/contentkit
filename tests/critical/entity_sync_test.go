@@ -77,7 +77,7 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 		owner = authtest.NewUser(t, a.tenant)
 		owner.TOTP = authtest.EnrollTOTP(t, a.tenant, owner)
 		token = authtest.SignIn(t, a.tenant, owner).AccessToken
-		in := channels.Input{Slug: "retry-" + owner.ID, Names: []entities.Name{{Language: "en", Kind: "name", Name: "Retry one channel"}}}
+		in := channels.Input{Slug: "retry-" + owner.ID, Names: []entities.Name{{Language: " EN ", Name: "  Retry one channel  "}}, Text: []entities.Text{{Language: " EN ", Description: "Body", SortKey: "  retry  "}}}
 		provider.provision.Store(true)
 		if _, err := a.client(token).PostChannels(t.Context(), in); err == nil {
 			t.Fatal("lost acknowledgement reported success")
