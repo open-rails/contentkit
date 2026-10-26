@@ -35,6 +35,7 @@ func TestFirstClassChannelRepostAuthority(t *testing.T) {
 	}
 	t.Setenv("CONTENTKIT_CRITICAL_PG", dsn)
 	w := newWorld(t, func(cfg *ck.Config) {
+		cfg.Content.Channels.Entitled = true
 		kind := cfg.Content.Kinds["article"]
 		kind.Versions.Hidden = false
 		cfg.Content.Kinds["article"] = kind
@@ -155,7 +156,18 @@ func TestFirstClassChannelRepostAuthority(t *testing.T) {
 	})
 	t.Run("all_versions_share_parent_channel_read_policy", func(t *testing.T) {
 		parentRule := access.Rule{Level: access.ChannelLevel, ChannelID: source.ID}
-		_, err := originalClient.PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: source.ID, Access: &parentRule,
+		valid, err := originalClient.PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: source.ID, Access: &parentRule,
+			Text: map[string]catalog.Text{"en": {Title: "One parent policy"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}}})
+		must(t, err)
+		if len(valid.Versions) != 2 {
+			t.Fatal("valid channel policy did not create both editions")
+		}
+		for _, version := range valid.Versions {
+			if version.Access == nil || version.Access.ChannelID != source.ID || version.Access.Level != access.ChannelLevel {
+				t.Fatal("edition did not inherit the valid parent rule")
+			}
+		}
+		_, err = originalClient.PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: source.ID, Access: &parentRule,
 			Versions: []catalog.VersionInput{{Languages: []string{"en"}, Access: &access.Rule{Level: access.Public}}}})
 		requireError(t, err, 400, "invalid_request")
 		wrongChannel := access.Rule{Level: access.ChannelLevel, ChannelID: destination.ID}
