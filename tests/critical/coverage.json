@@ -1965,7 +1965,7 @@
     {
       "id": "CK-J16-S06",
       "journey": "CK-J16",
-      "behavior": "Entity counts and covers reflect writes without workers or stale periodic projections",
+      "behavior": "Entity counts and covers reflect writes without workers or stale periodic projections, including letter-filtered directory pages",
       "status": "verified",
       "evidence": [
         "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
