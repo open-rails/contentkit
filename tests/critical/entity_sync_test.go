@@ -1,10 +1,13 @@
 package critical_test
 
 import (
+	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
@@ -12,118 +15,124 @@ import (
 	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
-	"github.com/riverqueue/river"
 )
 
+// Only acknowledgements are lost; the group operations use real AuthKit.
+type lostChannelReplies struct {
+	entities.Scopes
+	scope             ck.Scope
+	provision, retire atomic.Bool
+}
+
+func (s *lostChannelReplies) ContentKitScope() (string, string) {
+	return s.scope.TenantID.String(), s.scope.AppID.String()
+}
+func (s *lostChannelReplies) Provision(ctx context.Context, in []entities.Scope) error {
+	if err := s.Scopes.Provision(ctx, in); err != nil {
+		return err
+	}
+	if s.provision.Swap(false) {
+		return errors.New("test: group committed but response lost")
+	}
+	return nil
+}
+func (s *lostChannelReplies) Retire(ctx context.Context, ids []string) error {
+	if err := s.Scopes.Retire(ctx, ids); err != nil {
+		return err
+	}
+	if s.retire.Swap(false) {
+		return errors.New("test: retirement committed but response lost")
+	}
+	return nil
+}
+
+// Retain these journey identities while replacing the retired worker contract
+// with the owner-approved direct-call and idempotent caller-retry contract.
 func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
-	tenant := a.cfg.Scope.AppID.String()
-	jobs := pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()
-	entityTable := pgx.Identifier{w.schema, "content_entities"}.Sanitize()
-	countJobs := func(id string) int {
+	provider := &lostChannelReplies{Scopes: a.deps.Scopes, scope: *a.cfg.Scope}
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	a.deps.Scopes = provider
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	var channel channels.Channel
+	var owner authtest.User
+	var token string
+	noLifecycleJobs := func() {
 		t.Helper()
 		var n int
-		must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+jobs+" WHERE kind='contentkit_entity_sync' AND args->>'tenant'=$1 AND args->'groups' ? $2", tenant, id).Scan(&n))
-		return n
+		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+` WHERE kind IN ('contentkit_entity_sync','contentkit_channel_lifecycle')`).Scan(&n))
+		if n != 0 {
+			t.Fatalf("direct lifecycle created %d retired jobs", n)
+		}
 	}
-	var imported channels.Channel
-	var collection channels.Channel
-	var ownedContent string
-	t.Run("CK-J16-S01_transactional_admission_without_bound_workers", func(t *testing.T) {
-		owner, _, created := ownedChannel(t, w, a, "Immediate channel")
-		if countJobs(string(created.ID)) != 1 {
-			t.Fatal("unbound ordinary creation did not persist lifecycle work")
+	t.Run("CK-J16-S01_create_retries_same_channel_after_lost_acknowledgement", func(t *testing.T) {
+		owner = authtest.NewUser(t, a.tenant)
+		owner.TOTP = authtest.EnrollTOTP(t, a.tenant, owner)
+		token = authtest.SignIn(t, a.tenant, owner).AccessToken
+		in := channels.Input{Slug: "retry-" + owner.ID, Names: []entities.Name{{Language: "en", Kind: "name", Name: "Retry one channel"}}}
+		provider.provision.Store(true)
+		if _, err := a.client(token).PostChannels(t.Context(), in); err == nil {
+			t.Fatal("lost acknowledgement reported success")
 		}
-		store, err := channels.New(channels.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Model: a.cfg.Content, Scopes: a.deps.Scopes})
-		must(t, err)
-		tx, err := w.pool.Begin(t.Context())
-		must(t, err)
-		draftID := uuid.Must(uuid.NewV7()).String()
-		err = store.ImportTx(t.Context(), tx, []channels.Import{{ID: draftID, Slug: "rolled-back", OwnerUserID: owner.ID, Names: []entities.Name{{Language: "en", Kind: "name", Name: "Rolled back"}}}}, true)
-		must(t, err)
-		var inTx int
-		must(t, tx.QueryRow(t.Context(), "SELECT count(*) FROM "+jobs+" WHERE kind='contentkit_entity_sync' AND args->'groups' ? $1", draftID).Scan(&inTx))
-		if inTx != 1 {
-			t.Fatal("entity write did not atomically admit its lifecycle job")
-		}
-		must(t, tx.Rollback(t.Context()))
-		if countJobs(draftID) != 0 {
-			t.Fatal("rolled-back entity left a committed job")
-		}
-		var exists bool
-		must(t, w.pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM "+entityTable+" WHERE tenant_id=$1 AND id=$2)", tenant, draftID).Scan(&exists))
-		if exists {
-			t.Fatal("rolled-back entity survived")
-		}
-
-		id := uuid.Must(uuid.NewV7()).String()
-		result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "offline-lifecycle", ProvisionScopes: true, Channels: []importer.ChannelRecord{{ExternalID: "channel", ID: id, Slug: "offline-channel", OwnerUserID: owner.ID, Names: []entities.Name{{Language: "en", Kind: "name", Name: "Imported channel"}}}}})
-		must(t, err)
-		if len(result.Failed) != 0 {
-			t.Fatalf("import failed: %+v", result.Failed)
-		}
-		imported, err = a.engine.Client().GetManageChannel(t.Context(), id, ck.GetManageChannelQuery{})
-		must(t, err)
-		if imported.AuthScope != "" || countJobs(id) != 1 {
-			t.Fatal("offline import did not leave exactly one durable unprocessed scope job")
-		}
-	})
-	// S01 proves admission before any fleet is bound. Publication can now run,
-	// while entity synchronization stays paused until S05 explicitly resumes it.
-	fleet := publicationOnlyFleet(t, a)
-	t.Run("CK-J16-S04_owned_import_state_changes_admit_exact_work", func(t *testing.T) {
-		owner, token, created := ownedChannel(t, w, a, "Lifecycle channel")
-		collection = created
-		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(collection.ID), Text: map[string]catalog.Text{"en": {Title: "Channel lifecycle post"}}})
-		must(t, err)
-		ownedContent = item.ID
-		_, err = a.client(token).PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
-		must(t, err)
-		awaitEditionPublication(t, a, a.client(token), item.ID, item.Versions[0].ID)
-		result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "offline-lifecycle", ProvisionScopes: true, Channels: []importer.ChannelRecord{{ExternalID: "collection", ID: string(collection.ID), Slug: collection.Slug, OwnerUserID: owner.ID, State: "deleted"}}})
-		must(t, err)
-		if len(result.Failed) != 0 {
-			t.Fatalf("delete import failed: %+v", result.Failed)
-		}
-		if countJobs(string(collection.ID)) != 1 {
-			t.Fatal("channel import deletion lost its durable job")
-		}
-		_, err = a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(collection.ID), Text: map[string]catalog.Text{"en": {Title: "Deleted owner denied"}}})
+		var reserved string
+		must(t, w.pool.QueryRow(t.Context(), `SELECT id FROM `+pgx.Identifier{w.schema, "content_entities"}.Sanitize()+` WHERE tenant_id=$1 AND slug=$2`, a.cfg.Scope.AppID.String(), in.Slug).Scan(&reserved))
+		_, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: reserved})
 		if err == nil {
-			t.Fatal("deleted entity retained authoring authority before worker ran")
+			t.Fatal("pending channel granted authority")
 		}
+		channel, err = a.client(token).PostChannels(t.Context(), in)
+		must(t, err)
+		if channel.ID != reserved || channel.AuthScope == "" {
+			t.Fatal("retry changed identity or failed to complete group")
+		}
+		again, err := a.client(token).PostChannels(t.Context(), in)
+		must(t, err)
+		if again.ID != channel.ID {
+			t.Fatal("successful replay duplicated channel")
+		}
+		noLifecycleJobs()
 	})
-	t.Run("CK-J16-S05_exact_jobs_converge_when_workers_resume", func(t *testing.T) {
-		must(t, fleet.Queues().Add(entities.DefaultQueue, river.QueueConfig{MaxWorkers: 1}))
-		waitFor(t, func() bool {
-			current, err := a.engine.Client().GetManageChannel(t.Context(), string(imported.ID), ck.GetManageChannelQuery{})
-			must(t, err)
-			var state string
-			must(t, w.pool.QueryRow(t.Context(), "SELECT state FROM "+pgx.Identifier{w.schema, "content_items"}.Sanitize()+" WHERE tenant_id=$1 AND id=$2", tenant, ownedContent).Scan(&state))
-			return current.AuthScope != "" && state == "deleted"
-		})
-		groupID, err := ckauth.ChannelScopeID(*a.cfg.Scope, string(imported.ID))
+	var post catalog.Content
+	t.Run("CK-J16-S04_delete_returns_error_and_retries_retirement_inline", func(t *testing.T) {
+		post = authoredArticle(t, a, a.client(token), channel.ID)
+		provider.retire.Store(true)
+		if err := a.client(token).DeleteChannel(t.Context(), channel.ID); err == nil {
+			t.Fatal("lost retirement acknowledgement reported success")
+		}
+		_, err := a.client("").GetContent(t.Context(), post.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		must(t, a.client(token).DeleteChannel(t.Context(), channel.ID))
+		groupID, err := ckauth.ChannelScopeID(*a.cfg.Scope, channel.ID)
 		must(t, err)
 		group, err := w.auth.Group(t.Context(), iam.GroupByID(groupID))
 		must(t, err)
-		if group.DeletedAt != nil {
-			t.Fatal("queued scope was not provisioned")
+		if group.DeletedAt == nil {
+			t.Fatal("channel deletion returned before group retirement")
 		}
-		var reconciles int
-		must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+jobs+" WHERE kind='contentkit_entity_reconcile'").Scan(&reconciles))
-		if reconciles != 0 {
-			t.Fatal("worker resume scheduled the removed reconciliation poller")
-		}
-		result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "offline-lifecycle", ProvisionScopes: true, Channels: []importer.ChannelRecord{{ExternalID: "collection", ID: string(collection.ID), Slug: collection.Slug, OwnerUserID: collection.OwnerUserID, State: "active"}}})
+		noLifecycleJobs()
+	})
+	t.Run("CK-J16-S05_restore_and_import_finish_without_lifecycle_jobs", func(t *testing.T) {
+		active := entities.StateActive
+		_, err := a.engine.Client().PatchChannel(t.Context(), channel.ID, channels.Update{State: &active})
 		must(t, err)
-		if len(result.Failed) != 0 {
-			t.Fatalf("restore import failed: %+v", result.Failed)
+		restored, err := a.client(token).GetContent(t.Context(), post.ID, ck.GetContentQuery{})
+		must(t, err)
+		if restored.ChannelID != channel.ID {
+			t.Fatal("restore changed primary channel")
 		}
-		waitFor(t, func() bool {
-			var state string
-			must(t, w.pool.QueryRow(t.Context(), "SELECT state FROM "+pgx.Identifier{w.schema, "content_items"}.Sanitize()+" WHERE tenant_id=$1 AND id=$2", tenant, ownedContent).Scan(&state))
-			return state == "published"
-		})
+		batch := importer.Batch{Source: "direct-channel-import", ProvisionScopes: true, Channels: []importer.ChannelRecord{{ExternalID: "retained", ID: channel.ID, Slug: channel.Slug, OwnerUserID: owner.ID, State: "active"}}}
+		for range 2 {
+			result, err := a.engine.Client().PostImport(t.Context(), batch)
+			must(t, err)
+			if len(result.Failed) != 0 || result.Written[importer.SectionChannels] != 1 || result.IDs[importer.RecordChannel]["retained"] != channel.ID {
+				t.Fatalf("idempotent import failed: %+v", result)
+			}
+		}
+		noLifecycleJobs()
 	})
 }
