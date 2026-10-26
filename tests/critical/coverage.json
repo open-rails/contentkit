@@ -707,6 +707,30 @@
       ]
     },
     {
+      "id": "CK-J07-S13",
+      "journey": "CK-J07",
+      "behavior": "Typeahead under three characters completes name prefixes only",
+      "status": "verified",
+      "evidence": [
+        "Two characters starting both visible titles suggest both, two characters inside their names suggest nothing, and the same three characters suggest both again."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S13_short_typeahead_completes_name_prefixes"
+      ]
+    },
+    {
+      "id": "CK-J07-S14",
+      "journey": "CK-J07",
+      "behavior": "A list's counts are shared for a minute and then follow catalog changes",
+      "status": "verified",
+      "evidence": [
+        "After a second article is published, the list summary keeps its shared total within the minute and counts both articles once the minute has passed."
+      ],
+      "cases": [
+        "TestListingSummaryRefreshesWithinAMinute"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",

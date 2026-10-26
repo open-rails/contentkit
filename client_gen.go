@@ -2697,7 +2697,7 @@ func (q GetTypeaheadQuery) values() url.Values {
 	return v
 }
 
-// GetTypeahead is GET /v1/typeahead (public). Completes literal own title and entity-name/alias substrings while the reader types, with prefixes first and common fillers ignored; excludes contextual keywords and typos.
+// GetTypeahead is GET /v1/typeahead (public). Completes literal own title and entity-name/alias substrings while the reader types (name prefixes only under three characters), with prefixes first and common fillers ignored; excludes contextual keywords and typos.
 func (c *Client) GetTypeahead(ctx context.Context, q GetTypeaheadQuery) (discovery.Typeahead, error) {
 	var out discovery.Typeahead
 	err := c.call(ctx, http.MethodGet, "/v1/typeahead", q.values(), nil, &out)
