@@ -348,15 +348,20 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
-	if err := e.migratePublicationQueues(ctx); err != nil {
-		return err
-	}
 	if options.explicit {
+		if err := e.migratePublicationQueues(ctx); err != nil {
+			return err
+		}
 		if err := e.migrateUnifiedReleases(ctx); err != nil {
 			return err
 		}
-	} else if err := e.validateUnifiedReleases(ctx); err != nil {
-		return err
+	} else {
+		if err := e.validatePublicationQueues(ctx); err != nil {
+			return err
+		}
+		if err := e.validateUnifiedReleases(ctx); err != nil {
+			return err
+		}
 	}
 	if err := e.migrateCatalogEvents(ctx); err != nil {
 		return err
