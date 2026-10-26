@@ -133,18 +133,14 @@ type ContentRecord struct {
 	PublishedAt *time.Time `json:"published_at,omitempty"`
 	// DeletedAt dates a deleted item (now when omitted).
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
-	// Nil preserves an existing source title/language; a pointer to empty clears it.
-	OriginalTitle    *string `json:"original_title,omitempty"`
-	OriginalLanguage *string `json:"original_language,omitempty"`
 	// Comments is open (the default), closed or hidden.
 	Comments string `json:"comments,omitempty"`
 	// Access defaults to public. A entity rule names the entity's id.
-	Access       *access.Rule            `json:"access,omitempty"`
-	Restrictions []string                `json:"restrictions,omitempty"`
-	Attributes   map[string]any          `json:"attributes,omitempty"`
-	OwnerEntity  *Ref                    `json:"owner_group,omitempty"`
-	Creators     []catalog.Creator       `json:"creators,omitempty"`
-	Text         map[string]catalog.Text `json:"text,omitempty"`
+	Access       *access.Rule      `json:"access,omitempty"`
+	Restrictions []string          `json:"restrictions,omitempty"`
+	Attributes   map[string]any    `json:"attributes,omitempty"`
+	OwnerEntity  *Ref              `json:"owner_group,omitempty"`
+	Creators     []catalog.Creator `json:"creators,omitempty"`
 	// Versions: a kind with hidden versions takes none or one.
 	Versions  []VersionRecord `json:"versions,omitempty"`
 	Code      string          `json:"code,omitempty"`
@@ -173,8 +169,10 @@ type VersionRecord struct {
 	// Cover selects one of the version's cover uploads (i-{uuid}): a
 	// record's one legacy cover is uploaded to each of its versions. Left
 	// out, the stored selection stays.
-	Cover string                         `json:"cover,omitempty"`
-	Text  map[string]catalog.VersionText `json:"text,omitempty"`
+	Cover            string                         `json:"cover,omitempty"`
+	Text             map[string]catalog.VersionText `json:"text,omitempty"`
+	OriginalTitle    *string                        `json:"original_title,omitempty"`
+	OriginalLanguage *string                        `json:"original_language,omitempty"`
 	// Segments must be omitted. Use the version segments route with virtual
 	// start_page markers after importing content and source media.
 	Segments  []catalog.Segment `json:"segments,omitempty"`

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,10 +24,6 @@ import (
 // ContentInput creates a content item, a draft until published.
 type ContentInput struct {
 	Kind string `json:"kind"`
-	// Text is the text per language.
-	Text             map[string]Text `json:"text,omitempty"`
-	OriginalTitle    string          `json:"original_title,omitempty"`
-	OriginalLanguage string          `json:"original_language,omitempty"`
 	// Comments is open (the default when permitted), closed (existing ones
 	// show, new ones are refused) or hidden. A kind excluding open defaults to
 	// its first configured comment mode.
@@ -43,20 +38,18 @@ type ContentInput struct {
 	OwnerEntityID string `json:"owner_group_id,omitempty"`
 	// Creators nil credits the creating person as its author.
 	Creators *[]Creator `json:"creators,omitempty"`
-	// Versions: none gives the item one serving its text's languages (a
-	// kind with hidden versions takes none).
+	// Versions defines initial editions. Omission creates one empty edition.
+	// A kind with hidden versions accepts at most one initial edition.
 	Versions []VersionInput `json:"versions,omitempty"`
 }
 
 // ContentPatch edits a content item; nil fields stay.
 type ContentPatch struct {
-	OriginalTitle    *string        `json:"original_title,omitempty"`
-	OriginalLanguage *string        `json:"original_language,omitempty"`
-	Comments         *string        `json:"comments,omitempty"`
-	Access           *access.Rule   `json:"access,omitempty"`
-	Restrictions     *[]string      `json:"restrictions,omitempty"`
-	Attributes       map[string]any `json:"attributes,omitempty"` // replaces all
-	Creators         *[]Creator     `json:"creators,omitempty"`
+	Comments     *string        `json:"comments,omitempty"`
+	Access       *access.Rule   `json:"access,omitempty"`
+	Restrictions *[]string      `json:"restrictions,omitempty"`
+	Attributes   map[string]any `json:"attributes,omitempty"` // replaces all
+	Creators     *[]Creator     `json:"creators,omitempty"`
 	// Revision, when set, refuses the edit (409) unless it is current.
 	Revision *int64 `json:"revision,omitempty"`
 }
@@ -81,31 +74,15 @@ type VersionInput struct {
 	Ordinal     *int                   `json:"ordinal,omitempty"`
 	// Cover selects one of the version's cover uploads by name (i-{uuid});
 	// "" returns to its first.
-	Cover *string `json:"cover,omitempty"`
-	// Fork fills a new version's media from a sibling (creation only).
-	Fork *VersionFork `json:"fork,omitempty"`
-}
-
-// VersionFork copies a sibling version's media into a new version: its
-// uploads and reader metadata, with Playback its audio, with Segments its
-// segments.
-type VersionFork struct {
-	From     string `json:"from"`
-	Playback bool   `json:"playback,omitempty"`
-	Segments bool   `json:"segments,omitempty"`
+	Cover            *string `json:"cover,omitempty"`
+	OriginalTitle    *string `json:"original_title,omitempty"`
+	OriginalLanguage *string `json:"original_language,omitempty"`
 }
 
 // Update is one ContentPatch.
 type Update struct {
 	ID string
 	ContentPatch
-}
-
-// TextPut sets (Text non-nil) or removes one language's text.
-type TextPut struct {
-	ContentID string
-	Language  string
-	Text      *Text
 }
 
 // Publish publishes a content item now, or at At when it is in the future
@@ -133,8 +110,6 @@ type effects struct {
 	publish []versions.Target
 	// republish are versions whose effective rule or segments changed.
 	republish []versions.Target
-	forks     []versions.Fork
-	bodies    []versions.BodyCopy
 }
 
 // mutate runs fn over the authorized, locked items in one transaction, then
@@ -191,19 +166,6 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 		return err
 	}
 	fx.publish = append(fx.publish, fx.republish...)
-	if len(fx.forks) > 0 {
-		if s.media == nil {
-			return errMediaNotConfigured
-		}
-		if err := s.media.Versions.ForkTx(ctx, tx, fx.forks); err != nil {
-			return err
-		}
-	}
-	if s.media != nil && len(fx.bodies) > 0 {
-		if err := s.media.Versions.CopyBodiesTx(ctx, tx, fx.bodies); err != nil {
-			return err
-		}
-	}
 	if len(fx.publish) > 0 {
 		if err := s.schedulePublicationTx(ctx, tx, fx.publish); err != nil {
 			return err
@@ -266,9 +228,6 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		if p.OwnerEntityID, err = s.fixedOwner(ctx, s.pool, c.Kind, c.OwnerEntityID); err != nil {
 			return nil, err
 		}
-		if p.OriginalTitle, p.OriginalLanguage, err = cleanOriginalTitle(p.OriginalTitle, p.OriginalLanguage); err != nil {
-			return nil, err
-		}
 		if p.Comments == "" {
 			p.Comments = s.defaultComments(c.Kind)
 		}
@@ -300,13 +259,6 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 				return nil, invalid("%v", err)
 			}
 		}
-		texts := map[string]Text{}
-		for l, t := range c.Text {
-			if texts[l], err = s.cleanText(ctx, l, t); err != nil {
-				return nil, err
-			}
-		}
-		p.Text = texts
 		switch {
 		case c.Creators != nil:
 			p.creators, err = s.checkCreators(*c.Creators)
@@ -316,16 +268,17 @@ func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []Cont
 		if err != nil {
 			return nil, err
 		}
-		switch {
-		case p.kind.Versions.Hidden && len(c.Versions) > 0:
-			return nil, invalid("kind %s has one hidden version; give it no versions", c.Kind)
-		case len(c.Versions) == 0:
-			p.versions = []VersionInput{{Languages: s.textLanguages(p.kind, texts)}}
-		default:
-			p.versions = c.Versions
+		if p.kind.Versions.Hidden && len(c.Versions) > 1 {
+			return nil, invalid("kind %s has one hidden version", c.Kind)
 		}
-		if slices.ContainsFunc(p.versions, func(v VersionInput) bool { return v.Fork != nil }) {
-			return nil, invalid("a new item's versions have no sibling to fork")
+		p.versions = slices.Clone(c.Versions)
+		if len(p.versions) == 0 {
+			p.versions = []VersionInput{{Languages: []string{s.defaultLanguage()}}}
+		}
+		for j, v := range p.versions {
+			if p.versions[j], err = s.prepareVersionText(ctx, v); err != nil {
+				return nil, err
+			}
 		}
 		owners = append(owners, p.OwnerEntityID)
 		preps[i] = p
@@ -372,12 +325,9 @@ func (s *Store) createPreparedTx(ctx context.Context, tx pgx.Tx, actor access.Ac
 		}
 		rule, _ := json.Marshal(p.Access)
 		attrs, _ := json.Marshal(p.Attributes)
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, original_title, original_language, access, restrictions, attributes, owner_entity_id, created_by, comments)
- VALUES ($1, $2, $3, nullif($4, ''), nullif($5, ''), $6, $7, $8, nullif($9, ''), nullif($10, ''), $11)`,
-			s.tenant, p.id, p.Kind, p.OriginalTitle, p.OriginalLanguage, rule, p.Restrictions, attrs, p.OwnerEntityID, viewerID(actor), p.Comments); err != nil {
-			return nil, err
-		}
-		if err := s.writeTexts(ctx, tx, p.id, p.Text, nil); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, access, restrictions, attributes, owner_entity_id, created_by, comments)
+ VALUES ($1, $2, $3, $4, $5, $6, nullif($7, ''), nullif($8, ''), $9)`,
+			s.tenant, p.id, p.Kind, rule, p.Restrictions, attrs, p.OwnerEntityID, viewerID(actor), p.Comments); err != nil {
 			return nil, err
 		}
 		if err := s.writeCreators(ctx, tx, p.id, p.creators); err != nil {
@@ -399,44 +349,11 @@ func (s *Store) createPreparedTx(ctx context.Context, tx pgx.Tx, actor access.Ac
 	return ids, nil
 }
 
-// textLanguages are the languages a default or hidden version serves: its
-// content's text languages (the first in site order for a one-language kind),
-// else the site's first language.
-func (s *Store) textLanguages(k kinds.Kind, texts map[string]Text) []string {
-	var out []string
-	for _, l := range s.cfg.Languages {
-		if _, ok := texts[l]; ok {
-			out = append(out, l)
-		}
-	}
-	if len(out) == 0 {
-		out = []string{s.defaultLanguage()}
-	}
-	if k.Versions.Languages == "one" {
-		out = out[:1]
-	}
-	return out
-}
-
 // Update edits content items.
 func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) error {
 	ids := make([]string, len(in))
 	for i, u := range in {
 		ids[i] = u.ID
-		if u.OriginalTitle != nil {
-			title, _, err := cleanOriginalTitle(*u.OriginalTitle, "")
-			if err != nil {
-				return err
-			}
-			in[i].OriginalTitle = &title
-		}
-		if u.OriginalLanguage != nil {
-			_, language, err := cleanOriginalTitle("", *u.OriginalLanguage)
-			if err != nil {
-				return err
-			}
-			in[i].OriginalLanguage = &language
-		}
 		if u.Comments != nil {
 			if err := checkComments(*u.Comments); err != nil {
 				return err
@@ -504,9 +421,9 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []Update) err
 			if u.Restrictions != nil {
 				restrictions = *u.Restrictions
 			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET original_title = coalesce($3, original_title), original_language = coalesce($4, original_language), access = coalesce($5, access),
- restrictions = coalesce($6, restrictions), attributes = coalesce($7, attributes), comments = coalesce($8, comments) WHERE tenant_id = $1 AND id = $2`,
-				s.tenant, u.ID, u.OriginalTitle, u.OriginalLanguage, access, restrictions, attrs, u.Comments); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET access = coalesce($3, access),
+ restrictions = coalesce($4, restrictions), attributes = coalesce($5, attributes), comments = coalesce($6, comments) WHERE tenant_id = $1 AND id = $2`,
+				s.tenant, u.ID, access, restrictions, attrs, u.Comments); err != nil {
 				return fx, err
 			}
 			if u.Creators != nil {
@@ -563,25 +480,6 @@ func (s *Store) writeCreators(ctx context.Context, tx pgx.Tx, id string, cs []Cr
 	return nil
 }
 
-// writeTexts upserts set and deletes the languages in drop.
-func (s *Store) writeTexts(ctx context.Context, tx pgx.Tx, id string, set map[string]Text, drop []string) error {
-	for l, t := range set {
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.text+` (tenant_id, content_id, language, title, slug, description, body, sort_key, aliases)
- VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
- ON CONFLICT (tenant_id, content_id, language) DO UPDATE SET title = EXCLUDED.title, slug = EXCLUDED.slug, description = EXCLUDED.description,
- body = EXCLUDED.body, sort_key = EXCLUDED.sort_key, aliases = EXCLUDED.aliases, updated_at = clock_timestamp()`,
-			s.tenant, id, l, t.Title, t.Slug, t.Description, t.Body, t.SortKey, orEmpty(t.Aliases)); err != nil {
-			return err
-		}
-	}
-	if len(drop) > 0 {
-		if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.text+` WHERE tenant_id = $1 AND content_id = $2 AND language = ANY($3)`, s.tenant, id, drop); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func orEmpty[T any](s []T) []T {
 	if s == nil {
 		return []T{}
@@ -593,8 +491,11 @@ func orEmpty[T any](s []T) []T {
 // its kind's path entity slug, if any, then its title slug (the site's first
 // language with text is the default).
 func (s *Store) putCodes(ctx context.Context, q entities.Querier, ids []string) error {
-	rows, err := q.Query(ctx, `SELECT c.id, c.kind, t.language, t.slug FROM `+s.t.items+` c
- LEFT JOIN `+s.t.text+` t ON t.tenant_id = c.tenant_id AND t.content_id = c.id WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
+	rows, err := q.Query(ctx, `SELECT c.id,c.kind,t.language,t.slug FROM `+s.t.items+` c
+ LEFT JOIN LATERAL (SELECT DISTINCT ON (x.language) x.language,x.slug FROM `+s.t.versions+` v
+ JOIN `+s.t.versionText+` x ON x.tenant_id=v.tenant_id AND x.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted'
+ ORDER BY x.language,v.released DESC,v.position,v.id) t ON true WHERE c.tenant_id=$1 AND c.id=ANY($2)`, s.tenant, ids)
 	if err != nil {
 		return err
 	}
@@ -646,83 +547,6 @@ func (s *Store) putCodes(ctx context.Context, q entities.Querier, ids []string) 
 	return err
 }
 
-// PutText sets or removes text per language.
-func (s *Store) PutText(ctx context.Context, actor access.Actor, in []TextPut) error {
-	byID := map[string][]TextPut{}
-	var ids []string
-	for i, p := range in {
-		if err := s.checkLanguage(p.Language); err != nil {
-			return err
-		}
-		if p.Text != nil {
-			t, err := s.cleanText(ctx, p.Language, *p.Text)
-			if err != nil {
-				return err
-			}
-			in[i].Text = &t
-		}
-		if _, ok := byID[p.ContentID]; !ok {
-			ids = append(ids, p.ContentID)
-		}
-		byID[p.ContentID] = append(byID[p.ContentID], in[i])
-	}
-	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{codes: true}
-		for _, id := range ids {
-			o := got[id]
-			if o.state == StateDeleted {
-				return fx, ErrNotFound
-			}
-			set := map[string]Text{}
-			var drop []string
-			for _, p := range byID[id] {
-				if p.Text == nil {
-					drop = append(drop, p.Language)
-				} else {
-					set[p.Language] = *p.Text
-				}
-			}
-			if err := s.writeTexts(ctx, tx, id, set, drop); err != nil {
-				return fx, err
-			}
-			if err := s.syncHiddenVersion(ctx, tx, id, o.kind); err != nil {
-				return fx, err
-			}
-			fx.events = append(fx.events, Event{Type: EventContentUpdated, Kind: o.kind, ContentID: id})
-		}
-		return fx, nil
-	})
-}
-
-// syncHiddenVersion keeps a hidden version serving its content's languages.
-func (s *Store) syncHiddenVersion(ctx context.Context, tx pgx.Tx, id, kind string) error {
-	k := s.cfg.Kinds[kind]
-	if !k.Versions.Hidden {
-		return nil
-	}
-	rows, err := tx.Query(ctx, `SELECT language, title FROM `+s.t.text+` WHERE tenant_id = $1 AND content_id = $2`, s.tenant, id)
-	if err != nil {
-		return err
-	}
-	texts := map[string]Text{}
-	for rows.Next() {
-		var l string
-		var t Text
-		if err := rows.Scan(&l, &t.Title); err != nil {
-			rows.Close()
-			return err
-		}
-		texts[l] = t
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	_, err = tx.Exec(ctx, `UPDATE `+s.t.versions+` SET languages = $3, updated_at = clock_timestamp(), revision = revision + 1
- WHERE tenant_id = $1 AND content_id = $2 AND languages <> $3`, s.tenant, id, s.textLanguages(k, texts))
-	return err
-}
-
 // Publish accepts durable publication now, or schedules it for a future At.
 // Already released files stay available while any new publication is pending.
 func (s *Store) Publish(ctx context.Context, actor access.Actor, in []Publish) error {
@@ -759,10 +583,8 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 			var titled, versioned bool
 			originalAndVersion := s.cfg.Kinds[o.kind].TitlePolicy == kinds.TitleOriginalAndVersion
 			if err := tx.QueryRow(ctx, `SELECT
- EXISTS (SELECT 1 FROM `+s.t.text+` WHERE tenant_id=$1 AND content_id=$2 AND title<>'') OR
- ($3 AND (EXISTS (SELECT 1 FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2 AND coalesce(original_title,'')<>'') OR
- EXISTS (SELECT 1 FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
- WHERE v.tenant_id=$1 AND v.content_id=$2 AND v.state<>'deleted' AND t.language=ANY(v.languages) AND t.title<>''))),
+ EXISTS (SELECT 1 FROM `+s.t.versions+` v LEFT JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id AND t.language=ANY(v.languages)
+ WHERE v.tenant_id=$1 AND v.content_id=$2 AND v.state<>'deleted' AND (coalesce(t.title,'')<>'' OR ($3 AND coalesce(v.original_title,'')<>''))),
  EXISTS (SELECT 1 FROM `+s.t.versions+` WHERE tenant_id=$1 AND content_id=$2 AND state<>'deleted')`, s.tenant, p.ContentID, originalAndVersion).Scan(&titled, &versioned); err != nil {
 				return fx, err
 			}
@@ -979,6 +801,14 @@ func (s *Store) followOwned(ctx context.Context, query string, entities []string
 // PutVersions creates (VersionID "") or edits versions and returns their ids
 // in order.
 func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []VersionPut) ([]string, error) {
+	for i := range in {
+		v, err := s.prepareVersionText(ctx, in[i].VersionInput)
+		if err != nil {
+			return nil, err
+		}
+		in[i].VersionInput = v
+	}
+
 	var segmentVersions []string
 	var chapterTargets []versions.Target
 	for _, p := range in {
@@ -1001,7 +831,7 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 	out := make([]string, len(in))
 	err = s.withChapterLocks(ctx, chapterTargets, func() error {
 		return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-			fx := effects{}
+			fx := effects{codes: true}
 			for i, p := range in {
 				o := got[p.ContentID]
 				k := s.cfg.Kinds[o.kind]
@@ -1016,13 +846,8 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 						return fx, ErrNotFound
 					}
 				}
-				if k.Versions.Hidden && (p.VersionID == "" || !hiddenVersionEdit(p.VersionInput)) {
-					return fx, invalid("kind %s has one hidden version: only its cover or restoration is edited", o.kind)
-				}
-				if p.Fork != nil {
-					if err := s.checkFork(ctx, tx, p); err != nil {
-						return fx, err
-					}
+				if k.Versions.Hidden && p.VersionID == "" {
+					return fx, invalid("kind %s already has its single hidden version", o.kind)
 				}
 				if p.VersionID == "" {
 					// An added version stays a draft until its editors publish it.
@@ -1035,20 +860,6 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 						return fx, err
 					}
 					out[i] = vid
-					from := ""
-					if f := p.Fork; f != nil {
-						fx.forks = append(fx.forks, versions.Fork{Version: versions.Target{Content: p.ContentID, Version: vid}, From: f.From,
-							Playback: f.Playback, Segments: f.Segments})
-						from = f.From
-					}
-					// A new version starts with its own copy of the body's images
-					// and, forked, of its source's cover selection.
-					if from, err = s.sibling(ctx, tx, p.ContentID, vid, from, in.Cover == nil); err != nil {
-						return fx, err
-					}
-					if from != "" {
-						fx.bodies = append(fx.bodies, versions.BodyCopy{Content: p.ContentID, From: from, To: []string{vid}})
-					}
 					fx.events = append(fx.events, Event{Type: EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
 					if in.State == StatePublished {
 						fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: vid})
@@ -1082,13 +893,14 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 }
 
 type versionRow struct {
-	languages, traits []string
-	label, state      string
-	publishAt         *time.Time
-	access            []byte
-	attributes        []byte
-	ordinal           *int
-	cover             []byte
+	languages, traits               []string
+	label, state                    string
+	publishAt                       *time.Time
+	access                          []byte
+	attributes                      []byte
+	ordinal                         *int
+	cover                           []byte
+	originalTitle, originalLanguage string
 }
 
 func (s *Store) versionRow(k kinds.Kind, kind string, v VersionInput, cur *versionRow) (versionRow, error) {
@@ -1099,6 +911,25 @@ func (s *Store) versionRow(k kinds.Kind, kind string, v VersionInput, cur *versi
 		r = versionRow{traits: []string{}, state: StatePublished, attributes: []byte(`{}`)}
 	}
 	var err error
+	if v.OriginalTitle != nil {
+		r.originalTitle = *v.OriginalTitle
+	}
+	if v.OriginalLanguage != nil {
+		r.originalLanguage = *v.OriginalLanguage
+	}
+	if cur == nil && len(v.Languages) == 0 {
+		for _, language := range s.cfg.Languages {
+			if _, ok := v.Text[language]; ok {
+				v.Languages = append(v.Languages, language)
+			}
+		}
+		if len(v.Languages) == 0 {
+			v.Languages = []string{s.defaultLanguage()}
+		}
+		if k.Versions.Languages == "one" {
+			v.Languages = v.Languages[:1]
+		}
+	}
 	if v.Languages != nil || cur == nil {
 		if r.languages, err = s.checkVersionLanguages(k, v.Languages); err != nil {
 			return r, err
@@ -1184,73 +1015,19 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
 		return "", err
 	}
-	if k.TitlePolicy == kinds.TitleOriginalAndVersion {
-		v.Text, err = s.seedVersionTitles(ctx, tx, contentID, r.languages, v.Text)
-		if err != nil {
-			return "", err
-		}
-	}
 	id := contentref.NewID()
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versions+` (tenant_id, id, content_id, position, languages, traits, label, state, publish_at, published_at, access, attributes,
- ordinal, cover, playable)
+ ordinal, cover, playable,original_title,original_language)
  SELECT $1, $2, $3, coalesce((SELECT max(position) + 1 FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $3), 0), $4, $5, $6, $7, $8,
-  NULL, $9, $10, $11, $12, $13`,
+  NULL, $9, $10, $11, $12, $13,nullif($14,''),nullif($15,'')`,
 		s.tenant, id, contentID, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, r.cover,
-		s.startsUnplayable(kind)); err != nil {
+		s.startsUnplayable(kind), r.originalTitle, r.originalLanguage); err != nil {
 		return "", err
 	}
 	if err := s.writeVersionExtras(ctx, tx, id, v); err != nil {
 		return "", err
 	}
 	return id, nil
-}
-
-// hiddenVersionEdit permits a cover edit or restoring the implicit edition.
-// Its languages, publication schedule and other settings follow the parent.
-func hiddenVersionEdit(v VersionInput) bool {
-	if v.State == StatePublished {
-		v.State = ""
-	}
-	v.Cover = nil
-	v.Access, v.ClearAccess = nil, false
-	return reflect.DeepEqual(v, VersionInput{})
-}
-
-// sibling is the version new version vid copies its body images from: fork,
-// else its content's first other version ("" when it has none). With cover
-// a fork's source's cover selection is copied too.
-func (s *Store) sibling(ctx context.Context, tx pgx.Tx, contentID, vid, fork string, cover bool) (string, error) {
-	if fork != "" && cover {
-		_, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` v SET cover = f.cover FROM `+s.t.versions+` f
- WHERE v.tenant_id = $1 AND v.id = $2 AND f.tenant_id = $1 AND f.id = $3`, s.tenant, vid, fork)
-		return fork, err
-	}
-	if fork != "" {
-		return fork, nil
-	}
-	var from string
-	err := tx.QueryRow(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND id <> $3 AND state <> 'deleted'
- ORDER BY position, id LIMIT 1`, s.tenant, contentID, vid).Scan(&from)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
-	}
-	return from, err
-}
-
-// checkFork accepts a fork into a new version from a live sibling.
-func (s *Store) checkFork(ctx context.Context, tx pgx.Tx, p VersionPut) error {
-	if p.VersionID != "" {
-		return invalid("a fork fills a new version")
-	}
-	var ok bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND id = $3 AND state <> 'deleted')`,
-		s.tenant, p.ContentID, p.Fork.From).Scan(&ok); err != nil {
-		return err
-	}
-	if !ok {
-		return invalid("fork source %s is not a version of %s", p.Fork.From, p.ContentID)
-	}
-	return nil
 }
 
 // checkVersionRule checks a version's override (stored JSON, nil for none).
@@ -1267,9 +1044,9 @@ func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, raw []byte) err
 
 func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind string, k kinds.Kind, id string, v VersionInput) error {
 	var cur versionRow
-	err := tx.QueryRow(ctx, `SELECT languages, traits, label, state, publish_at, access, attributes, ordinal, cover FROM `+s.t.versions+`
+	err := tx.QueryRow(ctx, `SELECT languages, traits, label, state, publish_at, access, attributes, ordinal, cover,coalesce(original_title,''),coalesce(original_language,'') FROM `+s.t.versions+`
  WHERE tenant_id = $1 AND content_id = $2 AND id = $3 FOR UPDATE`, s.tenant, contentID, id).
-		Scan(&cur.languages, &cur.traits, &cur.label, &cur.state, &cur.publishAt, &cur.access, &cur.attributes, &cur.ordinal, &cur.cover)
+		Scan(&cur.languages, &cur.traits, &cur.label, &cur.state, &cur.publishAt, &cur.access, &cur.attributes, &cur.ordinal, &cur.cover, &cur.originalTitle, &cur.originalLanguage)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && cur.state == StateDeleted && v.State == "") {
 		return ErrNotFound
 	}
@@ -1300,9 +1077,9 @@ func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	// available until the publisher commits its replacement or withdrawal.
 	if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET languages = $4, traits = $5, label = $6, state = $7, publish_at = $8,
  deleted_at = CASE WHEN $7 = 'deleted' THEN deleted_at END, access = $9, attributes = $10, ordinal = $11, cover = $12, updated_at = clock_timestamp(),
- revision = revision + 1
+ revision = revision + 1, original_title=nullif($13,''),original_language=nullif($14,'')
  WHERE tenant_id = $1 AND content_id = $2 AND id = $3`,
-		s.tenant, contentID, id, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, r.cover); err != nil {
+		s.tenant, contentID, id, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, r.cover, r.originalTitle, r.originalLanguage); err != nil {
 		return err
 	}
 	return s.writeVersionExtras(ctx, tx, id, v)
@@ -1315,14 +1092,8 @@ func (s *Store) writeVersionExtras(ctx context.Context, tx pgx.Tx, id string, v 
 			return err
 		}
 		for l, t := range v.Text {
-			if err := s.checkLanguage(l); err != nil {
-				return err
-			}
-			if len([]rune(t.Title)) > maxTitle || len([]rune(t.Description)) > maxDescription {
-				return invalid("version text %s exceeds its limits", l)
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versionText+` (tenant_id, version_id, language, title, description) VALUES ($1, $2, $3, $4, $5)`,
-				s.tenant, id, l, strings.TrimSpace(t.Title), strings.TrimSpace(t.Description)); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versionText+` (tenant_id,version_id,language,title,description,slug,body,sort_key,aliases)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, s.tenant, id, l, t.Title, t.Description, t.Slug, t.Body, t.SortKey, orEmpty(t.Aliases)); err != nil {
 				return err
 			}
 		}

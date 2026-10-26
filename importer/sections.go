@@ -126,8 +126,8 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 		return nil, c.ExternalID, err
 	}
 	in := catalog.ImportContent{ID: id, Kind: c.Kind, State: c.State, PublishAt: c.PublishAt, PublishedAt: c.PublishedAt, DeletedAt: c.DeletedAt,
-		OriginalTitle: c.OriginalTitle, OriginalLanguage: c.OriginalLanguage, Comments: c.Comments, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes,
-		Creators: c.Creators, Text: c.Text, Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
+		Comments: c.Comments, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes,
+		Creators: c.Creators, Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 	if c.OwnerEntity != nil {
 		if in.OwnerEntityID, err = r.ref(RecordEntity, *c.OwnerEntity); err != nil {
 			return nil, c.ExternalID, err
@@ -140,7 +140,7 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 		}
 		in.Versions = append(in.Versions, catalog.ImportVersion{ID: vid, Code: v.Code, Languages: v.Languages, Traits: v.Traits, Label: v.Label, State: v.State,
 			PublishAt: v.PublishAt, PublishedAt: v.PublishedAt, DeletedAt: v.DeletedAt, Access: v.Access, Attributes: v.Attributes, Ordinal: v.Ordinal,
-			Cover: v.Cover, Text: v.Text, Segments: v.Segments, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
+			Cover: v.Cover, Text: v.Text, OriginalTitle: v.OriginalTitle, OriginalLanguage: v.OriginalLanguage, Segments: v.Segments, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
 	}
 	return in, c.ExternalID, nil
 }

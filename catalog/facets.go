@@ -154,7 +154,7 @@ func effectiveRule(content, override []byte) (access.Rule, error) {
 // they have text or a document in; the worker rebuilds or deletes each.
 func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) error {
 	rows, err := q.Query(ctx, `SELECT c.kind, c.id, l.language FROM `+s.t.items+` c CROSS JOIN LATERAL (
- SELECT t.language FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
+ SELECT t.language FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
  UNION SELECT d.language FROM `+s.t.docs+` d WHERE d.tenant_id = c.tenant_id AND d.content_kind = c.kind AND d.content_id = c.id AND d.content_version_id IS NULL) l
  WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.tenant, ids)
 	if err != nil {
@@ -186,7 +186,7 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 func (s *Store) EntitiesRenamed(ctx context.Context, q entities.Querier, entityIDs []string) error {
 	tag, err := q.Exec(ctx, `INSERT INTO `+s.qs+`.content_search_dirty (tenant_id, content_kind, content_id, language, reason)
  SELECT c.tenant_id, c.kind, c.id, l.language, 'catalog' FROM `+s.t.items+` c CROSS JOIN LATERAL (
- SELECT t.language FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
+ SELECT t.language FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
  UNION SELECT d.language FROM `+s.t.docs+` d WHERE d.tenant_id = c.tenant_id AND d.content_kind = c.kind AND d.content_id = c.id AND d.content_version_id IS NULL) l
  WHERE c.tenant_id = $1 AND c.id IN (SELECT f.content_id FROM `+s.t.facets+` f WHERE f.tenant_id = $1 AND f.entity_ids && $2::text[])
  ORDER BY c.kind, c.id, l.language

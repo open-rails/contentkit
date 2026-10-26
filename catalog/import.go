@@ -27,14 +27,12 @@ import (
 // version's Text keep what is stored; given ones replace it. Chapters are
 // authored through PutVersions after content and source media are imported.
 type ImportContent struct {
-	ID               string
-	Kind             string
-	State            string
-	PublishAt        *time.Time
-	PublishedAt      *time.Time
-	DeletedAt        *time.Time
-	OriginalTitle    *string
-	OriginalLanguage *string
+	ID          string
+	Kind        string
+	State       string
+	PublishAt   *time.Time
+	PublishedAt *time.Time
+	DeletedAt   *time.Time
 	// Comments is open (when empty), closed or hidden.
 	Comments      string
 	Access        *access.Rule
@@ -42,7 +40,6 @@ type ImportContent struct {
 	Attributes    map[string]any
 	OwnerEntityID string
 	Creators      []Creator
-	Text          map[string]Text
 	Versions      []ImportVersion
 	Code          string
 	CreatedAt     *time.Time
@@ -66,8 +63,10 @@ type ImportVersion struct {
 	Attributes  map[string]any
 	Ordinal     *int
 	// Cover selects one of the version's cover uploads (i-{uuid}).
-	Cover string
-	Text  map[string]VersionText
+	Cover            string
+	OriginalTitle    *string
+	OriginalLanguage *string
+	Text             map[string]VersionText
 	// Segments must be nil. Use PutVersions after importing source media so
 	// chapter changes hold the recovered manifest lock through commit.
 	Segments  []Segment
@@ -85,49 +84,43 @@ type stamped struct {
 }
 
 type importItemRow struct {
+	ID            string          `json:"id"`
+	Kind          string          `json:"kind"`
+	State         string          `json:"state"`
+	PublishAt     *time.Time      `json:"publish_at"`
+	PublishedAt   *time.Time      `json:"published_at"`
+	DeletedAt     *time.Time      `json:"deleted_at"`
+	Comments      string          `json:"comments"`
+	Access        json.RawMessage `json:"access"`
+	Restrictions  []string        `json:"restrictions"`
+	Attributes    map[string]any  `json:"attributes"`
+	OwnerEntityID *string         `json:"owner_entity_id"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+type importVersionRow struct {
 	ID               string          `json:"id"`
-	Kind             string          `json:"kind"`
+	ContentID        string          `json:"content_id"`
+	Code             *string         `json:"code"`
+	Position         int             `json:"position"`
+	Languages        []string        `json:"languages"`
+	Traits           []string        `json:"traits"`
+	Label            string          `json:"label"`
 	State            string          `json:"state"`
 	PublishAt        *time.Time      `json:"publish_at"`
 	PublishedAt      *time.Time      `json:"published_at"`
 	DeletedAt        *time.Time      `json:"deleted_at"`
-	OriginalTitle    *string         `json:"original_title"`
-	OriginalLanguage *string         `json:"original_language"`
-	Comments         string          `json:"comments"`
 	Access           json.RawMessage `json:"access"`
-	Restrictions     []string        `json:"restrictions"`
 	Attributes       map[string]any  `json:"attributes"`
-	OwnerEntityID    *string         `json:"owner_entity_id"`
+	Ordinal          *int            `json:"ordinal"`
+	Cover            *Cover          `json:"cover"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
-}
-
-type importVersionRow struct {
-	ID          string          `json:"id"`
-	ContentID   string          `json:"content_id"`
-	Code        *string         `json:"code"`
-	Position    int             `json:"position"`
-	Languages   []string        `json:"languages"`
-	Traits      []string        `json:"traits"`
-	Label       string          `json:"label"`
-	State       string          `json:"state"`
-	PublishAt   *time.Time      `json:"publish_at"`
-	PublishedAt *time.Time      `json:"published_at"`
-	DeletedAt   *time.Time      `json:"deleted_at"`
-	Access      json.RawMessage `json:"access"`
-	Attributes  map[string]any  `json:"attributes"`
-	Ordinal     *int            `json:"ordinal"`
-	Cover       *Cover          `json:"cover"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	OriginalTitle    *string         `json:"original_title"`
+	OriginalLanguage *string         `json:"original_language"`
 	// Playable is a new version's starting fact; an existing one keeps its own.
 	Playable *bool `json:"playable"`
-}
-
-type importTextRow struct {
-	ContentID string `json:"content_id"`
-	Language  string `json:"language"`
-	Text
 }
 
 type importCreatorRow struct {
@@ -156,11 +149,9 @@ type importSegmentRow struct {
 type importBatch struct {
 	items     []importItemRow
 	versions  []importVersionRow
-	texts     []importTextRow
 	creators  []importCreatorRow
 	vtexts    []importVersionTextRow
 	segments  []importSegmentRow
-	textIDs   []string // items whose text is replaced
 	creatorID []string // items whose creators are replaced
 	vtextIDs  []string // versions whose text is replaced
 	segIDs    []string // versions whose segments are replaced
@@ -311,7 +302,7 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 		} else {
 			b.fresh[c.ID] = true
 		}
-		row := importItemRow{ID: c.ID, Kind: c.Kind, State: c.State, OriginalTitle: c.OriginalTitle, OriginalLanguage: c.OriginalLanguage, Comments: c.Comments,
+		row := importItemRow{ID: c.ID, Kind: c.Kind, State: c.State, Comments: c.Comments,
 			Restrictions: c.Restrictions, Attributes: c.Attributes}
 		row.PublishAt, row.PublishedAt, row.DeletedAt = importTimes(c.State, c.PublishAt, c.PublishedAt, c.DeletedAt, oldp, now)
 		row.Access, _ = json.Marshal(c.Access)
@@ -324,12 +315,6 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 		b.items = append(b.items, row)
 		if c.Code != "" {
 			b.keep[codes.Key{Kind: c.Kind, ID: c.ID}] = c.Code
-		}
-		if c.Text != nil {
-			b.textIDs = append(b.textIDs, c.ID)
-			for l, t := range c.Text {
-				b.texts = append(b.texts, importTextRow{ContentID: c.ID, Language: l, Text: t})
-			}
 		}
 		if c.Creators != nil {
 			b.creatorID = append(b.creatorID, c.ID)
@@ -356,21 +341,18 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 				op = &o
 			}
 			vr := importVersionRow{ID: v.ID, ContentID: c.ID, Position: pos, Languages: v.Languages, Traits: v.Traits, Label: v.Label,
-				State: v.State, Attributes: v.Attributes, Ordinal: v.Ordinal}
+				State: v.State, Attributes: v.Attributes, Ordinal: v.Ordinal, OriginalTitle: v.OriginalTitle, OriginalLanguage: v.OriginalLanguage}
 			if v.Code != "" {
 				vr.Code = &v.Code
 			}
 			if v.Cover != "" {
 				vr.Cover = &Cover{Image: v.Cover}
 			}
-			if k.Versions.Hidden {
-				switch {
-				case c.Text != nil:
-					vr.Languages = s.textLanguages(k, c.Text)
-				case !had:
+			if len(vr.Languages) == 0 {
+				if had {
+					vr.Languages = nil
+				} else {
 					vr.Languages = []string{s.defaultLanguage()}
-				default:
-					vr.Languages = nil // the stored ones stay
 				}
 			}
 			vr.PublishAt, vr.PublishedAt, vr.DeletedAt = importTimes(v.State, v.PublishAt, v.PublishedAt, v.DeletedAt, op, now)
@@ -422,42 +404,22 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 		return err
 	}
 	data := func(v any) string { b, _ := json.Marshal(v); return string(b) }
-	if err := run(`INSERT INTO `+s.t.items+` AS c (tenant_id, id, kind, state, publish_at, published_at, deleted_at, original_title, original_language, comments,
+	if err := run(`INSERT INTO `+s.t.items+` AS c (tenant_id, id, kind, state, publish_at, published_at, deleted_at, comments,
  access, restrictions, attributes, owner_entity_id, created_at, updated_at)
- SELECT $1, r.id, r.kind, r.state, r.publish_at, r.published_at, r.deleted_at, r.original_title, r.original_language, r.comments, r.access, r.restrictions,
+ SELECT $1, r.id, r.kind, r.state, r.publish_at, r.published_at, r.deleted_at, r.comments, r.access, r.restrictions,
   r.attributes, r.owner_entity_id, r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, kind text, state text, publish_at timestamptz, published_at timestamptz, deleted_at timestamptz,
-  original_title text, original_language text, comments text, access jsonb, restrictions text[], attributes jsonb, owner_entity_id text,
+  comments text, access jsonb, restrictions text[], attributes jsonb, owner_entity_id text,
   created_at timestamptz, updated_at timestamptz)
  ON CONFLICT (tenant_id, id) DO UPDATE SET state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at,
-  deleted_at = EXCLUDED.deleted_at, deleted_without_versions=false, original_title = coalesce(EXCLUDED.original_title,c.original_title),
-  original_language = coalesce(EXCLUDED.original_language,c.original_language), comments = EXCLUDED.comments,
+  deleted_at = EXCLUDED.deleted_at, deleted_without_versions=false, comments = EXCLUDED.comments,
   access = EXCLUDED.access, restrictions = EXCLUDED.restrictions, attributes = EXCLUDED.attributes, owner_entity_id = EXCLUDED.owner_entity_id,
   created_at = EXCLUDED.created_at
- WHERE (c.state, c.publish_at, c.published_at, c.deleted_at, c.original_title, c.original_language, c.comments, c.access, c.restrictions, c.attributes,
+ WHERE (c.state, c.publish_at, c.published_at, c.deleted_at, c.comments, c.access, c.restrictions, c.attributes,
   c.owner_entity_id, c.created_at)
-  IS DISTINCT FROM (EXCLUDED.state, EXCLUDED.publish_at, EXCLUDED.published_at, EXCLUDED.deleted_at, coalesce(EXCLUDED.original_title,c.original_title),
-  coalesce(EXCLUDED.original_language,c.original_language), EXCLUDED.comments, EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_entity_id, EXCLUDED.created_at) OR c.deleted_without_versions
+  IS DISTINCT FROM (EXCLUDED.state, EXCLUDED.publish_at, EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.comments, EXCLUDED.access, EXCLUDED.restrictions, EXCLUDED.attributes, EXCLUDED.owner_entity_id, EXCLUDED.created_at) OR c.deleted_without_versions
  RETURNING c.id`, s.tenant, data(b.items)); err != nil {
 		return nil, err
-	}
-	if len(b.textIDs) > 0 {
-		if err := run(`DELETE FROM `+s.t.text+` t WHERE t.tenant_id = $1 AND t.content_id = ANY($2) AND NOT EXISTS (
- SELECT 1 FROM jsonb_to_recordset($3::jsonb) AS r(content_id text, language text) WHERE r.content_id = t.content_id AND r.language = t.language)
- RETURNING t.content_id`, s.tenant, b.textIDs, data(b.texts)); err != nil {
-			return nil, err
-		}
-		if err := run(`INSERT INTO `+s.t.text+` AS t (tenant_id, content_id, language, title, slug, description, body, sort_key, aliases)
- SELECT $1, r.content_id, r.language, r.title, coalesce(r.slug, ''), coalesce(r.description, ''), coalesce(r.body, ''), coalesce(r.sort_key, ''),
-  coalesce(r.aliases, '{}')
- FROM jsonb_to_recordset($2::jsonb) AS r(content_id text, language text, title text, slug text, description text, body text, sort_key text, aliases text[])
- ON CONFLICT (tenant_id, content_id, language) DO UPDATE SET title = EXCLUDED.title, slug = EXCLUDED.slug, description = EXCLUDED.description,
-  body = EXCLUDED.body, sort_key = EXCLUDED.sort_key, aliases = EXCLUDED.aliases, updated_at = clock_timestamp()
- WHERE (t.title, t.slug, t.description, t.body, t.sort_key, t.aliases) IS DISTINCT FROM
-  (EXCLUDED.title, EXCLUDED.slug, EXCLUDED.description, EXCLUDED.body, EXCLUDED.sort_key, EXCLUDED.aliases)
- RETURNING t.content_id`, s.tenant, data(b.texts)); err != nil {
-			return nil, err
-		}
 	}
 	if len(b.creatorID) > 0 {
 		if err := run(`DELETE FROM `+s.t.creators+` c WHERE c.tenant_id = $1 AND c.content_id = ANY($2) AND NOT EXISTS (
@@ -473,20 +435,20 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 		}
 	}
 	if err := run(`INSERT INTO `+s.t.versions+` AS v (tenant_id, id, content_id, code, position, languages, traits, label, state, publish_at,
- published_at, deleted_at, access, attributes, ordinal, cover, created_at, updated_at, playable)
+ published_at, deleted_at, access, attributes, ordinal, cover, created_at, updated_at, playable,original_title,original_language)
  SELECT $1, r.id, r.content_id, r.code, r.position, r.languages, r.traits, r.label, r.state, r.publish_at, r.published_at, r.deleted_at,
-  r.access, r.attributes, r.ordinal, r.cover, r.created_at, r.updated_at, r.playable
+  r.access, r.attributes, r.ordinal, r.cover, r.created_at, r.updated_at, r.playable,r.original_title,r.original_language
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, content_id text, code text, position int, languages text[], traits text[], label text, state text,
   publish_at timestamptz, published_at timestamptz, deleted_at timestamptz, access jsonb, attributes jsonb, ordinal int, cover jsonb, created_at timestamptz,
-  updated_at timestamptz, playable boolean)
+  updated_at timestamptz, playable boolean,original_title text,original_language text)
  ON CONFLICT (tenant_id, id) DO UPDATE SET position = EXCLUDED.position, languages = coalesce(EXCLUDED.languages, v.languages), traits = EXCLUDED.traits,
   label = EXCLUDED.label, state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at, deleted_at = EXCLUDED.deleted_at,
   access = EXCLUDED.access, attributes = EXCLUDED.attributes, ordinal = EXCLUDED.ordinal, cover = coalesce(EXCLUDED.cover, v.cover), created_at = EXCLUDED.created_at,
-  updated_at = EXCLUDED.updated_at, revision = v.revision + 1
+  updated_at = EXCLUDED.updated_at, revision = v.revision + 1, original_title=coalesce(EXCLUDED.original_title,v.original_title),original_language=coalesce(EXCLUDED.original_language,v.original_language)
  WHERE (v.position, v.languages, v.traits, v.label, v.state, v.publish_at, v.published_at, v.deleted_at, v.access, v.attributes, v.ordinal, v.cover,
-  v.created_at)
+  v.created_at,v.original_title,v.original_language)
   IS DISTINCT FROM (EXCLUDED.position, coalesce(EXCLUDED.languages, v.languages), EXCLUDED.traits, EXCLUDED.label, EXCLUDED.state, EXCLUDED.publish_at,
-  EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.access, EXCLUDED.attributes, EXCLUDED.ordinal, coalesce(EXCLUDED.cover, v.cover), EXCLUDED.created_at)
+  EXCLUDED.published_at, EXCLUDED.deleted_at, EXCLUDED.access, EXCLUDED.attributes, EXCLUDED.ordinal, coalesce(EXCLUDED.cover, v.cover), EXCLUDED.created_at,coalesce(EXCLUDED.original_title,v.original_title),coalesce(EXCLUDED.original_language,v.original_language))
  RETURNING v.content_id`, s.tenant, data(b.versions)); err != nil {
 		return nil, err
 	}
@@ -500,10 +462,10 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 			s.tenant, b.vtextIDs, data(b.vtexts)); err != nil {
 			return nil, err
 		}
-		if err := run(content(`INSERT INTO `+s.t.versionText+` AS t (tenant_id, version_id, language, title, description)
- SELECT $1, r.version_id, r.language, coalesce(r.title, ''), coalesce(r.description, '') FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, language text, title text, description text)
- ON CONFLICT (tenant_id, version_id, language) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description
- WHERE (t.title, t.description) IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.description)`), s.tenant, data(b.vtexts)); err != nil {
+		if err := run(content(`INSERT INTO `+s.t.versionText+` AS t (tenant_id, version_id, language, title, description,slug,body,sort_key,aliases)
+ SELECT $1, r.version_id, r.language, coalesce(r.title, ''), coalesce(r.description, ''),coalesce(r.slug,''),coalesce(r.body,''),coalesce(r.sort_key,''),coalesce(r.aliases,'{}') FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, language text, title text, description text,slug text,body text,sort_key text,aliases text[])
+ ON CONFLICT (tenant_id, version_id, language) DO UPDATE SET title=EXCLUDED.title,description=EXCLUDED.description,slug=EXCLUDED.slug,body=EXCLUDED.body,sort_key=EXCLUDED.sort_key,aliases=EXCLUDED.aliases,updated_at=clock_timestamp()
+ WHERE (t.title,t.description,t.slug,t.body,t.sort_key,t.aliases) IS DISTINCT FROM (EXCLUDED.title,EXCLUDED.description,EXCLUDED.slug,EXCLUDED.body,EXCLUDED.sort_key,EXCLUDED.aliases)`), s.tenant, data(b.vtexts)); err != nil {
 			return nil, err
 		}
 	}
@@ -655,20 +617,6 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 	default:
 		return invalid("state %q must be draft, published or deleted", c.State)
 	}
-	if c.OriginalTitle != nil {
-		value, _, err := cleanOriginalTitle(*c.OriginalTitle, "")
-		if err != nil {
-			return err
-		}
-		c.OriginalTitle = &value
-	}
-	if c.OriginalLanguage != nil {
-		_, value, err := cleanOriginalTitle("", *c.OriginalLanguage)
-		if err != nil {
-			return err
-		}
-		c.OriginalLanguage = &value
-	}
 	if c.Comments == "" {
 		c.Comments = s.defaultComments(c.Kind)
 	}
@@ -715,15 +663,6 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 	if c.Code != "" && !codes.ValidCode(c.Code) {
 		return invalid("code %q is not a content code", c.Code)
 	}
-	if c.Text != nil {
-		texts := make(map[string]Text, len(c.Text))
-		for l, t := range c.Text {
-			if texts[l], err = s.cleanText(ctx, l, t); err != nil {
-				return err
-			}
-		}
-		c.Text = texts
-	}
 	if c.Creators != nil {
 		if c.Creators, err = s.checkCreators(c.Creators); err != nil {
 			return err
@@ -736,14 +675,14 @@ func (s *Store) checkImport(ctx context.Context, c *ImportContent) error {
 		return invalid("a content item needs at least one version")
 	}
 	for i := range c.Versions {
-		if err := s.checkImportVersion(c.Kind, c.State == StateDeleted, &c.Versions[i]); err != nil {
+		if err := s.checkImportVersion(ctx, c.Kind, c.State == StateDeleted, &c.Versions[i]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) checkImportVersion(kind string, parentDeleted bool, v *ImportVersion) error {
+func (s *Store) checkImportVersion(ctx context.Context, kind string, parentDeleted bool, v *ImportVersion) error {
 	k := s.cfg.Kinds[kind]
 	if err := contentref.ValidateID(v.ID); err != nil {
 		return invalid("version id: %v", err)
@@ -795,16 +734,11 @@ func (s *Store) checkImportVersion(kind string, parentDeleted bool, v *ImportVer
 	if v.Attributes, err = checkAttributes(k.Attributes, v.Attributes); err != nil {
 		return err
 	}
-	for l, t := range v.Text {
-		if err := s.checkLanguage(l); err != nil {
-			return err
-		}
-		t.Title, t.Description = strings.TrimSpace(t.Title), strings.TrimSpace(t.Description)
-		if utf8.RuneCountInString(t.Title) > maxTitle || utf8.RuneCountInString(t.Description) > maxDescription {
-			return invalid("version text %s exceeds its limits", l)
-		}
-		v.Text[l] = t
+	prepared, err := s.prepareVersionText(ctx, VersionInput{Text: v.Text, OriginalTitle: v.OriginalTitle, OriginalLanguage: v.OriginalLanguage})
+	if err != nil {
+		return err
 	}
+	v.Text, v.OriginalTitle, v.OriginalLanguage = prepared.Text, prepared.OriginalTitle, prepared.OriginalLanguage
 	if v.Segments != nil {
 		for i, chapter := range v.Segments {
 			if chapter.StartPage == "" || chapter.Start != 0 || chapter.End != 0 {

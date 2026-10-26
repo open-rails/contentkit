@@ -152,7 +152,7 @@ func RefreshPaths(ctx context.Context, pool *pgxpool.Pool, schema, tenant string
 	visited := 0
 	for _, t := range tenants {
 		s := &Store{pool: pool, schema: schema, qs: pgx.Identifier{schema}.Sanitize(), tenant: t, cfg: model,
-			t: tables{items: q("content_items"), text: q("content_text"), entities: q("content_entities"), memberships: q("content_memberships")}}
+			t: tables{items: q("content_items"), versions: q("content_versions"), versionText: q("content_version_text"), entities: q("content_entities"), memberships: q("content_memberships")}}
 		n, err := s.RefreshPaths(ctx)
 		visited += n
 		if err != nil {
