@@ -374,24 +374,6 @@ type HistoryOptions struct {
 	Offset int
 }
 
-// ContentMetrics are named, separately defined statistics for one content
-// reference over a window, computed from canonical events. Each subject counts
-// once per metric that says "subjects". Measured consumption and explicit
-// feedback remain separate; neither exposes a route-open counter.
-type ContentMetrics struct {
-	Readers          uint64
-	UserReaders      uint64
-	GuestReaders     uint64
-	Completers       uint64
-	ActiveMS         uint64
-	ReaderQualitySum float64
-	ReturningReaders uint64
-	ValueSum         float64
-	PositiveSubjects uint64
-	NegativeSubjects uint64
-	Normalization    *NormalizationMetrics `json:"normalization,omitempty"`
-}
-
 // Window is a literal range of whole UTC calendar days, [From, To). A zero
 // From or To leaves that side unbounded; the zero Window is all time. Every
 // qualifying event inside the window counts with equal weight: there is no age
@@ -480,50 +462,16 @@ func utcDay(t time.Time) time.Time {
 	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// RankWeights tunes the default popularity ranking:
-//
-//	volume  = log10(1 + readers)
-//	quality = (100·reader_quality_sum + PriorScore·PriorWeight) / (readers + PriorWeight)
-//	rank    = volume × max(QualityFloor, quality)
-//
-// Qualified people have equal time weight inside the selected window. This
-// low-level default is separate from the named popularity.Policy formulas.
-type RankWeights struct {
-	// PriorWeight is the strength of the prior in pseudo-readers.
-	// Defaults to 10.
-	PriorWeight float64
-	// PriorScore is the prior mean quality on a 0–100 scale. Defaults to 0.
-	PriorScore float64
-	// QualityFloor bounds the low-level quality multiplier below. Defaults to 1.
-	QualityFloor float64
-}
-
-func (w RankWeights) withDefaults() RankWeights {
-	if w.PriorWeight <= 0 {
-		w.PriorWeight = 10
-	}
-	if w.QualityFloor <= 0 {
-		w.QualityFloor = 1
-	}
-	return w
-}
-
 // PopularOptions controls Popular reads.
 type PopularOptions struct {
 	Window Window
 	Limit  int // default 20
-
-	// Weights tunes the default ranking formula.
-	Weights RankWeights
-
-	// RankExpr, when set, REPLACES the default ranking with a host-supplied
-	// ClickHouse expression (trusted SQL). It may reference the window metric
-	// columns: readers, user_readers, guest_readers, completers, active_ms,
-	// reader_quality_sum, returning_readers, value_sum, positive_subjects,
-	// negative_subjects.
+	// RankExpr is the policy's trusted ClickHouse expression over the
+	// normalized metric columns: normalized_rate, normalized_engagement,
+	// normalized_completion, normalized_approval, normalized_revisit.
 	RankExpr string
-	// Normalization adds trusted event-time eligible-population observations
-	// and catalog availability intervals to a named normalized ranking.
+	// Normalization supplies the trusted catalog availability intervals and
+	// reader scope the ranking normalizes by.
 	Normalization *NormalizationOptions
 }
 
@@ -531,8 +479,8 @@ type PopularOptions struct {
 // qualified reader in the window rank; version rows never rank.
 type PopularHit struct {
 	ContentRef
-	ContentMetrics
-	Score float64
+	Score         float64
+	Normalization NormalizationMetrics
 }
 
 // CoEngagedOptions controls co-engagement queries ("subjects who engaged with
