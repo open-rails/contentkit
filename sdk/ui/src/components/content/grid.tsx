@@ -250,8 +250,8 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
                     showCounts={p.showCounts}
                     tiers={p.tiers ?? kinds?.tiers}
                     labels={p.labels}
-                    owner={p.owner}
-                    ownerHref={p.ownerHref}
+                    showChannel={p.showChannel}
+                    channelHref={p.channelHref}
                     decorate={p.decorate}
                     cardTitle={p.cardTitle}
                     onOpen={() => exposure.click(entry.card.id, entry.position)}

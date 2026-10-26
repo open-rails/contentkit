@@ -39,7 +39,7 @@ export interface ContentFilterQuery {
   /** Entity ids no listed version is in. */
   exclude_groups?: readonly string[];
   /** Only contents this group owns: a channel's feed. */
-  owner_group?: string;
+  channel_id?: string;
   /** User ids: only contents one of them is credited on. */
   creators?: readonly string[];
   /** public (anyone opens it now) or the level it stays locked at. */

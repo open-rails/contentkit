@@ -23,6 +23,7 @@ export { PollsClient, type PollAdminQuery, type PollQuery, type PollState } from
 export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
 export { reactionVerb, sameTarget, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type RuleSet, type Sort, type Target } from "./content/types.js";
+export { ChannelsClient, type ChannelQuery, type MyChannelQuery, type ChannelContentsQuery, type ChannelImageSlot } from "./channels.js";
 export { EntitiesClient, type EntityImageSlot, type EntityQuery, type ManageEntityQuery, type MemberQuery, type MyEntityQuery } from "./entities.js";
 export {
   DiscoveryClient,

@@ -251,7 +251,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
     const input = {
       kind: p.kind,
       text: { [l]: { ...before, title } },
-      owner_group_id: spec.owner_entity ? undefined : p.ownerEntity,
+      channel_id: spec.channel?.fixed ? undefined : p.channelId,
       access: cleanRule(latest.current.details.get().access),
       ...(spec.comment_modes?.length ? { comments: latest.current.details.get().comments } : {}),
     };
@@ -850,7 +850,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 onChange={(access) => changeDetails({ access })}
                 model={model}
                 kind={p.kind}
-                owner={item?.owner_group_id ?? p.ownerEntity}
+                owner={item?.channel_id ?? p.channelId}
                 labels={p.labels}
                 client={client}
               />
