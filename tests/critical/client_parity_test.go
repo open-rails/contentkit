@@ -34,7 +34,7 @@ func TestClientEquivalentStaffOperations(t *testing.T) {
 			t.Fatalf("equivalent staff reads diverged: local=%+v remote=%+v", local, wire)
 		}
 		title := "Remote update visible in process"
-		_, err = remote.PatchContent(t.Context(), item.ID, catalog.ContentPatch{OriginalTitle: &title})
+		_, err = remote.PatchContentVersion(t.Context(), item.ID, item.SelectedVersionID, catalog.VersionInput{OriginalTitle: &title})
 		must(t, err)
 		local, err = embedded.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err)

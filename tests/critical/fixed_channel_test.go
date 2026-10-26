@@ -79,7 +79,7 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	requireError(t, err, 400, "invalid_request")
 	_, err = staff.PostContentVersions(t.Context(), item.ID, catalog.VersionInput{Languages: []string{"de"}, Access: restricted.Access})
 	requireError(t, err, 400, "invalid_request")
-	batch := importer.Batch{Source: "fixed-channel-test", Contents: []importer.ContentRecord{importer.ContentRecord{ExternalID: "valid", Kind: "article", State: catalog.StatePublished, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "valid" + "/version", Text: input.Text}}}, importer.ContentRecord{ExternalID: "wrong-owner", Kind: "article", State: catalog.StatePublished, Channel: &importer.Ref{ID: string(other.ID)}, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "wrong-owner" + "/version", Text: input.Text}}}, importer.ContentRecord{ExternalID: "paid", Kind: "article", State: catalog.StatePublished, Access: restricted.Access, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "paid" + "/version", Text: input.Text}}}}}
+	batch := importer.Batch{Source: "fixed-channel-test", Contents: []importer.ContentRecord{importer.ContentRecord{ExternalID: "valid", Kind: "article", State: catalog.StatePublished, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "valid" + "/version", Text: input.Versions[0].Text}}}, importer.ContentRecord{ExternalID: "wrong-owner", Kind: "article", State: catalog.StatePublished, Channel: &importer.Ref{ID: string(other.ID)}, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "wrong-owner" + "/version", Text: input.Versions[0].Text}}}, importer.ContentRecord{ExternalID: "paid", Kind: "article", State: catalog.StatePublished, Access: restricted.Access, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "paid" + "/version", Text: input.Versions[0].Text}}}}}
 	imported, err := staff.PostImport(t.Context(), batch)
 	must(t, err)
 	if imported.Written["contents"] != 1 || len(imported.Failed) != 2 {
@@ -280,7 +280,7 @@ func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 	awaitEditionPublication(t, a, writer, post.ID, post.Versions[0].ID)
 	public, err := a.client("").GetContent(t.Context(), post.ID, ck.GetContentQuery{})
 	must(t, err)
-	if !public.Decision.Allowed || public.Body != input.Text["en"].Body {
+	if !public.Decision.Allowed || public.Body != input.Versions[0].Text["en"].Body {
 		t.Fatal("channel entitlement metadata overrode public post policy")
 	}
 }

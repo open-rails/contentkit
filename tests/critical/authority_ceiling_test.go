@@ -74,7 +74,7 @@ func TestInheritedAuthorityCredentialCeilings(t *testing.T) {
 				_, err = narrow.PostContents(t.Context(), input)
 				requireError(t, err, 403, "forbidden")
 				title := "Credential exceeded its ceiling"
-				_, err = narrow.PatchContent(t.Context(), item.ID, catalog.ContentPatch{OriginalTitle: &title})
+				_, err = narrow.PatchContentVersion(t.Context(), item.ID, item.SelectedVersionID, catalog.VersionInput{OriginalTitle: &title})
 				requireError(t, err, 403, "forbidden")
 				after, err := full.GetManage(t.Context(), ck.GetManageQuery{})
 				must(t, err)

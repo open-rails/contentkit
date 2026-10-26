@@ -75,7 +75,7 @@ func TestFirstClassChannelRepostAuthority(t *testing.T) {
 		if card.ID != original.ID || card.Channel == nil || card.Channel.ID != source.ID || card.Repost == nil || card.Repost.ChannelID != destination.ID || !card.Repost.CanRemove {
 			t.Fatalf("repost replaced original ownership or lost removal authority: %+v", card)
 		}
-		_, err = destinationClient.PutContentText(t.Context(), original.ID, "en", catalog.VersionText{Title: "Cannot edit another channel", Body: "bad"})
+		_, err = destinationClient.PatchContentVersion(t.Context(), original.ID, original.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Cannot edit another channel", Body: "bad"}}})
 		requireError(t, err, 403, "forbidden")
 		_, err = destinationClient.PatchContentVersion(t.Context(), original.ID, original.Versions[1].ID, catalog.VersionInput{Text: map[string]catalog.VersionText{"de": {Title: "Cannot edit translated version"}}})
 		requireError(t, err, 403, "forbidden")

@@ -202,7 +202,7 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.contributor)
 		authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.writer)
 		ownTitle := "Creator may edit this"
-		_, err = a.client(token).PatchContent(t.Context(), created.ID, catalog.ContentPatch{OriginalTitle: &ownTitle})
+		_, err = a.client(token).PatchContentVersion(t.Context(), created.ID, created.SelectedVersionID, catalog.VersionInput{OriginalTitle: &ownTitle})
 		must(t, err)
 		owned, err := a.client(token).GetContent(t.Context(), created.ID, ck.GetContentQuery{})
 		must(t, err)
@@ -213,7 +213,7 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(bob.ID), w.contributor)
 		other, err := a.client(bobToken).PostContents(t.Context(), input)
 		must(t, err)
-		_, err = a.client(token).PatchContent(t.Context(), other.ID, catalog.ContentPatch{OriginalTitle: &ownTitle})
+		_, err = a.client(token).PatchContentVersion(t.Context(), other.ID, other.SelectedVersionID, catalog.VersionInput{OriginalTitle: &ownTitle})
 		requireError(t, err, 403, "forbidden")
 		unchanged, err := a.engine.Client().GetContent(t.Context(), other.ID, ck.GetContentQuery{})
 		must(t, err)
