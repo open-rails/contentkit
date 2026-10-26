@@ -208,6 +208,7 @@ func TestPostContributorMediaRevocation(t *testing.T) {
 func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) {
 		cfg.Content.Channels.Creation = "staff"
+		cfg.Content.Channels.MaxPerOwner = 0
 	})
 	a := w.apps[0]
 	attachMedia(t, w, a)
