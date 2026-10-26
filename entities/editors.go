@@ -63,7 +63,7 @@ func (w *writer) edits(ctx context.Context, s *Store, g Entity) (bool, error) {
 	if g.Internal || (s.cfg.EntityKinds[g.Kind].AuthScope && g.AuthScope == "") || (s.cfg.EntityKinds[g.Kind].Owner != "user" && !s.cfg.EntityKinds[g.Kind].AuthScope) {
 		return false, nil
 	}
-	return gate.EntityEditor(ctx, w.auth, w.actor, g.OwnerUserID, g.AuthScope, access.EntitySettingsManage(g.Kind))
+	return gate.ChannelEditor(ctx, w.auth, w.actor, g.OwnerUserID, g.AuthScope, access.ChannelSettingsManage)
 }
 
 // mayEdit refuses, with ErrForbidden, an entity the writer does not edit.

@@ -925,7 +925,7 @@ func (s *Store) accessCond(level, tier string) (string, error) {
 	switch access.Level(level) {
 	case "":
 		return "", nil
-	case access.Public, access.TierLevel, access.EntityLevel, access.PPV, access.EntityPPV:
+	case access.Public, access.TierLevel, access.ChannelLevel, access.PPV, access.ChannelPPV:
 	default:
 		return "", invalid("access %q must be public, tier, group, ppv or group_ppv", level)
 	}

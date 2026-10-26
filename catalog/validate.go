@@ -198,12 +198,12 @@ func (s *Store) checkRuleEntities(ctx context.Context, q Querier, rules ...*acce
 		if r == nil {
 			continue
 		}
-		if r.Entity != "" && !slices.Contains(ids, r.Entity) {
-			ids = append(ids, r.Entity)
+		if r.ChannelID != "" && !slices.Contains(ids, r.ChannelID) {
+			ids = append(ids, r.ChannelID)
 		}
 		for _, release := range r.Releases {
-			if release.Entity != "" && !slices.Contains(ids, release.Entity) {
-				ids = append(ids, release.Entity)
+			if release.ChannelID != "" && !slices.Contains(ids, release.ChannelID) {
+				ids = append(ids, release.ChannelID)
 			}
 		}
 	}
@@ -380,9 +380,9 @@ func (s *Store) checkChannelRule(parent string, rule *access.Rule) error {
 	if rule == nil {
 		return nil
 	}
-	ids := []string{rule.Entity}
+	ids := []string{rule.ChannelID}
 	for _, release := range rule.Releases {
-		ids = append(ids, release.Entity)
+		ids = append(ids, release.ChannelID)
 	}
 	for _, id := range ids {
 		if id != "" && (parent == "" || id != parent) {
