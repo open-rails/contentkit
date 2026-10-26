@@ -15,6 +15,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -63,19 +64,19 @@ type Config struct {
 	// video.Config's.
 	Preset, TopPreset, VideoEncoder string
 	VideoCodecs                     []media.Codec
-	// VideoWorkers and ImageWorkers are concurrent jobs per process
-	// (defaults 1 and 2; ImageWorkers also bounds place jobs); ImageSources
-	// bounds sources decoded at once per image job (default 2).
-	VideoWorkers int
-	ImageWorkers int
+	// IngestWorkers and DerivativeWorkers bound concurrent item jobs (defaults
+	// 2 and 1). A derivative job handles both images and video for its item.
+	IngestWorkers     int
+	DerivativeWorkers int
+	// ImageSources bounds sources decoded at once within one derivative job.
 	ImageSources int
 	// MaxPixels, MaxFrames and MaxAnimationSeconds bound decoded images
 	// (image.Config's defaults when zero).
 	MaxPixels           int
 	MaxFrames           int
 	MaxAnimationSeconds float64
-	// ImageTimeout bounds one image job (default 1 h).
-	ImageTimeout time.Duration
+	// JobTimeout bounds one image job (default 1 h).
+	JobTimeout time.Duration
 	// ShutdownGrace is how long running jobs get to finish on shutdown
 	// before they are cancelled and retried elsewhere; default 30 s.
 	ShutdownGrace time.Duration
@@ -95,14 +96,14 @@ func (c *Config) defaults() error {
 	if c.ContentSchema == "" {
 		return errors.New("media/worker: Config.ContentSchema is required")
 	}
-	if c.VideoWorkers <= 0 {
-		c.VideoWorkers = 1
+	if c.DerivativeWorkers <= 0 {
+		c.DerivativeWorkers = 1
 	}
-	if c.ImageWorkers <= 0 {
-		c.ImageWorkers = 2
+	if c.IngestWorkers <= 0 {
+		c.IngestWorkers = 2
 	}
-	if c.ImageTimeout <= 0 {
-		c.ImageTimeout = time.Hour
+	if c.JobTimeout <= 0 {
+		c.JobTimeout = time.Hour
 	}
 	if c.ShutdownGrace <= 0 {
 		c.ShutdownGrace = 30 * time.Second
@@ -210,41 +211,31 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema,
-		MaxWorkers: c.VideoWorkers, Logger: c.Logger})
-	if err != nil {
-		return nil, err
-	}
 	hooks := append(c.RiverHooks[:len(c.RiverHooks):len(c.RiverHooks)], &completionHook{manifests: manifests, publish: publish})
 	var middleware []rivertype.Middleware
 	if c.Metrics != nil {
 		middleware = []rivertype.Middleware{c.Metrics}
 	}
-	contributions := []riverhelpers.Contribution{videos}
-	{
-		images, err := image.New(image.Config{Store: c.Store, Manifests: manifests,
-			Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
-		if err != nil {
-			return nil, err
-		}
-		imageJobs := riverhelpers.NewContribution("contentkit-media-image", func(_ context.Context, cfg *river.Config) error {
-			for _, q := range []string{workqueue.IngestQueue, workqueue.ImageQueue} {
-				if _, ok := cfg.Queues[q]; ok {
-					return fmt.Errorf("media/worker: queue %q already registered", q)
-				}
-			}
-			cfg.Queues[workqueue.IngestQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
-			cfg.Queues[workqueue.ImageQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
-			if err := river.AddWorkerSafely(cfg.Workers, &ingestWorker{c: c, manifests: manifests, queue: queue}); err != nil {
-				return err
-			}
-			return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images, manifests: manifests})
-		}, nil, nil)
-		contributions = append(contributions, imageJobs)
+	images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
+	if err != nil {
+		return nil, err
 	}
+	processing := riverhelpers.NewContribution("contentkit-media-processing", func(_ context.Context, cfg *river.Config) error {
+		for _, q := range []string{workqueue.IngestQueue, workqueue.DerivativeQueue} {
+			if _, exists := cfg.Queues[q]; exists {
+				return fmt.Errorf("media/worker: queue %q already registered", q)
+			}
+		}
+		cfg.Queues[workqueue.IngestQueue] = river.QueueConfig{MaxWorkers: c.IngestWorkers}
+		cfg.Queues[workqueue.DerivativeQueue] = river.QueueConfig{MaxWorkers: c.DerivativeWorkers}
+		if err := river.AddWorkerSafely(cfg.Workers, &ingestWorker{c: c, manifests: manifests, queue: queue}); err != nil {
+			return err
+		}
+		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, images: images, manifests: manifests, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, MaxWorkers: c.DerivativeWorkers, Logger: c.Logger}})
+	}, nil, nil)
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
 		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
-		Logger: c.Logger, Hooks: hooks, Middleware: middleware}, contributions...)
+		Logger: c.Logger, Hooks: hooks, Middleware: middleware}, processing)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +304,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := w.client.Start(runCtx); err != nil {
 		return err
 	}
-	w.c.Logger.Info("media-worker: started", "schema", w.c.Schema, "video_workers", w.c.VideoWorkers, "image_workers", w.c.ImageWorkers)
+	w.c.Logger.Info("media-worker: started", "schema", w.c.Schema, "derivative_workers", w.c.DerivativeWorkers, "ingest_workers", w.c.IngestWorkers)
 	<-ctx.Done()
 	return stopJobs(w.client, w.c.ShutdownGrace, 30*time.Second)
 }
@@ -342,7 +333,7 @@ type ingestWorker struct {
 }
 
 func (w *ingestWorker) Timeout(*river.Job[workqueue.IngestArgs]) time.Duration {
-	return w.c.ImageTimeout
+	return w.c.JobTimeout
 }
 
 // Work places an item's staged uploads, after any equal job it follows, then
@@ -395,17 +386,21 @@ func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.Ingest
 	return w.queue.Enqueue(ctx, media.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force})
 }
 
-type imageWorker struct {
-	river.WorkerDefaults[workqueue.ImageArgs]
+type derivativeWorker struct {
+	river.WorkerDefaults[workqueue.DerivativeArgs]
 	c         Config
 	images    *image.Processor
 	manifests *media.Manifests
+	video     video.WorkerConfig
 }
 
-func (w *imageWorker) Timeout(*river.Job[workqueue.ImageArgs]) time.Duration { return w.c.ImageTimeout }
+func (w *derivativeWorker) Timeout(*river.Job[workqueue.DerivativeArgs]) time.Duration {
+	return w.c.JobTimeout
+}
 
-// Work runs one image job, after any equal job it follows.
-func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) (err error) {
+// Work generates image outputs and advances video outputs through their existing
+// resumable chunks. Both formats share this one durable item obligation.
+func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.DerivativeArgs]) (err error) {
 	if err := w.c.restoreRescuedAttempt(ctx, job.JobRow); err != nil {
 		return err
 	}
@@ -429,7 +424,25 @@ func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageAr
 	if err := w.manifests.Recover(ctx, pj.Ref); err != nil {
 		return err
 	}
-	return full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj))
+	var checkpoint struct {
+		ImagesForced bool `json:"contentkit_images_forced"`
+	}
+	if err := json.Unmarshal(job.Metadata, &checkpoint); err != nil {
+		return err
+	}
+	pj.Force = a.Force && !checkpoint.ImagesForced
+	if err := full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj)); err != nil {
+		return err
+	}
+	if pj.Force {
+		if _, err := w.c.Pool.Exec(ctx, `UPDATE `+pgx.Identifier{w.c.Schema, "river_job"}.Sanitize()+` SET metadata=jsonb_set(metadata,'{contentkit_images_forced}','true') WHERE id=$1`, job.ID); err != nil {
+			return err
+		}
+	}
+	if a.Editor {
+		return nil
+	}
+	return w.video.Run(ctx, job)
 }
 
 // full marks the item Full when a record of its outputs did not fit

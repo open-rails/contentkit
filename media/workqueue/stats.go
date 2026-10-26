@@ -30,7 +30,7 @@ SELECT queue, state::text, priority, count(*), count(*) FILTER (WHERE attempt >=
   coalesce(greatest(0, extract(epoch FROM now() - min(scheduled_at)
     FILTER (WHERE state = 'available' AND scheduled_at <= now()))), 0)::float8
 FROM `+jobs(schema)+`
-WHERE queue IN ('media_ingest', 'media_image', 'media_video')
+WHERE queue IN ('media_ingest', 'media_derivatives')
   AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 GROUP BY queue, state, priority`,
 	)
@@ -54,7 +54,7 @@ GROUP BY queue, state, priority`,
 	return statuses, nil
 }
 
-// TenantBacklog counts video jobs waiting to run, excluding running and
+// TenantBacklog counts derivative jobs waiting to run, excluding running and
 // terminal jobs. The tenant comes from the reference River actually stored.
 func TenantBacklog(ctx context.Context, pool *pgxpool.Pool, schema string) (map[string]int64, error) {
 	if err := ValidSchema(schema); err != nil {
@@ -63,7 +63,7 @@ func TenantBacklog(ctx context.Context, pool *pgxpool.Pool, schema string) (map[
 	rows, err := pool.Query(ctx, `
 SELECT args->'ref'->>'tenant_id', count(*)
 FROM `+jobs(schema)+`
-WHERE queue IN ('media_video')
+WHERE queue IN ('media_derivatives')
   AND state IN ('available', 'pending', 'retryable', 'scheduled')
   AND nullif(args->'ref'->>'tenant_id', '') IS NOT NULL
 GROUP BY 1`)
