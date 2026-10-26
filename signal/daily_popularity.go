@@ -171,14 +171,18 @@ func (st *Store) insertPopularityDay(ctx context.Context, tenant, kind string, s
 	ctx = clickhouse.Context(ctx, clickhouse.WithExternalTable(table))
 	until := day.AddDate(0, 0, 1)
 	// Canonicalize only scalar facts needed for participation. Geometry is not
-	// unioned or rescored. Edition qualification precedes work/person dedupe.
+	// unioned or rescored. Signed receipt access facts are immutable across
+	// revisions, so filter full access and scope before grouping receipts.
+	// Edition qualification precedes work/person dedupe.
 	query := fmt.Sprintf(`INSERT INTO %[1]s.popularity_daily
  (tenant,content_kind,domain,language,day,content_id,readers,eligible,version)
  WITH canonical AS (
  SELECT content_id,content_version_id,subject_kind,subject,receipt_id,
- argMax(tuple(active_ms,notEmpty(covered_units),access_context),version) AS fact
+ argMax(tuple(active_ms,notEmpty(covered_units)),version) AS fact
  FROM %[1]s.engagement_segments
  WHERE tenant=? AND content_kind=? AND occurred_at>=? AND occurred_at<? AND %[2]s
+ AND JSONExtractString(access_context,'viewer_access')='full'
+ AND (?='' OR JSONExtractString(access_context,'domain')=?) AND (?='' OR JSONExtractString(access_context,'language')=?)
  GROUP BY content_id,content_version_id,subject_kind,subject,receipt_id
  ), people AS (
  SELECT subject_kind,subject,groupUniqArrayArrayIf(eligible_tiers,eligibility_known) AS tiers
@@ -189,9 +193,7 @@ func (st *Store) insertPopularityDay(ctx context.Context, tenant, kind string, s
  SELECT r.content_id AS content_id,r.content_version_id AS content_version_id,r.subject_kind AS subject_kind,r.subject AS subject
  FROM canonical r INNER JOIN contentkit_daily_audiences a ON r.content_id=a.content_id
  INNER JOIN people p ON p.subject_kind=r.subject_kind AND p.subject=r.subject
- WHERE JSONExtractString(r.fact.3,'viewer_access')='full'
- AND (?='' OR JSONExtractString(r.fact.3,'domain')=?) AND (?='' OR JSONExtractString(r.fact.3,'language')=?)
- AND (a.public=1 OR hasAny(p.tiers,a.tiers))
+ WHERE a.public=1 OR hasAny(p.tiers,a.tiers)
  GROUP BY r.content_id,r.content_version_id,r.subject_kind,r.subject
  HAVING sum(toUInt64(r.fact.1))>=1000 AND max(r.fact.2)>0
  ), readers AS (
@@ -204,9 +206,8 @@ func (st *Store) insertPopularityDay(ctx context.Context, tenant, kind string, s
  FROM contentkit_daily_audiences a LEFT JOIN readers r USING(content_id) LEFT JOIN population p USING(audience)
  SETTINGS max_threads=2, max_execution_time=120, max_memory_usage=1073741824,
  max_bytes_before_external_group_by=134217728, max_bytes_before_external_sort=134217728`, st.db, st.notErased())
-	if err := st.conn.Exec(ctx, query, tenant, kind, day, until,
+	if err := st.conn.Exec(ctx, query, tenant, kind, day, until, scope.Domain, scope.Domain, scope.Language, scope.Language,
 		tenant, kind, day, until, scope.Domain, scope.Domain, scope.Language, scope.Language,
-		scope.Domain, scope.Domain, scope.Language, scope.Language,
 		tenant, kind, scope.Domain, scope.Language, day); err != nil {
 		return fmt.Errorf("signal: prepare popularity day %s: %w", day.Format(time.DateOnly), err)
 	}

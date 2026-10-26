@@ -50,7 +50,13 @@ func TestDailyParticipationPreparation(t *testing.T) {
 	replaced := measurement(public, people[3], 2000)
 	revision := measurement(public, people[3], 300)
 	revision.EventID, revision.Measurement.VisitID, revision.Measurement.SegmentID, revision.Revision = replaced.EventID, replaced.Measurement.VisitID, replaced.Measurement.SegmentID, 2
-	must(t, store.RecordSignals(t.Context(), tenant, []signal.Signal{first, second, first, translated, replaced, revision, measurement(public, people[1], 1000),
+	// These otherwise-qualified receipts belong to other immutable scopes.
+	// They cannot rescue the short current revision or qualify a new reader.
+	otherDomain := measurement(public, people[3], 2000)
+	otherDomain.Access.Domain = "other"
+	otherLanguage := measurement(public, people[2], 2000)
+	otherLanguage.Access.Language = "ja"
+	must(t, store.RecordSignals(t.Context(), tenant, []signal.Signal{first, second, first, translated, replaced, revision, otherDomain, otherLanguage, measurement(public, people[1], 1000),
 		measurement(premium, people[0], 1000), measurement(premium, people[1], 1000), measurement(premium, people[2], 1000), measurement(premium, people[3], 1000)}))
 	availability := signal.Availability{Known: true, From: day, Until: end, Intervals: []signal.AccessInterval{
 		{ID: "public", ContentID: public.ContentID, From: day.Add(12 * time.Hour), Until: end, Audience: "public"},
