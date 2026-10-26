@@ -2062,17 +2062,21 @@
     {
       "id": "CK-J03-S08",
       "journey": "CK-J03",
-      "behavior": "Fixed official channel policy preserves host-defined roles, public access and atomic migration",
+      "behavior": "Configured fixed channels are provisioned through normal migrations with stable scopes, preserved roles/access and retry-safe adoption",
       "status": "verified",
       "evidence": [
         "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt.",
-        "Channel-owned comments are moderated by current channel roles; a revoked staff author's personal comment ban cannot govern an official blog."
+        "Channel-owned comments are moderated by current channel roles; a revoked staff author's personal comment ban cannot govern an official blog.",
+        "Explicit MigratePostgres realizes fixed owners without host seed code; same-pool one-connection provisioning, lost provider acknowledgements, concurrent replay, scoped/deleted conflicts and keyless AuthKit adapter preserve identity and assignments."
       ],
       "cases": [
         "TestFixedSiteChannelPolicy",
         "TestFixedSiteChannelMigration",
         "TestFixedSiteChannelStaffRevocation",
-        "TestFixedSiteChannelAuthorizationScope"
+        "TestFixedSiteChannelAuthorizationScope",
+        "TestConfiguredOwnerProvisioning",
+        "TestConfiguredOwnerRechecksAfterProvisioning",
+        "TestConfiguredOwnerKeylessAdapter"
       ]
     },
     {
@@ -8018,7 +8022,12 @@
       "name": "MigratePostgres",
       "status": "verified",
       "cases": [
-        "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity"
+        "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity",
+        "TestFixedSiteChannelMigration",
+        "TestFixedSiteChannelAuthorizationScope",
+        "TestConfiguredOwnerProvisioning",
+        "TestConfiguredOwnerRechecksAfterProvisioning",
+        "TestConfiguredOwnerKeylessAdapter"
       ],
       "evidence": [
         "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
@@ -9608,15 +9617,14 @@
       ]
     },
     {
-      "id": "go:contentkit.MigrateFixedOwners",
-      "name": "contentkit.MigrateFixedOwners",
+      "id": "go:authkit.MigrationScopes",
+      "name": "authkit.MigrationScopes",
       "status": "verified",
       "cases": [
-        "TestFixedSiteChannelMigration",
-        "TestFixedSiteChannelAuthorizationScope"
+        "TestConfiguredOwnerKeylessAdapter"
       ],
       "evidence": [
-        "Public migration helper uses the normalized app scope, atomic seed/bind/access checks and idempotence. Scoped channel creation remains explicitly AuthKit-backed. Exact combined execution is required."
+        "Real AuthKit store/role configuration prepares a channel group through MigratePostgres without keys or a runtime constructor, preserves the editor grant on replay and rejects a retired group. Requires exact candidate execution."
       ]
     }
   ]

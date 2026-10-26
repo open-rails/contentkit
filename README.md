@@ -38,15 +38,19 @@ See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
 
 | Name | Meaning |
 |---|---|
-| `tenant_id` | one site: `doujins`, `hentai0`, the marketplace |
+| `Scope.TenantID` | the business owning an account directory and its apps |
+| `Scope.AppID` | one tenant-owned app and its separate content catalog, such as Doujins or Hentai0 |
 | `content_id` | the host-owned work: a gallery, a video, a listing; a canonical UUIDv7, never reused ([Content ids](HOST_INTEGRATION.md#content-ids)) |
 | `content_version_id` | one selectable version of that work (optional) |
-| `group_id` | an entity: tag, artist, series, character, channel, playlist, featured rail |
+| `entity_id` | an associated tag, artist, series, character, channel, playlist or featured rail |
 | `ContentRef` | `{TenantID, ContentKind, ContentID, ContentVersionID *string}` — the typed reference every API, key, index and cursor carries |
 
 A language is metadata on a document or version, never part of a reference.
-Every read is scoped to the tenant pinned at construction; a reference of
-another tenant is an error, never remapped.
+Each engine serves the app pinned by `Scope`. Apps can share tenant-owned
+account data without sharing their catalogs. `ContentRef.TenantID` retains the
+catalog partition key: it is the app ID by default, or `LegacyCatalogKey` when
+adopting an existing catalog. It is not the business's `Scope.TenantID`.
+A reference to another catalog is an error, never remapped. See [scope.go](scope.go).
 
 ## Packages
 
@@ -56,7 +60,7 @@ another tenant is an error, never remapped.
 | `contenturl` | uniform content URLs `/{lang}/{route}/{CODE}[/{slug}][?v={version}]`: permanent 9-character codes per tenant, 4-character version codes, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`); the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access](#access-access)) |
 | `adapters/openrails` | `access.Billing` over the OpenRails client (its own module) |
-| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and due cleanup, immediate deletion and interrupted-commit recovery as River jobs |
+| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and durable processing/deletion records; ingest, image and video are the three processing jobs, while the content purge sweep owns due deletion |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
 | `media/token` | media access tokens, shared by hosts and the media gateway |
@@ -76,7 +80,7 @@ another tenant is an error, never remapped.
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
 | `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |
 | `e2e` | its own module: every route end to end over PostgreSQL, MinIO and a real AuthKit |
-| root | `Engine`: `New` (migrates its own schema), `Start` (its River jobs), `Routes` (route groups under `/v1`), `Client` (typed in-process client), `Ready`, `Probes`, `RiverJobs`, `Close` |
+| root | `Engine`: `New` (validates or migrates storage according to `Database.SkipMigrations`), `Start` (its River jobs), `Routes` (route groups under `/v1`), `Client` (typed in-process client), `Ready`, `Probes`, `RiverJobs`, `Close` |
 | `server` | its own module: the standalone `contentkit` binary (`server/cmd/contentkit`) |
 
 ## Engine
@@ -86,11 +90,12 @@ one `Start`, routes the host mounts.
 
 ```go
 ck, _ := contentkit.New(ctx, contentkit.Config{
-	Tenant:     "doujins",
-	Database:   contentkit.DatabaseConfig{Schema: "doujins_contentkit", RiverSchema: "doujins_river"},
-	Content:    siteKinds, // kinds.Config: languages, tiers, content and group kinds
+	Scope:            &contentkit.Scope{TenantID: tenantID, AppID: appID}, // stable provisioned IDs
+	LegacyCatalogKey: "doujins", // adopting an existing catalog; omit for a new app
+	Database:   contentkit.DatabaseConfig{Schema: "doujins_contentkit", RiverSchema: "doujins_river", SkipMigrations: true},
+	Content:    siteKinds, // kinds.Config: languages, tiers, content and entity kinds
 	Media:      &contentkit.MediaConfig{Config: registry, Delivery: contentkit.DeliveryConfig{SigningKey: key}},
-	ClickHouse: contentkit.ClickHouseConfig{Database: "doujins_signal", Addr: chAddr},
+	ClickHouse: contentkit.ClickHouseConfig{Database: "analytics", Addr: chAddr},
 }, contentkit.Deps{Postgres: pool, Auth: ak.Authenticator(), Users: ak.UserInfo(),
 	Billing: ckopenrails.Billing(merchant), Store: bucket})
 fleet, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "doujins_river"}, ak.RiverJobs(), ck.RiverJobs())
@@ -101,13 +106,17 @@ for _, r := range routes {
 }
 ```
 
-- `New` creates or upgrades ContentKit's tables in `Database.Schema`
-  (default `contentkit`), River's and the media worker queue's, and with
-  `ClickHouse.Addr` the signal plane, each under its migrator's advisory
-  lock. It may share the host's database, never its schema. PGroonga and
-  pg_trgm live in `public`.
+- With `Database.SkipMigrations: true`, `New` checks prepared storage read-only.
+  Run the explicit host migration command first; it calls the applicable
+  PostgreSQL, media and ClickHouse migration stages. `MigratePostgres` also
+  provisions configured fixed owner entities and their groups through
+  `MigrationOptions.Scopes`; hosts need no separate seeding code. The default `false` retains
+  embedded startup migrations. Catalog tables use `Database.Schema` (default
+  `contentkit`); account tables can use a separately shared schema. PGroonga and
+  pg_trgm live in `public`. See [migration instructions](docs/migration.md).
 - `Config` is plain data (YAML/JSON); `Deps` holds connections and
-  providers. Media's namespace is the tenant; content kinds' media are their
+  providers. `Scope` binds the business and app; media paths derive from that
+  scope, with tenant-shared account media. Content kinds' media are their
   versions' (`media.ForContent`, the `media/versions` service). All content
   belongs to ContentKit: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,

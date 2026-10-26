@@ -224,4 +224,4 @@ ts:MediaClient.watch	ts	TS client streaming method	MediaClient.watch	sdk/ui/src/
 ts:ContentUpload	ts	TS exported component	ContentUpload	sdk/ui/src/components/admin/content-upload.tsx	included-critical media247 streaming/UI acceptance
 ts:MediaProcessingPanel	ts	TS exported component	MediaProcessingPanel	sdk/ui/src/components/media-processing-panel.tsx	included-critical media247 streaming/UI acceptance
 go:Source.RetireInboxSync	go	Go explicit migration method	Source.RetireInboxSync	notification/openrails/retire.go	included-critical
-go:contentkit.MigrateFixedOwners	go	Go embedded migration	contentkit.MigrateFixedOwners	fixed_owners.go	included-critical
+go:authkit.MigrationScopes	go	Go AuthKit migration adapter	authkit.MigrationScopes	adapters/authkit/migration.go	included-critical

@@ -118,8 +118,7 @@ func TestFixedSiteChannelMigration(t *testing.T) {
 	article.OwnerEntity = &kinds.EntityRef{Kind: "official", Slug: "blog"}
 	article.AccessLevels = []string{"public"}
 	cfg.Content.Kinds["article"] = article
-	seeds := []entities.EntityInput{{Kind: "official", Slug: "blog", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Official blog"}}}}
-	_, err = ck.MigrateFixedOwners(t.Context(), w.pool, cfg, seeds)
+	err = ck.MigratePostgres(t.Context(), w.pool, cfg)
 	if err == nil {
 		t.Fatal("migration silently opened private content")
 	}
@@ -137,11 +136,8 @@ func TestFixedSiteChannelMigration(t *testing.T) {
 	must(t, err)
 	_, err = admin.PatchContentVersion(t.Context(), paid.ID, paid.Versions[0].ID, catalog.VersionInput{Access: &access.Rule{Level: access.Public}})
 	must(t, err)
-	changed, err := ck.MigrateFixedOwners(t.Context(), w.pool, cfg, seeds)
+	err = ck.MigratePostgres(t.Context(), w.pool, cfg)
 	must(t, err)
-	if changed != 2 {
-		t.Fatalf("backfilled %d posts; want2", changed)
-	}
 	page, err = admin.GetEntities(t.Context(), ck.GetEntitiesQuery{Kind: "official"})
 	must(t, err)
 	if len(page.Entities) != 1 {
@@ -162,11 +158,11 @@ func TestFixedSiteChannelMigration(t *testing.T) {
 	}
 	after, err := admin.GetContent(t.Context(), free.ID, ck.GetContentQuery{})
 	must(t, err)
-	changed, err = ck.MigrateFixedOwners(t.Context(), w.pool, cfg, seeds)
+	err = ck.MigratePostgres(t.Context(), w.pool, cfg)
 	must(t, err)
 	again, err := admin.GetContent(t.Context(), free.ID, ck.GetContentQuery{})
 	must(t, err)
-	if changed != 0 || again.Revision != after.Revision || again.Body != after.Body {
+	if again.Revision != after.Revision || again.Body != after.Body {
 		t.Fatal("idempotent migration changed retained content")
 	}
 }
@@ -182,7 +178,7 @@ func TestFixedSiteChannelStaffRevocation(t *testing.T) {
 		cfg.Content.Kinds["article"] = kind
 	})
 	a := w.apps[0]
-	_, err := ck.MigrateFixedOwners(t.Context(), w.pool, a.cfg, []entities.EntityInput{{Kind: "official", Slug: "blog", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Official blog"}}}})
+	err := ck.MigratePostgres(t.Context(), w.pool, a.cfg)
 	must(t, err)
 	author, token := w.person(t, 0)
 	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(author.ID), w.writer)
@@ -235,9 +231,8 @@ func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 		cfg.Content.Kinds["article"] = kind
 	})
 	a := w.apps[0]
-	seeds := []entities.EntityInput{{Kind: "channel", Slug: "blog", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Official channel"}}}}
-	if _, err := ck.MigrateFixedOwners(t.Context(), w.pool, a.cfg, seeds); err == nil {
-		t.Fatal("database-only migration provisioned an authorization scope")
+	if err := ck.MigratePostgres(t.Context(), w.pool, a.cfg); err == nil {
+		t.Fatal("migration accepted a missing authorization provider")
 	}
 	channels, err := a.engine.Client().GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
 	must(t, err)
@@ -245,12 +240,18 @@ func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 		t.Fatal("refused scope provisioning left a channel")
 	}
 	create := func(app *application) entities.Entity {
-		made, err := app.engine.Client().PostEntities(t.Context(), seeds)
+		must(t, ck.MigratePostgres(t.Context(), w.pool, app.cfg, ck.MigrationOptions{Scopes: app.deps.Scopes}))
+		made, err := app.engine.Client().GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
 		must(t, err)
-		if len(made) != 1 || made[0].AuthScope == "" || made[0].OwnerUserID != "" {
-			t.Fatalf("site scope not provisioned through AuthKit: %+v", made)
+		if len(made.Entities) != 1 {
+			t.Fatalf("missing fixed channel: %+v", made)
 		}
-		return made[0]
+		detail, err := app.engine.Client().GetManageEntity(t.Context(), string(made.Entities[0].ID), ck.GetManageEntityQuery{})
+		must(t, err)
+		if detail.AuthScope == "" || detail.OwnerUserID != "" {
+			t.Fatalf("site scope not provisioned through AuthKit: %+v", detail)
+		}
+		return detail.Entity
 	}
 	channel, foreign := create(a), create(w.apps[1])
 	scope, err := ckauth.EntityScopeID(*a.cfg.Scope, channel.AuthScope)
@@ -260,7 +261,7 @@ func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 	if scope == foreignScope {
 		t.Fatal("separate apps share an authorization group")
 	}
-	_, err = ck.MigrateFixedOwners(t.Context(), w.pool, a.cfg, seeds)
+	err = ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{Scopes: a.deps.Scopes})
 	must(t, err)
 	member, token := w.person(t, 0)
 	writer := a.client(token)
