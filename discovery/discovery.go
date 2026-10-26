@@ -94,7 +94,7 @@ type Service struct {
 }
 
 type tables struct {
-	facets, items, versions, versionText, text, codes, memberships, entities, prefs, favorites, reactions, counts, searches, searchMarks, erased, creators, comments, eventStreams, entityNames, normalize string
+	facets, items, versions, versionText, text, codes, memberships, entities, prefs, favorites, reactions, counts, searches, searchMarks, erased, creators, comments, entityNames, normalize string
 }
 
 // New validates o.
@@ -128,7 +128,7 @@ func New(o Options) (*Service, error) {
 		versionText: q("content_version_text"), text: q("content_text"), codes: q("content_codes"), memberships: q("content_memberships"),
 		entities: q("content_entities"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"), counts: q("content_interaction_counts"),
 		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators"),
-		comments: q("content_comments"), eventStreams: q("eventlog_streams"),
+		comments:    q("content_comments"),
 		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize")}}
 	var err error
 	s.historical, err = popularity.New(popularity.Config{Source: o.Hub, Policy: o.Policy, Availability: s,

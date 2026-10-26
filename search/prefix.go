@@ -103,9 +103,11 @@ func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, rela
 	order := groupBy + `
  ORDER BY score DESC,sd.content_kind,sd.content_id,sd.content_version_id NULLS FIRST,4
  LIMIT @limit`
-	queries := []string{
-		base + fmt.Sprintf(`%s OPERATOR(%s.&^) @q`, names, qn) + order,
-		base + corpus + ` LIKE @contains ESCAPE E'\\'` + order,
+	queries := []string{base + fmt.Sprintf(`%s OPERATOR(%s.&^) @q`, names, qn) + order}
+	// Under three characters nearly every name contains the query; a
+	// reader's suggestions then start with it. Management keeps substrings.
+	if relation != "content_search_documents" || utf8.RuneCountInString(q) >= 3 {
+		queries = append(queries, base+corpus+` LIKE @contains ESCAPE E'\\'`+order)
 	}
 	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout=2000`); err != nil {
 		return result, err

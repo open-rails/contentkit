@@ -52,7 +52,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		out.Truncated = candidates.truncated
 	}
 	visibleIDs := map[string]struct{}{}
-	out.unknown, err = s.summaryRows(ctx, visible, sort, func(row cardRow) {
+	out.unknown, err = s.summaryRows(ctx, visible, sort, nil, func(row cardRow) {
 		visibleIDs[row.ID] = struct{}{}
 		if !row.Access.Allowed && !row.Access.Unknown {
 			switch row.Access.Level {
@@ -103,7 +103,11 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		}
 		relaxed = summaryCandidateSelection(relaxed, candidates.relaxed)
 	}
-	unknown, err := s.summaryRows(ctx, relaxed, sort, func(row cardRow) {
+	var counted []string
+	for _, entry := range out.FilteredEntities {
+		counted = append(counted, string(entry.Entity.ID))
+	}
+	unknown, err := s.summaryRows(ctx, relaxed, sort, counted, func(row cardRow) {
 		// A visible matching edition already represents this content, even
 		// when a sibling edition has an optional hidden entity.
 		if _, ok := visibleIDs[row.ID]; ok {
@@ -132,7 +136,9 @@ func summaryCandidateSelection(q *sel, ids []string) *sel {
 // would show, settled and redacted exactly as cards are. It reads only what
 // the counts need, in one query: no titles, codes, media or offers.
 // It also reports unresolved access, including rows withheld from the visitor.
-func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, visit func(cardRow)) (bool, error) {
+// Rows carry, of their entities, those visit counts by and those that can open
+// them.
+func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, counted []string, visit func(cardRow)) (bool, error) {
 	args := maps.Clone(q.args)
 	for key, value := range sort.args {
 		args[key] = value
@@ -147,12 +153,19 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	}
 	// One read of the whole selection; access is then settled a batch at a time.
 	args["summary_tenant"], args["summary_user"] = s.o.Tenant, person(q.reader.Actor)
-	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, f.entity_ids, coalesce(f.owner_entity_id, ''), f.published_at,
+	// Only a held entity opens a row; against complete holdings no other
+	// entity changes a decision.
+	entityIDs := "f.entity_ids"
+	if filter, err := s.o.Gate.Filter(ctx, q.reader.Actor); err == nil && filter.Complete() {
+		args["summary_entities"] = append(filter.Entities(), counted...)
+		entityIDs = "ARRAY(SELECT e FROM unnest(f.entity_ids) e WHERE e = ANY(@summary_entities::text[]))"
+	}
+	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, v.id, %[6]s, coalesce(f.owner_entity_id, ''), f.published_at,
  @summary_user <> '' AND EXISTS (SELECT 1 FROM %[4]s cc WHERE cc.tenant_id = c.tenant_id AND cc.content_id = c.id AND cc.user_id = @summary_user)
  FROM (%[5]s) p
  JOIN %[3]s v ON v.tenant_id = @summary_tenant AND v.id = p.version_id
  JOIN %[1]s f ON f.tenant_id = v.tenant_id AND f.version_id = v.id
- JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id`, s.t.facets, s.t.items, s.t.versions, s.t.creators, pickSQL), args)
+ JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id`, s.t.facets, s.t.items, s.t.versions, s.t.creators, pickSQL, entityIDs), args)
 	if err != nil {
 		return false, err
 	}
