@@ -46,6 +46,19 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
+	accepted := currentReleaseJob(t, m.app, ref.Version)
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		var requests, jobs string
+		err := m.pool.QueryRow(ctx, `SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'state',state,'current',current,'scheduled_at',scheduled_at,'waiting',plan->'waiting','error',error)),'[]')::text FROM `+pgx.Identifier{m.schema, "content_publication_requests"}.Sanitize()+` WHERE tenant_id=$1 AND version_id=$2`, m.app.cfg.Scope.AppID.String(), ref.Version).Scan(&requests)
+		t.Logf("release requests=%s err=%v clock=%s", requests, err, m.clock.now())
+		err = m.pool.QueryRow(ctx, `SELECT coalesce(jsonb_agg(jsonb_build_object('state',state,'args',args,'errors',errors,'scheduled_at',scheduled_at)),'[]')::text FROM `+pgx.Identifier{m.schema + "_river", "river_job"}.Sanitize()+` WHERE kind='contentkit_version_release'`).Scan(&jobs)
+		t.Logf("release jobs=%s err=%v", jobs, err)
+	})
 	hold := m.wire.pause(t, func(r *http.Request) bool {
 		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/future/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4")
 	})
@@ -96,6 +109,10 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	}
 	hold.unblock()
 	awaitMediaReady(t, admin, ref)
+	readyRequest := currentReleaseJob(t, m.app, ref.Version)
+	if !readyRequest.Due.Equal(accepted.Due) {
+		t.Fatalf("processing completion moved accepted publication date: before=%s after=%s host_clock=%s", accepted.Due, readyRequest.Due, m.clock.now())
+	}
 	awaitEditionPublication(t, m.app, admin, item.ID, ref.Version)
 	visible, err := m.app.client("").GetVersion(t.Context(), ref.Version, ck.GetVersionQuery{})
 	must(t, err)

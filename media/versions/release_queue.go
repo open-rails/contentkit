@@ -80,6 +80,31 @@ func (s *Service) SchedulePublicationTx(ctx context.Context, tx pgx.Tx, targets 
 	return nil
 }
 
+// wakePublicationTx resumes an accepted publication without changing its date.
+// A processor observes readiness; it does not submit new publication intent.
+// The request's stored deadline also keeps external workers independent of the
+// host's clock. A frozen plan gets a successor at that same accepted deadline.
+func (s *Service) wakePublicationTx(ctx context.Context, tx pgx.Tx, target Target) error {
+	if tx == nil {
+		return errors.New("versions: publication wakeup requires a transaction")
+	}
+	if err := s.lockTarget(ctx, tx, target); err != nil {
+		return err
+	}
+	var at time.Time
+	err := tx.QueryRow(ctx, `SELECT scheduled_at FROM `+s.releaseRequestsTable()+`
+ WHERE tenant_id=$1 AND content_id=$2 AND version_id=$3 AND current AND state<>'cancelled' FOR UPDATE`,
+		s.o.Tenant, target.Content, target.Version).Scan(&at)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The normal intent check leaves an unpublished draft without a job.
+		return s.SchedulePublicationTx(ctx, tx, []Target{target})
+	}
+	if err != nil {
+		return err
+	}
+	return s.scheduleReleaseAtTx(ctx, tx, target, at)
+}
+
 // scheduleReleaseAtTx also schedules the next chapter boundary after a release.
 // An unfrozen waiting request can follow new manifest order. Once frozen, its
 // plan is immutable and another request owns later changes.

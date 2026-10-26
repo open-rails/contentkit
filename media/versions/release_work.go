@@ -791,14 +791,6 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				}
 				return nil
 			}
-			if plan.Waiting && !plan.Released && len(plan.Copies) == 0 {
-				_, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='waiting',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id)
-				current = false
-				if err == nil && plan.NextAt != nil {
-					err = s.scheduleReleaseAtTx(ctx, tx, t, *plan.NextAt)
-				}
-				return err
-			}
 			raw, err = json.Marshal(plan)
 			if err != nil {
 				return err
