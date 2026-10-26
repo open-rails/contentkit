@@ -1,4 +1,4 @@
-import type { Channel, ChannelInput, ChannelUpdate, ChannelPage, MyChannelPage, ContentPage, EntityCard, RefBody } from "./generated/wire.js";
+import type { Channel, ChannelInput, ChannelUpdate, ChannelRepost, ChannelPage, MyChannelPage, ContentPage, EntityCard, RefBody } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import type { MediaClient, NamedOptions } from "./media/client.js";
 import { call, type RouteQuery } from "./route.js";
@@ -33,10 +33,11 @@ export class ChannelsClient {
   contents(id: string, query: ChannelContentsQuery = {}, signal?: AbortSignal): Promise<ContentPage> {
     return call(this.http, "GET", "/channels/{id}/contents", { params: { id }, query, signal });
   }
-  async repost(id: string, contentId: string): Promise<void> {
+  async repost(id: string, contentId: string): Promise<ChannelRepost> {
     const emit = this.http.captureChanges();
-    await call(this.http, "PUT", "/channels/{id}/reposts/{content_id}", { params: { id, content_id: contentId } });
+    const repost: ChannelRepost = await call(this.http, "PUT", "/channels/{id}/reposts/{content_id}", { params: { id, content_id: contentId } });
     emit({ type: "channel.reposts.changed", id });
+    return repost;
   }
   async removeRepost(id: string, contentId: string): Promise<void> {
     const emit = this.http.captureChanges();

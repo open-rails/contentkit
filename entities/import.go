@@ -59,7 +59,7 @@ func (s *Store) bound(tx pgx.Tx) *Store {
 // the content a moved or deleted entity reaches follow. A merged entity is
 // ErrConflict; a taken slug too. An active entity of an auth_scope kind keeps
 // the AuthKit scope it names or has; one with neither is provisioned, by the
-// scope sync job, only with provision (else ErrInvalid).
+// caller after commit with provision (else ErrInvalid).
 func (s *Store) ImportEntities(ctx context.Context, q pgx.Tx, in []ImportEntity, provision bool) error {
 	if len(in) == 0 {
 		return nil

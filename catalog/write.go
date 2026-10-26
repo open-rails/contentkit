@@ -38,7 +38,7 @@ type ContentInput struct {
 	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions []string       `json:"restrictions,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"`
-	// ChannelID is the home entity (a channel); its editors edit the item.
+	// ChannelID is the primary channel; its current editors govern the item.
 	// It never changes.
 	ChannelID string `json:"channel_id,omitempty"`
 	// Creators nil credits the creating person as its author.

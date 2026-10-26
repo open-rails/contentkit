@@ -23,9 +23,7 @@ export class CommentsClient {
   /** The target's top-level comments with reply counts; the caller also gets its own held and rejected ones. */
   list(t: Target, q: CommentQuery = {}, signal?: AbortSignal): Promise<Comment[]> {
     const o = { params: { id: t.id }, signal };
-    return t.type === "entities"
-      ? call(this.http, "GET", "/entities/{id}/comments", { ...o, query: q })
-      : call(this.http, "GET", "/contents/{id}/comments", { ...o, query: { ...q, version: t.version } });
+    return call(this.http, "GET", `/${t.type}/{id}/comments`, { ...o, query: { ...q, ...(t.type === "contents" ? { version: t.version } : {}) } });
   }
   /** A top-level comment's replies, oldest first. */
   replies(id: string, q: PageQuery = {}, signal?: AbortSignal): Promise<Comment[]> {
@@ -36,7 +34,7 @@ export class CommentsClient {
     const emit = this.http.captureChanges();
     const o = { params: { id: t.id }, body: input };
     const comment: Comment =
-      t.type === "entities" ? await call(this.http, "POST", "/entities/{id}/comments", o) : await call(this.http, "POST", "/contents/{id}/comments", { ...o, query: { version: t.version } });
+      await call(this.http, "POST", `/${t.type}/{id}/comments`, { ...o, ...(t.type === "contents" ? { query: { version: t.version } } : {}) });
     emit({ type: "comment.created", target: t, comment });
     return comment;
   }
@@ -65,9 +63,7 @@ export class CommentsClient {
   /** Commenting permissions and the authoritative visible top-level count in query.language (all languages by default); hidden/locked threads withhold the count. */
   standing(t: Target, signal?: AbortSignal, query: { language?: string } = {}): Promise<CommentStanding> {
     const o = { params: { id: t.id }, signal, query };
-    return t.type === "entities"
-      ? call(this.http, "GET", "/entities/{id}/can-comment", o)
-      : call(this.http, "GET", "/contents/{id}/can-comment", { ...o, query: { ...query, version: t.version } });
+    return call(this.http, "GET", `/${t.type}/{id}/can-comment`, { ...o, query: { ...query, ...(t.type === "contents" ? { version: t.version } : {}) } });
   }
   /** The newest published comments across the site, with their items; a page may under-fill. */
   latest(q: PageQuery & { language?: string } = {}, signal?: AbortSignal): Promise<FeedItem[]> {

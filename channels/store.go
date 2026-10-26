@@ -17,6 +17,7 @@ import (
 // Store is a catalog's channels. Existing persisted identity, media and scope
 // bytes are retained; callers only see this typed channel interface.
 type Store struct {
+	trusted  bool
 	actor    access.Actor
 	storage  *entities.Store
 	metadata *entities.Store
@@ -42,7 +43,7 @@ func New(opts Options) (*Store, error) {
 
 // FromStore binds channel storage to the engine's existing catalog dependencies.
 func FromStore(storage *entities.Store) *Store {
-	return &Store{storage: storage.ChannelStorage(), metadata: storage}
+	return &Store{storage: storage.ChannelStorage(), metadata: storage, trusted: true}
 }
 
 func (s *Store) As(a auth.Authenticator, actor access.Actor) *Store {
@@ -149,7 +150,7 @@ func (s *Store) Create(ctx context.Context, in Input) (Channel, error) {
 				return Channel{}, lookupErr
 			}
 			staff, _ := s.storage.PrepareStaffWrite(ctx)
-			if (staff || current.OwnerUserID != "" && current.OwnerUserID == s.actor.AccountID()) && sameInput(current, in) {
+			if (s.trusted || staff || current.OwnerUserID != "" && current.OwnerUserID == s.actor.AccountID()) && sameInput(current, in) {
 				if err := s.Finish(ctx, []string{string(current.ID)}); err != nil {
 					return Channel{}, err
 				}
@@ -174,8 +175,8 @@ func (s *Store) Update(ctx context.Context, id string, in Update) (Channel, erro
 	return s.Get(ctx, id, "")
 }
 
-// Delete only withdraws the channel. Existing durable lifecycle processing
-// applies its content-retention policy; no new cleanup worker is introduced.
+// Delete withdraws the channel and completes its group/content lifecycle
+// synchronously. Retained media remains owned by the existing purge sweep.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	current, err := s.Raw(ctx, id)
 	if err != nil {

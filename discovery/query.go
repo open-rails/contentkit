@@ -477,14 +477,12 @@ const (
 // order is one parsed sort: an expression over f constant across a content's
 // versions, its direction and the type its cursor value casts to.
 type order struct {
-	raw      string
-	expr     string
-	join     string
-	desc     bool
-	cast     string
-	args     pgx.NamedArgs
-	ranking  *popularity.RankingInfo
-	rankings map[string]ContentRanking
+	raw  string
+	expr string
+	join string
+	desc bool
+	cast string
+	args pgx.NamedArgs
 	// edition keys can differ between a content's versions (version
 	// memberships): a content sorts by its shown edition's.
 	edition bool

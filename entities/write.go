@@ -282,7 +282,7 @@ func (s *Store) hierarchyKey() string {
 // user-owned kind and the person's own, within the kind's MaxPerOwner
 // (ErrLimit), linked only to entities the person edits; anything else is
 // ErrForbidden. An auth_scope kind's entity gets its AuthKit scope (Scopes)
-// after commit, else from the scope sync job.
+// synchronously after commit; provider failures are returned for caller retry.
 func (s *Store) CreateEntities(ctx context.Context, inputs []EntityInput) ([]Entity, error) {
 	if len(inputs) == 0 {
 		return []Entity{}, nil

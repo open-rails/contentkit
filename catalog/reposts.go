@@ -119,6 +119,9 @@ func (s *Store) PutRepost(ctx context.Context, actor access.Actor, destination, 
 		return out, ErrNotFound
 	}
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := s.guardRepostActor(ctx, tx, actor); err != nil {
+			return err
+		}
 		var current int64
 		var kind, currentOwner, currentState string
 		err := tx.QueryRow(ctx, "SELECT revision,kind,coalesce(owner_entity_id,''),state FROM "+s.t.items+" WHERE tenant_id=$1 AND id=$2 FOR SHARE", s.tenant, contentID).Scan(&current, &kind, &currentOwner, &currentState)
@@ -153,7 +156,7 @@ func (s *Store) PutRepost(ctx context.Context, actor access.Actor, destination, 
 		}
 		out.CanRemove = grant.write || grant.create && out.ActorID != "" && out.ActorID == viewerID(actor)
 		if tag.RowsAffected() > 0 {
-			return s.emit(ctx, tx, Event{Type: "content.reposted", Kind: kind, ContentID: contentID, ChannelID: destination, ActorID: viewerID(actor)})
+			return s.emit(ctx, tx, Event{Type: "content.reposted", Kind: kind, ContentID: contentID, ChannelID: destination})
 		}
 		return nil
 	})
@@ -174,6 +177,9 @@ func (s *Store) DeleteRepost(ctx context.Context, actor access.Actor, destinatio
 		return ErrForbidden
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := s.guardRepostActor(ctx, tx, actor); err != nil {
+			return err
+		}
 		var kind string
 		err := tx.QueryRow(ctx, "SELECT kind FROM "+s.t.items+" WHERE tenant_id=$1 AND id=$2 FOR SHARE", s.tenant, contentID).Scan(&kind)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -199,7 +205,7 @@ func (s *Store) DeleteRepost(ctx context.Context, actor access.Actor, destinatio
 		if _, err := tx.Exec(ctx, `DELETE FROM `+s.qs+`.content_channel_reposts WHERE tenant_id=$1 AND channel_id=$2 AND content_id=$3`, s.tenant, destination, contentID); err != nil {
 			return err
 		}
-		return s.emit(ctx, tx, Event{Type: "content.repost_removed", Kind: kind, ContentID: contentID, ChannelID: destination, ActorID: viewerID(actor)})
+		return s.emit(ctx, tx, Event{Type: "content.repost_removed", Kind: kind, ContentID: contentID, ChannelID: destination})
 	})
 }
 
@@ -222,4 +228,25 @@ func (s *Store) handleDeleteRepost(w http.ResponseWriter, r *http.Request) {
 var repostRoutes = []httpapi.Route[*Store]{
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/channels/{id}/reposts/{content_id}", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.ContentWrite), Doc: "Idempotently reposts a published original into a channel the caller may post to; original ownership and access remain unchanged.", Responses: []httpapi.Reply{httpapi.OK(channels.Repost{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, httpapi.CodeConflict}}, Serve: httpapi.H((*Store).handlePutRepost)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/channels/{id}/reposts/{content_id}", Resource: "channels", Auth: httpapi.Editor, Perm: string(access.ContentWrite), Doc: "Removes only the destination repost reference. Requires destination editorship or the original reposter's current posting permission.", Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}}, Serve: httpapi.H((*Store).handleDeleteRepost)},
+}
+
+// Reposts join the same subject fence as account anonymization. This lock is
+// acquired before content/channel locks so a late accepted request cannot
+// restore attribution after the terminal account event.
+func (s *Store) guardRepostActor(ctx context.Context, tx pgx.Tx, actor access.Actor) error {
+	id := viewerID(actor)
+	if id == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, s.schema+"\x1ferasure\x1f"+s.tenant+"\x1f"+id); err != nil {
+		return err
+	}
+	var erased bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+s.qs+`.content_erased_subjects WHERE tenant_id=$1 AND actor_id=$2)`, s.tenant, id).Scan(&erased); err != nil {
+		return err
+	}
+	if erased {
+		return ErrForbidden
+	}
+	return nil
 }

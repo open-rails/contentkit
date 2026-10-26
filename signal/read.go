@@ -3,7 +3,6 @@ package signal
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -285,136 +284,14 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, s
 	return out, rows.Err()
 }
 
-// metricColumns are the window metric aliases (also usable in RankExpr).
-const metricColumns = `readers,user_readers,guest_readers,completers,active_ms,reader_quality_sum,
- returning_readers,value_sum,positive_subjects,negative_subjects`
-
-// windowMetrics aggregates canonical measurements and feedback in a window:
-// first per subject (so each person counts once), then per content reference.
-func (st *Store) windowMetrics(tenant, filter string, filterArgs []any, win Window) (string, []any) {
-	// Work filters also admit their version source rows. Filtering again after
-	// aggregation preserves exact work/version requests without scanning other IDs.
-	sourceFilter := strings.ReplaceAll(filter, workLevel, "")
-	sourceFilter = strings.ReplaceAll(sourceFilter, referenceFilter, "("+referenceFilter+" OR (content_kind,content_id,'') IN (SELECT "+refColumns+" FROM contentkit_read_refs))")
-	pred, predArgs := win.predicate("c.1")
-	canonical := "SELECT * FROM (" + st.measuredCanonical(sourceFilter) + ") WHERE 1" + pred
-	measured := measuredVersions(canonical)
-	feedback := "SELECT * FROM (" + st.canonicalEvents(sourceFilter+" AND signal_type NOT IN ('view','preview')") + ") WHERE 1" + pred
-	q := fmt.Sprintf(`WITH measured_rows AS (%s
- SELECT %s,subject_kind,subject,qualified,completed,active_ms,attention_quality AS quality,days FROM scored
- UNION ALL
- SELECT content_kind,content_id,'',subject_kind,subject,max(qualified),max(completed),sum(active_ms),max(attention_quality),groupUniqArrayArray(days)
- FROM scored GROUP BY content_kind,content_id,subject_kind,subject),
- feedback_rows AS (SELECT %s,subject_kind,subject,sum(c.3) AS value FROM (%s)
- GROUP BY %s,subject_kind,subject),
- combined AS (SELECT %s,subject_kind,subject,max(qualified) AS qualified,max(completed) AS completed,
- sum(active_ms) AS active_ms,max(quality) AS quality,groupUniqArrayArray(days) AS days,sum(value) AS value FROM (
- SELECT %s,subject_kind,subject,qualified,completed,active_ms,quality,days,toFloat64(0) AS value FROM measured_rows
- UNION ALL
- SELECT %s,subject_kind,subject,false,false,toUInt64(0),toFloat64(0),CAST([],'Array(Date)'),value FROM feedback_rows)
- GROUP BY %s,subject_kind,subject)
- SELECT %s,toUInt64(countIf(qualified)) AS readers,
- toUInt64(countIf(qualified AND subject_kind='user')) AS user_readers,
- toUInt64(countIf(qualified AND subject_kind='anon')) AS guest_readers,
- toUInt64(countIf(completed)) AS completers,
- sum(active_ms) AS active_ms,
- sumIf(quality,qualified) AS reader_quality_sum,toUInt64(countIf(qualified AND length(days)>1)) AS returning_readers,
- sum(value) AS value_sum,toUInt64(countIf(value>0)) AS positive_subjects,
- toUInt64(countIf(value<0)) AS negative_subjects
- FROM combined WHERE %s GROUP BY %s`, measured, refColumns, refColumns, feedback, refColumns,
-		refColumns, refColumns, refColumns, refColumns, refColumns, filter, refColumns)
-	args := append([]any{tenant}, filterArgs...)
-	args = append(args, predArgs...)
-	args = append(args, tenant)
-	args = append(args, filterArgs...)
-	args = append(args, predArgs...)
-	args = append(args, filterArgs...)
-	return q, args
-}
-
-func scanMetrics(rows driver.Rows, kind, id, version *string, m *ContentMetrics, extra ...any) error {
-	dest := []any{kind, id, version, &m.Readers, &m.UserReaders, &m.GuestReaders, &m.Completers, &m.ActiveMS,
-		&m.ReaderQualitySum, &m.ReturningReaders, &m.ValueSum, &m.PositiveSubjects, &m.NegativeSubjects}
-	return rows.Scan(append(dest, extra...)...)
-}
-
 // finalSettings: day is in the sorting key and partition key, so FINAL never
 // needs to merge across partitions.
 const finalSettings = "\nSETTINGS do_not_merge_across_partitions_select_final = 1"
 
-// Metrics returns named window metrics for the references (works or versions;
-// zero window = all time). References with no canonical events in the window
-// are absent. A work's metrics never include its version rows.
-func (st *Store) Metrics(ctx context.Context, tenant string, refs []ContentRef, window Window) (map[ContentKey]ContentMetrics, error) {
-	out := map[ContentKey]ContentMetrics{}
-	if err := window.Validate(); err != nil {
-		return nil, err
-	}
-	if len(refs) == 0 {
-		return out, nil
-	}
-	for _, r := range refs {
-		if err := checkRef(tenant, r); err != nil {
-			return nil, err
-		}
-	}
-	ctx, err := referenceContext(ctx, refs)
-	if err != nil {
-		return nil, fmt.Errorf("signal: metrics references: %w", err)
-	}
-	q, args := st.windowMetrics(tenant, referenceFilter, nil, window)
-	rows, err := st.conn.Query(ctx, q+finalSettings, args...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: metrics: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			kind, id, version string
-			m                 ContentMetrics
-		)
-		if err := scanMetrics(rows, &kind, &id, &version, &m); err != nil {
-			return nil, fmt.Errorf("signal: metrics scan: %w", err)
-		}
-		out[contentref.NewVersion(tenant, kind, id, version).Key()] = m
-	}
-	return out, rows.Err()
-}
-
-// Popular ranks works of one kind with qualified readers in a literal window.
-// Measured observations have equal time weight inside that window.
+// Popular ranks the works of one kind with qualified readers by
+// event-time eligible-population participation (opts.Normalization) and the
+// policy expression opts.RankExpr.
 func (st *Store) Popular(ctx context.Context, tenant string, contentKind string, opts PopularOptions) ([]PopularHit, error) {
-	return st.popular(ctx, tenant, contentKind, nil, opts)
-}
-
-// PopularityFor scores a fixed candidate set of works by the popularity
-// ranking and returns content_id -> score. Candidates without qualified
-// readers in the window are absent.
-func (st *Store) PopularityFor(ctx context.Context, tenant string, contentKind string, ids []string, window Window) (map[string]float64, error) {
-	ids = trimAll(ids)
-	if len(ids) == 0 {
-		return map[string]float64{}, nil
-	}
-	hits, err := st.popular(ctx, tenant, contentKind, ids, PopularOptions{Window: window, Limit: len(ids)})
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]float64, len(hits))
-	for _, h := range hits {
-		out[h.ContentID] = h.Score
-	}
-	return out, nil
-}
-
-// defaultRankExpr builds the default ranking over the window metric columns.
-func defaultRankExpr(w RankWeights) string {
-	return fmt.Sprintf(
-		"log10(1 + toFloat64(readers)) * greatest(%g, (toFloat64(reader_quality_sum)*100 + %g) / (toFloat64(readers) + %g))",
-		w.QualityFloor, w.PriorScore*w.PriorWeight, w.PriorWeight,
-	)
-}
-
-func (st *Store) popular(ctx context.Context, tenant string, contentKind string, ids []string, opts PopularOptions) ([]PopularHit, error) {
 	if strings.TrimSpace(tenant) == "" {
 		return nil, fmt.Errorf("signal: tenant is required")
 	}
@@ -424,58 +301,10 @@ func (st *Store) popular(ctx context.Context, tenant string, contentKind string,
 	if err := opts.Window.Validate(); err != nil {
 		return nil, err
 	}
-	if opts.Normalization != nil {
-		return st.normalizedPopular(ctx, tenant, contentKind, ids, opts)
+	if opts.Normalization == nil {
+		return nil, fmt.Errorf("signal: popularity requires normalization")
 	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	rankExpr := strings.TrimSpace(opts.RankExpr)
-	if rankExpr == "" {
-		rankExpr = defaultRankExpr(opts.Weights.withDefaults())
-	}
-	filter, filterArgs := "content_kind = ?"+workLevel, []any{contentKind}
-	if len(ids) > 0 {
-		table, err := ext.NewTable("contentkit_popularity_ids", ext.Column("content_id", "String"))
-		if err != nil {
-			return nil, fmt.Errorf("signal: popularity candidates: %w", err)
-		}
-		for _, id := range ids {
-			if err := table.Append(id); err != nil {
-				return nil, fmt.Errorf("signal: popularity candidates: %w", err)
-			}
-		}
-		ctx = clickhouse.Context(ctx, clickhouse.WithExternalTable(table))
-		filter += " AND content_id IN (SELECT content_id FROM contentkit_popularity_ids)"
-	}
-	metrics, args := st.windowMetrics(tenant, filter, filterArgs, opts.Window)
-	q := fmt.Sprintf(`SELECT %s, %s, (%s) AS rank_score
-FROM (%s)
-WHERE readers > 0
-ORDER BY rank_score DESC, content_id ASC
-LIMIT ?%s`, refColumns, metricColumns, rankExpr, metrics, finalSettings)
-	rows, err := st.conn.Query(ctx, q, append(args, limit)...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: popular: %w", err)
-	}
-	defer rows.Close()
-	out := make([]PopularHit, 0, limit)
-	for rows.Next() {
-		var (
-			h                 PopularHit
-			kind, id, version string
-		)
-		if err := scanMetrics(rows, &kind, &id, &version, &h.ContentMetrics, &h.Score); err != nil {
-			return nil, fmt.Errorf("signal: popular scan: %w", err)
-		}
-		h.ContentRef = contentref.NewVersion(tenant, kind, id, version)
-		if math.IsNaN(h.Score) || math.IsInf(h.Score, 0) {
-			h.Score = 0
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
+	return st.normalizedPopular(ctx, tenant, contentKind, opts)
 }
 
 // CoEngaged returns works co-engaged with the anchor work: "subjects who

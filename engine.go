@@ -665,8 +665,10 @@ func (e *Engine) mount(deps Deps) error {
 	if e.modules[httpapi.Entities], err = e.entities.Handler(e.auth); err != nil {
 		return err
 	}
-	if e.modules[httpapi.Channels], err = e.channels.Handler(e.auth); err != nil {
-		return err
+	if e.cfg.Content.Channels != nil {
+		if e.modules[httpapi.Channels], err = e.channels.Handler(e.auth); err != nil {
+			return err
+		}
 	}
 	e.modules[httpapi.Contents] = e.catalog.Handler()
 	if err := e.mountDiscovery(deps); err != nil {
@@ -679,7 +681,7 @@ func (e *Engine) mount(deps Deps) error {
 	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c, e.hub.SignalPlane, avatars); err != nil {
 		return err
 	}
-	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities,
+	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
 	}

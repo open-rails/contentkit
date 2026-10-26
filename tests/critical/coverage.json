@@ -692,10 +692,10 @@
     {
       "id": "CK-J07-S11",
       "journey": "CK-J07",
-      "behavior": "Popular lists read access history only for contents read in their window",
+      "behavior": "Popular rankings read access history only for contents read in their window",
       "status": "verified",
       "evidence": [
-        "A catalog with more than 100,000 unread access-history intervals still serves a popular list instead of failing on the history bound, and returns none of the unread contents."
+        "A catalog with more than 100,000 unread access-history intervals still builds the requested popular ranking in the refresh job instead of failing on the history bound, and the list returns none of the unread contents."
       ],
       "cases": [
         "TestDiscoveryVisibility/CK-J07-S11_popular_list_reads_history_of_read_contents_only"
@@ -735,6 +735,42 @@
       ],
       "cases": [
         "TestListingSummaryRefreshesWithinAMinute"
+      ]
+    },
+    {
+      "id": "CK-J07-S15",
+      "journey": "CK-J07",
+      "behavior": "Popular lists follow the stored ranking of their kind, period and reader scope",
+      "status": "verified",
+      "evidence": [
+        "Before its ranking is built a popular list shows only works with standing; once the refresh stores a ranking, the list follows its order."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S15_popular_list_follows_the_stored_ranking"
+      ]
+    },
+    {
+      "id": "CK-J07-S16",
+      "journey": "CK-J07",
+      "behavior": "Reader-chosen popularity ranges queue bounded ranking work",
+      "status": "verified",
+      "evidence": [
+        "With fifty reader-chosen ranges requested, another range is not requested; after one is dropped, it is."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S16_reader_chosen_ranges_are_bounded"
+      ]
+    },
+    {
+      "id": "CK-J07-S17",
+      "journey": "CK-J07",
+      "behavior": "A ranking split by reader counts every reader exactly once",
+      "status": "verified",
+      "evidence": [
+        "A work with 25,000 readers, more than one batch holds, ranks with exactly 25,000 of 50,000 eligible readers, and a ten-reader work in another batch with exactly ten."
+      ],
+      "cases": [
+        "TestPopularRankingSplitsReadersExactly"
       ]
     },
     {
@@ -1319,7 +1355,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner\u2019s eligible content",
+      "behavior": "Owner ban affects only the owner’s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
@@ -2267,6 +2303,18 @@
       "evidence": [
         "Real account anonymization is repeated, the retained repost still references the original with no actor ID, late repost attempts are fenced and immutable event payloads omit erasable actor identity.",
         "Reviewed executable scenario; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J03-S73",
+      "journey": "CK-J03",
+      "behavior": "Channel metadata follows a merged descriptive entity without changing channel authority",
+      "status": "verified",
+      "evidence": [
+        "Public create/link/merge/read journey requires the surviving metadata identity exactly once. Final combined execution remains required."
+      ],
+      "cases": [
+        "TestChannelMetadataMerge/CK-J03-S73_channel_metadata_survives_canonical_entity_merge"
       ]
     }
   ],

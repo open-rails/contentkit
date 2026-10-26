@@ -63,6 +63,9 @@ func (s *Store) SetChannelMetadata(ctx context.Context, id EntityID, ids []Entit
 		return err
 	}
 	return s.run(ctx, func(q Querier) error {
+		if err := s.LockHierarchyShared(ctx, q); err != nil {
+			return err
+		}
 		locked, err := s.lock(ctx, q, []string{string(id)})
 		if err != nil {
 			return err
