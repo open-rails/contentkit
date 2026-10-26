@@ -23,7 +23,9 @@ people across that period. `metric=comments` ranks by published comments and sti
 works without the signal plane. The SDK accepts only `readers` and `comments`;
 there is no route-open, raw-view or session-count metric or compatibility alias.
 This staff ranking by people is separate from the public popularity policy,
-which also uses bounded per-person quality and event-time audience normalization.
+which averages audience-adjusted daily participation. A returning person can
+contribute on multiple days to popularity while still counting once in this
+staff period-wide unique-reader metric.
 
 The activity table displays active time as `m:ss` or `h:mm:ss`. The server retains
 millisecond precision; the display truncates incomplete seconds. Existing account
