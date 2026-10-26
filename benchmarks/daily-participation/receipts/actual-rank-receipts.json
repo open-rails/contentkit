@@ -1,0 +1,499 @@
+[
+  {
+    "Label": "database",
+    "QueryID": "ck261_actual_20261026_212902_database",
+    "WallSeconds": 0.098698593,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "table",
+    "QueryID": "ck261_actual_20261026_212902_table",
+    "WallSeconds": 0.416318143,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_000",
+    "QueryID": "ck261_actual_20261026_212902_base_000",
+    "WallSeconds": 0.586819638,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_007",
+    "QueryID": "ck261_actual_20261026_212902_base_007",
+    "WallSeconds": 0.438917868,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_014",
+    "QueryID": "ck261_actual_20261026_212902_base_014",
+    "WallSeconds": 0.421349004,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_021",
+    "QueryID": "ck261_actual_20261026_212902_base_021",
+    "WallSeconds": 0.43371537,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_028",
+    "QueryID": "ck261_actual_20261026_212902_base_028",
+    "WallSeconds": 0.398651347,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_035",
+    "QueryID": "ck261_actual_20261026_212902_base_035",
+    "WallSeconds": 0.417978199,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_042",
+    "QueryID": "ck261_actual_20261026_212902_base_042",
+    "WallSeconds": 0.473088107,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_049",
+    "QueryID": "ck261_actual_20261026_212902_base_049",
+    "WallSeconds": 0.450891603,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_056",
+    "QueryID": "ck261_actual_20261026_212902_base_056",
+    "WallSeconds": 0.418062455,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_063",
+    "QueryID": "ck261_actual_20261026_212902_base_063",
+    "WallSeconds": 0.561967426,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_070",
+    "QueryID": "ck261_actual_20261026_212902_base_070",
+    "WallSeconds": 0.443749945,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_077",
+    "QueryID": "ck261_actual_20261026_212902_base_077",
+    "WallSeconds": 0.47887403,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_084",
+    "QueryID": "ck261_actual_20261026_212902_base_084",
+    "WallSeconds": 0.42803771,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_091",
+    "QueryID": "ck261_actual_20261026_212902_base_091",
+    "WallSeconds": 0.580879685,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_098",
+    "QueryID": "ck261_actual_20261026_212902_base_098",
+    "WallSeconds": 0.391334517,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_105",
+    "QueryID": "ck261_actual_20261026_212902_base_105",
+    "WallSeconds": 0.460748582,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_112",
+    "QueryID": "ck261_actual_20261026_212902_base_112",
+    "WallSeconds": 0.384485894,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_119",
+    "QueryID": "ck261_actual_20261026_212902_base_119",
+    "WallSeconds": 0.492220287,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_126",
+    "QueryID": "ck261_actual_20261026_212902_base_126",
+    "WallSeconds": 0.422857375,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_133",
+    "QueryID": "ck261_actual_20261026_212902_base_133",
+    "WallSeconds": 0.398605571,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_140",
+    "QueryID": "ck261_actual_20261026_212902_base_140",
+    "WallSeconds": 0.414355958,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_147",
+    "QueryID": "ck261_actual_20261026_212902_base_147",
+    "WallSeconds": 0.488899611,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_154",
+    "QueryID": "ck261_actual_20261026_212902_base_154",
+    "WallSeconds": 0.53237763,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_161",
+    "QueryID": "ck261_actual_20261026_212902_base_161",
+    "WallSeconds": 0.455788079,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_168",
+    "QueryID": "ck261_actual_20261026_212902_base_168",
+    "WallSeconds": 0.400982212,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_175",
+    "QueryID": "ck261_actual_20261026_212902_base_175",
+    "WallSeconds": 0.410335855,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_182",
+    "QueryID": "ck261_actual_20261026_212902_base_182",
+    "WallSeconds": 0.618082414,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_189",
+    "QueryID": "ck261_actual_20261026_212902_base_189",
+    "WallSeconds": 0.492349686,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_196",
+    "QueryID": "ck261_actual_20261026_212902_base_196",
+    "WallSeconds": 0.388913596,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_203",
+    "QueryID": "ck261_actual_20261026_212902_base_203",
+    "WallSeconds": 0.47567383,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_210",
+    "QueryID": "ck261_actual_20261026_212902_base_210",
+    "WallSeconds": 0.366469125,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_217",
+    "QueryID": "ck261_actual_20261026_212902_base_217",
+    "WallSeconds": 0.411512684,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_224",
+    "QueryID": "ck261_actual_20261026_212902_base_224",
+    "WallSeconds": 0.436364043,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_231",
+    "QueryID": "ck261_actual_20261026_212902_base_231",
+    "WallSeconds": 0.380684713,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_238",
+    "QueryID": "ck261_actual_20261026_212902_base_238",
+    "WallSeconds": 0.386656079,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_245",
+    "QueryID": "ck261_actual_20261026_212902_base_245",
+    "WallSeconds": 0.500702177,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_252",
+    "QueryID": "ck261_actual_20261026_212902_base_252",
+    "WallSeconds": 0.409182382,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_259",
+    "QueryID": "ck261_actual_20261026_212902_base_259",
+    "WallSeconds": 0.437148904,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_266",
+    "QueryID": "ck261_actual_20261026_212902_base_266",
+    "WallSeconds": 0.38858643,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_273",
+    "QueryID": "ck261_actual_20261026_212902_base_273",
+    "WallSeconds": 0.481211647,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_280",
+    "QueryID": "ck261_actual_20261026_212902_base_280",
+    "WallSeconds": 0.395042539,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_287",
+    "QueryID": "ck261_actual_20261026_212902_base_287",
+    "WallSeconds": 0.43527596,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_294",
+    "QueryID": "ck261_actual_20261026_212902_base_294",
+    "WallSeconds": 0.463783455,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_301",
+    "QueryID": "ck261_actual_20261026_212902_base_301",
+    "WallSeconds": 0.392160844,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_308",
+    "QueryID": "ck261_actual_20261026_212902_base_308",
+    "WallSeconds": 0.46241108,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_315",
+    "QueryID": "ck261_actual_20261026_212902_base_315",
+    "WallSeconds": 0.380521098,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_322",
+    "QueryID": "ck261_actual_20261026_212902_base_322",
+    "WallSeconds": 0.43927531,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_329",
+    "QueryID": "ck261_actual_20261026_212902_base_329",
+    "WallSeconds": 0.388086621,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_336",
+    "QueryID": "ck261_actual_20261026_212902_base_336",
+    "WallSeconds": 0.475800569,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_343",
+    "QueryID": "ck261_actual_20261026_212902_base_343",
+    "WallSeconds": 0.40576017,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_350",
+    "QueryID": "ck261_actual_20261026_212902_base_350",
+    "WallSeconds": 0.416209767,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_357",
+    "QueryID": "ck261_actual_20261026_212902_base_357",
+    "WallSeconds": 0.41548828,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "base_364",
+    "QueryID": "ck261_actual_20261026_212902_base_364",
+    "WallSeconds": 0.065270104,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "hold_owned_merges",
+    "QueryID": "ck261_actual_20261026_212902_hold_owned_merges",
+    "WallSeconds": 0.001340723,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "replace_today",
+    "QueryID": "ck261_actual_20261026_212902_replace_today",
+    "WallSeconds": 0.073972777,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "7d_run1",
+    "QueryID": "ck261_actual_20261026_212902_7d_run1",
+    "WallSeconds": 0.698554079,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "30d_run1",
+    "QueryID": "ck261_actual_20261026_212902_30d_run1",
+    "WallSeconds": 0.754095347,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "year_run1",
+    "QueryID": "ck261_actual_20261026_212902_year_run1",
+    "WallSeconds": 2.29510503,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "all_run1",
+    "QueryID": "ck261_actual_20261026_212902_all_run1",
+    "WallSeconds": 2.33488489,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "7d_run2",
+    "QueryID": "ck261_actual_20261026_212902_7d_run2",
+    "WallSeconds": 0.63378675,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "30d_run2",
+    "QueryID": "ck261_actual_20261026_212902_30d_run2",
+    "WallSeconds": 0.771634473,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "year_run2",
+    "QueryID": "ck261_actual_20261026_212902_year_run2",
+    "WallSeconds": 2.7566594650000003,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "all_run2",
+    "QueryID": "ck261_actual_20261026_212902_all_run2",
+    "WallSeconds": 2.730024652,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "7d_run3",
+    "QueryID": "ck261_actual_20261026_212902_7d_run3",
+    "WallSeconds": 1.206003952,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "30d_run3",
+    "QueryID": "ck261_actual_20261026_212902_30d_run3",
+    "WallSeconds": 1.344832483,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "year_run3",
+    "QueryID": "ck261_actual_20261026_212902_year_run3",
+    "WallSeconds": 3.3858378670000002,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "all_run3",
+    "QueryID": "ck261_actual_20261026_212902_all_run3",
+    "WallSeconds": 3.317761848,
+    "Rows": 100000,
+    "Error": ""
+  },
+  {
+    "Label": "resume_owned_merges",
+    "QueryID": "ck261_actual_20261026_212902_resume_owned_merges",
+    "WallSeconds": 0.001906775,
+    "Rows": 0,
+    "Error": ""
+  },
+  {
+    "Label": "flush_logs",
+    "QueryID": "ck261_actual_20261026_212902_flush_logs",
+    "WallSeconds": 0.119968475,
+    "Rows": 0,
+    "Error": ""
+  }
+]

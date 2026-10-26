@@ -1,4 +1,4 @@
-# Daily participation scalar experiment
+# Daily participation experiments
 
 At 100,000 items over 365 days, combining **already reduced daily counts** into
 one complete ranking took **60–889 ms of ClickHouse server time** in this
@@ -6,10 +6,10 @@ experiment, depending on the window. Each result contained all 100,000 ordered
 item IDs. Three overlapping synthetic scopes and four buckets per scope were
 built and persisted in 4.665 seconds of cumulative server time.
 
-This establishes the cost of the scalar combination stage on this machine. It
-**does not measure or validate** producing those counts from canonical receipts,
-receipt replacement/deduplication, per-person qualification, historical access,
-erasure, or the production ContentKit algorithm. The earlier reported 107-second
+That first experiment isolates a prototype scalar combination stage. Later
+sections separately measure the actual Store's daily receipt reduction and its
+String-key, `FINAL` ranking query. None is an end-to-end HTTP/catalog benchmark.
+The earlier reported 107-second
 30-day result covered a different algorithm and fixture; these results are not
 a matched speedup comparison.
 
@@ -40,9 +40,11 @@ a matched speedup comparison.
   runs found **identical ordered IDs in all twelve**; seven runs differed only
   in score low bits, by at most 4.34e-19. The original first two outputs retain
   hashes only, so their ID ordering cannot be reconstructed. There is no
-  observed ordering flip supporting production rounding. This prototype's
-  rounding is not a proposed production scoring rule; full comparisons remain
-  in `.task/` and `receipts/unrounded-repeat-comparison.json`.
+  observed ordering flip in that UInt32 experiment. The later actual String-key
+  Store experiment below did reproduce ordering changes and motivated the
+  implemented precision rule. These are separate observations; original
+  comparisons remain in `.task/` and
+  `receipts/unrounded-repeat-comparison.json`.
 - `all` means all history in this fixture: initially 365 days, then 366 days in
   the next-day refresh. It is not a multi-year growth measurement.
 
@@ -112,6 +114,88 @@ Scopes are processed sequentially here. Additional independently stored scopes
 multiply aggregate input and preparation work; there is no claim of free
 cross-scope reuse.
 
+## Actual Store ranking over 365 days
+
+This experiment calls **`signal.Store.DailyPopular`**, using the exact migration
+0006 `ReplicatedReplacingMergeTree` schema: UUID-formatted **String** content IDs,
+UInt64 U/N counts and replacement versions, with N on each item/day row. It
+contains 100,000 items × 365 days, the same skew as the scalar prototype, and
+100,000 replacement rows for the latest day. Those replacements add five readers
+per item. A `FINAL` truth check confirms **36,500,000 canonical rows** and
+**219,500,000 total readers**; physical rows at the first measurement were
+36,616,384. Every query returns the complete 100,000-item order, not a short
+top-k sample.
+
+Only this newly created benchmark table's background merges were paused during
+the initial overlap measurement, then resumed. Shared tables and caches were
+untouched. The initial query is the unrounded implementation at `2a480be9`,
+unchanged at `3772fe78`.
+
+| Actual Store window | Server time, three runs | Driver wall time | Logical bytes read | Peak memory |
+|---|---:|---:|---:|---:|
+| 7d | 167, 175, 192 ms | 0.634–1.206 s | 55.73 MB | 74.5 MiB |
+| 30d | 299, 292, 339 ms | 0.754–1.345 s | 207.55 MB | 76.9 MiB |
+| 365d | 1,835, 2,189, 2,330 ms | 2.295–3.386 s | 2,418.42 MB | 75.2 MiB |
+| all (365d) | 1,805, 2,111, 2,292 ms | 2.335–3.318 s | 2,345.62 MB | 75.0 MiB |
+
+The original driver's wall timer includes writing its full JSON result and
+checking sample scores. Server time comes from `system.query_log` and excludes
+that local work. The 365-day queries consumed 3.55–4.55 CPU-user seconds plus
+0.07–0.10 CPU-system seconds under **two query threads**. `FINAL` and String keys
+cost more than the earlier UInt32/UUID prototype; the prototype's subsecond
+yearly number should not be attributed to this implementation.
+
+### Repeated ordering and score precision
+
+Sixteen further actual Store calls used the **same unchanged logical dataset**
+in `ck261_actual_20261026_212751`, with ordinary background merges enabled. Three
+unrounded runs changed **100, 41 and 100 ID positions** relative to the first
+run. For example, position 7,217 changed from item suffix `016bde` to `016c20`.
+Both have an independently calculated exact score of **10,355 / 21,907,300**.
+Both initially returned `0.0004726734923975113`; a later run returned
+`0.00047267349239751144` and `0.0004726734923975115`, respectively. These low-bit
+differences altered the ID order of mathematically tied items. This is a real
+ordering change, unlike the earlier UInt32 hash-only variation.
+
+The implementation change at **`1e8f332b`** applies
+`round(avg(readers / (eligible + 20.0)), 12)` before the existing ID tie breaker.
+Repeating the actual method another **16 times on the same database** produced
+all **100,000 unique, correctly sorted IDs and scores identically in every
+run**. The ordered-ID SHA256 was
+`e71bd9bf9a03b4ea823812409d4e249c72dfabfc84bc0e12ec29d86e468e2e01`.
+
+| Same-data repeated query | Server time | Driver wall time | Method-only wall time | Peak memory | CPU user / system |
+|---|---:|---:|---:|---:|---:|
+| Unrounded, 16 runs | 1.997–3.502 s | 2.681–4.305 s | not separately captured | 49.4 MiB | 3.87–6.80 / 0.08–0.18 s |
+| Rounded, 16 runs | 1.588–2.165 s | 1.889–2.528 s | 1.638–2.216 s | 49.4 MiB | 3.08–4.17 / 0.06–0.11 s |
+
+Each read 36.5m rows and **2.336 GB logical bytes**. Background merges had
+already removed physical duplicates in this repeated-query phase; the earlier
+table above separately exercises overlapping replacements. These timings were
+observed under varying concurrent host load, so the lower rounded timings are
+**not evidence of a rounding speedup**. Rounded runs reported zero physical
+`OSReadBytes`; unrounded runs reported 0–86,016 bytes. Both are cache-assisted
+measurements, not controlled cold-disk tests.
+
+The versioned `receipts/actual-*` files retain every query ID, server timing,
+CPU/read/memory counter, changed ID/score pair and full-result hashes. The large
+full ordered result files remain in `.task/actual-rank-365-v2/`,
+`.task/actual-unrounded-repeats-v2/` and `.task/actual-rounded-repeats/`.
+
+```sh
+GOWORK=off go build -p 1 -o .task/actual-rank benchmarks/daily-participation/actual_rank/main.go
+GOWORK=off go build -p 1 -o .task/repeat-rank benchmarks/daily-participation/repeat_rank/main.go
+. /path/to/owned/fixtures.env
+.task/actual-rank --days 365 --output .task/actual-rank-new
+# Use the newly created ck261_actual_* database printed above:
+.task/repeat-rank --database ck261_actual_YYYYMMDD_HHMMSS --output .task/repeats-new --repeats 16
+```
+
+Record `git rev-parse HEAD` with a new run. The current checkout's actual Store
+method is compiled into these drivers; they do not carry a replacement ranking
+SQL implementation. This phase generates reduced daily rows directly. It does
+not ingest a year of receipts, hydrate catalog cards or establish HTTP latency.
+
 ## Actual source receipts to daily preparation
 
 A second experiment calls the implementation's **actual**
@@ -119,6 +203,9 @@ A second experiment calls the implementation's **actual**
 `d5e6dc73` plus `2a480be9`. It does not substitute a benchmark SQL formulation.
 It uses the exact relevant table definitions from that source's migrations,
 with a new isolated database on the same ClickHouse/Keeper fixture.
+The later `f6761101` source change moves immutable access/domain/language
+filters before receipt aggregation. The raw timings below predate that change
+and do not measure its performance or the complete multi-scope host pipeline.
 
 One historical UTC day contains:
 
@@ -217,7 +304,7 @@ query logs reported zero physical `OSReadBytes` while still reading roughly
 bytes, memory, CPU counters, cache counters, result counts, and client wall time
 are retained rather than inferred from a stopwatch alone.
 
-All final result sets were checked for 100,000 unique IDs, score-descending /
+The prototype's final rounded result sets were checked for 100,000 unique IDs, score-descending /
 ID-ascending order, identical repeated outputs, and eight independently
 calculated sample scores per bucket. This checks the synthetic formula only.
 
