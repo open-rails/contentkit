@@ -24,7 +24,7 @@ func (s *Service) ChannelFeed(ctx context.Context, id string, r Reader, cursor s
 	if err != nil {
 		return empty, err
 	}
-	if channel.State != entities.StateActive {
+	if channel.State != entities.StateActive || channel.AuthScope == "" {
 		return empty, ErrNotFound
 	}
 	return s.List(ctx, ListOptions{Reader: r, Filter: Filter{ChannelIDs: []string{id}, includeReposts: true}, Sort: SortNewest, Cursor: cursor, Limit: limit})

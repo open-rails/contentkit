@@ -292,7 +292,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		if v.management {
 			return scope, args
 		}
-		return "(" + scope + " AND " + soft + ")", args
+		return "(" + scope + " AND " + soft + " AND " + v.channelReady(alias) + ")", args
 	}
 	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND " + soft
 	if v.mode == access.Hide {
@@ -305,7 +305,13 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	held := "(" + f("deleted") + " AND @cv_include_deleted::boolean AND " + live + " AND (EXISTS (" +
 		"SELECT 1 FROM unnest(@cv_owned_contents::text[], @cv_owned_versions::text[]) AS owned(content_id,version_id) WHERE owned.content_id=" +
 		f("content_id") + " AND owned.version_id=" + f("version_id") + ") OR @cv_owned_candidates::boolean))"
-	return "(" + scope + " AND (" + public + " OR " + held + " OR " + v.privileged(alias) + "))", args
+	return "(" + scope + " AND " + v.channelReady(alias) + " AND (" + public + " OR " + held + " OR " + v.privileged(alias) + "))", args
+}
+
+// channelReady keeps incomplete or withdrawn authoring homes out of public
+// readers and discovery. Explicit staff management still inspects their records.
+func (v *Viewer) channelReady(alias string) string {
+	return "(" + alias + ".owner_entity_id IS NULL OR EXISTS(SELECT 1 FROM " + v.s.t.entities + " source_channel WHERE source_channel.tenant_id=" + alias + ".tenant_id AND source_channel.id=" + alias + ".owner_entity_id AND source_channel.kind='channel' AND source_channel.state='active' AND source_channel.auth_scope IS NOT NULL))"
 }
 
 // privileged is the SQL test, over Listed's args, of a row whose channel the
@@ -336,7 +342,7 @@ func (v *Viewer) Indexable(alias string) (string, pgx.NamedArgs) {
 	scope, args := v.policies.SQL(alias, "ci_domain")
 	args["ci_now"] = v.now
 	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND NOT " + alias +
-		".unplayable AND " + scope + ")", args
+		".unplayable AND " + scope + " AND " + v.channelReady(alias) + ")", args
 }
 
 // facetRow is one version as the visibility rule reads it.
@@ -383,7 +389,8 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
  (coalesce(c.created_by, '') = $3 AND $3 <> '')
  FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
  JOIN `+s.t.versions+` ver ON ver.tenant_id = f.tenant_id AND ver.id = f.version_id
- WHERE f.tenant_id = $1 AND f.content_id = ANY($2) ORDER BY f.content_id, f.position, f.version_id`, s.tenant, ids, viewerID(v.actor))
+ WHERE f.tenant_id = $1 AND f.content_id = ANY($2) AND ($4 OR `+v.channelReady("f")+`)
+ ORDER BY f.content_id, f.position, f.version_id`, s.tenant, ids, viewerID(v.actor), v.management && v.staff)
 	if err != nil {
 		return nil, err
 	}
