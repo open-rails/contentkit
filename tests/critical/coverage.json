@@ -2375,7 +2375,8 @@
         "TestVersionOwnedContent/initial_and_alternative_versions_own_their_text",
         "TestVersionOwnedContent/feeds_select_text_and_summary_from_the_same_edition",
         "TestVersionOwnedContent/parent_text_writes_are_not_an_alias",
-        "TestVersionOwnedContent/hidden_initial_version_and_import_use_the_same_contract"
+        "TestVersionOwnedContent/hidden_initial_version_and_import_use_the_same_contract",
+        "TestVersionOwnedContent/title_sort_and_cursor_use_the_displayed_edition"
       ]
     },
     {
@@ -2389,6 +2390,30 @@
       "cases": [
         "TestVersionContentMigration/retained_translations_and_version_overrides_survive",
         "TestVersionContentMigration/replay_preserves_adopted_text_and_published_migration_receipts"
+      ]
+    },
+    {
+      "id": "CK-J29-S09",
+      "journey": "CK-J29",
+      "behavior": "Editor and public detail switch exact independent version content while retaining navigation",
+      "status": "verified",
+      "cases": [
+        "TestShippedVersionContentBrowser"
+      ],
+      "evidence": [
+        "Reviewed actual shipped UI browser journey creates English and Chinese editions, switches and edits Chinese, verifies English unchanged and both choices retained. Final runtime evidence remains required."
+      ]
+    },
+    {
+      "id": "CK-J09-S30",
+      "journey": "CK-J09",
+      "behavior": "One derivative processor handles images and video, withholding release until all required outputs exist",
+      "status": "verified",
+      "cases": [
+        "TestRequiredMixedDerivativesBeforeRelease"
+      ],
+      "evidence": [
+        "Reviewed actual PNG/FFmpeg audiovisual source and S3 write barrier test: image completion alone does not activate release, completed mixed outputs do, and pending replacement retains the prior reader snapshot. Final runtime execution remains required."
       ]
     }
   ],
