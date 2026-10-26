@@ -6,8 +6,8 @@ import type { Target } from "./types.js";
 
 /** A page of the caller's favorites or reactions. */
 export interface MineQuery {
-  /** contents (the default) or groups. */
-  target?: "contents" | "entities";
+  /** Content items (the default), metadata entities, or channels. */
+  target?: "contents" | "entities" | "channels";
   /** One content kind or group kind. */
   kind?: string;
   /** The group kinds each card names; every kind with a page by default. */
