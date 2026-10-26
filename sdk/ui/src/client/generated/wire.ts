@@ -213,6 +213,29 @@ export interface BodyImageInput {
   version: string;
 }
 
+export interface Card {
+  id: string;
+  kind: string;
+  code: string;
+  path: string;
+  title: string;
+  language: string;
+  cover: PublicRendition[];
+  version: CardVersion;
+  entities: Record<string, Chip[]>;
+  channel?: ChannelCard;
+  repost?: ChannelRepost;
+  counts: Counts;
+  access: CardAccess;
+  viewer?: ViewerState;
+  published_at?: string;
+  attributes: Record<string, unknown>;
+  ranking?: ContentRanking;
+  updated_at?: string;
+  deleted?: boolean;
+  excerpt?: string;
+}
+
 export interface CardAccess {
   allowed: boolean;
   level: "group" | "group_ppv" | "ppv" | "public" | "tier";
@@ -547,7 +570,7 @@ export interface ContentModel {
 }
 
 export interface ContentPage {
-  contents: DiscoveryCard[];
+  contents: Card[];
   summary?: ListingSummary;
   next_cursor?: string;
   ranking?: RankingInfo;
@@ -681,29 +704,6 @@ export interface Decision {
 export interface DeleteRecord {
   entity: string;
   external_id: string;
-}
-
-export interface DiscoveryCard {
-  id: string;
-  kind: string;
-  code: string;
-  path: string;
-  title: string;
-  language: string;
-  cover: PublicRendition[];
-  version: CardVersion;
-  entities: Record<string, Chip[]>;
-  channel?: ChannelCard;
-  repost?: ChannelRepost;
-  counts: Counts;
-  access: CardAccess;
-  viewer?: ViewerState;
-  published_at?: string;
-  attributes: Record<string, unknown>;
-  ranking?: ContentRanking;
-  updated_at?: string;
-  deleted?: boolean;
-  excerpt?: string;
 }
 
 export interface Download {
@@ -1166,7 +1166,7 @@ export interface InlineImage {
 }
 
 export interface Interaction {
-  content?: DiscoveryCard;
+  content?: Card;
   entity?: EntityCard;
   value: number;
   at: string;
@@ -1787,7 +1787,7 @@ export interface ReleaseDates {
 
 export interface ReleaseDay {
   date: string;
-  contents: DiscoveryCard[];
+  contents: Card[];
   filtered_count: number;
   filtered_entities: ReleaseFilteredEntity[];
 }
@@ -1852,7 +1852,7 @@ export interface Rule {
 }
 
 export interface SearchPage {
-  contents: DiscoveryCard[];
+  contents: Card[];
   summary?: ListingSummary;
   next_cursor?: string;
   ranking?: RankingInfo;
@@ -1960,7 +1960,7 @@ export interface Totals {
 }
 
 export interface Typeahead {
-  contents: DiscoveryCard[];
+  contents: Card[];
   entities: EntityCard[];
 }
 
