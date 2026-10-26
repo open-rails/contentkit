@@ -14,7 +14,6 @@ import (
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // QueueContentKit is the queue RiverJobs contributes. Hosts may set its
@@ -50,7 +49,6 @@ const (
 	searchSyncEvery     = 30 * time.Second // documents trail their writes by at most this
 	preferenceSyncEvery = 30 * time.Second
 	resyncEvery         = 24 * time.Hour
-	repairEvery         = time.Hour
 	reclassifyEvery     = 10 * time.Minute
 	searchPruneEvery    = time.Hour
 	popularRefreshEvery = 5 * time.Minute
@@ -74,7 +72,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &popularRefreshWorker{e: e}) },
@@ -98,7 +95,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		if e.hub.SignalsConfigured() { // their runs skip while it is down
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{})
 			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true})
-			periodic("contentkit_projection_repair", repairEvery, repairArgs{})
 			// A refresh can outlast its period; it never runs twice at once.
 			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, popularRefreshEvery,
 				func() (river.JobArgs, *river.InsertOpts) {
@@ -220,30 +216,6 @@ func (w *preferenceSyncWorker) Work(ctx context.Context, job *river.Job[preferen
 	}
 	_, err := w.e.content.SyncPreferences(ctx, h.SendPreferences)
 	return err
-}
-
-type repairArgs struct{}
-
-func (repairArgs) Kind() string { return "contentkit_projection_repair" }
-
-// repairWorker repairs projections of keys ingested since the last runs:
-// crash repair, overlapping two periods.
-type repairWorker struct {
-	river.WorkerDefaults[repairArgs]
-	e *Engine
-}
-
-func (w *repairWorker) Timeout(*river.Job[repairArgs]) time.Duration { return 30 * time.Minute }
-
-func (w *repairWorker) Work(ctx context.Context, job *river.Job[repairArgs]) error {
-	opts := signal.RepairOptions{IngestedSince: job.CreatedAt.Add(-2 * repairEvery)}
-	for {
-		res, err := w.e.hub.RepairProjections(ctx, opts)
-		if err != nil || res.Next == nil {
-			return ignoreDisabled(err)
-		}
-		opts.After = res.Next
-	}
 }
 
 type reclassifyArgs struct{}
