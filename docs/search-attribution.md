@@ -1,10 +1,11 @@
 # Search attribution
 
-Search results and content suggestions use the existing exposure, click and
+Search results, content suggestions and existing home/release/similar lists use the existing exposure, click and
 measured-engagement path. Each search carries a query ID and normalized query
 text; each rendered/visible list carries its render ID, language, ranking
 identifier and absolute result positions. Numbered pages include the page
-offset. Hidden cards are not reported as visible.
+offset. Hidden cards are not reported as visible. Non-search lists retain their
+surface and positions through the same bridge, with no search query attached.
 
 Search links carry only an opaque `ck_nav` identifier. The SDK keeps its short
 handoff in browser storage, scoped to the ContentKit mount, current identity and

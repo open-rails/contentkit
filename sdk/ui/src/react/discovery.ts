@@ -577,7 +577,7 @@ export function useExposure(items: readonly { id: string; position?: number; ver
     };
   }, [linkState, links]);
   const href = useCallback((content: string, position: number, url: string | undefined) => {
-    if (!url || !base.search_query || !isCurrent()) return url;
+    if (!url || !isCurrent()) return url;
     const key = `${content}\u0000${position}\u0000${url}`;
     let link = links.get(key);
     if (!link) {
@@ -590,14 +590,14 @@ export function useExposure(items: readonly { id: string; position?: number; ver
       links.set(key, link);
     }
     return link;
-  }, [base.search_query, base.language, isCurrent, links, items, client, segmentID, o.surface, b]);
+  }, [base.language, isCurrent, links, items, client, segmentID, o.surface, b]);
   const click = useCallback((content: string, position: number, url?: string) => {
     if (!isCurrent()) return;
     const index = Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE);
     const item = items.find((item) => item.id === content);
     const version = item?.version_id ?? item?.version?.id;
-    // Attributed search links are acknowledged by the destination, including
-    // context-menu/new-tab navigation which emits no source click event.
+    // Decorated links emit during activation, with destination fallback for
+    // native navigation that bypasses a source event.
     if (!url || !originID(url)) b.click(content, { render_id: segmentID(index), surface: o.surface, position, version_id: version, language: base.language });
   }, [b, items, segmentID, o.surface, base.language, isCurrent]);
   return { render_id: renderId, track, click, href };
