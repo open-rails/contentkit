@@ -2288,7 +2288,7 @@
         "TestShippedChannelBrowser"
       ],
       "evidence": [
-        "Real browser renders shared ChannelImageEditor/RepostButton/ChannelFeed, uploads via S3 and processing SSE, creates/removes a destination reference and preserves original content.",
+        "Real browser uses shipped ChannelsClient.uploadImage and folder against S3 and processing SSE, then renders RepostButton and ChannelFeed to create/remove a destination reference and preserve original content.",
         "Reviewed executable scenarios; combined exact-head qualification is required before release."
       ]
     },
@@ -10735,7 +10735,7 @@
         "TestShippedChannelBrowser"
       ],
       "evidence": [
-        "The shipped ChannelImageEditor uploads a real avatar through the three-step media flow and SSE, reads its persisted channel identity, then exercises repost creation and removal in the same browser journey.",
+        "The shipped ChannelsClient.uploadImage and folder methods upload a real avatar through the three-step media flow and SSE and read its persisted channel identity; rendered RepostButton and ChannelFeed then create and remove the reference.",
         "Reviewed contract; exact integrated execution remains required."
       ]
     },
@@ -10843,7 +10843,7 @@
         "TestShippedChannelBrowser"
       ],
       "evidence": [
-        "The shipped ChannelImageEditor uploads a real avatar through the three-step media flow and SSE, reads its persisted channel identity, then exercises repost creation and removal in the same browser journey.",
+        "The shipped ChannelsClient.uploadImage and folder methods upload a real avatar through the three-step media flow and SSE and read its persisted channel identity; rendered RepostButton and ChannelFeed then create and remove the reference.",
         "Reviewed contract; exact integrated execution remains required."
       ]
     }
