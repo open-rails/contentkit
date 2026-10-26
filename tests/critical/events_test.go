@@ -157,18 +157,19 @@ CREATE CONSTRAINT TRIGGER zzz_critical_delay AFTER INSERT ON %s.eventlog_pending
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 		defer cancel()
 		first, second := make(chan error, 1), make(chan error, 1)
-		update := func(id, title string, done chan<- error) {
-			_, err := admin.PatchContent(ctx, id, catalog.ContentPatch{Attributes: map[string]any{}})
+		update := func(id string, done chan<- error) {
+			mode := "closed"
+			_, err := admin.PatchContent(ctx, id, catalog.ContentPatch{Comments: &mode})
 			done <- err
 		}
-		go update(one.ID, "first request waits at commit", first)
+		go update(one.ID, first)
 		waitFor(t, func() bool {
 			var blocked int
 			err := w.pool.QueryRow(ctx, "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted", barrier).Scan(&blocked)
 			must(t, err)
 			return blocked > 0
 		})
-		go update(two.ID, "second request", second)
+		go update(two.ID, second)
 		secondFinished := false
 		waitFor(t, func() bool {
 			select {
