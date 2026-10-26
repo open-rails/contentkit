@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
@@ -19,12 +20,13 @@ import (
 const (
 	TargetContents = "contents"
 	TargetEntities = "entities"
+	TargetChannels = "channels"
 )
 
 // MineOptions select one page of the signed-in reader's favorites.
 type MineOptions struct {
 	Reader
-	// Target is contents (the default) or entities.
+	// Target is contents (the default), entities or channels.
 	Target string
 	// Kind is one content kind or entity kind; every kind by default.
 	Kind         string
@@ -39,6 +41,7 @@ type MineOptions struct {
 // Interaction is one content item or entity the reader favorited or reacted
 // to, as its card shows it now.
 type Interaction struct {
+	Channel *channels.Card       `json:"channel,omitempty"`
 	Content *Card                `json:"content,omitempty"`
 	Entity  *entities.EntityCard `json:"entity,omitempty"`
 	// Value is 1 for a favorite.
@@ -79,6 +82,14 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 		if _, ok := s.o.Kinds.Kinds[o.Kind]; o.Kind != "" && !ok {
 			return out, fmt.Errorf("%w: kind %q is not configured", ErrInvalid, o.Kind)
 		}
+	case TargetChannels:
+		if s.o.Kinds.Channels == nil || s.o.Channels == nil {
+			return out, fmt.Errorf("%w: channels are not configured", ErrInvalid)
+		}
+		if o.Kind != "" && o.Kind != "channel" {
+			return out, fmt.Errorf("%w: channel favorites have no metadata kind", ErrInvalid)
+		}
+		kinds = []string{"channel"}
 	case TargetEntities:
 		for k := range s.o.Kinds.EntityKinds {
 			kinds = append(kinds, k)
@@ -87,7 +98,7 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 			return out, fmt.Errorf("%w: group kind %q is not configured", ErrInvalid, o.Kind)
 		}
 	default:
-		return out, fmt.Errorf("%w: target %q is contents or entities", ErrInvalid, o.Target)
+		return out, fmt.Errorf("%w: target %q is contents, entities or channels", ErrInvalid, o.Target)
 	}
 	if o.Kind != "" {
 		kinds = []string{o.Kind}
@@ -100,6 +111,9 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 	args := pgx.NamedArgs{"d_tenant": s.o.Tenant, "d_user": o.Actor.AccountID(), "d_kinds": kinds, "d_limit": limit + 1, "d_after_at": afterAt, "d_after_id": afterID}
 	var q *sel
 	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = x.tenant_id AND g.id = x.content_id AND g.kind = x.content_kind AND g.state = 'active' AND NOT g.internal)`, s.t.entities)
+	if o.Target == TargetChannels {
+		exists += ` AND EXISTS(SELECT 1 FROM ` + s.t.entities + ` channel WHERE channel.tenant_id=x.tenant_id AND channel.id=x.content_id AND channel.kind='channel' AND channel.auth_scope IS NOT NULL)`
+	}
 	if o.Target == TargetContents {
 		if q, err = s.compile(ctx, o.Reader, Filter{Kind: o.Kind, keepUnplayable: true}); err != nil {
 			return out, err
@@ -154,6 +168,22 @@ WHERE @d_after_id = '' OR (at, id) < (@d_after_at, @d_after_id) ORDER BY at DESC
 	ids := make([]string, len(got))
 	for i, x := range got {
 		ids[i] = x.id
+	}
+	if o.Target == TargetChannels {
+		cards, err := s.o.Channels.Cards(ctx, ids, cmpOr(o.DisplayLanguage, o.Language))
+		if err != nil {
+			return out, err
+		}
+		byID := map[string]channels.Card{}
+		for _, c := range cards {
+			byID[c.ID] = c
+		}
+		for _, x := range got {
+			if c, ok := byID[x.id]; ok {
+				out.Items = append(out.Items, Interaction{Channel: &c, Value: x.value, At: x.at})
+			}
+		}
+		return out, nil
 	}
 	if o.Target == TargetEntities {
 		gids := make([]entities.EntityID, len(ids))
@@ -212,7 +242,7 @@ func decodeMineCursor(raw string) (time.Time, string, error) {
 }
 
 var mineParams = []httpapi.Param{
-	httpapi.Text("target", "contents (the default) or entities"),
+	httpapi.Text("target", "contents (the default), entities or channels"),
 	httpapi.Text("kind", "only this content kind or group kind"),
 	cardEntities,
 	httpapi.Text("cursor", "the previous page's next_cursor"),
@@ -222,7 +252,7 @@ var mineParams = []httpapi.Param{
 
 var mineRoutes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/favorites", Resource: "discovery", Auth: httpapi.User,
-		Doc:   "The content items (as their listing shows them) or groups the reader favorited, most recent first.",
+		Doc:   "The content items (as their listing shows them) entities or channels the reader favorited, most recent first.",
 		Query: params(mineParams, readerParams), Responses: []httpapi.Reply{httpapi.OK(InteractionPage{})}},
 		Serve: httpapi.H(handler.favorites)},
 }

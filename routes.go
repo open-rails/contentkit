@@ -68,7 +68,7 @@ var groupModules = []struct {
 	{UploadRoutes, []httpapi.Module{httpapi.Upload}, "upload"},
 	{MediaRoutes, []httpapi.Module{httpapi.Media, httpapi.Versions}, "media"},
 	{CodeRoutes, []httpapi.Module{httpapi.Codes}, "codes"},
-	{EntityRoutes, []httpapi.Module{httpapi.Entities, httpapi.Channels}, "entities"},
+	{EntityRoutes, []httpapi.Module{httpapi.Entities}, "entities"},
 	{DiscoveryRoutes, []httpapi.Module{httpapi.Discovery}, "discovery"},
 	{ImportRoutes, []httpapi.Module{httpapi.Import}, "import"},
 }
@@ -123,6 +123,9 @@ func (e *Engine) Routes(selection Routes) ([]Route, error) {
 			}
 			modules[m] = e.modules[m]
 		}
+	}
+	if selection.Groups&EntityRoutes != 0 && e.modules[httpapi.Channels] != nil {
+		modules[httpapi.Channels] = e.modules[httpapi.Channels]
 	}
 	return []Route{{Path: prefix + httpapi.Version + "/", Handler: e.dispatch(prefix, modules)}}, nil
 }
