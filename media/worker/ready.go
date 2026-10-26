@@ -17,7 +17,7 @@ import (
 )
 
 // completionHook is part of the processing attempt. It records observable
-// progress/completion and real metadata work before River completes the job.
+// progress/completion and the pending release wakeup before River completes the job.
 // A failed transaction retries this same attempt; there is no delivery job.
 type completionHook struct {
 	river.HookDefaults
@@ -53,7 +53,7 @@ func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err
 			return err
 		}
 		// Existing custom embedded integrations keep their transaction contract.
-		// Stock workers need no callbacks: facts/snapshots are version metadata work.
+		// Stock workers wake publication directly without a preparation job.
 		if r.State == media.StateProcessing {
 			if hooks.ItemProgressed != nil {
 				return hooks.ItemProgressed(ctx, tx, args.Ref)

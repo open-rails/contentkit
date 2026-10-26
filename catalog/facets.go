@@ -18,8 +18,7 @@ import (
 // content items, and queues their search documents, in q's transaction.
 // live_from is when a version's release completed, kept through deletion so
 // holders of a deleted item still read what was live; deleted marks either
-// deletion; unplayable marks a gated player version whose media does not
-// play yet (playable false; unknown lists).
+// deletion. Availability comes only from a completed publication.
 // Every
 // write to a content item, its versions, memberships, access, listing,
 // restrictions, traits or attributes calls it before committing; the entities
@@ -81,7 +80,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 	if err != nil {
 		return err
 	}
-	if _, err := q.Exec(ctx, `INSERT INTO `+s.t.facets+` AS f (tenant_id, content_id, version_id, kind, live_from, deleted, unplayable, languages,
+	if _, err := q.Exec(ctx, `INSERT INTO `+s.t.facets+` AS f (tenant_id, content_id, version_id, kind, live_from, deleted, languages,
  access_level, access_tiers, access_entity_id, access_releases, restrictions, entity_ids, traits, owner_entity_id, position, published_at, attributes,
  updated_at)
  SELECT c.tenant_id, c.id, v.id, c.kind,
@@ -89,7 +88,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
    AND (v.state = 'published' OR (v.state = 'deleted' AND v.published_at IS NOT NULL))
    AND v.released AND c.published_at IS NOT NULL AND v.published_at IS NOT NULL
    THEN greatest(c.published_at, v.published_at) END,
-  c.state = 'deleted' OR v.state = 'deleted', c.kind = ANY($4::text[]) AND v.playable IS FALSE, v.languages,
+  c.state = 'deleted' OR v.state = 'deleted', v.languages,
   a.level, a.tiers, a.entity_id, coalesce(a.releases, '[]'::jsonb), c.restrictions, a.entities, v.traits, c.owner_entity_id, v.position, c.published_at,
   c.attributes || v.attributes, now()
  FROM jsonb_to_recordset($3::jsonb) AS a(version_id text, level text, tiers text[], entity_id text, releases jsonb, entities text[])
@@ -97,12 +96,12 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
  JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
  WHERE c.id = ANY($2)
  ON CONFLICT (tenant_id, version_id) DO UPDATE SET content_id = EXCLUDED.content_id, kind = EXCLUDED.kind, live_from = EXCLUDED.live_from,
-  deleted = EXCLUDED.deleted, unplayable = EXCLUDED.unplayable, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
+  deleted = EXCLUDED.deleted, languages = EXCLUDED.languages, access_level = EXCLUDED.access_level,
   access_tiers = EXCLUDED.access_tiers, access_entity_id = EXCLUDED.access_entity_id, access_releases = EXCLUDED.access_releases,
   restrictions = EXCLUDED.restrictions, entity_ids = EXCLUDED.entity_ids, traits = EXCLUDED.traits, owner_entity_id = EXCLUDED.owner_entity_id,
   position = EXCLUDED.position, published_at = EXCLUDED.published_at, attributes = EXCLUDED.attributes,
   updated_at = EXCLUDED.updated_at`,
-		s.tenant, ids, string(data), s.playerKinds()); err != nil {
+		s.tenant, ids, string(data)); err != nil {
 		return err
 	}
 	if err := s.recordAccessHistory(ctx, q, ids); err != nil {
@@ -114,23 +113,6 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 		}
 	}
 	return s.markDocuments(ctx, q, ids)
-}
-
-// playerKinds are the kinds whose versions list once their media plays
-// (Options.PlayableKinds).
-func (s *Store) playerKinds() []string { return append([]string{}, s.playable...) }
-
-// gated reports a kind whose versions list only once their media plays.
-func (s *Store) gated(kind string) bool { return slices.Contains(s.playable, kind) }
-
-// startsUnplayable is a new version's playable fact: false for a gated kind,
-// until its media records otherwise; unknown (NULL) for others.
-func (s *Store) startsUnplayable(kind string) *bool {
-	if !s.gated(kind) {
-		return nil
-	}
-	f := false
-	return &f
 }
 
 // effectiveRule decodes a version's effective rule: its override, else its

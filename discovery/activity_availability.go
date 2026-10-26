@@ -22,10 +22,9 @@ import (
 const maxAccessHistory = 100_000
 
 type accessHistoryState struct {
-	Kind       string     `json:"kind"`
-	LiveFrom   *time.Time `json:"live_from"`
-	Deleted    bool       `json:"deleted"`
-	Unplayable bool       `json:"unplayable"`
+	Kind     string     `json:"kind"`
+	LiveFrom *time.Time `json:"live_from"`
+	Deleted  bool       `json:"deleted"`
 	// LegacyListing is read only from snapshots captured before listing policies
 	// were removed. New snapshots omit it; historical availability stays intact.
 	LegacyListing string           `json:"listing"`
@@ -117,7 +116,7 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
 		if begin.Before(from) {
 			begin = from
 		}
-		if row.state.Kind != kind || row.state.Deleted || row.state.Unplayable || row.state.LiveFrom == nil || (row.state.LegacyListing != "" && row.state.LegacyListing != "listed") ||
+		if row.state.Kind != kind || row.state.Deleted || row.state.LiveFrom == nil || (row.state.LegacyListing != "" && row.state.LegacyListing != "listed") ||
 			scope.Language != "" && !slices.Contains(row.state.Languages, scope.Language) {
 			continue
 		}

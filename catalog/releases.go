@@ -17,11 +17,11 @@ func (s *Store) recordReleases(ctx context.Context, tx pgx.Tx, ids []string) (in
  LEFT JOIN LATERAL (SELECT h.occurred_at AS reopened FROM `+s.qs+`.content_access_history h
  WHERE h.tenant_id=f.tenant_id AND h.content_id=f.content_id AND h.version_id=f.version_id AND h.id>(
  SELECT max(prior.id) FROM `+s.qs+`.content_access_history prior WHERE prior.tenant_id=f.tenant_id AND prior.content_id=f.content_id AND prior.version_id=f.version_id
- AND (coalesce((prior.snapshot->>'deleted')::boolean,false) OR coalesce((prior.snapshot->>'unplayable')::boolean,false) OR prior.snapshot->>'live_from' IS NULL
+ AND (coalesce((prior.snapshot->>'deleted')::boolean,false) OR prior.snapshot->>'live_from' IS NULL
  OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(prior.snapshot->'releases','[]'::jsonb)) previous_release
  WHERE `+s.qs+`.content_release_key(previous_release)=`+s.qs+`.content_release_key(release))))
  ORDER BY h.id LIMIT 1) availability ON true
- WHERE f.tenant_id=$1 AND f.content_id=ANY($2) AND NOT f.deleted AND NOT f.unplayable
+ WHERE f.tenant_id=$1 AND f.content_id=ANY($2) AND NOT f.deleted
  AND f.live_from<=$3 AND (release->>'at')::timestamptz<=$3
  ORDER BY f.content_id,f.version_id,(release->>'at')::timestamptz`, s.tenant, ids, s.now())
 	if err != nil {

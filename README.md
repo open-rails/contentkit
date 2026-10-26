@@ -567,7 +567,7 @@ Personalized, watermarked archives stream per request with
 Ordinary reader archives use the bounded, on-demand private cache described
 above; only non-reader ZIP processing presets are generated ahead of time.
 
-**Video** (`media/video`): one `contentkit_media_video` job on `media_video` owns
+**Video** (`media/video`): the unified `contentkit_media_derivatives` job on `media_derivatives` owns
 planning, conversion and publication. It checkpoints bounded encoded ranges,
 yields between them so shorter videos can run, and resumes successful ranges
 after shutdown. An `HLS` preset encodes the ladder (rung = short

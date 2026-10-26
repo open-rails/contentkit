@@ -115,7 +115,7 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
 		exists += ` AND EXISTS(SELECT 1 FROM ` + s.t.entities + ` channel WHERE channel.tenant_id=x.tenant_id AND channel.id=x.content_id AND channel.kind='channel' AND channel.auth_scope IS NOT NULL)`
 	}
 	if o.Target == TargetContents {
-		if q, err = s.compile(ctx, o.Reader, Filter{Kind: o.Kind, keepUnplayable: true}); err != nil {
+		if q, err = s.compile(ctx, o.Reader, Filter{Kind: o.Kind}); err != nil {
 			return out, err
 		}
 		for k, v := range q.args {
@@ -133,7 +133,7 @@ func (s *Service) mine(ctx context.Context, o MineOptions, table, value, at stri
  AND x.content_kind = ANY(@summary_kinds::text[]) AND %s)`, table, value),
 					pgx.NamedArgs{"summary_user": o.Actor.AccountID(), "summary_kinds": kinds})
 			}
-			out.Summary, err = s.listingSummary(ctx, Filter{Kind: o.Kind, keepUnplayable: true}, q, sort, &summaryCandidates{selection: selection})
+			out.Summary, err = s.listingSummary(ctx, Filter{Kind: o.Kind}, q, sort, &summaryCandidates{selection: selection})
 			if err != nil {
 				return out, err
 			}

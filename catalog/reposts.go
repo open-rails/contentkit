@@ -140,7 +140,7 @@ func (s *Store) PutRepost(ctx context.Context, actor access.Actor, destination, 
 		clause, args := viewer.Listed("f")
 		args["rp_tenant"], args["rp_content"], args["rp_versions"] = s.tenant, contentID, allowed
 		var readable bool
-		err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM "+s.t.facets+" f WHERE f.tenant_id=@rp_tenant AND f.content_id=@rp_content AND f.version_id=ANY(@rp_versions::text[]) AND NOT f.deleted AND NOT f.unplayable AND f.live_from<=@cv_now::timestamptz AND ("+clause+"))", args).Scan(&readable)
+		err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM "+s.t.facets+" f WHERE f.tenant_id=@rp_tenant AND f.content_id=@rp_content AND f.version_id=ANY(@rp_versions::text[]) AND NOT f.deleted AND f.live_from<=@cv_now::timestamptz AND ("+clause+"))", args).Scan(&readable)
 		if err != nil {
 			return err
 		}

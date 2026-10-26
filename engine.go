@@ -440,38 +440,14 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		return err
 	}
 	e.channels = channels.FromStore(e.entities)
-	playable, err := e.playableKinds()
-	if err != nil {
-		return err
-	}
 	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
-		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences, PlayableKinds: playable,
+		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
 	if e.catalog, err = catalog.New(ctx, co); err != nil {
 		return err
 	}
 	return nil
-}
-
-// playableKinds are the player kinds media streams (an HLS or audio preset):
-// their versions list once a rendition is out.
-func (e *Engine) playableKinds() ([]string, error) {
-	if e.cfg.Media == nil {
-		return nil, nil
-	}
-	mc, err := e.cfg.MediaKinds()
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, k := range mc.Kinds {
-		if e.cfg.Content.Kinds[k.Name].Presentation == "player" &&
-			slices.ContainsFunc(k.Private, func(p media.Private) bool { return p.HLS != nil }) {
-			out = append(out, k.Name)
-		}
-	}
-	return out, nil
 }
 
 // newVersions binds the one publication service before optional media storage.

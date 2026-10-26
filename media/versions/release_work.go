@@ -321,6 +321,11 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 		}
 		return prior, nil
 	}
+	if live && m != nil && !k.Readiness(m).Ready() {
+		// Publication is all-or-nothing for required outputs. Partial
+		// processing is observable to editors, never a partial reader release.
+		plan.Waiting = true
+	}
 	var identity []any
 	if k != nil {
 		served := map[string]bool{}
@@ -762,6 +767,11 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err != nil {
 				return err
 			}
+			if plan.Waiting {
+				_, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='waiting',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id)
+				current = false
+				return err
+			}
 			active, err := s.activeRelease(ctx, tx, t)
 			if err != nil {
 				return err
@@ -951,14 +961,6 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 		}
 		if err := completion.PublicationCompletedTx(ctx, tx, plan.Target, id, plan.Chapters, plan.Released, at); err != nil {
 			return err
-		}
-		// The automatic cover is selected only from the now-active pages.
-		// Its normal metadata/image work is idempotent and cannot select a
-		// future chapter merely because its preparation has finished.
-		if k != nil {
-			if err := s.enqueueTx(ctx, tx, publishArgs{Content: plan.Content, Version: plan.Version}); err != nil {
-				return err
-			}
 		}
 		if current && plan.NextAt != nil {
 			return s.scheduleReleaseAtTx(ctx, tx, plan.Target, *plan.NextAt)

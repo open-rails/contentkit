@@ -1306,7 +1306,7 @@ and `hentai0_media_worker`, and passes it everywhere:
 It is required. Hosts sharing a database must never share one: a worker
 drains every job in its schema, so it would take another host's jobs (same
 queue and job kinds) and fail them against its own registry and bucket. Queue
-names (`media_ingest`, `media_image`, `media_video`) are fixed within a schema.
+names (`media_ingest`, `media_derivatives`) are fixed within a schema.
 Every accepted upload passes through `media_ingest`, so a worker must run even
 for kinds without presets. Ingest preserves uploaded audio without conversion;
 video processing retains its configured soundtracks. Autoscalers (KEDA) can

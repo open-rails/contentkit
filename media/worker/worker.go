@@ -28,6 +28,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
@@ -75,7 +76,7 @@ type Config struct {
 	MaxPixels           int
 	MaxFrames           int
 	MaxAnimationSeconds float64
-	// JobTimeout bounds one image job (default 1 h).
+	// JobTimeout bounds one ingest or derivative attempt (default 1 h).
 	JobTimeout time.Duration
 	// ShutdownGrace is how long running jobs get to finish on shutdown
 	// before they are cancelled and retried elsewhere; default 30 s.
@@ -186,6 +187,8 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	// A stock worker can replace published renditions too. Install the same
 	// synchronous catalog barrier as embedded writers before any DELETE.
 	registryConfig := c.Kinds.Config()
+	registryConfig.Hooks.CanUpload = preparationUploads{}
+
 	registryConfig.Hooks.BeforeRetire = versions.RetirementBarrier(c.Pool, c.ContentSchema, c.Kinds)
 	paths := versions.ChapterPathHooks(c.Pool, c.ContentSchema, c.Kinds, publish)
 	registryConfig.Hooks.ValidatePathsChanged = paths.ValidatePathsChanged
@@ -201,6 +204,11 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := manifests.ValidatePublicationLayoutMigration(ctx); err != nil {
 		return nil, fmt.Errorf("media/worker: publication layout migration required: %w", err)
 	}
+	uploads, err := media.NewUploads(media.UploadOptions{Store: c.Store, Manifests: manifests})
+	if err != nil {
+		return nil, err
+	}
+	prepare := versions.PrepareDerivatives(c.Pool, c.ContentSchema, manifests, uploads)
 	var observeEncode func(video.EncodeObservation)
 	if c.Metrics != nil {
 		observeEncode = c.Metrics.ObserveEncode
@@ -231,7 +239,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		if err := river.AddWorkerSafely(cfg.Workers, &ingestWorker{c: c, manifests: manifests, queue: queue}); err != nil {
 			return err
 		}
-		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, images: images, manifests: manifests, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, MaxWorkers: c.DerivativeWorkers, Logger: c.Logger}})
+		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, MaxWorkers: c.DerivativeWorkers, Logger: c.Logger}})
 	}, nil, nil)
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
 		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
@@ -392,6 +400,7 @@ type derivativeWorker struct {
 	images    *image.Processor
 	manifests *media.Manifests
 	video     video.WorkerConfig
+	prepare   func(context.Context, contentref.ContentRef) error
 }
 
 func (w *derivativeWorker) Timeout(*river.Job[workqueue.DerivativeArgs]) time.Duration {
@@ -424,6 +433,11 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	if err := w.manifests.Recover(ctx, pj.Ref); err != nil {
 		return err
 	}
+	if !a.Editor {
+		if err := w.prepare(ctx, a.Ref); err != nil {
+			return err
+		}
+	}
 	var checkpoint struct {
 		ImagesForced bool `json:"contentkit_images_forced"`
 	}
@@ -442,6 +456,15 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	if a.Editor {
 		return nil
 	}
+	// Image analysis may have established page selection or changed the cover
+	// source. Prepare those inputs, then finish their image outputs in this job.
+	if err := w.prepare(ctx, a.Ref); err != nil {
+		return err
+	}
+	pj.Force = false
+	if err := full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj)); err != nil {
+		return err
+	}
 	return w.video.Run(ctx, job)
 }
 
@@ -453,4 +476,12 @@ func full(ctx context.Context, ms *media.Manifests, ref contentref.ContentRef, e
 		return err
 	}
 	return river.JobCancel(errors.Join(err, ms.SetFull(ctx, ref, err)))
+}
+
+// preparationUploads authorizes only internal same-version cover preparation;
+// this worker exposes no HTTP upload interface.
+type preparationUploads struct{}
+
+func (preparationUploads) CanUpload(_ context.Context, a access.Actor, _ media.UploadTarget) (media.UploadGrant, error) {
+	return media.UploadGrant{Allowed: a.ID == "contentkit" && a.Kind == "contentkit:system" && !a.Anonymous, Exempt: true}, nil
 }

@@ -32,11 +32,10 @@ type ProcessingEvent struct {
 	Archives     ArchiveStatus   `json:"archives"`
 	Presets      []PresetStatus  `json:"presets"`
 	FailureCount int             `json:"failure_count"`
-	Playable     bool            `json:"playable"`
 }
 
 // CompleteProcessing commits any changed processor observation together with
-// its idempotent metadata work. The caller must return an error to its processing job
+// its idempotent release wakeup. The caller must return an error to its processing job
 // if this fails. Retrying re-reads current media under a per-item database lock;
 // the durable fingerprint suppresses duplicate facts even after log retention.
 func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentref.ContentRef, metadata func(context.Context, pgx.Tx, Readiness) error) error {
@@ -65,13 +64,13 @@ func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentre
 		}
 		k := item.Kind()
 		status := statusOf(k, m, EncodeStatus{})
-		fact := ProcessingEvent{Kind: ref.ContentKind, ContentID: ref.ContentID, VersionID: ref.Version(), State: status.State, Uploads: status.Uploads, Archives: status.Archives, Presets: status.Presets, FailureCount: status.FailureCount, Playable: k.Playable(m)}
+		fact := ProcessingEvent{Kind: ref.ContentKind, ContentID: ref.ContentID, VersionID: ref.Version(), State: status.State, Uploads: status.Uploads, Archives: status.Archives, Presets: status.Presets, FailureCount: status.FailureCount}
 		payload, err := json.Marshal(fact)
 		if err != nil {
 			return err
 		}
 		// Output identity matters even when counts are unchanged: replacing one page
-		// or selecting a different cover must wake the metadata snapshot worker.
+		// or selecting a different cover must wake the pending release.
 		identity := m.Clone()
 		identity.Receipt = nil
 		identity.Hidden = false
@@ -90,8 +89,7 @@ func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentre
 			return err
 		}
 		readiness := k.Readiness(m)
-		// Event deduplication must not suppress an idempotent metadata repair.
-		// A prior snapshot job may have failed after the observation committed.
+		// Event deduplication must not suppress the pending release wakeup.
 		if metadata != nil {
 			if err := metadata(ctx, tx, readiness); err != nil {
 				return err
