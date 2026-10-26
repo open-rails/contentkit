@@ -133,6 +133,9 @@ identifies the stored result and its dates rather than claiming a previous
 UTC day's snapshot is current. Stored rankings remain readable during a
 ClickHouse outage.
 
+Pagination binds the selected bucket/range and filters, but does not freeze later
+ranking or catalog edits. A refresh while someone browses can change item order.
+
 ## Performance evidence
 
 The [daily participation experiment](../benchmarks/daily-participation/README.md)
