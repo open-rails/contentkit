@@ -300,6 +300,7 @@ export const es: ContentKitUiMessageBundle = {
     resume_mismatch: "La subida guardada es de otro archivo. Vuelve a elegir el archivo.",
     moderation_rejected: "La moderación lo ha rechazado.",
     comment_banned: "No puedes comentar aquí.",
+    comment_moderated: "No se puede editar un comentario en revisión o no publicado.",
     comments_closed: "Los comentarios están cerrados aquí.",
     comments_locked: "Desbloquéalo para ver y escribir comentarios.",
     not_joinable: "No es posible unirse a este grupo ahora mismo.",

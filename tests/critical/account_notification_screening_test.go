@@ -72,11 +72,18 @@ func TestAccountNotificationScreening(t *testing.T) {
 		if len(n.items(t, owner.ID)) != 1 {
 			t.Fatal("second held reply was already published")
 		}
-		changed, err = n.a.client(writerToken).PatchComment(t.Context(), second.ID, content.CommentEdit{Body: "Approved replacement"})
-		must(t, err)
-		if changed.Moderation != "" {
-			t.Fatalf("approved edit remained held: %+v", changed)
+		_, err = n.a.client(writerToken).PatchComment(t.Context(), second.ID, content.CommentEdit{Body: "Approved replacement"})
+		requireError(t, err, 403, "comment_moderated")
+		if len(n.items(t, owner.ID)) != 1 {
+			t.Fatal("refused edit of a held reply published it")
 		}
+		queue, err = admin.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: content.KindComment})
+		must(t, err)
+		if len(queue.Items) != 1 || queue.Items[0].ID != second.ID || queue.Items[0].Body != "review: second reply" {
+			t.Fatalf("refused edit changed the held reply: %+v", queue)
+		}
+		_, err = admin.PostModerationResolve(t.Context(), content.KindComment, second.ID, content.ResolveInput{Decision: content.DecisionApprove, Revision: queue.Items[0].Revision})
+		must(t, err)
 		notices = n.items(t, owner.ID)
 		if len(notices) != 2 || len(n.items(t, writer.ID)) != 0 {
 			t.Fatalf("edit approval missing or sender notified: %+v", notices)
