@@ -15,12 +15,11 @@ import type {
   MemberRef,
   Membership,
   MergeReport,
-  MyEntity,
   Name,
   NewEntity,
   Edit,
 } from "../client/generated/wire.js";
-import type { EntityImageSlot, MyEntityQuery } from "../client/entities.js";
+import type { EntityImageSlot } from "../client/entities.js";
 import { useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
@@ -236,17 +235,6 @@ export function useEntity(id: string | null | undefined, o: { language?: string;
     ),
     previews: { cover: entity?.cover?.image ? previews.cover : undefined, avatar: entity?.avatar?.image ? previews.avatar : undefined },
   };
-}
-
-/** Entities the signed-in person owns, edits or belongs to, a cursor page at a time; nothing signed out. */
-export function useMyEntities(q: Omit<MyEntityQuery, "cursor" | "limit"> & { pageSize?: number } = {}, o: { client?: ContentKitClient } = {}): UseList<MyEntity> {
-  const { client, store, scope, viewer, language } = useContentScope(o.client);
-  const { pageSize, ...rest } = q;
-  const query = { language, ...rest };
-  return useList(store, viewer === null ? null : keyOf("entities-mine", scope, query, pageSize), { type: "entities-mine" }, async (cursor, signal) => {
-    const page = await client.entities.mine({ ...query, cursor: cursor as string | undefined, limit: pageSize }, signal);
-    return { items: page.entities, next: page.next_cursor ?? null };
-  });
 }
 
 /** A membership with a stable id: (entity, content, version, role) is its identity. */

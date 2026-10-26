@@ -10,6 +10,17 @@ export const en = {
   ...entities,
   ...discovery,
   ...content,
+  channels: {
+    repost: "Repost",
+    removeRepost: "Remove repost",
+    repostHint: "Share this post on a channel you publish to. The original keeps its author, comments and access settings.",
+    removeHint: "Remove this reference from your channel. The original post stays unchanged.",
+    destination: "Destination channel",
+    loading: "Loading your channels…",
+    noDestination: "You do not have another channel you can publish to.",
+    repostedBy: "Reposted by {name}",
+    channel: "Channel",
+  },
   common: {
     cancel: "Cancel",
     close: "Close",

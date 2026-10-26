@@ -67,7 +67,7 @@ export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
   noun?: { one: string; other: string };
 }
 
-/** Whether the caller manages content: root:content:write holders, creators and owner-group editors. */
+/** Whether the caller manages content: root:content:write holders, creators and channel editors. */
 export function useContentManagerAccess(o: FlowClientOptions = {}): StaffAccess<"contents"> {
   return useStaffAccess(["contents"] as const, o);
 }
@@ -697,8 +697,8 @@ export interface ContentEditorProps {
   /** Registers the editor's confirmation before the enclosing flow leaves it. */
   onLeaveGuard?: (guard: (() => Promise<boolean>) | undefined) => void;
   labels?: Labels;
-  /** A new item's owner group: a channel its editors write for. */
-  ownerEntity?: string;
+  /** A new item's primary channel. Omit when the kind has a fixed channel. */
+  channelId?: string;
   /** Entities a new item starts linked to, e.g. the series it was created from; ignored for an existing item. */
   entities?: readonly EntityCard[];
   /** After create: show the new item (the editor goes on editing it). */
@@ -739,7 +739,7 @@ export function ContentEditor(p:ContentEditorProps){
   return <StandardContentEditor key={boundary.key} {...props}/>;
 }
 
-function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerEntity, entities, onCreated, onDeleted, onCancel, onError, management, noun }: ContentEditorProps) {
+function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, channelId, entities, onCreated, onDeleted, onCancel, onError, management, noun }: ContentEditorProps) {
   const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
@@ -807,7 +807,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     if (!f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       if (!item) {
-        const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: model?.kinds[kind]?.owner_entity ? undefined : ownerEntity });
+        const created = await ed.create({ kind, text: { [language]: text() }, channel_id: model?.kinds[kind]?.channel?.fixed ? undefined : channelId });
         // Starting entities link once the item exists; version-level kinds need a version first.
         const linked = (entities ?? []).filter((g) => model?.kinds[kind]?.entities?.includes(g.kind) && allowsEntityScope(model.entity_kinds[g.kind], "content"));
         if (linked.length) {
