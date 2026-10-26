@@ -47,6 +47,7 @@ export function useContents(q: ContentQuery | null, o: { client?: ContentKitClie
 /** One numbered page of a list or search: its cards and the selection's summary (total included). */
 export interface UseContentsPage {
   items: Card[];
+  popularity?: ContentPage["popularity"];
   summary?: ContentPage["summary"];
   loading: boolean;
   error?: ContentKitError;
@@ -59,7 +60,7 @@ const NO_ENTITIES: EntityCard[] = [];
 function useNumbered(key: string | null, fetch: (signal: AbortSignal) => Promise<ContentPage>, o: { client?: ContentKitClient }): UseContentsPage {
   const { store } = useContentScope(o.client);
   const r = useResource<ContentPage>(store, key, { type: "cards" }, fetch);
-  return { items: r.data?.contents ?? NO_CARDS, summary: r.data?.summary, loading: r.loading || (!!key && !r.loaded), error: r.error, reload: r.reload };
+  return { items: r.data?.contents ?? NO_CARDS, popularity:r.data?.popularity, summary: r.data?.summary, loading: r.loading || (!!key && !r.loaded), error: r.error, reload: r.reload };
 }
 
 /** Page `page` (from 1) of a list, with its summary; null reads nothing. */
@@ -82,7 +83,7 @@ export function useSearchPage(q: SearchQuery | null, page: number, o: { client?:
     if (n === 1 && viewer === null && !signal.aborted && isCurrent()) client.discovery.browserSearches.record(query!.q, out.contents.length);
     return out;
   });
-  return { items: r.data?.contents ?? NO_CARDS, summary: r.data?.summary, entities: r.data?.entities ?? NO_ENTITIES, loading: r.loading || (!!key && !r.loaded), error: r.error, reload: r.reload };
+  return { items: r.data?.contents ?? NO_CARDS, popularity:r.data?.popularity, summary: r.data?.summary, entities: r.data?.entities ?? NO_ENTITIES, loading: r.loading || (!!key && !r.loaded), error: r.error, reload: r.reload };
 }
 
 /** Locked contents in the same full selection, including its activity window. */

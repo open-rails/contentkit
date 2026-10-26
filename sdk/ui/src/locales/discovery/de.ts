@@ -82,6 +82,7 @@ export const discovery: typeof en = {
   listing: {
     preparingPopularity: "Diese Rangliste wird vorbereitet.",
     provisionalPopularity: "Die jüngsten Aktivitäten werden noch aktualisiert.",
+    activityAvailableFrom: "Aktivitätsdaten sind ab {from} (UTC) verfügbar.",
     activityRange: "Aktivität vom {from} bis einschließlich {until} (UTC)",
     popularPeriod: "Beliebtheitszeitraum",
     pastDays_one: "Letzter {count} Tag",
