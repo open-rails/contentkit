@@ -20,7 +20,7 @@ ContentKit accepts this directly as part of `kinds.Config`:
 
 ```yaml
 languages: [en, ja]
-kinds:
+content_kinds:
   gallery:
     route: g
     presentation: reader

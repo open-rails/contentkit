@@ -274,7 +274,7 @@ What a viewer who doesn't open content (or a version) sees of it is each
 kind's policy:
 
 ```yaml
-kinds:
+content_kinds:
   gallery:
     locked:
       show: [cover, entities] # of description, cover, entities, attributes, length, reactions, favorites, views, comments
@@ -316,7 +316,7 @@ download charged once to `media.downloads`:
 
 ```yaml
 content:
-  kinds:
+  content_kinds:
     video:
       download: {serve: original}   # default of players; or an MP4 preset ("mp4-1080"); {off: true} for none
     gallery: {}                     # readers serve pages: the media kind's Publish.Download zip

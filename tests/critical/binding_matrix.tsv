@@ -225,3 +225,4 @@ ts:ContentUpload	ts	TS exported component	ContentUpload	sdk/ui/src/components/ad
 ts:MediaProcessingPanel	ts	TS exported component	MediaProcessingPanel	sdk/ui/src/components/media-processing-panel.tsx	included-critical media247 streaming/UI acceptance
 go:Source.RetireInboxSync	go	Go explicit migration method	Source.RetireInboxSync	notification/openrails/retire.go	included-critical
 go:authkit.MigrationScopes	go	Go AuthKit migration adapter	authkit.MigrationScopes	adapters/authkit/migration.go	included-critical
+go:kinds.Config	go	Go content model configuration	kinds.Config	kinds/kinds.go	included-critical
