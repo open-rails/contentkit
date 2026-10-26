@@ -28,7 +28,7 @@ export interface ContentAdminProps extends AdminFlowProps, AdminRouteProps {
   content?: Pick<ContentManagerProps, "renderEditor" | "contentHref">;
   entities?: Pick<EntityManagerProps, "renderContent" | "contentHref">;
   moderation?: Pick<CommentModerationProps, "itemHref" | "userHref" | "sections">;
-  polls?: Pick<PollManagerProps, "freeText" | "maxOptions">;
+  polls?: Pick<PollManagerProps, "maxOptions">;
 }
 
 const SECTIONS: readonly ContentAdminSection[] = ["contents", "entities", "moderation", "polls", "statistics"];

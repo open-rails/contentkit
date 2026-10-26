@@ -19,8 +19,8 @@ import (
 	"github.com/riverqueue/river"
 )
 
-// A releasePlan is a frozen storage attempt. Chapter membership is derived
-// from ordered virtual paths each time a new attempt is prepared.
+// A releasePlan is a frozen publication attempt with optional storage work.
+// Chapter membership comes from ordered paths when a new plan is prepared.
 type releasePlan struct {
 	EffectiveAccess access.Rule `json:"effective_access"`
 	Target
@@ -50,7 +50,11 @@ type releaseMutationContextKey struct{}
 // A reader-equivalent revision can still have stale physical copies from an
 // attempt superseded after storage I/O. Never skip their recorded retirement.
 func (p *releasePlan) storageSettled(active *releasePlan) bool {
-	if active.View == nil || len(p.Previous) != len(active.View.Deliveries) {
+	if p.View == nil || active.View == nil {
+		return p.View == nil && active.View == nil &&
+			len(p.Copies) == 0 && len(p.Previous) == 0 && len(active.Copies) == 0 && len(active.Previous) == 0
+	}
+	if len(p.Previous) != len(active.View.Deliveries) {
 		return false
 	}
 	for _, id := range p.Previous {
@@ -65,6 +69,44 @@ func (p *releasePlan) storageSettled(active *releasePlan) bool {
 		}
 	}
 	return true
+}
+
+// releaseMedia returns only an explicitly configured kind. Absence is an
+// ordinary publication without storage; a configured runtime must be bound.
+func (s *Service) releaseMedia(kind string) (*media.Kind, error) {
+	if _, exists := s.o.Kinds.Kinds[kind]; !exists {
+		return nil, fmt.Errorf("%w: publication kind %q is not configured", ErrInvalid, kind)
+	}
+	if s.reg == nil {
+		if s.o.MediaConfigured {
+			return nil, errors.New("versions: configured publication media is not bound")
+		}
+		return nil, nil
+	}
+	k, err := s.reg.Kind(kind)
+	if errors.Is(err, media.ErrUnknownKind) {
+		return nil, nil
+	}
+	return k, err
+}
+
+// releasePlanMedia keeps frozen file obligations authoritative across changes
+// to configuration. A historical media plan cannot become a storage-free one.
+func (s *Service) releasePlanMedia(plan *releasePlan) (*media.Kind, error) {
+	if plan.View == nil {
+		if len(plan.Copies) != 0 || len(plan.Previous) != 0 {
+			return nil, errors.New("versions: publication file operations require a manifest snapshot")
+		}
+		return nil, nil
+	}
+	k, err := s.releaseMedia(plan.Kind)
+	if err != nil {
+		return nil, err
+	}
+	if k == nil {
+		return nil, errors.New("versions: frozen publication still requires its configured media")
+	}
+	return k, nil
 }
 
 // Download-only renditions stay internal. A whole-item reader token must not
@@ -156,27 +198,29 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 	if err != nil {
 		return nil, err
 	}
-	k, err := s.reg.Kind(kind)
+	k, err := s.releaseMedia(kind)
 	if err != nil {
 		return nil, err
 	}
-	ref, err := s.ref(kind, t)
-	if err != nil {
-		return nil, err
+	var m *media.Manifest
+	if k != nil {
+		ref, err := s.ref(kind, t)
+		if err != nil {
+			return nil, err
+		}
+		m, _, err = s.m.Manifests.GetTx(ctx, tx, ref)
+		if errors.Is(err, media.ErrNotFound) {
+			m, err = &media.Manifest{V: media.ManifestVersion, Files: []media.File{}}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !m.PublicationLayoutReady() {
+			return nil, media.ErrPublicationLayoutRequired
+		}
+		// GetTx returns a shared cached manifest. Never mutate that source.
+		m = m.Clone()
 	}
-	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
-	if errors.Is(err, media.ErrNotFound) {
-		m, err = &media.Manifest{V: media.ManifestVersion, Files: []media.File{}}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !m.PublicationLayoutReady() {
-		return nil, media.ErrPublicationLayoutRequired
-	}
-	// GetTx returns a shared cached manifest. The projection's public/track
-	// references are remapped after copying; never mutate that cached source.
-	m = m.Clone()
 	now := s.o.Now()
 	itemDue := now
 	for _, value := range []*time.Time{at, parentAt} {
@@ -184,8 +228,13 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 			itemDue = *value
 		}
 	}
-	live := state == "published" && parentState == "published" && !m.Deleted && !itemDue.After(now)
-	plan := &releasePlan{Target: t, Kind: kind, View: m.Clone(), Sources: map[string]string{}, Pages: pagesSnapshot{Pages: []page{}}, Playback: playbackSnapshot{Tracks: []track{}}}
+	live := state == "published" && parentState == "published" && (m == nil || !m.Deleted) && !itemDue.After(now)
+	plan := &releasePlan{Target: t, Kind: kind, Released: live}
+	if m != nil {
+		plan.View = m.Clone()
+		plan.Sources = map[string]string{}
+		plan.Pages.Pages, plan.Playback.Tracks = []page{}, []track{}
+	}
 	plan.EffectiveAccess = rule
 	plan.EffectiveAccess.Releases = nil
 	for _, release := range rule.Releases {
@@ -198,8 +247,10 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 			plan.EffectiveAccess.Releases = append(plan.EffectiveAccess.Releases, release)
 		}
 	}
-	plan.View.Files, plan.View.Deliveries = nil, nil
-	plan.View.Receipt = nil
+	if plan.View != nil {
+		plan.View.Files, plan.View.Deliveries = nil, nil
+		plan.View.Receipt = nil
+	}
 	if state == "published" && parentState == "published" && itemDue.After(now) {
 		plan.NextAt = &itemDue
 	}
@@ -208,16 +259,21 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 		return nil, err
 	}
 	if prior != nil && prior.View != nil {
+		if plan.View == nil {
+			return nil, errors.New("versions: completed publication still requires its configured media")
+		}
 		// applyDelivery keeps only aliases whose served destinations the new
 		// delivery actually owns, including unchanged HLS index references.
 		plan.View.Deliveries = slices.Clone(prior.View.Deliveries)
 	}
-	for _, delivery := range m.Deliveries {
-		if !delivery.Withdrawn {
-			plan.Previous = append(plan.Previous, delivery.ID)
+	if m != nil {
+		for _, delivery := range m.Deliveries {
+			if !delivery.Withdrawn {
+				plan.Previous = append(plan.Previous, delivery.ID)
+			}
 		}
 	}
-	if prior != nil && prior.Released && !m.Deleted && (state == "deleted" || parentState == "deleted") &&
+	if prior != nil && prior.Released && (m == nil || !m.Deleted) && (state == "deleted" || parentState == "deleted") &&
 		(state == "published" || state == "deleted") && (parentState == "published" || parentState == "deleted") {
 		// Retention freezes exactly the completed snapshot, including chapter
 		// membership and source revisions. Authoring edits and future deadlines
@@ -226,281 +282,300 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 		prior.Waiting, prior.NextAt, prior.Retained = false, nil, true
 		prior.EffectiveAccess = access.Rule{Level: access.PPV}
 		prior.Fingerprint = "retained:" + strings.TrimPrefix(prior.Fingerprint, "retained:")
-		pin := func(blob, area string) error {
-			if blob == "" {
+		if prior.View != nil {
+			pin := func(blob, area string) error {
+				if blob == "" {
+					return nil
+				}
+				sourceArea, _, valid := layout.SplitBlobRef(blob)
+				if !valid || sourceArea != layout.AreaPublic && sourceArea != layout.AreaPrivate {
+					return fmt.Errorf("%w: retained publication contains unserved media", ErrInvalid)
+				}
+				copy := media.Promotion{Source: blob, Area: area}
+				if !slices.Contains(prior.Copies, copy) {
+					prior.Copies = append(prior.Copies, copy)
+				}
 				return nil
 			}
-			sourceArea, _, valid := layout.SplitBlobRef(blob)
-			if !valid || sourceArea != layout.AreaPublic && sourceArea != layout.AreaPrivate {
-				return fmt.Errorf("%w: retained publication contains unserved media", ErrInvalid)
-			}
-			copy := media.Promotion{Source: blob, Area: area}
-			if !slices.Contains(prior.Copies, copy) {
-				prior.Copies = append(prior.Copies, copy)
-			}
-			return nil
-		}
-		for _, f := range prior.View.Files {
-			if !f.IsUpload() || k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
-				if err := pin(f.Blob, layout.AreaPrivate); err != nil {
-					return nil, err
-				}
-			}
-			if f.Track != nil {
-				if err := pin(f.Track.Index, layout.AreaPrivate); err != nil {
-					return nil, err
-				}
-			}
-			// Configured public previews remain public, just as for a paid
-			// edition. Ordinary reader files move to private before completion.
-			for _, pub := range f.Public {
-				for _, blob := range pub.Blobs {
-					if err := pin(blob, layout.AreaPublic); err != nil {
+			for _, f := range prior.View.Files {
+				if !f.IsUpload() || k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
+					if err := pin(f.Blob, layout.AreaPrivate); err != nil {
 						return nil, err
+					}
+				}
+				if f.Track != nil {
+					if err := pin(f.Track.Index, layout.AreaPrivate); err != nil {
+						return nil, err
+					}
+				}
+				// Configured public previews remain public, just as for a paid
+				// edition. Ordinary reader files move to private before completion.
+				for _, pub := range f.Public {
+					for _, blob := range pub.Blobs {
+						if err := pin(blob, layout.AreaPublic); err != nil {
+							return nil, err
+						}
 					}
 				}
 			}
 		}
 		return prior, nil
 	}
-	served := map[string]bool{}
-	retained := map[string]bool{}
-	var ordering []page
-	if k.Publish != nil {
-		for _, f := range sourcePages(k, m) {
-			if media.PageIncluded(f) {
-				ordering = append(ordering, page{Path: f.Path, Source: f.Key(), SourceHash: k.PageID(f)})
-			}
-		}
-		groups, err := s.segments(ctx, tx, []string{t.Version})
-		if err != nil {
-			return nil, err
-		}
-		chapters, err := resolveChapterStarts(groups[t.Version], ordering)
-		if err != nil {
-			return nil, err
-		}
-		for _, span := range spans(chapters, len(ordering)) {
-			var chapter *segment
-			if span.Segment != nil {
-				for i := range chapters {
-					if chapters[i].Position == *span.Segment {
-						chapter = &chapters[i]
-						break
-					}
+	if live && m != nil && !k.Readiness(m).Ready() {
+		// Publication is all-or-nothing for required outputs. Partial
+		// processing is observable to editors, never a partial reader release.
+		plan.Waiting = true
+	}
+	var identity []any
+	if k != nil {
+		served := map[string]bool{}
+		retained := map[string]bool{}
+		var ordering []page
+		if k.Publish != nil {
+			for _, f := range sourcePages(k, m) {
+				if media.PageIncluded(f) {
+					ordering = append(ordering, page{Path: f.Path, Source: f.Key(), SourceHash: k.PageID(f)})
 				}
 			}
-			due := itemDue
-			if chapter != nil && chapter.ReleasedAt == nil && chapter.ReleaseAt != nil && chapter.ReleaseAt.After(due) {
-				due = *chapter.ReleaseAt
+			groups, err := s.segments(ctx, tx, []string{t.Version})
+			if err != nil {
+				return nil, err
 			}
-			if !live || due.After(now) {
-				if state == "published" && parentState == "published" && due.After(now) && (plan.NextAt == nil || due.Before(*plan.NextAt)) {
-					plan.NextAt = &due
-				}
-				continue
+			chapters, err := resolveChapterStarts(groups[t.Version], ordering)
+			if err != nil {
+				return nil, err
 			}
-			selected := map[string]bool{}
-			for _, p := range ordering[span.Start:span.End] {
-				selected[p.Path] = true
-			}
-			part := m.Clone()
-			part.Files = slices.DeleteFunc(part.Files, func(f media.File) bool {
-				return f.IsUpload() && !selected[f.Path] || !f.IsUpload() && !selected[f.From]
-			})
-			pages, readyErr := pagesOf(k, part)
-			if readyErr != nil {
-				if !errors.Is(readyErr, ErrNotReady) && !errors.Is(readyErr, errFailed) {
-					return nil, readyErr
-				}
-				plan.Waiting = true
-				// Keep the prior published pages still inside this span. New or
-				// replaced bytes wait, without hiding the previously released set.
-				if prior != nil {
-					for _, p := range prior.Pages.Pages {
-						if selected[p.Path] {
-							pages = append(pages, p)
-							served[p.Path] = true
-							retained[p.Path] = true
+			for _, span := range spans(chapters, len(ordering)) {
+				var chapter *segment
+				if span.Segment != nil {
+					for i := range chapters {
+						if chapters[i].Position == *span.Segment {
+							chapter = &chapters[i]
+							break
 						}
 					}
 				}
-			} else {
-				for path := range selected {
-					served[path] = true
+				due := itemDue
+				if chapter != nil && chapter.ReleasedAt == nil && chapter.ReleaseAt != nil && chapter.ReleaseAt.After(due) {
+					due = *chapter.ReleaseAt
 				}
-				if chapter != nil {
-					plan.Chapters = append(plan.Chapters, chapter.ID)
-				}
-			}
-			start := len(plan.Pages.Pages)
-			plan.Pages.Pages = append(plan.Pages.Pages, pages...)
-			if chapter != nil && len(pages) > 0 {
-				g := *chapter
-				g.Start, g.End = start, len(plan.Pages.Pages)
-				if g.ReleasedAt == nil {
-					g.ReleasedAt = &now
-				}
-				plan.Pages.Segments = append(plan.Pages.Segments, g)
-			}
-		}
-	}
-	initial := live && (k.Publish == nil || len(plan.Pages.Pages) > 0 || len(ordering) == 0 && len(imports(k, m)) == 0)
-	if live && k.Publish != nil && len(imports(k, m)) > 0 {
-		plan.Waiting = true
-	}
-	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached || f.Gone || k.IsPageUpload(f) {
-			continue
-		}
-		if initial && f.Blob != "" && f.Fail() == nil {
-			served[f.Path] = true
-		} else if live && (f.Staged != "" || len(f.Pending) > 0) {
-			plan.Waiting = true
-		}
-	}
-	area := layout.AreaPrivate
-	if rule.Free(now) {
-		area = layout.AreaPublic
-	}
-	// Fingerprinting ignores allocation moves but includes ordered source
-	// revisions, chapter boundaries and desired areas. A move's own callback
-	// therefore cannot schedule an endless sequence of identical copies.
-	var identity []any
-	for _, f := range m.Files {
-		if f.IsUpload() && !f.Unattached {
-			plan.Sources[f.Path] = f.Key()
-			identity = append(identity, []any{f.Path, f.Key(), f.Staged, f.Gone, served[f.Path]})
-		}
-	}
-	add := func(blob, destination string) error {
-		if blob == "" {
-			return nil
-		}
-		digest, valid := layout.BlobDigest(blob)
-		if !valid {
-			return fmt.Errorf("%w: non-immutable publication source", ErrInvalid)
-		}
-		for _, previous := range plan.Copies {
-			if previous.Source == blob && previous.Area == destination {
-				return nil
-			}
-		}
-		current, _, _ := layout.SplitBlobRef(blob)
-		if destination != layout.AreaFuture || current != destination {
-			plan.Copies = append(plan.Copies, media.Promotion{Source: blob, Area: destination})
-		}
-		identity = append(identity, []string{hex.EncodeToString(digest), destination})
-		return nil
-	}
-	for _, file := range m.Files {
-		f := file
-		if f.Unattached || f.Gone {
-			continue
-		}
-		if retained[f.Path] || retained[f.From] {
-			continue
-		}
-		if f.IsUpload() {
-			for i := range f.Public {
-				pub := &f.Public[i]
-				if !pub.Ready() {
+				if !live || due.After(now) {
+					if state == "published" && parentState == "published" && due.After(now) && (plan.NextAt == nil || due.Before(*plan.NextAt)) {
+						plan.NextAt = &due
+					}
 					continue
 				}
-				destination := layout.AreaFuture
-				if served[f.Path] {
-					destination = layout.AreaPublic
+				selected := map[string]bool{}
+				for _, p := range ordering[span.Start:span.End] {
+					selected[p.Path] = true
 				}
-				for _, blob := range pub.Blobs {
-					if err := add(blob, destination); err != nil {
-						return nil, err
+				part := m.Clone()
+				part.Files = slices.DeleteFunc(part.Files, func(f media.File) bool {
+					return f.IsUpload() && !selected[f.Path] || !f.IsUpload() && !selected[f.From]
+				})
+				pages, readyErr := pagesOf(k, part)
+				if readyErr != nil {
+					if !errors.Is(readyErr, ErrNotReady) && !errors.Is(readyErr, errFailed) {
+						return nil, readyErr
+					}
+					plan.Waiting = true
+					// Keep the prior published pages still inside this span. New or
+					// replaced bytes wait, without hiding the previously released set.
+					if prior != nil {
+						for _, p := range prior.Pages.Pages {
+							if selected[p.Path] {
+								pages = append(pages, p)
+								served[p.Path] = true
+								retained[p.Path] = true
+							}
+						}
+					}
+				} else {
+					for path := range selected {
+						served[path] = true
+					}
+					if chapter != nil {
+						plan.Chapters = append(plan.Chapters, chapter.ID)
 					}
 				}
+				start := len(plan.Pages.Pages)
+				plan.Pages.Pages = append(plan.Pages.Pages, pages...)
+				if chapter != nil && len(pages) > 0 {
+					g := *chapter
+					g.Start, g.End = start, len(plan.Pages.Pages)
+					if g.ReleasedAt == nil {
+						g.ReleasedAt = &now
+					}
+					plan.Pages.Segments = append(plan.Pages.Segments, g)
+				}
 			}
-			if served[f.Path] {
-				// Uploaded originals stay internal; only declared audio is
-				// copied for direct reader playback.
-				if k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
-					if previous, ok := m.Delivered(f.Blob, area); ok {
-						f.Blob = previous
-					} else if prior != nil && prior.View != nil {
-						for path, source := range prior.Sources {
-							if source != file.Key() {
-								continue
-							}
-							if previous, ok := prior.View.Get(path); ok {
-								previousArea, _, valid := layout.SplitBlobRef(previous.Blob)
-								if valid && previousArea == area {
-									f.Blob = previous.Blob
-									break
+		}
+		initial := live && (k.Publish == nil || len(plan.Pages.Pages) > 0 || len(ordering) == 0 && len(imports(k, m)) == 0)
+		if live && k.Publish != nil && len(imports(k, m)) > 0 {
+			plan.Waiting = true
+		}
+		for _, f := range m.Files {
+			if !f.IsUpload() || f.Unattached || f.Gone || k.IsPageUpload(f) {
+				continue
+			}
+			if initial && f.Blob != "" && f.Fail() == nil {
+				served[f.Path] = true
+			} else if live && (f.Staged != "" || len(f.Pending) > 0) {
+				plan.Waiting = true
+			}
+		}
+		area := layout.AreaPrivate
+		if rule.Free(now) {
+			area = layout.AreaPublic
+		}
+		// Fingerprinting ignores allocation moves but includes ordered source
+		// revisions, chapter boundaries and desired areas. A move's own callback
+		// therefore cannot schedule an endless sequence of identical copies.
+		for _, f := range m.Files {
+			if f.IsUpload() && !f.Unattached {
+				plan.Sources[f.Path] = f.Key()
+				identity = append(identity, []any{f.Path, f.Key(), f.Staged, f.Gone, served[f.Path]})
+			}
+		}
+		add := func(blob, destination string) error {
+			if blob == "" {
+				return nil
+			}
+			digest, valid := layout.BlobDigest(blob)
+			if !valid {
+				return fmt.Errorf("%w: non-immutable publication source", ErrInvalid)
+			}
+			for _, previous := range plan.Copies {
+				if previous.Source == blob && previous.Area == destination {
+					return nil
+				}
+			}
+			current, _, _ := layout.SplitBlobRef(blob)
+			if destination != layout.AreaFuture || current != destination {
+				plan.Copies = append(plan.Copies, media.Promotion{Source: blob, Area: destination})
+			}
+			identity = append(identity, []string{hex.EncodeToString(digest), destination})
+			return nil
+		}
+		for _, file := range m.Files {
+			f := file
+			if f.Unattached || f.Gone {
+				continue
+			}
+			if retained[f.Path] || retained[f.From] {
+				continue
+			}
+			if f.IsUpload() {
+				for i := range f.Public {
+					pub := &f.Public[i]
+					if !pub.Ready() {
+						continue
+					}
+					destination := layout.AreaFuture
+					if served[f.Path] {
+						destination = layout.AreaPublic
+					}
+					for _, blob := range pub.Blobs {
+						if err := add(blob, destination); err != nil {
+							return nil, err
+						}
+					}
+				}
+				if served[f.Path] {
+					// Uploaded originals stay internal; only declared audio is
+					// copied for direct reader playback.
+					if k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
+						if previous, ok := m.Delivered(f.Blob, area); ok {
+							f.Blob = previous
+						} else if prior != nil && prior.View != nil {
+							for path, source := range prior.Sources {
+								if source != file.Key() {
+									continue
+								}
+								if previous, ok := prior.View.Get(path); ok {
+									previousArea, _, valid := layout.SplitBlobRef(previous.Blob)
+									if valid && previousArea == area {
+										f.Blob = previous.Blob
+										break
+									}
 								}
 							}
 						}
+						if err := add(f.Blob, area); err != nil {
+							return nil, err
+						}
+					} else {
+						// Preserve the internal source reference: public rendition
+						// ownership is checked against its source/edit key. Reader
+						// grants reject originals independently of this snapshot.
+						f.Staged, f.Editor = "", nil
 					}
-					if err := add(f.Blob, area); err != nil {
-						return nil, err
+					for j := range f.Public {
+						if f.Public[j].Source == file.Key() {
+							f.Public[j].Source = f.Key()
+						}
 					}
-				} else {
-					// Preserve the internal source reference: public rendition
-					// ownership is checked against its source/edit key. Reader
-					// grants reject originals independently of this snapshot.
-					f.Staged, f.Editor = "", nil
+					plan.View.Files = append(plan.View.Files, f)
 				}
-				for j := range f.Public {
-					if f.Public[j].Source == file.Key() {
-						f.Public[j].Source = f.Key()
-					}
-				}
-				plan.View.Files = append(plan.View.Files, f)
-			}
-			continue
-		}
-		destination := layout.AreaFuture
-		if served[f.From] && f.Fail() == nil && !downloadOnly(k, f) {
-			if spec := private(k, f.Preset); spec != nil && spec.HostOnly {
 				continue
 			}
-			destination = area
-		}
-		if err := add(f.Blob, destination); err != nil {
-			return nil, err
-		}
-		if f.Track != nil {
-			if err := add(f.Track.Index, destination); err != nil {
+			destination := layout.AreaFuture
+			if served[f.From] && f.Fail() == nil && !downloadOnly(k, f) {
+				if spec := private(k, f.Preset); spec != nil && spec.HostOnly {
+					continue
+				}
+				destination = area
+			}
+			if err := add(f.Blob, destination); err != nil {
 				return nil, err
 			}
-		}
-		if destination != layout.AreaFuture {
-			plan.View.Files = append(plan.View.Files, f)
-		}
-	}
-	if prior != nil && prior.View != nil {
-		for _, f := range prior.View.Files {
-			if !retained[f.Path] && !retained[f.From] {
-				continue
-			}
-			plan.View.Files = append(plan.View.Files, f)
-			if !f.IsUpload() || k.AudioUpload(f) {
-				if err := add(f.Blob, area); err != nil {
+			if f.Track != nil {
+				if err := add(f.Track.Index, destination); err != nil {
 					return nil, err
 				}
 			}
-			for _, pub := range f.Public {
-				for _, blob := range pub.Blobs {
-					if err := add(blob, layout.AreaPublic); err != nil {
+			if destination != layout.AreaFuture {
+				plan.View.Files = append(plan.View.Files, f)
+			}
+		}
+		if prior != nil && prior.View != nil {
+			for _, f := range prior.View.Files {
+				if !retained[f.Path] && !retained[f.From] {
+					continue
+				}
+				plan.View.Files = append(plan.View.Files, f)
+				if !f.IsUpload() || k.AudioUpload(f) {
+					if err := add(f.Blob, area); err != nil {
 						return nil, err
+					}
+				}
+				for _, pub := range f.Public {
+					for _, blob := range pub.Blobs {
+						if err := add(blob, layout.AreaPublic); err != nil {
+							return nil, err
+						}
 					}
 				}
 			}
 		}
-	}
-	if k.Publish != nil && k.Publish.Playback != "" {
-		tracks, err := tracksOf(k, plan.View)
-		if err == nil {
-			plan.Playback.Tracks = tracks
+		if k.Publish != nil && k.Publish.Playback != "" {
+			tracks, err := tracksOf(k, plan.View)
+			if err == nil {
+				plan.Playback.Tracks = tracks
+			}
 		}
+		plan.Released = initial || len(plan.Pages.Pages) > 0
 	}
-	plan.Released = initial || len(plan.Pages.Pages) > 0
+	if err := finishReleasePlanFingerprint(plan, identity, state, parentState, rule); err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+func finishReleasePlanFingerprint(plan *releasePlan, identity []any, state, parentState string, rule access.Rule) error {
+	if plan.View == nil {
+		identity = []any{"no-storage"}
+	}
 	var boundaries []any
 	for _, chapter := range plan.Pages.Segments {
 		boundaries = append(boundaries, []any{chapter.ID, chapter.Position, chapter.Title, chapter.StartPage, chapter.Start, chapter.End, chapter.ReleaseAt})
@@ -509,11 +584,11 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 	// private/. Its completed policy must still advance the active revision.
 	encoded, err := json.Marshal([]any{identity, boundaries, plan.Chapters, state, parentState, rule, plan.EffectiveAccess, plan.Released})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	sum := sha256.Sum256(encoded)
 	plan.Fingerprint = hex.EncodeToString(sum[:])
-	return plan, nil
+	return nil
 }
 
 func (p *releasePlan) applyDelivery(delivery *media.PublicationDelivery) {
@@ -623,17 +698,30 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	ref, err := s.ref(v.Kind, t)
+	k, err := s.releaseMedia(v.Kind)
 	if err != nil {
 		return err
 	}
+	var ref contentref.ContentRef
 	mutationCtx := context.WithValue(ctx, releaseMutationContextKey{}, true)
-	if _, _, err := s.m.Manifests.Get(ctx, ref); errors.Is(err, media.ErrNotFound) {
-		if _, err := s.m.Manifests.Edit(mutationCtx, ref, func(*media.Manifest) error { return nil }); err != nil {
+	if k != nil {
+		ref, err = s.ref(v.Kind, t)
+		if err != nil {
 			return err
 		}
-	} else if err != nil {
-		return err
+		if _, _, err := s.m.Manifests.Get(ctx, ref); errors.Is(err, media.ErrNotFound) {
+			if _, err := s.m.Manifests.Edit(mutationCtx, ref, func(*media.Manifest) error { return nil }); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+	}
+	withFiles := func(run func() error) error {
+		if k == nil {
+			return run()
+		}
+		return s.m.Manifests.WithRecoveredLock(mutationCtx, ref, run)
 	}
 	defer func() {
 		var snooze *river.JobSnoozeError
@@ -649,7 +737,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	}()
 	var plan *releasePlan
 	current, retiring := false, false
-	err = s.m.Manifests.WithRecoveredLock(mutationCtx, ref, func() error {
+	err = withFiles(func() error {
 		return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 			if err := s.lockTarget(ctx, tx, t); err != nil {
 				return err
@@ -677,6 +765,11 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			var err error
 			plan, err = s.planRelease(ctx, tx, t)
 			if err != nil {
+				return err
+			}
+			if plan.Waiting {
+				_, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='waiting',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id)
+				current = false
 				return err
 			}
 			active, err := s.activeRelease(ctx, tx, t)
@@ -723,15 +816,20 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	if !current {
 		return nil
 	}
-	if _, err := s.m.Manifests.PreparePromotion(mutationCtx, ref, id, plan.Copies); err != nil {
+	if _, err := s.releasePlanMedia(plan); err != nil {
 		return err
 	}
-	delivery, err := s.m.Manifests.Promote(mutationCtx, ref, id)
-	if err != nil {
-		return err
+	if plan.View != nil {
+		if _, err := s.m.Manifests.PreparePromotion(mutationCtx, ref, id, plan.Copies); err != nil {
+			return err
+		}
+		delivery, err := s.m.Manifests.Promote(mutationCtx, ref, id)
+		if err != nil {
+			return err
+		}
+		plan.applyDelivery(delivery)
 	}
-	plan.applyDelivery(delivery)
-	err = s.m.Manifests.WithRecoveredLock(mutationCtx, ref, func() error {
+	err = withFiles(func() error {
 		return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
 			if err := s.lockTarget(ctx, tx, t); err != nil {
 				return err
@@ -750,21 +848,19 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				current = false
 				return s.scheduleReleaseAtTx(ctx, tx, t, s.o.Now())
 			}
-			k, err := s.reg.Kind(plan.Kind)
-			if err != nil {
-				return err
-			}
-			for _, snapshot := range []struct {
-				kind  string
-				value any
-			}{{kindPages, plan.Pages}, {kindPlayback, plan.Playback}} {
-				pubID, same, err := s.prepareTx(ctx, tx, k, t, snapshot.kind, snapshot.value)
-				if err != nil {
-					return err
-				}
-				if !same {
-					if _, err := s.promoteTx(ctx, tx, k, t, snapshot.kind, pubID); err != nil {
+			if plan.View != nil {
+				for _, snapshot := range []struct {
+					kind  string
+					value any
+				}{{kindPages, plan.Pages}, {kindPlayback, plan.Playback}} {
+					pubID, same, err := s.prepareTx(ctx, tx, k, t, snapshot.kind, snapshot.value)
+					if err != nil {
 						return err
+					}
+					if !same {
+						if _, err := s.promoteTx(ctx, tx, k, t, snapshot.kind, pubID); err != nil {
+							return err
+						}
 					}
 				}
 			}
@@ -788,8 +884,10 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if !ok {
 				return errors.New("versions: catalog publication completion is not configured")
 			}
-			if err := s.recordFacts(ctx, tx, k, t, plan.View); err != nil {
-				return err
+			if plan.View != nil {
+				if err := s.recordFacts(ctx, tx, k, t, plan.View); err != nil {
+					return err
+				}
 			}
 			if plan.Retained {
 				if err := completion.WithdrawPublicationTx(ctx, tx, t, true); err != nil {
@@ -820,15 +918,21 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 // active while its superseded allocations are retired. A failure retains this
 // phase and retries it without recopying or breaking the active reader view.
 func (s *Service) finishRetirement(ctx context.Context, id string, plan *releasePlan) error {
-	ref, err := s.ref(plan.Kind, plan.Target)
+	k, err := s.releasePlanMedia(plan)
 	if err != nil {
 		return err
 	}
-	mutationCtx := context.WithValue(ctx, releaseMutationContextKey{}, true)
-	for _, old := range plan.Previous {
-		if old != id {
-			if err := s.m.Manifests.WithdrawPromotion(mutationCtx, ref, old); err != nil {
-				return err
+	if k != nil {
+		ref, err := s.ref(plan.Kind, plan.Target)
+		if err != nil {
+			return err
+		}
+		mutationCtx := context.WithValue(ctx, releaseMutationContextKey{}, true)
+		for _, old := range plan.Previous {
+			if old != id {
+				if err := s.m.Manifests.WithdrawPromotion(mutationCtx, ref, old); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -856,12 +960,6 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 			return errors.New("versions: catalog publication completion is not configured")
 		}
 		if err := completion.PublicationCompletedTx(ctx, tx, plan.Target, id, plan.Chapters, plan.Released, at); err != nil {
-			return err
-		}
-		// The automatic cover is selected only from the now-active pages.
-		// Its normal metadata/image work is idempotent and cannot select a
-		// future chapter merely because its preparation has finished.
-		if err := s.enqueueTx(ctx, tx, publishArgs{Content: plan.Content, Version: plan.Version}); err != nil {
 			return err
 		}
 		if current && plan.NextAt != nil {

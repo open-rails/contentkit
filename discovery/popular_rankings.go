@@ -90,7 +90,7 @@ func (s *Service) rankingJoin(key popularRanking) (string, pgx.NamedArgs) {
  CROSS JOIN LATERAL unnest(p.content_ids) WITH ORDINALITY AS r(content_id,ord)
  WHERE p.tenant_id=@d_rank_tenant AND p.kind=@d_rank_kind AND p.period=@d_rank_period AND p.domain=@d_rank_domain AND p.language=@d_rank_language) activity
  ON activity.content_id=f.content_id `, pgx.NamedArgs{"d_rank_tenant": s.o.Tenant, "d_rank_kind": key.kind, "d_rank_period": key.period,
-		"d_rank_domain": key.domain, "d_rank_language": key.language}
+			"d_rank_domain": key.domain, "d_rank_language": key.language}
 }
 
 // topRanked returns up to limit ids of the stored ranking, best first.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
 )
 
@@ -105,7 +106,13 @@ func (st *Store) recordMeasured(ctx context.Context, tenant string, events []Sig
 	for k := range keys {
 		ordered = append(ordered, k)
 	}
-	return st.projectMeasured(ctx, tenant, ordered)
+	if err := st.projectMeasured(ctx, tenant, ordered); err != nil {
+		// Canonical receipts are already accepted. Another interaction for
+		// these keys, or an explicit repair, recomputes the derived summaries.
+		slog.WarnContext(ctx, "contentkit: engagement summaries are stale after accepting canonical measurements",
+			"tenant", tenant, "keys", len(ordered), "error", err)
+	}
+	return nil
 }
 
 // measuredCanonical fixes one winning cumulative snapshot per receipt before

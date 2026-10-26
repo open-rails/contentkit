@@ -119,8 +119,6 @@ type importVersionRow struct {
 	UpdatedAt        time.Time       `json:"updated_at"`
 	OriginalTitle    *string         `json:"original_title"`
 	OriginalLanguage *string         `json:"original_language"`
-	// Playable is a new version's starting fact; an existing one keeps its own.
-	Playable *bool `json:"playable"`
 }
 
 type importCreatorRow struct {
@@ -408,7 +406,6 @@ func (s *Store) importRows(in []ImportContent, items, stored map[string]stamped,
 				vr.Access, _ = json.Marshal(c.Access)
 			}
 			vr.CreatedAt, vr.UpdatedAt = importStamps(v.CreatedAt, v.UpdatedAt, op, now)
-			vr.Playable = s.startsUnplayable(c.Kind)
 			b.versions = append(b.versions, vr)
 			if v.Text != nil {
 				b.vtextIDs = append(b.vtextIDs, v.ID)
@@ -478,12 +475,12 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 		}
 	}
 	if err := run(`INSERT INTO `+s.t.versions+` AS v (tenant_id, id, content_id, code, position, languages, traits, label, state, publish_at,
- published_at, deleted_at, access, attributes, ordinal, cover, created_at, updated_at, playable,original_title,original_language)
+ published_at, deleted_at, access, attributes, ordinal, cover, created_at, updated_at,original_title,original_language)
  SELECT $1, r.id, r.content_id, r.code, r.position, r.languages, r.traits, r.label, r.state, r.publish_at, r.published_at, r.deleted_at,
-  r.access, r.attributes, r.ordinal, r.cover, r.created_at, r.updated_at, r.playable,r.original_title,r.original_language
+  r.access, r.attributes, r.ordinal, r.cover, r.created_at, r.updated_at,r.original_title,r.original_language
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, content_id text, code text, position int, languages text[], traits text[], label text, state text,
   publish_at timestamptz, published_at timestamptz, deleted_at timestamptz, access jsonb, attributes jsonb, ordinal int, cover jsonb, created_at timestamptz,
-  updated_at timestamptz, playable boolean,original_title text,original_language text)
+  updated_at timestamptz,original_title text,original_language text)
  ON CONFLICT (tenant_id, id) DO UPDATE SET position = EXCLUDED.position, languages = coalesce(EXCLUDED.languages, v.languages), traits = EXCLUDED.traits,
   label = EXCLUDED.label, state = EXCLUDED.state, publish_at = EXCLUDED.publish_at, published_at = EXCLUDED.published_at, deleted_at = EXCLUDED.deleted_at,
   access = EXCLUDED.access, attributes = EXCLUDED.attributes, ordinal = EXCLUDED.ordinal, cover = coalesce(EXCLUDED.cover, v.cover), created_at = EXCLUDED.created_at,

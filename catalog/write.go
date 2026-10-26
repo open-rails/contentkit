@@ -1029,11 +1029,11 @@ func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	}
 	id := contentref.NewID()
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versions+` (tenant_id, id, content_id, position, languages, traits, label, state, publish_at, published_at, access, attributes,
- ordinal, cover, playable,original_title,original_language)
+ ordinal, cover,original_title,original_language)
  SELECT $1, $2, $3, coalesce((SELECT max(position) + 1 FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $3), 0), $4, $5, $6, $7, $8,
-  NULL, $9, $10, $11, $12, $13,nullif($14,''),nullif($15,'')`,
+  NULL, $9, $10, $11, $12,nullif($13,''),nullif($14,'')`,
 		s.tenant, id, contentID, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, r.cover,
-		s.startsUnplayable(kind), r.originalTitle, r.originalLanguage); err != nil {
+		r.originalTitle, r.originalLanguage); err != nil {
 		return "", err
 	}
 	if err := s.writeVersionExtras(ctx, tx, id, v); err != nil {

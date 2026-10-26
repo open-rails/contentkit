@@ -8,6 +8,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/media/versions"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -29,12 +30,12 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 		must(t, fleet.Stop(ctx))
 	})
 	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
-	queue := catalog.QueueFor(a.cfg.Scope.AppID.String())
+	queue := versions.QueueFor(publicationTenant(a))
 	base := w.clock.now()
 	versionAt, parentAt, audienceAt := base.Add(30*time.Minute), base.Add(time.Hour), base.Add(2*time.Hour)
 	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery",
-		Access:   &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: audienceAt, Level: access.Public}}},
-		Text:     map[string]catalog.Text{"en": {Title: "Parent embargo", Body: "Embargoed edition"}},
+		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: audienceAt, Level: access.Public}}},
+
 		Versions: []catalog.VersionInput{{State: "published", PublishAt: &versionAt, Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Embargoed version"}}}}})
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: &parentAt})
@@ -70,11 +71,13 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 				t.Fatalf("unstarted recorder already caught up: %+v", event)
 			}
 		}
-		// Insert several real jobs before starting their two-worker queue. The
-		// schedule's own startup job may race them; all share the same recorder.
+		// Duplicate delivery of one accepted request races on the same durable
+		// lifecycle. No broad scan or startup timer is needed to recover it.
+		request := currentReleaseJob(t, a, item.Versions[0].ID)
+		wakeDuePublicationJobs(t, a)
 		ids := []int64{}
 		for range 4 {
-			job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: queue})
+			job, err := fleet.Insert(t.Context(), request, &river.InsertOpts{Queue: queue})
 			must(t, err)
 			ids = append(ids, job.Job.ID)
 		}
@@ -111,12 +114,12 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 					t.Fatalf("publication did not record actual completed instant: %+v", event)
 				}
 			}
-			if counts["content.published"] != 1 || counts["version.published"] != 1 || counts["version.audience_released"] != 1 {
+			if counts["content.published"] != 1 || counts["version.published"] != 1 || counts["version.audience_released"] != 1 || counts["version.publication_completed"] != 1 {
 				t.Fatalf("caught-up facts = %+v; expected one of each", counts)
 			}
 		}
 		check()
-		job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: queue})
+		job, err := fleet.Insert(t.Context(), request, &river.InsertOpts{Queue: queue})
 		must(t, err)
 		waitFor(t, func() bool {
 			row, err := fleet.JobGet(t.Context(), job.Job.ID)

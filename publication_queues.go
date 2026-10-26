@@ -21,8 +21,7 @@ import (
 var legacyPublicationKinds = []string{
 	"contentkit_content_publish_due", "contentkit_catalog_publish_due",
 	"contentkit_content_purge_deleted", "contentkit_catalog_purge_deleted",
-	"contentkit_version_publish", "contentkit_version_release",
-	"contentkit_version_fork", "contentkit_version_body_copy", "contentkit_version_playable",
+	"contentkit_version_release",
 }
 
 type migratedPublicationJob struct {
@@ -126,8 +125,7 @@ func (e *Engine) publicationJobOwners(ctx context.Context, q interface {
 	}
 	items := pgx.Identifier{e.schema, "content_items"}.Sanitize()
 	editions := pgx.Identifier{e.schema, "content_versions"}.Sanitize()
-	periodic := args.Content == "" && (job.kind == "contentkit_version_playable" ||
-		job.kind == "contentkit_content_publish_due" || job.kind == "contentkit_catalog_publish_due" ||
+	periodic := args.Content == "" && (job.kind == "contentkit_content_publish_due" || job.kind == "contentkit_catalog_publish_due" ||
 		job.kind == "contentkit_content_purge_deleted" || job.kind == "contentkit_catalog_purge_deleted")
 	var query string
 	var values []any

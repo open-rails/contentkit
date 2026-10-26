@@ -14,7 +14,7 @@ export type OpName = "put" | "edit" | "move" | "rename" | "remove" | "attach" | 
 export type Access = "full" | "partial" | "none";
 export type ItemState = "ready" | "processing" | "failed";
 export type EncodePhase = "queued" | "downloading" | "probing" | "encoding" | "muxing" | "uploading" | "publishing" | "images";
-export type PollKind = "multiple_choice" | "free_text";
+export type PollKind = "multiple_choice";
 export type ModerationState = "approved" | "held" | "rejected";
 export type ContentState = "draft" | "published" | "deleted";
 export type VersionState = "draft" | "published";
@@ -122,20 +122,6 @@ export interface Anonymous {
   votes: boolean;
 }
 
-export interface AnswerGroup {
-  id: string;
-  label: string;
-  count: number;
-}
-
-export interface AnswerRecord {
-  poll: Ref;
-  user_id: string;
-  text: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
 export interface ArchiveStatus {
   completed: number;
   total: number;
@@ -203,7 +189,6 @@ export interface Batch {
   favorites?: FavoriteRecord[];
   polls?: PollRecord[];
   votes?: VoteRecord[];
-  answers?: AnswerRecord[];
   legacy_reading?: LegacyReadingRecord[];
   signals?: SignalRecord[];
   deletes?: DeleteRecord[];
@@ -1475,20 +1460,6 @@ export interface Poll {
   options: PollOption[];
   voted: boolean;
   my_option?: string;
-  answer_count?: number;
-  groups?: AnswerGroup[];
-  my_answer?: PollAnswer;
-}
-
-export interface PollAnswer {
-  id: string;
-  text: string;
-  classified: boolean;
-  updated_at: string;
-}
-
-export interface PollAnswerInput {
-  text: string;
 }
 
 export interface PollImage {

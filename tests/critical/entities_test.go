@@ -95,7 +95,7 @@ func TestEntityConcurrentOwnershipAndStaleScopes(t *testing.T) {
 		group := iam.GroupByID(id)
 		authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(writer.ID), w.channelWriter)
 		client := a.client(token)
-		input := catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Before scope retirement"}}}
+		input := catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Before scope retirement"}}}}}
 		created, err := client.PostContents(t.Context(), input)
 		must(t, err)
 		must(t, w.auth.DeleteGroup(t.Context(), group))
@@ -196,7 +196,7 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		group, err := ckauth.ChannelScopeID(*a.cfg.Scope, first.AuthScope)
 		must(t, err)
 		authtest.GrantRole(t, w.tenant[0], iam.GroupByID(group), iam.UserSubject(writer.ID), w.channelWriter)
-		input := catalog.ContentInput{Kind: "article", ChannelID: string(first.ID), Text: map[string]catalog.Text{"en": {Title: "Scoped work"}}}
+		input := catalog.ContentInput{Kind: "article", ChannelID: string(first.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Scoped work"}}}}}
 		created, err := a.client(token).PostContents(t.Context(), input)
 		must(t, err)
 		if created.ChannelID != string(first.ID) {
@@ -214,7 +214,7 @@ func TestOwnedEntityAuthority(t *testing.T) {
 	t.Run("CK-J16-S04_deletion_retires_scope_and_owned_content", func(t *testing.T) {
 		startPublicationRuntime(t, a)
 		_, token, entity := ownedChannel(t, w, a, "retirement")
-		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Channel article"}}})
+		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Channel article"}}}}})
 		must(t, err)
 		_, err = a.client(token).PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
@@ -291,7 +291,7 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		if !canWrite(token) || canWrite(editorToken) {
 			t.Fatal("explicit restore failed to grant the owner or resurrected retired team authority")
 		}
-		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Restored owner's work"}}})
+		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Restored owner's work"}}}}})
 		must(t, err)
 		if item.ChannelID != string(entity.ID) {
 			t.Fatal("restored owner lost authoring capability")

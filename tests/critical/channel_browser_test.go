@@ -37,7 +37,7 @@ func TestShippedChannelBrowser(t *testing.T) {
 	must(t, err)
 	destination, err := a.client(aliceToken).PostChannels(t.Context(), channels.Input{Slug: "browser-destination", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Destination channel"}}})
 	must(t, err)
-	original, err := a.client(bobToken).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: originalChannel.ID, Text: map[string]catalog.Text{"en": {Title: "Browser canonical original", Body: "One original, shared by reference."}}})
+	original, err := a.client(bobToken).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: originalChannel.ID, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Browser canonical original", Body: "One original, shared by reference."}}}}})
 	must(t, err)
 	_, err = a.client(bobToken).PostContentPublish(t.Context(), original.ID, catalog.PublishInput{})
 	must(t, err)

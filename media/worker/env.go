@@ -61,8 +61,8 @@ func FromEnv(ctx context.Context) (Config, error) {
 //	MEDIA_WORKER_TOP_PRESET      x264/x265 preset of the rungs above (default fast)
 //	MEDIA_WORKER_CODECS          the ladder's codecs, preferred first: h264, hevc, av1 (default av1,h264)
 //	MEDIA_WORKER_ENCODER         auto (default: per codec NVENC if a probe encode works, else CPU), cpu or nvenc
-//	MEDIA_WORKER_CONCURRENCY     video jobs per process (default 1)
-//	MEDIA_WORKER_IMAGE_CONCURRENCY  image jobs per process (default 2)
+//	MEDIA_WORKER_CONCURRENCY     image/video derivative jobs per process (default 1)
+//	MEDIA_WORKER_INGEST_CONCURRENCY  ingest jobs per process (default 2)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 func (c *Config) TuningFromEnv() error {
 	for k, p := range map[string]*string{"MEDIA_ACCOUNT_SCHEMA": &c.AccountSchema, "MEDIA_ACCOUNT_WORKER_SCHEMA": &c.AccountWorkerSchema, "MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_CONTENT_SCHEMA": &c.ContentSchema, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_WORKER_TMP": &c.TempDir,
@@ -77,8 +77,8 @@ func (c *Config) TuningFromEnv() error {
 			c.VideoCodecs = append(c.VideoCodecs, media.Codec(strings.TrimSpace(s)))
 		}
 	}
-	for k, p := range map[string]*int{"MEDIA_WORKER_THREADS": &c.Threads, "MEDIA_WORKER_CONCURRENCY": &c.VideoWorkers,
-		"MEDIA_WORKER_IMAGE_CONCURRENCY": &c.ImageWorkers} {
+	for k, p := range map[string]*int{"MEDIA_WORKER_THREADS": &c.Threads, "MEDIA_WORKER_CONCURRENCY": &c.DerivativeWorkers,
+		"MEDIA_WORKER_INGEST_CONCURRENCY": &c.IngestWorkers} {
 		n, err := intEnv(k, *p)
 		if err != nil {
 			return err

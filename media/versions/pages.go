@@ -609,9 +609,7 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 	if err != nil {
 		return err
 	}
-	changed := false
 	_, err = s.m.Manifests.EditExisting(ctx, ref, func(m *media.Manifest) error {
-		before := revisionOfInput(m.Files)
 		guardSegmentedPages(k, m, legacyPageRanges(segments[t.Version]))
 		taken := map[string]bool{}
 		for _, f := range sourcePages(k, m) {
@@ -634,30 +632,9 @@ func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Tar
 			writePageMeta(&m.Files[i], meta)
 		}
 		persistPageSelection(k, m)
-		changed = before != revisionOfInput(m.Files)
 		return nil
 	})
-	if err == nil {
-		if err = pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-			if err := s.lockTarget(ctx, tx, t); err != nil {
-				return err
-			}
-			// Not the manifest this edit wrote: a commit may have landed since.
-			m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
-			if errors.Is(err, media.ErrNotFound) {
-				return nil
-			} else if err != nil {
-				return err
-			}
-			return s.recordFacts(ctx, tx, k, t, m)
-		}); err != nil {
-			return err
-		}
-		if changed && s.m.Jobs != nil {
-			err = s.m.Jobs.EnqueueProcessing(ctx, media.ProcessJob{Ref: ref})
-		}
-		return err
-	}
+
 	return err
 }
 

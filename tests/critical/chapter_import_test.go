@@ -12,7 +12,7 @@ import (
 func TestImportChaptersRequiresManifestLockingWriter(t *testing.T) {
 	w := newWorld(t)
 	admin := w.apps[0].engine.Client()
-	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Original title"}}})
+	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Original title"}}}}})
 	must(t, err)
 	for _, input := range []struct {
 		name     string
@@ -23,10 +23,10 @@ func TestImportChaptersRequiresManifestLockingWriter(t *testing.T) {
 		{"marker", []catalog.Segment{{StartPage: "pages/020.jpg"}}, "then update chapters with PUT"},
 	} {
 		t.Run(input.name, func(t *testing.T) {
-			result, err := admin.PostImport(t.Context(), importer.Batch{Source: "chapter-lock-contract", Contents: []importer.ContentRecord{{
+			result, err := admin.PostImport(t.Context(), importer.Batch{Source: "chapter-lock-contract", Contents: []importer.ContentRecord{importer.ContentRecord{
 				ExternalID: "content", ID: item.ID, Kind: "gallery", State: "draft",
-				Text:     map[string]catalog.Text{"en": {Title: "Must roll back"}},
-				Versions: []importer.VersionRecord{{ExternalID: "edition", ID: item.Versions[0].ID, Languages: []string{"en"}, Segments: input.chapters}},
+
+				Versions: []importer.VersionRecord{{ExternalID: "edition", ID: item.Versions[0].ID, Languages: []string{"en"}, Segments: input.chapters, Text: map[string]catalog.VersionText{"en": {Title: "Must roll back"}}}},
 			}}})
 			must(t, err)
 			if result.Written[importer.SectionContents] != 0 || len(result.Failed) != 1 || !strings.Contains(result.Failed[0].Error, input.message) {

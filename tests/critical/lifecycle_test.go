@@ -128,7 +128,7 @@ func TestHostLifecycle(t *testing.T) {
 	})
 	t.Run("CK-J01-S08_reopen_preserves_data_and_borrowed_pool", func(t *testing.T) {
 		b := w.apps[1]
-		created, err := b.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Persistent draft"}}})
+		created, err := b.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Persistent draft"}}}}})
 		must(t, err)
 		must(t, b.engine.Close(t.Context()))
 		must(t, b.engine.Close(t.Context()))

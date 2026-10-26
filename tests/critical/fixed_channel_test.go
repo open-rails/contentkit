@@ -34,7 +34,7 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	key, err := w.tenant[0].CreateAPIKey(t.Context(), iam.SystemIdentity(), a.group, iam.NewAPIKey{Name: "Official blog editor", Role: persona.OwnerRole()})
 	must(t, err)
 	staff, public := a.client(key.Secret), a.client("")
-	input := catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Official news", Body: "A free public announcement"}}}
+	input := catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Official news", Body: "A free public announcement"}}}}}
 	_, err = staff.PostContents(t.Context(), input)
 	requireError(t, err, 503, "unavailable")
 	createChannel := func(app *application, slug string) channels.Channel {
@@ -79,11 +79,7 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	requireError(t, err, 400, "invalid_request")
 	_, err = staff.PostContentVersions(t.Context(), item.ID, catalog.VersionInput{Languages: []string{"de"}, Access: restricted.Access})
 	requireError(t, err, 400, "invalid_request")
-	batch := importer.Batch{Source: "fixed-channel-test", Contents: []importer.ContentRecord{
-		{ExternalID: "valid", Kind: "article", State: catalog.StatePublished, Text: input.Text},
-		{ExternalID: "wrong-owner", Kind: "article", State: catalog.StatePublished, Text: input.Text, Channel: &importer.Ref{ID: string(other.ID)}},
-		{ExternalID: "paid", Kind: "article", State: catalog.StatePublished, Text: input.Text, Access: restricted.Access},
-	}}
+	batch := importer.Batch{Source: "fixed-channel-test", Contents: []importer.ContentRecord{importer.ContentRecord{ExternalID: "valid", Kind: "article", State: catalog.StatePublished, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "valid" + "/version", Text: input.Versions[0].Text}}}, importer.ContentRecord{ExternalID: "wrong-owner", Kind: "article", State: catalog.StatePublished, Channel: &importer.Ref{ID: string(other.ID)}, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "wrong-owner" + "/version", Text: input.Versions[0].Text}}}, importer.ContentRecord{ExternalID: "paid", Kind: "article", State: catalog.StatePublished, Access: restricted.Access, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "paid" + "/version", Text: input.Versions[0].Text}}}}}
 	imported, err := staff.PostImport(t.Context(), batch)
 	must(t, err)
 	if imported.Written["contents"] != 1 || len(imported.Failed) != 2 {
@@ -110,7 +106,7 @@ func TestFixedSiteChannelMigration(t *testing.T) {
 	a := w.apps[0]
 	admin := a.engine.Client()
 	free := publishedArticle(t, a, "Existing free blog")
-	paid, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}, Text: map[string]catalog.Text{"en": {Title: "Private must not silently become free", Body: "Retained policy"}}})
+	paid, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Private must not silently become free", Body: "Retained policy"}}}}})
 	must(t, err)
 	foreign := publishedArticle(t, w.apps[1], "Another app")
 	cfg := a.cfg
@@ -184,7 +180,7 @@ func TestFixedSiteChannelStaffRevocation(t *testing.T) {
 	author, token := w.person(t, 0)
 	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(author.ID), w.writer)
 	writer := a.client(token)
-	input := catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Staff authored", Body: "Official text"}}}
+	input := catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Staff authored", Body: "Official text"}}}}}
 	draft, err := writer.PostContents(t.Context(), input)
 	must(t, err)
 	published, err := writer.PostContents(t.Context(), input)
@@ -266,7 +262,7 @@ func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 	must(t, err)
 	member, token := w.person(t, 0)
 	writer := a.client(token)
-	input := catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Scoped official post", Body: "Host roles decide who posts"}}}
+	input := catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Scoped official post", Body: "Host roles decide who posts"}}}}}
 	_, err = writer.PostContents(t.Context(), input)
 	requireError(t, err, 403, "forbidden")
 	authtest.GrantRole(t, w.tenant[0], iam.GroupByID(foreignScope), iam.UserSubject(member.ID), w.channelWriter)
@@ -284,7 +280,7 @@ func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 	awaitEditionPublication(t, a, writer, post.ID, post.Versions[0].ID)
 	public, err := a.client("").GetContent(t.Context(), post.ID, ck.GetContentQuery{})
 	must(t, err)
-	if !public.Decision.Allowed || public.Body != input.Text["en"].Body {
+	if !public.Decision.Allowed || public.Body != input.Versions[0].Text["en"].Body {
 		t.Fatal("channel entitlement metadata overrode public post policy")
 	}
 }

@@ -62,7 +62,7 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	if len(page.Channels) != 0 {
 		t.Fatal("migration invented an undeclared channel")
 	}
-	post, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Existing", Body: "Preserve this body"}}})
+	post, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Existing", Body: "Preserve this body"}}}}})
 	must(t, err)
 	cfg := a.cfg
 	cfg.Content.Kinds = maps.Clone(cfg.Content.Kinds)
@@ -256,7 +256,7 @@ func TestConfiguredOwnerKeylessAdapter(t *testing.T) {
 	}
 	member, token := w.person(t, 0)
 	writer := a.client(token)
-	input := catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Declared model", Body: "No host seed step"}}}
+	input := catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Declared model", Body: "No host seed step"}}}}}
 	_, err = writer.PostContents(ctx, input)
 	requireError(t, err, 403, "forbidden")
 	authtest.GrantRole(t, w.tenant[0], iam.GroupByID(groupID), iam.UserSubject(member.ID), w.channelWriter)

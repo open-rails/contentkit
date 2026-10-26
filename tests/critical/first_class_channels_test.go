@@ -106,7 +106,7 @@ func TestChannelRepostAnonymization(t *testing.T) {
 		t.Fatal("repost did not record initial attribution")
 	}
 	t.Run("CK-J03-S70_import_cannot_reassign_original_channel", func(t *testing.T) {
-		result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "channel-transfer", Contents: []importer.ContentRecord{{ExternalID: "original", ID: original.ID, Kind: "article", State: "published", Channel: &importer.Ref{ID: destination.ID}}}})
+		result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "channel-transfer", Contents: []importer.ContentRecord{importer.ContentRecord{ExternalID: "original", ID: original.ID, Kind: "article", State: "published", Channel: &importer.Ref{ID: destination.ID}}}})
 		must(t, err)
 		if len(result.Failed) != 1 {
 			t.Fatalf("import changed original channel: %+v", result)

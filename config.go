@@ -355,9 +355,7 @@ type Deps struct {
 
 	// Moderator screens comments; nil publishes every comment.
 	Moderator content.ContentModerator
-	// Classifier entities free-text poll answers; nil refuses free-text polls.
-	Classifier content.AnswerClassifier
-	// ProviderDataEraser erases what a retaining Moderator or Classifier
+	// ProviderDataEraser erases what a retaining Moderator
 	// keeps; required with one.
 	ProviderDataEraser content.ProviderDataEraser
 	// Processor sanitizes comments, BodyProcessor content items' rich-text

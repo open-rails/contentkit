@@ -257,7 +257,7 @@ func must(t testing.TB, err error) {
 func publishedArticle(t *testing.T, a *application, title string) catalog.Content {
 	t.Helper()
 	startPublicationRuntime(t, a)
-	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: title, Body: "Published body: " + title}}})
+	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title, Body: "Published body: " + title}}}}})
 	must(t, err)
 	item, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)

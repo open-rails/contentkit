@@ -58,7 +58,7 @@ var enums = []enum{
 	{"Access", []string{media.AccessFull, media.AccessPartial, media.AccessNone}, []string{"media.ReadResult.access"}},
 	{"ItemState", []string{media.StateReady, media.StateProcessing, media.StateFailed}, []string{"media.ReadResult.state"}},
 	{"EncodePhase", media.EncodePhases, []string{"media.EncodeProgress.phase"}},
-	{"PollKind", []string{content.PollMultipleChoice, content.PollFreeText}, []string{"content.Poll.kind", "content.PollInput.kind"}},
+	{"PollKind", []string{content.PollMultipleChoice}, []string{"content.Poll.kind", "content.PollInput.kind"}},
 	{"ModerationState", []string{content.ModerationApproved, content.ModerationHeld, content.ModerationRejected},
 		[]string{"content.Comment.moderation", "catalog.Content.moderation"}},
 	{"ContentState", []string{catalog.StateDraft, catalog.StatePublished, catalog.StateDeleted}, []string{"catalog.Content.state", "catalog.Version.state"}},

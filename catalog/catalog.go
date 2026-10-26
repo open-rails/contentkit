@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +21,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/helpers/cache"
-	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/channels"
@@ -89,12 +87,8 @@ type Options struct {
 	// AfterPurge completes durable cross-store cleanup after local deletion.
 	// It runs even when some local deletions failed, and retries via this sweep.
 	AfterPurge func(context.Context) error
-	// PlayableKinds are the kinds whose versions list only once their media
-	// plays (an HLS rendition is out): a new version starts not playable until
-	// media records otherwise. Only kinds media streams belong here.
-	PlayableKinds []string
-	// DocumentsChanged runs in the writing transaction after a write queued
-	// search documents, so the engine can sync them at once. Optional.
+
+	// DocumentsChanged queues search refresh with the catalog write.
 	DocumentsChanged func(ctx context.Context, q Querier) error
 	// References clears host-owned edition links during permanent purge.
 	References VersionReferenceOwner
@@ -104,31 +98,30 @@ type Options struct {
 
 // Store is one tenant's catalog.
 type Store struct {
-	pool            *pgxpool.Pool
-	schema          string
-	qs              string
-	tenant          string
-	cfg             kinds.Config
-	t               tables
-	guard           *gate.Gate
-	accessG         *access.Gate
-	entities        Entities
-	channels        *channels.Store
-	body            Sanitizer
-	media           *Media
-	publicationMu   sync.RWMutex
-	publicationJobs *river.Client[pgx.Tx]
-	standing        Standing
-	retention       time.Duration
-	eventRetention  time.Duration
-	onPurge         func(context.Context, pgx.Tx, []contentref.ContentRef) error
-	afterPurge      func(context.Context) error
-	documents       func(ctx context.Context, q Querier) error
-	references      VersionReferenceOwner
-	playable        []string
-	now             func() time.Time
-	log             *slog.Logger
-	totals          *cache.Cache[totalsKey, Total]
+	pool           *pgxpool.Pool
+	schema         string
+	qs             string
+	tenant         string
+	cfg            kinds.Config
+	t              tables
+	guard          *gate.Gate
+	accessG        *access.Gate
+	entities       Entities
+	channels       *channels.Store
+	body           Sanitizer
+	media          *Media
+	publicationMu  sync.RWMutex
+	publication    PublicationScheduler
+	standing       Standing
+	retention      time.Duration
+	eventRetention time.Duration
+	onPurge        func(context.Context, pgx.Tx, []contentref.ContentRef) error
+	afterPurge     func(context.Context) error
+	documents      func(ctx context.Context, q Querier) error
+	references     VersionReferenceOwner
+	now            func() time.Time
+	log            *slog.Logger
+	totals         *cache.Cache[totalsKey, Total]
 }
 
 type tables struct {
@@ -166,7 +159,7 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 		t:     catalogTables(opts.Schema),
 		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities, channels: opts.Channels,
 		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, afterPurge: opts.AfterPurge, documents: opts.DocumentsChanged, references: opts.References,
-		playable: slices.Sorted(slices.Values(opts.PlayableKinds)), now: opts.Now, log: opts.Logger,
+		now: opts.Now, log: opts.Logger,
 	}
 	if s.accessG == nil {
 		g, err := access.NewGate(access.GateConfig{Tenant: opts.Tenant, Kinds: opts.Kinds, Logger: opts.Logger})

@@ -47,8 +47,8 @@ func TestFirstClassChannelRepostAuthority(t *testing.T) {
 	originalClient, destinationClient := a.client(sourceToken), a.client(destinationToken)
 	create := func(title string) catalog.Content {
 		item, err := originalClient.PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: source.ID,
-			Text:     map[string]catalog.Text{"en": {Title: title, Body: "One original body"}},
-			Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}}})
+
+			Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title, Body: "One original body"}}}, {Languages: []string{"de"}, Text: map[string]catalog.VersionText{"en": {Title: title, Body: "One original body"}}}}})
 		must(t, err)
 		return item
 	}
@@ -75,7 +75,7 @@ func TestFirstClassChannelRepostAuthority(t *testing.T) {
 		if card.ID != original.ID || card.Channel == nil || card.Channel.ID != source.ID || card.Repost == nil || card.Repost.ChannelID != destination.ID || !card.Repost.CanRemove {
 			t.Fatalf("repost replaced original ownership or lost removal authority: %+v", card)
 		}
-		_, err = destinationClient.PutContentText(t.Context(), original.ID, "en", catalog.Text{Title: "Cannot edit another channel", Body: "bad"})
+		_, err = destinationClient.PatchContentVersion(t.Context(), original.ID, original.SelectedVersionID, catalog.VersionInput{Text: map[string]catalog.VersionText{"en": {Title: "Cannot edit another channel", Body: "bad"}}})
 		requireError(t, err, 403, "forbidden")
 		_, err = destinationClient.PatchContentVersion(t.Context(), original.ID, original.Versions[1].ID, catalog.VersionInput{Text: map[string]catalog.VersionText{"de": {Title: "Cannot edit translated version"}}})
 		requireError(t, err, 403, "forbidden")
@@ -157,7 +157,7 @@ func TestFirstClassChannelRepostAuthority(t *testing.T) {
 	t.Run("all_versions_share_parent_channel_read_policy", func(t *testing.T) {
 		parentRule := access.Rule{Level: access.ChannelLevel, ChannelID: source.ID}
 		valid, err := originalClient.PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: source.ID, Access: &parentRule,
-			Text: map[string]catalog.Text{"en": {Title: "One parent policy"}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}}})
+			Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "One parent policy"}}}, {Languages: []string{"de"}, Text: map[string]catalog.VersionText{"en": {Title: "One parent policy"}}}}})
 		must(t, err)
 		if len(valid.Versions) != 2 {
 			t.Fatal("valid channel policy did not create both editions")

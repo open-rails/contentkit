@@ -61,12 +61,11 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | GET | `/v1/channels/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a channel and whether the caller favorited it (never, signed out: then it must be visible). |
 | GET | `/v1/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
 | GET | `/v1/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `state`, `q`, `limit`, `offset`. |
-| GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders. |
-| POST | `/v1/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
+| GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders. |
+| POST | `/v1/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with at least two predefined options; only multiple_choice is supported. |
 | PATCH | `/v1/polls/{id}` | staff `root:polls:write` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
 | DELETE | `/v1/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll and its media folder. |
 | POST | `/v1/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
-| POST | `/v1/polls/{id}/answer` | user | `PollAnswerInput` | 200 `Poll` | Stores or replaces the caller's answer to an open free-text poll; banned words and IP bans apply. |
 | PUT | `/v1/polls/{id}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
 | POST | `/v1/polls/{id}/options` | staff `root:polls:write` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |
 | PATCH | `/v1/polls/{id}/options/{oid}` | staff `root:polls:write` | `PollOptionPatch` | 200 `PollOption` | Updates an option's label or position. |
