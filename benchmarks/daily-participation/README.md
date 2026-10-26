@@ -283,6 +283,50 @@ receipt ingestion path, authorization, media serving or a production migration.
 Versioned `receipts/raw-*` preserve the full successful run; `.task/raw-*` also
 contains the pilot and failed setup attempt.
 
+### Updated projection on the retained replayed dataset
+
+After the immutable access/domain/language filter change at **`f6761101`**, one
+actual explicit rebuild reused database `ck261_raw_20261026_211659`. It inserted
+no source or population rows and created no replacement fixture. The driver
+checked **all 100,000 U/N pairs before and after** the rebuild: 360,000 qualified
+item/person-days, public population 60,000 and Gold population 30,000 remained
+exactly correct. The resulting rounded ranking also matched the count oracle
+for all 60,000 positive items.
+
+| Actual method phase | Method wall time | Main SQL time | Logical rows / bytes read | Query peak memory |
+|---|---:|---:|---:|---:|
+| Explicit rebuild at `f6761101` | **13.325 s** | **13.065 s** | 4.14m / 1,529.06 MB | 357.4 MiB |
+| Reuse finalized day | **7.55 ms** | 6 ms | 3 / 309 bytes | 1.45 MiB |
+| Rank prepared day, 60k IDs | **111 ms** | 93 ms | 100k / 6.60 MB | 29.4 MiB |
+
+The projection's logical row and byte counts **exactly matched the earlier
+47.113-second replay rebuild**. Background merging did not reduce the recorded
+input volume in this comparison. CPU time was **24.225 user + 1.013 system
+seconds**, versus the earlier 79.47 + 3.05 seconds. The explicit day deletion
+took 68 ms; reuse issued only the checkpoint query. Its three checkpoint rows
+are replacing versions of the same completed day, not three raw scans.
+
+This is one observed before/after result on a shared host, not a throughput
+guarantee. The new projection reported 79.3 MB physical `OSReadBytes` versus
+1.529 GB logical reads; no cache was dropped, so it is not a controlled cold
+measurement. The fixture's receipts all belong to the selected `main/en` scope:
+this verifies the changed actual method and qualification result, but does not
+measure a 23-scope host refresh or benefit from excluding out-of-scope traffic.
+It also omits PostgreSQL history loading and full host/catalog preparation.
+
+```sh
+GOWORK=off go build -p 1 -o .task/raw-daily benchmarks/daily-participation/raw/main.go
+. /path/to/owned/fixtures.env
+.task/raw-daily --existing-database ck261_raw_20261026_211659 --users 60000 \
+  --implementation f67611014860792bc07670f5155f21370dc197ce \
+  --output .task/raw-existing-new
+```
+
+`--existing-database` skips schema creation, source insertion and replay. It
+performs a deliberate rebuild of that owned synthetic database and then verifies
+finalized reuse; use the original fixture's user count. The versioned
+`receipts/raw-f676-*` preserve this run, including exact SQL and query IDs.
+
 ## Environment and measurement limits
 
 Measured 2026-10-26 in the task-owned `ck254-contracts-ch` fixture, ClickHouse

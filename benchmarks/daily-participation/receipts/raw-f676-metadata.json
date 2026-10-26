@@ -1,0 +1,18 @@
+{
+  "canonical_receipts": 1800000,
+  "database": "ck261_raw_20261026_211659",
+  "existing_database_rebuild_only": true,
+  "historical_day": "2025-01-15T00:00:00Z",
+  "implementation": "f67611014860792bc07670f5155f21370dc197ce",
+  "initial_population_rows": 240000,
+  "initial_source_rows": 3600000,
+  "items": 100000,
+  "limits": "Synthetic direct table inserts; actual PrepareDailyPopularity/DailyPopular execute; no HTTP ingestion timing or year raw dataset",
+  "person_item_days": 600000,
+  "scope": {
+    "domain": "main",
+    "language": "en"
+  },
+  "source_deliveries": "revision2 then1; replay1 then2",
+  "users": 60000
+}

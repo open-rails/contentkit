@@ -29,12 +29,12 @@ type phase struct {
 }
 type conn struct {
 	driver.Conn
-	out, db, label string
-	receipts       []receipt
+	out, db, label, runID string
+	receipts              []receipt
 }
 
 func (c *conn) log(ctx context.Context, q, kind string) (context.Context, func(error)) {
-	id := fmt.Sprintf("%s_%s_%04d", c.db, c.label, len(c.receipts))
+	id := fmt.Sprintf("%s_%s_%04d", c.runID, c.label, len(c.receipts))
 	start := time.Now()
 	r := receipt{Label: c.label, QueryID: id, Kind: kind, SQL: q}
 	return clickhouse.Context(ctx, clickhouse.WithQueryID(id)), func(err error) {
@@ -70,10 +70,12 @@ func must(err error) {
 }
 func id(prefix uint32, n uint64) string { return fmt.Sprintf("%08x-0000-7000-8000-%012x", prefix, n) }
 func main() {
-	var output string
+	var output, existingDB, implementation string
 	var users int
 	flag.StringVar(&output, "output", "", "new output directory")
 	flag.IntVar(&users, "users", 60000, "daily users")
+	flag.StringVar(&existingDB, "existing-database", "", "retained owned ck261_raw_* database; rebuild only, without inserting or replaying sources")
+	flag.StringVar(&implementation, "implementation", "current checkout", "source revision to record")
 	flag.Parse()
 	const items = 100000
 	if output == "" || users < 100 || users > 60000 {
@@ -89,22 +91,30 @@ func main() {
 	must(err)
 	defer native.Close()
 	db := "ck261_raw_" + time.Now().UTC().Format("20060102_150405")
-	c := &conn{Conn: native, db: db, out: output, label: "schema"}
-	must(c.Exec(ctx, "CREATE DATABASE "+db))
-	// Exact relevant migration definitions, no production migration execution.
-	for _, spec := range []struct{ file, table string }{{"0001_baseline.up.sql", "erasures"}, {"0003_measured_engagement.up.sql", "engagement_segments"}, {"0004_measured_population.up.sql", "measured_population_observations"}, {"0006_daily_popularity.up.sql", "popularity_daily"}, {"0006_daily_popularity.up.sql", "popularity_daily_prepared"}} {
-		b, e := os.ReadFile(filepath.Join("migrations/clickhouse", spec.file))
-		must(e)
-		s := string(b)
-		start := strings.Index(s, "CREATE TABLE IF NOT EXISTS "+spec.table+" ")
-		if start < 0 {
-			panic("missing table " + spec.table)
+	if existingDB != "" {
+		if !strings.HasPrefix(existingDB, "ck261_raw_") || strings.Trim(existingDB[len("ck261_raw_"):], "0123456789_") != "" {
+			panic("owned raw benchmark database required")
 		}
-		end := strings.Index(s[start:], ";")
-		q := s[start : start+end+1]
-		q = strings.Replace(q, "CREATE TABLE IF NOT EXISTS "+spec.table, "CREATE TABLE IF NOT EXISTS "+db+"."+spec.table, 1)
-		q = strings.ReplaceAll(q, "{{ON_CLUSTER}}", "")
-		must(c.Exec(ctx, q))
+		db = existingDB
+	}
+	c := &conn{Conn: native, db: db, out: output, label: "schema", runID: db + "_" + time.Now().UTC().Format("150405.000000000")}
+	if existingDB == "" {
+		must(c.Exec(ctx, "CREATE DATABASE "+db))
+		// Exact relevant migration definitions, no production migration execution.
+		for _, spec := range []struct{ file, table string }{{"0001_baseline.up.sql", "erasures"}, {"0003_measured_engagement.up.sql", "engagement_segments"}, {"0004_measured_population.up.sql", "measured_population_observations"}, {"0006_daily_popularity.up.sql", "popularity_daily"}, {"0006_daily_popularity.up.sql", "popularity_daily_prepared"}} {
+			b, e := os.ReadFile(filepath.Join("migrations/clickhouse", spec.file))
+			must(e)
+			s := string(b)
+			start := strings.Index(s, "CREATE TABLE IF NOT EXISTS "+spec.table+" ")
+			if start < 0 {
+				panic("missing table " + spec.table)
+			}
+			end := strings.Index(s[start:], ";")
+			q := s[start : start+end+1]
+			q = strings.Replace(q, "CREATE TABLE IF NOT EXISTS "+spec.table, "CREATE TABLE IF NOT EXISTS "+db+"."+spec.table, 1)
+			q = strings.ReplaceAll(q, "{{ON_CLUSTER}}", "")
+			must(c.Exec(ctx, q))
+		}
 	}
 	day := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
 	tenant := "benchmark261"
@@ -132,14 +142,18 @@ func main() {
 			must(c.Exec(ctx, strings.Replace(statement, fmt.Sprintf("FROM numbers(%d)", pairs*6), fmt.Sprintf("FROM numbers(%d,%d)", offset, n), 1)))
 		}
 	}
-	insertSource("insert_source", insert)
+	if existingDB == "" {
+		insertSource("insert_source", insert)
+	}
 	population := fmt.Sprintf(`INSERT INTO %s.measured_population_observations
  (tenant,subject_kind,subject,content_kind,observation_id,observed_at,domain,language,eligible_tiers,eligibility_known)
  WITH toUInt64(intDiv(number,4)) AS person,toUInt64(intDiv(number%%4,2)) AS observation
  SELECT '%s','user',%s,'%s',%s,toDateTime64('2025-01-15 11:00:00',6,'UTC')+toIntervalSecond(observation),
  'main','en',if(observation=1 AND person%%2=0,['gold'],CAST([],'Array(String)')),true FROM numbers(%d)`, db, tenant, uuidSQL("00000003", "person"), kind, uuidSQL("00000007", "person*2+observation"), users*4)
 	c.label = "insert_population"
-	must(c.Exec(ctx, population))
+	if existingDB == "" {
+		must(c.Exec(ctx, population))
+	}
 	expected := make([]uint64, items)
 	eligible := make([]uint64, items)
 	for item := 0; item < items; item++ {
@@ -204,17 +218,24 @@ func main() {
 		}
 		save(filepath.Join(output, label+".json"), map[string]any{"items_verified": n, "qualified_item_people": total, "population_public": users, "population_gold": (users + 1) / 2})
 	}
-	prep("prepare_initial", false)
-	verify("verify_initial")
-	prep("reuse_closed_day", false)
-	// Replay identical identities in opposite revision order, never new receipts.
-	insertSource("replay_source", strings.Replace(insert, "toUInt64(2-number%2) AS rev", "toUInt64(1+number%2) AS rev", 1))
-	c.label = "replay_population"
-	must(c.Exec(ctx, population))
-	prep("reuse_after_replay", false)
-	verify("verify_reused")
-	prep("explicit_rebuild_after_replay", true)
-	verify("verify_rebuilt")
+	if existingDB == "" {
+		prep("prepare_initial", false)
+		verify("verify_initial")
+		prep("reuse_closed_day", false)
+		// Replay identical identities in opposite revision order, never new receipts.
+		insertSource("replay_source", strings.Replace(insert, "toUInt64(2-number%2) AS rev", "toUInt64(1+number%2) AS rev", 1))
+		c.label = "replay_population"
+		must(c.Exec(ctx, population))
+		prep("reuse_after_replay", false)
+		verify("verify_reused")
+		prep("explicit_rebuild_after_replay", true)
+		verify("verify_rebuilt")
+	} else {
+		verify("verify_existing_before")
+		prep("existing_explicit_rebuild", true)
+		verify("verify_existing_rebuilt")
+		prep("existing_reuse_finalized", false)
+	}
 	c.label = "rank"
 	start := time.Now()
 	hits, err := store.DailyPopular(ctx, tenant, kind, signal.Between(day, day.AddDate(0, 0, 1)), scope, items)
@@ -266,7 +287,7 @@ func main() {
 	must(rows.Err())
 	rows.Close()
 	save(filepath.Join(output, "query-metrics.json"), metrics)
-	save(filepath.Join(output, "metadata.json"), map[string]any{"database": db, "users": users, "items": items, "person_item_days": pairs, "initial_source_rows": pairs * 6, "canonical_receipts": pairs * 3, "initial_population_rows": users * 4, "source_deliveries": "revision2 then1; replay1 then2", "scope": scope, "implementation": "d5e6dc73+2a480be9", "historical_day": day, "limits": "Synthetic direct table inserts; actual PrepareDailyPopularity/DailyPopular execute; no HTTP ingestion timing or year raw dataset"})
+	save(filepath.Join(output, "metadata.json"), map[string]any{"database": db, "users": users, "items": items, "person_item_days": pairs, "initial_source_rows": pairs * 6, "canonical_receipts": pairs * 3, "initial_population_rows": users * 4, "source_deliveries": "revision2 then1; replay1 then2", "scope": scope, "implementation": implementation, "existing_database_rebuild_only": existingDB != "", "historical_day": day, "limits": "Synthetic direct table inserts; actual PrepareDailyPopularity/DailyPopular execute; no HTTP ingestion timing or year raw dataset"})
 	fmt.Println(db)
 	for _, p := range phases {
 		fmt.Printf("%s %.3fs %+v\n", p.Name, p.WallSeconds, p.Report)
