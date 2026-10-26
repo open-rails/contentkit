@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -13,11 +14,20 @@ func TestErasedProjectionAndHistoricalAnswers(t *testing.T) {
 	w := newWorld(t)
 	a, sibling := w.apps[0], w.apps[1]
 	configureDiscoverySignals(t, w, a)
+	// The fixture helper provisions ClickHouse and updates dependencies; reopen
+	// the engine so erasure and the direct projection reader share that plane.
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	a.cfg.Database.SkipMigrations = true
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
 	target, _ := w.person(t, 0)
 	live, _ := w.person(t, 0)
 	// Preserve real pre-retirement rows without reviving their removed writer.
 	poll, siblingPoll := uuid.NewString(), uuid.NewString()
-	_, err := w.pool.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_poll_questions (id,tenant_id,kind,question,language)
+	_, err = w.pool.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_poll_questions (id,tenant_id,kind,question,language)
  VALUES($1,$2,'free_text','Historical question','en'),($3,$4,'free_text','Sibling history','en')`, poll, a.cfg.Scope.AppID.String(), siblingPoll, sibling.cfg.Scope.AppID.String())
 	must(t, err)
 	_, err = w.pool.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_poll_answers (tenant_id,question_id,actor_id,text)
@@ -37,7 +47,8 @@ func TestErasedProjectionAndHistoricalAnswers(t *testing.T) {
 	other.Subject = signal.Subject{UserID: live.ID}
 	other.EventID = uuid.NewString()
 	must(t, store.RecordSignals(t.Context(), a.cfg.Scope.AppID.String(), []signal.Signal{event, other}))
-	assertState := func(user string, present bool) {
+	assertState := func(t *testing.T, user string, present bool) {
+		t.Helper()
 		state, err := store.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: user}, []signal.ContentRef{ref})
 		must(t, err)
 		value, exists := state[ref.Key()]
@@ -45,8 +56,8 @@ func TestErasedProjectionAndHistoricalAnswers(t *testing.T) {
 			t.Fatalf("measured projection presence=%v active=%d for%s, expected presence=%v", exists, value.ActiveMS, user, present)
 		}
 	}
-	assertState(target.ID, true)
-	assertState(live.ID, true)
+	assertState(t, target.ID, true)
+	assertState(t, live.ID, true)
 	t.Run("CK-J23-S07_historical_answers_and_projection_rebuild_remain_erased", func(t *testing.T) {
 		for range 2 {
 			report, err := a.engine.EraseAppSubjects(t.Context(), []signal.Subject{{UserID: target.ID}})
@@ -68,7 +79,7 @@ func TestErasedProjectionAndHistoricalAnswers(t *testing.T) {
 		if repaired.Examined == 0 || repaired.Repaired == 0 {
 			t.Fatal("repair did not rebuild the live positive-control projection")
 		}
-		assertState(target.ID, false)
-		assertState(live.ID, true)
+		assertState(t, target.ID, false)
+		assertState(t, live.ID, true)
 	})
 }
