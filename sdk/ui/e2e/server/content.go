@@ -10,8 +10,7 @@ import (
 )
 
 // The host's content policies, deterministic for tests: a comment or text
-// containing "[hold]" is held for review, "[reject]" is refused; free-text
-// poll answers group by their first word.
+// containing "[hold]" is held for review and "[reject]" is refused.
 type moderator struct{}
 
 func (moderator) Screen(_ context.Context, in content.ModerationInput) (content.Verdict, error) {
@@ -25,15 +24,6 @@ func (moderator) Screen(_ context.Context, in content.ModerationInput) (content.
 }
 
 func (moderator) StatelessPolicy() {}
-
-type classifier struct{}
-
-func (classifier) Classify(_ context.Context, a content.Answer) (content.GroupAssignment, error) {
-	word := strings.ToLower(strings.Fields(a.Text + " other")[0])
-	return content.GroupAssignment{GroupID: word, Label: strings.ToUpper(word[:1]) + word[1:]}, nil
-}
-
-func (classifier) StatelessPolicy() {}
 
 // blogKind is the content kind of blog posts.
 const blogKind = "blog"

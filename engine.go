@@ -69,7 +69,6 @@ type Engine struct {
 	log             *slog.Logger
 	auth            auth.Authenticator
 	gate            *access.Gate
-	classifier      bool // free-text answers to reclassify
 
 	hub      *hub.Hub
 	signals  *signalPlane // nil without ClickHouse
@@ -129,7 +128,7 @@ func NewForErasureReplay(ctx context.Context, cfg Config, deps Deps) (*Engine, e
 }
 
 func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *Engine, err error) {
-	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, classifier: deps.Classifier != nil, erasureRecovery: recovery}
+	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, erasureRecovery: recovery}
 	if e.log == nil {
 		e.log = slog.Default()
 	}
@@ -291,6 +290,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := preflightPublishingJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
 		return err
 	}
+	if err := e.preflightReclassificationJobs(ctx, options.RetireReclassificationJobs); err != nil {
+		return err
+	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
@@ -340,6 +342,11 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	}
 	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
+	}
+	if options.explicit {
+		if err := e.retireReclassificationJobs(ctx, options.RetireReclassificationJobs); err != nil {
+			return err
+		}
 	}
 	if err := e.migratePublicationQueues(ctx); err != nil {
 		return err
@@ -609,7 +616,7 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		NotificationPublisher: deps.Notifications,
 		EraseAccountReceipts:  e.eraseAccountReceipts,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
-		Classifier: deps.Classifier, ProviderDataEraser: deps.ProviderDataEraser,
+		ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
@@ -893,7 +900,7 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 // recent searches, inboxes, people's avatars (on the avatar primary only:
 // another site's people's avatars are the primary's, which its own
 // EraseSubjects erases; see AvatarsConfig) and data
-// retained by moderation and classifier providers; approved authored content
+// retained by moderation providers; approved authored content
 // stays (content.EraseSubjects). Retry while error != nil or
 // !report.Complete(); Remaining names a plane that could not finish
 // (content_plane, media_plane, signal_plane). Without a signal plane only the
