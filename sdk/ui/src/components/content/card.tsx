@@ -149,7 +149,7 @@ function useLink(url: string | undefined, before?: () => void) {
   return useCallback(
     (e: MouseEvent<HTMLAnchorElement>) => {
       if (e.defaultPrevented || e.button !== 0) return;
-      const target = renewOriginLink(e.currentTarget.href);
+      const target = renewOriginLink(e.currentTarget.href, true);
       e.currentTarget.href = target;
       before?.();
       if (!navigate || !url || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -162,7 +162,7 @@ function useLink(url: string | undefined, before?: () => void) {
 
 function prepareNativeLink(e: MouseEvent<HTMLAnchorElement>) {
   if (e.type === "auxclick" && e.button !== 1) return;
-  e.currentTarget.href = renewOriginLink(e.currentTarget.href);
+  e.currentTarget.href = renewOriginLink(e.currentTarget.href, e.type === "auxclick");
 }
 
 /** Which chips of a one-line list fit whole beside its "+N": `through` counts chips in list order (breakpoint-hidden ones included), `fitted` the ones that show, `squeezed` when even the first one does not fit and must shrink; null until measured. `chipsKey` names the chips rendered, so new ones are measured. */

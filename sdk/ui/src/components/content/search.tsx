@@ -176,7 +176,7 @@ export function SearchBox(p: SearchBoxProps) {
       return search(s.query);
     }
     const prepared = suggestionHref(s, visible.indexOf(s) + 1);
-    const url = prepared ? renewOriginLink(prepared) : undefined;
+    const url = prepared ? renewOriginLink(prepared, true) : undefined;
     setOpen(false);
     if (!url) return;
     p.onSelect?.();
@@ -227,11 +227,11 @@ export function SearchBox(p: SearchBoxProps) {
           {s.type !== "recent" && <a href={suggestionHref(s, i + 1)} className="absolute inset-0 z-10" aria-label={s.type === "content" ? s.card.title || s.card.code : s.entity.name || s.entity.slug}
             onMouseDown={e => e.stopPropagation()}
             onClick={e => {
-              const url = renewOriginLink(e.currentTarget.href); e.currentTarget.href = url;
+              const url = renewOriginLink(e.currentTarget.href, true); e.currentTarget.href = url;
               if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
               e.preventDefault(); setOpen(false); p.onSelect?.(); if (navigate) navigate(url); else location.assign(url);
             }}
-            onAuxClick={e => { if (e.button === 1) e.currentTarget.href = renewOriginLink(e.currentTarget.href); }}
+            onAuxClick={e => { if (e.button === 1) e.currentTarget.href = renewOriginLink(e.currentTarget.href, true); }}
             onContextMenu={e => { e.currentTarget.href = renewOriginLink(e.currentTarget.href); }} />}
           {header && s.type !== "recent" ? (
             <>

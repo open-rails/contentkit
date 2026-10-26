@@ -200,7 +200,10 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
     if (!permitted || !state.owns()) return;
     const releaseOrigin = holdOriginVisit(client, state.origin);
     if (state.origin && contentId) {
-      beaconsFor(client).click(contentId, { ...state.origin.attribution, version_id: state.origin.version }, state.origin.clickId);
+      if (!state.origin.clicked) {
+        state.origin.clicked = true;
+        beaconsFor(client).click(contentId, { ...state.origin.attribution, version_id: state.origin.version }, state.origin.clickId);
+      }
       cleanOriginURL(client, state.origin);
     }
     state.start();
@@ -238,7 +241,7 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
         void state.tracker.flush(true).finally(() => state.tracker.discard());
       });
     };
-  }, [permitted, state]);
+  }, [permitted, state, client, contentId]);
 
   const video = useCallback((element: HTMLVideoElement | null) => state.bindVideo(element), [state]);
   const text = useCallback((element: HTMLElement | null) => state.page(0)(element), [state]);

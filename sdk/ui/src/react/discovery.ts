@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Beacons, eventId, type BeaconOptions } from "../client/beacons.js";
-import { originID, originLink } from "../client/navigation-origin.js";
+import { forgetOriginLink, originID, originLink } from "../client/navigation-origin.js";
 import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
 import type { ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
@@ -568,19 +568,22 @@ export function useExposure(items: readonly { id: string; position?: number; ver
     observer.observe(el);
   }, [observer]);
   const links = useMemo(() => new Map<string, string>(), [renderId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { for (const link of links.values()) forgetOriginLink(link); }, [links]);
   const href = useCallback((content: string, position: number, url: string | undefined) => {
     if (!url || !base.search_query || !isCurrent()) return url;
     const key = `${content}\u0000${position}\u0000${url}`;
     let link = links.get(key);
     if (!link) {
       const item = items.find((item) => item.id === content);
-      link = originLink(client, content, item?.version_id ?? item?.version?.id, {
+      const attribution = {
         render_id: segmentID(Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE)), surface: o.surface, position, language: base.language,
-      }, url);
+      };
+      link = originLink(client, content, item?.version_id ?? item?.version?.id, attribution, url,
+        id => { if (isCurrent()) b.click(content, { ...attribution, version_id: item?.version_id ?? item?.version?.id }, id); });
       links.set(key, link);
     }
     return link;
-  }, [base.search_query, base.language, isCurrent, links, items, client, segmentID, o.surface]);
+  }, [base.search_query, base.language, isCurrent, links, items, client, segmentID, o.surface, b]);
   const click = useCallback((content: string, position: number, url?: string) => {
     if (!isCurrent()) return;
     const index = Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE);

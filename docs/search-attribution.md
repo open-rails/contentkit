@@ -9,8 +9,9 @@ offset. Hidden cards are not reported as visible.
 Search links carry only an opaque `ck_nav` identifier. The SDK keeps its short
 handoff in browser storage, scoped to the ContentKit mount, current identity and
 target content. Ordinary, modifier, middle-click and context-menu navigation
-renew that identifier. The destination records the click once through the
-existing beacon batcher and starts a separate visit identity. Query text is
+renew that identifier. Activation records the click through the existing beacon
+batcher; the destination supplies it only when native navigation bypassed that
+event, then starts a separate visit identity. Query text is
 never added to destination URLs. Blocked browser storage or lost telemetry
 does not prevent navigation or reading.
 
@@ -20,8 +21,9 @@ their existing revisions and access checks; origin is analytics context, not
 authorization. The attribution export joins click IDs only within the same
 tenant, subject and content. Its visits report observed active time, coverage
 and completion from canonical receipt revisions. No received engagement means
-unobserved engagement, not a proven bounce or dislike. A destination that never
-loads its reader may not emit a click; collection remains best effort.
+unobserved engagement, not a proven bounce or dislike. A native context-menu
+destination that never loads its reader may not emit a click; collection remains
+best effort.
 
 `exposures.search_query` uses the existing recent-search normalization and
 200-rune bound. ClickHouse expires this text after 180 days through its normal

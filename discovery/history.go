@@ -281,7 +281,7 @@ func (s *Service) RecordSignals(ctx context.Context, actor access.Actor, in Sign
 		if x.Type != TypeClick {
 			return fmt.Errorf("%w: only click signals are accepted; reading uses /engagement", ErrInvalid)
 		}
-		sig := signal.Signal{ContentRef: ref, Subject: subject, Type: TypeClick, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC()}
+		sig := signal.Signal{ContentRef: ref.WithVersion(x.VersionID), Subject: subject, Type: TypeClick, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC()}
 		if receipt != nil {
 			sig.Access = &receipt.Access
 			sig.OccurredAt = receipt.Access.ObservedAt
@@ -405,6 +405,11 @@ func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Ex
 	}
 	var ids []string
 	for _, e := range in.Exposures {
+		if e.SearchQuery != "" {
+			if _, ok := searchKey(e.SearchQuery); !ok {
+				return fmt.Errorf("%w: search query must contain 1-%d characters", ErrInvalid, maxSearchQuery)
+			}
+		}
 		switch signal.ExposureStage(e.Stage) {
 		case signal.StageServed, signal.StageRendered, signal.StageVisible:
 		default:
