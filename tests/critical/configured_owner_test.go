@@ -70,6 +70,8 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 		kind.OwnerEntity = &kinds.EntityRef{Kind: "channel", Slug: "blog"}
 		cfg.Content.Kinds[name] = kind
 	}
+	var queuedBefore int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()).Scan(&queuedBefore))
 	for _, opt := range []ck.MigrationOptions{{}, {Scopes: w.apps[1].deps.Scopes}} {
 		if err := ck.MigratePostgres(t.Context(), w.pool, cfg, opt); err == nil {
 			t.Fatal("missing/foreign provider was accepted")
@@ -154,6 +156,11 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	if after.Revision != before.Revision || !reflect.DeepEqual(after.Names, before.Names) || newGroup.ID != group.ID || !reflect.DeepEqual(newMemberships, memberships) {
 		t.Fatal("repeated/concurrent provisioning changed names, identities or editor assignments")
 	}
+	var queuedAfter int
+	must(t, pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()).Scan(&queuedAfter))
+	if queuedAfter != queuedBefore {
+		t.Fatal("explicit provisioning enqueued redundant lifecycle jobs")
+	}
 	// A manually retired AuthKit group is not an invitation to recreate it and
 	// wipe its grants on the next ordinary application migration.
 	must(t, w.auth.DeleteGroup(ctx, iam.GroupByID(groupID)))
@@ -169,6 +176,14 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	must(t, err)
 	if stillDeleted.DeletedAt == nil || !reflect.DeepEqual(stillDeleted, deleted) {
 		t.Fatal("refused provisioning altered the retired group")
+	}
+	// The runtime's deliberate entity-restore operation retains its existing
+	// semantics; only configuration-driven provisioning refuses resurrection.
+	must(t, a.deps.Scopes.Provision(ctx, []entities.Scope{{ID: id, Kind: "channel", Restore: true}}))
+	restored, err := w.auth.Group(ctx, iam.GroupByID(groupID))
+	must(t, err)
+	if restored.DeletedAt != nil {
+		t.Fatal("explicit entity restoration no longer provisions its group")
 	}
 }
 
