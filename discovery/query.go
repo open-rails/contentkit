@@ -481,10 +481,12 @@ type order struct {
 	edition bool
 }
 
-// titleKey is a content's title sort key in the display language's text.
-const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key,''),x.title)) FROM %[1]s x JOIN %[2]s v ON v.tenant_id=x.tenant_id AND v.id=x.version_id
- WHERE v.tenant_id=f.tenant_id AND v.content_id=f.content_id AND v.state<>'deleted'
- ORDER BY coalesce(@d_display=ANY(v.languages),false) DESC,v.released DESC,v.position,x.language=@d_display DESC,x.language LIMIT 1),'')`
+// titleKey belongs to the edition selected by this query's language, access
+// and entity filters. A sibling's title must not sort or paginate its card.
+const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key,''),nullif(x.title,''),CASE WHEN v.kind=ANY(@d_sort_title_kinds::text[]) THEN nullif(v.original_title,'') END,''))
+ FROM (SELECT cv.*,f.kind FROM %[2]s cv WHERE cv.tenant_id=f.tenant_id AND cv.id=f.version_id) v
+ LEFT JOIN LATERAL (SELECT t.title,t.sort_key FROM %[1]s t WHERE t.tenant_id=v.tenant_id AND t.version_id=v.id
+ ORDER BY t.language=@d_display DESC,array_position(v.languages,t.language),t.language LIMIT 1) x ON true),'')`
 
 func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, error) {
 	raw = s.sortName(raw, f.Kind)
@@ -500,7 +502,14 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	case SortNewest, SortOldest:
 		o.expr, o.cast, o.desc = "coalesce(f.published_at, 'epoch'::timestamptz)", "timestamptz", name == SortNewest
 	case SortTitle:
-		o.expr, o.cast, o.desc = fmt.Sprintf(titleKey, s.t.versionText, s.t.versions), "text", false
+		o.expr, o.cast, o.desc, o.edition = fmt.Sprintf(titleKey, s.t.versionText, s.t.versions), "text", false, true
+		titleKinds := []string{}
+		for kind, model := range s.o.Kinds.Kinds {
+			if model.TitlePolicy == kinds.TitleOriginalAndVersion {
+				titleKinds = append(titleKinds, kind)
+			}
+		}
+		o.args["d_sort_title_kinds"] = titleKinds
 	case SortPopular:
 		window, err := popularity.WindowForPeriod(cmpOr(period, popularity.DefaultPeriod), s.now())
 		if err != nil {

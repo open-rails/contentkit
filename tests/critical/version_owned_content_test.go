@@ -132,6 +132,30 @@ func TestVersionOwnedContent(t *testing.T) {
 			}
 		}
 	})
+	t.Run("title_sort_and_cursor_use_the_displayed_edition", func(t *testing.T) {
+		makePair := func(enTitle, zhTitle string) catalog.Content {
+			pair, err := admin.PostContents(ctx, catalog.ContentInput{Kind: "post", Versions: []catalog.VersionInput{
+				{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: enTitle, Body: "English body"}}},
+				{Languages: []string{"zh"}, Text: map[string]catalog.VersionText{"zh": {Title: zhTitle, Body: "Chinese body"}}},
+			}})
+			must(err)
+			publish(pair)
+			return pair
+		}
+		zulu, mango := makePair("Zulu English", "Aardvark Chinese"), makePair("Mango English", "Zebra Chinese")
+		query := ck.GetContentsQuery{Kind: "post", Ids: []string{zulu.ID, mango.ID}, Language: "en", DisplayLanguage: "zh", Sort: "title", Limit: 1}
+		first, err := public.GetContents(ctx, query)
+		must(err)
+		if len(first.Contents) != 1 || first.Contents[0].ID != mango.ID || first.Contents[0].Title != "Mango English" || first.Contents[0].Version.ID != mango.Versions[0].ID || first.NextCursor == "" {
+			t.Fatalf("sort borrowed sibling text: %+v", first)
+		}
+		query.Cursor = first.NextCursor
+		second, err := public.GetContents(ctx, query)
+		must(err)
+		if len(second.Contents) != 1 || second.Contents[0].ID != zulu.ID || second.Contents[0].Title != "Zulu English" || second.Contents[0].Version.ID != zulu.Versions[0].ID {
+			t.Fatalf("title cursor changed selected edition: %+v", second)
+		}
+	})
 	t.Run("parent_text_writes_are_not_an_alias", func(t *testing.T) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPut, server.URL+"/content/v1/contents/"+item.ID+"/text/en", strings.NewReader(`{"title":"wrong parent"}`))
 		must(err)
