@@ -77,6 +77,7 @@ type NoticePage struct {
 	To         int    `json:"to,omitempty"`
 	Chapter    int    `json:"chapter,omitempty"` // a removed page still named as this chapter's start
 	PreviewURL string `json:"preview_url,omitempty"`
+	path       string
 }
 
 // PageNotices are a version's undismissed notices, for its editors.
@@ -392,7 +393,7 @@ func noticesOf(k *media.Kind, m *media.Manifest) []PageNotice {
 	var removed []NoticePage
 	for _, p := range sel.Pages {
 		if reason := noticePageReason[p.Decision.Reason]; reason != "" && !p.Included && p.Mode == "auto" {
-			removed = append(removed, NoticePage{ID: p.ID, SourceName: p.SourceName, Reason: reason})
+			removed = append(removed, NoticePage{ID: p.ID, SourceName: p.SourceName, Reason: reason, path: p.Path})
 		}
 	}
 	if len(removed) > 0 {
@@ -443,14 +444,9 @@ func (s *Service) PageNotices(ctx context.Context, actor access.Actor, t Target)
 	if len(out.Notices) == 0 {
 		return out, nil
 	}
-	byPath, hidden := map[string]string{}, map[string]string{}
+	byPath := map[string]string{}
 	for _, f := range sourcePages(k, m) {
 		byPath[f.Path] = pageID(k, f)
-	}
-	for _, p := range selectionOf(k, m).Pages {
-		if !p.Included {
-			hidden[p.Path] = p.ID
-		}
 	}
 	segments, err := s.segments(ctx, s.o.Pool, []string{t.Version})
 	if err != nil {
@@ -458,14 +454,12 @@ func (s *Service) PageNotices(ctx context.Context, actor access.Actor, t Target)
 	}
 	starts := map[string]int{}
 	for _, g := range segments[t.Version] {
-		if id := hidden[g.StartPage]; id != "" {
-			starts[id] = g.Position + 1
-		}
+		starts[g.StartPage] = g.Position + 1
 	}
 	for i := range out.Notices {
 		if out.Notices[i].Kind == "removed" {
 			for j := range out.Notices[i].Pages {
-				out.Notices[i].Pages[j].Chapter = starts[out.Notices[i].Pages[j].ID]
+				out.Notices[i].Pages[j].Chapter = starts[out.Notices[i].Pages[j].path]
 			}
 		}
 	}
