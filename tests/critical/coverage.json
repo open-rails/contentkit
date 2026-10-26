@@ -707,6 +707,18 @@
       ]
     },
     {
+      "id": "CK-J07-S13",
+      "journey": "CK-J07",
+      "behavior": "Typeahead under three characters completes name prefixes only",
+      "status": "verified",
+      "evidence": [
+        "Two characters starting both visible titles suggest both, two characters inside their names suggest nothing, and the same three characters suggest both again."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S13_short_typeahead_completes_name_prefixes"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",

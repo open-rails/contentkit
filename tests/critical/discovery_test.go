@@ -357,6 +357,13 @@ func TestDiscoveryVisibility(t *testing.T) {
 			assertCards(t, found.ContentPage, want...)
 		}
 	})
+	t.Run("CK-J07-S13_short_typeahead_completes_name_prefixes", func(t *testing.T) {
+		for q, want := range map[string][]string{"cr": {one.ID, two.ID}, "al": {}, "all": {one.ID, two.ID}} {
+			got, err := public.GetTypeahead(t.Context(), ck.GetTypeaheadQuery{Q: q, Kind: "article", Mode: "hide"})
+			must(t, err)
+			assertCards(t, discovery.ContentPage{Contents: got.Contents}, want...)
+		}
+	})
 	t.Run("CK-J07-S06_code_resolution_retains_parent_and_domain_authority", func(t *testing.T) {
 		resolved, err := public.GetCode(t.Context(), one.Code, ck.GetCodeQuery{V: one.Versions[0].Code})
 		must(t, err)
