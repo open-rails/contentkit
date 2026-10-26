@@ -124,6 +124,9 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 			cards[i].Ranking = &ranking
 		}
 	}
+	if err == nil && o.Filter.includeReposts {
+		err = s.repostContext(ctx, q, o.Filter.ChannelIDs[0], cards)
+	}
 	out := ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}
 	if err == nil && o.Summary && o.Cursor == "" {
 		out.Summary, err = s.cachedListingSummary(ctx, o.Filter, q, srt)

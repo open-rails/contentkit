@@ -79,6 +79,8 @@ type Filter struct {
 	// ChannelIDs keeps content one of these channels owns (the original feed);
 	// owning is not membership and opens nothing.
 	ChannelIDs []string
+	// includeReposts is enabled only by the public channel feed.
+	includeReposts bool
 	// Creators keeps content one of these users is credited on.
 	Creators []string
 	// Access keeps content at one of these levels: public is what anyone
@@ -243,7 +245,13 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 		q.and("NOT (f.entity_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": excluded})
 	}
 	if len(owners) > 0 {
-		q.and("f.owner_entity_id = ANY(@d_owners::text[])", pgx.NamedArgs{"d_owners": owners})
+		owned := "f.owner_entity_id = ANY(@d_owners::text[])"
+		if f.includeReposts {
+			owned = "(" + owned + " OR EXISTS (SELECT 1 FROM " + s.t.reposts + " rp WHERE rp.tenant_id=f.tenant_id AND rp.content_id=f.content_id AND rp.channel_id=ANY(@d_owners::text[])))"
+			// A public feed never exposes unpublished or deleted originals, even to staff.
+			q.and("NOT f.deleted AND f.live_from <= @cv_now::timestamptz AND (@cv_language = '' OR @cv_language = ANY(f.languages))", nil)
+		}
+		q.and(owned, pgx.NamedArgs{"d_owners": owners})
 	}
 	if cs, err := uniqueIDs("creators", f.Creators); err != nil {
 		return nil, err

@@ -204,6 +204,16 @@ func hasKey(m map[string]bool, k string) bool {
 	return ok
 }
 
+// CanPostToChannel checks current destination posting authority. It grants no
+// authority over an original referenced by a repost.
+func (v *Viewer) CanPostToChannel(ctx context.Context, id string) (bool, error) {
+	if v.staffWrite {
+		return true, nil
+	}
+	got, err := v.s.entityAllowed(ctx, v.s.pool, v.actor, []string{id}, true)
+	return got[id], err
+}
+
 // Staff reports a viewer holding root:content:view-restricted or
 // root:content:write: they see everything inside the domain boundary.
 func (v *Viewer) Staff() bool { return v.staff }

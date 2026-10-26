@@ -45,6 +45,7 @@ type Card struct {
 	Entities map[string][]Chip `json:"entities"`
 	// Channel is the original authoring home; reposts do not replace it.
 	Channel     *channels.Card       `json:"channel,omitempty"`
+	Repost      *channels.Repost     `json:"repost,omitempty"`
 	Counts      Counts               `json:"counts"`
 	Access      CardAccess           `json:"access"`
 	Viewer      *catalog.ViewerState `json:"viewer,omitempty"`

@@ -212,10 +212,10 @@ func lockedNote(typ TargetType, them string) string {
 // targetNoun names a target type in route docs.
 func targetNoun(typ TargetType) string {
 	if typ == TargetChannel {
-		return "channel"
+		return "a channel"
 	}
 	if typ != TargetContent {
-		return "a group"
+		return "an entity"
 	}
 	return "a content item or one of its versions"
 }

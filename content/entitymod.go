@@ -214,7 +214,7 @@ func (rt *Runtime) handleEntityBans(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	limit, offset := parsePage(req)
-	bans, err := rt.listCommentBans(req.Context(), EntityScope(g.ID), limit, offset)
+	bans, err := rt.listCommentBans(req.Context(), ChannelScope(g.ID), limit, offset)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -235,7 +235,7 @@ func (rt *Runtime) handleEntityBan(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	b, err := rt.banCommenter(req.Context(), actor.ID, EntityScope(g.ID), req.PathValue("user"), in)
+	b, err := rt.banCommenter(req.Context(), actor.ID, ChannelScope(g.ID), req.PathValue("user"), in)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -249,7 +249,7 @@ func (rt *Runtime) handleEntityUnban(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := rt.liftCommentBan(req.Context(), EntityScope(g.ID), req.PathValue("user")); err != nil {
+	if err := rt.liftCommentBan(req.Context(), ChannelScope(g.ID), req.PathValue("user")); err != nil {
 		writeErr(w, err)
 		return
 	}

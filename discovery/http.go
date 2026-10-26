@@ -104,6 +104,9 @@ func dailyFilterParams() []httpapi.Param {
 }
 
 var routes = []httpapi.Route[handler]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/channels/{id}/contents", Resource: "discovery", Auth: httpapi.Public,
+		Doc:   "Lists a channel's published originals and repost references, once per original. Original publication, read, language, and domain policies always apply; reposting grants no editing or reading rights.",
+		Query: params(readerParams, pageParams), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.channelFeed)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/library", Resource: "discovery", Auth: httpapi.User,
 		Doc:       "Content covered by the reader's purchased content or version entitlements, within the current domain's hard visibility boundary.",
 		Query:     []httpapi.Param{httpapi.Text("language", "title language"), httpapi.Text("cursor", "previous next_cursor"), httpapi.Int("limit", "page size: 20 by default, at most 100")},
