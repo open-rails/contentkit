@@ -440,6 +440,7 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		requireError(t, err, 403, "comment_moderated")
 	})
 }
+
 // Only this owned pool's search path changes the provider clock; AuthKit,
 // sibling apps and every other fixture keep the ordinary PostgreSQL clock.
 func useModerationDatabaseClock(t *testing.T, w *world, a *application) func(time.Time) {
