@@ -79,7 +79,7 @@ func (s *Store) entityAllowed(ctx context.Context, q Querier, actor access.Actor
 		if creating {
 			permissions = append(permissions, access.ChannelContentCreate)
 		}
-		ok, err := gate.ChannelEditor(ctx, s.guard.Auth, actor, g.owner, g.scope, permissions...)
+		ok, err := gate.ChannelEditor(ctx, s.guard.Auth, actor, g.scope, permissions...)
 		if err != nil {
 			return nil, &AuthError{err}
 		}

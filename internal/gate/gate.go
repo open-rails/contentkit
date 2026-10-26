@@ -99,7 +99,7 @@ func Can(ctx context.Context, a auth.Authenticator, actor access.Actor, perm str
 // ChannelEditor checks current capabilities in a channel AuthKit group.
 // Owner attribution and a missing group never grant authority. Staff are the
 // caller's to admit. An error never grants.
-func ChannelEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, owner, scope string, perms ...string) (bool, error) {
+func ChannelEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, scope string, perms ...string) (bool, error) {
 	switch {
 	case actor.Anonymous:
 		return false, nil

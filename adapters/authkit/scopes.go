@@ -1,9 +1,6 @@
-// Package authkit keeps ContentKit's group scopes in AuthKit: the
-// entities.Scopes an Engine takes as Deps.Scopes. A entity kind with
-// auth_scope names an AuthKit persona of the same name; each of its groups
-// is guarded by an AuthKit group keyed by the ContentKit entity's id, whose
-// holders of {kind}:settings:manage and {kind}:media:write edit it
-// (access.GroupPermissions).
+// Package authkit binds ContentKit channels to AuthKit permission groups.
+// Host-defined roles use access.ChannelPermissions; current group authority
+// controls authoring independently of descriptive metadata and paid readership.
 package authkit
 
 import (

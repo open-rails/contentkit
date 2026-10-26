@@ -27,7 +27,7 @@ func (rt *Runtime) entityModerator(ctx context.Context, actor access.Actor, g *r
 	if g == nil {
 		return errForbidden
 	}
-	ok, err := gate.ChannelEditor(ctx, rt.guard.Auth, actor, g.Owner, g.Scope, access.ChannelCommentsModerate)
+	ok, err := gate.ChannelEditor(ctx, rt.guard.Auth, actor, g.Scope, access.ChannelCommentsModerate)
 	switch {
 	case err != nil:
 		return &AuthError{Err: err}
