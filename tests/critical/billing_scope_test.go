@@ -27,6 +27,7 @@ import (
 // product access, including its persisted time window and revocation history.
 func TestCommerceEntitlementBoundaries(t *testing.T) {
 	w := newWorld(t, func(c *ck.Config) {
+		c.Content.Channels.Entitled = true
 		c.Content.EntityKinds["tag"] = kinds.EntityKind{Route: "tags", MembershipScopes: []kinds.MembershipScope{kinds.ContentScope}}
 		kind := c.Content.Kinds["article"]
 		kind.Versions.Hidden, kind.Entities = false, []string{"tag"}
