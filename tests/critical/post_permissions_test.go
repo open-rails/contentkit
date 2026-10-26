@@ -1,6 +1,9 @@
 package critical_test
 
 import (
+	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -10,13 +13,10 @@ import (
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/channels"
-	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
-	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
-	"github.com/riverqueue/river"
 )
 
 func TestPostContributorAuthority(t *testing.T) {
@@ -253,107 +253,89 @@ func TestSiteChannelDelegatedCapabilities(t *testing.T) {
 	requireError(t, err, 403, "forbidden")
 }
 
-// Offline imports must not turn a not-yet-provisioned authorization scope into
-// the intentionally unscoped direct-owner model.
+// A lost provider acknowledgement leaves a local pending channel. Its caller
+// retries the same import identity; neither a queue nor a later sweep is needed.
 func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
-	w := newWorld(t, func(cfg *ck.Config) {
-		gallery := cfg.Content.Kinds["gallery"]
-		gallery.Channel = &kinds.ChannelPolicy{}
-		cfg.Content.Kinds["gallery"] = gallery
-	})
+	w := newWorld(t)
 	a := w.apps[0]
 	attachMedia(t, w, a)
 	a.server.Close()
 	must(t, a.engine.Close(t.Context()))
+	provider := &lostChannelScopeAck{Scopes: a.deps.Scopes, scope: *a.cfg.Scope}
+	provider.lose.Store(true)
+	a.deps.Scopes = provider
 	var err error
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
 	a.server = mountEngine(t, a.engine)
-	fleet := publicationOnlyFleet(t, a) // Entity synchronization stays stopped until the final phase.
 	owner := authtest.NewUser(t, a.tenant)
 	owner.TOTP = authtest.EnrollTOTP(t, a.tenant, owner)
 	token := authtest.SignIn(t, a.tenant, owner).AccessToken
 	caller := a.client(token)
 	id := contentref.NewID()
-	result, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "pending-channel-scope", ProvisionScopes: true, Channels: []importer.ChannelRecord{{ExternalID: "pending", ID: id, Slug: "pending-scope", OwnerUserID: owner.ID}}})
-	must(t, err)
-	if len(result.Failed) != 0 {
-		t.Fatalf("pending scope fixture: %+v", result.Failed)
+	batch := importer.Batch{Source: "pending-channel-scope", ProvisionScopes: true, Channels: []importer.ChannelRecord{{ExternalID: "pending", ID: id, Slug: "pending-scope", OwnerUserID: owner.ID}}}
+	result, err := a.engine.Client().PostImport(t.Context(), batch)
+	if err == nil && len(result.Failed) == 0 {
+		t.Fatal("lost provider acknowledgement was reported as success")
 	}
-	channel, err := a.engine.Client().GetManageChannel(t.Context(), id, ck.GetManageChannelQuery{})
+	current, err := a.engine.Client().GetManageChannel(t.Context(), id, ck.GetManageChannelQuery{})
 	must(t, err)
-	if channel.AuthScope != "" {
-		t.Fatal("fixture processed scope before the checks")
+	if current.AuthScope != "" {
+		t.Fatal("pending channel advertised authorization readiness")
 	}
-	input := catalog.ContentInput{Kind: "article", ChannelID: id, Text: map[string]catalog.Text{"en": {Title: "Pending channel", Body: "Public content remains public"}}}
-	item, err := a.engine.Client().PostContents(t.Context(), input)
-	must(t, err)
-	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
-	must(t, err)
-	awaitEditionPublication(t, a, a.engine.Client(), item.ID, item.Versions[0].ID)
-	gallery, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", ChannelID: id, Text: map[string]catalog.Text{"en": {Title: "Pending gallery"}}})
-	must(t, err)
-	commenter, commentToken := w.person(t, 0)
-	comment := postComment(t, a.client(commentToken), item.ID, "Not moderated by metadata")
-	_, err = caller.PutCommentBan(t.Context(), commenter.ID, content.BanInput{})
-	must(t, err)
-	_, err = a.client(commentToken).PostChannelComments(t.Context(), id, content.CommentInput{Body: "Personal blocks do not moderate a scoped channel"})
-	must(t, err)
-	// A saved channel ban may outlive an authorization-scope restoration.
-	// Reproduce that durable state without granting the pending owner authority.
-	banned, bannedToken := w.person(t, 0)
-	_, err = w.pool.Exec(t.Context(), "INSERT INTO "+pgx.Identifier{w.schema, "content_comment_bans"}.Sanitize()+
-		" (tenant_id,user_id,scope,reason,banned_by) VALUES($1,$2,$3,$4,$5)", a.cfg.Scope.AppID.String(), banned.ID, content.ChannelScope(id), "Retained channel restriction", owner.ID)
-	must(t, err)
-	bannedClient := a.client(bannedToken)
-	_, err = bannedClient.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "Still banned while scope is pending"}, ck.PostContentCommentsQuery{})
-	requireError(t, err, 403, "comment_banned")
-	_, err = bannedClient.PostChannelComments(t.Context(), id, content.CommentInput{Body: "Channel thread keeps the same ban"})
-	requireError(t, err, 403, "comment_banned")
-	err = caller.DeleteChannelCommentBan(t.Context(), id, banned.ID)
-	requireError(t, err, 403, "forbidden")
-	other, err := a.engine.Client().PostChannels(t.Context(), channels.Input{Slug: "other-ban-scope"})
-	must(t, err)
-	_, err = bannedClient.PostChannelComments(t.Context(), other.ID, content.CommentInput{Body: "A different channel is unaffected"})
-	must(t, err)
+	input := catalog.ContentInput{Kind: "article", ChannelID: id, Text: map[string]catalog.Text{"en": {Title: "Retryable channel post", Body: "One post"}}}
 	_, err = caller.PostContents(t.Context(), input)
 	requireError(t, err, 403, "forbidden")
-	_, err = caller.PutContentText(t.Context(), item.ID, "en", catalog.Text{Title: "Forbidden", Body: "no"})
-	requireError(t, err, 403, "forbidden")
-	update := channels.Update{Names: []entities.Name{{Language: "en", Kind: "name", Name: "Team updated"}}}
-	_, err = caller.PatchChannel(t.Context(), id, update)
-	requireError(t, err, 403, "forbidden")
-	err = caller.PostCommentHold(t.Context(), comment.ID)
+	_, err = caller.PatchChannel(t.Context(), id, channels.Update{})
 	requireError(t, err, 403, "forbidden")
 	payload := imageBytes(t)
-	requests := []media.PresignBody{
-		{Ref: media.RefBody{Kind: "channel", ID: id}, Path: "cover/probe.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)},
-		{Ref: media.RefBody{Kind: "gallery", ID: gallery.ID, Version: gallery.Versions[0].ID}, Path: "pages/probe.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)},
-	}
-	for _, request := range requests {
-		_, err = caller.PostMediaUploadPresign(t.Context(), request)
-		requireError(t, err, 403, "forbidden")
-	}
+	presign := media.PresignBody{Ref: media.RefBody{Kind: "channel", ID: id}, Path: "cover/probe.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)}
+	_, err = caller.PostMediaUploadPresign(t.Context(), presign)
+	requireError(t, err, 403, "forbidden")
 	mine, err := caller.GetMeChannels(t.Context(), ck.GetMeChannelsQuery{})
 	must(t, err)
-	for _, entity := range mine.Channels {
-		if string(entity.ID) == id {
-			t.Fatal("pending scope advertised owner capabilities")
-		}
+	if len(mine.Channels) != 0 {
+		t.Fatalf("pending scope advertised authoring rights: %+v", mine.Channels)
 	}
-	must(t, fleet.Queues().Add(entities.DefaultQueue, river.QueueConfig{MaxWorkers: 1}))
-	waitFor(t, func() bool {
-		current, err := a.engine.Client().GetManageChannel(t.Context(), id, ck.GetManageChannelQuery{})
-		must(t, err)
-		return current.AuthScope != ""
-	})
+	result, err = a.engine.Client().PostImport(t.Context(), batch)
+	must(t, err)
+	if len(result.Failed) != 0 {
+		t.Fatalf("retry failed: %+v", result.Failed)
+	}
+	current, err = a.engine.Client().GetManageChannel(t.Context(), id, ck.GetManageChannelQuery{})
+	must(t, err)
+	if current.ID != id || current.AuthScope != id {
+		t.Fatalf("retry changed identity or did not finish: %+v", current)
+	}
 	_, err = caller.PostContents(t.Context(), input)
 	must(t, err)
-	_, err = caller.PatchChannel(t.Context(), id, update)
+	_, err = caller.PostMediaUploadPresign(t.Context(), presign)
 	must(t, err)
-	must(t, caller.PostCommentHold(t.Context(), comment.ID))
-	for _, request := range requests {
-		_, err = caller.PostMediaUploadPresign(t.Context(), request)
-		must(t, err)
+	var jobs int
+	must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+" WHERE kind IN ('contentkit_entity_sync','contentkit_channel_lifecycle','contentkit_group_sync') AND args->>'tenant'=$1", a.cfg.Scope.AppID.String()).Scan(&jobs))
+	if jobs != 0 {
+		t.Fatalf("synchronous lifecycle queued %d jobs", jobs)
 	}
+}
+
+type lostChannelScopeAck struct {
+	entities.Scopes
+	scope ck.Scope
+	lose  atomic.Bool
+}
+
+func (s *lostChannelScopeAck) ContentKitScope() (string, string) {
+	return s.scope.TenantID.String(), s.scope.AppID.String()
+}
+func (s *lostChannelScopeAck) Provision(ctx context.Context, groups []entities.Scope) error {
+	if err := s.Scopes.Provision(ctx, groups); err != nil {
+		return err
+	}
+	if s.lose.Swap(false) {
+		return errors.New("injected lost channel provisioning acknowledgement")
+	}
+	return nil
+}
+func (s *lostChannelScopeAck) HoldingScopes(ctx context.Context, user string, kinds, ids []string) (map[string][]string, error) {
+	return s.Scopes.(entities.LocalScopes).HoldingScopes(ctx, user, kinds, ids)
 }

@@ -191,6 +191,7 @@ func (s *Store) finishChannelScope(ctx context.Context, id string) error {
 			return fmt.Errorf("channels: apply authorization group for %s: %w", id, err)
 		}
 		done := false
+		staleActive := false
 		err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 			var after channelState
 			err := tx.QueryRow(ctx, "SELECT state,coalesce(owner_user_id,''),coalesce(auth_scope,''),revision FROM "+s.table("content_entities")+" WHERE tenant_id=$1 AND id=$2 AND kind='channel' FOR UPDATE", s.tenant, id).Scan(&after.state, &after.owner, &after.scope, &after.revision)
@@ -202,6 +203,16 @@ func (s *Store) finishChannelScope(ctx context.Context, id string) error {
 				return err
 			}
 			if after != before {
+				// A late retirement may have invalidated a concurrent restore.
+				// Commit a pending marker, then report conflict outside this tx.
+				if after.state == StateActive {
+					if after.scope != "" {
+						if _, err := tx.Exec(ctx, "UPDATE "+s.table("content_entities")+" SET auth_scope=NULL,revision=revision+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", s.tenant, id); err != nil {
+							return err
+						}
+					}
+					staleActive = true
+				}
 				return nil
 			}
 			desired := ""
@@ -218,6 +229,9 @@ func (s *Store) finishChannelScope(ctx context.Context, id string) error {
 		})
 		if err != nil {
 			return err
+		}
+		if staleActive {
+			return fmt.Errorf("%w: channel changed during authorization update; retry the current channel operation", ErrConflict)
 		}
 		if done {
 			return nil
