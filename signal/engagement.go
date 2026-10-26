@@ -46,13 +46,14 @@ type WatchedRange struct {
 // retained per page (per second for players), so short partials can accumulate
 // across segments and visits without counting visits themselves.
 type Measurement struct {
-	VersionID string   `json:"version_id"`
-	VisitID   string   `json:"visit_id"`
-	SegmentID string   `json:"segment_id"`
-	ActiveMS  uint32   `json:"active_ms"`
-	Total     uint32   `json:"total"`
-	Scale     uint32   `json:"scale"`
-	Units     []uint32 `json:"units"`
+	VersionID     string   `json:"version_id"`
+	VisitID       string   `json:"visit_id"`
+	OriginClickID string   `json:"origin_click_id,omitempty"`
+	SegmentID     string   `json:"segment_id"`
+	ActiveMS      uint32   `json:"active_ms"`
+	Total         uint32   `json:"total"`
+	Scale         uint32   `json:"scale"`
+	Units         []uint32 `json:"units"`
 	// Pairs are [logical unit index, active milliseconds], sorted by index.
 	Attention [][2]uint64 `json:"attention"`
 	// Raw bounded measurements remain available for later quality policies.

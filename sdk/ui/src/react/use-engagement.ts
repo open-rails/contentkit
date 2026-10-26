@@ -1,5 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { readerSession } from "../client/beacons.js";
+import { cleanOriginURL, holdOriginVisit, visitOrigin } from "../client/navigation-origin.js";
+import { beaconsFor } from "./discovery.js";
 import type { ContentKitClient } from "../client/client.js";
 import { EngagementTracker, type ReadingObservation, type VisiblePage } from "../client/engagement.js";
 import { ContentKitContext, useContentKitClient } from "./context.js";
@@ -79,6 +81,7 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
   language.current = context?.language;
 
   const state = useMemo(() => {
+    const origin = permitted && contentId ? visitOrigin(client, contentId) : undefined;
     const pages = new Map<number, PageBinding>();
     const intersections = new WeakMap<Element, boolean>();
     let observer: IntersectionObserver | undefined;
@@ -90,6 +93,7 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
     const getSession = () => owner === null ? (session ??= readerSession()) : undefined;
     const tracker = new EngagementTracker({
       contentId: contentId ?? "", versionId, idleAfter: options.idleAfter, checkpointInterval: options.checkpointInterval,
+      visitId: origin?.visitId, originClickId: origin?.clickId,
       begin: async () => {
         if (!owns()) return null;
         const result = await client.discovery.activityContexts([{ content_id: contentId!, version_id: versionId }], getSession(), language.current);
@@ -160,7 +164,7 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
     };
     const flush = () => { sample(); return sameOwner() ? tracker.flush() : Promise.resolve(); };
     return {
-      tracker, sample, owns, sameOwner, page, bindVideo, flush,
+      tracker, sample, owns, sameOwner, page, bindVideo, flush, origin,
       setResume: (value: string | undefined) => { resume = value; sample(); },
       start: () => {
         active = true;
@@ -194,6 +198,11 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
 
   useEffect(() => {
     if (!permitted || !state.owns()) return;
+    const releaseOrigin = holdOriginVisit(client, state.origin);
+    if (state.origin && contentId) {
+      beaconsFor(client).click(contentId, { ...state.origin.attribution, version_id: state.origin.version }, state.origin.clickId);
+      cleanOriginURL(client, state.origin);
+    }
     state.start();
     const timer = setInterval(state.sample, 250);
     const inputEvents = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart", "touchmove"];
@@ -209,6 +218,7 @@ export function useReadingEngagement(contentId: string | null | undefined, versi
     window.addEventListener("online", state.flush);
     document.addEventListener("visibilitychange", visibility);
     return () => {
+      releaseOrigin();
       state.stop(); clearInterval(timer);
       for (const event of inputEvents) window.removeEventListener(event, state.activity, true);
       window.removeEventListener("scroll", state.sample, true);

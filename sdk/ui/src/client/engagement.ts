@@ -16,6 +16,8 @@ export interface ReadingObservation {
 export interface EngagementTrackerOptions {
   contentId: string;
   versionId?: string;
+  visitId?: string;
+  originClickId?: string;
   /** Acquired when attention begins, never by preloading or opening a route. */
   begin: () => Promise<ActivityContext | null>;
   submit: (snapshot: EngagementSnapshot, options: { keepalive: boolean }) => Promise<void>;
@@ -83,7 +85,7 @@ export class EngagementTracker {
   constructor(private readonly options: EngagementTrackerOptions) {
     this.now = options.now ?? clock;
     this.id = options.id ?? randomId;
-    this.visitId = this.id();
+    this.visitId = options.visitId ?? this.id();
     this.idleAfter = durationOption(options.idleAfter, 60_000);
     this.interval = durationOption(options.checkpointInterval, MAX_SEGMENT, MAX_SEGMENT);
     this.last = this.lastActivity = this.now();
@@ -241,6 +243,7 @@ export class EngagementTracker {
     const snapshot: EngagementSnapshot = {
       content_id: this.options.contentId, version_id: this.options.versionId,
       visit_id: this.visitId, segment_id: segment.id, revision: ++segment.revision,
+      ...(this.options.originClickId ? { origin_click_id: this.options.originClickId } : {}),
       activity_token: "", active_ms: Math.floor(segment.active),
       ...(segment.resume !== undefined ? { resume: segment.resume } : {}),
       ...(pages.length ? { pages } : {}), ...(watched.length ? { watched } : {}),

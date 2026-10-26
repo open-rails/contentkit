@@ -44,7 +44,7 @@ func (st *Store) recordMeasured(ctx context.Context, tenant string, events []Sig
 		if m.VersionID == "" || m.VersionID != s.Version() || m.VisitID == "" || m.SegmentID == "" || s.Revision == 0 {
 			return fmt.Errorf("signal: measured segment needs its immutable version, visit and revision")
 		}
-		if err := checkIdentifiers("VisitID", m.VisitID, "SegmentID", m.SegmentID); err != nil {
+		if err := checkIdentifiers("VisitID", m.VisitID, "SegmentID", m.SegmentID, "OriginClickID", m.OriginClickID); err != nil {
 			return err
 		}
 		var normalized Measurement
@@ -86,17 +86,17 @@ func (st *Store) recordMeasured(ctx context.Context, tenant string, events []Sig
 		// limit even for the maximum 128-page geometry. Nothing is incremented.
 		q := fmt.Sprintf(`INSERT INTO %s.engagement_segments
  (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,
- occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement)
+ occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,origin_click_id)
  SELECT tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,
- occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement
+ occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement,origin_click_id
  FROM (SELECT ? AS tenant,? AS content_kind,? AS content_id,? AS content_version_id,? AS subject_kind,? AS subject,
  ? AS receipt_id,toUInt64(?) AS revision,? AS visit_id,? AS segment_id,toDateTime64(?,6,'UTC') AS occurred_at,
  toUInt32(?) AS active_ms,CAST(?,'Array(UInt32)') AS covered_units,
  mapFromArrays(CAST(?,'Array(UInt32)'),CAST(?,'Array(UInt64)')) AS unit_attention,
- toUInt32(?) AS unit_total,toUInt32(?) AS unit_scale,? AS resume,? AS access_context,? AS measurement)
+ toUInt32(?) AS unit_total,toUInt32(?) AS unit_scale,? AS resume,? AS access_context,? AS measurement,? AS origin_click_id)
  WHERE %s`, st.db, st.notErased())
 		if err := st.conn.Exec(ctx, q, tenant, s.ContentKind, s.ContentID, s.Version(), s.Subject.Kind(), s.Subject.Key(), s.EventID, s.Revision, m.VisitID, m.SegmentID,
-			s.OccurredAt.UTC().Format("2006-01-02 15:04:05.000000"), m.ActiveMS, m.Units, attentionKeys, attentionMS, m.Total, m.Scale, s.Resume, string(accessJSON), string(raw)); err != nil {
+			s.OccurredAt.UTC().Format("2006-01-02 15:04:05.000000"), m.ActiveMS, m.Units, attentionKeys, attentionMS, m.Total, m.Scale, s.Resume, string(accessJSON), string(raw), m.OriginClickID); err != nil {
 			return fmt.Errorf("signal: insert measured segment: %w", err)
 		}
 		keys[ProjectionKey{ContentKey: s.Key(), Subject: s.Subject}] = struct{}{}

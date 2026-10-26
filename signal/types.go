@@ -193,19 +193,20 @@ type Placement struct {
 // Exposure is one result list at one stage: the cumulative set of placements
 // the stage reached, as one row. Identity is (tenant, RenderID, Stage);
 // re-sending replaces, a higher Revision supersedes (a visible list that grows
-// as the subject scrolls). Never one row per item or per scroll tick. No query
-// text is stored; QueryID groups the pages/renders of one query.
+// as the subject scrolls). Never one row per item or per scroll tick. QueryID
+// groups the pages/renders of one query; its normalized text expires in 180 days.
 type Exposure struct {
-	RenderID   string // required, stable per render, shared with its clicks
-	Stage      ExposureStage
-	Revision   uint64
-	QueryID    string
-	Surface    string
-	Ranker     string // ranking configuration identity for offline comparison
-	Language   string
-	Subject    Subject // optional for anonymous renders
-	Shown      []Placement
-	OccurredAt time.Time // required
+	RenderID    string // required, stable per render, shared with its clicks
+	Stage       ExposureStage
+	Revision    uint64
+	QueryID     string
+	SearchQuery string // normalized search text; expires after 180 days
+	Surface     string
+	Ranker      string // ranking configuration identity for offline comparison
+	Language    string
+	Subject     Subject // optional for anonymous renders
+	Shown       []Placement
+	OccurredAt  time.Time // required
 }
 
 func (e Exposure) validate(tenant string) error {

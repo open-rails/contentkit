@@ -367,9 +367,11 @@ type ExposureInput struct {
 	Stage    string `json:"stage"`
 	Revision uint64 `json:"revision,omitempty"`
 	QueryID  string `json:"query_id,omitempty"`
-	Surface  string `json:"surface,omitempty"`
-	Ranker   string `json:"ranker,omitempty"`
-	Language string `json:"language,omitempty"`
+	// SearchQuery is normalized like recent search history, at most 200 runes.
+	SearchQuery string `json:"search_query,omitempty"`
+	Surface     string `json:"surface,omitempty"`
+	Ranker      string `json:"ranker,omitempty"`
+	Language    string `json:"language,omitempty"`
 	// OccurredAt is the render's time; now by default.
 	OccurredAt *time.Time  `json:"occurred_at,omitempty"`
 	Shown      []Placement `json:"shown"`
@@ -434,7 +436,7 @@ func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Ex
 	}
 	out := make([]signal.Exposure, 0, len(in.Exposures))
 	for _, e := range in.Exposures {
-		x := signal.Exposure{RenderID: e.RenderID, Stage: signal.ExposureStage(e.Stage), Revision: e.Revision, QueryID: e.QueryID, Surface: e.Surface,
+		x := signal.Exposure{RenderID: e.RenderID, Stage: signal.ExposureStage(e.Stage), Revision: e.Revision, QueryID: e.QueryID, SearchQuery: e.SearchQuery, Surface: e.Surface,
 			Ranker: e.Ranker, Language: e.Language, Subject: subject, OccurredAt: s.now().UTC()}
 		if e.OccurredAt != nil {
 			x.OccurredAt = e.OccurredAt.UTC()

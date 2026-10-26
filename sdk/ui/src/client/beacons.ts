@@ -120,10 +120,10 @@ export class Beacons {
   }
 
   /** A click on a listed card. Acquire its access snapshot at observation time. */
-  click(content: string, a: Attribution & { version_id?: string } = {}): void {
+  click(content: string, a: Attribution & { version_id?: string } = {}, event = eventId()): void {
     if (this.paused()) return;
     const generation = this.generation;
-    const event = eventId(), at = new Date().toISOString();
+    const at = new Date().toISOString();
     const { language, ...attribution } = a;
     const target = { content_id: content, version_id: a.version_id };
     this.track(this.contexts([target], generation, language).then((receipts) => {

@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Beacons, eventId, type BeaconOptions } from "../client/beacons.js";
+import { originID, originLink } from "../client/navigation-origin.js";
 import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
 import type { ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
@@ -479,6 +480,7 @@ export interface ExposureOptions {
   render: string;
   ranker?: string;
   query_id?: string;
+  search_query?: string;
   language?: string;
   client?: ContentKitClient;
 }
@@ -489,7 +491,9 @@ export interface UseExposure {
   /** A card's ref: reports it shown once at least half of it is in view. */
   track: (content: string, position: number) => (el: Element | null) => void;
   /** Reports a click on the card at position. */
-  click: (content: string, position: number) => void;
+  click: (content: string, position: number, href?: string) => void;
+  /** Link carrying only an opaque navigation ID; also works with native new tabs. */
+  href: (content: string, position: number, href: string | undefined) => string | undefined;
 }
 
 /** A rendered result list: each page rendered, each card shown, clicks attributed to the render. */
@@ -498,7 +502,7 @@ export function useExposure(items: readonly { id: string; position?: number; ver
   const b = beaconsFor(client);
   const isCurrent = useCurrentDiscoveryScope(client, scope);
   const renderId = useMemo(() => eventId(), [o.render, scope]); // eslint-disable-line react-hooks/exhaustive-deps
-  const base = useMemo(() => ({ surface: o.surface, ranker: o.ranker, query_id: o.query_id, language: o.language ?? language }), [o.surface, o.ranker, o.query_id, o.language, language]);
+  const base = useMemo(() => ({ surface: o.surface, ranker: o.ranker, query_id: o.query_id, search_query: o.search_query, language: o.language ?? language }), [o.surface, o.ranker, o.query_id, o.search_query, o.language, language]);
   const state = useMemo(() => ({ segments: new Map<number, ExposureSegment>(), pending: new Set<number>(), timer: undefined as ReturnType<typeof setTimeout> | undefined }), [renderId]); // eslint-disable-line react-hooks/exhaustive-deps
   const segmentID = useCallback((index: number) => index === 0 ? renderId : `${renderId}-${index}`, [renderId]);
   const segmentFor = useCallback((index: number) => {
@@ -563,14 +567,30 @@ export function useExposure(items: readonly { id: string; position?: number; ver
     (el as HTMLElement).dataset.exposurePosition = String(position);
     observer.observe(el);
   }, [observer]);
-  const click = useCallback((content: string, position: number) => {
+  const links = useMemo(() => new Map<string, string>(), [renderId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const href = useCallback((content: string, position: number, url: string | undefined) => {
+    if (!url || !base.search_query || !isCurrent()) return url;
+    const key = `${content}\u0000${position}\u0000${url}`;
+    let link = links.get(key);
+    if (!link) {
+      const item = items.find((item) => item.id === content);
+      link = originLink(client, content, item?.version_id ?? item?.version?.id, {
+        render_id: segmentID(Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE)), surface: o.surface, position, language: base.language,
+      }, url);
+      links.set(key, link);
+    }
+    return link;
+  }, [base.search_query, base.language, isCurrent, links, items, client, segmentID, o.surface]);
+  const click = useCallback((content: string, position: number, url?: string) => {
     if (!isCurrent()) return;
     const index = Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE);
     const item = items.find((item) => item.id === content);
     const version = item?.version_id ?? item?.version?.id;
-    b.click(content, { render_id: segmentID(index), surface: o.surface, position, version_id: version, language: base.language });
+    // Attributed search links are acknowledged by the destination, including
+    // context-menu/new-tab navigation which emits no source click event.
+    if (!url || !originID(url)) b.click(content, { render_id: segmentID(index), surface: o.surface, position, version_id: version, language: base.language });
   }, [b, items, segmentID, o.surface, base.language, isCurrent]);
-  return { render_id: renderId, track, click };
+  return { render_id: renderId, track, click, href };
 }
 
 type ObservedPlacement = { content_id: string; version_id?: string; position: number };
