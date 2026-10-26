@@ -48,7 +48,6 @@ func (run *batchRun) sections() []section {
 		{name: SectionFavorites, n: len(b.Favorites), prepare: run.favorite, write: typed(s.o.Content.ImportFavorites)},
 		{name: SectionPolls, n: len(b.Polls), prepare: run.poll, write: typed(s.o.Content.ImportPolls)},
 		{name: SectionVotes, n: len(b.Votes), prepare: run.vote, write: typed(s.o.Content.ImportVotes)},
-		{name: SectionAnswers, n: len(b.Answers), prepare: run.answer, write: typed(s.o.Content.ImportAnswers)},
 		{name: SectionLegacyReading, n: len(b.LegacyReading), prepare: run.legacyReading,
 			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportLegacyReading) error {
 				return s.o.Signals.ImportLegacyReading(ctx, in)
@@ -244,15 +243,6 @@ func (run *batchRun) vote(r *resolver, i int) (any, string, error) {
 		return nil, "", err
 	}
 	return content.ImportVote{PollID: poll, OptionID: option, UserID: v.UserID, IP: v.IP, CreatedAt: v.CreatedAt}, "", nil
-}
-
-func (run *batchRun) answer(r *resolver, i int) (any, string, error) {
-	a := run.b.Answers[i]
-	poll, err := r.ref(RecordPoll, a.Poll)
-	if err != nil {
-		return nil, "", err
-	}
-	return content.ImportAnswer{PollID: poll, UserID: a.UserID, Text: a.Text, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}, "", nil
 }
 
 func (run *batchRun) signal(r *resolver, i int) (any, string, error) {

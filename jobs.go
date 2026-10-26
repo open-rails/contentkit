@@ -51,7 +51,6 @@ const (
 	preferenceSyncEvery = 5 * time.Minute
 	resyncEvery         = 24 * time.Hour
 	repairEvery         = time.Hour
-	reclassifyEvery     = 10 * time.Minute
 	searchPruneEvery    = time.Hour
 	popularRefreshEvery = 5 * time.Minute
 )
@@ -75,7 +74,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &repairWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &popularRefreshWorker{e: e}) },
 		} {
@@ -92,9 +90,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{})
 		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{})
-		if e.classifier {
-			periodic("contentkit_reclassify", reclassifyEvery, reclassifyArgs{})
-		}
 		if e.hub.SignalsConfigured() { // their runs skip while it is down
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{})
 			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true})
@@ -240,33 +235,6 @@ func (w *repairWorker) Work(ctx context.Context, job *river.Job[repairArgs]) err
 			return ignoreDisabled(err)
 		}
 		opts.After = res.Next
-	}
-}
-
-type reclassifyArgs struct{}
-
-func (reclassifyArgs) Kind() string { return "contentkit_reclassify" }
-
-// reclassifyWorker retries free-text poll answers the classifier failed,
-// sweeping every pending answer once per run.
-type reclassifyWorker struct {
-	river.WorkerDefaults[reclassifyArgs]
-	e *Engine
-}
-
-func (w *reclassifyWorker) Timeout(*river.Job[reclassifyArgs]) time.Duration { return 30 * time.Minute }
-
-func (w *reclassifyWorker) Work(ctx context.Context, _ *river.Job[reclassifyArgs]) error {
-	var errs []error
-	for after := ""; ; {
-		page, err := w.e.content.ReclassifyPending(ctx, after, 100)
-		if err != nil {
-			errs = append(errs, err)
-		}
-		if page.Next == "" || page.Next == after || ctx.Err() != nil {
-			return errors.Join(errs...)
-		}
-		after = page.Next
 	}
 }
 

@@ -19,6 +19,4 @@ var (
 	// ErrCommentsLocked: the actor can't open the content the comments are
 	// on, and its kind's locked view hides them. -> 403 comments_locked
 	ErrCommentsLocked = errors.New("content: comments are locked")
-	// ErrNoClassifier: a free-text poll needs an AnswerClassifier. -> 501
-	ErrNoClassifier = errors.New("content: free-text polls need an AnswerClassifier")
 )

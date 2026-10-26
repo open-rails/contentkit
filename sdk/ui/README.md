@@ -579,8 +579,7 @@ fullscreen and a mini player.
 `Comments` (threads with one-level replies, tombstones, held and rejected
 states shown to their author, reactions, edit, delete, ban and rate-limit
 notices, the server's longest comment), `ReactionButtons`, `FavoriteButton` (with the server's count)
-and `Poll` (a final vote with results scaled to the leading option, or a
-free-text answer and its groups; `results="always"` shows results before
+and `Poll` (a final vote with results scaled to the leading option; `results="always"` shows results before
 voting). Signed-out visitors comment under a name, react and vote where the
 server allows it (`content.Options.Anonymous`, read from the comment standing
 and `client.config()`); elsewhere they are asked to sign in (`onSignIn`, the
@@ -671,7 +670,7 @@ of content editing.
 
 The optional `content` props are `renderEditor` and `contentHref`; `entities`
 accepts `renderContent`; `moderation` accepts `itemHref`, `userHref` and
-`sections`; `polls` accepts `freeText` and `maxOptions`. These are the existing
+`sections`; `polls` accepts `maxOptions`. These are the existing
 managers' extension points. Without `renderEditor`, body editing uses the
 manager's HTML field; the rich text editor is an optional peer dependency.
 Changing the client or the provider's viewer/access/language scope resets the
@@ -780,7 +779,7 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
 - **`PollManager`**: every poll by language, month or day, state (live,
   scheduled, closed, inactive) and question; create and edit through
   `PollEditor` at `basePath/new` and `basePath/{id}`; delete with a typed
-  confirmation. Props: `languages`, `freeText`, `maxOptions`, `pageSize`.
+  confirmation. Props: `languages`, `maxOptions`, `pageSize`.
   `usePollManagerAccess()`.
 
   ```tsx

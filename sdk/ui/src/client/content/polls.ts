@@ -20,7 +20,7 @@ export interface PollAdminQuery extends PollQuery {
   q?: string;
 }
 
-/** Site-wide polls: multiple choice or free text; staff write them (root:polls:write). */
+/** Site-wide polls: predefined choices; staff write them (root:polls:write). */
 export class PollsClient {
   constructor(
     private readonly http: Http,
@@ -35,7 +35,7 @@ export class PollsClient {
   adminList(q: PollAdminQuery = {}, signal?: AbortSignal): Promise<Poll[]> {
     return call(this.http, "GET", "/polls/admin", { query: q, signal });
   }
-  /** A poll with the caller's vote or answer. */
+  /** A poll with the caller's vote. */
   get(id: string, signal?: AbortSignal): Promise<Poll> {
     return call(this.http, "GET", "/polls/{id}", { params: { id }, signal });
   }
@@ -63,13 +63,6 @@ export class PollsClient {
   async vote(id: string, option: string): Promise<Poll> {
     const emit = this.http.captureChanges();
     const poll: Poll = await call(this.http, "POST", "/polls/{id}/vote", { params: { id }, body: { option_id: option } });
-    emit({ type: "poll.updated", poll });
-    return poll;
-  }
-  /** Stores or replaces the signed-in caller's answer to an open free-text poll. */
-  async answer(id: string, text: string): Promise<Poll> {
-    const emit = this.http.captureChanges();
-    const poll: Poll = await call(this.http, "POST", "/polls/{id}/answer", { params: { id }, body: { text } });
     emit({ type: "poll.updated", poll });
     return poll;
   }

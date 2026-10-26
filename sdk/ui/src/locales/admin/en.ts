@@ -296,7 +296,7 @@ export const admin = {
     wordPlaceholder: "Separate several with commas",
     ban: "Ban",
     rejectNew: "Refuse comments containing them (instead of masking)",
-    wordsHint: "New comments and answers containing a masked word show it as asterisks; a refused word blocks the comment. Existing comments are unchanged.",
+    wordsHint: "New comments containing a masked word show it as asterisks; a refused word blocks the comment. Existing comments are unchanged.",
     loadFailed: "The rules couldn't be loaded.",
     noWords: "No banned words.",
     filter: "Find a word",

@@ -88,7 +88,12 @@ type MigrationOptions struct {
 	// LegacyAccountKey adopts an existing account inbox key during explicit
 	// provisioning. Runtime discovers it through the persisted tenant binding.
 	LegacyAccountKey string
-	explicit         bool
+	// RetireObsoleteJobs names exact retired periodic job IDs reviewed
+	// by the owning fleet's operator after stopping its old workers. Those jobs
+	// have no app identity; an empty list never authorizes inferred ownership.
+	// Only matching waiting jobs are cancelled. Terminal history is preserved.
+	RetireObsoleteJobs []int64
+	explicit           bool
 }
 
 // MigratePostgres prepares all configured ContentKit PostgreSQL storage and
@@ -112,6 +117,9 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, option
 	var opt MigrationOptions
 	if len(options) == 1 {
 		opt = options[0]
+	}
+	if opt.SkipQueues && len(opt.RetireObsoleteJobs) != 0 {
+		return errors.New("contentkit: obsolete periodic job retirement cannot skip queue migrations")
 	}
 	e := &Engine{cfg: cfg, pool: pool}
 	if err := e.configureStorage(); err != nil {
@@ -189,6 +197,9 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 		return required(err)
 	}
 	if err := riverhelpers.ValidateMigrations(ctx, e.pool, e.riverSchema); err != nil {
+		return required(err)
+	}
+	if err := e.preflightObsoletePeriodicJobs(ctx, nil); err != nil {
 		return required(err)
 	}
 	if err := e.validatePublicationQueues(ctx); err != nil {
