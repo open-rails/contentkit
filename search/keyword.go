@@ -245,8 +245,8 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 // typoWindow bounds the typo candidates KeywordMatch reads per language.
 const typoWindow = 1000
 
-// Match selects the content IDs a keyword query matches, as SQL a listing
-// filters by and then orders and pages itself.
+// Match selects (content_id, content_version_id) document pairs as SQL.
+// Listings keep the exact matched edition when ordering and applying filters.
 type Match struct {
 	SQL  string
 	Args pgx.NamedArgs
@@ -269,9 +269,9 @@ func KeywordMatch(ctx context.Context, pool *pgxpool.Pool, query string, opts Op
 		return Match{}, err
 	}
 	if len(k.tokens) == 0 {
-		return Match{SQL: `SELECT NULL::text WHERE false`}, tx.Commit(ctx)
+		return Match{SQL: `SELECT NULL::text,NULL::text WHERE false`}, tx.Commit(ctx)
 	}
-	typos := []string{}
+	typos, typoVersions := []string{}, []string{}
 	if k.fuzzy() {
 		if _, err = tx.Exec(ctx, `SET LOCAL statement_timeout=2000`); err != nil {
 			return Match{}, err
@@ -290,6 +290,7 @@ func KeywordMatch(ctx context.Context, pool *pgxpool.Pool, query string, opts Op
 			}
 			for _, h := range hits {
 				typos = append(typos, h.ContentID)
+				typoVersions = append(typoVersions, h.Version())
 			}
 		}
 	}
@@ -297,12 +298,12 @@ func KeywordMatch(ctx context.Context, pool *pgxpool.Pool, query string, opts Op
 	if err != nil {
 		return Match{}, err
 	}
-	routes := k.literalRoutes("sd.content_id", qs+`.content_search_documents sd`,
+	routes := k.literalRoutes("sd.content_id,sd.content_version_id", qs+`.content_search_documents sd`,
 		`sd.tenant_id=@k_tenant AND sd.language=ANY(@k_languages::text[]) AND sd.content_kind=ANY(@k_kinds::text[])`, "@k_q", "@k_prefix", "@k_contains")
 	return Match{
-		SQL: strings.Join(append(routes, `SELECT unnest(@k_typos::text[])`), " UNION ALL "),
+		SQL: strings.Join(append(routes, `SELECT * FROM unnest(@k_typos::text[],@k_typo_versions::text[])`), " UNION ALL "),
 		Args: pgx.NamedArgs{"k_tenant": opts.Tenant, "k_languages": languages, "k_kinds": opts.ContentKinds,
-			"k_q": k.q, "k_prefix": k.prefix, "k_contains": k.contains, "k_typos": typos},
+			"k_q": k.q, "k_prefix": k.prefix, "k_contains": k.contains, "k_typos": typos, "k_typo_versions": typoVersions},
 	}, tx.Commit(ctx)
 }
 
