@@ -135,9 +135,12 @@ a public audience needs neither. The content and version publication dates,
 moderation and media readiness still apply. A version override replaces the
 whole inherited access policy. Omitting `releases` keeps ordinary access rules.
 
-Reads evaluate timestamps directly. The five-minute publication recorder adds
-release facts to the retained event log and catches up after downtime. Consumers
-use the event's effective timestamp separately from its recording timestamp.
+The common publication worker applies the next audience at its scheduled
+deadline, updates the completed reader policy and records retained release
+facts. Reads use that completed policy; passing a deadline alone does not
+complete pending publication. Durable requests catch up after downtime without
+a polling sweep. Consumers use the event's effective timestamp separately from
+its recording timestamp.
 Backdating a newly added grant does not pretend access existed before that edit.
 
 The migration converts old `free_after` rules into equivalent public releases.

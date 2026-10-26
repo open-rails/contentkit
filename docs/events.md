@@ -91,6 +91,8 @@ Audience release schedules use `version.audience_released` facts. The payload
 includes `content_id`, `version_id` and the released audience (`release.at`,
 `release.level`, and its optional `tiers` or `group_id`). `occurred_at` is when
 the audience actually became eligible: no earlier than its configured timestamp,
-publication, policy introduction, or restoration; `recorded_at` is when the recorder caught up. The five-minute recorder
-is not an access gate. Content edits first retain any overdue release facts,
+publication, policy introduction, or restoration; `recorded_at` is when the fact
+entered the log. The common release worker applies each scheduled audience and
+records its facts through the catalog completion transaction. Content edits
+first retain any already-effective release facts,
 so unpublishing or rescheduling cannot erase an already-effective release.
