@@ -418,7 +418,7 @@ func (s *Store) credentialScopes(ctx context.Context, actor access.Actor, candid
 	held := make(map[string][]string)
 	for scope, permissions := range candidates {
 		for _, permission := range permissions {
-			allowed, err := gate.ChannelEditor(ctx, s.as.auth, actor, "", scope, permission)
+			allowed, err := gate.ChannelEditor(ctx, s.as.auth, actor, scope, permission)
 			if err != nil {
 				return nil, err
 			}

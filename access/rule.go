@@ -27,8 +27,8 @@ const (
 // ErrRule is a rule outside the grammar or naming an undeclared tier.
 var ErrRule = errors.New("access: invalid rule")
 
-// Rule is the access rule stored as JSON on content (content_items.access), on
-// a version as its override (content_versions.access) . Channel-owned content keeps its rule on the overall item; publication
+// Rule is stored as JSON on content and its versions. Channel-owned content
+// keeps its editable rule on the overall item; publication
 // snapshots each version's effective rule. A version also opens to holders of
 // its exact version key. Metadata associations never grant access.
 type Rule struct {
