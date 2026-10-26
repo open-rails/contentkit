@@ -349,7 +349,7 @@ func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
 		return err
 	}
 	if len(by[RecordChannel]) > 0 {
-		if err := s.o.Channels.ImportDeletes(ctx, tx, by[RecordChannel]); err != nil {
+		if err := s.o.Channels.ImportDeletesTx(ctx, tx, by[RecordChannel]); err != nil {
 			return err
 		}
 	}
