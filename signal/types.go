@@ -194,13 +194,13 @@ type Placement struct {
 // the stage reached, as one row. Identity is (tenant, RenderID, Stage);
 // re-sending replaces, a higher Revision supersedes (a visible list that grows
 // as the subject scrolls). Never one row per item or per scroll tick. QueryID
-// groups the pages/renders of one query; its normalized text expires in 180 days.
+// groups the pages/renders of one query and keeps its normalized search text.
 type Exposure struct {
 	RenderID    string // required, stable per render, shared with its clicks
 	Stage       ExposureStage
 	Revision    uint64
 	QueryID     string
-	SearchQuery string // normalized search text; expires after 180 days
+	SearchQuery string // normalized search text, retained with analytics
 	Surface     string
 	Ranker      string // ranking configuration identity for offline comparison
 	Language    string

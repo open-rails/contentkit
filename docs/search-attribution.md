@@ -27,8 +27,9 @@ destination that never loads its reader may not emit a click; collection remains
 best effort.
 
 `exposures.search_query` uses the existing recent-search normalization and
-200-rune bound. ClickHouse expires this text after 180 days through its normal
-column TTL merges; other exposure data retains its existing lifecycle. Account
+200-rune bound. This analytics context has no age-based expiry, like its source
+engagement and exposures. The separate PostgreSQL recent-search autocomplete
+history retains its 180-day last-use expiry. Account
 erasure removes exposures and engagement; anonymization strips query text and
 origin IDs. The existing explicit exposure-forgetting methods still remove
 query attribution. Clearing recent autocomplete history retains its existing
