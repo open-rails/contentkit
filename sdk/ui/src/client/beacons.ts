@@ -136,8 +136,16 @@ export class Beacons {
 
   /** A cumulative result-list stage; each newly observed target gets one receipt. */
   exposure(e: ExposureInput): void {
-    if (this.paused() || !e.shown.length) return;
+    if (this.paused()) return;
     const generation = this.generation;
+    if (!e.shown.length) {
+      if (e.stage !== "rendered" || e.surface !== "search" || !e.query_id || !e.search_query?.trim()) return;
+      this.track(this.recording().then((enabled) => {
+        if (!enabled || generation !== this.generation || this.paused()) return;
+        this.queueExposure({ ...e, occurred_at: e.occurred_at ?? new Date().toISOString() });
+      }), generation);
+      return;
+    }
     const key = `${e.render_id}\u0000${e.stage}`;
     let state = this.exposureContexts.get(key);
     if (!state) {
@@ -169,13 +177,17 @@ export class Beacons {
       captured.occurredAt ??= valid.find((r) => r.context)?.context?.occurred_at ?? e.occurred_at ?? new Date().toISOString();
       const enriched = { ...e, occurred_at: captured.occurredAt,
         shown: e.shown.map((p, i) => ({ ...p, activity_token: valid[i]?.context?.token })) };
-      // A later cumulative revision supersedes a queued earlier snapshot.
-      const previous = this.exposures.find((x) => x.render_id === e.render_id && x.stage === e.stage);
-      if (previous && (previous.revision ?? 0) > (e.revision ?? 0)) return;
-      this.exposures = this.exposures.filter((x) => x.render_id !== e.render_id || x.stage !== e.stage);
-      this.exposures.push(enriched);
-      this.schedule();
+      this.queueExposure(enriched);
     }), generation);
+  }
+
+  private queueExposure(e: ExposureInput): void {
+    // A later cumulative revision supersedes a queued earlier snapshot.
+    const previous = this.exposures.find((x) => x.render_id === e.render_id && x.stage === e.stage);
+    if (previous && (previous.revision ?? 0) > (e.revision ?? 0)) return;
+    this.exposures = this.exposures.filter((x) => x.render_id !== e.render_id || x.stage !== e.stage);
+    this.exposures.push(e);
+    this.schedule();
   }
 
   /** Keep receipt state when a mounted list resumes (including StrictMode replay). */

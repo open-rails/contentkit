@@ -32,9 +32,9 @@ function NumberedCards({
   render,
   filterKinds,
   filterLanguage,
-  searchQuery, queryID, ranker,
+  searchQuery, queryID, ranker, settledEmpty,
   ...p
-}: CardListProps & { result: UseContentsPage; page: number; setPage: (page: number) => void; render: string; filterKinds?: readonly string[]; filterLanguage?: string; searchQuery?: string; queryID?: string; ranker?: string }) {
+}: CardListProps & { result: UseContentsPage; page: number; setPage: (page: number) => void; render: string; filterKinds?: readonly string[]; filterLanguage?: string; searchQuery?: string; queryID?: string; ranker?: string; settledEmpty?: boolean }) {
   const top = useRef<HTMLDivElement>(null);
   const size = p.pageSize ?? NUMBERED_PAGE_SIZE;
   const total = result.summary?.total ?? 0;
@@ -56,7 +56,7 @@ function NumberedCards({
         {controls(false)}
       </div>
       <CardGrid {...p} className={undefined} list={list} render={render} filterKinds={filterKinds} filterLanguage={filterLanguage}
-        positionOffset={(page - 1) * size} searchQuery={searchQuery} queryID={queryID} ranker={ranker} />
+        positionOffset={(page - 1) * size} searchQuery={searchQuery} queryID={queryID} ranker={ranker} settledEmpty={settledEmpty} />
       {list.items.length > 0 && controls(true)}
     </ContentKitUiRoot>
   );
@@ -114,6 +114,7 @@ export function PagedSearchResults({ query, entityHref, ...p }: SearchResultsPro
         render={JSON.stringify([q, page])}
         queryID={queryID}
         searchQuery={query.q}
+        settledEmpty={!result.loading && !result.error && result.items.length === 0}
         ranker={query.sort ?? "relevance"}
         filterKinds={query.kind ? [query.kind] : undefined}
         filterLanguage={query.display_language ?? query.language}

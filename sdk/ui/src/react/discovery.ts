@@ -481,6 +481,8 @@ export interface ExposureOptions {
   ranker?: string;
   query_id?: string;
   search_query?: string;
+  /** A completed full search returned no items; never infer this while loading. */
+  settledEmpty?: boolean;
   language?: string;
   client?: ContentKitClient;
 }
@@ -516,6 +518,10 @@ export function useExposure(items: readonly { id: string; position?: number; ver
   useEffect(() => {
     if (!isCurrent()) return;
     const changed = new Set<number>();
+    if (o.settledEmpty && !items.length && o.surface === "search" && base.query_id && base.search_query?.trim()) {
+      const segment = segmentFor(0);
+      if (segment.renderedRevision === 0) changed.add(0);
+    }
     for (const [i, item] of items.entries()) {
       const supplied = item.position;
       const position = supplied !== undefined && Number.isSafeInteger(supplied) && supplied > 0 ? supplied : i + 1;
@@ -529,7 +535,7 @@ export function useExposure(items: readonly { id: string; position?: number; ver
       b.exposure({ ...base, render_id: segmentID(index), stage: "rendered", revision: ++segment.renderedRevision,
         occurred_at: segment.renderedAt ??= new Date().toISOString(), shown: [...segment.rendered.values()] });
     }
-  }, [b, base, items, state, segmentFor, segmentID, isCurrent]);
+  }, [b, base, items, state, segmentFor, segmentID, isCurrent, o.settledEmpty, o.surface]);
   const observer = useMemo(() => {
     if (typeof IntersectionObserver !== "function") return null;
     return new IntersectionObserver((entries) => {

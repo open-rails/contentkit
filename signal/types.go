@@ -219,7 +219,7 @@ func (e Exposure) validate(tenant string) error {
 	if e.OccurredAt.IsZero() {
 		return fmt.Errorf("exposure: OccurredAt is required")
 	}
-	if len(e.Shown) == 0 {
+	if len(e.Shown) == 0 && !(e.Stage == StageRendered && e.Surface == SurfaceSearch && strings.TrimSpace(e.QueryID) != "" && strings.TrimSpace(e.SearchQuery) != "") {
 		return fmt.Errorf("exposure: at least one placement is required")
 	}
 	if len(e.Shown) > MaxShownPerExposure {

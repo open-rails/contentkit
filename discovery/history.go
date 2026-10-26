@@ -415,8 +415,9 @@ func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Ex
 		default:
 			return fmt.Errorf("%w: stage %q is served, rendered or visible", ErrInvalid, e.Stage)
 		}
-		if e.RenderID == "" || len(e.Shown) == 0 || len(e.Shown) > signal.MaxShownPerExposure {
-			return fmt.Errorf("%w: an exposure needs a render_id and 1-%d placements", ErrInvalid, signal.MaxShownPerExposure)
+		emptySearch := e.Stage == string(signal.StageRendered) && e.Surface == signal.SurfaceSearch && e.QueryID != "" && strings.TrimSpace(e.SearchQuery) != ""
+		if e.RenderID == "" || len(e.Shown) == 0 && !emptySearch || len(e.Shown) > signal.MaxShownPerExposure {
+			return fmt.Errorf("%w: an exposure needs a render_id and 1-%d placements, or a completed empty search", ErrInvalid, signal.MaxShownPerExposure)
 		}
 		if err := identifiers(e.RenderID, e.QueryID, e.Surface, e.Ranker, e.Language); err != nil {
 			return err
@@ -464,7 +465,7 @@ func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Ex
 			}
 			x.Shown = append(x.Shown, placement)
 		}
-		if len(x.Shown) > 0 {
+		if len(x.Shown) > 0 || len(e.Shown) == 0 {
 			out = append(out, x)
 		}
 	}

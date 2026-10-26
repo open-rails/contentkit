@@ -6,6 +6,11 @@ text; each rendered/visible list carries its render ID, language, ranking
 identifier and absolute result positions. Numbered pages include the page
 offset. Hidden cards are not reported as visible. Non-search lists retain their
 surface and positions through the same bridge, with no search query attached.
+A successful full search with no returned content records one rendered search
+exposure with an empty result list. Loading, failed requests and cards hidden by
+the presentation do not create zero-result observations. These rows retain the
+query for search-quality counts even when there is no result to click; this is
+not a raw request log or a record of every typed suggestion prefix.
 
 Search links carry only an opaque `ck_nav` identifier. The SDK keeps its short
 handoff in browser storage, scoped to the ContentKit mount, current identity and

@@ -87,7 +87,7 @@ export function cardGridLayout(layout?: CardGridLayout): { className: string; st
 
 /** A list carries exact selection-wide counts when the API was asked for them. */
 type SummaryList = UseList<Card> & { summary?: ListingSummary };
-type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string; horizontal?: boolean; searchQuery?: string; queryID?: string; ranker?: string; positionOffset?: number };
+type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string; horizontal?: boolean; searchQuery?: string; queryID?: string; ranker?: string; positionOffset?: number; settledEmpty?: boolean };
 
 /** A list's cards and summary controls share one responsive, animated grid. */
 export function CardGrid(p: GridProps) {
@@ -102,7 +102,7 @@ export function CardGrid(p: GridProps) {
   return <CardGridBody key={session.key} {...p} />;
 }
 
-function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, searchQuery, queryID, ranker, positionOffset = 0, ...p }: GridProps) {
+function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, searchQuery, queryID, ranker, positionOffset = 0, settledEmpty, ...p }: GridProps) {
   const m = useMessages();
   const { t } = m;
   const { kinds } = useKinds({ client: p.client });
@@ -150,7 +150,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
     return limit !== undefined && Number.isFinite(limit) ? result.slice(0, Math.max(0, Math.floor(limit))) : result;
   }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit, positionOffset]);
   const shown = useMemo(() => entries.flatMap((entry) => ("premium" in entry ? [] : [{ ...entry.card, position: entry.position }])), [entries]);
-  const exposure = useExposure(shown, { surface: p.surface ?? "list", render, client: p.client, query_id: queryID, search_query: searchQuery, ranker });
+  const exposure = useExposure(shown, { surface: p.surface ?? "list", render, client: p.client, query_id: queryID, search_query: searchQuery, ranker, settledEmpty });
   const [sentinel, near] = useNearViewport({ margin: "600px 0px", leaveMargin: "1200px 0px" });
   const { hasMore, loadingMore, loadMore, error } = list;
   useEffect(() => {
@@ -378,6 +378,7 @@ function CursorSearchResults({ query, entityHref, ...p }: SearchResultsProps) {
         render={JSON.stringify(q)}
         queryID={queryID}
         searchQuery={query.q}
+        settledEmpty={!list.loading && !list.error && list.items.length === 0}
         ranker={query.sort ?? "relevance"}
         filterKinds={query.kind ? [query.kind] : undefined}
         filterLanguage={query.display_language ?? query.language}
