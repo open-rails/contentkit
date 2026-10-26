@@ -6,6 +6,7 @@ export type ErrorCode =
   | "animation_unsupported"
   | "checksum_mismatch"
   | "comment_banned"
+  | "comment_moderated"
   | "comment_too_long"
   | "comments_closed"
   | "comments_locked"
@@ -51,6 +52,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   animation_unsupported: { status: 415, meaning: "An AVIF or HEIF image sequence, which is decoded as one frame." },
   checksum_mismatch: { status: 422, meaning: "The stored bytes differ from the declared SHA-256." },
   comment_banned: { status: 403, meaning: "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends." },
+  comment_moderated: { status: 403, meaning: "The comment is held for review or was rejected, so its author can't edit it; a reviewer's approval makes a held one editable again." },
   comment_too_long: { status: 422, meaning: "The comment is longer than the site allows; `details.max` is the limit in characters." },
   comments_closed: { status: 403, meaning: "The target's comments are closed or hidden: existing ones may show, new ones and edits are refused." },
   comments_locked: { status: 403, meaning: "The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them." },
