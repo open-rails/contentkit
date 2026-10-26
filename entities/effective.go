@@ -135,39 +135,3 @@ func collectStrings(rows interface {
 	}
 	return out, rows.Err()
 }
-
-// Memberships is popularity.Catalog: per content id, the ids of the active
-// entities of groupKind its versions are effective in; contents in none are
-// absent.
-func (s *Store) Memberships(ctx context.Context, tenant, contentKind, entityKind string, contentIDs []string) (map[string][]EntityID, error) {
-	if tenant != s.tenant {
-		return nil, fmt.Errorf("%w: tenant %s", ErrInvalid, tenant)
-	}
-	out := map[string][]EntityID{}
-	if len(contentIDs) == 0 {
-		return out, nil
-	}
-	err := s.read(ctx, func(q Querier) error {
-		rows, err := q.Query(ctx, s.effectiveSQL(fmt.Sprintf(`SELECT cv.id AS version_id, cv.content_id FROM %s cv
- JOIN %s c ON c.tenant_id = cv.tenant_id AND c.id = cv.content_id AND c.kind = $3
- WHERE cv.tenant_id = $1 AND cv.content_id = ANY($2::text[])`, s.table("content_versions"), s.table("content_items")))+fmt.Sprintf(`
-SELECT v.content_id, array_agg(DISTINCT gid ORDER BY gid) FROM v JOIN eff ON eff.version_id = v.version_id CROSS JOIN LATERAL unnest(eff.entity_ids) AS gid
- JOIN %s g ON g.tenant_id = $1 AND g.id = gid AND g.kind = $4 GROUP BY v.content_id`, s.table("content_entities")), s.tenant, contentIDs, contentKind, entityKind)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id string
-			var ids []string
-			if err := rows.Scan(&id, &ids); err != nil {
-				return err
-			}
-			for _, g := range ids {
-				out[id] = append(out[id], EntityID(g))
-			}
-		}
-		return rows.Err()
-	})
-	return out, err
-}
