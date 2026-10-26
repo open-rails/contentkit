@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -61,9 +62,10 @@ type keywordQuery struct {
 	q        string
 	tokens   []string
 	prefix   string
+	typos    string
 	contains string
-	// trgm and native are the schemas of pg_trgm and PGroonga, quoted.
-	trgm, native string
+	// native is the schema of PGroonga, quoted.
+	native string
 }
 
 func prepareKeyword(ctx context.Context, tx pgx.Tx, schema, query string) (keywordQuery, error) {
@@ -77,10 +79,9 @@ func prepareKeyword(ctx context.Context, tx pgx.Tx, schema, query string) (keywo
 	}
 	// Normalize in the same database function as the stored terms. This avoids
 	// Go/Postgres Unicode casing and locale differences.
-	var trgm, native string
+	var native string
 	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_search_normalize($1),
- (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'),
- (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&k.q, &trgm, &native)
+ (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&k.q, &native)
 	if err != nil {
 		return k, err
 	}
@@ -88,23 +89,67 @@ func prepareKeyword(ctx context.Context, tx pgx.Tx, schema, query string) (keywo
 	if len(k.tokens) > 16 {
 		return k, fmt.Errorf("%w: keyword query exceeds 16 tokens", ErrInvalidQuery)
 	}
-	k.trgm, _ = quoteIdent(trgm)
 	k.native, _ = quoteIdent(native)
 	k.contains = literalSubstring(k.q)
 	// Tokens contain letters/numbers only and are lowercase. Appending '*' makes
 	// each token a literal prefix, never an OR/NOT/query-language operator.
 	prefixes := make([]string, len(k.tokens))
+	typos := make([]string, len(k.tokens))
 	for i, t := range k.tokens {
 		prefixes[i] = t + "*"
+		typos[i] = "(" + strings.Join(append([]string{t + "*"}, oneEdits(t)...), " OR ") + ")"
 	}
 	k.prefix = strings.Join(prefixes, " ")
+	k.typos = strings.Join(typos, " ")
 	return k, nil
 }
 
-// fuzzy reports whether typo tolerance applies. Its trigram prefilter admits
-// nearly every row, so it is always a bounded nearest-distance window; Go
-// accepts at most one edit.
+// fuzzy reports whether typo tolerance applies; Go accepts at most one edit.
 func (k keywordQuery) fuzzy() bool { return utf8.RuneCountInString(k.q) >= 3 }
+
+// typoRoute matches documents whose every token is a word prefix or one of
+// its one-edit spellings, through the terms index, so it reads only documents
+// holding those words. Go then keeps the one-edit matches.
+func (k keywordQuery) typoRoute(typos string) string {
+	return fmt.Sprintf(`sd.terms OPERATOR(%s.&@~) %s`, k.native, typos)
+}
+
+const editAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+// oneEdits lists the words oneEdit accepts for token that differ from it:
+// every deletion, adjacent transposition, and substitution or insertion of
+// editAlphabet or the token's own characters. Like tokens, they hold only
+// letters, numbers and marks, so they are literal query terms.
+func oneEdits(token string) []string {
+	t := []rune(token)
+	if len(t) < 3 {
+		return nil
+	}
+	alphabet := []rune(editAlphabet + token)
+	seen := map[string]bool{token: true}
+	var out []string
+	add := func(r []rune) {
+		if w := string(r); len(r) >= 3 && !seen[w] {
+			seen[w] = true
+			out = append(out, w)
+		}
+	}
+	for i := 0; i <= len(t); i++ {
+		for _, c := range alphabet {
+			add(slices.Concat(t[:i], []rune{c}, t[i:]))
+			if i < len(t) {
+				add(slices.Concat(t[:i], []rune{c}, t[i+1:]))
+			}
+		}
+		if i < len(t) {
+			add(slices.Concat(t[:i], t[i+1:]))
+		}
+		if i+1 < len(t) {
+			add(slices.Concat(t[:i], []rune{t[i+1], t[i]}, t[i+2:]))
+		}
+	}
+	return out
+}
 
 // literalRoutes match what keywordScore accepts without a typo: the exact term,
 // every token as a word prefix, or the query inside a name (or, for a
@@ -156,12 +201,13 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	literal := strings.Join(k.literalRoutes(`sd.content_kind,sd.content_id,sd.content_version_id,sd.language,`+cols, from, where, "@q", "@prefix", "@contains"), " UNION ")
 	queries := []string{`SELECT * FROM (` + literal + `) sd ORDER BY ` + tierSQL + ` DESC,` + order + ` LIMIT @limit`}
 	if k.fuzzy() {
-		queries = append(queries, fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s FROM %s WHERE %s AND sd.body OPERATOR(%s.%%>) @q ORDER BY sd.body OPERATOR(%s.<->>) @q,%s LIMIT @limit`, cols, from, where, k.trgm, k.trgm, order))
+		args["typos"] = k.typos
+		queries = append(queries, `SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,`+cols+` FROM `+from+` WHERE `+where+` AND `+k.typoRoute("@typos")+` ORDER BY `+order+` LIMIT @limit`)
 	}
 	// The whole request has a two-second ceiling (or an earlier caller deadline),
 	// including candidate scoring. SET LOCAL applies before retrieval and cannot leak into
 	// another pooled request. A SELECT CTE setting the GUC has ambiguous timing.
-	if _, err = tx.Exec(ctx, `SET LOCAL pg_trgm.word_similarity_threshold=0.1; SET LOCAL statement_timeout=2000`); err != nil {
+	if _, err = tx.Exec(ctx, `SET LOCAL statement_timeout=2000`); err != nil {
 		return result, err
 	}
 	found := map[documentKey]Hit{}
@@ -196,7 +242,7 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	return result, nil
 }
 
-// typoWindow is the nearest-distance window KeywordMatch adds typo matches from.
+// typoWindow bounds the typo candidates KeywordMatch reads per language.
 const typoWindow = 1000
 
 // Match selects the content IDs a keyword query matches, as SQL a listing
@@ -207,8 +253,8 @@ type Match struct {
 }
 
 // KeywordMatch matches query in opts.ContentKinds among documents of any of
-// languages: every literal match, plus the one-edit matches among the nearest
-// typoWindow documents of each language. opts.Language, Limit and Eligibility
+// languages: every literal match, plus the one-edit matches among up to
+// typoWindow typo candidates of each language. opts.Language, Limit and Eligibility
 // are ignored; the listing applies its own visibility.
 func KeywordMatch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options, languages []string) (Match, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -227,18 +273,18 @@ func KeywordMatch(ctx context.Context, pool *pgxpool.Pool, query string, opts Op
 	}
 	typos := []string{}
 	if k.fuzzy() {
-		if _, err = tx.Exec(ctx, `SET LOCAL pg_trgm.word_similarity_threshold=0.1; SET LOCAL statement_timeout=2000`); err != nil {
+		if _, err = tx.Exec(ctx, `SET LOCAL statement_timeout=2000`); err != nil {
 			return Match{}, err
 		}
 		for _, language := range languages {
 			o := Options{Schema: opts.Schema, Tenant: opts.Tenant, Language: language, ContentKinds: opts.ContentKinds}
-			args := pgx.NamedArgs{"q": k.q, "limit": typoWindow}
+			args := pgx.NamedArgs{"typos": k.typos, "limit": typoWindow}
 			from, where, _, err := hostClauses(o, args)
 			if err != nil {
 				return Match{}, err
 			}
-			hits, _, err := scoreRows(ctx, tx, fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,0,sd.terms,cardinality(sd.aliases) AS aliases
- FROM %s WHERE %s AND sd.body OPERATOR(%s.%%>) @q ORDER BY sd.body OPERATOR(%s.<->>) @q LIMIT @limit`, from, where, k.trgm, k.trgm), args, opts.Tenant, k)
+			hits, _, err := scoreRows(ctx, tx, `SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,0,sd.terms,cardinality(sd.aliases) AS aliases
+ FROM `+from+` WHERE `+where+` AND `+k.typoRoute("@typos")+` ORDER BY sd.content_kind,sd.content_id,sd.content_version_id LIMIT @limit`, args, opts.Tenant, k)
 			if err != nil {
 				return Match{}, err
 			}
