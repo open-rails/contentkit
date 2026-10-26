@@ -359,7 +359,9 @@ func TestVersionContentMigration(t *testing.T) {
 	}
 	ledgerSQL := `SELECT coalesce(jsonb_agg(to_jsonb(m) ORDER BY sequence),'[]'::jsonb)::text FROM public.migrations m WHERE app='contentkit' AND schema=$1`
 	beforeLedger := snapshot(ledgerSQL, schema)
-	versionsSQL := "SELECT jsonb_agg(to_jsonb(v)-'original_title'-'original_language' ORDER BY id)::text FROM " + table("content_versions") + " v WHERE tenant_id='version-owned-migration'"
+	// The combined migration also deliberately retires playable (0056). Compare
+	// every retained field; assert the retired readiness columns disappear below.
+	versionsSQL := "SELECT jsonb_agg(to_jsonb(v)-'original_title'-'original_language'-'playable' ORDER BY id)::text FROM " + table("content_versions") + " v WHERE tenant_id='version-owned-migration'"
 	parentsSQL := "SELECT jsonb_agg(to_jsonb(c)-'original_title'-'original_language' ORDER BY id)::text FROM " + table("content_items") + " c WHERE tenant_id='version-owned-migration'"
 	beforeVersions, beforeParents := snapshot(versionsSQL), snapshot(parentsSQL)
 	cfg := ck.Config{Tenant: "version-owned-migration", Database: ck.DatabaseConfig{Schema: schema}, Content: kinds.Config{Languages: []string{"en", "zh"}, Kinds: map[string]kinds.Kind{"post": {Route: "posts", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}}}}}
@@ -384,8 +386,14 @@ func TestVersionContentMigration(t *testing.T) {
 				}
 			}
 		}
-		if snapshot(versionsSQL) != beforeVersions || snapshot(parentsSQL) != beforeParents {
-			t.Fatal("text migration changed identity, access, revision or publication fields")
+		if afterVersions, afterParents := snapshot(versionsSQL), snapshot(parentsSQL); afterVersions != beforeVersions || afterParents != beforeParents {
+			t.Fatalf("text migration changed retained fields: versions before=%s after=%s; parents before=%s after=%s", beforeVersions, afterVersions, beforeParents, afterParents)
+		}
+		var retiredReadinessColumns int
+		check(pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=$1
+ AND (table_name,column_name) IN (('content_versions','playable'),('content_facets','unplayable'))`, schema).Scan(&retiredReadinessColumns))
+		if retiredReadinessColumns != 0 {
+			t.Fatal("retired readiness columns remain after migration")
 		}
 		var parentTable *string
 		check(pool.QueryRow(ctx, "SELECT to_regclass($1)::text", schema+".content_text").Scan(&parentTable))
