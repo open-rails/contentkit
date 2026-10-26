@@ -3,6 +3,7 @@ package critical_test
 import (
 	"encoding/json"
 	"github.com/goccy/go-yaml"
+	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/kinds"
 	"strings"
 	"testing"
@@ -86,6 +87,43 @@ entity_kinds:
 		cfg.Kinds["blog"] = kind
 		if cfg.StorageModel().Validate() == nil {
 			t.Fatal("channel accepted as a descriptive association")
+		}
+	})
+}
+
+func TestChannelRepostAnonymization(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	_, sourceToken, source := ownedChannel(t, w, a, "Retained original")
+	original := authoredArticle(t, a, a.client(sourceToken), source.ID)
+	user, token, destination := ownedChannel(t, w, a, "Repost destination")
+	client := a.client(token)
+	posted, err := client.PutChannelRepost(t.Context(), destination.ID, original.ID)
+	must(t, err)
+	if posted.ActorID != user.ID {
+		t.Fatal("repost did not record initial attribution")
+	}
+	t.Run("CK-J24-S07_terminal_account_event_unlinks_repost_attribution", func(t *testing.T) {
+		must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
+		must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
+		feed, err := a.client("").GetChannelContents(t.Context(), destination.ID, ck.GetChannelContentsQuery{})
+		must(t, err)
+		if len(feed.Contents) != 1 || feed.Contents[0].ID != original.ID || feed.Contents[0].Repost == nil || feed.Contents[0].Repost.ActorID != "" {
+			t.Fatalf("anonymization lost reference or retained account: %+v", feed.Contents)
+		}
+		still, err := a.client("").GetContent(t.Context(), original.ID, ck.GetContentQuery{})
+		must(t, err)
+		if still.ChannelID != source.ID {
+			t.Fatal("account purge changed original channel")
+		}
+		_, err = client.PutChannelRepost(t.Context(), destination.ID, original.ID)
+		requireError(t, err, 403, "forbidden")
+		log, err := a.engine.Client().GetEvents(t.Context(), ck.GetEventsQuery{})
+		must(t, err)
+		for _, event := range log.Events {
+			if event.Type == "content.reposted" && strings.Contains(string(event.Data), user.ID) {
+				t.Fatal("immutable repost event retained erasable account attribution")
+			}
 		}
 	})
 }
