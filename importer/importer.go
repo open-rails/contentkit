@@ -33,11 +33,11 @@ type Batch struct {
 	// retained signal plane's newest revision before anything is stamped, as
 	// after a Postgres restore. It only ever advances.
 	PreferenceFloor int64 `json:"preference_floor,omitempty"`
-	// ProvisionScopes lets ContentKit create the AuthKit scope of an
-	// imported entity of an auth_scope kind that names none; without it such
-	// an entity fails.
+	// ProvisionScopes lets ContentKit create a missing imported channel's
+	// AuthKit scope. It never grants authority through a metadata entity.
 	ProvisionScopes bool                  `json:"provision_scopes,omitempty"`
 	Entities        []EntityRecord        `json:"entities,omitempty"`
+	Channels        []ChannelRecord       `json:"channels,omitempty"`
 	Contents        []ContentRecord       `json:"contents,omitempty"`
 	Memberships     []MembershipSet       `json:"memberships,omitempty"`
 	Aliases         []AliasRecord         `json:"aliases,omitempty"`
@@ -68,6 +68,7 @@ type TargetRef struct {
 	Content *Ref `json:"content,omitempty"`
 	Version *Ref `json:"version,omitempty"`
 	Entity  *Ref `json:"group,omitempty"`
+	Channel *Ref `json:"channel,omitempty"`
 	Comment *Ref `json:"comment,omitempty"`
 }
 
@@ -95,13 +96,8 @@ type EntityRecord struct {
 	// CoverContent a member whose cover it shows, imported before.
 	CoverImage   string `json:"cover_image,omitempty"`
 	CoverContent *Ref   `json:"cover_content,omitempty"`
-	// Avatar is a user-owned entity's avatar: an image of its media folder.
+	// Avatar is an image of the entity's media folder.
 	Avatar string `json:"avatar,omitempty"`
-	// OwnerUserID owns a user-owned kind's entity.
-	OwnerUserID string `json:"owner_user_id,omitempty"`
-	// AuthScope is the entity's AuthKit scope (an auth_scope kind's); empty
-	// keeps the stored one.
-	AuthScope string `json:"auth_scope,omitempty"`
 	// Edges replace the entity's edges to other entities.
 	Edges []EdgeRecord `json:"edges,omitempty"`
 	// Code keeps a content code the entity had (9 characters); one is
@@ -109,6 +105,26 @@ type EntityRecord struct {
 	Code      string     `json:"code,omitempty"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// ChannelRecord imports an authoring channel independently of descriptive
+// entities. Names and text preserve existing values when omitted. Scope and
+// owner attribution do not themselves assign any new editorial grants.
+type ChannelRecord struct {
+	ExternalID   string          `json:"external_id"`
+	ID           string          `json:"id,omitempty"`
+	Slug         string          `json:"slug"`
+	State        string          `json:"state,omitempty"`
+	Names        []entities.Name `json:"names,omitempty"`
+	Text         []entities.Text `json:"text,omitempty"`
+	CoverImage   string          `json:"cover_image,omitempty"`
+	CoverContent *Ref            `json:"cover_content,omitempty"`
+	Avatar       string          `json:"avatar,omitempty"`
+	OwnerUserID  string          `json:"owner_user_id,omitempty"`
+	AuthScope    string          `json:"auth_scope,omitempty"`
+	Code         string          `json:"code,omitempty"`
+	CreatedAt    *time.Time      `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time      `json:"updated_at,omitempty"`
 }
 
 // EdgeRecord is a relation from the entity to another.
@@ -138,11 +154,11 @@ type ContentRecord struct {
 	OriginalLanguage *string `json:"original_language,omitempty"`
 	// Comments is open (the default), closed or hidden.
 	Comments string `json:"comments,omitempty"`
-	// Access defaults to public. A entity rule names the entity's id.
+	// Access defaults to public. A channel rule names the owning channel's id.
 	Access       *access.Rule            `json:"access,omitempty"`
 	Restrictions []string                `json:"restrictions,omitempty"`
 	Attributes   map[string]any          `json:"attributes,omitempty"`
-	OwnerEntity  *Ref                    `json:"owner_group,omitempty"`
+	Channel      *Ref                    `json:"channel,omitempty"`
 	Creators     []catalog.Creator       `json:"creators,omitempty"`
 	Text         map[string]catalog.Text `json:"text,omitempty"`
 	// Versions: a kind with hidden versions takes none or one.
@@ -336,6 +352,7 @@ type DeleteRecord struct {
 
 // Sections, in the order a batch writes them.
 const (
+	SectionChannels      = "channels"
 	SectionEntities      = "entities"
 	SectionContents      = "contents"
 	SectionMemberships   = "memberships"
@@ -353,6 +370,7 @@ const (
 
 // Entities of external ids.
 const (
+	RecordChannel = "channel"
 	RecordContent = "content"
 	RecordVersion = "version"
 	RecordEntity  = "group"
