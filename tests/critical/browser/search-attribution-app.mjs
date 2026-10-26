@@ -8,10 +8,15 @@ import "../../../sdk/ui/dist/styles.css";
 const fixture = await fetch("/fixture.json").then((r) => r.json());
 const nativeFetch = globalThis.fetch.bind(globalThis);
 const accepted = [];
+const observedSearches = [];
 globalThis.fetch = async (...args) => {
   const response = await nativeFetch(...args);
   if (String(args[0]).includes("/engagement") && args[1]?.body && response.ok) {
     accepted.push(...JSON.parse(args[1].body).snapshots);
+  }
+  if (String(args[0]).includes("/search?") && response.ok) {
+    const body = await response.clone().json();
+    observedSearches.push({ query: new URL(String(args[0]), location.origin).searchParams.get("q"), count: body.contents.length });
   }
   return response;
 };
@@ -60,7 +65,9 @@ function App() {
     addEventListener("popstate", changed);
     return () => removeEventListener("popstate", changed);
   }, []);
-  const pathname = new URL(path, location.origin).pathname;
+  const locationURL = new URL(path, location.origin);
+  const pathname = locationURL.pathname;
+  const query = locationURL.searchParams.get("q") ?? fixture.query;
   const reader = pathname.match(/^\/read\/([^/]+)\/([^/]+)$/);
   return h(ContentKitProvider, { client, viewer: fixture.user, language: "en", navigate },
     h(BeaconFlush), reader ? h(Reader, { key: reader[1], content: reader[1], version: reader[2] }) : pathname === "/browse" ?
@@ -74,15 +81,15 @@ function App() {
           onSearch: () => {},
         })),
         h("section", { id: "results" }, h(SearchResults, {
-          client, query: { q: fixture.query, kind: "article", limit: 2, sort: "relevance" },
-          pagination: "pages", page: 2, pageSize: 2,
+          client, query: { q: query, kind: "article", limit: 2, sort: "relevance" },
+          pagination: "pages", page: query === fixture.query ? 2 : 1, pageSize: 2,
           href: (item) => `/read/${item.id}/${item.version.id}`,
           showCounts: false, owner: false,
         }))));
 }
 createRoot(document.getElementById("root")).render(h(App));
 window.attribution = {
-  fixture, client, accepted,
+  fixture, client, accepted, observedSearches,
   navigate: (...args) => navigate(...args),
   stopReading: () => stopReading(),
   flush: async () => { await flushReader(); await flushBeacons(); },

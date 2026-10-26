@@ -128,8 +128,47 @@ try {
   await Promise.all(context.pages().map(async (page) => {
     if (!page.isClosed()) await page.evaluate(() => window.attribution?.flush());
   }));
+  // The real server has answered successfully, but the browser has not seen
+  // that answer yet. Loading must not masquerade as a zero-result observation.
+  const zeroQuery = "Quasarzero258unmatched";
+  let held, release;
+  const reached = new Promise((resolve) => held = resolve);
+  const gate = new Promise((resolve) => release = resolve);
+  const holdSearch = async (route) => {
+    if (new URL(route.request().url()).searchParams.get("q") !== zeroQuery) { await route.continue(); return; }
+    const response = await route.fetch();
+    assert.equal(response.status(), 200);
+    assert.equal((await response.json()).contents.length, 0, "zero-result positive control is not empty");
+    held(); await gate;
+    await route.fulfill({ response });
+  };
+  await source.route("**/content/v1/search?**", holdSearch);
+  await source.evaluate((query) => window.attribution.navigate("/results?q=" + encodeURIComponent(query)), zeroQuery);
+  await reached;
+  await source.evaluate(() => window.attribution.flush());
+  let counts = await source.evaluate((query) => fetch("/fixture/exposure-count?query=" + encodeURIComponent(query)).then((r) => r.json()), zeroQuery);
+  assert.deepEqual(counts, { rendered: 0, visible: 0 }, "loading search emitted a false empty exposure");
+  release();
+  await source.waitForFunction((query) => window.attribution.observedSearches.some((r) => r.query === query && r.count === 0), zeroQuery);
+  await source.waitForTimeout(450);
+  await source.evaluate(() => window.attribution.flush());
+  counts = await source.evaluate((query) => fetch("/fixture/exposure-count?query=" + encodeURIComponent(query)).then((r) => r.json()), zeroQuery);
+  assert.deepEqual(counts, { rendered: 1, visible: 0 }, "settled zero search did not record exactly one rendered observation");
+  await source.unroute("**/content/v1/search?**", holdSearch);
+  // A genuine network failure is another absence of results, not an observed
+  // empty list. The request is aborted rather than replaced by a fake API reply.
+  const errorQuery = "Quasarerror258unmatched";
+  await source.route("**/content/v1/search?**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("q") === errorQuery) await route.abort("failed");
+    else await route.continue();
+  });
+  await source.evaluate((query) => window.attribution.navigate("/results?q=" + encodeURIComponent(query)), errorQuery);
+  await source.waitForTimeout(500);
+  await source.evaluate(() => window.attribution.flush());
+  counts = await source.evaluate((query) => fetch("/fixture/exposure-count?query=" + encodeURIComponent(query)).then((r) => r.json()), errorQuery);
+  assert.deepEqual(counts, { rendered: 0, visible: 0 }, "failed search emitted a false empty exposure");
   assert.equal(diagnostics.length, 0, diagnostics.join("\n"));
-  console.log(JSON.stringify({ status: "passed", results }));
+  console.log(JSON.stringify({ status: "passed", results, zeroQuery, errorQuery }));
 } finally {
   await context.close();
   await browser.close();

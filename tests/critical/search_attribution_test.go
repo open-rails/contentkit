@@ -63,6 +63,28 @@ func TestBrowserSearchEngagementAttribution(t *testing.T) {
 		out.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(out).Encode(map[string]string{"query": query, "user": user.ID, "token": credential})
 	})
+	// This observation-only fixture endpoint lets the browser prove that no
+	// false empty exposure landed while a real search response is withheld.
+	mux.HandleFunc("/fixture/exposure-count", func(out http.ResponseWriter, request *http.Request) {
+		rows, err := a.deps.ClickHouse.Query(request.Context(), `SELECT countIf(stage='rendered'),countIf(stage='visible')
+ FROM `+a.cfg.ClickHouse.Database+`.exposures FINAL WHERE tenant=? AND search_query=?`, a.cfg.Scope.AppID.String(), strings.ToLower(request.URL.Query().Get("query")))
+		if err != nil {
+			http.Error(out, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		var rendered, visible uint64
+		if !rows.Next() {
+			http.Error(out, "missing aggregate", http.StatusInternalServerError)
+			return
+		}
+		if err := rows.Scan(&rendered, &visible); err != nil {
+			http.Error(out, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(out).Encode(map[string]uint64{"rendered": rendered, "visible": visible})
+	})
 	files := http.FileServer(http.Dir(dist))
 	mux.HandleFunc("/", func(out http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/assets/") {
@@ -82,8 +104,9 @@ func TestBrowserSearchEngagementAttribution(t *testing.T) {
 		t.Fatalf("actual browser attribution: %v\n%s", err, output)
 	}
 	var report struct {
-		Status  string
-		Results []attributedBrowserVisit
+		Status                string
+		Results               []attributedBrowserVisit
+		ZeroQuery, ErrorQuery string
 	}
 	must(t, json.Unmarshal(output, &report))
 	if report.Status != "passed" || len(report.Results) != 7 {
@@ -129,6 +152,26 @@ func TestBrowserSearchEngagementAttribution(t *testing.T) {
 	for _, stage := range []signal.ExposureStage{signal.StageRendered, signal.StageVisible} {
 		exported, err := store.Attribution(t.Context(), tenant, signal.AttributionOptions{Stage: stage, Window: signal.LastDays(1, time.Now())})
 		must(t, err)
+		emptySearches := 0
+		for _, render := range exported.Renders {
+			if render.SearchQuery == strings.ToLower(report.ErrorQuery) {
+				t.Fatal("failed search became an exposure export")
+			}
+			if render.SearchQuery != strings.ToLower(report.ZeroQuery) {
+				continue
+			}
+			emptySearches++
+			if render.Surface != signal.SurfaceSearch || render.QueryID == "" || len(render.Shown) != 0 || len(render.Clicks) != 0 {
+				t.Fatalf("zero-result search fabricated placements or lost query context: %+v", render)
+			}
+		}
+		wantEmpty := 0
+		if stage == signal.StageRendered {
+			wantEmpty = 1
+		}
+		if emptySearches != wantEmpty {
+			t.Fatalf("zero-result %s exports=%d want=%d", stage, emptySearches, wantEmpty)
+		}
 		for _, visit := range report.Results {
 			if visit.Origin == "" {
 				continue
