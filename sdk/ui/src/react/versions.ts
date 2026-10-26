@@ -55,8 +55,8 @@ export function useReaderPlan(content: string | null | undefined, version: strin
   const r = useResource<ReaderPlan | Pending>(store, key, { type: "reader-plan", id: version ?? undefined }, (s) => client.versions.reader(content!, version!, s));
   const pending = isPending(r.data);
   const terminal = !!r.error && ([401, 403, 404, 410].includes(r.error.status) || ["unauthorized", "forbidden", "not_found", "gone"].includes(r.error.code));
-  // A retry clears the resource's error before it has new data. Keep a denied
-  // plan hidden until a successful response, including across transient errors.
+  // Keep a denied plan hidden until a successful response, including across
+  // later transient errors.
   const [deniedKey, setDeniedKey] = useState<string | null>(null);
   if (terminal && deniedKey !== key) setDeniedKey(key);
   if (deniedKey === key && r.loaded && !r.loading && !r.error) setDeniedKey(null);
