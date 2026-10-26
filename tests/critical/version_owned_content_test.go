@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"reflect"
@@ -192,6 +193,11 @@ func TestVersionOwnedContent(t *testing.T) {
 			must(err)
 			if len(page.Contents) != 1 || page.Contents[0].Version.ID != searchable.Versions[1].ID || page.Contents[0].Title != "Crimson Orchid" || page.Contents[0].Excerpt != "Matched summary" || page.Summary == nil || page.Summary.Total != 1 {
 				t.Fatalf("%s search hydrated another version: %+v", sort, page)
+			}
+			link, err := url.Parse(page.Contents[0].Path)
+			must(err)
+			if link.Query().Get("v") != searchable.Versions[1].Code {
+				t.Fatalf("%s search link opened a different version: %s", sort, page.Contents[0].Path)
 			}
 			private, err := public.GetSearch(ctx, ck.GetSearchQuery{Q: "SecretCabinet", Kind: "post", Language: "en", Mode: "hide", Sort: sort, Summary: &includeSummary})
 			must(err)
