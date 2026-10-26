@@ -20,6 +20,7 @@ type delayedChannelRetirement struct {
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
+	loseAck bool
 }
 
 func (s *delayedChannelRetirement) Retire(ctx context.Context, ids []string) error {
@@ -29,14 +30,30 @@ func (s *delayedChannelRetirement) Retire(ctx context.Context, ids []string) err
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return s.Scopes.Retire(ctx, ids)
+	if err := s.Scopes.Retire(ctx, ids); err != nil {
+		return err
+	}
+	if s.loseAck {
+		return errors.New("lost retirement acknowledgement after concurrent restore")
+	}
+	return nil
 }
 
 func TestChannelLateRetirementFailsClosed(t *testing.T) {
+	for _, loseAck := range []bool{false, true} {
+		name := "acknowledged"
+		if loseAck {
+			name = "lost_acknowledgement"
+		}
+		t.Run(name, func(t *testing.T) { testChannelLateRetirement(t, loseAck) })
+	}
+}
+
+func testChannelLateRetirement(t *testing.T, loseAck bool) {
 	w := newWorld(t)
 	a := w.apps[0]
 	_, _, channel := ownedChannel(t, w, a, "Retirement race")
-	provider := &delayedChannelRetirement{Scopes: a.deps.Scopes, entered: make(chan struct{}), release: make(chan struct{})}
+	provider := &delayedChannelRetirement{Scopes: a.deps.Scopes, entered: make(chan struct{}), release: make(chan struct{}), loseAck: loseAck}
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(provider.release) }) }
 	t.Cleanup(release)
@@ -60,7 +77,7 @@ func TestChannelLateRetirementFailsClosed(t *testing.T) {
 	release()
 	select {
 	case err := <-deleted:
-		if !errors.Is(err, entities.ErrConflict) {
+		if err == nil || !loseAck && !errors.Is(err, entities.ErrConflict) {
 			t.Fatalf("stale retirement reported completion: %v", err)
 		}
 	case <-ctx.Done():
