@@ -8,6 +8,7 @@ import (
 
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/media/versions"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -49,11 +50,12 @@ func TestEnginePublicationLifetime(t *testing.T) {
 	if err := a.engine.Ready(t.Context()); err == nil {
 		t.Fatal("closed engine still reports ready")
 	}
-	// An insert-only client probes the same public queue after Close. If the
-	// old engine still fetched jobs, this harmless catch-up worker would finish.
+	// Replaying this completed exact request probes the queue after Close.
+	// If the old engine still fetched jobs, its idempotent replay would finish.
+	request := currentReleaseJob(t, a, item.Versions[0].ID)
 	queue, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 	must(t, err)
-	job, err := queue.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
+	job, err := queue.Insert(t.Context(), request, &river.InsertOpts{Queue: versions.QueueFor(publicationTenant(a))})
 	must(t, err)
 	deadline := time.NewTimer(500 * time.Millisecond)
 	defer deadline.Stop()

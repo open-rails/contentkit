@@ -359,7 +359,8 @@
       "cases": [
         "TestPublicationWithoutWorkers/CK-J05-S01_immediate_publication_is_visible",
         "TestDurableTextPublication",
-        "TestMediaApplicationPublishesTextKinds"
+        "TestMediaApplicationPublishesTextKinds",
+        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },

@@ -1,22 +1,33 @@
 package critical_test
 
 import (
+	"bytes"
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
 )
 
 func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
-	// Only galleries declare media. Articles must retain the text worker even
-	// though this same application has an active storage publication service.
+	// Configured media and unconfigured storage kinds share one application,
+	// request model and worker. Posts also exercise zero and multiple attachments.
 	attachMedia(t, w, a, func(cfg *ck.Config) {
 		cfg.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
+		post := cfg.Content.Kinds["article"]
+		post.Route = "posts"
+		cfg.Content.Kinds["post"] = post
+		cfg.Media.Kinds = append(cfg.Media.Kinds, media.Kind{Name: "post", KeepOriginals: true,
+			Uploads: []media.Upload{{Path: "images/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Max: 5}},
+			Private: []media.Private{{Name: "reader", From: "images/{name}", To: "reader/{name}.webp", Image: &media.Image{Width: 48, Height: 48}}},
+		})
 	})
 	admin, reader := a.engine.Client(), a.client("")
 	create := func(kind, title string) catalog.Content {
@@ -26,7 +37,15 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 		return item
 	}
 	article, gallery := create("article", "Text alongside media"), create("gallery", "Declared media edition")
-	for _, item := range []catalog.Content{article, gallery} {
+	emptyPost, attachedPost := create("post", "Post without attachments"), create("post", "Post with two attachments")
+	postRef := media.RefBody{Kind: "post", ID: attachedPost.ID, Version: attachedPost.Versions[0].ID}
+	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, postRef, uuid.NewString(), []ck.MediaFile{
+		{Path: "images/first.png", Type: "image/png", Body: bytes.NewReader(chapterImage(t, 31))},
+		{Path: "images/second.png", Type: "image/png", Body: bytes.NewReader(chapterImage(t, 47))},
+	})
+	must(t, err)
+	awaitMediaReady(t, admin, postRef)
+	for _, item := range []catalog.Content{article, gallery, emptyPost, attachedPost} {
 		_, err := admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
 	}
@@ -40,8 +59,35 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
  WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), gallery.Versions[0].ID).Scan(&ready))
 		return ready
 	})
+	for _, item := range []catalog.Content{article, gallery, emptyPost, attachedPost} {
+		waitForChapterPublication(t, func() bool {
+			var complete bool
+			must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM `+w.schema+`.content_versions v
+ JOIN `+w.schema+`.content_publication_requests r ON r.tenant_id=v.tenant_id AND r.id=v.release_id
+ WHERE v.tenant_id=$1 AND v.id=$2 AND v.released AND r.state='completed')`, publicationTenant(a), item.Versions[0].ID).Scan(&complete))
+			return complete
+		})
+	}
+	view, err := reader.GetMediaVersion(t.Context(), postRef.Kind, postRef.ID, postRef.Version, ck.GetMediaVersionQuery{})
+	must(t, err)
+	readable := 0
+	for _, file := range view.Files {
+		if file.URL == "" {
+			continue
+		}
+		response, err := http.Get(file.URL)
+		must(t, err)
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("published post attachment HTTP %d", response.StatusCode)
+		}
+		readable++
+	}
+	if readable != 2 {
+		t.Fatalf("published post exposes %d attachments, want two", readable)
+	}
 	due := w.clock.now().Add(time.Hour)
-	_, err := admin.PatchContentVersion(t.Context(), article.ID, article.Versions[0].ID, catalog.VersionInput{
+	_, err = admin.PatchContentVersion(t.Context(), article.ID, article.Versions[0].ID, catalog.VersionInput{
 		Access: &access.Rule{Level: access.PPV, Releases: []access.Release{{At: due, Level: access.Public}}},
 	})
 	must(t, err)
@@ -56,7 +102,7 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 		var pending int
 		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job
  WHERE queue=$1 AND state IN ('available','pending','running','retryable','scheduled')
- AND scheduled_at<=clock_timestamp()`, catalog.QueueFor(a.cfg.Scope.AppID.String())).Scan(&pending))
+ AND scheduled_at<=clock_timestamp()`, versions.QueueFor(publicationTenant(a))).Scan(&pending))
 		return pending == 0
 	})
 	w.clock.set(due.Add(time.Second))
@@ -76,12 +122,13 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 		second, err := reader.GetContent(t.Context(), scheduled.ID, ck.GetContentQuery{})
 		return err == nil && second.Live && second.Body == "Scheduled text alongside media"
 	})
-	var wrongRequests int
-	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_publication_requests r
- JOIN `+w.schema+`.content_items c ON c.tenant_id=r.tenant_id AND c.id=r.content_id
- WHERE r.tenant_id=$1 AND c.kind='article'`, a.cfg.Scope.AppID.String()).Scan(&wrongRequests))
-	if wrongRequests != 0 {
-		t.Fatalf("nonmedia articles created %d storage requests", wrongRequests)
+	var completedArticles int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_versions v
+ JOIN `+w.schema+`.content_publication_requests r ON r.tenant_id=v.tenant_id AND r.id=v.release_id
+ JOIN `+w.schema+`.content_items c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+ WHERE v.tenant_id=$1 AND c.kind='article' AND r.state='completed'`, publicationTenant(a)).Scan(&completedArticles))
+	if completedArticles != 2 {
+		t.Fatalf("unified worker completed %d article editions, want two", completedArticles)
 	}
 	_, err = admin.PostContentUnpublish(t.Context(), article.ID)
 	must(t, err)
