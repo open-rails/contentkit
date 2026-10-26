@@ -3,14 +3,19 @@ import React from "../../../sdk/ui/node_modules/react/index.js";
 import { createRoot } from "../../../sdk/ui/node_modules/react-dom/client.js";
 import { createContentKitClient } from "../../../sdk/ui/dist/client.js";
 import { ContentKitProvider } from "../../../sdk/ui/dist/react/provider.js";
+import { useContentDetail } from "../../../sdk/ui/dist/react/detail.js";
 import { useFavorite } from "../../../sdk/ui/dist/react/engagement.js";
-import { ChannelFeed, RepostButton } from "../../../sdk/ui/dist/index.js";
+import { ChannelFeed, RepostButton, ContentEditor } from "../../../sdk/ui/dist/index.js";
 
 let fixture, bearer, currentViewer, client, root;
 const target = () => ({ type: "contents", id: fixture.item });
 function FavoriteView() {
   const state = useFavorite(target());
   return React.createElement("output", { id: "favorite", "data-viewer": currentViewer, "data-loading": String(state.loading) }, state.error?.code ?? String(state.favorited));
+}
+function VersionReader({ version }) {
+  const detail = useContentDetail(fixture.item, { version, language: "en" });
+  return React.createElement("output", { id: "version-reader", "data-loading": String(detail.loading), "data-version": detail.version?.id }, detail.content?.body ?? "");
 }
 function render() {
   root ??= createRoot(document.querySelector("#root"));
@@ -19,6 +24,15 @@ function render() {
 window.critical = {
   initialize(input) { fixture=input; bearer=input.aliceToken; currentViewer=input.alice; client=createContentKitClient({baseUrl:"/content",token:()=>bearer}); window.client=client; },
   mount() { render(); },
+  mountVersionEditor() {
+    root ??= createRoot(document.querySelector("#root"));
+    root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" },
+      React.createElement(ContentEditor, { id: fixture.item, kind: "article", languages: [{value:"en",label:"English"},{value:"zh",label:"Chinese"}] })));
+  },
+  mountVersionReader(version) {
+    root ??= createRoot(document.querySelector("#root"));
+    root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" }, React.createElement(VersionReader, {version})));
+  },
   mountChannel() {
     root ??= createRoot(document.querySelector("#root"));
     root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" },
