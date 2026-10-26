@@ -78,10 +78,7 @@ function Manager({ basePath, navigation, ...p }: Inner) {
   const list = useMemo(
     () =>
       p.entityKinds ??
-      Object.entries(kinds?.entity_kinds ?? {})
-        .filter(([, k]) => k.owner !== "user")
-        .map(([name]) => name)
-        .sort(),
+      Object.keys(kinds?.entity_kinds ?? {}).sort(),
     [p.entityKinds, kinds],
   );
   if (access.loading || model.loading) return <Rows />;

@@ -76,9 +76,11 @@ type Filter struct {
 	// ViewStatus is unseen, in_progress or completed: the signed-in
 	// reader's own.
 	ViewStatus string
-	// OwnerEntities keeps content one of these entities owns (a channel's feed);
+	// ChannelIDs keeps content one of these channels owns (the original feed);
 	// owning is not membership and opens nothing.
-	OwnerEntities []string
+	ChannelIDs []string
+	// includeReposts is enabled only by the public channel feed.
+	includeReposts bool
 	// Creators keeps content one of these users is credited on.
 	Creators []string
 	// Access keeps content at one of these levels: public is what anyone
@@ -172,7 +174,7 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 			return nil, fmt.Errorf("%w: time zone %q", ErrInvalid, f.TimeZone)
 		}
 	}
-	owners, err := uniqueIDs("owner_group", f.OwnerEntities)
+	owners, err := uniqueIDs("channel_id", f.ChannelIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +245,13 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 		q.and("NOT (f.entity_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": excluded})
 	}
 	if len(owners) > 0 {
-		q.and("f.owner_entity_id = ANY(@d_owners::text[])", pgx.NamedArgs{"d_owners": owners})
+		owned := "f.owner_entity_id = ANY(@d_owners::text[])"
+		if f.includeReposts {
+			owned = "(" + owned + " OR EXISTS (SELECT 1 FROM " + s.t.reposts + " rp WHERE rp.tenant_id=f.tenant_id AND rp.content_id=f.content_id AND rp.channel_id=ANY(@d_owners::text[])))"
+			// A public feed never exposes unpublished or deleted originals, even to staff.
+			q.and("NOT f.deleted AND f.live_from <= @cv_now::timestamptz AND (@cv_language = '' OR @cv_language = ANY(f.languages))", nil)
+		}
+		q.and(owned, pgx.NamedArgs{"d_owners": owners})
 	}
 	if cs, err := uniqueIDs("creators", f.Creators); err != nil {
 		return nil, err
@@ -315,7 +323,7 @@ func (s *Service) accessFilter(q *sel, levels, tiers []string) error {
 		return err
 	}
 	for _, l := range levels {
-		if !slices.Contains([]access.Level{access.Public, access.TierLevel, access.EntityLevel, access.PPV, access.EntityPPV}, access.Level(l)) {
+		if !slices.Contains([]access.Level{access.Public, access.TierLevel, access.ChannelLevel, access.PPV, access.ChannelPPV}, access.Level(l)) {
 			return fmt.Errorf("%w: access %q is public, tier, group, ppv or group_ppv", ErrInvalid, l)
 		}
 	}
@@ -481,8 +489,9 @@ type order struct {
 }
 
 // titleKey is a content's title sort key in the display language's text.
-const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key, ''), x.title)) FROM %s x WHERE x.tenant_id = f.tenant_id AND x.content_id = f.content_id
- ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1), '')`
+const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key,''),x.title)) FROM %[1]s x JOIN %[2]s v ON v.tenant_id=x.tenant_id AND v.id=x.version_id
+ WHERE v.tenant_id=f.tenant_id AND v.content_id=f.content_id AND v.state<>'deleted'
+ ORDER BY coalesce(@d_display=ANY(v.languages),false) DESC,v.released DESC,v.position,x.language=@d_display DESC,x.language LIMIT 1),'')`
 
 func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, error) {
 	raw = s.sortName(raw, f.Kind)
@@ -498,7 +507,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	case SortNewest, SortOldest:
 		o.expr, o.cast, o.desc = "coalesce(f.published_at, 'epoch'::timestamptz)", "timestamptz", name == SortNewest
 	case SortTitle:
-		o.expr, o.cast, o.desc = fmt.Sprintf(titleKey, s.t.text), "text", false
+		o.expr, o.cast, o.desc = fmt.Sprintf(titleKey, s.t.versionText, s.t.versions), "text", false
 	case SortPopular:
 		window, err := popularity.WindowForPeriod(cmpOr(period, popularity.DefaultPeriod), s.now())
 		if err != nil {

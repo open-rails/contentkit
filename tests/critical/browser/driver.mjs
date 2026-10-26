@@ -51,6 +51,28 @@ try {
     const error=await page.evaluate(()=>window.critical.stableErrors());assert.equal(error.status,413);assert.equal(error.code,"too_large");
   } else if(scenario==="CK-J09-S01") {
     assert.match(await page.evaluate(()=>window.critical.imageUpload()),/^[a-f0-9-]{36}$/);
+  } else if(scenario==="CK-J29-S08") {
+    assert.equal(await page.evaluate(()=>window.critical.uploadChannelImage()),fixture.destination);
+    await page.evaluate(()=>window.critical.mountChannel());
+    await page.locator("#empty-channel").waitFor();
+    await page.getByRole("button", {name:"Repost",exact:true}).click();
+    const dialog=page.getByRole("dialog");
+    await dialog.getByRole("button", {name:"Repost",exact:true}).click();
+    await dialog.waitFor({state:"hidden"});
+    await page.locator('[data-ckui="card-title"]').filter({hasText:"Browser canonical original"}).waitFor();
+    assert.match(await page.locator('[data-ckui="repost-context"]').innerText(),/Reposted by Destination channel/);
+    const feed=await page.evaluate(id=>window.client.channels.contents(id),fixture.destination);
+    assert.equal(feed.contents.length,1);
+    assert.equal(feed.contents[0].id,fixture.item);
+    assert.equal(feed.contents[0].channel.id,fixture.originalChannel);
+    await page.getByRole("button", {name:"Remove repost",exact:true}).click();
+    await dialog.getByRole("button", {name:"Remove repost",exact:true}).click();
+    await dialog.waitFor({state:"hidden"});
+    await page.locator("#empty-channel").waitFor();
+    const original=await page.evaluate(id=>window.client.contents.get(id),fixture.item);
+    assert.equal(original.id,fixture.item);
+    assert.equal(original.channel_id,fixture.originalChannel);
+    assert.equal(original.editor,false,"reposting must not grant editing authority");
   } else throw Error(`unknown browser scenario ${scenario}`);
   console.log(JSON.stringify({scenario,status:"passed"}));
 } finally {await browser.close();}

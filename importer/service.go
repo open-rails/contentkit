@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
@@ -37,6 +38,7 @@ type Options struct {
 	Tenant   string
 	Catalog  *catalog.Store
 	Entities *entities.Store
+	Channels *channels.Store
 	Content  *content.Runtime
 	// Signals is nil, or answers discovery.ErrNoSignals, without a signal
 	// plane: signals are skipped.
@@ -78,6 +80,9 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 	if n := b.RecordCount(); n > MaxRecords {
 		return res, fmt.Errorf("%w: %d records; at most %d per batch", ErrInvalid, n, MaxRecords)
 	}
+	if len(b.Channels) > 0 && s.o.Channels == nil {
+		return res, fmt.Errorf("%w: channels are not configured", ErrInvalid)
+	}
 	if b.PreferenceFloor != 0 {
 		err := pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error { return s.o.Content.RaisePreferenceFloor(ctx, tx, b.PreferenceFloor) })
 		if errors.Is(err, content.ErrInvalid) {
@@ -114,7 +119,7 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 // RecordCount returns the count checked against MaxRecords, including nested
 // content versions and poll options. Importers can use it to size their batches.
 func (b Batch) RecordCount() int {
-	n := len(b.Entities) + len(b.Memberships) + len(b.Aliases) + len(b.Comments) + len(b.Reactions) + len(b.Favorites) +
+	n := len(b.Entities) + len(b.Channels) + len(b.Memberships) + len(b.Aliases) + len(b.Comments) + len(b.Reactions) + len(b.Favorites) +
 		len(b.Votes) + len(b.Answers) + len(b.LegacyReading) + len(b.Signals) + len(b.Deletes)
 	for _, c := range b.Contents {
 		n += 1 + len(c.Versions)
@@ -230,6 +235,32 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
+	}
+	// Channel identity is already durable, so a lost provider response can be
+	// retried by the same external ID. Finish outside the import transaction:
+	// embedded AuthKit may share this pool, and remote AuthKit may time out.
+	// A provider failure is a failed record, never success deferred to a worker.
+	if sec.name == SectionChannels || sec.name == SectionDeletes {
+		completed := written[:0]
+		for _, p := range written {
+			var channelID string
+			switch input := p.in.(type) {
+			case channels.Import:
+				channelID = input.ID
+			case deletion:
+				if input.entity == RecordChannel {
+					channelID = input.id
+				}
+			}
+			if channelID != "" {
+				if err := s.o.Channels.Finish(ctx, []string{channelID}); err != nil {
+					run.fail(sec.name, p.index, p.external, err)
+					continue
+				}
+			}
+			completed = append(completed, p)
+		}
+		written = completed
 	}
 	if len(written) > 0 {
 		run.res.Written[sec.name] += len(written)
@@ -526,6 +557,7 @@ const (
 	allowContent = 1 << iota
 	allowVersion
 	allowEntity
+	allowChannel
 	allowComment
 )
 
@@ -533,7 +565,7 @@ const (
 func (r *resolver) target(t TargetRef, allow int) (resolved, error) {
 	var out resolved
 	n := 0
-	for _, p := range []*Ref{t.Entity, t.Comment} {
+	for _, p := range []*Ref{t.Entity, t.Channel, t.Comment} {
 		if p != nil {
 			n++
 		}
@@ -542,10 +574,22 @@ func (r *resolver) target(t TargetRef, allow int) (resolved, error) {
 		n++
 	}
 	if n != 1 {
-		return out, fmt.Errorf("%w: a target names a content (or version), a group or a comment", errInvalid)
+		return out, fmt.Errorf("%w: a target names content (or version), an entity, a channel or a comment", errInvalid)
 	}
 	tenant := r.s.o.Tenant
 	switch {
+	case t.Channel != nil:
+		if allow&allowChannel == 0 || r.s.o.Channels == nil {
+			return out, fmt.Errorf("%w: a channel is no target here", errInvalid)
+		}
+		id, err := r.ref(RecordChannel, *t.Channel)
+		if err != nil || r.collect {
+			return out, err
+		}
+		if r.entityKind[id] != "channel" {
+			return out, fmt.Errorf("%w: channel %s", errNotFound, id)
+		}
+		out.ref = contentref.New(tenant, "channel", id)
 	case t.Entity != nil:
 		if allow&allowEntity == 0 {
 			return out, fmt.Errorf("%w: a group is no target here", errInvalid)
@@ -555,7 +599,7 @@ func (r *resolver) target(t TargetRef, allow int) (resolved, error) {
 			return out, err
 		}
 		kind, ok := r.entityKind[id]
-		if !ok {
+		if !ok || kind == "channel" {
 			return out, fmt.Errorf("%w: group %s", errNotFound, id)
 		}
 		out.entity, out.ref = id, contentref.New(tenant, kind, id)

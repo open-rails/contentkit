@@ -1,5 +1,4 @@
 import type {
-  CatalogText,
   Content,
   ContentInput,
   ContentPatch,
@@ -70,13 +69,6 @@ export class ContentsClient {
   update(id: string, patch: ContentPatch): Promise<Content> {
     return this.write(call(this.http, "PATCH", "/contents/{id}", { params: { id }, body: patch }));
   }
-  /** Sets the text in one language; moderation "held" when the moderator holds the edit. */
-  putText(id: string, language: string, text: CatalogText): Promise<Content> {
-    return this.write(call(this.http, "PUT", "/contents/{id}/text/{language}", { params: { id, language }, body: text }));
-  }
-  deleteText(id: string, language: string): Promise<Content> {
-    return this.write(call(this.http, "DELETE", "/contents/{id}/text/{language}", { params: { id, language } }));
-  }
   setCreators(id: string, creators: Creator[]): Promise<Content> {
     return this.write(call(this.http, "PUT", "/contents/{id}/creators", { params: { id }, body: { creators } }));
   }
@@ -109,8 +101,8 @@ export class ContentsClient {
     return this.updateVersion(id, vid, { cover: image ?? "" });
   }
   /**
-   * A body image uploaded to version vid (its private files), copied into
-   * every other version: the reference to store in the body and a URL that shows
+   * A body image uploaded to version vid (its private files):
+   * the reference to store in that version's body and a URL that shows
    * it to the editor now (null while none exists).
    */
   inlineImage(id: string, vid: string, image: string, signal?: AbortSignal): Promise<InlineImage> {

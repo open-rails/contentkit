@@ -42,6 +42,7 @@ export { LazyMount, type LazyMountProps } from "./components/lazy-mount.js";
 export { MediaReadinessNotice, type MediaReadinessNoticeProps } from "./components/media-readiness-notice.js";
 export * from "./components/social/index.js";
 export * from "./components/entities/index.js";
+export * from "./components/channels/index.js";
 export * from "./components/content/index.js";
 export { ContentAdmin, type ContentAdminProps, type ContentAdminSection } from "./components/admin/content-admin.js";
 export { AdminQuickSearch, type AdminQuickSearchProps } from "./components/admin/quick-search.js";

@@ -9,6 +9,7 @@ export const MAX_SINGLE_PUT = 67108864;
 export const MIN_PART_SIZE = 8388608;
 export const MAX_PART_SIZE = 16777216;
 
+export type ChannelState = "active" | "deleted";
 export type OpName = "put" | "edit" | "move" | "rename" | "remove" | "attach" | "copy" | "frame" | "meta" | "regenerate";
 export type Access = "full" | "partial" | "none";
 export type ItemState = "ready" | "processing" | "failed";
@@ -193,6 +194,7 @@ export interface Batch {
   preference_floor?: number;
   provision_scopes?: boolean;
   entities?: EntityRecord[];
+  channels?: ChannelRecord[];
   contents?: ContentRecord[];
   memberships?: MembershipSet[];
   aliases?: AliasRecord[];
@@ -222,7 +224,8 @@ export interface Card {
   cover: PublicRendition[];
   version: CardVersion;
   entities: Record<string, Chip[]>;
-  owner?: EntityCard;
+  channel?: ChannelCard;
+  repost?: ChannelRepost;
   counts: Counts;
   access: CardAccess;
   viewer?: ViewerState;
@@ -262,13 +265,103 @@ export interface CatalogCover {
   renditions?: PublicRendition[];
 }
 
-export interface CatalogText {
-  title: string;
+export interface Channel {
+  id: string;
+  slug: string;
+  name: string;
+  name_language?: string;
+  code?: string;
+  path?: string;
+  cover?: EntitiesCover;
+  avatar?: Avatar;
+  count: number;
+  access?: EntityAccess;
+  created_at: string;
+  state: ChannelState;
+  owner_user_id?: string;
+  auth_scope?: string;
+  revision: number;
+  updated_at: string;
+  names: Name[];
+  text: EntitiesText[];
+  counts: Count[];
+  entities: EntityCard[];
+}
+
+export interface ChannelCard {
+  id: string;
+  slug: string;
+  name: string;
+  name_language?: string;
+  code?: string;
+  path?: string;
+  cover?: EntitiesCover;
+  avatar?: Avatar;
+  count: number;
+  access?: EntityAccess;
+  created_at: string;
+}
+
+export interface ChannelInput {
+  slug: string;
+  names?: Name[];
+  text?: EntitiesText[];
+  cover?: EntitiesCover;
+  avatar?: Avatar;
+}
+
+export interface ChannelPage {
+  channels: ChannelCard[];
+  next_cursor?: string;
+  total?: number;
+}
+
+export interface ChannelPolicy {
+  fixed?: string;
+  required?: boolean;
+}
+
+export interface ChannelRecord {
+  external_id: string;
+  id?: string;
+  slug: string;
+  state?: string;
+  names?: Name[];
+  text?: EntitiesText[];
+  cover_image?: string;
+  cover_content?: Ref;
+  avatar?: string;
+  owner_user_id?: string;
+  auth_scope?: string;
+  code?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ChannelRepost {
+  channel_id: string;
+  actor_id?: string;
+  created_at: string;
+  can_remove: boolean;
+}
+
+export interface ChannelUpdate {
+  owner_user_id?: string;
   slug?: string;
-  description?: string;
-  body?: string;
-  sort_key?: string;
-  aliases?: string[];
+  names?: Name[];
+  text?: EntitiesText[];
+  cover?: EntitiesCover;
+  avatar?: Avatar;
+  state?: ChannelState;
+}
+
+export interface Channels {
+  creation: string;
+  route?: string;
+  entities?: string[];
+  entitled?: boolean;
+  max_per_owner?: number;
+  uploads?: UploadLimits;
 }
 
 export interface Chip {
@@ -392,15 +485,14 @@ export interface Content {
   access: Rule;
   restrictions: string[];
   attributes: Record<string, unknown>;
-  owner_group_id?: string;
-  owner?: EntityCard;
+  channel_id?: string;
+  channel?: ChannelCard;
   creators: Creator[];
   entities: EntitySummary[];
   versions: Version[];
   selected_version_id?: string;
   viewer?: ViewerState;
   editor: boolean;
-  text?: Record<string, CatalogText>;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -439,14 +531,11 @@ export interface ContentFiltersUpdate {
 
 export interface ContentInput {
   kind: string;
-  text?: Record<string, CatalogText>;
-  original_title?: string;
-  original_language?: string;
   comments?: string;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;
-  owner_group_id?: string;
+  channel_id?: string;
   creators?: Creator[];
   versions?: VersionInput[];
 }
@@ -458,6 +547,7 @@ export interface ContentMemberships {
 }
 
 export interface ContentModel {
+  channels?: Channels;
   languages: string[];
   tiers: string[];
   kinds: Record<string, Kind>;
@@ -473,8 +563,6 @@ export interface ContentPage {
 }
 
 export interface ContentPatch {
-  original_title?: string;
-  original_language?: string;
   comments?: string;
   access?: Rule;
   restrictions?: string[];
@@ -491,15 +579,12 @@ export interface ContentRecord {
   publish_at?: string;
   published_at?: string;
   deleted_at?: string;
-  original_title?: string;
-  original_language?: string;
   comments?: string;
   access?: Rule;
   restrictions?: string[];
   attributes?: Record<string, unknown>;
-  owner_group?: Ref;
+  channel?: Ref;
   creators?: Creator[];
-  text?: Record<string, CatalogText>;
   versions?: VersionRecord[];
   code?: string;
   created_at?: string;
@@ -679,8 +764,6 @@ export interface Entity {
   attributes: Record<string, unknown>;
   cover?: EntitiesCover;
   avatar?: Avatar;
-  owner_user_id?: string;
-  auth_scope?: string;
   created_at: string;
   updated_at: string;
   revision: number;
@@ -724,8 +807,6 @@ export interface EntityDetail {
   attributes: Record<string, unknown>;
   cover?: EntitiesCover;
   avatar?: Avatar;
-  owner_user_id?: string;
-  auth_scope?: string;
   created_at: string;
   updated_at: string;
   revision: number;
@@ -753,8 +834,6 @@ export interface EntityInput {
   attributes?: Record<string, unknown>;
   cover?: EntitiesCover;
   avatar?: Avatar;
-  owner_user_id?: string;
-  auth_scope?: string;
   names?: Name[];
   text?: EntitiesText[];
 }
@@ -764,12 +843,7 @@ export interface EntityKind {
   ordered?: boolean;
   parent?: string;
   scoped_by?: string;
-  owner?: string;
-  max_per_owner?: number;
   avatar?: boolean;
-  uploads?: UploadLimits;
-  entitled?: boolean;
-  auth_scope?: boolean;
   membership_scopes?: ("content" | "version")[];
   version_level?: boolean;
   creatable?: boolean;
@@ -798,17 +872,10 @@ export interface EntityRecord {
   cover_image?: string;
   cover_content?: Ref;
   avatar?: string;
-  owner_user_id?: string;
-  auth_scope?: string;
   edges?: EdgeRecord[];
   code?: string;
   created_at?: string;
   updated_at?: string;
-}
-
-export interface EntityRef {
-  kind: string;
-  slug: string;
 }
 
 export interface EntitySummary {
@@ -829,8 +896,6 @@ export interface EntityUpdate {
   attributes?: Record<string, unknown>;
   cover?: EntitiesCover;
   avatar?: Avatar;
-  owner_user_id?: string;
-  auth_scope?: string;
   names?: Name[];
   text?: EntitiesText[];
 }
@@ -1009,12 +1074,6 @@ export interface ForegroundCue {
   anchor?: string;
 }
 
-export interface ForkBody {
-  from: string;
-  playback?: boolean;
-  segments?: boolean;
-}
-
 export interface Frame {
   t?: number;
   auto?: boolean;
@@ -1076,6 +1135,7 @@ export interface InlineImage {
 }
 
 export interface Interaction {
+  channel?: ChannelCard;
   content?: Card;
   entity?: EntityCard;
   value: number;
@@ -1100,7 +1160,7 @@ export interface Kind {
   segments?: boolean;
   entities?: string[];
   attributes?: Record<string, Attribute>;
-  owner_entity?: EntityRef;
+  channel?: ChannelPolicy;
   sort?: string;
   locked?: Locked;
   download?: Download;
@@ -1221,13 +1281,9 @@ export interface MultipartReply {
   max_parts: number;
 }
 
-export interface MyEntity {
+export interface MyChannel {
   id: string;
-  kind: string;
   slug: string;
-  internal: boolean;
-  scope_id?: string;
-  parent_id?: string;
   name: string;
   name_language?: string;
   code?: string;
@@ -1235,7 +1291,6 @@ export interface MyEntity {
   cover?: EntitiesCover;
   avatar?: Avatar;
   count: number;
-  attributes: Record<string, unknown>;
   access?: EntityAccess;
   created_at: string;
   owner: boolean;
@@ -1247,8 +1302,8 @@ export interface MyEntity {
   member: boolean;
 }
 
-export interface MyEntityPage {
-  entities: MyEntity[];
+export interface MyChannelPage {
+  channels: MyChannel[];
   next_cursor?: string;
 }
 
@@ -1846,6 +1901,7 @@ export interface TargetRef {
   content?: Ref;
   version?: Ref;
   group?: Ref;
+  channel?: Ref;
   comment?: Ref;
 }
 
@@ -1899,6 +1955,12 @@ export interface Version {
   label?: string;
   title?: string;
   description?: string;
+  language?: string;
+  slug?: string;
+  body?: string;
+  images?: Record<string, string>;
+  original_title?: string;
+  original_language?: string;
   state?: ContentState;
   publish_at?: string;
   published_at?: string;
@@ -1920,12 +1982,6 @@ export interface Version {
   viewer?: ViewerState;
 }
 
-export interface VersionFork {
-  from: string;
-  playback?: boolean;
-  segments?: boolean;
-}
-
 export interface VersionInput {
   languages?: string[];
   traits?: string[];
@@ -1939,7 +1995,8 @@ export interface VersionInput {
   segments?: SegmentInput[];
   ordinal?: number;
   cover?: string;
-  fork?: VersionFork;
+  original_title?: string;
+  original_language?: string;
 }
 
 export interface VersionRecord {
@@ -1958,6 +2015,8 @@ export interface VersionRecord {
   ordinal?: number;
   cover?: string;
   text?: Record<string, VersionText>;
+  original_title?: string;
+  original_language?: string;
   segments?: Segment[];
   created_at?: string;
   updated_at?: string;
@@ -1970,8 +2029,12 @@ export interface VersionRules {
 }
 
 export interface VersionText {
-  title?: string;
+  title: string;
+  slug?: string;
   description?: string;
+  body?: string;
+  sort_key?: string;
+  aliases?: string[];
 }
 
 export interface VideoLimits {

@@ -77,11 +77,9 @@ func TestMediaAdmissionBoundaries(t *testing.T) {
 	})
 	t.Run("CK-J09-S05_entity_owner_quota_is_atomic_and_removal_refunds_once", func(t *testing.T) {
 		m := newResilientMedia(t, func(c *ck.Config) {
-			kind := c.Content.EntityKinds["channel"]
-			kind.Uploads.QuotaBytes = 64 << 10
-			c.Content.EntityKinds["channel"] = kind
+			c.Content.Channels.Uploads.QuotaBytes = 64 << 10
 		})
-		_, credential, entity := ownedEntity(t, m.world, m.app, "Quota-owned media")
+		_, credential, entity := ownedChannel(t, m.world, m.app, "Quota-owned media")
 		client := m.app.client(credential)
 		ref := media.RefBody{Kind: "channel", ID: string(entity.ID)}
 		first := stageFile(t, client, ref, "cover/first.png", imageBytes(t))
@@ -106,7 +104,7 @@ func TestMediaAdmissionBoundaries(t *testing.T) {
 		read, err = client.GetMedia(t.Context(), ref.Kind, ref.ID, ck.GetMediaQuery{Editor: true})
 		must(t, err)
 		requireMediaPaths(t, read, second.Path)
-		_, otherCredential, otherEntity := ownedEntity(t, m.world, m.app, "Independent media quota")
+		_, otherCredential, otherEntity := ownedChannel(t, m.world, m.app, "Independent media quota")
 		other := m.app.client(otherCredential)
 		otherRef := media.RefBody{Kind: "channel", ID: string(otherEntity.ID)}
 		op := stageFile(t, other, otherRef, "cover/other.png", imageBytes(t))

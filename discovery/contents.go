@@ -119,6 +119,9 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 		return ContentPage{Contents: []Card{}}, err
 	}
 	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
+	if err == nil && o.Filter.includeReposts {
+		err = s.repostContext(ctx, q, o.Filter.ChannelIDs[0], cards)
+	}
 	out := ContentPage{Contents: cards, NextCursor: next}
 	if err == nil && o.Summary && o.Cursor == "" {
 		out.Summary, err = s.cachedListingSummary(ctx, o.Filter, q, srt)

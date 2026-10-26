@@ -170,7 +170,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		c.pathLang = lang
 	}
 	c.args["language"], c.args["count_language"] = lang, c.pathLang
-	where := []string{"g.tenant_id = @tenant", "g.state = 'active'"}
+	where := []string{"g.tenant_id = @tenant", "g.state = 'active'", s.domainPredicate("g")}
 	if opts.Deleted {
 		if !opts.IncludeInternal {
 			return c, fmt.Errorf("%w: deleted groups are listed for management only", ErrForbidden)
@@ -500,7 +500,7 @@ func (s *Store) detail(ctx context.Context, id EntityID, language string, includ
 				return err
 			}
 			g, ok := found[id]
-			if !ok || g.State == StateDeleted || (!includeInternal && g.Internal) || hop == maxMergeHops {
+			if !ok || (g.State == StateDeleted && !includeInternal) || (!includeInternal && g.Internal) || hop == maxMergeHops {
 				return ErrNotFound
 			}
 			if g.State == StateMerged {
@@ -510,7 +510,7 @@ func (s *Store) detail(ctx context.Context, id EntityID, language string, includ
 			d.Entity = g
 			break
 		}
-		c, err := s.compile(ListOptions{Language: language, IncludeInternal: includeInternal}, []string{string(id)})
+		c, err := s.compile(ListOptions{Language: language, IncludeInternal: includeInternal, Deleted: d.State == StateDeleted}, []string{string(id)})
 		if err != nil {
 			return err
 		}

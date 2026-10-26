@@ -58,7 +58,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyEntityPage, error
 		if err != nil {
 			return out, err
 		}
-		joined = filter.Entities()
+		joined = filter.Channels()
 	}
 	type mine struct{ owner, editor, writer, moderator, member, canPost, canEditOwn bool }
 	rel := map[EntityID]mine{}
@@ -79,12 +79,12 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (MyEntityPage, error
 			}
 			held := scopes[scope]
 			directOwner := m.owner && scope == "" && !s.cfg.EntityKinds[kind].AuthScope
-			m.owner = m.owner && (directOwner || slices.Contains(held, access.EntitySettingsManage(kind)))
-			m.editor = directOwner || slices.Contains(held, access.EntitySettingsManage(kind))
-			m.writer = directOwner || slices.Contains(held, access.EntityContentWrite(kind))
-			m.canPost = m.writer || slices.Contains(held, access.EntityContentCreate(kind))
-			m.canEditOwn = m.writer || slices.Contains(held, access.EntityContentEditOwn(kind))
-			m.moderator = directOwner || slices.Contains(held, access.EntityCommentsModerate(kind))
+			m.owner = m.owner && (directOwner || slices.Contains(held, access.ChannelSettingsManage))
+			m.editor = directOwner || slices.Contains(held, access.ChannelSettingsManage)
+			m.writer = directOwner || slices.Contains(held, access.ChannelContentWrite)
+			m.canPost = m.writer || slices.Contains(held, access.ChannelContentCreate)
+			m.canEditOwn = m.writer || slices.Contains(held, access.ChannelContentEditOwn)
+			m.moderator = directOwner || slices.Contains(held, access.ChannelCommentsModerate)
 			if m.owner || m.editor || m.writer || m.moderator || m.member || m.canPost || m.canEditOwn {
 				rel[id] = m
 			}

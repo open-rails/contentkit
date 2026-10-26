@@ -24,7 +24,7 @@ func (s *Store) markDirty(ctx context.Context, q Querier, entities []Entity) err
 	for _, g := range entities {
 		for _, lang := range s.cfg.Languages {
 			marks = append(marks, search.DirtyMark{DocumentKey: search.DocumentKey{ContentRef: s.ref(g.Kind, g.ID), Language: lang},
-				Deleted: g.State != StateActive || g.Internal, Reason: "groups"})
+				Deleted: g.State != StateActive || g.Internal || g.Kind == "channel", Reason: "groups"})
 		}
 	}
 	if err := search.MarkDirty(ctx, q, s.schema, marks); err != nil || len(marks) == 0 || s.documents == nil {
@@ -40,7 +40,9 @@ const (
 )
 
 // DocumentKinds are the entity kinds: the store is a worker.Source.
-func (s *Store) DocumentKinds() []string { return slices.Sorted(maps.Keys(s.cfg.EntityKinds)) }
+func (s *Store) DocumentKinds() []string {
+	return slices.DeleteFunc(slices.Sorted(maps.Keys(s.cfg.EntityKinds)), func(k string) bool { return k == "channel" })
+}
 
 // BuildDocuments builds entity documents: one per active entity and language,
 // titled by that language's canonical name (falling back to English, then

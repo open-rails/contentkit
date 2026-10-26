@@ -13,10 +13,10 @@ import (
 // granted by the base rule or an earlier release. At is bounded by the content
 // and version publication dates. Tier names have no implicit rank.
 type Release struct {
-	At     time.Time `json:"at"`
-	Level  Level     `json:"level"`
-	Tiers  []string  `json:"tiers,omitempty"`
-	Entity string    `json:"group_id,omitempty"`
+	At        time.Time `json:"at"`
+	Level     Level     `json:"level"`
+	Tiers     []string  `json:"tiers,omitempty"`
+	ChannelID string    `json:"group_id,omitempty"`
 }
 
 // key compares validated releases independently of input ordering.
@@ -36,10 +36,10 @@ func (r Rule) validateReleases(cfg kinds.Config) error {
 		if release.At.IsZero() {
 			return fmt.Errorf("%w: release needs at", ErrRule)
 		}
-		if release.Level != Public && release.Level != TierLevel && release.Level != EntityLevel {
+		if release.Level != Public && release.Level != TierLevel && release.Level != ChannelLevel {
 			return fmt.Errorf("%w: release audience must be public, tier or group", ErrRule)
 		}
-		if err := (Rule{Level: release.Level, Tiers: release.Tiers, Entity: release.Entity}).Validate(cfg); err != nil {
+		if err := (Rule{Level: release.Level, Tiers: release.Tiers, ChannelID: release.ChannelID}).Validate(cfg); err != nil {
 			return err
 		}
 		key := release.key()

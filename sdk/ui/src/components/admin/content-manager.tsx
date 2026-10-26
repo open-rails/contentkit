@@ -67,7 +67,7 @@ export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
   noun?: { one: string; other: string };
 }
 
-/** Whether the caller manages content: root:content:write holders, creators and owner-group editors. */
+/** Whether the caller manages content: root:content:write holders, creators and channel editors. */
 export function useContentManagerAccess(o: FlowClientOptions = {}): StaffAccess<"contents"> {
   return useStaffAccess(["contents"] as const, o);
 }
@@ -697,8 +697,8 @@ export interface ContentEditorProps {
   /** Registers the editor's confirmation before the enclosing flow leaves it. */
   onLeaveGuard?: (guard: (() => Promise<boolean>) | undefined) => void;
   labels?: Labels;
-  /** A new item's owner group: a channel its editors write for. */
-  ownerEntity?: string;
+  /** A new item's primary channel. Omit when the kind has a fixed channel. */
+  channelId?: string;
   /** Entities a new item starts linked to, e.g. the series it was created from; ignored for an existing item. */
   entities?: readonly EntityCard[];
   /** After create: show the new item (the editor goes on editing it). */
@@ -739,7 +739,7 @@ export function ContentEditor(p:ContentEditorProps){
   return <StandardContentEditor key={boundary.key} {...props}/>;
 }
 
-function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerEntity, entities, onCreated, onDeleted, onCancel, onError, management, noun }: ContentEditorProps) {
+function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, channelId, entities, onCreated, onDeleted, onCancel, onError, management, noun }: ContentEditorProps) {
   const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
@@ -747,7 +747,8 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   const languageName = useLanguageName();
   const languages = choices(offered, languageName);
   const [language, setLanguage] = useState(languages[0]?.value ?? "en");
-  const ed = useContent(id, kind, language, { client });
+  const [selectedVersion, setSelectedVersion] = useState<string>();
+  const ed = useContent(id, kind, language, { client, version: selectedVersion });
   // A hidden version's cover is edited here; a visible version's in its own form.
   const model = useKinds({ client }).kinds;
   const hidden = !!model?.kinds[kind]?.versions.hidden;
@@ -765,10 +766,10 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   );
   useEffect(() => {
     if (!item) return;
-    const stored = item.text?.[language];
+    const stored = ed.version?.text?.[language];
     setForm((f) => f ?? { title: stored?.title ?? "", description: stored?.description ?? "", body: stored?.body ?? "",
       publishAt: item.publish_at && !item.live ? localInput(new Date(item.publish_at)) : "" });
-  }, [item, language]);
+  }, [item, language, ed.version]);
   const { imageSrc } = ed;
   const shown = useMemo(
     () => (form?.body ?? "").replace(imageRefs(), (ref, name: string) => {
@@ -794,11 +795,11 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     report(err, "content.save");
   };
   const text = () => ({ title: f.title.trim(), description: f.description.trim(), body: f.body });
-  const stored = item?.text?.[language];
+  const stored = ed.version?.text?.[language];
   const dirty = f.title.trim() !== (stored?.title ?? "") || f.description.trim() !== (stored?.description ?? "") || f.body !== (stored?.body ?? "");
   // The server normalizes what it stores, so the form takes the stored text back.
-  const synced = (c: Content) => {
-    const saved = c.text?.[language];
+  const synced = (version: Version) => {
+    const saved = version.text?.[language];
     set({ title: saved?.title ?? "", description: saved?.description ?? "", body: saved?.body ?? "" });
   };
   const save = async () => {
@@ -807,7 +808,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     if (!f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       if (!item) {
-        const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: model?.kinds[kind]?.owner_entity ? undefined : ownerEntity });
+        const created = await ed.create({ kind, versions: [{ languages: [language], text: { [language]: text() } }], channel_id: model?.kinds[kind]?.channel?.fixed ? undefined : channelId });
         // Starting entities link once the item exists; version-level kinds need a version first.
         const linked = (entities ?? []).filter((g) => model?.kinds[kind]?.entities?.includes(g.kind) && allowsEntityScope(model.entity_kinds[g.kind], "content"));
         if (linked.length) {
@@ -818,7 +819,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
         onCreated?.(created);
         return;
       }
-      synced(await ed.putText(text()));
+      synced(await ed.saveText(text()));
       setNotice(t("pollEditor.saved"));
     } catch (e) {
       fail(e);
@@ -830,7 +831,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     if (live && dirty && !f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       // Publishing makes the stored text public, so unsaved edits are saved first.
-      if (live && dirty) synced(await ed.putText(text()));
+      if (live && dirty) synced(await ed.saveText(text()));
       if (live) await ed.publish(f.publishAt ? new Date(f.publishAt).toISOString() : undefined);
       else await ed.unpublish();
       setNotice(t(live ? "contentManager.publishedNotice" : "contentManager.unpublishedNotice"));
@@ -982,6 +983,14 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                   )}
                   <span aria-hidden>·</span>
                   <span className="font-mono text-xs">{item.code}</span>
+                  {!hidden && versionChoices.length > 1 && <Select value={ed.version?.id ?? ""} onValueChange={async (value) => {
+                    if (dirty && !(await confirm({ title: t("contentManager.switchLanguage"), description: t("contentManager.discardLanguageEdits"), confirm: t("readerEditor.discard") }))) return;
+                    setSelectedVersion(String(value));
+                    setForm(null);
+                  }}>
+                    <SelectTrigger size="sm" aria-label={t("contentEditor.versions")}><SelectValue>{(value: string) => versionChoices.find((v) => v.id === value)?.label ?? value}</SelectValue></SelectTrigger>
+                    <SelectContent>{versionChoices.map((v) => <SelectItem key={v.id} value={v.id}>{v.label}</SelectItem>)}</SelectContent>
+                  </Select>}
                   {languages.length > 1 && (
                     <>
                       <span aria-hidden>·</span>

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -28,21 +28,15 @@ const (
 	StateDeleted   = "deleted"
 )
 
-// Text is a content item's text in one language. Body is rich text whose
-// inline images are "contentkit:i-{uuid}" references (ImageRef).
-type Text struct {
+// VersionText is one edition's authored text in one language. Inline images
+// resolve only against this edition's media; no sibling or parent fallback.
+type VersionText struct {
 	Title       string   `json:"title"`
 	Slug        string   `json:"slug,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Body        string   `json:"body,omitempty"`
 	SortKey     string   `json:"sort_key,omitempty"`
 	Aliases     []string `json:"aliases,omitempty"`
-}
-
-// VersionText overrides a version's title and description in one language.
-type VersionText struct {
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
 }
 
 // Creator is a person credited on a content item. Credits do not grant access
@@ -115,9 +109,15 @@ type Version struct {
 	Languages []string `json:"languages"`
 	Traits    []string `json:"traits"`
 	Label     string   `json:"label,omitempty"`
-	// Title and Description are the override in the detail's language.
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
+	// Resolved text is selected from this version only in the request language.
+	Title            string            `json:"title,omitempty"`
+	Description      string            `json:"description,omitempty"`
+	Language         string            `json:"language,omitempty"`
+	Slug             string            `json:"slug,omitempty"`
+	Body             string            `json:"body,omitempty"`
+	Images           map[string]string `json:"images,omitempty"`
+	OriginalTitle    string            `json:"original_title,omitempty"`
+	OriginalLanguage string            `json:"original_language,omitempty"`
 	// State is the editors' to see.
 	State       string     `json:"state,omitempty"`
 	PublishAt   *time.Time `json:"publish_at,omitempty"`
@@ -146,7 +146,7 @@ type Version struct {
 	// author's pending chapter markers. It never leaves the store directly.
 	readerSegments []Segment
 	Decision       Decision `json:"decision"`
-	// Text is every language's override, for editors.
+	// Text is every authored language of this edition, for editors.
 	Text map[string]VersionText `json:"text,omitempty"`
 	// Viewer is the signed-in reader's standing with the version.
 	Viewer *ViewerState `json:"viewer,omitempty"`
@@ -190,8 +190,9 @@ type EntitySummary struct {
 	Path string `json:"path,omitempty"`
 }
 
-// Content is a content item as a viewer sees it: its text in the viewer's
-// language (falling back), its live versions (every version for editors),
+// Content is a resolved reader response. Text and media fields are read-only
+// projections of SelectedVersionID; the parent stores no text. It includes live
+// versions (every version for editors),
 // entities and attributes. A viewer who opens none of its versions gets what
 // its kind's locked view shows (kinds.Locked), and of each locked version
 // what that view shows.
@@ -205,8 +206,7 @@ type Content struct {
 	// selected edition or OriginalTitle under the kind's title policy.
 	Language string `json:"language"`
 	Title    string `json:"title"`
-	// OriginalTitle is the shared source-language title, independent of editions.
-	// OriginalLanguage is optional: unknown source languages are never guessed.
+	// OriginalTitle and OriginalLanguage project the selected version only.
 	OriginalTitle    string `json:"original_title,omitempty"`
 	OriginalLanguage string `json:"original_language,omitempty"`
 	// Slug is Path's decorative tail in the page's language (entity and
@@ -230,18 +230,17 @@ type Content struct {
 	Cover *Cover `json:"cover,omitempty"`
 	State string `json:"state"`
 	// Comments is open, closed or hidden.
-	Comments      string         `json:"comments"`
-	PublishAt     *time.Time     `json:"publish_at,omitempty"`
-	PublishedAt   *time.Time     `json:"published_at,omitempty"`
-	Live          bool           `json:"live"`
-	Access        access.Rule    `json:"access"`
-	Restrictions  []string       `json:"restrictions"`
-	Attributes    map[string]any `json:"attributes"`
-	OwnerEntityID string         `json:"owner_group_id,omitempty"`
-	// Owner is the owner entity's card (a channel's name, path, avatar and
-	// cover) while it is active.
-	Owner    *entities.EntityCard `json:"owner,omitempty"`
-	Creators []Creator            `json:"creators"`
+	Comments     string         `json:"comments"`
+	PublishAt    *time.Time     `json:"publish_at,omitempty"`
+	PublishedAt  *time.Time     `json:"published_at,omitempty"`
+	Live         bool           `json:"live"`
+	Access       access.Rule    `json:"access"`
+	Restrictions []string       `json:"restrictions"`
+	Attributes   map[string]any `json:"attributes"`
+	ChannelID    string         `json:"channel_id,omitempty"`
+	// Channel identifies the original's primary authoring channel while active.
+	Channel  *channels.Card `json:"channel,omitempty"`
+	Creators []Creator      `json:"creators"`
 	// Entities are shared/null-version memberships. Version-specific entities
 	// are carried by each Version.Entities, never merged across editions here.
 	Entities []EntitySummary `json:"entities"`
@@ -253,12 +252,11 @@ type Content struct {
 	// it; each version carries its own.
 	Viewer *ViewerState `json:"viewer,omitempty"`
 	// Editor: the viewer may edit it; the fields below are theirs.
-	Editor    bool            `json:"editor"`
-	Text      map[string]Text `json:"text,omitempty"`
-	Revision  int64           `json:"revision"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
-	DeletedAt *time.Time      `json:"deleted_at,omitempty"`
+	Editor    bool       `json:"editor"`
+	Revision  int64      `json:"revision"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 // DefaultVersion is the version a reader of language opens by default, the

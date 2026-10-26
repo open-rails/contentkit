@@ -5,99 +5,44 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/contentkit/entities"
-	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 )
 
-// Only an explicit tenant and a known historical queue establish ownership.
-// Terminal history and other apps' work remain untouched.
+// These are previously shipped job identities, recognized only by the explicit
+// stopped-writer migration. No runtime worker or alias is registered for them.
 const obsoleteEntityJobs = `args->>'tenant'=$2 AND (
  (kind IN ('contentkit_groups','contentkit_entity_projection') AND queue=$1)
- OR (kind IN ('contentkit_group_reconcile','contentkit_entity_reconcile','contentkit_group_sync') AND queue IN ('contentkit_groups','contentkit_entities'))
- OR (kind='contentkit_entity_sync' AND queue='contentkit_groups'))`
+ OR (kind IN ('contentkit_group_reconcile','contentkit_entity_reconcile','contentkit_group_sync','contentkit_entity_sync') AND queue IN ('contentkit_groups','contentkit_entities')))`
 
-const ambiguousEntityJobs = `kind IN ('contentkit_groups','contentkit_entity_projection') AND queue=$1 AND coalesce(args->>'tenant','')=''`
+const ambiguousEntityJobs = `coalesce(args->>'tenant','')='' AND (
+ (kind IN ('contentkit_groups','contentkit_entity_projection') AND queue=$1)
+ OR (kind IN ('contentkit_group_reconcile','contentkit_entity_reconcile','contentkit_group_sync','contentkit_entity_sync') AND queue IN ('contentkit_groups','contentkit_entities')))`
 
 func (e *Engine) migrateEntityJobsTx(ctx context.Context, tx pgx.Tx, jobs string) error {
 	if err := e.preflightEntityJobs(ctx, tx, jobs); err != nil {
 		return err
 	}
-	if err := e.admitPendingEntityLifecycles(ctx, tx); err != nil {
-		return err
-	}
-	// Preserve exact old sync work; the broad pollers and derived-count jobs end.
-	if _, err := tx.Exec(ctx, `UPDATE `+jobs+` SET kind='contentkit_entity_sync',queue=$3,unique_key=NULL
- WHERE state IN ('available','pending','retryable','scheduled') AND kind IN ('contentkit_group_sync','contentkit_entity_sync') AND (`+obsoleteEntityJobs+`)`, QueueContentKit, e.cfg.Tenant, entities.DefaultQueue); err != nil {
-		return err
-	}
+	// The stored channel state and cascade prove there is no unfinished work.
+	// Keep terminal history and foreign app jobs exactly as they stand.
 	_, err := tx.Exec(ctx, `UPDATE `+jobs+` SET state='cancelled',finalized_at=clock_timestamp(),unique_key=NULL
  WHERE state IN ('available','pending','retryable','scheduled') AND (`+obsoleteEntityJobs+`)`, QueueContentKit, e.cfg.Tenant)
 	return err
 }
 
-// This one-time migration turns existing lifecycle mismatches into exact jobs
-// before retiring the old scan. Subsequent writes admit their own work atomically.
-func (e *Engine) admitPendingEntityLifecycles(ctx context.Context, tx pgx.Tx) error {
-	var scopes, owned []string
-	for name, kind := range e.cfg.Content.EntityKinds {
-		if kind.AuthScope {
-			scopes = append(scopes, name)
-		}
-		if kind.Owner == "user" {
-			owned = append(owned, name)
-		}
-	}
-	table := pgx.Identifier{e.schema, "content_entities"}.Sanitize()
-	items := pgx.Identifier{e.schema, "content_items"}.Sanitize()
-	rows, err := tx.Query(ctx, `SELECT g.id FROM `+table+` g WHERE g.tenant_id=$1 AND (
- (g.state='active' AND g.auth_scope IS NULL AND g.kind=ANY($2::text[]))
- OR (g.state<>'active' AND g.auth_scope IS NOT NULL)
- OR (g.kind=ANY($3::text[]) AND EXISTS(SELECT 1 FROM `+items+` c WHERE c.tenant_id=g.tenant_id AND (
-  (g.state='deleted' AND c.owner_entity_id=g.id AND c.state<>'deleted')
-  OR (g.state='active' AND c.deleted_with_entity=g.id AND c.state='deleted'))))) ORDER BY g.id`, e.cfg.Tenant, scopes, owned)
-	if err != nil {
-		return err
-	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(ids) == 0 {
-		return err
-	}
-	client, err := river.NewClient(riverpgxv5.New(e.pool), &river.Config{Schema: e.riverSchema})
-	if err != nil {
-		return err
-	}
-	for len(ids) > 0 {
-		n := min(len(ids), 100)
-		_, err = client.InsertTx(ctx, tx, entityLifecycleArgs{Tenant: e.cfg.Tenant, Entities: ids[:n]}, &river.InsertOpts{Queue: entities.DefaultQueue, MaxAttempts: 10, UniqueOpts: river.UniqueOpts{ByArgs: true}})
-		if err != nil {
-			return err
-		}
-		ids = ids[n:]
-	}
-	return nil
-}
-
-type entityLifecycleArgs struct {
-	Tenant   string   `json:"tenant"`
-	Entities []string `json:"groups"`
-}
-
-func (entityLifecycleArgs) Kind() string { return "contentkit_entity_sync" }
-
 func (e *Engine) validateEntityJobHandoff(ctx context.Context, jobs string) error {
 	var pending bool
-	if err := e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jobs+` WHERE state IN ('available','pending','retryable','scheduled','running') AND ((`+obsoleteEntityJobs+`) OR (`+ambiguousEntityJobs+`)))`, QueueContentKit, e.cfg.Tenant).Scan(&pending); err != nil {
+	err := e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jobs+` WHERE state IN ('available','pending','retryable','scheduled','running') AND ((`+obsoleteEntityJobs+`) OR (`+ambiguousEntityJobs+`)))`, QueueContentKit, e.cfg.Tenant).Scan(&pending)
+	if err != nil {
 		return err
 	}
 	if pending {
-		return fmt.Errorf("contentkit: obsolete entity jobs require the explicit stopped-writer migration")
+		return fmt.Errorf("contentkit: retired channel jobs require the explicit stopped-writer migration")
 	}
 	return nil
 }
 
-// Refuse incompatible active or unattributable work before dropping old schema.
-// The transaction-held handoff repeats this check; old writers must stay stopped.
+// preflightEntityJobs refuses work that still needs the old implementation.
+// Complete it with the old version before stopping writers and upgrading. The
+// new version never reimplements a retired worker inside migration or startup.
 func (e *Engine) preflightEntityJobs(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, jobs string) error {
@@ -106,13 +51,44 @@ func (e *Engine) preflightEntityJobs(ctx context.Context, q interface {
 		return err
 	}
 	if ambiguous {
-		return fmt.Errorf("contentkit: stop the shared worker fleet and retire its tenantless entity projection jobs explicitly; their app ownership is ambiguous")
+		return fmt.Errorf("contentkit: tenantless legacy entity jobs have ambiguous ownership; resolve them under the old version before stopping its writers")
 	}
 	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jobs+` WHERE state='running' AND (`+obsoleteEntityJobs+`))`, QueueContentKit, e.cfg.Tenant).Scan(&running); err != nil {
 		return err
 	}
 	if running {
-		return fmt.Errorf("contentkit: stop old entity workers before migrating their jobs")
+		return fmt.Errorf("contentkit: finish and stop old channel lifecycle workers before migration")
+	}
+	// Only legacy obligations invoke this drain requirement. A new synchronous
+	// request may legitimately leave a pending channel for its caller to retry.
+	var legacy bool
+	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jobs+` WHERE state IN ('available','pending','retryable','scheduled') AND (`+obsoleteEntityJobs+`))`, QueueContentKit, e.cfg.Tenant).Scan(&legacy); err != nil {
+		return err
+	}
+	if !legacy {
+		return nil
+	}
+	table := pgx.Identifier{e.schema, "content_entities"}.Sanitize()
+	items := pgx.Identifier{e.schema, "content_items"}.Sanitize()
+	var exists bool
+	if err := q.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL AND to_regclass($2) IS NOT NULL", table, items).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	var unresolved string
+	err := q.QueryRow(ctx, `SELECT coalesce((SELECT g.id FROM `+table+` g WHERE g.tenant_id=$1 AND g.kind='channel' AND (
+  (g.state='active' AND g.auth_scope IS NULL)
+  OR (g.state<>'active' AND g.auth_scope IS NOT NULL)
+  OR EXISTS(SELECT 1 FROM `+items+` c WHERE c.tenant_id=g.tenant_id AND (
+   (g.state='deleted' AND c.owner_entity_id=g.id AND c.state<>'deleted')
+   OR (g.state='active' AND c.deleted_with_entity=g.id AND c.state='deleted')))) ORDER BY g.id LIMIT 1),'')`, e.cfg.Tenant).Scan(&unresolved)
+	if err != nil {
+		return err
+	}
+	if unresolved != "" {
+		return fmt.Errorf("contentkit: channel %s has unfinished authorization or content lifecycle work; finish it under the old version, stop writers, then retry migration", unresolved)
 	}
 	return nil
 }

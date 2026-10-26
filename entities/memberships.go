@@ -98,8 +98,8 @@ func (s *Store) facts(ctx context.Context, q Querier, entityIDs, contentIDs, ver
 	f := facts{entities: map[string]Entity{}, contents: map[string]string{}, versions: map[string]string{}}
 	if len(entityIDs) > 0 {
 		// A share lock keeps a concurrent merge or delete from moving the entities.
-		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) ORDER BY g.id FOR SHARE`,
-			entityColumns, s.table("content_entities")), s.tenant, entityIDs)
+		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) AND %s ORDER BY g.id FOR SHARE`,
+			entityColumns, s.table("content_entities"), s.domainPredicate("g")), s.tenant, entityIDs)
 		if err != nil {
 			return f, err
 		}
@@ -537,7 +537,7 @@ func (s *Store) MembershipsOf(ctx context.Context, contentIDs []string) (map[str
 		}
 	}
 	err := s.read(ctx, func(q Querier) error {
-		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s m WHERE m.tenant_id = $1 AND m.content_id = ANY($2::text[])
+		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s m WHERE m.tenant_id = $1 AND m.content_id = ANY($2::text[]) AND EXISTS(SELECT 1 FROM `+s.table("content_entities")+` g WHERE g.tenant_id=m.tenant_id AND g.id=m.entity_id AND g.kind<>'channel')
  ORDER BY m.content_id, m.entity_id, m.version_id NULLS FIRST, m.role`, membershipColumns, s.table("content_memberships")), s.tenant, contentIDs)
 		if err != nil {
 			return err

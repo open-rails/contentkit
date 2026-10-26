@@ -1,11 +1,11 @@
-import type { FileDownload, ForkBody, PageNotices, Pending, ReaderMeta, ReaderPlan } from "./generated/wire.js";
+import type { FileDownload, PageNotices, Pending, ReaderMeta, ReaderPlan } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import { call, routeURL } from "./route.js";
 
 /** A version's answer while it is prepared (202). */
 export const isPending = (x: unknown): x is Pending => !!x && typeof x === "object" && "status" in x && !("pages" in x) && !("url" in x);
 
-/** Content versions: page notices, reader plans, reader metadata, forks and downloads. */
+/** Content versions: page notices, reader plans, reader metadata and downloads. */
 export class VersionsClient {
   constructor(private readonly http: Http) {}
 
@@ -34,10 +34,6 @@ export class VersionsClient {
     const emit = this.http.captureChanges();
     await call(this.http, "PUT", "/contents/{id}/versions/{version}/reader", { params: { id: content, version }, body: meta });
     emit({ type: "reader.changed", content, version });
-  }
-  /** Editors: fills a version without media from a sibling, in a durable job. */
-  fork(content: string, version: string, body: ForkBody): Promise<Pending> {
-    return call(this.http, "POST", "/contents/{id}/versions/{version}/fork", { params: { id: content, version }, body });
   }
   /**
    * Grants the version's download, what its kind serves (the original, a

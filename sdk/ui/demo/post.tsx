@@ -32,7 +32,7 @@ function Editor() {
             field.current!.insertAdjacentHTML("beforeend", `<p><img src="${url}" alt=""></p>`);
           }}
         />
-        <button type="button" disabled={editor.saving} onClick={() => editor.putText({ title: editor.text!.title, body: field.current!.innerHTML })}>
+        <button type="button" disabled={editor.saving} onClick={() => editor.saveText({ title: editor.text!.title, body: field.current!.innerHTML })}>
           Save
         </button>
         <button type="button" disabled={editor.saving} onClick={() => (draft ? editor.publish() : editor.unpublish())}>

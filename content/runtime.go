@@ -266,8 +266,11 @@ func (rt *Runtime) accessLog(next http.Handler) http.Handler {
 
 // --- shared helpers used by every module ---
 
-// isRegistered reports a content kind or entity kind interactions target.
+// isRegistered reports a content, metadata or enabled channel target.
 func (rt *Runtime) isRegistered(kind string) bool {
+	if kind == "channel" {
+		return rt.cfg.Channels != nil
+	}
 	_, content := rt.cfg.Kinds[kind]
 	_, entity := rt.cfg.EntityKinds[kind]
 	return content || entity

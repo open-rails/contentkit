@@ -46,10 +46,10 @@ func (f *Filter) Versions() map[string]string {
 	return out
 }
 
-// Groups returns the group ids whose key the viewer holds, sorted.
-func (f *Filter) Entities() []string { return sortedKeys(f.entities) }
+// Channels returns the channel ids whose membership key the viewer holds, sorted.
+func (f *Filter) Channels() []string { return sortedKeys(f.entities) }
 
-// Complete reports whether Contents, Versions and Groups are the viewer's
+// Complete reports whether Contents, Versions and Channels are the viewer's
 // whole holdings. An anonymous filter is complete; an unknown one is not.
 func (f *Filter) Complete() bool {
 	return !f.unknown && f.contentsComplete && f.entitiesComplete
@@ -86,7 +86,7 @@ func (f *Filter) lookup(k Key) (held, known bool) {
 		parent, present := f.versions[k.version]
 		h := present && parent == k.id
 		return h, h || f.contentsComplete && !f.unknown
-	case KeyEntity:
+	case KeyChannel:
 		return f.entities[k.id], f.entities[k.id] || f.entitiesComplete && !f.unknown
 	}
 	return false, true
@@ -117,7 +117,7 @@ func (f *Filter) load(ans Answer, q Query) error {
 					return fmt.Errorf("entitlements contain conflicting parents for version %q", k.version)
 				}
 				f.versions[k.version] = k.id
-			case KeyEntity:
+			case KeyChannel:
 				f.entities[k.id] = true
 			}
 		}

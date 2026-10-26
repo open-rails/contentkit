@@ -30,9 +30,9 @@ type TenantActorResolver interface {
 // AuthKit before adopting this adapter; startup never rewrites grants or keys.
 var ErrScopeMigrationRequired = errors.New("contentkit/authkit: explicit authorization-scope migration required")
 
-// GroupResolver resolves only a group's authorization scope owned by this app.
+// ChannelResolver resolves a channel authorization group owned by this app.
 // Return auth.ErrForbidden for a missing group or one belonging to another app.
-type EntityResolver func(context.Context, contentkit.Scope, string) (auth.Scope, error)
+type ChannelResolver func(context.Context, contentkit.Scope, string) (auth.Scope, error)
 
 // AuthorizationConfig binds one ContentKit app to its identity directory and
 // AuthKit permission group. These values come from trusted provisioning, never
@@ -55,9 +55,9 @@ type AuthorizationConfig struct {
 	// Accounts is the legacy dedicated-issuer contract. Do not use it when
 	// one issuer contains accounts from more than one tenant.
 	Accounts AccountResolver
-	// Groups overrides deterministic GroupScopeID resolution only for an
+	// Channels overrides deterministic ChannelScopeID resolution only for an
 	// explicitly verified legacy binding. New apps use AppScopes and omit it.
-	Entities EntityResolver
+	Channels ChannelResolver
 }
 
 type authorization struct {
@@ -297,13 +297,13 @@ func (a authorization) Authorize(ctx context.Context, scope contentkit.Scope, v 
 	if !ok {
 		return false, nil
 	}
-	if target.EntityID != "" {
+	if target.ChannelID != "" {
 		var group auth.Scope
 		var err error
-		if a.cfg.Entities != nil {
-			group, err = a.cfg.Entities(ctx, scope, target.EntityID)
+		if a.cfg.Channels != nil {
+			group, err = a.cfg.Channels(ctx, scope, target.ChannelID)
 		} else {
-			group.ID, err = EntityScopeID(scope, target.EntityID)
+			group.ID, err = ChannelScopeID(scope, target.ChannelID)
 			group.Authority = a.cfg.PermissionAuthority
 		}
 		if err != nil {
@@ -312,7 +312,7 @@ func (a authorization) Authorize(ctx context.Context, scope contentkit.Scope, v 
 		if group.ID == "" || group.Authority != a.cfg.PermissionAuthority {
 			return false, auth.ErrForbidden
 		}
-		if err := a.currentGroup(ctx, group, ""); err != nil {
+		if err := a.currentGroup(ctx, group, "channel"); err != nil {
 			return false, err
 		}
 		return checker.Can(ctx, group, target.Permission)
@@ -335,10 +335,10 @@ func (a authorization) Authorize(ctx context.Context, scope contentkit.Scope, v 
 	return checker.Can(ctx, a.cfg.AppScope, permission)
 }
 
-// GroupScopeID is a deterministic AuthKit group identity for a ContentKit
-// group in one tenant and app. Existing content IDs and stored auth_scope
+// ChannelScopeID is a deterministic AuthKit group identity for a ContentKit
+// channel in one tenant and app. Existing content IDs and stored auth_scope
 // references stay unchanged; only the provider's authorization ID is derived.
-func EntityScopeID(scope contentkit.Scope, groupID string) (string, error) {
+func ChannelScopeID(scope contentkit.Scope, groupID string) (string, error) {
 	if err := scope.Validate(); err != nil {
 		return "", err
 	}

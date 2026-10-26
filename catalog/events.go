@@ -32,6 +32,7 @@ const (
 
 // Event is the catalog fact appended by a mutation. Readers receive EventRecord.
 type Event struct {
+	ChannelID     string
 	Type          string
 	Kind          string
 	ContentID     string
@@ -44,6 +45,7 @@ type Event struct {
 }
 
 type eventPayload struct {
+	ChannelID     string          `json:"channel_id,omitempty"`
 	Kind          string          `json:"kind"`
 	ContentID     string          `json:"content_id"`
 	VersionID     string          `json:"version_id,omitempty"`
@@ -69,7 +71,7 @@ func (s *Store) emit(ctx context.Context, tx pgx.Tx, events ...Event) error {
 		if times[i].IsZero() {
 			times[i] = s.now()
 		}
-		payload, err := json.Marshal(eventPayload{Kind: e.Kind, ContentID: e.ContentID, VersionID: e.VersionID, Release: e.Release,
+		payload, err := json.Marshal(eventPayload{ChannelID: e.ChannelID, Kind: e.Kind, ContentID: e.ContentID, VersionID: e.VersionID, Release: e.Release,
 			PublicationID: e.PublicationID, ChapterIDs: e.ChapterIDs, Released: e.Released})
 		if err != nil {
 			return err

@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/resolve"
@@ -65,6 +66,8 @@ type Options struct {
 	ActivityCohorts []signal.ActivityCohort
 	// Entities names the entities on cards and in typeahead.
 	Entities *entities.Store
+	// Channels resolves the primary authoring home independently of metadata.
+	Channels *channels.Store
 	// Media resolves cards' covers and ladders; nil leaves them out.
 	Media Media
 	// Hub is the keyword search client and the signal plane. Without a
@@ -89,7 +92,7 @@ type Service struct {
 }
 
 type tables struct {
-	facets, items, versions, versionText, text, codes, memberships, entities, prefs, favorites, reactions, counts, searches, searchMarks, erased, creators, comments, entityNames, normalize, rankings string
+	facets, items, versions, versionText, codes, memberships, entities, prefs, favorites, reactions, counts, searches, searchMarks, erased, creators, comments, entityNames, normalize, rankings, reposts string
 }
 
 // New validates o.
@@ -114,11 +117,11 @@ func New(o Options) (*Service, error) {
 	}
 	q := func(t string) string { return pgx.Identifier{o.Schema, t}.Sanitize() }
 	s := &Service{o: o, t: tables{facets: q("content_facets"), items: q("content_items"), versions: q("content_versions"),
-		versionText: q("content_version_text"), text: q("content_text"), codes: q("content_codes"), memberships: q("content_memberships"),
+		versionText: q("content_version_text"), codes: q("content_codes"), memberships: q("content_memberships"),
 		entities: q("content_entities"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"), counts: q("content_interaction_counts"),
 		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments:    q("content_comments"),
-		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), rankings: q("content_popular_rankings")}}
+		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), rankings: q("content_popular_rankings"), reposts: q("content_channel_reposts")}}
 	if o.Candidates != nil && !o.Hub.SignalsConfigured() {
 		return nil, errors.New("discovery: Candidates needs the signal plane")
 	}

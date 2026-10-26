@@ -25,6 +25,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
@@ -76,6 +77,7 @@ type Options struct {
 	// its Options.ContentChanged to Store.ContentChanged and its
 	// Options.NamesChanged to Store.EntitiesRenamed.
 	Entities Entities
+	Channels *channels.Store
 	// Body sanitizes text bodies; nil strips tags.
 	Body Sanitizer
 	// DeletedRetention: see DefaultDeletedRetention.
@@ -111,6 +113,7 @@ type Store struct {
 	guard           *gate.Gate
 	accessG         *access.Gate
 	entities        Entities
+	channels        *channels.Store
 	body            Sanitizer
 	media           *Media
 	publicationMu   sync.RWMutex
@@ -129,14 +132,14 @@ type Store struct {
 }
 
 type tables struct {
-	items, text, creators, versions, versionText, segments, facets, events string
-	entities, entityNames, memberships, prefs, counts, docs                string
-	reactions, favorites, comments, accessHistory                          string
+	items, creators, versions, versionText, segments, facets, events string
+	entities, entityNames, memberships, prefs, counts, docs          string
+	reactions, favorites, comments, accessHistory                    string
 }
 
 func catalogTables(schema string) tables {
 	q := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
-	return tables{items: q("content_items"), text: q("content_text"), creators: q("content_creators"), versions: q("content_versions"),
+	return tables{items: q("content_items"), creators: q("content_creators"), versions: q("content_versions"),
 		versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), events: q("content_events"),
 		entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
 		prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),
@@ -154,13 +157,14 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 	if err := opts.Kinds.Validate(); err != nil {
 		return nil, err
 	}
+	opts.Kinds = opts.Kinds.StorageModel()
 	if err := gate.Check(opts.Auth, access.ContentWrite, access.ContentViewRestricted); err != nil {
 		return nil, fmt.Errorf("catalog: Auth: %w", err)
 	}
 	s := &Store{
 		pool: opts.Pool, schema: opts.Schema, qs: pgx.Identifier{opts.Schema}.Sanitize(), tenant: opts.Tenant, cfg: opts.Kinds,
 		t:     catalogTables(opts.Schema),
-		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities,
+		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities, channels: opts.Channels,
 		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, afterPurge: opts.AfterPurge, documents: opts.DocumentsChanged, references: opts.References,
 		playable: slices.Sorted(slices.Values(opts.PlayableKinds)), now: opts.Now, log: opts.Logger,
 	}

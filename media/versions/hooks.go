@@ -129,7 +129,7 @@ type uploads struct{ s *Service }
 
 // CanUpload lets editors of a content (staff, its authenticated author, its owner
 // group's editors) write its items, a group's editors its item, a person
-// their own avatar. A version being forked takes no other writes.
+// their own avatar.
 func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	s := u.s
 	k, err := s.reg.Kind(t.Ref.ContentKind)
@@ -171,15 +171,6 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.Kind
 	res, err := s.decide(ctx, actor, k.Name, []Target{target})
 	if err != nil || !res[target].Editor {
 		return media.UploadGrant{}, err
-	}
-	if target.Version != "" && k.Publish != nil {
-		m, _, err := s.m.Manifests.Get(ctx, t.Ref)
-		if err != nil && !errors.Is(err, media.ErrNotFound) {
-			return media.UploadGrant{}, err
-		}
-		if m != nil && m.Meta[forkMeta] != nil {
-			return media.UploadGrant{}, &media.UploadError{Code: media.CodeConflict, Message: "the version is being forked; edit it once the fork finishes"}
-		}
 	}
 	owner := ""
 	if actor.Member() {

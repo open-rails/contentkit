@@ -61,7 +61,9 @@ _Avoid_: Catalog, which refers to OpenRails products and prices
 
 **Entity**:
 An app-owned record associated with content, such as an artist, series,
-character, tag or collection. Multiple content items can refer to one entity.
+character, tag or collection. Entities describe content items, versions or
+channels. Multiple records can refer to one entity; the association grants no
+editing authority or channel membership.
 _Avoid_: Group when referring to ContentKit content associations
 
 **Entity kind**:
@@ -70,8 +72,32 @@ character, tag or another app-specific concept.
 
 **Permission group**:
 An AuthKit organization or team in which people hold roles and permissions.
-An entity can have a permission group for its editors; they remain separate
-records with separate responsibilities.
+A channel has a permission group for its authors and editors. The group holds
+current authorization grants; the channel holds its public identity and posts.
+
+**Content item**:
+The overall work, with shared metadata and at most one primary channel. Its
+versions share that channel's editorial authority and parent access policy.
+
+**Version**:
+One edition of an item, such as an English or Chinese post. Versions retain
+independent text, attachments and publication state. Channel-free content may
+also use the application's configured per-version access policy.
+
+**Channel**:
+The authoring home of content items, with its own public identity and AuthKit
+permission group. A site blog, creator feed or community uses the same channel
+model with different host-defined policies. A channel is not a metadata entity.
+
+**Primary channel**:
+The single channel that owns an item's authoring context. It is associated with
+the overall item, not separately with each version. Descriptive tags and author
+credits cannot transfer that authority.
+
+**Repost**:
+A reference showing an existing item in another channel. The destination may
+remove its reference but gains no editing rights over the original. Original
+publication/access checks, versions, comments and reactions remain authoritative.
 
 **Association**:
 A link between content and an entity. An association reuses the entity's
@@ -99,7 +125,8 @@ starts media processing; it does not publish the content.
 
 **Media processing**:
 Durable work that validates and extracts uploaded archives or generates image,
-audio and video renditions. Its progress belongs to the media owner.
+and video renditions. Standalone audio uploads are playable without conversion.
+Its progress belongs to the media owner.
 
 **Ownership**:
 An account's relationship to content it created or controls in a particular

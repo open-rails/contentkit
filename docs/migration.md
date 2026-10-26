@@ -32,6 +32,30 @@ reject it rather than silently ignoring it or accepting a legacy alias. The Go
 member remains `kinds.Config.Kinds`. This does not rename the `kinds` field in the
 public `GET /kinds` discovery response or any HTTP query parameters.
 
+## First-class channel upgrade
+
+Move channel configuration out of `entity_kinds` into `channels`. Replace a
+content kind's `owner_entity: {kind: channel, slug: blog}` with
+`channel: {fixed: blog}`; creator-selected kinds use `channel: {required: true}`
+or an empty optional policy. Metadata kinds no longer declare owner or
+permission-group policies. Content HTTP ownership is `channel_id`, and channels
+have their own `/channels` interface. Existing channel IDs, media locations,
+AuthKit group identities and opaque OpenRails membership keys are retained.
+
+Channel create/delete/restore now calls AuthKit synchronously. A failed call
+returns an error and the caller retries against the same identity. No
+`contentkit_entity_sync` or replacement lifecycle worker remains. Before upgrading,
+finish actionable old channel lifecycle work using the prior version, stop old
+writers, and run the normal explicit migration. Preflight refuses unfinished,
+running or ambiguous legacy obligations. It retires only no-op queued rows and
+preserves terminal history and foreign-app work. Do not delete jobs to bypass
+that check. The content-purge sweep still owns physical retention cleanup.
+
+New migration `0054_channels` adds descriptive channel metadata/repost references
+and moves imported channel identifiers into their own record category. It does
+not move source media or rewrite published SQL. Reposts reference their original
+item and retain its access, versions and editorial authority.
+
 ## ContentKit's own schema
 
 Hosts run `MigratePostgres(ctx, pool, cfg)` and
@@ -41,14 +65,13 @@ scope bindings and queues; `MigrationOptions{SkipQueues: true}` skips queue
 DDL when the caller manages that separately. The ClickHouse entrypoint creates
 its target database before applying the signal lineage.
 
-The PostgreSQL call also realizes fixed `owner_entity` declarations from the
-content model. It creates missing site-owned channels and binds eligible unowned
-posts, preserving existing names, identities, grants and access. If a declared
-owner has `auth_scope: true`, provide `MigrationOptions.Scopes` using the existing
+The PostgreSQL call also realizes `content_kinds.<kind>.channel.fixed` declarations
+from the content model. It creates missing staff channels and binds eligible
+unowned posts, preserving existing names, identities, grants and access. Every
+channel has an AuthKit group; provide `MigrationOptions.Scopes` using the existing
 runtime provider or `adapters/authkit.MigrationScopes(pool, authConfig, scope)`.
 The latter needs only migrated AuthKit storage and the host's role configuration,
-not a full authentication runtime. No fixed owners means no provisioning or extra
-authorization dependency. See [configured channels](posts-and-channels.md#one-fixed-official-channel)
+not a full authentication runtime. No fixed channels means this migration performs no configured-channel provisioning. See [configured channels](posts-and-channels.md#one-fixed-official-channel)
 for retry and conflict behavior. This provisioning runs only through the explicit
 migration call, never ordinary runtime initialization.
 

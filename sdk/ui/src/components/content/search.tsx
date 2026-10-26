@@ -6,9 +6,10 @@ import { createPortal } from "react-dom";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { TypeaheadQuery } from "../../client/discovery.js";
-import type { Card, EntityCard, Typeahead } from "../../client/generated/wire.js";
+import type { Card, EntityCard, ChannelCard, Typeahead } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext } from "../../react/context.js";
+import { useChannels } from "../../react/channels.js";
 import { useRecentSearches, useTypeahead } from "../../react/discovery.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Input } from "#ckui/ui/input";
@@ -22,6 +23,9 @@ export interface SearchBoxProps {
   kind?: string;
   /** The entity kinds suggested; every kind with a page by default. */
   entityKinds?: readonly string[];
+  /** Also suggest public channels by name. */
+  channels?: boolean;
+  channelHref?: (channel: ChannelCard) => string | undefined;
   defaultValue?: string;
   placeholder?: string;
   /** A suggestion's link; default its canonical path. */
@@ -43,10 +47,12 @@ export interface SearchBoxProps {
   appearance?: ContentKitUiAppearance;
 }
 
-type Suggestion = { type: "content"; card: Card } | { type: "entity"; entity: EntityCard } | { type: "recent"; query: string };
+type Suggestion = { type: "content"; card: Card } | { type: "entity"; entity: EntityCard } | { type: "channel"; channel: ChannelCard } | { type: "recent"; query: string };
 const entities = (entities: EntityCard[]): Suggestion[] => entities.map((entity) => ({ type: "entity", entity }));
 const titles = (contents: Card[]): Suggestion[] => contents.map((card) => ({ type: "content", card }));
-const suggestionKey = (s: Suggestion) => s.type === "content" ? `c:${s.card.id}` : s.type === "entity" ? `g:${s.entity.id}` : `r:${s.query}`;
+const suggestionKey = (s: Suggestion) => s.type === "content" ? `c:${s.card.id}` : s.type === "entity" ? `g:${s.entity.id}` : s.type === "channel" ? `channel:${s.channel.id}` : `r:${s.query}`;
+const suggestionKind = (s: Exclude<Suggestion, { type: "recent" }>) => s.type === "content" ? s.card.kind : s.type === "entity" ? s.entity.kind : "channel";
+const suggestionName = (s: Exclude<Suggestion, { type: "recent" }>) => s.type === "content" ? s.card.title || s.card.code : s.type === "entity" ? s.entity.name || s.entity.slug : s.channel.name || s.channel.slug;
 
 // Mirror search-only normalization. Identity/slug normalization stays separate;
 // complete English filler words never change Japanese/CJK or interior letters.
@@ -54,6 +60,7 @@ const searchText = (text: string) => text.normalize("NFKD").replace(/[\u0300-\u0
   .replace(/(^|[^\p{L}\p{N}\p{M}_])(?:the|a|an)(?=$|[^\p{L}\p{N}\p{M}_])/gu, "$1").trim().replace(/\s+/g, " ");
 
 const TYPE_ICONS: Record<string, { icon: IconSvgElement; color: string }> = {
+  channel: { icon: UserIcon, color: "text-blue-500 dark:text-blue-400" },
   artist: { icon: UserIcon, color: "text-blue-500 dark:text-blue-400" },
   series: { icon: Folder01Icon, color: "text-yellow-600 dark:text-yellow-400" },
   gallery: { icon: Image01Icon, color: "text-green-600 dark:text-green-400" },
@@ -120,6 +127,7 @@ export function SearchBox(p: SearchBoxProps) {
   const { top } = anchor;
   const empty = !text.trim();
   const found = useTypeahead(text, { kind: p.kind, entity_kinds: p.entityKinds, client: p.client, request: p.requestSuggestions, minLength: p.disabled ? Infinity : 1 });
+  const channels = useChannels({ q: found.query, limit: 6 }, { client: p.client, enabled: !!p.channels && open && !!found.query && !p.disabled });
   const recent = useRecentSearches({ enabled: p.recent !== false && open && !p.disabled, client: p.client });
   const normalized = searchText(text);
   const current = found.query === text.trim();
@@ -131,8 +139,9 @@ export function SearchBox(p: SearchBoxProps) {
         .sort((a, b) => Number(b.normalized.startsWith(normalized)) - Number(a.normalized.startsWith(normalized)))
         .map((r) => ({ type: "recent" as const, query: r.query }))),
       ...(!empty && current ? header ? [...titles(found.contents), ...entities(found.entities)] : [...entities(found.entities), ...titles(found.contents)] : []),
+      ...(!empty && current && p.channels ? channels.items.map((channel) => ({ type: "channel" as const, channel })) : []),
     ],
-    [p.recent, normalized, empty, current, header, recent.searches, found.contents, found.entities],
+    [p.recent, normalized, empty, current, header, recent.searches, found.contents, found.entities, p.channels, channels.items],
   );
   // History and live suggestions can arrive independently. Track identity so
   // prepending history never changes what Enter will open.
@@ -142,7 +151,7 @@ export function SearchBox(p: SearchBoxProps) {
     const suggestion = visible[index];
     setActive(suggestion ? suggestionKey(suggestion) : index >= 0 ? null : undefined);
   };
-  const loading = recent.loading || (!empty && (!current || found.loading));
+  const loading = recent.loading || (!empty && (!current || found.loading || !!p.channels && channels.loading));
   const showRecent = empty && p.recent !== false;
   const emptyMessage = empty ? !header && showRecent && !recent.error ? "contents.noRecentSearches" : "contents.searchHint" : "contents.noResults";
   useEffect(() => {
@@ -165,7 +174,7 @@ export function SearchBox(p: SearchBoxProps) {
       setText(s.query);
       return search(s.query);
     }
-    const url = p.href ? p.href(s.type === "content" ? s.card : s.entity) : s.type === "content" ? s.card.path : s.entity.path;
+    const url = s.type === "channel" ? p.channelHref?.(s.channel) ?? s.channel.path : p.href ? p.href(s.type === "content" ? s.card : s.entity) : s.type === "content" ? s.card.path : s.entity.path;
     setOpen(false);
     if (!url) return;
     p.onSelect?.();
@@ -201,7 +210,7 @@ export function SearchBox(p: SearchBoxProps) {
           key={suggestionKey(s)}
           id={`${id}-${i}`}
           role="option"
-          aria-label={header && s.type !== "recent" ? `${labelOf(p.labels, s.type === "content" ? s.card.kind : s.entity.kind)} ${s.type === "content" ? s.card.title || s.card.code : s.entity.name || s.entity.slug}` : undefined}
+          aria-label={header && s.type !== "recent" ? `${labelOf(p.labels, suggestionKind(s))} ${suggestionName(s)}` : undefined}
           aria-selected={i === activeIndex}
           data-ckui="suggestion"
           data-type={s.type}
@@ -215,9 +224,9 @@ export function SearchBox(p: SearchBoxProps) {
           {header && s.type !== "recent" ? (
             <>
               {s.type === "content" ? <span className="h-10 w-8 shrink-0 overflow-hidden rounded bg-muted"><RenditionImg outputs={s.card.cover} alt="" fit="cover" className="size-full" /></span>
-                : <span className="grid h-10 w-8 shrink-0 place-items-center"><SearchTypeIcon kind={s.entity.kind} /></span>}
-              <span className="min-w-0 flex-1 truncate">{s.type === "content" ? s.card.title || s.card.code : s.entity.name || s.entity.slug}</span>
-              <span className={cn("shrink-0 text-xs font-normal text-muted-foreground", s.type === "content" && "sr-only")}>{labelOf(p.labels, s.type === "content" ? s.card.kind : s.entity.kind)}</span>
+                : <span className="grid h-10 w-8 shrink-0 place-items-center"><SearchTypeIcon kind={suggestionKind(s)} /></span>}
+              <span className="min-w-0 flex-1 truncate">{suggestionName(s)}</span>
+              <span className={cn("shrink-0 text-xs font-normal text-muted-foreground", s.type === "content" && "sr-only")}>{labelOf(p.labels, suggestionKind(s))}</span>
             </>
           ) : s.type === "content" ? (
             <>
@@ -226,10 +235,10 @@ export function SearchBox(p: SearchBoxProps) {
               </span>
               <span className="min-w-0 truncate">{s.card.title || s.card.code}</span>
             </>
-          ) : s.type === "entity" ? (
+          ) : s.type === "entity" || s.type === "channel" ? (
             <>
-              <span className="min-w-0 flex-1 truncate">{s.entity.name || s.entity.slug}</span>
-              <span className="text-xs text-muted-foreground">{labelOf(p.labels, s.entity.kind)}</span>
+              <span className="min-w-0 flex-1 truncate">{suggestionName(s)}</span>
+              <span className="text-xs text-muted-foreground">{labelOf(p.labels, suggestionKind(s))}</span>
             </>
           ) : (
             <>
@@ -253,7 +262,7 @@ export function SearchBox(p: SearchBoxProps) {
       ))}
     </ul>
     {loading ? <div role="status" className={cn("text-muted-foreground", header ? "flex justify-center py-4" : dialog ? "px-2 py-8 text-center" : "px-3 py-2")}>{header ? <><span className="size-6 animate-spin rounded-full border-2 border-muted border-t-foreground motion-reduce:animate-none" aria-hidden /><span className="sr-only">{t("contents.loading")}</span></> : t("contents.loading")}</div>
-      : !empty && found.error ? <p role="alert" className={cn("px-3 py-2 text-destructive", (header || dialog) && "px-2 py-8 text-center")}>{error(found.error)}</p>
+      : !empty && (found.error || p.channels && channels.error) ? <p role="alert" className={cn("px-3 py-2 text-destructive", (header || dialog) && "px-2 py-8 text-center")}>{error(found.error ?? channels.error!)}</p>
       : visible.length === 0 && <div role="status" className={cn("text-muted-foreground", header ? "px-2 py-3" : dialog ? "px-2 py-8 text-center" : "px-3 py-2")}><p>{t(emptyMessage, { q: text.trim() })}</p></div>}
   </>);
   return (

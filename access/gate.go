@@ -52,7 +52,7 @@ func NewGate(c GateConfig) (*Gate, error) {
 		return nil, fmt.Errorf("access: GateConfig.Tenant %q must match [a-z0-9_-]{1,64}", c.Tenant)
 	}
 	g := &Gate{billing: c.Billing, tenant: c.Tenant, tierSet: map[string]bool{}, claimable: map[string]bool{},
-		prefixes: []string{ContentPrefix(c.Tenant), EntityPrefix(c.Tenant)}, log: c.Logger, now: c.Now}
+		prefixes: []string{ContentPrefix(c.Tenant), ChannelPrefix(c.Tenant)}, log: c.Logger, now: c.Now}
 	if g.now == nil {
 		g.now = time.Now
 	}
@@ -90,9 +90,6 @@ type Item struct {
 	Version string
 	// Rule is the version's effective rule (Effective).
 	Rule Rule
-	// Entities are the entities holding the content or version (content_facets
-	// entity_ids): a held key of any of them opens it.
-	Entities []string
 }
 
 // Decision is one item's verdict.
@@ -105,7 +102,7 @@ type Decision struct {
 	// tiers or entity), then the version's;
 	// The host resolves these keys through its billing provider.
 	Sell []Key
-	// Requires is the key a buyer must hold first (EntityPPV), nil when held.
+	// Requires is the key a buyer must hold first (ChannelPPV), nil when held.
 	Requires *Key
 	// Preview is the part a viewer may read while it is locked.
 	Preview *Preview
@@ -277,9 +274,9 @@ type itemPlan struct {
 	invalid  bool
 	rule     Rule
 	version  Key
-	entities []Key // Item.Entities, and the rule's entity for EntityLevel
+	channels []Key // Only the explicitly named channel in a ChannelLevel rule.
 	tiers    []Key // TierLevel: the configured ones among the rule's
-	requires *Key  // EntityPPV
+	requires *Key  // ChannelPPV
 	releases []releasePlan
 }
 
@@ -305,13 +302,6 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 	if p.version, err = VersionKey(g.tenant, it.Content, it.Version); err != nil {
 		return p, err
 	}
-	for _, id := range it.Entities {
-		k, err := EntityKey(g.tenant, id)
-		if err != nil {
-			return p, err
-		}
-		p.entities = append(p.entities, k)
-	}
 	switch it.Rule.Level {
 	case Public, PPV:
 	case TierLevel:
@@ -320,13 +310,13 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 				p.tiers = append(p.tiers, Key{kind: KeyTier, id: t})
 			}
 		}
-	case EntityLevel, EntityPPV:
-		k, err := EntityKey(g.tenant, it.Rule.Entity)
+	case ChannelLevel, ChannelPPV:
+		k, err := ChannelKey(g.tenant, it.Rule.ChannelID)
 		if err != nil {
 			return p, fmt.Errorf("%w: %w", ErrRule, err)
 		}
-		if it.Rule.Level == EntityLevel {
-			p.entities = append(p.entities, k)
+		if it.Rule.Level == ChannelLevel {
+			p.channels = append(p.channels, k)
 		} else {
 			p.requires = &k
 		}
@@ -344,8 +334,8 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 				}
 				rp.keys = append(rp.keys, Key{kind: KeyTier, id: tier})
 			}
-		case EntityLevel:
-			key, err := EntityKey(g.tenant, release.Entity)
+		case ChannelLevel:
+			key, err := ChannelKey(g.tenant, release.ChannelID)
 			if err != nil {
 				return p, err
 			}
@@ -452,7 +442,7 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 		}
 		return h
 	}
-	opens := slices.Concat(p.tiers, p.entities, []Key{p.version})
+	opens := slices.Concat(p.tiers, p.channels, []Key{p.version})
 	for _, release := range p.releases {
 		if !now.Before(release.at) {
 			opens = append(opens, release.keys...)
@@ -474,8 +464,8 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 	switch p.rule.Level {
 	case TierLevel:
 		d.Sell = slices.Clone(p.tiers)
-	case EntityLevel:
-		d.Sell = []Key{p.entities[len(p.entities)-1]}
+	case ChannelLevel:
+		d.Sell = []Key{p.channels[len(p.channels)-1]}
 	}
 	d.Sell = append(d.Sell, p.version)
 	if !requiresHeld {

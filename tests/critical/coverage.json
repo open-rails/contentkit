@@ -503,7 +503,8 @@
       "status": "verified",
       "evidence": [
         "Actual product-access revocation and exact expiry remove body and purchased-library access plus fresh media URLs and download grants. A real ZIP is readable before loss of access; a still-unexpired signed archive ticket also refuses after revocation/expiry.",
-        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5.",
+        "Deleting a primary channel preserves the existing retained exact-version purchase read, while a sibling edition and anonymous reader remain hidden; revocation removes that retained read. Final candidate execution is required."
       ],
       "cases": [
         "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants",
@@ -511,7 +512,8 @@
         "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants/revoke",
         "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access",
         "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/expire",
-        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/revoke"
+        "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/revoke",
+        "TestCommerceEntitlementBoundaries/CK-J06-S04_deleted_channel_retains_only_exact_edition_purchase"
       ]
     },
     {
@@ -1290,7 +1292,8 @@
       "status": "verified",
       "evidence": [
         "Real scope provisioning binds the exact tenant/app. A sibling-app entity edit404s and leaves both owner and description unchanged.",
-        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases.",
+        "Channel253 supersedes the historical queued entity lifecycle: the same scenario IDs now cover synchronous real-provider effects, lost-response errors, idempotent caller retries and zero lifecycle jobs."
       ],
       "cases": [
         "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app"
@@ -1330,7 +1333,8 @@
       "status": "verified",
       "evidence": [
         "Deleting an owned entity hides its formerly published content and marks its actual app-bound AuthKit group deleted.",
-        "Executed under the race detector; all recorded cases are required by the strict future qualification runner."
+        "Executed under the race detector; all recorded cases are required by the strict future qualification runner.",
+        "Channel253 supersedes the historical queued entity lifecycle: the same scenario IDs now cover synchronous real-provider effects, lost-response errors, idempotent caller retries and zero lifecycle jobs."
       ],
       "cases": [
         "TestOwnedEntityAuthority/CK-J16-S04_deletion_retires_scope_and_owned_content"
@@ -1343,7 +1347,8 @@
       "status": "verified",
       "evidence": [
         "Restoration preserves owner and scope IDs, revives the real AuthKit group in its original tenant, permits the owner to author again and still denies a stranger.",
-        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
+        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases.",
+        "Channel253 supersedes the historical queued entity lifecycle: the same scenario IDs now cover synchronous real-provider effects, lost-response errors, idempotent caller retries and zero lifecycle jobs."
       ],
       "cases": [
         "TestOwnedEntityAuthority/CK-J16-S05_restore_does_not_widen_scope_or_change_owner"
@@ -1352,7 +1357,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner’s eligible content",
+      "behavior": "Owner ban affects only the owner\u2019s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
@@ -2190,6 +2195,129 @@
       "cases": [
         "TestOptionalInboxAnonymizationRestore"
       ]
+    },
+    {
+      "id": "CK-J03-S67",
+      "journey": "CK-J03",
+      "behavior": "First-class fixed blog config round-trips without exposing private channel entity storage",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelConfiguration/CK-J03-S67_fixed_blog_without_public_channel_route"
+      ],
+      "evidence": [
+        "Public config is parsed and validated through YAML and JSON, including rejected conflicting models; no private storage model leaks into caller configuration.",
+        "Reviewed executable scenarios; combined exact-head qualification is required before release."
+      ]
+    },
+    {
+      "id": "CK-J03-S68",
+      "journey": "CK-J03",
+      "behavior": "Metadata cannot be configured as an authorization or paid-membership channel",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelConfiguration/CK-J03-S68_metadata_cannot_become_an_authoring_scope"
+      ],
+      "evidence": [
+        "Public config is parsed and validated through YAML and JSON, including rejected conflicting models; no private storage model leaks into caller configuration.",
+        "Reviewed executable scenarios; combined exact-head qualification is required before release."
+      ]
+    },
+    {
+      "id": "CK-J03-S69",
+      "journey": "CK-J03",
+      "behavior": "Channel policy rejects missing channel setup, route collisions and channel metadata associations",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelConfiguration/CK-J03-S69_channel_policy_rejects_ambiguous_configuration"
+      ],
+      "evidence": [
+        "Public config is parsed and validated through YAML and JSON, including rejected conflicting models; no private storage model leaks into caller configuration.",
+        "Reviewed executable scenarios; combined exact-head qualification is required before release."
+      ]
+    },
+    {
+      "id": "CK-J03-S70",
+      "journey": "CK-J03",
+      "behavior": "Repost references preserve original authority, read policy and version identity",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelRepostAuthority/reference_preserves_identity_without_editorial_authority",
+        "TestFirstClassChannelRepostAuthority/pending_source_channel_is_not_readable_or_repostable",
+        "TestFirstClassChannelRepostAuthority/drafts_and_withdrawn_originals_never_appear_in_public_feeds",
+        "TestFirstClassChannelRepostAuthority/channel_authority_is_current_and_metadata_routes_cannot_retarget_it",
+        "TestFirstClassChannelRepostAuthority/all_versions_share_parent_channel_read_policy",
+        "TestChannelRepostAnonymization/CK-J03-S70_import_cannot_reassign_original_channel"
+      ],
+      "evidence": [
+        "Real AuthKit, PostgreSQL and HTTP clients share a one-connection pool; exact assertions cover canonical original/version identity, idempotent references, pending/withdrawn source suppression, current grants and parent-only policy.",
+        "Reviewed executable scenarios; combined exact-head qualification is required before release."
+      ]
+    },
+    {
+      "id": "CK-J03-S71",
+      "journey": "CK-J03",
+      "behavior": "Late external group retirement cannot leave an active channel falsely ready",
+      "status": "verified",
+      "cases": [
+        "TestChannelLateRetirementFailsClosed/acknowledged",
+        "TestChannelLateRetirementFailsClosed/lost_acknowledgement"
+      ],
+      "evidence": [
+        "A real AuthKit retirement is delayed across a concurrent channel restore; the stale acknowledgement clears local readiness, returns conflict and an explicit caller retry restores the same channel/group identity.",
+        "Reviewed executable scenarios; combined exact-head qualification is required before release.",
+        "Both successful provider acknowledgements and lost-after-commit responses follow the concurrent-state recheck; stale active readiness is cleared before returning conflict or the original provider error."
+      ]
+    },
+    {
+      "id": "CK-J03-S72",
+      "journey": "CK-J03",
+      "behavior": "Channel interactions remain separate from metadata entity routes",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Actual channel comment, reaction and favorite mutations persist and read back; metadata paths reject the same channel ID.",
+        "Reviewed executable scenarios; combined exact-head qualification is required before release."
+      ]
+    },
+    {
+      "id": "CK-J29-S08",
+      "journey": "CK-J29",
+      "behavior": "Shipped channel avatar and repost controls use live policy and canonical content",
+      "status": "verified",
+      "cases": [
+        "TestShippedChannelBrowser"
+      ],
+      "evidence": [
+        "Real browser uses shipped ChannelsClient.uploadImage and folder against S3 and processing SSE, then renders RepostButton and ChannelFeed to create/remove a destination reference and preserve original content.",
+        "Reviewed executable scenarios; combined exact-head qualification is required before release."
+      ]
+    },
+    {
+      "id": "CK-J24-S07",
+      "journey": "CK-J24",
+      "behavior": "Account anonymization clears repost attribution without copying or deleting original content",
+      "status": "verified",
+      "cases": [
+        "TestChannelRepostAnonymization/CK-J24-S07_terminal_account_event_unlinks_repost_attribution"
+      ],
+      "evidence": [
+        "Real account anonymization is repeated, the retained repost still references the original with no actor ID, late repost attempts are fenced and immutable event payloads omit erasable actor identity.",
+        "Reviewed executable scenario; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J03-S73",
+      "journey": "CK-J03",
+      "behavior": "Channel metadata follows a merged descriptive entity without changing channel authority",
+      "status": "verified",
+      "evidence": [
+        "Public create/link/merge/read journey requires the surviving metadata identity exactly once. Final combined execution remains required."
+      ],
+      "cases": [
+        "TestChannelMetadataMerge/CK-J03-S73_channel_metadata_survives_canonical_entity_merge"
+      ]
     }
   ],
   "review_notes": {
@@ -2200,7 +2328,39 @@
     "qualification": "All123 scenario statuses remain pending semantic and operation review. The default runner intentionally refuses qualification; focused execution is explicitly partial.",
     "upstream": "Normal signed merge of8377f8b3 preserved media runtime. HTTP identities remain166. POST content publish and PUT text no longer advertise202 or moderation_rejected; comment moderation remains current. P0 purge CK-J08-S05/S06 activated; P1 audio deferred.",
     "bindings": "binding_matrix.tsv freezes the selected public contract:115Go and115TypeScript bindings (230total). Every binding remains pending; invocation alone does not establish functional, error, alias or transport coverage.",
-    "media_247": "Adds CK-J11-S08/S09 and promotes existing CK-J12-S01. Advanced audio-language/subtitle selection in CK-J12-S02 remains P1; a single AAC soundtrack does not qualify it. External media owner retains ZIP/SSE and codec acceptance files. Six new streaming/UI bindings are pending."
+    "media_247": "Adds CK-J11-S08/S09 and promotes existing CK-J12-S01. Advanced audio-language/subtitle selection in CK-J12-S02 remains P1; a single AAC soundtrack does not qualify it. External media owner retains ZIP/SSE and codec acceptance files. Six new streaming/UI bindings are pending.",
+    "channels_253_retired_bindings": {
+      "reason": "Entity-owned channels are removed; personal channel selection is ChannelsClient.mine. Historical selected contract retained here, not counted as a current binding.",
+      "inventory": [
+        {
+          "id": "ts:EntitiesClient.mine",
+          "language": "ts",
+          "surface": "TS class member",
+          "name": "EntitiesClient.mine",
+          "source": "sdk/ui/src/client/entities.ts",
+          "selection": "included-critical"
+        }
+      ],
+      "contracts": [
+        {
+          "id": "ts:EntitiesClient.mine",
+          "name": "EntitiesClient.mine",
+          "status": "verified",
+          "cases": [
+            "TestTypeScriptPublicContracts/discovery_entities"
+          ],
+          "evidence": [
+            "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
+          ]
+        }
+      ]
+    },
+    "channels_253": {
+      "http_operations": 182,
+      "bindings": 261,
+      "change": "Moves channel moderation and personal-channel paths with their existing operation IDs; adds first-class channel CRUD, metadata, feed, repost and interaction contracts. Stable serialized billing/access identifiers remain unchanged.",
+      "qualification": "Mappings are reviewed; no new integrated execution claim is made. The strict runner still requires every selected case to run and pass exactly once."
+    }
   },
   "operation_contracts": [
     {
@@ -3676,28 +3836,28 @@
     {
       "id": "CK-API-052",
       "method": "GET",
-      "path": "/v1/entities/{id}/held-comments",
+      "path": "/v1/channels/{id}/held-comments",
       "selection": "included-critical functionality and security",
       "status": "verified",
       "cases": [
         "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity",
         "TestCommentModerationBoundaries/CK-J20-S06_unauthorized_moderation_preserves_public_and_held_state",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/inherited_HEAD_credential_gate",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/wrong_issuer"
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/wrong_issuer"
       ],
       "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/entities/{id}/held-comments/inherited_HEAD_credential_gate"
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-052_GET_/v1/channels/{id}/held-comments/inherited_HEAD_credential_gate"
       ],
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
@@ -3708,28 +3868,28 @@
     {
       "id": "CK-API-053",
       "method": "GET",
-      "path": "/v1/entities/{id}/comment-bans",
+      "path": "/v1/channels/{id}/comment-bans",
       "selection": "included-critical functionality and security",
       "status": "verified",
       "cases": [
         "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity",
         "TestCommentModerationBoundaries/CK-J20-S06_unauthorized_moderation_preserves_public_and_held_state",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/inherited_HEAD_credential_gate",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/wrong_issuer"
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/wrong_issuer"
       ],
       "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/entities/{id}/comment-bans/inherited_HEAD_credential_gate"
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-053_GET_/v1/channels/{id}/comment-bans/inherited_HEAD_credential_gate"
       ],
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
@@ -3740,26 +3900,26 @@
     {
       "id": "CK-API-054",
       "method": "PUT",
-      "path": "/v1/entities/{id}/comment-bans/{user}",
+      "path": "/v1/channels/{id}/comment-bans/{user}",
       "selection": "included-critical functionality and security",
       "status": "verified",
       "cases": [
         "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity",
         "TestCommentModerationBoundaries/CK-J20-S06_unauthorized_moderation_preserves_public_and_held_state",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/wrong_issuer"
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/wrong_issuer"
       ],
       "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/entities/{id}/comment-bans/{user}/anonymous_protected_operation"
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-054_PUT_/v1/channels/{id}/comment-bans/{user}/anonymous_protected_operation"
       ],
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
@@ -3770,26 +3930,26 @@
     {
       "id": "CK-API-055",
       "method": "DELETE",
-      "path": "/v1/entities/{id}/comment-bans/{user}",
+      "path": "/v1/channels/{id}/comment-bans/{user}",
       "selection": "included-critical functionality and security",
       "status": "verified",
       "cases": [
         "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity",
         "TestCommentModerationBoundaries/CK-J20-S06_unauthorized_moderation_preserves_public_and_held_state",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/wrong_issuer"
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/wrong_issuer"
       ],
       "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/entities/{id}/comment-bans/{user}/anonymous_protected_operation"
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-055_DELETE_/v1/channels/{id}/comment-bans/{user}/anonymous_protected_operation"
       ],
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
@@ -5418,28 +5578,28 @@
     {
       "id": "CK-API-111",
       "method": "GET",
-      "path": "/v1/me/entities",
+      "path": "/v1/me/channels",
       "selection": "included-critical functionality and security",
       "status": "verified",
       "cases": [
         "TestEntityConcurrentOwnershipAndStaleScopes/CK-J16-S02_concurrent_creation_commits_one_owner_slot",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/inherited_HEAD_credential_gate",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/wrong_issuer",
         "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app"
       ],
       "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/entities/inherited_HEAD_credential_gate"
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-111_GET_/v1/me/channels/inherited_HEAD_credential_gate"
       ],
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
@@ -6884,6 +7044,633 @@
         "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
       ],
       "qualified_scope": "phase1 security-only; not full route functionality"
+    },
+    {
+      "id": "CK-API-168",
+      "method": "GET",
+      "path": "/v1/channels/{id}/comments",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/inherited_HEAD_credential_gate"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-168_GET_/v1/channels/{id}/comments/inherited_HEAD_credential_gate"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-169",
+      "method": "POST",
+      "path": "/v1/channels/{id}/comments",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/foreign_app_key"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-169_POST_/v1/channels/{id}/comments/foreign_app_key"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-170",
+      "method": "POST",
+      "path": "/v1/channels/{id}/like",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/foreign_app_key"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-170_POST_/v1/channels/{id}/like/foreign_app_key"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-171",
+      "method": "POST",
+      "path": "/v1/channels/{id}/dislike",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/foreign_app_key"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-171_POST_/v1/channels/{id}/dislike/foreign_app_key"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-172",
+      "method": "DELETE",
+      "path": "/v1/channels/{id}/reaction",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/foreign_app_key"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-172_DELETE_/v1/channels/{id}/reaction/foreign_app_key"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-173",
+      "method": "GET",
+      "path": "/v1/channels/{id}/reaction",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/inherited_HEAD_credential_gate"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-173_GET_/v1/channels/{id}/reaction/inherited_HEAD_credential_gate"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-174",
+      "method": "POST",
+      "path": "/v1/channels/{id}/favorite",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-174_POST_/v1/channels/{id}/favorite/anonymous_protected_operation"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-175",
+      "method": "DELETE",
+      "path": "/v1/channels/{id}/favorite",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-175_DELETE_/v1/channels/{id}/favorite/anonymous_protected_operation"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-176",
+      "method": "GET",
+      "path": "/v1/channels/{id}/favorite",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/inherited_HEAD_credential_gate"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-176_GET_/v1/channels/{id}/favorite/inherited_HEAD_credential_gate"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-177",
+      "method": "GET",
+      "path": "/v1/channels/{id}/can-comment",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/inherited_HEAD_credential_gate"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-177_GET_/v1/channels/{id}/can-comment/inherited_HEAD_credential_gate"
+      ],
+      "evidence": [
+        "Real HTTP writes and reads assert channel comment identity, standing, reaction switches, favorite state and refusal through metadata routes.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-178",
+      "method": "PUT",
+      "path": "/v1/channels/{id}/reposts/{content_id}",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelRepostAuthority/reference_preserves_identity_without_editorial_authority",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-178_PUT_/v1/channels/{id}/reposts/{content_id}/anonymous_protected_operation"
+      ],
+      "evidence": [
+        "The real public-client repost journey asserts idempotency, original identity, destination removal and refusal to edit original versions; pending and withdrawn originals are excluded.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-179",
+      "method": "DELETE",
+      "path": "/v1/channels/{id}/reposts/{content_id}",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelRepostAuthority/reference_preserves_identity_without_editorial_authority",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-179_DELETE_/v1/channels/{id}/reposts/{content_id}/anonymous_protected_operation"
+      ],
+      "evidence": [
+        "The real public-client repost journey asserts idempotency, original identity, destination removal and refusal to edit original versions; pending and withdrawn originals are excluded.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-180",
+      "method": "GET",
+      "path": "/v1/manage/channels",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestConfiguredOwnerProvisioning",
+        "TestPendingChannelScopeHasNoAuthority",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/member_without_named_permission"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-180_GET_/v1/manage/channels/member_without_named_permission"
+      ],
+      "evidence": [
+        "Configured migration and lost-acknowledgement import journeys inspect actual channel administration records without inventing another identity.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-181",
+      "method": "GET",
+      "path": "/v1/channels",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestTypeScriptPublicContracts/discovery_entities",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/inherited_HEAD_credential_gate"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-181_GET_/v1/channels/inherited_HEAD_credential_gate"
+      ],
+      "evidence": [
+        "Shipped TypeScript client exercises the real channel endpoint, checks returned identities and metadata, and verifies unauthorized writes leave state unchanged.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-182",
+      "method": "POST",
+      "path": "/v1/channels",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestEntityLifecycleWithoutReconciliation",
+        "TestSiteChannelDelegatedCapabilities",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-182_POST_/v1/channels/anonymous_protected_operation"
+      ],
+      "evidence": [
+        "Real AuthKit-backed channel lifecycle tests cover authorized create/update/delete, caller retry after lost responses, stable identity and no queued lifecycle work.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-183",
+      "method": "GET",
+      "path": "/v1/channels/{id}",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestTypeScriptPublicContracts/discovery_entities",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/inherited_HEAD_credential_gate"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-183_GET_/v1/channels/{id}/inherited_HEAD_credential_gate"
+      ],
+      "evidence": [
+        "Shipped TypeScript client exercises the real channel endpoint, checks returned identities and metadata, and verifies unauthorized writes leave state unchanged.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-184",
+      "method": "PATCH",
+      "path": "/v1/channels/{id}",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestEntityLifecycleWithoutReconciliation",
+        "TestSiteChannelDelegatedCapabilities",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-184_PATCH_/v1/channels/{id}/anonymous_protected_operation"
+      ],
+      "evidence": [
+        "Real AuthKit-backed channel lifecycle tests cover authorized create/update/delete, caller retry after lost responses, stable identity and no queued lifecycle work.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-185",
+      "method": "DELETE",
+      "path": "/v1/channels/{id}",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestEntityLifecycleWithoutReconciliation",
+        "TestSiteChannelDelegatedCapabilities",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-185_DELETE_/v1/channels/{id}/anonymous_protected_operation"
+      ],
+      "evidence": [
+        "Real AuthKit-backed channel lifecycle tests cover authorized create/update/delete, caller retry after lost responses, stable identity and no queued lifecycle work.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-186",
+      "method": "GET",
+      "path": "/v1/manage/channels/{id}",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestConfiguredOwnerProvisioning",
+        "TestPendingChannelScopeHasNoAuthority",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/member_without_named_permission"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-186_GET_/v1/manage/channels/{id}/member_without_named_permission"
+      ],
+      "evidence": [
+        "Configured migration and lost-acknowledgement import journeys inspect actual channel administration records without inventing another identity.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-187",
+      "method": "GET",
+      "path": "/v1/channels/{id}/entities",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestTypeScriptPublicContracts/discovery_entities",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/inherited_HEAD_credential_gate"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-187_GET_/v1/channels/{id}/entities/inherited_HEAD_credential_gate"
+      ],
+      "evidence": [
+        "Shipped TypeScript client exercises the real channel endpoint, checks returned identities and metadata, and verifies unauthorized writes leave state unchanged.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-188",
+      "method": "PUT",
+      "path": "/v1/channels/{id}/entities",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings",
+        "TestTypeScriptPublicContracts/discovery_entities",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-188_PUT_/v1/channels/{id}/entities/anonymous_protected_operation"
+      ],
+      "evidence": [
+        "Shipped TypeScript client exercises the real channel endpoint, checks returned identities and metadata, and verifies unauthorized writes leave state unchanged.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
+    },
+    {
+      "id": "CK-API-189",
+      "method": "GET",
+      "path": "/v1/channels/{id}/contents",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelRepostAuthority/reference_preserves_identity_without_editorial_authority",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/inherited_HEAD_credential_gate"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-189_GET_/v1/channels/{id}/contents/inherited_HEAD_credential_gate"
+      ],
+      "evidence": [
+        "The real public-client repost journey asserts idempotency, original identity, destination removal and refusal to edit original versions; pending and withdrawn originals are excluded.",
+        "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
+      ]
     }
   ],
   "binding_contracts": [
@@ -7027,8 +7814,8 @@
       ]
     },
     {
-      "id": "go:Client.GetEntityHeldComments",
-      "name": "Client.GetEntityHeldComments",
+      "id": "go:Client.GetChannelHeldComments",
+      "name": "Client.GetChannelHeldComments",
       "status": "verified",
       "cases": [
         "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity",
@@ -7040,8 +7827,8 @@
       ]
     },
     {
-      "id": "go:Client.GetEntityCommentBans",
-      "name": "Client.GetEntityCommentBans",
+      "id": "go:Client.GetChannelCommentBans",
+      "name": "Client.GetChannelCommentBans",
       "status": "verified",
       "cases": [
         "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity",
@@ -7053,8 +7840,8 @@
       ]
     },
     {
-      "id": "go:Client.PutEntityCommentBan",
-      "name": "Client.PutEntityCommentBan",
+      "id": "go:Client.PutChannelCommentBan",
+      "name": "Client.PutChannelCommentBan",
       "status": "verified",
       "cases": [
         "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity",
@@ -7066,8 +7853,8 @@
       ]
     },
     {
-      "id": "go:Client.DeleteEntityCommentBan",
-      "name": "Client.DeleteEntityCommentBan",
+      "id": "go:Client.DeleteChannelCommentBan",
+      "name": "Client.DeleteChannelCommentBan",
       "status": "verified",
       "cases": [
         "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity",
@@ -7521,8 +8308,8 @@
       ]
     },
     {
-      "id": "go:Client.GetMeEntities",
-      "name": "Client.GetMeEntities",
+      "id": "go:Client.GetMeChannels",
+      "name": "Client.GetMeChannels",
       "status": "verified",
       "cases": [
         "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app",
@@ -8653,17 +9440,6 @@
       ]
     },
     {
-      "id": "ts:EntitiesClient.mine",
-      "name": "EntitiesClient.mine",
-      "status": "verified",
-      "cases": [
-        "TestTypeScriptPublicContracts/discovery_entities"
-      ],
-      "evidence": [
-        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
-      ]
-    },
-    {
       "id": "ts:ContentKitError.refusal",
       "name": "ContentKitError.refusal",
       "status": "verified",
@@ -9648,6 +10424,429 @@
       ],
       "evidence": [
         "Configuration serialization/strict decoding is distinct from the unchanged GET /kinds ContentModel DTO. Raw config round trips and rejected input preserve the existing model. Exact candidate execution is required."
+      ]
+    },
+    {
+      "id": "go:Client.DeleteChannel",
+      "name": "Client.DeleteChannel",
+      "status": "verified",
+      "cases": [
+        "TestEntityLifecycleWithoutReconciliation",
+        "TestSiteChannelDelegatedCapabilities"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.DeleteChannelFavorite",
+      "name": "Client.DeleteChannelFavorite",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.DeleteChannelReaction",
+      "name": "Client.DeleteChannelReaction",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.DeleteChannelRepost",
+      "name": "Client.DeleteChannelRepost",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelRepostAuthority/reference_preserves_identity_without_editorial_authority"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetChannel",
+      "name": "Client.GetChannel",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Generated Go client performs real channel directory/detail/management/metadata calls and asserts stable identity, exact selected records and metadata replacement.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetChannelCanComment",
+      "name": "Client.GetChannelCanComment",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetChannelComments",
+      "name": "Client.GetChannelComments",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetChannelContents",
+      "name": "Client.GetChannelContents",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelRepostAuthority/reference_preserves_identity_without_editorial_authority"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetChannelEntities",
+      "name": "Client.GetChannelEntities",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Generated Go client performs real channel directory/detail/management/metadata calls and asserts stable identity, exact selected records and metadata replacement.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetChannelFavorite",
+      "name": "Client.GetChannelFavorite",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetChannelReaction",
+      "name": "Client.GetChannelReaction",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetChannels",
+      "name": "Client.GetChannels",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Generated Go client performs real channel directory/detail/management/metadata calls and asserts stable identity, exact selected records and metadata replacement.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetManageChannel",
+      "name": "Client.GetManageChannel",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Generated Go client performs real channel directory/detail/management/metadata calls and asserts stable identity, exact selected records and metadata replacement.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetManageChannels",
+      "name": "Client.GetManageChannels",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Generated Go client performs real channel directory/detail/management/metadata calls and asserts stable identity, exact selected records and metadata replacement.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.PatchChannel",
+      "name": "Client.PatchChannel",
+      "status": "verified",
+      "cases": [
+        "TestEntityLifecycleWithoutReconciliation",
+        "TestSiteChannelDelegatedCapabilities"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.PostChannelComments",
+      "name": "Client.PostChannelComments",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.PostChannelDislike",
+      "name": "Client.PostChannelDislike",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.PostChannelFavorite",
+      "name": "Client.PostChannelFavorite",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.PostChannelLike",
+      "name": "Client.PostChannelLike",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.PostChannels",
+      "name": "Client.PostChannels",
+      "status": "verified",
+      "cases": [
+        "TestEntityLifecycleWithoutReconciliation",
+        "TestSiteChannelDelegatedCapabilities"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.PutChannelEntities",
+      "name": "Client.PutChannelEntities",
+      "status": "verified",
+      "cases": [
+        "TestChannelInteractionBindings"
+      ],
+      "evidence": [
+        "Generated Go client performs real channel directory/detail/management/metadata calls and asserts stable identity, exact selected records and metadata replacement.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.PutChannelRepost",
+      "name": "Client.PutChannelRepost",
+      "status": "verified",
+      "cases": [
+        "TestFirstClassChannelRepostAuthority/reference_preserves_identity_without_editorial_authority"
+      ],
+      "evidence": [
+        "Public HTTP channel contract is exercised through the generated client or the same route by the shipped TypeScript client; response/state assertions are retained.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.contents",
+      "name": "ChannelsClient.contents",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.create",
+      "name": "ChannelsClient.create",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.entities",
+      "name": "ChannelsClient.entities",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.folder",
+      "name": "ChannelsClient.folder",
+      "status": "verified",
+      "cases": [
+        "TestShippedChannelBrowser"
+      ],
+      "evidence": [
+        "The shipped ChannelsClient.uploadImage and folder methods upload a real avatar through the three-step media flow and SSE and read its persisted channel identity; rendered RepostButton and ChannelFeed then create and remove the reference.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.get",
+      "name": "ChannelsClient.get",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.list",
+      "name": "ChannelsClient.list",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.mine",
+      "name": "ChannelsClient.mine",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.remove",
+      "name": "ChannelsClient.remove",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.removeRepost",
+      "name": "ChannelsClient.removeRepost",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.repost",
+      "name": "ChannelsClient.repost",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.setEntities",
+      "name": "ChannelsClient.setEntities",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.update",
+      "name": "ChannelsClient.update",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/discovery_entities"
+      ],
+      "evidence": [
+        "Shipped ChannelsClient sends real HTTP requests; the discovery_entities contract checks stable channel/repost identities, metadata and state transitions and emits this exact binding receipt.",
+        "Reviewed contract; exact integrated execution remains required."
+      ]
+    },
+    {
+      "id": "ts:ChannelsClient.uploadImage",
+      "name": "ChannelsClient.uploadImage",
+      "status": "verified",
+      "cases": [
+        "TestShippedChannelBrowser"
+      ],
+      "evidence": [
+        "The shipped ChannelsClient.uploadImage and folder methods upload a real avatar through the three-step media flow and SSE and read its persisted channel identity; rendered RepostButton and ChannelFeed then create and remove the reference.",
+        "Reviewed contract; exact integrated execution remains required."
       ]
     }
   ]

@@ -24,7 +24,7 @@ export const fileTitle = (name: string) => {
 
 /** A draft of kind titled from file, and the ref of its first version (uploads land there). */
 export async function createDraft(client: ContentKitClient, kind: string, language: string, file: File, untitled: string): Promise<{ content: Content; ref: RefBody }> {
-  const content = await client.contents.create({ kind, text: { [language]: { title: fileTitle(file.name) || untitled } } });
+  const content = await client.contents.create({ kind, versions: [{ languages: [language], text: { [language]: { title: fileTitle(file.name) || untitled } } }] });
   const version = [...(content.versions ?? [])].sort((a, b) => a.position - b.position)[0];
   if (!version) throw new ContentKitError("invalid_request", `kind ${kind} made a draft without a version`);
   return { content, ref: { kind, id: content.id, version: version.id } };

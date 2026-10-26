@@ -228,10 +228,10 @@ export async function runMediaContracts(group, fixture) {
     assert.equal(inline.ref, "contentkit:" + inline.name);
     assert.equal(typeof inline.url, "string");
     assert.equal((await fetch(inline.url)).status, 200);
-    await owner.contents.putText(imageRef.id, "en", {
+    await owner.contents.updateVersion(imageRef.id, imageRef.version, { text: { en: {
       title: "Inline body",
       body: "Text ![inline](" + inline.ref + ")",
-    });
+    } } });
     // Only the completed ordinary reader projection proves publication. An
     // uploaded/processed image and a saved body can precede that durable move.
     const publishedInline = async (previous) => {
@@ -416,7 +416,7 @@ export async function runMediaContracts(group, fixture) {
     proved("MediaClient.getFrame");
     const empty = await owner.contents.create({
       kind: "clip",
-      text: { en: { title: "Native browser transport upload" } },
+      versions: [{ languages: ["en"], text: { en: { title: "Native browser transport upload" } } }],
     });
     const freshRef = {
       kind: "clip",
