@@ -377,9 +377,14 @@ func (e *Engine) validateUnifiedReleases(ctx context.Context) error {
 	items := pgx.Identifier{e.schema, "content_items"}.Sanitize()
 	editions := pgx.Identifier{e.schema, "content_versions"}.Sanitize()
 	requests := pgx.Identifier{e.schema, "content_publication_requests"}.Sanitize()
+	segments := pgx.Identifier{e.schema, "content_segments"}.Sanitize()
+	frozen := pgx.Identifier{e.schema, "content_frozen_access"}.Sanitize()
 	if err := e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+editions+` v JOIN `+items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
  WHERE v.tenant_id=$1 AND ((v.released AND v.release_id IS NULL AND NOT (c.kind=ANY($2::text[])))
- OR (c.state='published' AND v.state='published' AND NOT v.released
+ OR (((c.state='published' AND v.state='published' AND (NOT v.released
+ OR `+frozen+`(v.released_access,'infinity'::timestamptz) IS DISTINCT FROM `+frozen+`(v.access,'infinity'::timestamptz)
+ OR EXISTS(SELECT 1 FROM `+segments+` s WHERE s.tenant_id=v.tenant_id AND s.version_id=v.id AND s.released_at IS NULL AND s.release_at IS NOT NULL)))
+ OR (v.released AND (c.state NOT IN ('published','deleted') OR v.state NOT IN ('published','deleted'))))
  AND NOT EXISTS(SELECT 1 FROM `+requests+` r WHERE r.tenant_id=v.tenant_id AND r.version_id=v.id AND r.current AND r.state NOT IN ('completed','cancelled')))))`, e.cfg.Tenant, kinds).Scan(&exists); err != nil {
 		return err
 	}

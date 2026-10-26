@@ -197,6 +197,30 @@ func TestUnifiedReleaseMigration(t *testing.T) {
 		t.Fatalf("repeated migration created successors: %v", counts)
 	}
 	check()
+	// A previously completed baseline does not prove its next audience was
+	// admitted. Model an old snapshot whose sweep and next obligation are absent.
+	err = pgx.BeginFunc(t.Context(), w.pool, func(tx pgx.Tx) error {
+		for _, query := range []string{
+			`DELETE FROM ` + jobs + ` WHERE args->>'id' IN (SELECT id::text FROM ` + requests + ` WHERE tenant_id=$1 AND version_id=$2 AND current)`,
+			`DELETE FROM ` + requests + ` WHERE tenant_id=$1 AND version_id=$2 AND current`,
+			`UPDATE ` + requests + ` SET current=true WHERE tenant_id=$1 AND id=(SELECT release_id FROM ` + editions + ` WHERE tenant_id=$1 AND id=$2)`,
+		} {
+			if _, err := tx.Exec(t.Context(), query, tenant, baseline.Versions[0].ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	must(t, err)
+	unprepared, err = ck.New(t.Context(), readonly, a.deps)
+	if unprepared != nil {
+		must(t, unprepared.Close(t.Context()))
+	}
+	if !errors.Is(err, ck.ErrMigrationsRequired) {
+		t.Fatalf("startup accepted a lost audience deadline: %v", err)
+	}
+	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
+	check()
 	// Current request-ID workers are compatible with ordinary replica startup.
 	_, err = w.pool.Exec(t.Context(), `UPDATE `+jobs+` SET state='running',attempted_at=now() WHERE id=$1`, targeted)
 	must(t, err)
