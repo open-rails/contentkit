@@ -14,9 +14,9 @@ log before its processing job completes. Current status remains available
 through the existing media HTTP and Go interfaces. Observers own their cursors;
 retention expiry requires a fresh current-state read.
 
-Completion also wakes the existing version metadata worker in the same database
-transaction. That worker records preparation progress and wakes accepted
-publication work. Only completed storage delivery activates reader snapshots
+Completion also wakes the existing accepted release request in the same database
+transaction. Derivative preparation belongs to the processing attempt; there is
+no separate version metadata worker. Only completed storage delivery activates reader snapshots
 and release-dependent catalog state. Processing remains independent of an
 editor's publication instruction. There is no source-managed event consumer.
 
@@ -45,19 +45,18 @@ survive log expiry.
 
 Custom embedded `Hooks.ItemReady` and `Hooks.ItemProgressed` run synchronously in
 the processor's completion transaction. They must be idempotent transactional
-extensions. Stock external workers need no hooks: completion directly queues
-`contentkit_version_publish`, whose metadata work wakes the durable
-`contentkit_version_release` operation. If an earlier publisher is running,
-its normal follow-up preserves the wakeup. Queues are scoped to the exact
+extensions. Stock external workers need no host callbacks: completion directly
+joins the durable `contentkit_version_release` request. If an earlier release is
+running, its normal follow-up preserves the wakeup. Queues are scoped to the exact
 catalog key, including when several apps share one River schema.
 
 Removed interfaces: `media.Jobs.Expose`, `ExposeTx` on media/version/entity
 folders, `media.HostQueue`, `worker.Config.HostQueue` and `MEDIA_HOST_QUEUE`.
-Keep `HostSchema` / `MEDIA_HOST_RIVER_SCHEMA` for the metadata work queue.
+Keep `HostSchema` / `MEDIA_HOST_RIVER_SCHEMA` for the release queue.
 Standalone integrations run `media.MigrateProcessing` alongside their explicit
 migration step. It refuses running old lifecycle jobs, retires only owned
 waiting rows, preserves history and other namespaces, and queues one normal
-image pass per known item using an existing journal receipt. No bucket discovery
+derivative pass per known item using an existing journal receipt. No bucket discovery
 or recurring backfill job is installed.
 
 ## Live editor status
