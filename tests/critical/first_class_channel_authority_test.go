@@ -1,6 +1,9 @@
 package critical_test
 
 import (
+	"net/url"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/open-rails/authkit/authtest"
@@ -16,6 +19,20 @@ import (
 // Reposting references one original through the public API. It never copies
 // versions or turns the receiving team into editors of the original.
 func TestFirstClassChannelRepostAuthority(t *testing.T) {
+	// AuthKit and ContentKit deliberately share one connection: permission
+	// lookups must complete before repost transactions hold that connection.
+	dsn := os.Getenv("CONTENTKIT_CRITICAL_PG")
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		parsed, err := url.Parse(dsn)
+		must(t, err)
+		query := parsed.Query()
+		query.Set("pool_max_conns", "1")
+		parsed.RawQuery = query.Encode()
+		dsn = parsed.String()
+	} else if dsn != "" {
+		dsn += " pool_max_conns=1"
+	}
+	t.Setenv("CONTENTKIT_CRITICAL_PG", dsn)
 	w := newWorld(t, func(cfg *ck.Config) {
 		kind := cfg.Content.Kinds["article"]
 		kind.Versions.Hidden = false
