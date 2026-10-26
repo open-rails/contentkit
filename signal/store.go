@@ -352,8 +352,9 @@ func subjectFromKey(kind, key string) Subject {
 
 // Forget erases a subject's events and projections for one content item (the
 // work and all its versions) or an entire content kind when contentID is
-// empty. Windows and popularity read the per-subject projections, so they stop
-// counting the subject at once. This is NOT account erasure: exposures and the
+// empty. Per-subject readers stop counting the subject at once; anonymous
+// finalized daily popularity counts remain until explicitly rebuilt. This is
+// NOT account erasure: exposures and the
 // content_pairs rollup remain, and a write racing the deletion can re-project.
 func (st *Store) Forget(ctx context.Context, tenant string, subject Subject, contentKind string, contentID string) error {
 	if strings.TrimSpace(tenant) == "" {
@@ -446,6 +447,15 @@ func (st *Store) ForgetContents(ctx context.Context, tenant string, contents []F
 		return nil
 	}
 	if err := forget(works, tables, func(in string) string { return "(content_kind, content_id) IN " + in }); err != nil {
+		return err
+	}
+	// Daily popularity is work-level and anonymous. Purging one edition must
+	// not remove the work's other editions from its historical aggregate.
+	daily, err := st.existing(ctx, []string{"popularity_daily"})
+	if err != nil {
+		return err
+	}
+	if err := forget(works, daily, func(in string) string { return "(content_kind, content_id) IN " + in }); err != nil {
 		return err
 	}
 	if err := forget(works, pairs, func(in string) string {

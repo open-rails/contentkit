@@ -10,7 +10,6 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	ck "github.com/open-rails/contentkit"
-	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -31,7 +30,7 @@ func refreshPopularRankings(t *testing.T, w *world) {
 	})
 }
 
-func TestPopularRankingSplitsReadersExactly(t *testing.T) {
+func TestDailyPopularityCountsReadersExactly(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	configureDiscoverySignals(t, w, a)
@@ -39,8 +38,8 @@ func TestPopularRankingSplitsReadersExactly(t *testing.T) {
 	store, err := signal.NewStore(a.deps.ClickHouse, database)
 	must(t, err)
 	ctx := t.Context()
-	// 25,000 readers of one work exceed one batch, so the ranking splits them
-	// by reader; ten of them also read a small work in another batch.
+	// A large work and a small work share one daily population. The other
+	// six available days have no readers and still contribute to the mean.
 	must(t, a.deps.ClickHouse.Exec(ctx, `INSERT INTO `+database+`.engagement_segments
  (tenant,content_kind,content_id,content_version_id,subject_kind,subject,receipt_id,revision,visit_id,segment_id,
  occurred_at,active_ms,covered_units,unit_attention,unit_total,unit_scale,resume,access_context,measurement)
@@ -53,14 +52,12 @@ func TestPopularRankingSplitsReadersExactly(t *testing.T) {
  SELECT 'batch','user',concat('u',toString(number)),'gallery',toString(number),toDateTime64('2026-10-20 13:00:00',6,'UTC'),'main','en',[],true
  FROM numbers(50000)`))
 	from, until := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)
-	p := popularity.PolicyV2.Priors
-	hits, err := store.Popular(ctx, "batch", "gallery", signal.PopularOptions{Window: signal.Between(from, until), Limit: 10, RankExpr: popularity.PolicyV2.RankExpr(),
-		Normalization: &signal.NormalizationOptions{Scope: signal.ActivityScope{Domain: "main", Language: "en"}, PriorWeight: 20,
-			Availability: signal.Availability{Known: true, From: from, Until: until, Intervals: []signal.AccessInterval{
-				{ID: "i-big", ContentID: "big", From: from, Until: until, Audience: "public"},
-				{ID: "i-small", ContentID: "small", From: from, Until: until, Audience: "public"}}},
-			Quality: signal.NormalizationPriors{Engagement: p.Engagement, EngagementWeight: p.EngagementWeight, Completion: p.Completion,
-				CompletionWeight: p.CompletionWeight, Approval: p.Approval, ApprovalWeight: p.ApprovalWeight, RevisitWeight: p.RevisitWeight}}})
+	scope := signal.ActivityScope{Domain: "main", Language: "en"}
+	_, err = store.PrepareDailyPopularity(ctx, "batch", "gallery", signal.Availability{Known: true, From: from, Until: until, Intervals: []signal.AccessInterval{
+		{ContentID: "big", From: from, Until: until, Audience: "public"},
+		{ContentID: "small", From: from, Until: until, Audience: "public"}}}, scope, false)
+	must(t, err)
+	hits, err := store.DailyPopular(ctx, "batch", "gallery", signal.Between(from, until), scope, 10)
 	must(t, err)
 	want := map[string]float64{"big": 25000, "small": 10}
 	if len(hits) != len(want) {
@@ -68,10 +65,9 @@ func TestPopularRankingSplitsReadersExactly(t *testing.T) {
 	}
 	for _, h := range hits {
 		readers := want[h.ContentID]
-		for name, pair := range map[string][2]float64{"raw rate": {h.Normalization.RawRate, readers / 50000}, "rate": {h.Normalization.Rate, readers / 50020}} {
-			if math.Abs(pair[0]-pair[1]) > 1e-12*pair[1] {
-				t.Fatalf("%s %s = %v; want %v", h.ContentID, name, pair[0], pair[1])
-			}
+		wantScore := math.Round(readers/50020/7*1e12) / 1e12
+		if math.Abs(h.Score-wantScore) > 1e-12*wantScore {
+			t.Fatalf("%s score = %v; want %v", h.ContentID, h.Score, wantScore)
 		}
 	}
 	if hits[0].ContentID != "big" {

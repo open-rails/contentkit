@@ -748,7 +748,7 @@
       "behavior": "Popular lists follow the stored ranking of their kind, period and reader scope",
       "status": "verified",
       "evidence": [
-        "Before its ranking is built a popular list shows only works with standing; once the refresh stores a ranking, the list follows its order."
+        "A configured bucket reads its stored order; an empty prepared ranking remains empty without unrelated standing scores."
       ],
       "cases": [
         "TestDiscoveryVisibility/CK-J07-S15_popular_list_follows_the_stored_ranking"
@@ -757,25 +757,29 @@
     {
       "id": "CK-J07-S16",
       "journey": "CK-J07",
-      "behavior": "Reader-chosen popularity ranges queue bounded ranking work",
+      "behavior": "Public popularity reads only declared presets or prepared whole-day ranges",
       "status": "verified",
       "evidence": [
-        "With fifty reader-chosen ranges requested, another range is not requested; after one is dropped, it is."
+        "Unknown bucket, kind and scope requests are refused without creating work.",
+        "Cold start prepares configured presets without public requests; metadata distinguishes pending from computed empty and reports actual covered dates across UTC rollover.",
+        "Arbitrary ranges read prepared scalars with catalog pagination and create no cache rows; dates before the first fully trusted UTC day or beyond prepared coverage are refused with structured bounds."
       ],
       "cases": [
-        "TestDiscoveryVisibility/CK-J07-S16_reader_chosen_ranges_are_bounded"
+        "TestDiscoveryVisibility/CK-J07-S16_public_requests_cannot_create_popularity_work",
+        "TestPreparedPopularityBuckets"
       ]
     },
     {
       "id": "CK-J07-S17",
       "journey": "CK-J07",
-      "behavior": "A ranking split by reader counts every reader exactly once",
+      "behavior": "Daily popularity counts each qualified person once per work and available UTC day",
       "status": "verified",
       "evidence": [
-        "A work with 25,000 readers, more than one batch holds, ranks with exactly 25,000 of 50,000 eligible readers, and a ten-reader work in another batch with exactly ten."
+        "A 25,000-reader work and a ten-reader work share exactly 50,000 eligible readers; six available zero-reader days remain in the seven-day mean. Canonical receipt revisions, edition deduplication, public/tier daily unions, finalization, explicit rebuild, erasure and purge boundaries are covered with real ClickHouse."
       ],
       "cases": [
-        "TestPopularRankingSplitsReadersExactly"
+        "TestDailyPopularityCountsReadersExactly",
+        "TestDailyParticipationPreparation"
       ]
     },
     {
@@ -791,6 +795,30 @@
         "TestEngagementSummaryFailuresAreBestEffort",
         "TestEngagementCanonicalFailuresRemainErrors",
         "TestSignalRecoveryDoesNotScheduleProjectionRepair"
+      ]
+    },
+    {
+      "id": "CK-J07-S20",
+      "journey": "CK-J07",
+      "behavior": "The shipped popularity grid uses host choices and prepared whole-day ranges",
+      "status": "verified",
+      "evidence": [
+        "The real built shared UI selects two host-defined bucket IDs, renders their actual HTTP/PG ranking order, switches to a prepared-only ClickHouse date range, displays its inclusive last day, and receives the structured earliest-date refusal. No ranking cache is created by browser reads."
+      ],
+      "cases": ["TestPreparedPopularityBrowser"]
+    },
+    {
+      "id": "CK-J07-S19",
+      "journey": "CK-J07",
+      "behavior": "Observed search query and absolute result rank join to exact clicked visits across same-tab and native new-tab navigation",
+      "status": "verified",
+      "evidence": [
+        "Built shared SearchResults, SearchBox, ordinary ContentGrid and useReadingEngagement run in Chromium against real AuthKit/API/PostgreSQL/ClickHouse. Rendered and visible query/rank records join through exact click IDs to observed visits; opaque hrefs, direct returns, repeated tabs and snapshot retries preserve identity. A held real zero-result response produces no loading impression; only its successful settled empty list emits one rendered query observation, while a failed request emits none.",
+        "Real ClickHouse exports exclude origins with another subject, item or tenant, combine one visit across editions without receipt inflation, and retain historical analytics query text without age expiry. Recent-search clearing remains distinct from subject erasure. Execution receipts qualify the actual selected candidate separately."
+      ],
+      "cases": [
+        "TestBrowserSearchEngagementAttribution",
+        "TestSearchAttributionUsesExactOriginScope"
       ]
     },
     {

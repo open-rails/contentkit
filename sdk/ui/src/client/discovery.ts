@@ -25,7 +25,7 @@ import { browserSearchHistory, type BrowserSearchHistory } from "./browser-searc
 /** A popularity period. */
 export type Period = "7d" | "30d" | "90d" | "365d" | "all";
 /** A list's order; position orders by the first of `groups` (an ordered group). */
-export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${Period}` | "top_rated" | `top_rated:${Period}` | "most_favorited" | "position" | "random";
+export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${string}` | "top_rated" | `top_rated:${Period}` | "most_favorited" | "position" | "random";
 /** How locked contents list: marked (lock, the default) or left out (hide). */
 export type AccessMode = "lock" | "hide";
 
@@ -93,24 +93,21 @@ export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQu
   /** Exclusive UTC date (YYYY-MM-DD); requires activity_from, kind and sort=popular. */
   activity_until?: string;
 };
-export type PopularPeriod = "7d" | "90d" | "365d" | "all";
-/** Whole UTC dates: from inclusive, until exclusive. */
-export interface PopularDateRange {
-  from: string;
-  until: string;
-}
-export type PopularQuery = Omit<ContentQuery, "sort" | "activity_from" | "activity_until">;
 
-/** Rank activity in the selected window; publication age is an optional separate filter. */
-export function popularQuery(period: PopularPeriod | PopularDateRange = "7d", filters: PopularQuery = {}): ContentQuery {
-  return typeof period === "string"
-    ? { ...filters, sort: `popular:${period}` }
-    : { ...filters, sort: "popular", activity_from: period.from, activity_until: period.until };
+/** A host-declared popularity bucket ID. */
+export type PopularPeriod = string;
+/** Explicit whole UTC dates, from inclusive and until exclusive. */
+export interface PopularDateRange {from:string;until:string}
+export type PopularQuery = Omit<ContentQuery,"sort"|"activity_from"|"activity_until">;
+
+/** Read a prepared bucket; omitted ID selects the kind's first configured bucket. */
+export function popularQuery(bucket: string | PopularDateRange = "", filters: PopularQuery = {}): ContentQuery {
+ return typeof bucket === "string" ? {...filters,sort: bucket ? `popular:${bucket}` : "popular"} : {...filters,sort:"popular",activity_from:bucket.from,activity_until:bucket.until};
 }
 
-/** Rank activity between two UTC dates: from inclusive, until exclusive. */
-export function popularBetween(from: string, until: string, filters: PopularQuery & { kind: string }): ContentQuery {
-  return popularQuery({ from, until }, filters);
+/** Rank a whole-day range using prepared counts, never raw processing. */
+export function popularBetween(from:string,until:string,filters:PopularQuery & {kind:string}):ContentQuery {
+ return popularQuery({from,until},filters);
 }
 
 export type SearchQuery = ContentFilterQuery &

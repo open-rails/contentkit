@@ -189,7 +189,7 @@ func (st *Store) copyAnonymous(ctx context.Context, table, tenant string, old, a
 			args = append(args, anonymous.Key())
 		case "payload":
 			values = append(values, "'{}'")
-		case "resume":
+		case "resume", "search_query", "origin_click_id":
 			values = append(values, "''")
 		case "version":
 			if table == "exposures" {

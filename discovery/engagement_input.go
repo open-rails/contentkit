@@ -22,6 +22,7 @@ type EngagementSnapshot struct {
 	ContentID     string           `json:"content_id"`
 	VersionID     string           `json:"version_id,omitempty"`
 	VisitID       string           `json:"visit_id"`
+	OriginClickID string           `json:"origin_click_id,omitempty"`
 	SegmentID     string           `json:"segment_id"`
 	Revision      uint64           `json:"revision"`
 	ActivityToken string           `json:"activity_token"`
@@ -59,7 +60,7 @@ func (s *Service) RecordEngagement(ctx context.Context, actor access.Actor, in E
 	for _, x := range in.Snapshots {
 		if contentref.ValidateID(x.ContentID) != nil || x.VersionID != "" && contentref.ValidateID(x.VersionID) != nil ||
 			strings.TrimSpace(x.VisitID) == "" || strings.TrimSpace(x.SegmentID) == "" || x.Revision == 0 ||
-			x.ActivityToken == "" || identifiers(x.VisitID, x.SegmentID, x.Resume) != nil {
+			x.ActivityToken == "" || identifiers(x.VisitID, x.SegmentID, x.Resume, x.OriginClickID) != nil {
 			return fmt.Errorf("%w: engagement needs a content, stable visit/segment, positive revision and original activity receipt", ErrInvalid)
 		}
 		ids = append(ids, x.ContentID)
@@ -123,6 +124,7 @@ func (s *Service) RecordEngagement(ctx context.Context, actor access.Actor, in E
 			return fmt.Errorf("%w: %v", ErrInvalid, err)
 		}
 		m.VersionID, m.VisitID, m.SegmentID = receipt.ResolvedVersion, x.VisitID, x.SegmentID
+		m.OriginClickID = x.OriginClickID
 		sig := signal.Signal{ContentRef: ref.WithVersion(receipt.ResolvedVersion), Subject: subject,
 			Type: signal.TypeEngagement, EventID: receipt.ID, Revision: x.Revision, OccurredAt: receipt.Access.ObservedAt,
 			Resume: x.Resume, Access: &receipt.Access, Measurement: &m}

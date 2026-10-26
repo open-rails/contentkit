@@ -193,19 +193,20 @@ type Placement struct {
 // Exposure is one result list at one stage: the cumulative set of placements
 // the stage reached, as one row. Identity is (tenant, RenderID, Stage);
 // re-sending replaces, a higher Revision supersedes (a visible list that grows
-// as the subject scrolls). Never one row per item or per scroll tick. No query
-// text is stored; QueryID groups the pages/renders of one query.
+// as the subject scrolls). Never one row per item or per scroll tick. QueryID
+// groups the pages/renders of one query and keeps its normalized search text.
 type Exposure struct {
-	RenderID   string // required, stable per render, shared with its clicks
-	Stage      ExposureStage
-	Revision   uint64
-	QueryID    string
-	Surface    string
-	Ranker     string // ranking configuration identity for offline comparison
-	Language   string
-	Subject    Subject // optional for anonymous renders
-	Shown      []Placement
-	OccurredAt time.Time // required
+	RenderID    string // required, stable per render, shared with its clicks
+	Stage       ExposureStage
+	Revision    uint64
+	QueryID     string
+	SearchQuery string // normalized search text, retained with analytics
+	Surface     string
+	Ranker      string // ranking configuration identity for offline comparison
+	Language    string
+	Subject     Subject // optional for anonymous renders
+	Shown       []Placement
+	OccurredAt  time.Time // required
 }
 
 func (e Exposure) validate(tenant string) error {
@@ -218,7 +219,7 @@ func (e Exposure) validate(tenant string) error {
 	if e.OccurredAt.IsZero() {
 		return fmt.Errorf("exposure: OccurredAt is required")
 	}
-	if len(e.Shown) == 0 {
+	if len(e.Shown) == 0 && !(e.Stage == StageRendered && e.Surface == SurfaceSearch && strings.TrimSpace(e.QueryID) != "" && strings.TrimSpace(e.SearchQuery) != "") {
 		return fmt.Errorf("exposure: at least one placement is required")
 	}
 	if len(e.Shown) > MaxShownPerExposure {
@@ -462,25 +463,11 @@ func utcDay(t time.Time) time.Time {
 	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// PopularOptions controls Popular reads.
-type PopularOptions struct {
-	Window Window
-	Limit  int // default 20
-	// RankExpr is the policy's trusted ClickHouse expression over the
-	// normalized metric columns: normalized_rate, normalized_engagement,
-	// normalized_completion, normalized_approval, normalized_revisit.
-	RankExpr string
-	// Normalization supplies the trusted catalog availability intervals and
-	// reader scope the ranking normalizes by.
-	Normalization *NormalizationOptions
-}
-
-// PopularHit is one ranked work from Popular. Only works with at least one
-// qualified reader in the window rank; version rows never rank.
+// PopularHit is one ranked work from prepared daily participation. Only works
+// with at least one qualified reader in the window rank; editions never rank.
 type PopularHit struct {
 	ContentRef
-	Score         float64
-	Normalization NormalizationMetrics
+	Score float64
 }
 
 // CoEngagedOptions controls co-engagement queries ("subjects who engaged with

@@ -10,7 +10,9 @@ import type { Card, EntityCard, ChannelCard, Typeahead } from "../../client/gene
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext } from "../../react/context.js";
 import { useChannels } from "../../react/channels.js";
-import { useRecentSearches, useTypeahead } from "../../react/discovery.js";
+import { useExposure, useRecentSearches, useTypeahead } from "../../react/discovery.js";
+import { eventId } from "../../client/beacons.js";
+import { renewOriginLink } from "../../client/navigation-origin.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Input } from "#ckui/ui/input";
 import { RenditionImg } from "../rendition-img.js";
@@ -147,6 +149,15 @@ export function SearchBox(p: SearchBoxProps) {
   // prepending history never changes what Enter will open.
   const activeIndex = active === null ? Math.min(0, visible.length - 1) : visible.findIndex((s) => suggestionKey(s) === active);
   const selected = visible[activeIndex];
+  const queryID = useMemo(() => eventId(), [normalized]); // eslint-disable-line react-hooks/exhaustive-deps
+  const exposed = useMemo(() => open && current ? visible.flatMap((s, i) => s.type === "content" ? [{ ...s.card, position: i + 1 }] : []) : [], [open, current, visible]);
+  const exposure = useExposure(exposed, { surface: "search_suggestions", render: JSON.stringify([normalized, exposed.map(card => card.id)]), query_id: queryID, search_query: text, ranker: "typeahead", client: p.client });
+  const suggestionHref = (s: Suggestion, position: number) => {
+    if (s.type === "recent") return undefined;
+    if (s.type === "channel") return p.channelHref?.(s.channel) ?? s.channel.path;
+    const url = p.href ? p.href(s.type === "content" ? s.card : s.entity) : s.type === "content" ? s.card.path : s.entity.path;
+    return s.type === "content" ? exposure.href(s.card.id, position, url) : url;
+  };
   const activate = (index: number) => {
     const suggestion = visible[index];
     setActive(suggestion ? suggestionKey(suggestion) : index >= 0 ? null : undefined);
@@ -174,7 +185,8 @@ export function SearchBox(p: SearchBoxProps) {
       setText(s.query);
       return search(s.query);
     }
-    const url = s.type === "channel" ? p.channelHref?.(s.channel) ?? s.channel.path : p.href ? p.href(s.type === "content" ? s.card : s.entity) : s.type === "content" ? s.card.path : s.entity.path;
+    const prepared = suggestionHref(s, visible.indexOf(s) + 1);
+    const url = prepared ? renewOriginLink(prepared, true) : undefined;
     setOpen(false);
     if (!url) return;
     p.onSelect?.();
@@ -214,13 +226,23 @@ export function SearchBox(p: SearchBoxProps) {
           aria-selected={i === activeIndex}
           data-ckui="suggestion"
           data-type={s.type}
-          className={cn("flex cursor-pointer items-center", header ? s.type === "recent" ? "entity h-9 gap-2.5 rounded-lg px-2.5 text-sm hover:bg-foreground/10" : "gap-3 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-foreground/10" : dialog ? "min-h-11 gap-3 rounded-md p-2 text-sm hover:bg-accent hover:text-accent-foreground" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
+          ref={s.type === "content" ? exposure.track(s.card.id, i + 1) : undefined}
+          className={cn("relative flex cursor-pointer items-center", header ? s.type === "recent" ? "entity h-9 gap-2.5 rounded-lg px-2.5 text-sm hover:bg-foreground/10" : "gap-3 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-foreground/10" : dialog ? "min-h-11 gap-3 rounded-md p-2 text-sm hover:bg-accent hover:text-accent-foreground" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
           onMouseEnter={() => setActive(suggestionKey(s))}
           onMouseDown={(e) => {
             e.preventDefault();
-            go(s);
+            if (s.type === "recent") go(s);
           }}
         >
+          {s.type !== "recent" && <a href={suggestionHref(s, i + 1)} className="absolute inset-0 z-10" aria-label={suggestionName(s)}
+            onMouseDown={e => e.stopPropagation()}
+            onClick={e => {
+              const url = renewOriginLink(e.currentTarget.getAttribute("href") ?? "", true); e.currentTarget.href = url;
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault(); setOpen(false); p.onSelect?.(); if (navigate) navigate(url); else location.assign(url);
+            }}
+            onAuxClick={e => { if (e.button === 1) e.currentTarget.href = renewOriginLink(e.currentTarget.href, true); }}
+            onContextMenu={e => { e.currentTarget.href = renewOriginLink(e.currentTarget.href); }} />}
           {header && s.type !== "recent" ? (
             <>
               {s.type === "content" ? <span className="h-10 w-8 shrink-0 overflow-hidden rounded bg-muted"><RenditionImg outputs={s.card.cover} alt="" fit="cover" className="size-full" /></span>

@@ -160,8 +160,12 @@ func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) 
 	}
 	hits, err := recs.Recommend(ctx, signal.Subject{UserID: o.Actor.AccountID()}, RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
 		Limit: recLimit(o.Limit), Backfill: s.newest(q), Admit: a.admit,
-		Popular: func(ctx context.Context, kind, period string, limit int) ([]string, error) {
-			return s.topRanked(ctx, s.rankingFor(ctx, o.Reader, kind, period), limit)
+		Popular: func(ctx context.Context, kind string, limit int) ([]string, error) {
+			key, ok := s.rankingFor(ctx, o.Reader, kind, "")
+			if !ok {
+				return nil, nil
+			}
+			return s.topRanked(ctx, key, limit)
 		}})
 	if err != nil {
 		return empty, err

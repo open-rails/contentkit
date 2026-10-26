@@ -1,0 +1,25 @@
+[
+  {
+    "Name": "existing_explicit_rebuild",
+    "WallSeconds": 13.324715193,
+    "Report": {
+      "Prepared": 1,
+      "Reused": 0
+    }
+  },
+  {
+    "Name": "existing_reuse_finalized",
+    "WallSeconds": 0.007554309,
+    "Report": {
+      "Prepared": 0,
+      "Reused": 1
+    }
+  },
+  {
+    "Name": "rank",
+    "WallSeconds": 0.110896526,
+    "Report": {
+      "results": 60000
+    }
+  }
+]

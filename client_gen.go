@@ -2730,15 +2730,15 @@ type GetContentsQuery struct {
 	DisplayLanguage string
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
-	// newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
+	// newest, oldest, title, popular[:bucket], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
 	// selection-wide total, filtered and locked counts on the first page or every numbered page
 	Summary *bool
-	// custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter
+	// inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only
 	ActivityFrom string
-	// custom popularity activity window: exclusive UTC date YYYY-MM-DD; requires activity_from, kind and sort=popular
+	// exclusive UTC date; requires activity_from, kind and sort=popular
 	ActivityUntil string
 	// the previous page's next_cursor
 	Cursor string

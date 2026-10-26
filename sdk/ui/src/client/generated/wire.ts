@@ -542,6 +542,7 @@ export interface ContentModel {
 }
 
 export interface ContentPage {
+  popularity?: PopularitySnapshot;
   contents: Card[];
   summary?: ListingSummary;
   next_cursor?: string;
@@ -715,6 +716,7 @@ export interface EngagementSnapshot {
   content_id: string;
   version_id?: string;
   visit_id: string;
+  origin_click_id?: string;
   segment_id: string;
   revision: number;
   activity_token: string;
@@ -941,6 +943,7 @@ export interface ExposureInput {
   stage: string;
   revision?: number;
   query_id?: string;
+  search_query?: string;
   surface?: string;
   ranker?: string;
   language?: string;
@@ -1147,6 +1150,7 @@ export interface Kind {
   attributes?: Record<string, Attribute>;
   channel?: ChannelPolicy;
   sort?: string;
+  popularity?: PopularityBucket[];
   locked?: Locked;
   download?: Download;
 }
@@ -1526,6 +1530,34 @@ export interface PollVote {
   option_id: string;
 }
 
+export interface PopularityBucket {
+  id: string;
+  label?: string;
+  days?: number;
+  from?: string;
+  until?: string;
+  all?: boolean;
+  scopes?: PopularityScope[];
+  refresh_every?: number;
+}
+
+export interface PopularityScope {
+  domain?: string;
+  language?: string;
+}
+
+export interface PopularitySnapshot {
+  bucket: string;
+  ready: boolean;
+  window_from?: string;
+  window_until?: string;
+  from?: string;
+  until?: string;
+  available_from?: string;
+  computed_at?: string;
+  provisional?: boolean;
+}
+
 export interface PresetRule {
   kind: string;
   name: string;
@@ -1784,6 +1816,7 @@ export interface Rule {
 }
 
 export interface SearchPage {
+  popularity?: PopularitySnapshot;
   contents: Card[];
   summary?: ListingSummary;
   next_cursor?: string;

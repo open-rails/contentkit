@@ -1,0 +1,41 @@
+[
+  {
+    "Name": "prepare_initial",
+    "WallSeconds": 34.859686694,
+    "Report": {
+      "Prepared": 1,
+      "Reused": 0
+    }
+  },
+  {
+    "Name": "reuse_closed_day",
+    "WallSeconds": 0.014383308,
+    "Report": {
+      "Prepared": 0,
+      "Reused": 1
+    }
+  },
+  {
+    "Name": "reuse_after_replay",
+    "WallSeconds": 0.024757796,
+    "Report": {
+      "Prepared": 0,
+      "Reused": 1
+    }
+  },
+  {
+    "Name": "explicit_rebuild_after_replay",
+    "WallSeconds": 47.112882897,
+    "Report": {
+      "Prepared": 1,
+      "Reused": 0
+    }
+  },
+  {
+    "Name": "rank",
+    "WallSeconds": 0.233158498,
+    "Report": {
+      "results": 60000
+    }
+  }
+]

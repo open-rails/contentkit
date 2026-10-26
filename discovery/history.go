@@ -281,7 +281,7 @@ func (s *Service) RecordSignals(ctx context.Context, actor access.Actor, in Sign
 		if x.Type != TypeClick {
 			return fmt.Errorf("%w: only click signals are accepted; reading uses /engagement", ErrInvalid)
 		}
-		sig := signal.Signal{ContentRef: ref, Subject: subject, Type: TypeClick, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC()}
+		sig := signal.Signal{ContentRef: ref.WithVersion(x.VersionID), Subject: subject, Type: TypeClick, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC()}
 		if receipt != nil {
 			sig.Access = &receipt.Access
 			sig.OccurredAt = receipt.Access.ObservedAt
@@ -367,9 +367,11 @@ type ExposureInput struct {
 	Stage    string `json:"stage"`
 	Revision uint64 `json:"revision,omitempty"`
 	QueryID  string `json:"query_id,omitempty"`
-	Surface  string `json:"surface,omitempty"`
-	Ranker   string `json:"ranker,omitempty"`
-	Language string `json:"language,omitempty"`
+	// SearchQuery is normalized like recent search history, at most 200 runes.
+	SearchQuery string `json:"search_query,omitempty"`
+	Surface     string `json:"surface,omitempty"`
+	Ranker      string `json:"ranker,omitempty"`
+	Language    string `json:"language,omitempty"`
 	// OccurredAt is the render's time; now by default.
 	OccurredAt *time.Time  `json:"occurred_at,omitempty"`
 	Shown      []Placement `json:"shown"`
@@ -403,13 +405,19 @@ func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Ex
 	}
 	var ids []string
 	for _, e := range in.Exposures {
+		if e.SearchQuery != "" {
+			if _, ok := searchKey(e.SearchQuery); !ok {
+				return fmt.Errorf("%w: search query must contain 1-%d characters", ErrInvalid, maxSearchQuery)
+			}
+		}
 		switch signal.ExposureStage(e.Stage) {
 		case signal.StageServed, signal.StageRendered, signal.StageVisible:
 		default:
 			return fmt.Errorf("%w: stage %q is served, rendered or visible", ErrInvalid, e.Stage)
 		}
-		if e.RenderID == "" || len(e.Shown) == 0 || len(e.Shown) > signal.MaxShownPerExposure {
-			return fmt.Errorf("%w: an exposure needs a render_id and 1-%d placements", ErrInvalid, signal.MaxShownPerExposure)
+		emptySearch := e.Stage == string(signal.StageRendered) && e.Surface == signal.SurfaceSearch && e.QueryID != "" && strings.TrimSpace(e.SearchQuery) != ""
+		if e.RenderID == "" || len(e.Shown) == 0 && !emptySearch || len(e.Shown) > signal.MaxShownPerExposure {
+			return fmt.Errorf("%w: an exposure needs a render_id and 1-%d placements, or a completed empty search", ErrInvalid, signal.MaxShownPerExposure)
 		}
 		if err := identifiers(e.RenderID, e.QueryID, e.Surface, e.Ranker, e.Language); err != nil {
 			return err
@@ -434,7 +442,7 @@ func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Ex
 	}
 	out := make([]signal.Exposure, 0, len(in.Exposures))
 	for _, e := range in.Exposures {
-		x := signal.Exposure{RenderID: e.RenderID, Stage: signal.ExposureStage(e.Stage), Revision: e.Revision, QueryID: e.QueryID, Surface: e.Surface,
+		x := signal.Exposure{RenderID: e.RenderID, Stage: signal.ExposureStage(e.Stage), Revision: e.Revision, QueryID: e.QueryID, SearchQuery: e.SearchQuery, Surface: e.Surface,
 			Ranker: e.Ranker, Language: e.Language, Subject: subject, OccurredAt: s.now().UTC()}
 		if e.OccurredAt != nil {
 			x.OccurredAt = e.OccurredAt.UTC()
@@ -457,7 +465,7 @@ func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in Ex
 			}
 			x.Shown = append(x.Shown, placement)
 		}
-		if len(x.Shown) > 0 {
+		if len(x.Shown) > 0 || len(e.Shown) == 0 {
 			out = append(out, x)
 		}
 	}

@@ -80,7 +80,10 @@ export const discovery: typeof en = {
     removeRecent: "„{q}“ entfernen",
   },
   listing: {
-    activityRange: "Aktivität von {from} bis vor {until} (UTC)",
+    preparingPopularity: "Diese Rangliste wird vorbereitet.",
+    provisionalPopularity: "Die jüngsten Aktivitäten werden noch aktualisiert.",
+    activityAvailableFrom: "Aktivitätsdaten sind ab {from} (UTC) verfügbar.",
+    activityRange: "Aktivität vom {from} bis einschließlich {until} (UTC)",
     popularPeriod: "Beliebtheitszeitraum",
     pastDays_one: "Letzter {count} Tag",
     pastDays_other: "Letzte {count} Tage",
