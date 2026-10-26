@@ -399,6 +399,8 @@
         "TestCopiedPageChapterPlacement",
         "TestHiddenChapterStartKeepsPublishing",
         "TestHiddenChapterStartSpreadWaits",
+        "TestHiddenPageCopiesWaitForTheirChapter",
+        "TestBlankAndLastChapterStarts",
         "TestIndependentChaptersSkipUnreleasedMiddle",
         "TestCompletedPublicationReader",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange"

@@ -275,8 +275,8 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 		if err != nil {
 			return nil, err
 		}
-		starts, holds := readableStarts(k, groups[t.Version], sourcePages(k, m))
-		chapters, err := resolveChapterStarts(starts, ordering)
+		holds := standIns(groups[t.Version], sourcePages(k, m))
+		chapters, err := resolveChapterStarts(readableStarts(groups[t.Version], sourcePages(k, m)), ordering)
 		if err != nil {
 			return nil, err
 		}

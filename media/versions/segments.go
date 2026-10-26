@@ -91,9 +91,7 @@ func resolveChapterStarts(segs []segment, pages []page) ([]segment, error) {
 // readableStarts moves a marker whose source page is excluded from reading to
 // the next included page, so every included page keeps its chapter. A moved
 // chapter left with no included page is dropped; other markers pass through.
-// An included page standing in for a hidden start (its duplicate or covering
-// spread) is returned with that start's chapter: it also waits for its date.
-func readableStarts(k *media.Kind, segs []segment, source []media.File) ([]segment, map[string][]segment) {
+func readableStarts(segs []segment, source []media.File) []segment {
 	at := make(map[string]int, len(source))
 	next := make([]string, len(source))
 	following := ""
@@ -104,7 +102,6 @@ func readableStarts(k *media.Kind, segs []segment, source []media.File) ([]segme
 		}
 		next[i] = following
 	}
-	holds := map[string][]segment{}
 	from := make([]int, len(segs))
 	owner := map[string]int{}
 	out := slices.Clone(segs)
@@ -112,13 +109,6 @@ func readableStarts(k *media.Kind, segs []segment, source []media.File) ([]segme
 		g := &out[i]
 		from[i] = -1
 		if index, ok := at[g.StartPage]; ok {
-			if d := pageMeta(source[index]).Decision; d != nil && !media.PageIncluded(source[index]) {
-				for _, f := range source {
-					if media.PageIncluded(f) && slices.Contains(d.Related, k.PageID(f)) {
-						holds[f.Path] = append(holds[f.Path], segs[i])
-					}
-				}
-			}
 			from[i], g.StartPage = index, next[index]
 			if prior, taken := owner[g.StartPage]; !taken || from[prior] < index {
 				owner[g.StartPage] = i
@@ -131,7 +121,76 @@ func readableStarts(k *media.Kind, segs []segment, source []media.File) ([]segme
 			keep = append(keep, g)
 		}
 	}
-	return keep, holds
+	return keep
+}
+
+// standIns maps each included page showing an excluded page's content (the
+// same bytes or pixels, or a spread overlapping its page range) to the
+// excluded page's chapter, by source order. It also waits for that date.
+func standIns(segs []segment, source []media.File) map[string][]segment {
+	at := make(map[string]int, len(source))
+	for i, f := range source {
+		at[f.Path] = i
+	}
+	var markers []segment
+	for _, g := range segs {
+		if _, ok := at[g.StartPage]; ok {
+			markers = append(markers, g)
+		}
+	}
+	slices.SortFunc(markers, func(a, b segment) int { return at[a.StartPage] - at[b.StartPage] })
+	keys := func(f media.File) []string {
+		digest := pageDigest(f)
+		out := []string{"bytes:" + digest}
+		if a := pageMeta(f).Analysis; a != nil && a.Recipe == media.PageAnalysisRecipe && a.Status == "complete" && a.SourceSHA256 == digest && a.PixelSHA256 != "" {
+			out = append(out, "pixels:"+a.PixelSHA256)
+		}
+		return out
+	}
+	shown := map[string][]string{}
+	var spreads []media.File
+	for _, f := range source {
+		if !media.PageIncluded(f) {
+			continue
+		}
+		for _, key := range keys(f) {
+			shown[key] = append(shown[key], f.Path)
+		}
+		if span := pageMeta(f).Span; span != nil && span.From < span.To {
+			spreads = append(spreads, f)
+		}
+	}
+	holds := map[string][]segment{}
+	for i, f := range source {
+		chapter := -1
+		for j, g := range markers {
+			if at[g.StartPage] <= i {
+				chapter = j
+			}
+		}
+		if media.PageIncluded(f) || chapter < 0 {
+			continue
+		}
+		held := map[string]bool{}
+		for _, key := range keys(f) {
+			if !strings.HasSuffix(key, ":") {
+				for _, path := range shown[key] {
+					held[path] = true
+				}
+			}
+		}
+		if span := pageMeta(f).Span; span != nil {
+			for _, spread := range spreads {
+				if over := pageMeta(spread).Span; over.From <= span.To && span.From <= over.To {
+					held[spread.Path] = true
+				}
+			}
+		}
+		for path := range held {
+			holds[path] = append(holds[path], markers[chapter])
+		}
+	}
+	return holds
 }
 
 func sourcePageHash(p page) string {

@@ -35,8 +35,7 @@ func (s *Service) inspectionPlan(ctx context.Context, actor access.Actor, k *med
 	if err != nil {
 		return nil, err
 	}
-	starts, _ := readableStarts(k, groups[target.Version], sourcePages(k, grant.Manifest))
-	chapters, err := resolveChapterStarts(starts, pages)
+	chapters, err := resolveChapterStarts(readableStarts(groups[target.Version], sourcePages(k, grant.Manifest)), pages)
 	if err != nil {
 		return nil, err
 	}
