@@ -27,6 +27,9 @@ type lostChannelReplies struct {
 func (s *lostChannelReplies) ContentKitScope() (string, string) {
 	return s.scope.TenantID.String(), s.scope.AppID.String()
 }
+func (s *lostChannelReplies) HoldingScopes(ctx context.Context, user string, kinds, ids []string) (map[string][]string, error) {
+	return s.Scopes.(entities.LocalScopes).HoldingScopes(ctx, user, kinds, ids)
+}
 func (s *lostChannelReplies) Provision(ctx context.Context, in []entities.Scope) error {
 	if err := s.Scopes.Provision(ctx, in); err != nil {
 		return err

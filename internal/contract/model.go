@@ -326,6 +326,9 @@ func newModel(fsys fs.FS, list []httpapi.Spec) (*model, error) {
 			if len(types) > 1 {
 				name = strings.ToUpper(pkgName(t)[:1]) + pkgName(t)[1:] + base
 			}
+			if pkgName(t) == "discovery" && base == "Card" {
+				name = "Card"
+			}
 			if pkgName(t) == "channels" {
 				if mapped, ok := map[string]string{"Card": "ChannelCard", "Page": "ChannelPage", "Mine": "MyChannel", "MyPage": "MyChannelPage", "Input": "ChannelInput", "Update": "ChannelUpdate", "Repost": "ChannelRepost"}[base]; ok {
 					name = mapped

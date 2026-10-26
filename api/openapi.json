@@ -13842,6 +13842,97 @@
           }
         }
       },
+      "Card": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "cover": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicRendition"
+            }
+          },
+          "version": {
+            "$ref": "#/components/schemas/CardVersion"
+          },
+          "entities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Chip"
+              }
+            }
+          },
+          "channel": {
+            "$ref": "#/components/schemas/ChannelCard"
+          },
+          "repost": {
+            "$ref": "#/components/schemas/ChannelRepost"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/Counts"
+          },
+          "access": {
+            "$ref": "#/components/schemas/CardAccess"
+          },
+          "viewer": {
+            "$ref": "#/components/schemas/ViewerState"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "ranking": {
+            "$ref": "#/components/schemas/ContentRanking"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "excerpt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "code",
+          "path",
+          "title",
+          "language",
+          "cover",
+          "version",
+          "entities",
+          "counts",
+          "access",
+          "attributes"
+        ]
+      },
       "CardAccess": {
         "type": "object",
         "properties": {
@@ -15029,7 +15120,7 @@
           "contents": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DiscoveryCard"
+              "$ref": "#/components/schemas/Card"
             }
           },
           "summary": {
@@ -15448,97 +15539,6 @@
             "type": "string"
           }
         }
-      },
-      "DiscoveryCard": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "language": {
-            "type": "string"
-          },
-          "cover": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PublicRendition"
-            }
-          },
-          "version": {
-            "$ref": "#/components/schemas/CardVersion"
-          },
-          "entities": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "array",
-              "items": {
-                "$ref": "#/components/schemas/Chip"
-              }
-            }
-          },
-          "channel": {
-            "$ref": "#/components/schemas/ChannelCard"
-          },
-          "repost": {
-            "$ref": "#/components/schemas/ChannelRepost"
-          },
-          "counts": {
-            "$ref": "#/components/schemas/Counts"
-          },
-          "access": {
-            "$ref": "#/components/schemas/CardAccess"
-          },
-          "viewer": {
-            "$ref": "#/components/schemas/ViewerState"
-          },
-          "published_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "attributes": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "ranking": {
-            "$ref": "#/components/schemas/ContentRanking"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "deleted": {
-            "type": "boolean"
-          },
-          "excerpt": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "code",
-          "path",
-          "title",
-          "language",
-          "cover",
-          "version",
-          "entities",
-          "counts",
-          "access",
-          "attributes"
-        ]
       },
       "Download": {
         "type": "object",
@@ -17042,7 +17042,7 @@
         "type": "object",
         "properties": {
           "content": {
-            "$ref": "#/components/schemas/DiscoveryCard"
+            "$ref": "#/components/schemas/Card"
           },
           "entity": {
             "$ref": "#/components/schemas/EntityCard"
@@ -19096,7 +19096,7 @@
           "contents": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DiscoveryCard"
+              "$ref": "#/components/schemas/Card"
             }
           },
           "filtered_count": {
@@ -19345,7 +19345,7 @@
           "contents": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DiscoveryCard"
+              "$ref": "#/components/schemas/Card"
             }
           },
           "summary": {
@@ -19679,7 +19679,7 @@
           "contents": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DiscoveryCard"
+              "$ref": "#/components/schemas/Card"
             }
           },
           "entities": {
