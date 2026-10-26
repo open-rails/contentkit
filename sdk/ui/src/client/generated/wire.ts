@@ -213,7 +213,6 @@ export interface Card {
   viewer?: ViewerState;
   published_at?: string;
   attributes: Record<string, unknown>;
-  ranking?: ContentRanking;
   updated_at?: string;
   deleted?: boolean;
   excerpt?: string;
@@ -456,7 +455,6 @@ export interface ContentPage {
   contents: Card[];
   summary?: ListingSummary;
   next_cursor?: string;
-  ranking?: RankingInfo;
 }
 
 export interface ContentPatch {
@@ -468,12 +466,6 @@ export interface ContentPatch {
   attributes?: Record<string, unknown>;
   creators?: Creator[];
   revision?: number;
-}
-
-export interface ContentRanking {
-  score: number;
-  participation: number;
-  adjusted_participation: number;
 }
 
 export interface ContentRecord {
@@ -1570,15 +1562,6 @@ export interface PublishInput {
   publish_at?: string;
 }
 
-export interface RankingInfo {
-  policy: string;
-  mode: string;
-  requested_from?: string;
-  requested_until?: string;
-  covered_from?: string;
-  covered_until?: string;
-}
-
 export interface ReactionCounts {
   likes?: number;
   dislikes?: number;
@@ -1749,7 +1732,6 @@ export interface SearchPage {
   contents: Card[];
   summary?: ListingSummary;
   next_cursor?: string;
-  ranking?: RankingInfo;
   entities?: EntityCard[];
 }
 

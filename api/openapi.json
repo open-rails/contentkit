@@ -12376,9 +12376,6 @@
             "type": "object",
             "additionalProperties": {}
           },
-          "ranking": {
-            "$ref": "#/components/schemas/ContentRanking"
-          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -13252,9 +13249,6 @@
           },
           "next_cursor": {
             "type": "string"
-          },
-          "ranking": {
-            "$ref": "#/components/schemas/RankingInfo"
           }
         },
         "required": [
@@ -13296,25 +13290,6 @@
             "type": "integer"
           }
         }
-      },
-      "ContentRanking": {
-        "type": "object",
-        "properties": {
-          "score": {
-            "type": "number"
-          },
-          "participation": {
-            "type": "number"
-          },
-          "adjusted_participation": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "score",
-          "participation",
-          "adjusted_participation"
-        ]
       },
       "ContentRecord": {
         "type": "object",
@@ -16873,33 +16848,6 @@
           }
         }
       },
-      "RankingInfo": {
-        "type": "object",
-        "properties": {
-          "policy": {
-            "type": "string"
-          },
-          "mode": {
-            "type": "string"
-          },
-          "requested_from": {
-            "type": "string"
-          },
-          "requested_until": {
-            "type": "string"
-          },
-          "covered_from": {
-            "type": "string"
-          },
-          "covered_until": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "policy",
-          "mode"
-        ]
-      },
       "ReactionCounts": {
         "type": "object",
         "properties": {
@@ -17512,9 +17460,6 @@
           },
           "next_cursor": {
             "type": "string"
-          },
-          "ranking": {
-            "$ref": "#/components/schemas/RankingInfo"
           },
           "entities": {
             "type": "array",

@@ -91,7 +91,7 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 	}
 	var srt order
 	if custom {
-		srt, err = s.historicalOrder(ctx, o.Kind, window, o.Reader)
+		srt, err = s.historicalOrder(ctx, o.Kind, customPeriod(window), window, o.Reader)
 	} else if name, period, _ := strings.Cut(sort, ":"); name == SortPopular && o.Kind != "" && s.o.Hub.SignalsConfigured() {
 		if period == "" {
 			period = popularity.DefaultPeriod
@@ -100,7 +100,7 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 		if err != nil {
 			err = fmt.Errorf("%w: %w", ErrInvalid, err)
 		} else {
-			srt, err = s.historicalOrder(ctx, o.Kind, window, o.Reader)
+			srt, err = s.historicalOrder(ctx, o.Kind, period, window, o.Reader)
 			srt.raw = sort
 		}
 	} else {
@@ -119,12 +119,7 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 		return ContentPage{Contents: []Card{}}, err
 	}
 	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
-	for i := range cards {
-		if ranking, ok := srt.rankings[cards[i].ID]; ok {
-			cards[i].Ranking = &ranking
-		}
-	}
-	out := ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}
+	out := ContentPage{Contents: cards, NextCursor: next}
 	if err == nil && o.Summary && o.Cursor == "" {
 		out.Summary, err = s.cachedListingSummary(ctx, o.Filter, q, srt)
 	}
