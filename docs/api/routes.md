@@ -231,7 +231,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | DELETE | `/v1/me/history` | user | — | 204 — | Erases the reader's history: of one content item, one kind or everything. Query: `kind`, `content_id`. |
 | POST | `/v1/signals` | public | `Signals` | 204 — | Records explicit clicks of the signed-in reader or, signed out, the stable browser identity; actual reading and playback use POST /engagement. |
 | POST | `/v1/exposures` | public | `Exposures` | 204 — | Records result lists a client served, rendered or showed, for click attribution. |
-| GET | `/v1/me/favorites` | user | — | 200 `InteractionPage` | The content items (as their listing shows them) or groups the reader favorited, most recent first. Query: `target`, `kind`, `card_entities`, `cursor`, `limit`, `summary`, `language`, `display_language`, `mode`. |
+| GET | `/v1/me/favorites` | user | — | 200 `InteractionPage` | The content items (as their listing shows them) entities or channels the reader favorited, most recent first. Query: `target`, `kind`, `card_entities`, `cursor`, `limit`, `summary`, `language`, `display_language`, `mode`. |
 | GET | `/v1/me/searches` | public | — | 200 `RecentSearches` | The reader's recent searches, newest first, since they last cleared them; a signed-out reader names its session. Query: `session`, `limit`. |
 | DELETE | `/v1/me/searches` | public | — | 204 — | Clears the reader's recent searches: one query, or every one so far. Query: `session`, `query`. |
 | GET | `/v1/sitemap/contents` | open | — | 200 `SitemapPage` | Pages through the site's public content pages of one kind, by id, for host sitemaps: live, listed and in the request's site scope, each with every language it serves. Query: `kind`, `cursor`, `limit`. |

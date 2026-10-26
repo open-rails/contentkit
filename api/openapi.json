@@ -12540,12 +12540,12 @@
         "tags": [
           "discovery"
         ],
-        "summary": "The content items (as their listing shows them) or groups the reader favorited, most recent first.",
+        "summary": "The content items (as their listing shows them) entities or channels the reader favorited, most recent first.",
         "parameters": [
           {
             "name": "target",
             "in": "query",
-            "description": "contents (the default) or entities",
+            "description": "contents (the default), entities or channels",
             "schema": {
               "type": "string"
             }
@@ -14111,12 +14111,7 @@
             "format": "date-time"
           },
           "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "deleted",
-              "merged"
-            ]
+            "$ref": "#/components/schemas/ChannelState"
           },
           "owner_user_id": {
             "type": "string"
@@ -14380,12 +14375,7 @@
             "$ref": "#/components/schemas/Avatar"
           },
           "state": {
-            "type": "string",
-            "enum": [
-              "active",
-              "deleted",
-              "merged"
-            ]
+            "$ref": "#/components/schemas/ChannelState"
           }
         }
       },
@@ -17041,6 +17031,9 @@
       "Interaction": {
         "type": "object",
         "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/ChannelCard"
+          },
           "content": {
             "$ref": "#/components/schemas/Card"
           },
@@ -20152,6 +20145,13 @@
         },
         "required": [
           "count"
+        ]
+      },
+      "ChannelState": {
+        "type": "string",
+        "enum": [
+          "active",
+          "deleted"
         ]
       },
       "ErrorCode": {

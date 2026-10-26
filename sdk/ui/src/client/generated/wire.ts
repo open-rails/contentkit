@@ -9,6 +9,7 @@ export const MAX_SINGLE_PUT = 67108864;
 export const MIN_PART_SIZE = 8388608;
 export const MAX_PART_SIZE = 16777216;
 
+export type ChannelState = "active" | "deleted";
 export type OpName = "put" | "edit" | "move" | "rename" | "remove" | "attach" | "copy" | "frame" | "meta" | "regenerate";
 export type Access = "full" | "partial" | "none";
 export type ItemState = "ready" | "processing" | "failed";
@@ -286,7 +287,7 @@ export interface Channel {
   count: number;
   access?: EntityAccess;
   created_at: string;
-  state: "active" | "deleted" | "merged";
+  state: ChannelState;
   owner_user_id?: string;
   auth_scope?: string;
   revision: number;
@@ -361,7 +362,7 @@ export interface ChannelUpdate {
   text?: EntitiesText[];
   cover?: EntitiesCover;
   avatar?: Avatar;
-  state?: "active" | "deleted" | "merged";
+  state?: ChannelState;
 }
 
 export interface Channels {
@@ -1166,6 +1167,7 @@ export interface InlineImage {
 }
 
 export interface Interaction {
+  channel?: ChannelCard;
   content?: Card;
   entity?: EntityCard;
   value: number;

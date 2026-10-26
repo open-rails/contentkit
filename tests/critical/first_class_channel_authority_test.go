@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -90,6 +91,31 @@ func TestFirstClassChannelRepostAuthority(t *testing.T) {
 		if still.ID != original.ID || len(still.Versions) != 2 {
 			t.Fatal("removing repost modified original versions")
 		}
+	})
+	t.Run("pending_source_channel_is_not_readable_or_repostable", func(t *testing.T) {
+		_, err := destinationClient.PutChannelRepost(t.Context(), destination.ID, original.ID)
+		must(t, err)
+		table := pgx.Identifier{w.schema, "content_entities"}.Sanitize()
+		_, err = w.pool.Exec(t.Context(), "UPDATE "+table+" SET auth_scope=NULL,revision=revision+1 WHERE tenant_id=$1 AND id=$2", a.cfg.Scope.AppID.String(), source.ID)
+		must(t, err)
+		restore := func() {
+			_, err := w.pool.Exec(t.Context(), "UPDATE "+table+" SET auth_scope=id,revision=revision+1 WHERE tenant_id=$1 AND id=$2", a.cfg.Scope.AppID.String(), source.ID)
+			must(t, err)
+		}
+		defer restore()
+		_, err = a.client("").GetContent(t.Context(), original.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		_, err = a.client("").GetVersion(t.Context(), original.Versions[0].ID, ck.GetVersionQuery{})
+		requireError(t, err, 404, "not_found")
+		for _, reader := range []*ck.Client{a.client(""), destinationClient, a.engine.Client()} {
+			feed, err := reader.GetChannelContents(t.Context(), destination.ID, ck.GetChannelContentsQuery{})
+			must(t, err)
+			if len(feed.Contents) != 0 {
+				t.Fatalf("pending original leaked in destination feed: %+v", feed.Contents)
+			}
+		}
+		_, err = a.engine.Client().PutChannelRepost(t.Context(), destination.ID, original.ID)
+		requireError(t, err, 404, "not_found")
 	})
 	t.Run("drafts_and_withdrawn_originals_never_appear_in_public_feeds", func(t *testing.T) {
 		draft := create("Private draft")
