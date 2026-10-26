@@ -444,8 +444,8 @@ func TestDiscoveryVisibility(t *testing.T) {
 				}
 			})
 		}
-		_, ownerToken, owned := ownedEntity(t, w, a, "Code visibility owner")
-		ownedDetail, err := a.client(ownerToken).GetEntity(t.Context(), string(owned.ID), ck.GetEntityQuery{})
+		_, ownerToken, owned := ownedChannel(t, w, a, "Code visibility owner")
+		ownedDetail, err := a.client(ownerToken).GetChannel(t.Context(), string(owned.ID), ck.GetChannelQuery{})
 		must(t, err)
 		ownerLink, err := a.client(ownerToken).GetCode(t.Context(), ownedDetail.Code, ck.GetCodeQuery{})
 		must(t, err)

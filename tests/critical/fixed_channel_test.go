@@ -10,6 +10,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
@@ -21,9 +22,9 @@ import (
 // for the ordinary durable publication worker.
 func TestFixedSiteChannelPolicy(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) {
-		cfg.Content.EntityKinds["official"] = kinds.EntityKind{Route: "official", Owner: "site"}
+		cfg.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
 		article := cfg.Content.Kinds["article"]
-		article.OwnerEntity = &kinds.EntityRef{Kind: "official", Slug: "blog"}
+		article.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
 		article.AccessLevels = []string{"public"}
 		cfg.Content.Kinds["article"] = article
 	})
@@ -36,13 +37,13 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	input := catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Official news", Body: "A free public announcement"}}}
 	_, err = staff.PostContents(t.Context(), input)
 	requireError(t, err, 503, "unavailable")
-	createChannel := func(app *application, slug string) entities.Entity {
-		result, err := app.engine.Client().PostEntities(t.Context(), []entities.EntityInput{{Kind: "official", Slug: slug, Names: []entities.Name{{Language: "en", Kind: "name", Name: slug}}}})
+	createChannel := func(app *application, slug string) channels.Channel {
+		result, err := app.engine.Client().PostChannels(t.Context(), channels.Input{Slug: slug, Names: []entities.Name{{Language: "en", Kind: "name", Name: slug}}})
 		must(t, err)
-		if len(result) != 1 {
+		if result.ID == "" {
 			t.Fatalf("missing channel: %+v", result)
 		}
-		return result[0]
+		return result
 	}
 	foreign := createChannel(w.apps[1], "blog")
 	_, err = staff.PostContents(t.Context(), input)
@@ -51,7 +52,7 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	other := createChannel(a, "other")
 	for _, owner := range []string{string(other.ID), string(foreign.ID)} {
 		wrong := input
-		wrong.OwnerEntityID = owner
+		wrong.ChannelID = owner
 		_, err := staff.PostContents(t.Context(), wrong)
 		requireError(t, err, 400, "invalid_request")
 	}
@@ -60,7 +61,7 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	requireError(t, err, 403, "forbidden")
 	item, err := staff.PostContents(t.Context(), input)
 	must(t, err)
-	if item.OwnerEntityID != string(official.ID) {
+	if item.ChannelID != string(official.ID) {
 		t.Fatalf("wrong fixed owner: %+v", item)
 	}
 	startPublicationRuntime(t, a)
@@ -69,7 +70,7 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	awaitEditionPublication(t, a, staff, item.ID, item.Versions[0].ID)
 	got, err := public.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 	must(t, err)
-	if got.OwnerEntityID != string(official.ID) || !got.Decision.Allowed || got.Body != "A free public announcement" {
+	if got.ChannelID != string(official.ID) || !got.Decision.Allowed || got.Body != "A free public announcement" {
 		t.Fatalf("official post not public: %+v", got)
 	}
 	restricted := input
@@ -80,7 +81,7 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	requireError(t, err, 400, "invalid_request")
 	batch := importer.Batch{Source: "fixed-channel-test", Contents: []importer.ContentRecord{
 		{ExternalID: "valid", Kind: "article", State: catalog.StatePublished, Text: input.Text},
-		{ExternalID: "wrong-owner", Kind: "article", State: catalog.StatePublished, Text: input.Text, OwnerEntity: &importer.Ref{ID: string(other.ID)}},
+		{ExternalID: "wrong-owner", Kind: "article", State: catalog.StatePublished, Text: input.Text, Channel: &importer.Ref{ID: string(other.ID)}},
 		{ExternalID: "paid", Kind: "article", State: catalog.StatePublished, Text: input.Text, Access: restricted.Access},
 	}}
 	imported, err := staff.PostImport(t.Context(), batch)
@@ -97,14 +98,14 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	awaitEditionPublication(t, a, staff, importedID, managed.Versions[0].ID)
 	got, err = public.GetContent(t.Context(), importedID, ck.GetContentQuery{})
 	must(t, err)
-	if got.OwnerEntityID != string(official.ID) || !got.Decision.Allowed {
+	if got.ChannelID != string(official.ID) || !got.Decision.Allowed {
 		t.Fatalf("import did not apply fixed free channel: %+v", got)
 	}
 }
 
 func TestFixedSiteChannelMigration(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) {
-		cfg.Content.EntityKinds["official"] = kinds.EntityKind{Route: "official", Owner: "site"}
+		cfg.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
 	})
 	a := w.apps[0]
 	admin := a.engine.Client()
@@ -115,50 +116,50 @@ func TestFixedSiteChannelMigration(t *testing.T) {
 	cfg := a.cfg
 	cfg.Content.Kinds = maps.Clone(cfg.Content.Kinds)
 	article := cfg.Content.Kinds["article"]
-	article.OwnerEntity = &kinds.EntityRef{Kind: "official", Slug: "blog"}
+	article.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
 	article.AccessLevels = []string{"public"}
 	cfg.Content.Kinds["article"] = article
-	err = ck.MigratePostgres(t.Context(), w.pool, cfg)
+	err = ck.MigratePostgres(t.Context(), w.pool, cfg, ck.MigrationOptions{Scopes: a.deps.Scopes})
 	if err == nil {
 		t.Fatal("migration silently opened private content")
 	}
-	page, err := admin.GetEntities(t.Context(), ck.GetEntitiesQuery{Kind: "official"})
+	page, err := admin.GetChannels(t.Context(), ck.GetChannelsQuery{})
 	must(t, err)
-	if len(page.Entities) != 0 {
+	if len(page.Channels) != 0 {
 		t.Fatal("rejected migration partially seeded the channel")
 	}
 	before, err := admin.GetContent(t.Context(), free.ID, ck.GetContentQuery{})
 	must(t, err)
-	if before.OwnerEntityID != "" {
+	if before.ChannelID != "" {
 		t.Fatal("rejected migration partially changed ownership")
 	}
 	_, err = admin.PatchContent(t.Context(), paid.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.Public}})
 	must(t, err)
 	_, err = admin.PatchContentVersion(t.Context(), paid.ID, paid.Versions[0].ID, catalog.VersionInput{Access: &access.Rule{Level: access.Public}})
 	must(t, err)
-	err = ck.MigratePostgres(t.Context(), w.pool, cfg)
+	err = ck.MigratePostgres(t.Context(), w.pool, cfg, ck.MigrationOptions{Scopes: a.deps.Scopes})
 	must(t, err)
-	page, err = admin.GetEntities(t.Context(), ck.GetEntitiesQuery{Kind: "official"})
+	page, err = admin.GetChannels(t.Context(), ck.GetChannelsQuery{})
 	must(t, err)
-	if len(page.Entities) != 1 {
+	if len(page.Channels) != 1 {
 		t.Fatalf("fixed channel missing: %+v", page)
 	}
-	owner := string(page.Entities[0].ID)
+	owner := string(page.Channels[0].ID)
 	for _, id := range []string{free.ID, paid.ID} {
 		got, err := admin.GetContent(t.Context(), id, ck.GetContentQuery{})
 		must(t, err)
-		if got.OwnerEntityID != owner {
+		if got.ChannelID != owner {
 			t.Fatalf("wrong migrated owner: %+v", got)
 		}
 	}
 	other, err := w.apps[1].engine.Client().GetContent(t.Context(), foreign.ID, ck.GetContentQuery{})
 	must(t, err)
-	if other.OwnerEntityID != "" {
+	if other.ChannelID != "" {
 		t.Fatal("migration crossed app scope")
 	}
 	after, err := admin.GetContent(t.Context(), free.ID, ck.GetContentQuery{})
 	must(t, err)
-	err = ck.MigratePostgres(t.Context(), w.pool, cfg)
+	err = ck.MigratePostgres(t.Context(), w.pool, cfg, ck.MigrationOptions{Scopes: a.deps.Scopes})
 	must(t, err)
 	again, err := admin.GetContent(t.Context(), free.ID, ck.GetContentQuery{})
 	must(t, err)
@@ -171,14 +172,14 @@ func TestFixedSiteChannelMigration(t *testing.T) {
 // personal editing grant after the staff role is revoked.
 func TestFixedSiteChannelStaffRevocation(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) {
-		cfg.Content.EntityKinds["official"] = kinds.EntityKind{Route: "official", Owner: "site"}
+		cfg.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
 		kind := cfg.Content.Kinds["article"]
-		kind.OwnerEntity = &kinds.EntityRef{Kind: "official", Slug: "blog"}
+		kind.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
 		kind.AccessLevels = []string{"public"}
 		cfg.Content.Kinds["article"] = kind
 	})
 	a := w.apps[0]
-	err := ck.MigratePostgres(t.Context(), w.pool, a.cfg)
+	err := ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{Scopes: a.deps.Scopes})
 	must(t, err)
 	author, token := w.person(t, 0)
 	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(author.ID), w.writer)
@@ -224,9 +225,9 @@ func TestFixedSiteChannelStaffRevocation(t *testing.T) {
 // A fixed destination does not dictate which AuthKit roles may publish there.
 func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) {
-		cfg.Content.EntityKinds["channel"] = kinds.EntityKind{Route: "channels", Owner: "site", AuthScope: true, Entitled: true}
+		cfg.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels", Entitled: true}
 		kind := cfg.Content.Kinds["article"]
-		kind.OwnerEntity = &kinds.EntityRef{Kind: "channel", Slug: "blog"}
+		kind.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
 		kind.AccessLevels = []string{"public"}
 		cfg.Content.Kinds["article"] = kind
 	})
@@ -234,29 +235,29 @@ func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 	if err := ck.MigratePostgres(t.Context(), w.pool, a.cfg); err == nil {
 		t.Fatal("migration accepted a missing authorization provider")
 	}
-	channels, err := a.engine.Client().GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+	channelList, err := a.engine.Client().GetManageChannels(t.Context(), ck.GetManageChannelsQuery{})
 	must(t, err)
-	if len(channels.Entities) != 0 {
+	if len(channelList.Channels) != 0 {
 		t.Fatal("refused scope provisioning left a channel")
 	}
-	create := func(app *application) entities.Entity {
+	create := func(app *application) channels.Channel {
 		must(t, ck.MigratePostgres(t.Context(), w.pool, app.cfg, ck.MigrationOptions{Scopes: app.deps.Scopes}))
-		made, err := app.engine.Client().GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+		made, err := app.engine.Client().GetManageChannels(t.Context(), ck.GetManageChannelsQuery{})
 		must(t, err)
-		if len(made.Entities) != 1 {
+		if len(made.Channels) != 1 {
 			t.Fatalf("missing fixed channel: %+v", made)
 		}
-		detail, err := app.engine.Client().GetManageEntity(t.Context(), string(made.Entities[0].ID), ck.GetManageEntityQuery{})
+		detail, err := app.engine.Client().GetManageChannel(t.Context(), string(made.Channels[0].ID), ck.GetManageChannelQuery{})
 		must(t, err)
 		if detail.AuthScope == "" || detail.OwnerUserID != "" {
 			t.Fatalf("site scope not provisioned through AuthKit: %+v", detail)
 		}
-		return detail.Entity
+		return detail
 	}
 	channel, foreign := create(a), create(w.apps[1])
-	scope, err := ckauth.EntityScopeID(*a.cfg.Scope, channel.AuthScope)
+	scope, err := ckauth.ChannelScopeID(*a.cfg.Scope, channel.AuthScope)
 	must(t, err)
-	foreignScope, err := ckauth.EntityScopeID(*w.apps[1].cfg.Scope, foreign.AuthScope)
+	foreignScope, err := ckauth.ChannelScopeID(*w.apps[1].cfg.Scope, foreign.AuthScope)
 	must(t, err)
 	if scope == foreignScope {
 		t.Fatal("separate apps share an authorization group")
@@ -274,7 +275,7 @@ func TestFixedSiteChannelAuthorizationScope(t *testing.T) {
 	authtest.GrantRole(t, w.tenant[0], iam.GroupByID(scope), iam.UserSubject(member.ID), w.channelWriter)
 	post, err := writer.PostContents(t.Context(), input)
 	must(t, err)
-	if post.OwnerEntityID != string(channel.ID) {
+	if post.ChannelID != string(channel.ID) {
 		t.Fatal("channel-scoped writer escaped the fixed destination")
 	}
 	startPublicationRuntime(t, a)

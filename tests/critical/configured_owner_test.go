@@ -17,6 +17,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -50,15 +51,15 @@ func (s configuredScopes) Provision(ctx context.Context, groups []entities.Scope
 
 func TestConfiguredOwnerProvisioning(t *testing.T) {
 	w := newWorld(t, func(c *ck.Config) {
-		c.Content.EntityKinds["channel"] = kinds.EntityKind{Route: "channels", Owner: "site", AuthScope: true}
+		c.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
 	})
 	a := w.apps[0]
 	admin := a.engine.Client()
 	// An ordinary creator-selected model has no fixed owner to invent.
 	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
-	page, err := admin.GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+	page, err := admin.GetManageChannels(t.Context(), ck.GetManageChannelsQuery{})
 	must(t, err)
-	if len(page.Entities) != 0 {
+	if len(page.Channels) != 0 {
 		t.Fatal("migration invented an undeclared channel")
 	}
 	post, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Existing", Body: "Preserve this body"}}})
@@ -67,7 +68,7 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	cfg.Content.Kinds = maps.Clone(cfg.Content.Kinds)
 	for _, name := range []string{"article", "gallery"} {
 		kind := cfg.Content.Kinds[name]
-		kind.OwnerEntity = &kinds.EntityRef{Kind: "channel", Slug: "blog"}
+		kind.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
 		cfg.Content.Kinds[name] = kind
 	}
 	var queuedBefore int
@@ -77,9 +78,9 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 			t.Fatal("missing/foreign provider was accepted")
 		}
 	}
-	page, err = admin.GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+	page, err = admin.GetManageChannels(t.Context(), ck.GetManageChannelsQuery{})
 	must(t, err)
-	if len(page.Entities) != 0 {
+	if len(page.Channels) != 0 {
 		t.Fatal("provider preflight wrote an entity")
 	}
 
@@ -105,23 +106,23 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	}
 	retained, err := admin.GetContent(ctx, post.ID, ck.GetContentQuery{})
 	must(t, err)
-	if retained.OwnerEntityID != "" || retained.Body != post.Body {
+	if retained.ChannelID != "" || retained.Body != post.Body {
 		t.Fatal("failed provisioning attached or changed existing content")
 	}
-	groupID, err := ckauth.EntityScopeID(*cfg.Scope, id)
+	groupID, err := ckauth.ChannelScopeID(*cfg.Scope, id)
 	must(t, err)
 	group, err := w.auth.Group(ctx, iam.GroupByID(groupID))
 	must(t, err)
 	provider.after = nil
 	must(t, ck.MigratePostgres(ctx, pool, cfg, ck.MigrationOptions{Scopes: provider}))
-	page, err = admin.GetManageEntities(ctx, ck.GetManageEntitiesQuery{Kind: "channel"})
+	page, err = admin.GetManageChannels(ctx, ck.GetManageChannelsQuery{})
 	must(t, err)
-	if len(page.Entities) != 1 || string(page.Entities[0].ID) != id {
+	if len(page.Channels) != 1 || string(page.Channels[0].ID) != id {
 		t.Fatal("retry changed the reserved identity or duplicated a shared owner")
 	}
 	retained, err = admin.GetContent(ctx, post.ID, ck.GetContentQuery{})
 	must(t, err)
-	if retained.OwnerEntityID != id || retained.Body != post.Body || !reflect.DeepEqual(retained.Access, post.Access) {
+	if retained.ChannelID != id || retained.Body != post.Body || !reflect.DeepEqual(retained.Access, post.Access) {
 		t.Fatal("migration lost content identity, body or access")
 	}
 	var queuedAfter int
@@ -132,9 +133,9 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	member, _ := w.person(t, 0)
 	authtest.GrantRole(t, w.tenant[0], iam.GroupByID(groupID), iam.UserSubject(member.ID), w.channelWriter)
 	label := []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "Staff-selected name"}}
-	_, err = admin.PatchEntity(ctx, id, entities.EntityUpdate{Names: label})
+	_, err = admin.PatchChannel(ctx, id, channels.Update{Names: label})
 	must(t, err)
-	before, err := admin.GetManageEntity(ctx, id, ck.GetManageEntityQuery{})
+	before, err := admin.GetManageChannel(ctx, id, ck.GetManageChannelQuery{})
 	must(t, err)
 	memberships, err := w.auth.ListMemberships(ctx, iam.UserSubject(member.ID), iam.PageRequest{})
 	must(t, err)
@@ -155,7 +156,7 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	for err := range errs {
 		must(t, err)
 	}
-	after, err := admin.GetManageEntity(ctx, id, ck.GetManageEntityQuery{})
+	after, err := admin.GetManageChannel(ctx, id, ck.GetManageChannelQuery{})
 	must(t, err)
 	newGroup, err := w.auth.Group(ctx, iam.GroupByID(groupID))
 	must(t, err)
@@ -196,9 +197,9 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 
 func TestConfiguredOwnerRechecksAfterProvisioning(t *testing.T) {
 	w := newWorld(t, func(c *ck.Config) {
-		c.Content.EntityKinds["channel"] = kinds.EntityKind{Route: "channels", Owner: "site", AuthScope: true}
+		c.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
 		kind := c.Content.Kinds["article"]
-		kind.OwnerEntity = &kinds.EntityRef{Kind: "channel", Slug: "blog"}
+		kind.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
 		c.Content.Kinds["article"] = kind
 	})
 	a := w.apps[0]
@@ -218,9 +219,9 @@ func TestConfiguredOwnerRechecksAfterProvisioning(t *testing.T) {
 
 func TestConfiguredOwnerKeylessAdapter(t *testing.T) {
 	w := newWorld(t, func(c *ck.Config) {
-		c.Content.EntityKinds["channel"] = kinds.EntityKind{Route: "channels", Owner: "site", AuthScope: true}
+		c.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
 		kind := c.Content.Kinds["article"]
-		kind.OwnerEntity = &kinds.EntityRef{Kind: "channel", Slug: "blog"}
+		kind.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
 		c.Content.Kinds["article"] = kind
 	})
 	a := w.apps[0]
@@ -240,13 +241,13 @@ func TestConfiguredOwnerKeylessAdapter(t *testing.T) {
 	provider, err := ckauth.MigrationScopes(pool, authConfig, *a.cfg.Scope)
 	must(t, err)
 	must(t, ck.MigratePostgres(ctx, pool, a.cfg, ck.MigrationOptions{Scopes: provider}))
-	channels, err := a.engine.Client().GetManageEntities(ctx, ck.GetManageEntitiesQuery{Kind: "channel"})
+	channels, err := a.engine.Client().GetManageChannels(ctx, ck.GetManageChannelsQuery{})
 	must(t, err)
-	if len(channels.Entities) != 1 {
+	if len(channels.Channels) != 1 {
 		t.Fatal("keyless migration did not create its channel")
 	}
-	id := string(channels.Entities[0].ID)
-	groupID, err := ckauth.EntityScopeID(*a.cfg.Scope, id)
+	id := string(channels.Channels[0].ID)
+	groupID, err := ckauth.ChannelScopeID(*a.cfg.Scope, id)
 	must(t, err)
 	group, err := w.auth.Group(ctx, iam.GroupByID(groupID))
 	must(t, err)
@@ -262,7 +263,7 @@ func TestConfiguredOwnerKeylessAdapter(t *testing.T) {
 	must(t, ck.MigratePostgres(ctx, pool, a.cfg, ck.MigrationOptions{Scopes: provider}))
 	post, err := writer.PostContents(ctx, input)
 	must(t, err)
-	if post.OwnerEntityID != id {
+	if post.ChannelID != id {
 		t.Fatal("declared channel did not own its post")
 	}
 	must(t, w.auth.DeleteGroup(ctx, iam.GroupByID(groupID)))

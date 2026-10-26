@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
@@ -34,6 +35,10 @@ func (run *batchRun) sections() []section {
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []entities.ImportEntity) error {
 				return s.o.Entities.ImportEntities(ctx, tx, in, b.ProvisionScopes)
 			})},
+		{name: SectionChannels, n: len(b.Channels), prepare: run.channel,
+			write: typed(func(ctx context.Context, tx pgx.Tx, in []channels.Import) error {
+				return s.o.Channels.ImportTx(ctx, tx, in, b.ProvisionScopes)
+			})},
 		{name: SectionContents, n: len(b.Contents), prepare: run.content, write: typed(s.o.Catalog.Import)},
 		{name: SectionMemberships, n: len(b.Memberships), prepare: run.memberships,
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []entities.ContentEntities) error {
@@ -58,7 +63,7 @@ func (run *batchRun) sections() []section {
 				return s.o.Signals.ImportSignals(ctx, in)
 			})},
 		{name: SectionDeletes, n: len(b.Deletes), prepare: run.deletion, write: typed(s.deletes),
-			first: func(in any) bool { return in.(deletion).entity == RecordEntity }},
+			first: func(in any) bool { e := in.(deletion).entity; return e == RecordEntity || e == RecordChannel }},
 	}
 	if s.o.Signals == nil || !s.o.Signals.SignalPlane() {
 		for i := range out {
@@ -77,7 +82,7 @@ func (run *batchRun) entity(r *resolver, i int) (any, string, error) {
 		return nil, g.ExternalID, err
 	}
 	in := entities.ImportEntity{ID: entities.EntityID(id), Kind: g.Kind, Slug: g.Slug, Internal: g.Internal, State: entities.State(g.State), Attributes: g.Attributes,
-		OwnerUserID: g.OwnerUserID, AuthScope: g.AuthScope, Names: g.Names, Text: g.Text, Code: g.Code, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt}
+		Names: g.Names, Text: g.Text, Code: g.Code, CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt}
 	if g.Avatar != "" {
 		in.Avatar = &entities.Avatar{Image: g.Avatar}
 	}
@@ -119,6 +124,33 @@ func (run *batchRun) entity(r *resolver, i int) (any, string, error) {
 	return in, g.ExternalID, nil
 }
 
+func (run *batchRun) channel(r *resolver, i int) (any, string, error) {
+	c := run.b.Channels[i]
+	id, err := r.own(RecordChannel, c.ExternalID, c.ID, c.CreatedAt)
+	if err != nil {
+		return nil, c.ExternalID, err
+	}
+	in := channels.Import{ID: id, Slug: c.Slug, State: entities.State(c.State),
+		OwnerUserID: c.OwnerUserID, AuthScope: c.AuthScope, Names: c.Names, Text: c.Text,
+		Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
+	if c.Avatar != "" {
+		in.Avatar = &entities.Avatar{Image: c.Avatar}
+	}
+	switch {
+	case c.CoverImage != "" && c.CoverContent != nil:
+		return nil, c.ExternalID, fmt.Errorf("%w: a cover is an image or content, not both", errInvalid)
+	case c.CoverImage != "":
+		in.Cover = &entities.Cover{Image: c.CoverImage}
+	case c.CoverContent != nil:
+		id, err := r.ref(RecordContent, *c.CoverContent)
+		if err != nil {
+			return nil, c.ExternalID, err
+		}
+		in.Cover = &entities.Cover{ContentID: id}
+	}
+	return in, c.ExternalID, nil
+}
+
 func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 	c := run.b.Contents[i]
 	id, err := r.own(RecordContent, c.ExternalID, c.ID, c.CreatedAt)
@@ -128,8 +160,8 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 	in := catalog.ImportContent{ID: id, Kind: c.Kind, State: c.State, PublishAt: c.PublishAt, PublishedAt: c.PublishedAt, DeletedAt: c.DeletedAt,
 		OriginalTitle: c.OriginalTitle, OriginalLanguage: c.OriginalLanguage, Comments: c.Comments, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes,
 		Creators: c.Creators, Text: c.Text, Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
-	if c.OwnerEntity != nil {
-		if in.ChannelID, err = r.ref(RecordEntity, *c.OwnerEntity); err != nil {
+	if c.Channel != nil {
+		if in.ChannelID, err = r.ref(RecordChannel, *c.Channel); err != nil {
 			return nil, c.ExternalID, err
 		}
 	}
@@ -170,7 +202,7 @@ func (run *batchRun) memberships(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) alias(r *resolver, i int) (any, string, error) {
 	a := run.b.Aliases[i]
-	t, err := r.target(a.Target, allowContent|allowEntity)
+	t, err := r.target(a.Target, allowContent|allowEntity|allowChannel)
 	if err != nil {
 		return nil, a.Key, err
 	}
@@ -199,7 +231,7 @@ func (run *batchRun) comment(r *resolver, i int) (any, string, error) {
 
 func (run *batchRun) reaction(r *resolver, i int) (any, string, error) {
 	x := run.b.Reactions[i]
-	t, err := r.target(x.Target, allowContent|allowVersion|allowEntity|allowComment)
+	t, err := r.target(x.Target, allowContent|allowVersion|allowEntity|allowChannel|allowComment)
 	if err != nil {
 		return nil, "", err
 	}
@@ -276,9 +308,12 @@ type deletion struct {
 func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 	d := run.b.Deletes[i]
 	switch d.Entity {
-	case RecordContent, RecordVersion, RecordEntity, RecordComment, RecordPoll:
+	case RecordContent, RecordVersion, RecordEntity, RecordChannel, RecordComment, RecordPoll:
 	default:
-		return nil, d.ExternalID, fmt.Errorf("%w: entity %q is content, version, group, comment or poll", errInvalid, d.Entity)
+		return nil, d.ExternalID, fmt.Errorf("%w: entity %q is content, version, group, channel, comment or poll", errInvalid, d.Entity)
+	}
+	if d.Entity == RecordChannel && run.s.o.Channels == nil {
+		return nil, d.ExternalID, fmt.Errorf("%w: channels are not configured", errInvalid)
 	}
 	if d.ExternalID == "" {
 		return nil, "", fmt.Errorf("%w: a delete names an external_id", errInvalid)
@@ -312,6 +347,11 @@ func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
 	}
 	if err := s.o.Entities.ImportDeletes(ctx, tx, gs); err != nil {
 		return err
+	}
+	if len(by[RecordChannel]) > 0 {
+		if err := s.o.Channels.ImportDeletesTx(ctx, tx, by[RecordChannel]); err != nil {
+			return err
+		}
 	}
 	if err := s.o.Catalog.ImportDeletes(ctx, tx, by[RecordContent], by[RecordVersion]); err != nil {
 		return err

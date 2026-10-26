@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/gate"
@@ -28,7 +26,7 @@ type Scopes interface {
 	// Retire stops each scope resolving and granting.
 	Retire(ctx context.Context, ids []string) error
 	// Holding answers, per live scope of the kinds' personas user belongs
-	// to, the kind's access.EntityPermissions user holds there.
+	// to, the kind's access.ChannelPermissions user holds there.
 	Holding(ctx context.Context, user string, kinds []string) (map[string][]string, error)
 }
 
@@ -85,63 +83,21 @@ func (s *Store) unscoped(gs []Entity) []string {
 	return out
 }
 
-// needsSync reports whether configured kinds use the external lifecycle adapters.
-// Hosts commonly install Owned for ordinary catalog writes without configuring
-// any user-owned kinds; those hosts have no asynchronous ownership work.
-func (s *Store) needsSync() bool {
-	return s.cfg.Channels != nil && s.scopes != nil
-}
-
-// queueSync records exact lifecycle work in the entity write's transaction.
-// An insert-only client makes admission independent of running local workers.
-func (s *Store) queueSync(ctx context.Context, q Querier, ids []string) error {
-	if !s.needsSync() || len(ids) == 0 {
-		return nil
-	}
-	tx, ok := q.(pgx.Tx)
-	if !ok {
-		return errors.New("entities: lifecycle synchronization requires a transaction")
-	}
-	rows, err := tx.Query(ctx, `SELECT id FROM `+s.table("content_entities")+` WHERE tenant_id=$1 AND kind='channel' AND id=ANY($2::text[]) ORDER BY id`, s.tenant, ids)
-	if err != nil {
-		return err
-	}
-	ids, err = pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(ids) == 0 {
-		return err
-	}
-	client := s.river.bound()
-	if client == nil {
-		var err error
-		client, err = river.NewClient(riverpgxv5.New(s.pool), &river.Config{Schema: s.riverSchema})
-		if err != nil {
-			return err
-		}
-	}
-	_, err = client.InsertTx(ctx, tx, channelLifecycleArgs{Tenant: s.tenant, Channels: ids}, &river.InsertOpts{Queue: s.queue, MaxAttempts: 10})
-	return err
-}
-
-// syncAfter syncs the entities a committed write changed, best effort (the
-// queued job retries), and answers gs as they then stand. Bound to a
-// caller's transaction it leaves them to the job.
+// syncAfter finishes committed channel changes synchronously. A caller-owned
+// transaction (an import) must call FinishChannels after committing it.
 func (s *Store) syncAfter(ctx context.Context, gs []Entity, changed []string) ([]Entity, error) {
-	if s.tx != nil || len(changed) == 0 || !s.needsSync() {
+	if s.tx != nil || !s.channels || len(changed) == 0 || s.cfg.Channels == nil {
 		return gs, nil
 	}
 	ids := make([]EntityID, len(changed))
 	for i, id := range changed {
 		ids[i] = EntityID(id)
 	}
-	if err := s.Sync(ctx, ids); err != nil {
-		s.log.WarnContext(ctx, "entities: sync failed; the job retries", "err", err)
-		return gs, nil
+	if err := s.FinishChannels(ctx, ids); err != nil {
+		return gs, err
 	}
 	var now map[EntityID]Entity
-	if err := s.read(ctx, func(q Querier) (err error) {
-		now, err = s.byIDs(ctx, q, changed)
-		return err
-	}); err != nil {
+	if err := s.read(ctx, func(q Querier) (err error) { now, err = s.byIDs(ctx, q, changed); return err }); err != nil {
 		return nil, err
 	}
 	out := slices.Clone(gs)
@@ -153,118 +109,142 @@ func (s *Store) syncAfter(ctx context.Context, gs []Entity, changed []string) ([
 	return out, nil
 }
 
-// Sync brings what follows from each entity's state in line with it: its
-// AuthKit scope (SyncScopes) and the content a user-owned entity owns,
-// deleted with it and restored with it (Options.Owned). Repeating it changes
-// nothing.
-func (s *Store) Sync(ctx context.Context, ids []EntityID) error {
-	if err := s.SyncScopes(ctx, ids); err != nil {
-		return err
+// FinishChannels completes the external effects of committed channel writes.
+// It is safe to retry after a failed request, including a lost response from
+// AuthKit. Calls run outside SQL transactions, so embedded and remote providers
+// share the same contract. It adds no job, timer or separate retry record.
+func (s *Store) FinishChannels(ctx context.Context, ids []EntityID) error {
+	if s.tx != nil {
+		return errors.New("channels: finish requires a committed transaction")
 	}
 	list, err := uniqueIDs(ids)
 	if err != nil {
 		return err
 	}
-	return s.followOwned(ctx, list)
-}
-
-// followOwned deletes and restores the content entities own as they stand;
-// nil is every entity.
-func (s *Store) followOwned(ctx context.Context, entities []string) error {
-	if s.owned == nil {
+	if len(list) == 0 {
 		return nil
 	}
-	if err := s.owned.DeleteOwned(ctx, entities); err != nil {
-		return fmt.Errorf("entities: delete owned content: %w", err)
+	rows, err := s.pool.Query(ctx, "SELECT id FROM "+s.table("content_entities")+" WHERE tenant_id=$1 AND kind='channel' AND id=ANY($2::text[]) ORDER BY id", s.tenant, list)
+	if err != nil {
+		return err
 	}
-	if err := s.owned.RestoreOwned(ctx, entities); err != nil {
-		return fmt.Errorf("entities: restore owned content: %w", err)
+	list, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || len(list) == 0 {
+		return err
 	}
-	return nil
-}
-
-// SyncScopes brings AuthKit in line with each entity: an active entity of an
-// auth_scope kind without a scope gets one, keyed by its id and owned by its
-// owner; an entity no longer active has its scope retired and cleared. It
-// holds the entities' row locks over the AuthKit calls, so a concurrent delete
-// or restore waits and is synced after; repeating it changes nothing.
-func (s *Store) SyncScopes(ctx context.Context, ids []EntityID) error {
 	if s.scopes == nil {
-		return nil
+		return errors.New("channels: authorization group provider is required")
 	}
-	list, err := uniqueIDs(ids)
-	if err != nil {
-		return err
+	if s.owned != nil {
+		if err := s.owned.DeleteOwned(ctx, list); err != nil {
+			return fmt.Errorf("channels: delete owned content: %w", err)
+		}
 	}
-	slices.Sort(list)
-	for len(list) > 0 {
-		n := min(len(list), syncBatch)
-		if err := s.syncScopes(ctx, list[:n]); err != nil {
+	for _, id := range list {
+		if err := s.finishChannelScope(ctx, id); err != nil {
 			return err
 		}
-		list = list[n:]
+	}
+	if s.owned != nil {
+		if err := s.owned.RestoreOwned(ctx, list); err != nil {
+			return fmt.Errorf("channels: restore owned content: %w", err)
+		}
 	}
 	return nil
 }
 
-func (s *Store) syncScopes(ctx context.Context, ids []string) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT id, kind, state, coalesce(owner_user_id, ''), coalesce(auth_scope, '') FROM %s
- WHERE tenant_id = $1 AND id = ANY($2::text[]) ORDER BY id FOR UPDATE`, s.table("content_entities")), s.tenant, ids)
+type channelState struct {
+	state        State
+	owner, scope string
+	revision     int64
+}
+
+// finishChannelScope follows the stored state, rechecking after each external
+// call. A concurrent edit makes this request follow the new state or return a
+// retryable conflict. Neither an unavailable provider nor a stale acknowledgment
+// grants a pending/deleted channel local authority.
+func (s *Store) finishChannelScope(ctx context.Context, id string) error {
+	for attempt := 0; attempt < 4; attempt++ {
+		var before channelState
+		err := s.pool.QueryRow(ctx, "SELECT state,coalesce(owner_user_id,''),coalesce(auth_scope,''),revision FROM "+s.table("content_entities")+" WHERE tenant_id=$1 AND id=$2 AND kind='channel'", s.tenant, id).Scan(&before.state, &before.owner, &before.scope, &before.revision)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-		var provision []Scope
-		var retire, provided, retired []string
-		for rows.Next() {
-			var id, kind, owner, scope string
-			var state State
-			if err := rows.Scan(&id, &kind, &state, &owner, &scope); err != nil {
-				rows.Close()
+		if before.state == StateActive && before.scope != "" {
+			return nil
+		}
+		if before.state == StateActive {
+			err = s.scopes.Provision(ctx, []Scope{{ID: id, Kind: "channel", Owner: before.owner, Restore: true}})
+		} else {
+			// Retire even a locally pending ID: a prior provider call may have
+			// committed before its response was lost.
+			target := before.scope
+			if target == "" {
+				target = id
+			}
+			err = s.scopes.Retire(ctx, []string{target})
+		}
+		if err != nil {
+			return fmt.Errorf("channels: apply authorization group for %s: %w", id, err)
+		}
+		done := false
+		staleActive := false
+		err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+			var after channelState
+			err := tx.QueryRow(ctx, "SELECT state,coalesce(owner_user_id,''),coalesce(auth_scope,''),revision FROM "+s.table("content_entities")+" WHERE tenant_id=$1 AND id=$2 AND kind='channel' FOR UPDATE", s.tenant, id).Scan(&after.state, &after.owner, &after.scope, &after.revision)
+			if errors.Is(err, pgx.ErrNoRows) {
+				done = true
+				return nil
+			}
+			if err != nil {
 				return err
 			}
-			switch {
-			case state == StateActive && scope == "" && s.cfg.EntityKinds[kind].AuthScope:
-				provision, provided = append(provision, Scope{ID: id, Kind: kind, Owner: owner, Restore: true}), append(provided, id)
-			case state != StateActive && scope != "":
-				retire, retired = append(retire, scope), append(retired, id)
+			if after != before {
+				// A late retirement may have invalidated a concurrent restore.
+				// Commit a pending marker, then report conflict outside this tx.
+				if after.state == StateActive {
+					if after.scope != "" {
+						if _, err := tx.Exec(ctx, "UPDATE "+s.table("content_entities")+" SET auth_scope=NULL,revision=revision+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", s.tenant, id); err != nil {
+							return err
+						}
+					}
+					staleActive = true
+				}
+				return nil
 			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+			desired := ""
+			if after.state == StateActive {
+				desired = id
+			}
+			if after.scope != desired {
+				if _, err := tx.Exec(ctx, "UPDATE "+s.table("content_entities")+" SET auth_scope=nullif($3,''),revision=revision+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", s.tenant, id, desired); err != nil {
+					return err
+				}
+			}
+			done = true
+			return nil
+		})
+		if err != nil {
 			return err
 		}
-		if len(provision) > 0 {
-			if err := s.scopes.Provision(ctx, provision); err != nil {
-				return fmt.Errorf("entities: provision scopes: %w", err)
-			}
-			if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET auth_scope = id, updated_at = now(), revision = revision + 1
- WHERE tenant_id = $1 AND id = ANY($2::text[])`, s.table("content_entities")), s.tenant, provided); err != nil {
-				return err
-			}
+		if staleActive {
+			return fmt.Errorf("%w: channel changed during authorization update; retry the current channel operation", ErrConflict)
 		}
-		if len(retire) > 0 {
-			if err := s.scopes.Retire(ctx, retire); err != nil {
-				return fmt.Errorf("entities: retire scopes: %w", err)
-			}
-			if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET auth_scope = NULL, updated_at = now(), revision = revision + 1
- WHERE tenant_id = $1 AND id = ANY($2::text[])`, s.table("content_entities")), s.tenant, retired); err != nil {
-				return err
-			}
+		if done {
+			return nil
 		}
-		return nil
-	})
+	}
+	return fmt.Errorf("%w: channel changed while applying authorization; retry", ErrConflict)
 }
 
 func (s *Store) userKinds() []string {
-	var out []string
-	for name, gk := range s.cfg.EntityKinds {
-		if gk.Owner == "user" {
-			out = append(out, name)
-		}
+	if s.cfg.Channels != nil {
+		return []string{"channel"}
 	}
-	slices.Sort(out)
-	return out
+	return nil
 }
 
 // PurgeFolders claims expired entity media, runs the shared retirement pass,
@@ -438,7 +418,7 @@ func (s *Store) credentialScopes(ctx context.Context, actor access.Actor, candid
 	held := make(map[string][]string)
 	for scope, permissions := range candidates {
 		for _, permission := range permissions {
-			allowed, err := gate.EntityEditor(ctx, s.as.auth, actor, "", scope, permission)
+			allowed, err := gate.ChannelEditor(ctx, s.as.auth, actor, scope, permission)
 			if err != nil {
 				return nil, err
 			}

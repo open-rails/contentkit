@@ -95,9 +95,9 @@ func TestPublicContentKindsConfig(t *testing.T) {
 		Languages: []string{"en"},
 		Kinds: map[string]kinds.Kind{"blog": {
 			Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"},
-			OwnerEntity: &kinds.EntityRef{Kind: "channel", Slug: "blog"},
+			Channel: &kinds.ChannelPolicy{Fixed: "blog"},
 		}},
-		EntityKinds: map[string]kinds.EntityKind{"channel": {Owner: "site"}},
+		Channels: &kinds.Channels{Creation: "staff"}, EntityKinds: map[string]kinds.EntityKind{"tag": {}},
 	}
 	must(t, model.Validate())
 	if _, routed := model.Routes()["channel"]; routed {

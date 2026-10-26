@@ -204,6 +204,16 @@ func hasKey(m map[string]bool, k string) bool {
 	return ok
 }
 
+// CanPostToChannel checks current destination posting authority. It grants no
+// authority over an original referenced by a repost.
+func (v *Viewer) CanPostToChannel(ctx context.Context, id string) (bool, error) {
+	if v.staffWrite {
+		return true, nil
+	}
+	got, err := v.s.entityAllowed(ctx, v.s.pool, v.actor, []string{id}, true)
+	return got[id], err
+}
+
 // Staff reports a viewer holding root:content:view-restricted or
 // root:content:write: they see everything inside the domain boundary.
 func (v *Viewer) Staff() bool { return v.staff }
@@ -429,7 +439,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	}
 	items := make([]access.Item, 0, len(live)+len(held))
 	for _, r := range live {
-		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: r.rule, Entities: r.entityIDs})
+		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: r.rule})
 	}
 	for _, r := range held {
 		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: access.Rule{Level: access.PPV}})
@@ -570,7 +580,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 			continue
 		}
 		o := owners[ref.ContentID]
-		res := resolve.Resolution{Ref: ref, Editor: iv.editor, ReadRestricted: iv.readRestricted, Owner: o.creator, Comments: o.comments, OwnerEntity: o.entity}
+		res := resolve.Resolution{Ref: ref, Editor: iv.editor, ReadRestricted: iv.readRestricted, Owner: o.creator, Comments: o.comments, Channel: o.entity}
 		for _, ver := range iv.versions {
 			if want := ref.Version(); want == "" || ver.versionID == want {
 				res.Visible = true
@@ -588,7 +598,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 // user-owned owner entity.
 type ownership struct {
 	creator, comments string
-	entity            *resolve.OwnerEntity
+	entity            *resolve.Channel
 }
 
 func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership, error) {
@@ -603,12 +613,12 @@ func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership,
 	for rows.Next() {
 		var id string
 		var o ownership
-		var g resolve.OwnerEntity
+		var g resolve.Channel
 		if err := rows.Scan(&id, &o.comments, &o.creator, &g.ID, &g.Kind, &g.Owner, &g.Scope); err != nil {
 			return nil, err
 		}
-		if g.ID != "" && (s.cfg.EntityKinds[g.Kind].Owner == "user" || s.cfg.EntityKinds[g.Kind].AuthScope) {
-			if s.cfg.EntityKinds[g.Kind].AuthScope && g.Scope == "" {
+		if g.ID != "" && g.Kind == "channel" {
+			if g.Scope == "" {
 				// Keep the channel ban boundary while refusing the owner fallback.
 				g.Owner = ""
 			}

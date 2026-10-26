@@ -48,6 +48,8 @@ export type SocialOperation =
   | "media.save"
   | "group.load"
   | "entity.save"
+  | "channel.save"
+  | "channel.repost"
   | "membership.save"
   | "history.forget"
   | "filters.save"

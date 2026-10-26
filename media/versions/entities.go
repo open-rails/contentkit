@@ -56,19 +56,23 @@ FROM `+s.t.entities+` WHERE tenant_id = $1 AND kind = $2 AND id = ANY($3)`, s.o.
 		return out, err
 	}
 	staff := false
+	permission := access.EntitiesWrite
+	if kind == "channel" {
+		permission = access.ChannelsWrite
+	}
 	if actor.Person() || actor.Kind == auth.SubjectApplication {
-		if staff, err = gate.Can(ctx, s.o.Auth, actor, string(access.EntitiesWrite)); err != nil {
+		if staff, err = gate.Can(ctx, s.o.Auth, actor, string(permission)); err != nil {
 			return nil, err
 		}
 	}
-	scoped := s.o.Kinds.EntityKinds[kind].Owner == "user" || s.o.Kinds.EntityKinds[kind].AuthScope
+	scoped := kind == "channel" && s.o.Kinds.Channels != nil
 	for _, r := range found {
 		right := entityRight{active: r.active, internal: r.internal, staff: staff, owner: r.owner}
 		switch {
 		case staff:
 			right.editor = true
-		case scoped && !r.internal && (!s.o.Kinds.EntityKinds[kind].AuthScope || r.scope != ""):
-			if right.editor, err = gate.EntityEditor(ctx, s.o.Auth, actor, r.owner, r.scope, access.EntityMediaWrite(kind), access.EntitySettingsManage(kind)); err != nil {
+		case scoped && !r.internal && r.scope != "":
+			if right.editor, err = gate.ChannelEditor(ctx, s.o.Auth, actor, r.scope, access.ChannelMediaWrite, access.ChannelSettingsManage); err != nil {
 				return nil, err
 			}
 		}
@@ -78,6 +82,9 @@ FROM `+s.t.entities+` WHERE tenant_id = $1 AND kind = $2 AND id = ANY($3)`, s.o.
 }
 
 func (s *Service) isEntityKind(kind string) bool {
+	if kind == "channel" {
+		return s.o.Kinds.Channels != nil
+	}
 	_, ok := s.o.Kinds.EntityKinds[kind]
 	return ok
 }

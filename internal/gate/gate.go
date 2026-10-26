@@ -96,16 +96,13 @@ func Can(ctx context.Context, a auth.Authenticator, actor access.Actor, perm str
 	return actor.Can(ctx, root, perm)
 }
 
-// GroupEditor reports whether actor edits a user-owned group, by its owner
-// and AuthKit scope (groups' owner_user_id and auth_scope): its owner, or a
-// holder of any of perms in the scope, under the authority of a's root
-// scope. Staff are the caller's to admit. An error never grants.
-func EntityEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, owner, scope string, perms ...string) (bool, error) {
+// ChannelEditor checks current capabilities in a channel AuthKit group.
+// Owner attribution and a missing group never grant authority. Staff are the
+// caller's to admit. An error never grants.
+func ChannelEditor(ctx context.Context, a auth.Authenticator, actor access.Actor, scope string, perms ...string) (bool, error) {
 	switch {
 	case actor.Anonymous:
 		return false, nil
-	case scope == "" && owner != "" && actor.Member() && owner == actor.AccountID():
-		return true, nil
 	case scope == "":
 		return false, nil
 	}

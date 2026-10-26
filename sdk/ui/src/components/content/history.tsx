@@ -59,8 +59,8 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
               showCounts={p.showCounts}
               tiers={p.tiers}
               labels={p.labels}
-              owner={p.owner}
-              ownerHref={p.ownerHref}
+              showChannel={p.showChannel}
+              channelHref={p.channelHref}
               decorate={p.decorate}
               cardTitle={p.cardTitle}
             >

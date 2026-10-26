@@ -59,7 +59,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
 			return fmt.Errorf("catalog: version %s: %w", id, err)
 		}
 		f := rule.Facet()
-		facets = append(facets, versionFacet{VersionID: id, Level: f.Level, Tiers: f.Tiers, EntityID: f.EntityID, Releases: f.Releases, Entities: []string{}})
+		facets = append(facets, versionFacet{VersionID: id, Level: f.Level, Tiers: f.Tiers, EntityID: f.ChannelID, Releases: f.Releases, Entities: []string{}})
 		versions = append(versions, id)
 	}
 	rows.Close()

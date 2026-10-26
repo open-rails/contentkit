@@ -12,22 +12,22 @@ func (s *Service) internalAccessEntities(ctx context.Context, items []access.Ite
 	var ids []string
 	for _, item := range items {
 		for _, release := range item.Rule.Releases {
-			if release.Entity != "" {
-				ids = append(ids, release.Entity)
+			if release.ChannelID != "" {
+				ids = append(ids, release.ChannelID)
 			}
 		}
-		if item.Rule.Entity != "" {
-			ids = append(ids, item.Rule.Entity)
+		if item.Rule.ChannelID != "" {
+			ids = append(ids, item.Rule.ChannelID)
 		}
 	}
 	for _, d := range decisions {
 		for _, key := range d.Sell {
-			if key.Kind() == access.KeyEntity {
-				ids = append(ids, key.Entity())
+			if key.Kind() == access.KeyChannel {
+				ids = append(ids, key.Channel())
 			}
 		}
-		if d.Requires != nil && d.Requires.Kind() == access.KeyEntity {
-			ids = append(ids, d.Requires.Entity())
+		if d.Requires != nil && d.Requires.Kind() == access.KeyChannel {
+			ids = append(ids, d.Requires.Channel())
 		}
 	}
 	internal := map[string]bool{}

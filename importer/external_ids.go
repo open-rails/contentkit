@@ -57,6 +57,7 @@ var gone = map[string]struct{ table, join, deleted string }{
 	RecordContent: {"content_items", "r.id = x.id", "r.id IS NULL OR r.state = 'deleted'"},
 	RecordVersion: {"content_versions", "r.id = x.id", "r.id IS NULL OR r.state = 'deleted'"},
 	RecordEntity:  {"content_entities", "r.id = x.id", "r.id IS NULL OR r.state = 'deleted'"},
+	RecordChannel: {"content_entities", "r.id = x.id AND r.kind = 'channel'", "r.id IS NULL OR r.state = 'deleted'"},
 	RecordComment: {"content_comments", "r.id = x.id::uuid", "r.id IS NULL OR r.deleted_at IS NOT NULL"},
 	RecordPoll:    {"content_poll_questions", "r.id = x.id::uuid", "r.id IS NULL OR r.deleted_at IS NOT NULL"},
 	RecordOption:  {"content_poll_options", "r.id = x.id::uuid", "r.id IS NULL"},

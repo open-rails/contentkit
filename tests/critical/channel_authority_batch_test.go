@@ -56,13 +56,13 @@ func TestChannelAuthorityUsesBatchedCurrentGrants(t *testing.T) {
 	}
 	const existing = 32
 	for _, id := range ids[:existing] {
-		pid, err := ckauth.EntityScopeID(*a.cfg.Scope, id)
+		pid, err := ckauth.ChannelScopeID(*a.cfg.Scope, id)
 		must(t, err)
 		_, err = w.auth.CreateGroup(t.Context(), iam.NewGroup{ID: pid, TenantID: tenant, Persona: persona})
 		must(t, err)
 	}
 	foreignID := ids[existing]
-	foreignProvider, err := ckauth.EntityScopeID(*a.cfg.Scope, foreignID)
+	foreignProvider, err := ckauth.ChannelScopeID(*a.cfg.Scope, foreignID)
 	must(t, err)
 	foreignTenant, err := iam.ParseTenantID(w.apps[2].cfg.Scope.TenantID.String())
 	must(t, err)
@@ -83,12 +83,12 @@ func TestChannelAuthorityUsesBatchedCurrentGrants(t *testing.T) {
 	if got := lookup(); len(got) != 0 || directory.groups != 0 {
 		t.Fatalf("unrelated channel grants or per-channel metadata work: %v groups=%d", got, directory.groups)
 	}
-	selectedProvider, err := ckauth.EntityScopeID(*a.cfg.Scope, ids[0])
+	selectedProvider, err := ckauth.ChannelScopeID(*a.cfg.Scope, ids[0])
 	must(t, err)
 	selected := iam.GroupByID(selectedProvider)
 	authtest.GrantRole(t, w.tenant[0], selected, iam.UserSubject(account.ID), w.channelContributor)
 	got := lookup()
-	if len(got) != 1 || directory.groups != 1 || !slices.Contains(got[ids[0]], access.EntityContentCreate("channel")) || !slices.Contains(got[ids[0]], access.EntityContentEditOwn("channel")) || slices.Contains(got[ids[0]], access.EntityContentWrite("channel")) {
+	if len(got) != 1 || directory.groups != 1 || !slices.Contains(got[ids[0]], access.ChannelContentCreate) || !slices.Contains(got[ids[0]], access.ChannelContentEditOwn) || slices.Contains(got[ids[0]], access.ChannelContentWrite) {
 		t.Fatalf("narrow channel role did not retain exact live capabilities: %+v metadata=%d", got, directory.groups)
 	}
 	authtest.RevokeRole(t, w.tenant[0], selected, iam.UserSubject(account.ID), w.channelContributor)
@@ -102,7 +102,7 @@ func TestChannelAuthorityUsesBatchedCurrentGrants(t *testing.T) {
 		t.Fatalf("inherited authority lost local scopes or included foreign tenant: got%d want%d foreign=%v", len(got), existing, got[foreignID])
 	}
 	for i, id := range ids[:existing] {
-		for _, permission := range access.EntityPermissions("channel") {
+		for _, permission := range access.ChannelPermissions() {
 			if !slices.Contains(got[id], permission) {
 				t.Fatal(fmt.Sprintf("scope%d missing inherited capability %s: %v", i, permission, got[id]))
 			}
