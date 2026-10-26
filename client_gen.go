@@ -2408,6 +2408,10 @@ type GetContentsQuery struct {
 	CardEntities []string
 	// selection-wide total, filtered and locked counts on the first page or every numbered page
 	Summary *bool
+	// inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only
+	ActivityFrom string
+	// exclusive UTC date; requires activity_from, kind and sort=popular
+	ActivityUntil string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -2477,6 +2481,12 @@ func (q GetContentsQuery) values() url.Values {
 	}
 	if q.Summary != nil {
 		v.Set("summary", fmt.Sprint(*q.Summary))
+	}
+	if q.ActivityFrom != "" {
+		v.Set("activity_from", q.ActivityFrom)
+	}
+	if q.ActivityUntil != "" {
+		v.Set("activity_until", q.ActivityUntil)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)

@@ -56,7 +56,7 @@ func (s *Service) rankingSnapshot(ctx context.Context, key popularRanking) (*Pop
 	if errors.Is(err, pgx.ErrNoRows) {
 		return snapshot, nil
 	}
-	snapshot.Ready = snapshot.ComputedAt != nil
+	snapshot.Ready = snapshot.ComputedAt != nil && snapshot.From != nil
 	return snapshot, err
 }
 
@@ -131,7 +131,7 @@ func (s *Service) RefreshPopularRankings(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
-				if snapshot.Ready && snapshot.ComputedAt.Add(bucket.Every()).After(now) && sameBound(snapshot.WindowFrom, from) && sameBound(snapshot.WindowUntil, until) {
+				if snapshot.ComputedAt != nil && snapshot.ComputedAt.Add(bucket.Every()).After(now) && sameBound(snapshot.WindowFrom, from) && sameBound(snapshot.WindowUntil, until) {
 					continue
 				}
 				groups[group] = append(groups[group], pending{key, window})

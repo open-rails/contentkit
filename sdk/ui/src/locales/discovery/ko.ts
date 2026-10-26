@@ -81,7 +81,7 @@ export const discovery: typeof en = {
   },
   listing: {
     preparingPopularity: "이 순위를 준비하고 있습니다.",
-    activityRange: "{from}부터 {until} 전까지의 활동 (UTC)",
+    activityRange: "{from}부터 {until}까지의 활동 (양일 포함, UTC)",
     popularPeriod: "인기 집계 기간",
     pastDays_one: "최근 {count}일",
     pastDays_other: "최근 {count}일",

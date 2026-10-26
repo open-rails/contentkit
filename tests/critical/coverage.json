@@ -752,13 +752,16 @@
     {
       "id": "CK-J07-S16",
       "journey": "CK-J07",
-      "behavior": "Public popularity requests select declared buckets without creating work",
+      "behavior": "Public popularity reads only declared presets or prepared whole-day ranges",
       "status": "verified",
       "evidence": [
-        "Unknown bucket, kind, scope and arbitrary date requests are refused and leave the stored ranking inventory unchanged."
+        "Unknown bucket, kind and scope requests are refused without creating work.",
+        "Cold start prepares configured presets without public requests; metadata distinguishes pending from computed empty and reports actual covered dates across UTC rollover.",
+        "Arbitrary ranges read prepared scalars with catalog pagination and create no cache rows; dates before the first fully trusted UTC day or beyond prepared coverage are refused with structured bounds."
       ],
       "cases": [
-        "TestDiscoveryVisibility/CK-J07-S16_public_requests_cannot_create_popularity_work"
+        "TestDiscoveryVisibility/CK-J07-S16_public_requests_cannot_create_popularity_work",
+        "TestPreparedPopularityBuckets"
       ]
     },
     {

@@ -5007,6 +5007,22 @@
             }
           },
           {
+            "name": "activity_from",
+            "in": "query",
+            "description": "inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activity_until",
+            "in": "query",
+            "description": "exclusive UTC date; requires activity_from, kind and sort=popular",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "cursor",
             "in": "query",
             "description": "the previous page's next_cursor",
@@ -16766,11 +16782,23 @@
           "ready": {
             "type": "boolean"
           },
+          "window_from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "window_until": {
+            "type": "string",
+            "format": "date-time"
+          },
           "from": {
             "type": "string",
             "format": "date-time"
           },
           "until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "available_from": {
             "type": "string",
             "format": "date-time"
           },

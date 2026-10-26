@@ -1521,8 +1521,11 @@ export interface PopularityScope {
 export interface PopularitySnapshot {
   bucket: string;
   ready: boolean;
+  window_from?: string;
+  window_until?: string;
   from?: string;
   until?: string;
+  available_from?: string;
   computed_at?: string;
 }
 

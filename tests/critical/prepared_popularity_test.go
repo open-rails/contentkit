@@ -1,6 +1,8 @@
 package critical_test
 
 import (
+	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -22,6 +24,13 @@ func TestPreparedPopularityBuckets(t *testing.T) {
 	a.server.Close()
 	must(t, a.engine.Close(t.Context()))
 	configureDiscoverySignals(t, w, a)
+	day := w.clock.now().UTC().Truncate(24 * time.Hour)
+	// Instrumentation began partway through the day before yesterday. Only
+	// yesterday onward is fully trustworthy, even when a preset asks for a week.
+	tenant := a.cfg.Scope.AppID.String()
+	_, seedErr := w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.content_access_history_start SET started_at=$1 WHERE tenant_id=$2`, day.AddDate(0, 0, -3), tenant)
+	must(t, seedErr)
+	must(t, a.deps.ClickHouse.Exec(t.Context(), `INSERT INTO `+a.cfg.ClickHouse.Database+`.measured_population_coverage (tenant,content_kind,domain,language,started_at) VALUES(?,?,?,?,?)`, tenant, "article", "", "", day.AddDate(0, 0, -2).Add(12*time.Hour)))
 	var err error
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
@@ -55,6 +64,51 @@ func TestPreparedPopularityBuckets(t *testing.T) {
 		t.Fatalf("prepared empty bucket is not ready: %+v", ready)
 	}
 	before := *ready.Popularity
+	if before.AvailableFrom == nil || !before.AvailableFrom.Equal(day.AddDate(0, 0, -1)) || before.From == nil || !before.From.Equal(*before.AvailableFrom) {
+		t.Fatalf("partial instrumentation was reported as complete history: %+v", before)
+	}
+	_, err = client.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular:november"})
+	requireError(t, err, 400, "invalid_request")
+	var refused *ck.Error
+	if !errors.As(err, &refused) {
+		t.Fatal("missing structured range error")
+	}
+	var details map[string]string
+	must(t, json.Unmarshal(refused.Details, &details))
+	if details["available_from"] != day.AddDate(0, 0, -1).Format(time.DateOnly) {
+		t.Fatalf("missing cutoff: %+v", details)
+	}
+	first := publishedArticle(t, a, "First daily result")
+	second := publishedArticle(t, a, "Second daily result")
+	// The read contract uses prepared scalar rows. These IDs have no raw
+	// engagement receipts, so a raw-ranking fallback would return no results.
+	for i, id := range []string{first.ID, second.ID} {
+		must(t, a.deps.ClickHouse.Exec(t.Context(), `INSERT INTO `+a.cfg.ClickHouse.Database+`.popularity_daily (tenant,content_kind,domain,language,day,content_id,readers,eligible,version) VALUES(?,?,?,?,?,?,?,?,?)`, tenant, "article", "", "", day.AddDate(0, 0, -1), id, uint64(2-i), uint64(10), uint64(1)))
+	}
+	query := ck.GetContentsQuery{Kind: "article", Sort: "popular", ActivityFrom: day.AddDate(0, 0, -1).Format(time.DateOnly), ActivityUntil: day.Format(time.DateOnly), Limit: 1}
+	ranged, err := client.GetContents(t.Context(), query)
+	must(t, err)
+	if len(ranged.Contents) != 1 || ranged.Contents[0].ID != first.ID || ranged.NextCursor == "" {
+		t.Fatalf("prepared range ordering/page: %+v", ranged)
+	}
+	query.Cursor = ranged.NextCursor
+	next, err := client.GetContents(t.Context(), query)
+	must(t, err)
+	if len(next.Contents) != 1 || next.Contents[0].ID != second.ID {
+		t.Fatalf("prepared range next page: %+v", next)
+	}
+	query.Cursor = ""
+	query.ActivityFrom = day.AddDate(0, 0, -2).Format(time.DateOnly)
+	_, err = client.GetContents(t.Context(), query)
+	requireError(t, err, 400, "invalid_request")
+	query.ActivityFrom = day.Format(time.DateOnly)
+	query.ActivityUntil = day.AddDate(0, 0, 2).Format(time.DateOnly)
+	_, err = client.GetContents(t.Context(), query)
+	requireError(t, err, 400, "invalid_request")
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_popular_rankings`).Scan(&rows))
+	if rows != 2 {
+		t.Fatalf("arbitrary ranges created cache rows: %d", rows)
+	}
 	if before.WindowFrom == nil || before.WindowUntil == nil || before.ComputedAt == nil {
 		t.Fatalf("prepared bucket has no resolved dates: %+v", before)
 	}

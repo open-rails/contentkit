@@ -81,7 +81,7 @@ export const discovery: typeof en = {
   },
   listing: {
     preparingPopularity: "このランキングは準備中です。",
-    activityRange: "{from}から{until}より前までのアクティビティ (UTC)",
+    activityRange: "{from}から{until}までのアクティビティ（両日を含む、UTC）",
     popularPeriod: "人気の集計期間",
     pastDays_one: "過去{count}日間",
     pastDays_other: "過去{count}日間",
