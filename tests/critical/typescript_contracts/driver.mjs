@@ -67,12 +67,12 @@ if (group === "catalog_publication") {
   assert(before.next_cursor.length > 0);
   const draft = await owner.contents.create({
     kind: "article",
-    text: {
+    versions: [{ languages: ["en"], text: {
       en: {
         title: "TS Unicode Straße / ?",
         body: "Exact TypeScript source body",
       },
-    },
+    } }],
   });
   await refused(() => anonymous.contents.get(draft.id), 404, "not_found");
   await refused(() => reader.contents.publish(draft.id), 403, "forbidden");
@@ -87,9 +87,9 @@ if (group === "catalog_publication") {
   proved("ContentsClient.publish");
   const second = await owner.contents.create({
     kind: "article",
-    text: {
+    versions: [{ languages: ["en"], text: {
       en: { title: "Second TypeScript article", body: "Ready without media" },
-    },
+    } }],
   });
   const ready = await owner.contents.publishWhenReady(second.id, undefined, 60_000);
   assert.equal(ready.id, second.id);
@@ -209,9 +209,9 @@ if (group === "catalog_publication") {
 } else if (group === "moderation_bans") {
   const item = await owner.contents.create({
     kind: "article",
-    text: {
+    versions: [{ languages: ["en"], text: {
       en: { title: "TypeScript owned thread", body: "Owned public body" },
-    },
+    } }],
   });
   await owner.contents.publish(item.id);
   await released(item.id);
@@ -493,7 +493,7 @@ if (group === "catalog_publication") {
     const item = await owner.contents.create({
       kind: "article",
       ...(locked ? { access: { level: "tier", tiers: ["gold"] } } : {}),
-      text: { en: { title: "TypeScriptNeedle " + name, body: "Body " + name } },
+      versions: [{ languages: ["en"], text: { en: { title: "TypeScriptNeedle " + name, body: "Body " + name } } }],
     });
     await owner.entities.setSharedOfContent(item.id, {
       memberships: [{ group_id: tags[0].id }],
@@ -623,7 +623,7 @@ if (group === "catalog_publication") {
   assert.equal((await anonymous.channels.get(destination.id)).name, "Updated Repost Home");
   await reader.channels.setEntities(destination.id, [tags[0].id]);
   assert.deepEqual((await anonymous.channels.entities(destination.id)).map((entry) => entry.id), [tags[0].id]);
-  const original = await owner.contents.create({ kind: "article", channel_id: channel.id, text: { en: { title: "A canonical channel original", body: "One original across destinations" } } });
+  const original = await owner.contents.create({ kind: "article", channel_id: channel.id, versions: [{ languages: ["en"], text: { en: { title: "A canonical channel original", body: "One original across destinations" } } }] });
   await owner.contents.publish(original.id);
   await released(original.id);
   await reader.channels.repost(destination.id, original.id);

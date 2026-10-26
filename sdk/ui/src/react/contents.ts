@@ -177,9 +177,9 @@ export function useContent(
   }, [missing, files, reload]);
 
   // Every URL shown for an image, of this and earlier reads, back to its name.
-  const shown = useMemo(() => new Map<string, string>(), [vid]);
+  const shown = useMemo(() => ({ version: vid, urls: new Map<string, string>() }), [vid]);
   useEffect(() => {
-    for (const m of [previews, published, views]) for (const [n, u] of m) shown.set(u, n);
+    for (const m of [previews, published, views]) for (const [n, u] of m) shown.urls.set(u, n);
   }, [previews, published, views, shown]);
 
   const imageSrc = useCallback(
@@ -196,7 +196,7 @@ export function useContent(
   );
   const storedBody = useCallback(
     (html: string) => {
-      const back = new Map(shown);
+      const back = new Map(shown.urls);
       for (const m of [previews, published, views]) for (const [n, u] of m) back.set(u, n);
       let out = html;
       for (const [u, n] of back) out = out.split(u).join(imageRef(n)).split(u.replaceAll("&", "&amp;")).join(imageRef(n));
@@ -244,7 +244,7 @@ export function useContent(
         const up = await client.media.uploadNamed(ref, file, { path: await client.media.presetPath(kind, "cover", file) });
         const saved = await client.contents.setCover(ref.id, ref.version, up.name);
         const url = preview(up.name, file) ?? saved.cover?.url ?? null;
-        if (url) shown.set(url, up.name);
+        if (url) shown.urls.set(url, up.name);
         return url;
       }),
     [client, run, need, needVersion, kind, preview, shown],
@@ -254,7 +254,7 @@ export function useContent(
       run(async () => {
         const up = await client.media.uploadInline({ kind, id: need(), version: needVersion() }, file);
         const url = preview(up.name, file) ?? up.url ?? up.ref;
-        shown.set(url, up.name);
+        shown.urls.set(url, up.name);
         return url;
       }),
     [client, run, need, needVersion, kind, preview, shown],
