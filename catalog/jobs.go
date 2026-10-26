@@ -530,5 +530,5 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 			return errors.New("catalog: River must use the catalog pool")
 		}
 		return nil
-	}, nil)
+	}, func() error { return nil })
 }
