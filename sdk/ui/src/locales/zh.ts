@@ -300,6 +300,7 @@ export const zh: ContentKitUiMessageBundle = {
     resume_mismatch: "保存的上传属于另一个文件。请重新选择文件。",
     moderation_rejected: "已被审核拒绝。",
     comment_banned: "你无法在此评论。",
+    comment_moderated: "审核中或未发布的评论无法编辑。",
     comments_closed: "此处评论已关闭。",
     comments_locked: "解锁后即可查看和发表评论。",
     not_joinable: "目前无法加入此群组。",

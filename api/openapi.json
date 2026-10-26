@@ -875,7 +875,7 @@
         "tags": [
           "comments"
         ],
-        "summary": "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text.",
+        "summary": "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. Its author can't edit it while it is held or rejected.",
         "parameters": [
           {
             "name": "cid",
@@ -931,6 +931,7 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "comment_banned",
+          "comment_moderated",
           "comment_too_long",
           "comments_closed",
           "comments_locked",
@@ -19719,6 +19720,7 @@
           "animation_unsupported",
           "checksum_mismatch",
           "comment_banned",
+          "comment_moderated",
           "comment_too_long",
           "comments_closed",
           "comments_locked",
@@ -19944,6 +19946,10 @@
     "comment_banned": {
       "status": 403,
       "meaning": "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends."
+    },
+    "comment_moderated": {
+      "status": 403,
+      "meaning": "The comment is held for review or was rejected, so its author can't edit it; a reviewer's approval makes a held one editable again."
     },
     "comment_too_long": {
       "status": 422,

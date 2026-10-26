@@ -1461,6 +1461,21 @@
       ]
     },
     {
+      "id": "CK-J20-S07",
+      "journey": "CK-J20",
+      "behavior": "An author's edit cannot undo a hold or rejection; approved comments and released ones stay editable",
+      "status": "verified",
+      "evidence": [
+        "Author edits of a staff-held and a reviewer-rejected comment answer 403 comment_moderated and leave both bodies, states and the signed-out thread unchanged. Another user is still refused 403 forbidden on held and approved comments; the author's approved edit publishes, after release the author's edit publishes, a moderator's edit of another author's held comment is screened and publishes, and a moderator's edit of their own held comment is refused.",
+        "Executed in a focused local run against real PostgreSQL and AuthKit; failed with the edit refusal removed."
+      ],
+      "cases": [
+        "TestCommentModerationBoundaries/CK-J20-S07_author_edit_cannot_undo_hold_or_rejection",
+        "TestCommentModerationBoundaries/CK-J20-S07_author_edit_cannot_undo_hold_or_rejection/held",
+        "TestCommentModerationBoundaries/CK-J20-S07_author_edit_cannot_undo_hold_or_rejection/rejected"
+      ]
+    },
+    {
       "id": "CK-J23-S01",
       "journey": "CK-J23",
       "behavior": "Erasure fences reads before physical cleanup finishes",
@@ -2031,7 +2046,7 @@
       "behavior": "Held reply creation and edits only notify after authoritative approval; reapproval reopens the exact receipt",
       "status": "verified",
       "evidence": [
-        "The external moderator decision is controlled explicitly; public ContentKit writes/review queue/approval and real AuthKit storage execute unchanged. Initial holds suppress notices, held edit withdraws, reapproval retains identity with unread revision3, and editing a held reply to approved publishes once.",
+        "The external moderator decision is controlled explicitly; public ContentKit writes/review queue/approval and real AuthKit storage execute unchanged. Initial holds suppress notices, held edit withdraws, reapproval retains identity with unread revision3, the author's edit of a held reply is refused without publishing it, and its approval publishes once.",
         "Executable mapping requires this exact case to execute and pass on the final integrated candidate."
       ],
       "cases": [

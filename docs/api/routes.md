@@ -31,7 +31,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | GET | `/v1/comments/admin` | staff `root:comments:moderate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `author`, `limit`, `offset`. |
 | POST | `/v1/comments/{cid}/restore` | staff `root:comments:moderate` | — | 200 `Restored` | Restores a deleted comment. |
 | GET | `/v1/comments/{cid}/replies` | public | — | 200 `Comment[]` | A comment's replies, oldest first; withheld (empty) where the caller can't open the content. Query: `limit`, `offset`. |
-| PATCH | `/v1/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. |
+| PATCH | `/v1/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. Its author can't edit it while it is held or rejected. |
 | DELETE | `/v1/comments/{cid}` | public | — | 204 — | Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder. |
 | POST | `/v1/comments/{cid}/like` | public | — | 200 `ReactionCounts` | Likes a comment. |
 | POST | `/v1/comments/{cid}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a comment. |
@@ -254,6 +254,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `animation_unsupported` | 415 | An AVIF or HEIF image sequence, which is decoded as one frame. |
 | `checksum_mismatch` | 422 | The stored bytes differ from the declared SHA-256. |
 | `comment_banned` | 403 | The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends. |
+| `comment_moderated` | 403 | The comment is held for review or was rejected, so its author can't edit it; a reviewer's approval makes a held one editable again. |
 | `comment_too_long` | 422 | The comment is longer than the site allows; `details.max` is the limit in characters. |
 | `comments_closed` | 403 | The target's comments are closed or hidden: existing ones may show, new ones and edits are refused. |
 | `comments_locked` | 403 | The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them. |
