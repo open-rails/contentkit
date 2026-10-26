@@ -159,7 +159,10 @@ func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) 
 		a.candidates = map[string]struct{}{}
 	}
 	hits, err := recs.Recommend(ctx, signal.Subject{UserID: o.Actor.AccountID()}, RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
-		Limit: recLimit(o.Limit), PopularWindow: signal.LastDays(30, s.now()), Backfill: s.newest(q), Admit: a.admit})
+		Limit: recLimit(o.Limit), Backfill: s.newest(q), Admit: a.admit,
+		Popular: func(ctx context.Context, kind, period string, limit int) ([]string, error) {
+			return s.topRanked(ctx, s.rankingFor(ctx, o.Reader, kind, period), limit)
+		}})
 	if err != nil {
 		return empty, err
 	}

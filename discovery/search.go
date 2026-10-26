@@ -128,7 +128,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 			if windowErr != nil {
 				return empty, windowErr
 			}
-			srt, err = s.historicalOrder(ctx, o.Kind, window, o.Reader)
+			srt, err = s.historicalOrder(ctx, o.Kind, period, window, o.Reader)
 			srt.raw = o.Sort
 		}
 		if err != nil {
@@ -145,12 +145,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 			return empty, err
 		}
 		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
-		for i := range cards {
-			if ranking, ok := srt.rankings[cards[i].ID]; ok {
-				cards[i].Ranking = &ranking
-			}
-		}
-		return SearchPage{ContentPage: ContentPage{Contents: cards, NextCursor: next, Ranking: srt.ranking}}, err
+		return SearchPage{ContentPage: ContentPage{Contents: cards, NextCursor: next}}, err
 	}
 	cur, err := decodeCursor(o.Cursor, SortRelevance)
 	if err != nil {
@@ -165,7 +160,9 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 	opts := hub.HubSearchOptions{SearchOptions: base}
 	if a := o.Actor; a.Member() && !o.Unpersonalized {
 		opts.Personalize = &hub.Personalization{Subject: signal.Subject{UserID: a.AccountID()}, DemoteSeen: true,
-			PopularityWindow: signal.LastDays(30, s.o.Now())}
+			Popularity: func(ctx context.Context, kind string, ids []string) (map[string]float64, error) {
+				return s.rankedScores(ctx, s.rankingFor(ctx, o.Reader, kind, popularity.DefaultPeriod), ids)
+			}}
 	}
 	res, err := s.o.Hub.Search(ctx, text, opts)
 	if err != nil {

@@ -125,8 +125,9 @@ type Personalization struct {
 	// PopularityWeight is the RRF weight of the candidate-set popularity
 	// list blended with the content ranking. Defaults to 0.25.
 	PopularityWeight float32
-	// PopularityWindow bounds candidate popularity (zero = all time).
-	PopularityWindow signal.Window
+	// Popularity scores candidate works of one kind, higher first; works
+	// without a score are absent. Nil leaves popularity out.
+	Popularity func(ctx context.Context, kind string, ids []string) (map[string]float64, error)
 
 	// AffinityWeight boosts works the subject already engaged with by
 	// (1 + AffinityWeight·last_score/100). 0 = off.
@@ -204,9 +205,11 @@ func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions
 	}
 	popularity := map[ContentKey]float64{}
 	for kind, ids := range idsByKind {
-		scores, err := store.PopularityFor(ctx, h.tenant, kind, ids, p.PopularityWindow)
-		if err != nil {
-			return unpersonalized(ctx, content, offset, limit, err), nil
+		scores := map[string]float64{}
+		if p.Popularity != nil {
+			if scores, err = p.Popularity(ctx, kind, ids); err != nil {
+				return unpersonalized(ctx, content, offset, limit, err), nil
+			}
 		}
 		for id, s := range scores {
 			popularity[h.Content(kind, id).Key()] = s
@@ -521,27 +524,6 @@ func (h *Hub) Popular(ctx context.Context, contentKind string, opts signal.Popul
 		return nil, err
 	}
 	return store.Popular(ctx, h.tenant, contentKind, opts)
-}
-
-// Metrics returns named window metrics (readers, views, completions,
-// feedback, ...) for the references (works or versions).
-func (h *Hub) Metrics(ctx context.Context, refs []ContentRef, window signal.Window) (map[ContentKey]signal.ContentMetrics, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	return store.Metrics(ctx, h.tenant, refs, window)
-}
-
-// PopularityFor scores a fixed candidate set (work ids of one kind) by the
-// popularity ranking, returning content_id -> score. Use to rank a host-
-// filtered universe (e.g. "galleries of artist X by popularity").
-func (h *Hub) PopularityFor(ctx context.Context, contentKind string, ids []string, window signal.Window) (map[string]float64, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	return store.PopularityFor(ctx, h.tenant, contentKind, ids, window)
 }
 
 func clampInt(v, lo, hi int) int {

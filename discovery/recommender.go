@@ -55,10 +55,10 @@ type RecommendOptions struct {
 	// IncludeSeen keeps already-seen works in results (default: excluded).
 	IncludeSeen bool
 
-	// PopularWindow is the popularity window used to fill out results on
-	// cold start or thin candidate sets (zero = all time, like every Window);
-	// all-time popularity fills what it leaves short.
-	PopularWindow signal.Window
+	// Popular lists up to limit works of kind, best first, by popularity in
+	// period. It fills out results on cold start or thin candidate sets: the
+	// last 30 days, then all time. Nil skips it.
+	Popular func(ctx context.Context, kind, period string, limit int) ([]string, error)
 
 	// Backfill fills what popularity leaves short, from works no signal
 	// names; nil leaves the list short.
@@ -175,7 +175,7 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 
 // Recommend returns "for you" works for a subject: excluding already-seen
 // (unless IncludeSeen) and always disliked works, filled on cold start or
-// thin candidates from popularity in PopularWindow, then of all time, then
+// thin candidates from popularity of the last 30 days, then of all time, then
 // Backfill.
 func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]Hit, error) {
 	if err := subject.Validate(); err != nil {
@@ -226,14 +226,12 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 		}
 	}
 
-	windows := []signal.Window{opts.PopularWindow}
-	if opts.PopularWindow != signal.AllTime() {
-		windows = append(windows, signal.AllTime())
-	}
 	for _, kind := range kinds {
-		for _, w := range windows {
-			if err := r.fillPopular(ctx, f, kind, w, limit); err != nil {
-				return nil, err
+		for _, period := range []string{"30d", "all"} {
+			if opts.Popular != nil {
+				if err := r.fillPopular(ctx, f, opts.Popular, kind, period, limit); err != nil {
+					return nil, err
+				}
 			}
 		}
 		if f.full() || opts.Backfill == nil {
@@ -254,18 +252,18 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 	return f.out, nil
 }
 
-// fillPopular fills f from kind's popularity in w.
-func (r Recommender) fillPopular(ctx context.Context, f *filter, kind string, w signal.Window, limit int) error {
+// fillPopular fills f from kind's popularity in period.
+func (r Recommender) fillPopular(ctx context.Context, f *filter, popular func(context.Context, string, string, int) ([]string, error), kind, period string, limit int) error {
 	// Oversample so exclusions still leave enough to fill, deeper while a
 	// full read leaves the list short.
 	for depth := clampInt((limit-len(f.out))*3, 20, 500); !f.full(); depth *= 4 {
-		pop, err := r.Store.Popular(ctx, r.Tenant, kind, signal.PopularOptions{Window: w, Limit: depth})
+		pop, err := popular(ctx, kind, period, depth)
 		if err != nil {
 			return err
 		}
 		fill := make([]Candidate, len(pop))
-		for i, p := range pop {
-			fill[i] = Candidate{Ref: p.ContentRef, Score: float64(r.fillScore(f, i))}
+		for i, id := range pop {
+			fill[i] = Candidate{Ref: contentref.New(r.Tenant, kind, id), Score: float64(r.fillScore(f, i))}
 		}
 		if err := f.pushAll(ctx, fill); err != nil {
 			return err
