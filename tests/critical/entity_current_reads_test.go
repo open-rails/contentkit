@@ -48,6 +48,11 @@ func TestEntityCountsAndCoversWithoutWorkers(t *testing.T) {
 					t.Fatalf("directory %s count/cover without projection work: %+v; want count=%d cover=%s", sort, card, want, cover)
 				}
 			}
+			lettered, err := public.GetEntities(t.Context(), ck.GetEntitiesQuery{Kind: "tag", ContentKind: "article", Language: "en", Sort: sort, Letter: "c", Page: 1})
+			must(t, err)
+			if len(lettered.Entities) != 1 || lettered.Entities[0].ID != child.ID || lettered.Total == nil || *lettered.Total != 1 || lettered.Entities[0].Count != want {
+				t.Fatalf("directory %s letter c: %+v; want child with count=%d and total 1", sort, lettered, want)
+			}
 		}
 		detail, err := public.GetEntity(t.Context(), string(child.ID), ck.GetEntityQuery{Language: "en"})
 		must(t, err)

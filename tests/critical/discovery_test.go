@@ -61,7 +61,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 		{Kind: "tag", Slug: "required", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Required public tag"}, {Language: "en", Kind: "alias", Name: "MandatoryAliasNeedle"}}},
 		{Kind: "tag", Slug: "choice", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Optional public tag"}, {Language: "en", Kind: "alias", Name: "ChoiceNeedle"}}},
 		{Kind: "tag", Slug: "internal", Internal: true, Names: []entities.Name{{Language: "en", Kind: "name", Name: "HiddenClassificationNeedle"}}},
-		{Kind: "tag", Slug: "elsewhere", Names: []entities.Name{{Language: "en", Kind: "name", Name: "ElsewhereOnlyNeedle"}}},
+		{Kind: "tag", Slug: "elsewhere", Names: []entities.Name{{Language: "en", Kind: "name", Name: "ElsewhereOnlyNeedle"}, {Language: "en", Kind: "alias", Name: "Tow"}}},
 	})
 	must(t, err)
 	if len(tags) != 4 {
@@ -343,6 +343,18 @@ func TestDiscoveryVisibility(t *testing.T) {
 			if strings.HasPrefix(card.ID, "unread-") {
 				t.Fatalf("popular list returned an unread synthetic content: %s", card.ID)
 			}
+		}
+	})
+	t.Run("CK-J07-S12_search_tolerates_one_edit_per_word", func(t *testing.T) {
+		for q, want := range map[string][]string{
+			"CriticalVsi": {one.ID, two.ID},
+			"allowed twp": {two.ID},
+			"allowed tow": {two.ID},
+			"CritclVis":   {},
+		} {
+			found, err := public.GetSearch(t.Context(), ck.GetSearchQuery{Q: q, Kind: "article", Mode: "hide"})
+			must(t, err)
+			assertCards(t, found.ContentPage, want...)
 		}
 	})
 	t.Run("CK-J07-S06_code_resolution_retains_parent_and_domain_authority", func(t *testing.T) {

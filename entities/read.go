@@ -283,24 +283,26 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	from := s.table("content_entities") + " g"
 	predicate := "WHERE " + strings.Join(where, " AND ")
 	paging := " LIMIT @limit OFFSET @offset"
-	if c.sort == SortName && strings.TrimSpace(opts.Letter) == "" {
-		// Names choose this page; derive counts and covers only for its rows.
-		from = "(SELECT g.* FROM " + from + " " + displayJoins + " " + predicate + " ORDER BY " + order + paging + ") g"
-		predicate, paging = "", ""
+	// Select the page first, then derive covers (and counts unless they rank)
+	// only for its rows. Display names join the selection only when the sort
+	// or a letter reads them.
+	selectJoins := ""
+	if c.sort == SortName || strings.TrimSpace(opts.Letter) != "" {
+		selectJoins = displayJoins
 	}
-	if c.sort == SortNewest && strings.TrimSpace(opts.Letter) == "" {
-		// Display names and counts do not select newest pages without a letter
-		// filter. Resolve them only for the selected page and its cursor sentinel.
-		from = "(SELECT g.* FROM " + from + " " + predicate + " ORDER BY " + order + paging + ") g"
-		predicate, paging = "", ""
+	countFrom := s.table("content_entities") + " g"
+	if strings.TrimSpace(opts.Letter) != "" {
+		countFrom += " " + displayJoins
 	}
-	if c.sort == SortCount && strings.TrimSpace(opts.Letter) == "" {
-		// Counts select the page; localized display fields do not. Carry the
-		// selected counts outward instead of aggregating them a second time.
-		from = "(SELECT g.*, " + count + " AS content_count FROM " + from + " " + counts + " " + predicate + " ORDER BY " + order + paging + ") g"
-		count, counts, predicate, paging = "g.content_count", "", "", ""
+	if c.sort == SortCount {
+		// Carry the ranking counts outward instead of aggregating them twice.
+		from = "(SELECT g.*, " + count + " AS content_count FROM " + from + " " + counts + " " + selectJoins + " " + predicate + " ORDER BY " + order + paging + ") g"
+		count, counts = "g.content_count", ""
 		order = count + " DESC, g.id"
+	} else {
+		from = "(SELECT g.* FROM " + from + " " + selectJoins + " " + predicate + " ORDER BY " + order + paging + ") g"
 	}
+	predicate, paging = "", ""
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
  coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), CASE WHEN g.cover IS NULL OR g.cover ? 'auto' THEN %[13]s ELSE g.cover END, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
 FROM %[1]s
@@ -313,10 +315,7 @@ LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AN
 		count, sortName, counts, predicate, scope, parent, displayJoins, covers, autoCover)
 	c.sql = base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
-		c.count = "SELECT count(*) FROM (" + base + ") counted"
-		if strings.TrimSpace(opts.Letter) == "" {
-			c.count = "SELECT count(*) FROM " + s.table("content_entities") + " g WHERE " + strings.Join(where, " AND ")
-		}
+		c.count = "SELECT count(*) FROM " + countFrom + " WHERE " + strings.Join(where, " AND ")
 	}
 	return c, nil
 }

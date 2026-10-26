@@ -695,6 +695,18 @@
       ]
     },
     {
+      "id": "CK-J07-S12",
+      "journey": "CK-J07",
+      "behavior": "Search tolerates one edit per word",
+      "status": "verified",
+      "evidence": [
+        "A transposed title word finds both visible works, a misspelled second word next to a literal first word finds only its work, also when the misspelling is a word of another work, and a word two edits away finds nothing."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S12_search_tolerates_one_edit_per_word"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
@@ -1953,7 +1965,7 @@
     {
       "id": "CK-J16-S06",
       "journey": "CK-J16",
-      "behavior": "Entity counts and covers reflect writes without workers or stale periodic projections",
+      "behavior": "Entity counts and covers reflect writes without workers or stale periodic projections, including letter-filtered directory pages",
       "status": "verified",
       "evidence": [
         "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
