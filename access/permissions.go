@@ -33,6 +33,8 @@ const (
 	// EntitiesWrite: create, edit, merge and delete entities, and set content's
 	// memberships.
 	EntitiesWrite Permission = "root:entities:write"
+	// ChannelsWrite: manage channel identity, lifecycle and configuration.
+	ChannelsWrite Permission = "root:channels:write"
 	// NotificationsPublish: publish notices to users' inboxes (a host service).
 	NotificationsPublish Permission = "root:notifications:publish"
 	// ImportWrite: bulk-import content, entities, interactions and signals (a
@@ -46,7 +48,7 @@ const (
 
 // Permissions is every application permission; hosts choose which roles hold them.
 func Permissions() []Permission {
-	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
+	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, ChannelsWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
 }
 
 func (p Permission) String() string { return string(p) }
