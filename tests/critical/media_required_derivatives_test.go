@@ -130,6 +130,12 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	if len(during.Files) != len(before.Files) || len(during.HLS) != len(before.HLS) {
 		t.Fatal("pending replacement changed the completed reader snapshot")
 	}
+	for i, file := range before.Files {
+		current := during.Files[i]
+		if current.Path != file.Path || current.Type != file.Type || current.Size != file.Size || current.W != file.W || current.H != file.H {
+			t.Fatal("pending replacement changed completed reader media facts")
+		}
+	}
 	hold.unblock()
 	awaitMediaReady(t, admin, ref)
 }
