@@ -752,9 +752,6 @@ func isAudioType(t string) bool { return strings.HasPrefix(t, "audio/") }
 // their libvips loaders are blocked as untrusted.
 var ImageTypes = []string{"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif", "image/heic", "image/heif", "image/tiff"}
 
-// SubtitleTypes are the subtitle types the Subtitles producer converts.
-var SubtitleTypes = []string{"text/vtt", "application/x-subrip", "text/x-ssa", "text/x-ass"}
-
 // Upload metadata keys ContentKit reads.
 const (
 	MetaLang      = "lang"       // subtitles and audio: BCP 47

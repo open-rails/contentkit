@@ -43,9 +43,6 @@ func New(opts Options) (*Store, error) {
 	return &Store{pool: opts.Pool, qs: qs, tenant: tenant}, nil
 }
 
-// Tenant is the tenant the store is pinned to.
-func (s *Store) Tenant() string { return s.tenant }
-
 func (s *Store) q() codes.Querier { return codes.Pgx(s.pool) }
 
 func (s *Store) ref(r contentref.ContentRef) (codes.Key, error) {

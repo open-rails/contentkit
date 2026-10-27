@@ -298,19 +298,6 @@ func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Tar
 	return err == nil, err
 }
 
-// manifest is v's item's manifest; an empty one before its first upload.
-func (s *Service) manifest(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target) (*media.Manifest, error) {
-	ref, err := s.ref(k.Name, v)
-	if err != nil {
-		return nil, err
-	}
-	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
-	if errors.Is(err, media.ErrNotFound) {
-		return &media.Manifest{V: media.ManifestVersion}, nil
-	}
-	return m, err
-}
-
 // sameBlob reports two allocations of the same bytes.
 func sameBlob(a, b string) bool {
 	da, okA := layout.BlobDigest(a)

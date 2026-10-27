@@ -160,10 +160,6 @@ func (s *Store) Check(ctx context.Context) error {
 	return nil
 }
 
-// Client exposes the SDK client for bucket administration and tests.
-func (s *Store) Client() *s3.Client { return s.client }
-func (s *Store) Bucket() string     { return s.bucket }
-
 func (s *Store) Put(ctx context.Context, key string, body io.Reader, size int64, o media.PutOptions) (media.Object, error) {
 	in := &s3.PutObjectInput{Bucket: &s.bucket, Key: &key, Body: body, ContentLength: &size}
 	in.ContentType = optional(o.ContentType)

@@ -839,13 +839,6 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 	return c.rt.reactions.counts(ctx, c.s.pool, actor, key, true)
 }
 
-// AuthorReactions is one author's received like/dislike totals across their
-// published comments.
-type AuthorReactions struct {
-	Likes    int64 `json:"likes"`
-	Dislikes int64 `json:"dislikes"`
-}
-
 // --- HTTP ---
 
 func commentRoutes() []httpapi.Route[*comments] {

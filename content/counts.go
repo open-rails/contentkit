@@ -8,14 +8,6 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 )
 
-// Counts is the denormalized per-reference aggregate (content_interaction_counts).
-type Counts struct {
-	Likes        int `json:"likes"`
-	Dislikes     int `json:"dislikes"`
-	Favorites    int `json:"favorites"`
-	CommentCount int `json:"comment_count"`
-}
-
 // bumpCounts upserts the rollup by the given deltas inside the caller's tx.
 // GREATEST clamps each count at 0 so it never goes negative.
 func bumpCounts(ctx context.Context, tx pgx.Tx, s *store, key contentref.ContentKey, dLikes, dDislikes, dFav, dComments int) error {
