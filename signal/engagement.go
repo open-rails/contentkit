@@ -10,8 +10,6 @@ import (
 // receipt and revision make retries independent of the number of deliveries.
 const TypeEngagement = "engagement"
 
-const engagementPayloadKey = "contentkit_engagement"
-
 const (
 	MaxEngagementPages = 128
 	MaxPageRanges      = 16

@@ -69,8 +69,7 @@ const maxErasurePasses = 3
 //  2. every row of the subjects that existed when the pass ran is deleted from
 //     signals, compact state, daily contributions and exposures on every replica (mutations_sync = 2) and re-counted as zero;
 //  3. co-engagement pairs touching works the subjects contributed to are
-//     removed (an explicit RefreshCoEngagement re-verifies the ledger around
-//     its build).
+//     removed.
 //
 // A writer or projection that observed the pre-erasure state can still leave
 // residue rows; they are unreadable by (1) and EnforceErasures removes them
@@ -117,24 +116,6 @@ func (st *Store) EraseSubjects(ctx context.Context, tenants []string, subjects [
 		return report, fmt.Errorf("signal: erasure incomplete: %v", report.Remaining)
 	}
 	return report, nil
-}
-
-// erasedCount is the ledger's distinct subject count: RefreshCoEngagement
-// re-verifies it around a build so a rollup never publishes a subject erased
-// while it was being computed.
-func (st *Store) erasedCount(ctx context.Context, tenant string) (uint64, error) {
-	rows, err := st.conn.Query(ctx, fmt.Sprintf("SELECT uniqExact(subject_hash) FROM %s.erasures WHERE tenant = ?", st.db), tenant)
-	if err != nil {
-		return 0, fmt.Errorf("signal: erasure ledger: %w", err)
-	}
-	defer rows.Close()
-	var n uint64
-	if rows.Next() {
-		if err := rows.Scan(&n); err != nil {
-			return 0, err
-		}
-	}
-	return n, rows.Err()
 }
 
 // EnforceErasures re-applies every recorded erasure of a tenant to every row:
