@@ -211,6 +211,16 @@ func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, f media.F
 		if p.MP4 == nil || remuxed[p.Name] || !e.todo(fresh, f, p) {
 			continue
 		}
+		// Regeneration re-marks a failed upload's presets pending. An MP4
+		// already completed before the failure remains current; force has
+		// invalidated its fingerprint when it really needs encoding again.
+		w := runWork{item: item, f: f, p: p, fp: e.fp(p, f)}
+		if w.settled(e, fresh) {
+			if err := e.clearSettled(ctx, w); err != nil {
+				return err
+			}
+			continue
+		}
 		st, _ := stages(p, pl)
 		if len(st) == 0 {
 			if err := e.noOutput(ctx, item, f, p); err != nil {
