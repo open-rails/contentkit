@@ -2,8 +2,6 @@ package media
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -187,111 +185,9 @@ func (j *Jobs) repeatLegacyDeletion(ctx context.Context, item Item, c manifestCo
 	return nil
 }
 
-// prepareLegacyRetirementTx also covers an already-retired publication whose
-// old sweep or first-delete timer outlived its publication rows. The exact
-// historical journal identity or locked internal deletion job is the proof;
-// callers cannot use this path for a current version folder.
-func (j *PGJournal) prepareLegacyRetirementTx(ctx context.Context, tx pgx.Tx, reg *Registry, prefix string, jobID int64, incarnation string, due time.Time) (uuid.UUID, error) {
-	item, legacy, err := reg.cleanupItem(prefix)
-	if err != nil || !legacy {
-		return uuid.Nil, ErrCommitIdentity
-	}
-	j = j.forTenant(item.ref.TenantID)
-	var existing uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT operation_id FROM `+j.table+` WHERE tenant_id=$1 AND folder_prefix=$2 AND state='applied' AND effects ? 'legacy_publication' LIMIT 1`, item.ref.TenantID, prefix).Scan(&existing)
-	if err == nil {
-		return existing, j.scheduleCleanupTx(ctx, tx, item.ref, prefix, due, []uuid.UUID{existing}, true)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, err
-	}
-	var pending bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+j.table+` WHERE tenant_id=$1 AND folder_prefix=$2 AND state IN('open','prepared','frozen'))`, item.ref.TenantID, prefix).Scan(&pending); err != nil {
-		return uuid.Nil, err
-	}
-	if pending {
-		return uuid.Nil, ErrCommitPending
-	}
-	proof := legacyPublication{Kind: strings.TrimSuffix(item.ref.ContentKind, PublishedSuffix), Initialized: true}
-	var prior uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT operation_id FROM `+j.table+` WHERE tenant_id=$1 AND folder_prefix=$2 AND content_kind=$3 AND content_id=$4 AND content_version_id IS NULL AND state IN('applied','absent') ORDER BY updated_at DESC LIMIT 1`, item.ref.TenantID, prefix, item.ref.ContentKind, item.ref.ContentID).Scan(&prior)
-	if err == nil {
-		proof.PriorOperation = prior.String()
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, err
-	} else {
-		if jobID <= 0 {
-			return uuid.Nil, errors.New("media: legacy prefix has neither ownership journal nor deletion job")
-		}
-		if _, err := uuid.Parse(incarnation); err != nil {
-			return uuid.Nil, ErrCommitIdentity
-		}
-		proof.DeletionJob, proof.Incarnation = jobID, incarnation
-	}
-	rows, err := tx.Query(ctx, `SELECT object_key FROM `+j.allocations+` WHERE tenant_id=$1 AND folder_prefix=$2`, item.ref.TenantID, prefix)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	keys, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return uuid.Nil, err
-	}
-	keys = append(keys, item.ManifestKey())
-	effects, err := json.Marshal(journalEffects{Cleanup: true, Private: keys, LegacyPublication: &proof})
-	if err != nil {
-		return uuid.Nil, err
-	}
-	id := uuid.New()
-	fingerprint := sha256.Sum256([]byte("legacy-publication-retirement:" + prefix))
-	_, err = tx.Exec(ctx, `INSERT INTO `+j.table+`(tenant_id,operation_id,content_kind,content_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects)
-VALUES($1,$2,$3,$4,$5,'migration:reader-metadata',$6,$7,'applied',$8)`, item.ref.TenantID, id, item.ref.ContentKind, item.ref.ContentID, prefix, fingerprint[:], uuid.New(), effects)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	return id, j.scheduleCleanupTx(ctx, tx, item.ref, prefix, due, []uuid.UUID{id}, true)
-}
-
 func maxTime(a, b time.Time) time.Time {
 	if a.After(b) {
 		return a
 	}
 	return b
-}
-
-func prepareOrphanedLegacyCleanup(ctx context.Context, tx pgx.Tx, reg *Registry, journal *PGJournal, grace time.Duration) error {
-	for _, tenant := range reg.Namespaces() {
-		var kinds []string
-		for _, k := range reg.all {
-			if k.ns == tenant && k.Versions {
-				kinds = append(kinds, k.Name+PublishedSuffix)
-			}
-		}
-		if len(kinds) == 0 {
-			continue
-		}
-		jr := journal.forTenant(tenant)
-		rows, err := tx.Query(ctx, `SELECT d.folder_prefix,CASE WHEN isfinite(d.due_at) THEN d.due_at ELSE $3 END FROM `+jr.cleanup+` d
-WHERE d.tenant_id=$1 AND d.content_kind=ANY($2) AND NOT EXISTS(SELECT 1 FROM `+jr.table+` c WHERE c.tenant_id=d.tenant_id AND c.folder_prefix=d.folder_prefix AND c.effects ? 'legacy_publication')`, tenant, kinds, time.Now().Add(grace))
-		if err != nil {
-			return err
-		}
-		type pending struct {
-			Prefix string
-			Due    time.Time
-		}
-		pendingRows, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (pending, error) {
-			var p pending
-			err := r.Scan(&p.Prefix, &p.Due)
-			return p, err
-		})
-		if err != nil {
-			return err
-		}
-		for _, p := range pendingRows {
-			if _, err := journal.prepareLegacyRetirementTx(ctx, tx, reg, p.Prefix, 0, "", maxTime(p.Due, time.Now().Add(grace))); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
