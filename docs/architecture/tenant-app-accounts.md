@@ -60,11 +60,11 @@ that a release or deployment contains all of it.
 | [`config.go`](../../config.go), [`engine.go`](../../engine.go) | `Config.Tenant` pins a catalog, access gate, signal scope and media setup | Its current value is a legacy **app** key, not the new business tenant |
 | [`scope.go`](../../scope.go) | Local typed tenant/app scope and immutable app/account-storage claims | Establishes compatible ownership metadata; it does not grant app permissions |
 | [`accounts.go`](../../accounts.go) | Scoped `AccountsConfig{Schema, Avatars}` derives the tenant account root; legacy `Namespace` remains a migration input | Shared account/avatar coordinates do not configure an inbox |
-| [`account_erasure_receipts.go`](../../account_erasure_receipts.go), [`migration/legacyinbox`](../../migration/legacyinbox) | Existing account-erasure fences and explicit legacy receipt adoption use AuthKit-owned storage | Normal notification publication uses only AuthKit's publisher; ContentKit has no inbox reader or fallback store |
-| [`account-notifications.md`](../account-notifications.md), [`notification/openrails`](../../notification/openrails) | AuthKit-owned inbox with an injected transactional publisher; the former billing inbox poller is removed and its adapter remains only for explicit legacy handoff | Keep general event logs independent; OpenRails owns selected billing notices and their resolution |
+| [`account_erasure_receipts.go`](../../account_erasure_receipts.go) | Existing account-erasure fences use AuthKit-owned storage | Normal notification publication uses only AuthKit's publisher; ContentKit has no inbox reader or fallback store |
+| [`notifications.md`](../notifications.md) | AuthKit-owned inbox with an injected transactional publisher | Keep general event logs independent; OpenRails owns selected billing notices and their resolution |
 | [`avatars.go`](../../avatars.go), [`media/avatar`](../../media/avatar) | One avatar writer; secondary app forwards authenticated self-only edits | Keep one canonical manifest and processing flow |
 | [`discovery/stats.go`](../../discovery/stats.go), [`adapters/openrails/tenure.go`](../../adapters/openrails/tenure.go) | App comments/completions plus a thin adapter to OpenRails' native access-tenure query | Keep counters app-scoped; expose billing-derived tenure through ContentKit |
-| [`media/layout/layout.go`](../../media/layout/layout.go) | Scoped paths include the tenant and optional app; legacy paths remain explicit compatibility inputs | Registry, tokens, gateway, workers and verified copy plans share the same scope |
+| [`media/layout/layout.go`](../../media/layout/layout.go) | Scoped paths include the tenant and optional app; legacy paths remain explicit compatibility inputs | Registry, tokens, gateway and workers share the same scope |
 | [`access/keys.go`](../../access/keys.go), [`content/runtime.go`](../../content/runtime.go) | Legacy tenant values occur in durable keys, references and query predicates | A config rename must not rewrite existing catalog/access identities |
 | [`internal/gate/gate.go`](../../internal/gate/gate.go), [`adapters/authkit/authorization.go`](../../adapters/authkit/authorization.go) | Legacy staff checks retain root scope; scoped engines require the app authorization port and explicit AuthKit grants | Host role/key adoption remains separate from the implemented adapter |
 
@@ -264,11 +264,8 @@ editor views and originals keep their existing access controls.
 
 The logical target is not a request to rename live objects immediately.
 Current storage uses `accounts/user/...`, `doujins/...` and `hentai0/...`;
-`media/layout.Parse` accepts both shapes. Explicit copy plans hash and verify
-objects and adopt their manifest/journal state before cutover. A scoped-only
-gateway stops serving preserved legacy objects. The temporary `LegacyLayout`
-mode requires a successful rollback check; it is never an automatic fallback.
-See [media migration](../media-layout-migration.md).
+`media/layout.Parse` accepts both shapes. A scoped-only gateway serves only
+scoped objects.
 
 Consolidating buckets is independent of renaming keys. First copy and verify
 the existing keys into the shared bucket, switch explicit mappings, and keep
