@@ -11,7 +11,6 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-type CoverageRange = signal.CoverageRange
 type PageEngagement = signal.PageEngagement
 type WatchedRange = signal.WatchedRange
 
