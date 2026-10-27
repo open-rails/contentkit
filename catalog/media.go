@@ -43,8 +43,6 @@ type Reader interface {
 type VersionMedia interface {
 	// Covers resolves versions' covers.
 	Covers(ctx context.Context, covers []versions.CoverOf) ([][]media.PublicRendition, error)
-	// RepublishTx follows a change of a version's effective rule or segments.
-	RepublishTx(ctx context.Context, tx pgx.Tx, versions []versions.Target) error
 	// DeleteTx claims irreversible erasure under the eligibility row locks.
 	DeleteTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
 	// Delete verifies physical deletion after that claim has committed.
@@ -53,8 +51,6 @@ type VersionMedia interface {
 	ResumeDeletes(ctx context.Context, limit int) (int, error)
 	// CheckRestorableTx refuses restoration once irreversible erasure started.
 	CheckRestorableTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
-	// PendingTx reports versions whose media is not ready to go live.
-	PendingTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) ([]versions.MediaPending, error)
 }
 
 var errMediaNotConfigured = errors.New("catalog: media is not bound")
@@ -113,36 +109,6 @@ func (s *Store) validateChapterStarts(ctx context.Context, tx pgx.Tx, version st
 	}
 	if err := validator.ValidateChapterStartsTx(ctx, tx, target, starts); err != nil {
 		return invalid("chapter starts: %v", err)
-	}
-	return nil
-}
-
-// NotReadyError refuses making versions live while their media is still
-// processing or being published; it is versions.ErrNotReady.
-type NotReadyError struct{ Pending []versions.MediaPending }
-
-func (e *NotReadyError) Error() string {
-	reasons := make([]string, len(e.Pending))
-	for i, p := range e.Pending {
-		reasons[i] = p.Reason
-	}
-	slices.Sort(reasons)
-	return "media not ready: " + strings.Join(slices.Compact(reasons), "; ")
-}
-
-func (e *NotReadyError) Unwrap() error { return versions.ErrNotReady }
-
-// readyTx refuses targets that would go live without readable media.
-func (s *Store) readyTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error {
-	if s.media == nil || len(targets) == 0 {
-		return nil
-	}
-	pending, err := s.media.Versions.PendingTx(ctx, tx, targets)
-	if err != nil {
-		return err
-	}
-	if len(pending) > 0 {
-		return &NotReadyError{Pending: pending}
 	}
 	return nil
 }
@@ -271,35 +237,4 @@ func coverURL(rs []media.PublicRendition) *string {
 	}
 	u := media.PublicImage{Renditions: rs}.URL(math.MaxInt)
 	return &u
-}
-
-// Existing reports which of ids are this tenant's content items or versions,
-// for the media orphan sweep; deleted rows not yet purged still exist.
-func (s *Store) Existing(ctx context.Context, ids []string) (map[string]bool, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2)
- UNION SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
-	if err != nil {
-		return nil, err
-	}
-	found, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]bool, len(found))
-	for _, id := range found {
-		out[id] = true
-	}
-	return out, nil
-}
-
-// publishedVersions are the items' published versions, which go live with them.
-func (s *Store) publishedVersions(ctx context.Context, tx pgx.Tx, ids []string) ([]versions.Target, error) {
-	if s.media == nil || len(ids) == 0 {
-		return nil, nil
-	}
-	rows, err := tx.Query(ctx, `SELECT content_id, id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = ANY($2) AND state = 'published'`, s.tenant, ids)
-	if err != nil {
-		return nil, err
-	}
-	return pgx.CollectRows(rows, pgx.RowToStructByPos[versions.Target])
 }

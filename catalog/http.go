@@ -218,7 +218,6 @@ func writeErr(w http.ResponseWriter, err error) {
 
 func classify(err error) (int, string, string) {
 	var ae *AuthError
-	var notReady *NotReadyError
 	switch {
 	case errors.As(err, &ae):
 		if errors.Is(err, auth.ErrExpired) || errors.Is(err, auth.ErrRevoked) {
@@ -239,8 +238,6 @@ func classify(err error) (int, string, string) {
 		return http.StatusForbidden, httpapi.CodeForbidden, "forbidden"
 	case errors.Is(err, ErrConflict):
 		return http.StatusConflict, httpapi.CodeConflict, httpapi.Message(httpapi.CodeConflict)
-	case errors.As(err, &notReady):
-		return http.StatusConflict, "not_ready", notReady.Error()
 	case errors.Is(err, errMediaNotConfigured):
 		return http.StatusNotImplemented, "not_configured", "images need ContentKit media"
 	case errors.Is(err, errFixedOwnerUnavailable):

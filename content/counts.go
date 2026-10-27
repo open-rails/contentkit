@@ -5,9 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/versionid"
 )
 
 // Counts is the denormalized per-reference aggregate (content_interaction_counts).
@@ -59,59 +57,4 @@ func orderBy(sort, likes, dislikes, created, id string) string {
 	default:
 		return "ORDER BY " + created + " DESC, " + id + " DESC"
 	}
-}
-
-// Counts batch-reads the aggregate counts of refs (O(1) rollup rows). A
-// reference with no engagement yet is absent from the map.
-func (rt *Runtime) Counts(ctx context.Context, refs []contentref.ContentRef) (map[contentref.ContentKey]Counts, error) {
-	out := make(map[contentref.ContentKey]Counts, len(refs))
-	for _, r := range refs {
-		if err := rt.checkRef(r); err != nil {
-			return nil, err
-		}
-	}
-	if len(refs) == 0 {
-		return out, nil
-	}
-	kinds, ids, versions := refColumns(refs)
-	rows, err := rt.store.pool.Query(ctx, `SELECT content_kind, content_id, content_version_id, likes, dislikes, favorites, comment_count
-		FROM `+rt.store.t.counts+` WHERE tenant_id = $1 AND `+refsIn(2), rt.tenant, kinds, ids, versions)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		k := contentref.ContentKey{TenantID: rt.tenant}
-		var c Counts
-		if err := rows.Scan(&k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID), &c.Likes, &c.Dislikes, &c.Favorites, &c.CommentCount); err != nil {
-			return nil, err
-		}
-		out[k] = c
-	}
-	return out, rows.Err()
-}
-
-// LatestComments is the feed: newest comments across all content the actor
-// may see, in language ("" for every language).
-func (rt *Runtime) LatestComments(ctx context.Context, actor access.Actor, language string, limit, offset int) ([]FeedItem, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	return rt.comments.latest(ctx, actor, language, limit, offset)
-}
-
-// LatestCommentsTotal is the page total for LatestComments: how many live,
-// approved comments the feed draws from in this tenant. Per-reference
-// visibility is applied per page (a page may under-fill), so this is the
-// upper bound a paged envelope reports, not a per-actor exact count.
-func (rt *Runtime) LatestCommentsTotal(ctx context.Context) (int, error) {
-	return rt.comments.latestTotal(ctx)
-}
-
-// CommentReactionsByAuthor totals the reactions each author's published
-// comments have received. Held and rejected comments are author-only and
-// never counted, so every reader sees the same totals. An author with no
-// published comments is absent from the map.
-func (rt *Runtime) CommentReactionsByAuthor(ctx context.Context, userIDs []string) (map[string]AuthorReactions, error) {
-	return rt.comments.reactionsByAuthor(ctx, userIDs)
 }

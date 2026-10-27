@@ -561,13 +561,6 @@ func (s *Store) putCodes(ctx context.Context, q entities.Querier, ids []string) 
 // Publish accepts durable publication now, or schedules it for a future At.
 // Already released files stay available while any new publication is pending.
 func (s *Store) Publish(ctx context.Context, actor access.Actor, in []Publish) error {
-	return s.PublishChecked(ctx, actor, in, nil)
-}
-
-// PublishChecked is Publish with a transaction-local precondition. The check
-// runs after ordinary authorization and content locks, before any publication
-// mutation. It must use tx for database reads and must not open transactions.
-func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Publish, check func(context.Context, pgx.Tx) error) error {
 	ids := make([]string, len(in))
 	for i, p := range in {
 		ids[i] = p.ContentID
@@ -575,11 +568,6 @@ func (s *Store) PublishChecked(ctx context.Context, actor access.Actor, in []Pub
 	now := s.now()
 	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
 		fx := effects{}
-		if check != nil {
-			if err := check(ctx, tx); err != nil {
-				return fx, err
-			}
-		}
 		if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
 			return fx, err
 		}
@@ -631,35 +619,6 @@ func (s *Store) Unpublish(ctx context.Context, actor access.Actor, ids []string)
 			}
 			fx.events = append(fx.events, Event{Type: EventContentUnpublished, Kind: o.kind, ContentID: id})
 			fx.publish = append(fx.publish, versions.Target{Content: id})
-		}
-		return fx, nil
-	})
-}
-
-// DeleteForModeration hides content without changing its editions. This
-// embedded operation is separate from ordinary version deletion and has no
-// public delete route. Deleted content follows the configured retention.
-func (s *Store) DeleteForModeration(ctx context.Context, actor access.Actor, ids []string) error {
-	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
-		fx := effects{}
-		for _, id := range ids {
-			o := got[id]
-			if o.state == StateDeleted {
-				changed, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_without_versions=false WHERE tenant_id=$1 AND id=$2 AND deleted_without_versions`, s.tenant, id)
-				if err != nil {
-					return fx, err
-				}
-				if changed.RowsAffected() > 0 {
-					fx.events = append(fx.events, Event{Type: EventContentDeleted, Kind: o.kind, ContentID: id})
-					continue
-				}
-				return fx, ErrNotFound
-			}
-
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'deleted', deleted_at = clock_timestamp(),deleted_without_versions=false WHERE tenant_id = $1 AND id = $2`, s.tenant, id); err != nil {
-				return fx, err
-			}
-			fx.events = append(fx.events, Event{Type: EventContentDeleted, Kind: o.kind, ContentID: id})
 		}
 		return fx, nil
 	})

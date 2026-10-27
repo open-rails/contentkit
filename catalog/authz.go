@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"context"
-	"errors"
 	"slices"
 
 	"github.com/jackc/pgx/v5"
@@ -217,11 +216,6 @@ func (s *Store) authorizeCreate(ctx context.Context, q Querier, actor access.Act
 
 func viewerID(a access.Actor) string {
 	return a.AccountID()
-}
-
-func isAuthErr(err error) bool {
-	var ae *AuthError
-	return errors.As(err, &ae)
 }
 
 // ownAccess is evaluated once per request from current provider grants. The

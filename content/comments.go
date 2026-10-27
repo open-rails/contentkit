@@ -405,15 +405,6 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, language stri
 	return kept, nil
 }
 
-// latestTotal counts the rows latest draws from, under the same tenant,
-// liveness and moderation predicate.
-func (c *comments) latestTotal(ctx context.Context) (int, error) {
-	var n int
-	err := c.s.pool.QueryRow(ctx, `SELECT count(*) FROM `+c.s.t.comments+`
-		WHERE tenant_id = $1 AND deleted_at IS NULL AND moderation = 'approved'`, c.s.tenant).Scan(&n)
-	return n, err
-}
-
 // AdminComment is the moderation view: raw body (no tombstoning), deletion
 // and moderation state and the content reference.
 type AdminComment struct {
@@ -853,34 +844,6 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 type AuthorReactions struct {
 	Likes    int64 `json:"likes"`
 	Dislikes int64 `json:"dislikes"`
-}
-
-// reactionsByAuthor sums the reaction counters ContentKit maintains on each
-// author's published comments. Tombstoned, held and rejected comments are
-// never published, so they never contribute; anonymous comments have no author.
-func (c *comments) reactionsByAuthor(ctx context.Context, userIDs []string) (map[string]AuthorReactions, error) {
-	ids := dedup(userIDs)
-	out := make(map[string]AuthorReactions, len(ids))
-	if len(ids) == 0 {
-		return out, nil
-	}
-	rows, err := c.s.pool.Query(ctx, `SELECT user_id, COALESCE(SUM(likes), 0), COALESCE(SUM(dislikes), 0)
-		FROM `+c.s.t.comments+`
-		WHERE tenant_id = $1 AND user_id = ANY($2) AND deleted_at IS NULL AND moderation = 'approved'
-		GROUP BY user_id`, c.s.tenant, ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		var r AuthorReactions
-		if err := rows.Scan(&id, &r.Likes, &r.Dislikes); err != nil {
-			return nil, err
-		}
-		out[id] = r
-	}
-	return out, rows.Err()
 }
 
 // --- HTTP ---
