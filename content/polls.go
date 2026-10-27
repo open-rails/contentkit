@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
@@ -41,6 +42,12 @@ type PollOption struct {
 // PollMultipleChoice is the supported poll kind.
 const PollMultipleChoice = "multiple_choice"
 
+const (
+	MaxPollOptions        = 10
+	MaxPollQuestionLength = 300
+	MaxPollOptionLength   = 200
+)
+
 // Poll is a question, its predefined options and the caller's own vote.
 type Poll struct {
 	ID         string       `json:"id"`
@@ -57,6 +64,7 @@ type Poll struct {
 	Options    []PollOption `json:"options"`
 	Voted      bool         `json:"voted"`
 	MyOption   string       `json:"my_option,omitempty"`
+	scheduled  bool         // live_at is still ahead, by the database clock
 }
 
 // PollInput is a new poll.
@@ -96,6 +104,15 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (P
 	if in.Question == "" {
 		return Poll{}, badRequest("question is required")
 	}
+	if utf8.RuneCountInString(in.Question) > MaxPollQuestionLength {
+		return Poll{}, badRequest("question is longer than %d characters", MaxPollQuestionLength)
+	}
+	if in.Language == "" {
+		return Poll{}, badRequest("language is required")
+	}
+	if !slices.Contains(p.rt.cfg.Languages, in.Language) {
+		return Poll{}, badRequest("language %q is not one of the site's languages", in.Language)
+	}
 	if in.Kind != "" && in.Kind != PollMultipleChoice {
 		return Poll{}, badRequest("only %s polls are supported", PollMultipleChoice)
 	}
@@ -103,13 +120,23 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (P
 	if len(in.Options) < 2 {
 		return Poll{}, badRequest("a poll needs at least 2 options")
 	}
-	if in.ClosesAt != nil && in.LiveAt != nil && !in.ClosesAt.After(*in.LiveAt) {
+	if len(in.Options) > MaxPollOptions {
+		return Poll{}, badRequest("a poll has at most %d options", MaxPollOptions)
+	}
+	liveAt := time.Now()
+	if in.LiveAt != nil {
+		liveAt = *in.LiveAt
+	}
+	if in.ClosesAt != nil && !in.ClosesAt.After(liveAt) {
 		return Poll{}, badRequest("closes_at must be after live_at")
 	}
 	for i := range in.Options {
 		in.Options[i].Label = strings.TrimSpace(in.Options[i].Label)
 		if in.Options[i].Label == "" {
 			return Poll{}, badRequest("option %d label is required", i)
+		}
+		if utf8.RuneCountInString(in.Options[i].Label) > MaxPollOptionLength {
+			return Poll{}, badRequest("option %d label is longer than %d characters", i, MaxPollOptionLength)
 		}
 	}
 
@@ -152,17 +179,44 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in Po
 		if q == "" {
 			return Poll{}, badRequest("question cannot be blank")
 		}
+		if utf8.RuneCountInString(q) > MaxPollQuestionLength {
+			return Poll{}, badRequest("question is longer than %d characters", MaxPollQuestionLength)
+		}
 		in.Question = &q
 	}
-	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
+	tx, err := p.s.beginMutation(ctx)
+	if err != nil {
+		return Poll{}, err
+	}
+	defer tx.Rollback(ctx)
+	var liveAt time.Time
+	var closesAt *time.Time
+	err = tx.QueryRow(ctx, `SELECT live_at, closes_at FROM `+p.s.t.pollQuestions+`
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice' FOR UPDATE`, id, p.s.tenant).Scan(&liveAt, &closesAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Poll{}, ErrNotFound
+	}
+	if err != nil {
+		return Poll{}, err
+	}
+	if in.LiveAt != nil {
+		liveAt = *in.LiveAt
+	}
+	if in.ClosesAt.Set {
+		closesAt = in.ClosesAt.Value
+	}
+	if closesAt != nil && !closesAt.After(liveAt) {
+		return Poll{}, badRequest("closes_at must be after live_at")
+	}
+	_, err = tx.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
 		SET question = COALESCE($2, question), is_active = COALESCE($3, is_active),
 		    live_at = COALESCE($4, live_at), closes_at = CASE WHEN $7 THEN $6 ELSE closes_at END, updated_at = now()
 		WHERE id = $1 AND tenant_id = $5 AND deleted_at IS NULL AND kind = 'multiple_choice'`, id, in.Question, in.IsActive, in.LiveAt, p.s.tenant, in.ClosesAt.Value, in.ClosesAt.Set)
 	if err != nil {
 		return Poll{}, err
 	}
-	if tag.RowsAffected() == 0 {
-		return Poll{}, ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return Poll{}, err
 	}
 	return p.get(ctx, actor, id)
 }
@@ -299,15 +353,17 @@ func parseWindow(month, date string) (from, to time.Time, ok bool) {
 	return time.Time{}, time.Time{}, false
 }
 
-const pollCols = `id::text, kind, question, language, is_active, coalesce(image_name,''), live_at, closes_at`
+const pollCols = `id::text, kind, question, language, is_active, coalesce(image_name,''), live_at, closes_at, live_at > now(), closes_at IS NOT NULL AND closes_at <= now()`
 
-// scan reads pollCols and derives Closed; attach resolves the images.
+// scan reads pollCols and derives Closed by the database clock, as open
+// does; attach resolves the images.
 func (p *polls) scan(row pgx.Row) (Poll, error) {
 	v := Poll{Options: []PollOption{}}
-	if err := row.Scan(&v.ID, &v.Kind, &v.Question, &v.Language, &v.IsActive, &v.image, &v.LiveAt, &v.ClosesAt); err != nil {
+	var pastClose bool
+	if err := row.Scan(&v.ID, &v.Kind, &v.Question, &v.Language, &v.IsActive, &v.image, &v.LiveAt, &v.ClosesAt, &v.scheduled, &pastClose); err != nil {
 		return Poll{}, err
 	}
-	v.Closed = !v.IsActive || (v.ClosesAt != nil && !v.ClosesAt.After(time.Now()))
+	v.Closed = !v.IsActive || pastClose
 	return v, nil
 }
 
@@ -463,6 +519,9 @@ func (p *polls) vote(ctx context.Context, actor access.Actor, pollID, optionID s
 		return Poll{}, err
 	}
 
+	if userID != "" {
+		ip = ""
+	}
 	// ON CONFLICT DO NOTHING makes a duplicate voter BLOCK then no-op (0 rows) —
 	// a bare INSERT would raise 23505, aborting the whole tx (25P02).
 	tag, err := tx.Exec(ctx, `INSERT INTO `+p.s.t.pollVotes+`
@@ -485,14 +544,16 @@ func (p *polls) vote(ctx context.Context, actor access.Actor, pollID, optionID s
 
 // open asserts a choice poll of this tenant takes votes: it must exist, be
 // live and not soft-deleted (all hidden as 404 so a future poll never leaks),
-// and be neither deactivated nor past closes_at.
+// and be neither deactivated nor past closes_at. The share lock holds off an
+// option delete until the vote commits, and makes a vote that waited on one
+// see the option gone.
 func (p *polls) open(ctx context.Context, q querier, pollID string) error {
 	if !uuidRe.MatchString(pollID) {
 		return ErrNotFound
 	}
 	var active, closed bool
 	err := q.QueryRow(ctx, `SELECT is_active, closes_at IS NOT NULL AND closes_at <= now() FROM `+p.s.t.pollQuestions+`
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice' AND live_at <= now()`, pollID, p.s.tenant).Scan(&active, &closed)
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice' AND live_at <= now() FOR SHARE`, pollID, p.s.tenant).Scan(&active, &closed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -528,7 +589,7 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Responses: []httpapi.Reply{httpapi.OK([]Poll{})}},
 		Serve: httpapi.H((*polls).handleAdminList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Public,
-		Doc:       "A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders.",
+		Doc:       "A poll with the caller's vote; a scheduled poll only for root:polls:write holders.",
 		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*polls).handleGet)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
@@ -539,7 +600,7 @@ var pollRoutes = []httpapi.Route[*polls]{
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Updates a poll's given fields; closes_at null reopens it until deactivated.",
 		Request:   PollUpdate{},
-		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeNotFound}},
+		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeInvalidRequest, CodeNotFound}},
 		Serve: httpapi.H((*polls).handleUpdate)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Deletes a poll and its media folder.",
@@ -558,14 +619,14 @@ var pollRoutes = []httpapi.Route[*polls]{
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/options", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Adds an option to a multiple-choice poll, at the end unless position is given.",
 		Request:   PollOptionPatch{},
-		Responses: []httpapi.Reply{httpapi.Created(PollOption{})}, Errors: []string{CodeNotFound}},
+		Responses: []httpapi.Reply{httpapi.Created(PollOption{})}, Errors: []string{CodeInvalidRequest, CodeNotFound}},
 		Serve: httpapi.H((*polls).handleAddOption)},
 	// Nested under the poll: a bare /polls/options/{oid} DELETE would ambiguously
 	// overlap reactions' generic DELETE /{kind}/{id}/reaction in ServeMux.
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Updates an option's label or position.",
 		Request:   PollOptionPatch{},
-		Responses: []httpapi.Reply{httpapi.OK(PollOption{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
+		Responses: []httpapi.Reply{httpapi.OK(PollOption{})}, Errors: []string{CodeInvalidRequest, CodeNotConfigured, CodeNotFound}},
 		Serve: httpapi.H((*polls).handleUpdateOption)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Removes an option and its votes; a poll keeps at least two.",
@@ -623,19 +684,55 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, badRequest("label is required"))
 		return
 	}
+	label := strings.TrimSpace(*in.Label)
+	if utf8.RuneCountInString(label) > MaxPollOptionLength {
+		writeErr(w, badRequest("label is longer than %d characters", MaxPollOptionLength))
+		return
+	}
+	ctx := req.Context()
+	tx, err := p.s.beginMutation(ctx)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE tenant_id = $1 AND id = $2 AND kind = 'multiple_choice' AND deleted_at IS NULL FOR NO KEY UPDATE`,
+		p.s.tenant, id).Scan(new(int))
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeErr(w, ErrNotFound)
+		return
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	var options int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM `+p.s.t.pollOptions+`
+		WHERE tenant_id = $1 AND question_id = $2`, p.s.tenant, id).Scan(&options); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if options >= MaxPollOptions {
+		writeErr(w, badRequest("a poll has at most %d options", MaxPollOptions))
+		return
+	}
 	var o PollOption
-	err := p.s.pool.QueryRow(req.Context(), `INSERT INTO `+p.s.t.pollOptions+`
+	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollOptions+`
 		(tenant_id, question_id, label, position)
 		SELECT q.tenant_id, q.id, $2, COALESCE($3, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE tenant_id = q.tenant_id AND question_id = q.id))
 		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.tenant_id = $4 AND q.deleted_at IS NULL AND q.kind = '`+PollMultipleChoice+`'
 		RETURNING id::text, label, position, vote_count`,
-		id, strings.TrimSpace(*in.Label), in.Position, p.s.tenant).
+		id, label, in.Position, p.s.tenant).
 		Scan(&o.ID, &o.Label, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, ErrNotFound)
 		return
 	}
 	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -663,6 +760,10 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 		l := strings.TrimSpace(*in.Label)
 		if l == "" {
 			writeErr(w, badRequest("label cannot be blank"))
+			return
+		}
+		if utf8.RuneCountInString(l) > MaxPollOptionLength {
+			writeErr(w, badRequest("label is longer than %d characters", MaxPollOptionLength))
 			return
 		}
 		in.Label = &l
@@ -715,7 +816,7 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 
 // deleteOption deletes an option and its votes while the poll keeps at least
 // two. The poll row lock serializes deletes, which otherwise could each see
-// three options and leave one; FOR NO KEY UPDATE does not block voting. Votes
+// three options and leave one, and waits for votes in flight (see open). Votes
 // go before their option, the order account erasure locks them in.
 func (p *polls) deleteOption(ctx context.Context, pollID, oid string) error {
 	tx, err := p.s.beginMutation(ctx) // the count must see a delete committed during the lock wait
@@ -863,8 +964,8 @@ func (p *polls) handleGet(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	// Future/inactive polls are admin-only; hide as 404 (don't leak schedules).
-	if !v.IsActive || v.LiveAt.After(time.Now()) {
+	// Future polls are admin-only; hide as 404 (don't leak schedules).
+	if v.scheduled {
 		if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 			writeErr(w, ErrNotFound)
 			return

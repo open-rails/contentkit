@@ -399,7 +399,7 @@ var ruleRoutes = []httpapi.Route[*Runtime]{
 		}),
 	ruleRoute(httpapi.GET, "/moderation/ip-bans", "The IP bans, newest first, expired ones included.", nil, httpapi.OK([]IPBan{}),
 		func(rt *Runtime, _ access.Actor, req *http.Request) (any, error) { return rt.ipBans(req.Context()) }),
-	ruleRoute(httpapi.POST, "/moderation/ip-bans", "Bans addresses or networks from commenting and answering polls, or replaces their bans.",
+	ruleRoute(httpapi.POST, "/moderation/ip-bans", "Bans addresses or networks from commenting, or replaces their bans.",
 		[]IPBanInput{}, httpapi.OK([]IPBan{}), func(rt *Runtime, actor access.Actor, req *http.Request) (any, error) {
 			var in []IPBanInput
 			if err := decodeJSON(req, &in); err != nil {

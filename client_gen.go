@@ -663,7 +663,7 @@ func (c *Client) GetPollsAdmin(ctx context.Context, q GetPollsAdminQuery) ([]con
 	return out, err
 }
 
-// GetPoll is GET /v1/polls/{id} (public). A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders.
+// GetPoll is GET /v1/polls/{id} (public). A poll with the caller's vote; a scheduled poll only for root:polls:write holders.
 func (c *Client) GetPoll(ctx context.Context, id string) (content.Poll, error) {
 	var out content.Poll
 	err := c.call(ctx, http.MethodGet, expand("/v1/polls/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
@@ -1008,7 +1008,7 @@ func (c *Client) GetModerationIpBans(ctx context.Context) ([]content.IPBan, erro
 	return out, err
 }
 
-// PostModerationIpBans is POST /v1/moderation/ip-bans (staff). Bans addresses or networks from commenting and answering polls, or replaces their bans.
+// PostModerationIpBans is POST /v1/moderation/ip-bans (staff). Bans addresses or networks from commenting, or replaces their bans.
 func (c *Client) PostModerationIpBans(ctx context.Context, body []content.IPBanInput) ([]content.IPBan, error) {
 	var out []content.IPBan
 	err := c.call(ctx, http.MethodPost, "/v1/moderation/ip-bans", nil, body, &out)
