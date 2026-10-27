@@ -921,7 +921,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 	}
 	// Each copy lands in its destination file's area.
 	allocated := make([]string, len(sums))
-	for _, area := range []string{layout.AreaPrivate, layout.AreaDownload, layout.AreaOriginals, layout.AreaFuture} {
+	for _, area := range []string{layout.AreaPrivate, layout.AreaDownload, layout.AreaOriginals, layout.AreaInternal} {
 		var at []int
 		var of [][]byte
 		for i, a := range areas {
@@ -1017,7 +1017,7 @@ func copyBlobs(k *Kind, to string, files []File) [][2]string {
 
 func copyIndexArea(k *Kind) string {
 	if k.Versions {
-		return layout.AreaFuture
+		return layout.AreaInternal
 	}
 	return layout.AreaPrivate
 }

@@ -68,7 +68,7 @@ func TestCommerceMediaGrantRevocation(t *testing.T) {
 		if !ok {
 			t.Fatal("download-only source rendition is missing")
 		}
-		if area, _, valid := layout.SplitBlobRef(highResolution.Blob); !valid || area != layout.AreaFuture {
+		if area, _, valid := layout.SplitBlobRef(highResolution.Blob); !valid || area != layout.AreaInternal {
 			t.Fatalf("download-only source was promoted into the item token's served area: %+v", highResolution)
 		}
 		key, err := item.Blob(highResolution.Blob)

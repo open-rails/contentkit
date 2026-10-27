@@ -109,13 +109,13 @@ func TestRestrictedMediaReadIsNotEditAuthority(t *testing.T) {
 	must(t, err)
 	ttl, err := strconv.Atoi(preview.Query().Get("X-Amz-Expires"))
 	must(t, err)
-	if ttl <= 0 || ttl > 300 || preview.Query().Get("X-Amz-Signature") == "" || preview.Query().Get("t") != "" || !strings.Contains(preview.Path, "/future/") {
+	if ttl <= 0 || ttl > 300 || preview.Query().Get("X-Amz-Signature") == "" || preview.Query().Get("t") != "" || !strings.Contains(preview.Path, "/internal/") {
 		t.Fatalf("auditor preview is not an exact bounded prepared-file capability: %s", preview.Path)
 	}
 	key := strings.TrimPrefix(preview.Path, "/"+storage.bucket+"/")
-	folder, _, found := strings.Cut(key, "/future/")
+	folder, _, found := strings.Cut(key, "/internal/")
 	if !found {
-		t.Fatal("prepared object has no item future prefix")
+		t.Fatal("prepared object has no item internal prefix")
 	}
 	ring, err := mediatoken.NewRing(storage.key, nil)
 	must(t, err)

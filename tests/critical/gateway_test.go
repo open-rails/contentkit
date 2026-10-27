@@ -157,7 +157,7 @@ func TestGatewayCapabilities(t *testing.T) {
 	})
 	t.Run("CK-J13-S05_reserved_and_erasure_fenced_objects_refuse", func(t *testing.T) {
 		control(t, first, grant(first))
-		for _, key := range []string{folder + layout.ManifestName, folder + "temp/u-" + uuid.NewString(), folder + "tmp/u-" + uuid.NewString(), folder + "future/" + layout.BlobName(sum[:], uuid.NewString()), folder + "originals/" + layout.BlobName(sum[:], uuid.NewString()), folder + "public/" + layout.ErasureFenceName} {
+		for _, key := range []string{folder + layout.ManifestName, folder + "temp/u-" + uuid.NewString(), folder + "tmp/u-" + uuid.NewString(), folder + "internal/" + layout.BlobName(sum[:], uuid.NewString()), folder + "originals/" + layout.BlobName(sum[:], uuid.NewString()), folder + "public/" + layout.ErasureFenceName} {
 			seed(t, key)
 			deny(t, key, ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute)), "")
 		}
