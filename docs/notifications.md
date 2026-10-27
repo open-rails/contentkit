@@ -58,6 +58,10 @@ General retained platform event logs and `preference_sync` are independent.
 
 ## Account cleanup
 
+The host's AuthKit inbox scope for ContentKit must be `contentkit:` followed by
+ContentKit's account key (`tenant_<tenant ID>` for a scoped engine); account
+cleanup reads erasures under exactly that scope.
+
 Account lifecycle cleanup retains its established canonical account/app erasure
 fences and content-only restore checks. The narrow cleanup adapter calls
 AuthKit's canonical erasure implementation; it creates no inbox tables and
