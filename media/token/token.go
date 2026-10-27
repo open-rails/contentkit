@@ -5,8 +5,7 @@
 //
 // An item token's scope is an item's, "{ns}/{kind}/{id}" or a version's
 // "{ns}/{kind}/{id}/{version}": every file in the item's private/ or none. A
-// private-file token covers one immutable key, never its siblings. A download
-// token covers one key in download/, which neither private token opens.
+// private-file token covers one immutable key, never its siblings.
 // Tokens are bearer tokens, revoked only by expiry.
 package token
 

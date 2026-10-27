@@ -52,7 +52,7 @@ type Config struct {
 	Routes []Route
 
 	Endpoint, Region             string // path-style S3 endpoint; Region default us-east-1
-	AccessKeyID, SecretAccessKey string // read key for served private/download/public objects, including erasure-marker HEAD; scoped prefixes need missing-object 404s
+	AccessKeyID, SecretAccessKey string // read key for served private/public objects, including erasure-marker HEAD; scoped prefixes need missing-object 404s
 	Ring                         token.Ring
 	Hosts                        map[string][]string // legacy lower-case host -> namespaces; Routes selects scoped paths
 	Buckets                      map[string]string   // legacy namespace -> bucket; required for each legacy host namespace

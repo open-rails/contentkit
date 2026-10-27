@@ -197,7 +197,7 @@ func (i Item) Prefix() string        { return i.prefix }
 func (i Item) ManifestKey() string   { return i.prefix + layout.ManifestName }
 func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/" }
 
-// DownloadPrefix is the folder's download/: files only a download token opens.
+// DownloadPrefix is the folder's download/: files the gateway never serves.
 func (i Item) DownloadPrefix() string  { return i.prefix + layout.AreaDownload + "/" }
 func (i Item) PublicPrefix() string    { return i.prefix + layout.AreaPublic + "/" }
 func (i Item) OriginalsPrefix() string { return i.prefix + layout.AreaOriginals + "/" }
