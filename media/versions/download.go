@@ -336,7 +336,7 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 		name = fileName(cmp.Or(layout.DownloadExt(f.Type), path.Ext(f.Path)), g.name, title+" ["+code+"]", v.Content)
 	}
 	area, _, valid := layout.SplitBlobRef(f.Blob)
-	if !valid || area != layout.AreaPublic && area != layout.AreaPrivate && area != layout.AreaOriginals && area != layout.AreaFuture {
+	if !valid || area != layout.AreaPublic && area != layout.AreaPrivate && area != layout.AreaOriginals && area != layout.AreaInternal {
 		return nil, ErrNoDownload
 	}
 	if preset := private(k, f.Preset); preset != nil && preset.HostOnly && (area == layout.AreaPublic || area == layout.AreaPrivate) {
@@ -345,7 +345,7 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	if err := s.charge(ctx, actor); err != nil {
 		return nil, err
 	}
-	if area == layout.AreaOriginals || area == layout.AreaFuture {
+	if area == layout.AreaOriginals || area == layout.AreaInternal {
 		// The existing host transfer endpoint repeats policy and access. An
 		// item token must never acquire a retained original or HostOnly output.
 		u, exp := s.transferURL(actor, ArchiveRequest{Target: t, Editor: d.res.Editor, File: true, Name: name, Revision: archiveRevision([]media.File{f})}, ttl)

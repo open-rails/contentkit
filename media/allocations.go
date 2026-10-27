@@ -65,7 +65,7 @@ func (m *Manifests) NewBlobs(ctx context.Context, ref contentref.ContentRef, are
 		return nil, err
 	}
 	if item.Kind().Versions && (area == layout.AreaPrivate || area == layout.AreaDownload) {
-		area = layout.AreaFuture
+		area = layout.AreaInternal
 	}
 	return m.newBlobs(ctx, ref, area, sums)
 }
@@ -77,7 +77,7 @@ func (m *Manifests) newBlobs(ctx context.Context, ref contentref.ContentRef, are
 	if err != nil {
 		return nil, err
 	}
-	if area != layout.AreaPrivate && area != layout.AreaDownload && area != layout.AreaOriginals && area != layout.AreaFuture && area != layout.AreaPublic {
+	if area != layout.AreaPrivate && area != layout.AreaDownload && area != layout.AreaOriginals && area != layout.AreaInternal && area != layout.AreaPublic {
 		return nil, fmt.Errorf("media: no blobs in area %q", area)
 	}
 	names, keys := make([]string, len(sums)), make([]string, len(sums))

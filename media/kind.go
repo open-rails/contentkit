@@ -547,7 +547,7 @@ func (k *Kind) Area(path, preset string) string {
 		if preset == "" {
 			return layout.AreaOriginals
 		}
-		return layout.AreaFuture
+		return layout.AreaInternal
 	}
 	d := preset
 	if preset == "" {

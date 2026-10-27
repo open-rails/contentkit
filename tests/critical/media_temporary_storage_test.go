@@ -57,7 +57,7 @@ func TestTemporaryPublicationStorage(t *testing.T) {
 		}
 	}
 	checkTag(temp, true)
-	for _, area := range []string{layout.AreaOriginals, layout.AreaFuture, layout.AreaPublic, layout.AreaPrivate} {
+	for _, area := range []string{layout.AreaOriginals, layout.AreaInternal, layout.AreaPublic, layout.AreaPrivate} {
 		key := prefix + area + "/" + layout.BlobName(sum[:], uuid.NewString())
 		_, err := storage.store.Copy(t.Context(), temp, key, media.CopyOptions{})
 		must(t, err)
