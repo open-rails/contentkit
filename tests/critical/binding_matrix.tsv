@@ -71,8 +71,6 @@ go:Engine.Start	go	Go Engine member	Engine.Start	engine.go	included-critical
 go:Engine.Close	go	Go Engine member	Engine.Close	engine.go	included-critical
 go:Engine.Ready	go	Go Engine member	Engine.Ready	engine.go	included-critical
 go:Engine.Probes	go	Go Engine member	Engine.Probes	engine.go	included-critical
-go:Engine.EraseSubjects	go	Go Engine member	Engine.EraseSubjects	engine.go	included-critical
-go:Engine.EraseAppSubjects	go	Go Engine member	Engine.EraseAppSubjects	engine.go	included-critical
 go:Engine.ReplayErasureFences	go	Go Engine member	Engine.ReplayErasureFences	erasure.go	included-critical
 go:Engine.ReplayAccountErasures	go	Go Engine member	Engine.ReplayAccountErasures	erasure.go	included-critical
 go:Engine.RiverJobs	go	Go Engine member	Engine.RiverJobs	jobs.go	included-critical

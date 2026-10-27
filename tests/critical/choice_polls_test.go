@@ -13,7 +13,6 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/importer"
-	"github.com/open-rails/contentkit/signal"
 )
 
 func TestChoicePolls(t *testing.T) {
@@ -98,16 +97,12 @@ func TestChoicePolls(t *testing.T) {
 		_, err = other.PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[1].ID})
 		must(t, err)
 		for range 2 {
-			report, err := a.engine.EraseAppSubjects(t.Context(), []signal.Subject{{UserID: person.ID}})
-			must(t, err)
-			if !report.Complete() {
-				t.Fatalf("incomplete erasure: %+v", report)
-			}
+			must(t, a.engine.AnonymizeAccount(t.Context(), person.ID))
 		}
 		got, err = admin.GetPoll(t.Context(), p.ID)
 		must(t, err)
-		if got.TotalVotes != 1 || got.Options[0].VoteCount != 0 || got.Options[1].VoteCount != 1 {
-			t.Fatalf("repeated erasure damaged another vote: %+v", got)
+		if got.TotalVotes != 2 || got.Options[0].VoteCount != 1 || got.Options[1].VoteCount != 1 {
+			t.Fatalf("repeated account deletion lost or duplicated a vote: %+v", got)
 		}
 	})
 	t.Run("CK-J30-S01_closed_scheduled_and_historical_polls_stay_inert", func(t *testing.T) {

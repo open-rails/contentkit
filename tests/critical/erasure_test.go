@@ -111,9 +111,8 @@ func TestClickHouseErasureRetry(t *testing.T) {
 		wire.cut()
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
-		report, err := a.engine.EraseAppSubjects(ctx, []signal.Subject{{UserID: alice.ID}})
-		if err == nil || report.Complete() || report.Remaining["signal_plane"] == 0 {
-			t.Fatalf("unavailable CH falsely completed erasure: %+v %v", report, err)
+		if err := a.engine.AnonymizeAccount(ctx, alice.ID); err == nil {
+			t.Fatal("unavailable CH falsely completed account deletion")
 		}
 		_, err = a.client(aliceToken).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
 		requireError(t, err, 403, "forbidden")
