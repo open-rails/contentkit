@@ -314,7 +314,7 @@ callbacks delivering the other app obligations before final identity deletion.
 A catalog restored from backup must pass `ReplayErasureFences` before serving.
 `NewForErasureReplay` opens a restricted recovery engine with no serving or worker
 capability. Ordinary startup returns `ErrErasureReplayRequired` until each
-replayed fence has its completed engine-cleanup receipt (main migration0005).
+replayed fence has its completed engine-cleanup receipt.
 Avatar completion requires synchronous deletion and verification plus a durable
 access fence; recorded late-upload cleanup continues after completion.
 

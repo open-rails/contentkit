@@ -198,8 +198,7 @@ Entity identity, aliases and slug normalization are unchanged.
 A full-search score is a match tier: exact title 1, alias 0.9, name prefix
 0.84–0.85, name substring 0.81–0.82, contextual/token matches 0.75–0.77,
 and typo 0.5–0.52. Queries are capped at 256 characters, 16 tokens and two
-seconds. Each search document stores its normalized terms (migration
-`0043_stored_search_terms`), so a bounded candidate window keeps the strongest
+seconds. Each search document stores its normalized terms, so a bounded candidate window keeps the strongest
 name matches. A search sorted by newest, title or popularity orders every
 literal match; typo matches come from the nearest-distance window.
 
@@ -210,8 +209,8 @@ and is capped at 20. Current draft/held names and internal entities are matched
 only within the caller's management authority. `display_language` chooses
 labels while matching current names in every language. This API does not use
 body/associated-entity keywords, public reader filters or a results-page fallback.
-Migration `0012_management_names` adds separate current-name views and indexes;
-approved/published search documents and old writers remain unchanged.
+Separate current-name views and indexes serve it; approved/published search
+documents are unchanged.
 
 ## Errors
 

@@ -57,12 +57,7 @@ River delivery jobs or automatic polling loop.
 
 ## Shared PostgreSQL storage
 
-SQL33 moves retained facts into the shared Helpers log without changing their
-numeric IDs, UUID boundaries, positions, epochs, timestamps or purge handoff.
-Stop all application writers using the previous event storage before applying
-it. The migration is atomic; legacy event tables become read-only compatibility
-views, and old writers are refused. Rolling back storage requires an explicit
-coordinated forward migration.
+Retained facts live in the shared Helpers event log in the catalog schema.
 
 New facts enter the shared pending queue in the domain transaction. At commit,
 the shared flush locks the touched scopes in sorted order and assigns positions.

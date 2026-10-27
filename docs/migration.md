@@ -4,7 +4,7 @@ Each store has one baseline; later schema changes are numbered migrations after 
 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
-| PostgreSQL catalog | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, offers, the event log, import ids, codes, interactions, polls, search, preferences, erasure and media state |
+| PostgreSQL catalog | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, the event log, import ids, codes, interactions, polls, search, preferences, erasure and media state |
 | PostgreSQL accounts | `migrations.Accounts` | `accounts/0001_baseline.up.sql` | tenant bindings, account media, avatar placement and account erasure records |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, measured engagement, exposures, popularity and erasure fences |
 
@@ -20,37 +20,22 @@ reject it rather than silently ignoring it or accepting a legacy alias. The Go
 member remains `kinds.Config.Kinds`. This does not rename the `kinds` field in the
 public `GET /kinds` discovery response or any HTTP query parameters.
 
-## First-class channel upgrade
+## Channels
 
-Move channel configuration out of `entity_kinds` into `channels`. Replace a
-content kind's `owner_entity: {kind: channel, slug: blog}` with
-`channel: {fixed: blog}`; creator-selected kinds use `channel: {required: true}`
-or an empty optional policy. Metadata kinds no longer declare owner or
-permission-group policies. Content HTTP ownership is `channel_id`, and channels
-have their own `/channels` interface. Existing channel IDs, media locations,
-AuthKit group identities and opaque OpenRails membership keys are retained.
+Channels are configured under `channels`. A content kind declares
+`channel: {fixed: blog}`, `channel: {required: true}` or an empty optional
+policy; metadata kinds declare no owner or permission-group policies. Content
+HTTP ownership is `channel_id`, and channels have their own `/channels`
+interface.
 
-Channel create/delete/restore now calls AuthKit synchronously. A failed call
+Channel create/delete/restore calls AuthKit synchronously. A failed call
 returns an error and the caller retries against the same identity. No
-`contentkit_entity_sync` or replacement lifecycle worker remains. Before upgrading,
-finish actionable old channel lifecycle work using the prior version, stop old
-writers, and run the normal explicit migration. Preflight refuses unfinished,
-running or ambiguous legacy obligations. It retires only no-op queued rows and
-preserves terminal history and foreign-app work. Do not delete jobs to bypass
-that check. The content-purge sweep still owns physical retention cleanup.
-
-New migration `0054_channels` adds descriptive channel metadata/repost references
-and moves imported channel identifiers into their own record category. It does
-not move source media or rewrite published SQL. Reposts reference their original
-item and retain its access, versions and editorial authority.
+`contentkit_entity_sync` or lifecycle worker exists. The content-purge sweep
+owns physical retention cleanup. Imported channel identifiers have their own
+record category. Reposts reference their original item and retain its access,
+versions and editorial authority.
 
 ## Authored content belongs to versions
-
-Migration `0055_version_content` moves retained parent-localized text and source
-titles into existing version records, preserving already-authored version titles
-and summaries. Existing IDs, media and files stay in place. The parent text table
-and original-title columns are then removed. This one-time adoption preserves old
-translations; it does not create automatic copying between future editions.
 
 Write initial text through `ContentInput.versions[].text` and update an edition
 through `PATCH /contents/{id}/versions/{vid}`. The former parent-text routes and
@@ -58,10 +43,6 @@ version-fork endpoint are removed. Hidden-version post kinds still create one
 version; callers may supply that initial version explicitly. Additional versions
 start empty. The content reader's title/body/image fields are read-only projections
 from its `selected_version_id`, with no parent or sibling content fallback.
-
-Finish any accepted old body-copy/fork work using the previous version before
-cutover. No replacement copy job or obsolete-job scan is introduced. Existing
-copied files are preserved, not deleted merely because the feature was removed.
 
 ## ContentKit's own schema
 

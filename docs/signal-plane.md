@@ -22,7 +22,7 @@ access and content-filter policy before returning its card.
 - `engagement_daily` is a repairable per-subject/version/day projection. Repair
   computes one complete source generation before bounded partition writes.
 - `legacy_reading_state` preserves old bookmarks and progress without treating
-  them as measured engagement. It remains useful after raw counter retirement.
+  them as measured engagement.
 - `signals` stores explicit clicks and current reactions/favorites. Superseded
   feedback revisions replace old values; clicks alone cannot create readership.
 - `CoEngaged` computes co-engagement from the canonical selected window; no
