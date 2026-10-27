@@ -2,7 +2,6 @@ package critical_test
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -71,11 +70,3 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
 		return err == nil && got.Live
 	})
 }
-
-type publicationMigrationJob struct {
-	kind string
-	args json.RawMessage
-}
-
-func (j publicationMigrationJob) Kind() string                 { return j.kind }
-func (j publicationMigrationJob) MarshalJSON() ([]byte, error) { return j.args, nil }

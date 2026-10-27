@@ -2361,7 +2361,6 @@
       "behavior": "Each edition owns independently authored text and media references",
       "status": "verified",
       "evidence": [
-        "Executed against real PostgreSQL/AuthKit using public operations. Migration owner runs actual published ContentKit0.129.0, checks retained translations/overrides/IDs/access and immutable receipts, then replays. Focused evidence is in259-version-content gitdir; combined final qualification remains required.",
         "Exact-edition search uses existing document keys and hit version IDs; parent documents are retired and version dirty obligations seeded during migration. Initial focused match/filter proof passed; expanded final integrated execution remains required."
       ],
       "cases": [

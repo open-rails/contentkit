@@ -149,10 +149,3 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	purge(rivertype.JobStateCompleted)
 	assertState(untouched, true)
 }
-
-type priorForgetJob struct {
-	Tenant   string                    `json:"tenant,omitempty"`
-	Contents []signal.ForgottenContent `json:"contents"`
-}
-
-func (priorForgetJob) Kind() string { return "contentkit_forget_contents" }

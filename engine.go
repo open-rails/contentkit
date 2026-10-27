@@ -441,9 +441,6 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		Processes: m.queue, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
 		return nil, err
 	}
-	if err := m.jobs.Manifests().ValidatePublicationLayoutMigration(ctx); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrMigrationsRequired, err)
-	}
 	d := mc.Delivery
 	signing, err := token.ParseKey(d.SigningKey)
 	if err != nil {
