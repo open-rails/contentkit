@@ -43,8 +43,7 @@ type VersionStatus struct {
 	Languages []string `json:"languages"`
 	// Deleted is the edition's or its content's deletion.
 	Deleted bool `json:"deleted"`
-	// Live is released and not deleted at the time of the read. No event
-	// fires when a scheduled LiveFrom passes; compare it with the time.
+	// Live is released and not deleted at the time of the read.
 	Live bool `json:"live"`
 	// LiveFrom is when its release completed, kept through deletion; absent
 	// before release.
@@ -65,11 +64,11 @@ func (s *Store) VersionStatuses(ctx context.Context, ids []string) ([]VersionSta
 		}
 	}
 	rows, err := s.pool.Query(ctx, `SELECT v.id, v.content_id, c.kind, v.languages, d.deleted, f.live_from,
- coalesce(NOT d.deleted AND f.live_from <= statement_timestamp(), false)
+ coalesce(NOT d.deleted AND f.live_from <= $3, false)
  FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
  CROSS JOIN LATERAL (SELECT c.state = 'deleted' OR v.state = 'deleted' AS deleted) d
  LEFT JOIN `+s.t.facets+` f ON f.tenant_id = v.tenant_id AND f.version_id = v.id
- WHERE v.tenant_id = $1 AND v.id = ANY($2::text[]) ORDER BY array_position($2::text[], v.id)`, s.tenant, ids)
+ WHERE v.tenant_id = $1 AND v.id = ANY($2::text[]) ORDER BY array_position($2::text[], v.id)`, s.tenant, ids, s.now())
 	if err != nil {
 		return nil, err
 	}

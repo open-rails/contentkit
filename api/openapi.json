@@ -7874,7 +7874,7 @@
           {
             "name": "normalized",
             "in": "query",
-            "description": "compare ContentKit's normalized forms, folding case, accents, whitespace and punctuation; exact text by default",
+            "description": "compare ContentKit's normalized forms, folding case, accents and whitespace; exact text by default",
             "schema": {
               "type": "boolean"
             }

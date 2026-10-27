@@ -176,3 +176,5 @@ CK-API-186	GET	/v1/manage/channels/{id}	staff	root:channels:write	included-criti
 CK-API-187	GET	/v1/channels/{id}/entities	public		included-critical functionality and security
 CK-API-188	PUT	/v1/channels/{id}/entities	editor	root:channels:write	included-critical functionality and security
 CK-API-189	GET	/v1/channels/{id}/contents	public		included-critical functionality and security
+CK-API-190	GET	/v1/versions	staff	root:content:view-restricted	included-critical functionality and security
+CK-API-191	GET	/v1/manage/entities/match	staff	root:entities:write	included-critical functionality and security

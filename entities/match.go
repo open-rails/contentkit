@@ -15,8 +15,8 @@ type MatchQuery struct {
 	Scope EntityID
 	// Language matches names in it only; empty matches every language.
 	Language string
-	// Normalized compares ContentKit's normalized forms, folding case, accents,
-	// whitespace and punctuation; otherwise names must be equal byte for byte.
+	// Normalized compares ContentKit's normalized forms, folding case, accents
+	// and whitespace; otherwise names must be equal byte for byte.
 	Normalized bool
 	// Names are matched whole: a comma never separates two names.
 	Names []string

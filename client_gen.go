@@ -1885,7 +1885,7 @@ type GetManageEntitiesMatchQuery struct {
 	Scope string
 	// match names in this language only; every language by default
 	Language string
-	// compare ContentKit's normalized forms, folding case, accents, whitespace and punctuation; exact text by default
+	// compare ContentKit's normalized forms, folding case, accents and whitespace; exact text by default
 	Normalized *bool
 	// required: 1-100 whole names; repeat for each
 	Name []string

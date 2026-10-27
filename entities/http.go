@@ -75,7 +75,7 @@ var routes = []httpapi.Route[handler]{
 		nil, httpapi.OK([]NameMatch{}), httpapi.H(handler.match), nil,
 		httpapi.Text("kind", "required: the entity kind"), httpapi.Text("scope", "the entity the names are unique within; unscoped entities by default"),
 		httpapi.Text("language", "match names in this language only; every language by default"),
-		httpapi.Bool("normalized", "compare ContentKit's normalized forms, folding case, accents, whitespace and punctuation; exact text by default"),
+		httpapi.Bool("normalized", "compare ContentKit's normalized forms, folding case, accents and whitespace; exact text by default"),
 		httpapi.Repeated("name", "required: 1-100 whole names; repeat for each")),
 	staff(httpapi.GET, "/manage/entities/{id}", "An entity's administration view, including internal classifications and their relationships.", nil, httpapi.OK(EntityDetail{}), httpapi.H(handler.manageDetail), notFound, language),
 

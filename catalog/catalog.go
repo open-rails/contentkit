@@ -90,8 +90,8 @@ type Options struct {
 
 	// DocumentsChanged queues search refresh with the catalog write.
 	DocumentsChanged func(ctx context.Context, q Querier) error
-	Now        func() time.Time
-	Logger     *slog.Logger
+	Now              func() time.Time
+	Logger           *slog.Logger
 }
 
 // Store is one tenant's catalog.

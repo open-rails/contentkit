@@ -73,13 +73,13 @@ const MaxListIDs = 100
 
 // EntityCard is a listed entity: what a directory page or a chip needs.
 type EntityCard struct {
-	ID           EntityID `json:"id"`
-	Kind         string   `json:"kind"`
-	Slug         string   `json:"slug"`
-	Internal     bool     `json:"internal"`
-	ScopeID      EntityID `json:"scope_id,omitempty"`
-	ParentID     EntityID `json:"parent_id,omitempty"`
-	State        State    `json:"state"`
+	ID       EntityID `json:"id"`
+	Kind     string   `json:"kind"`
+	Slug     string   `json:"slug"`
+	Internal bool     `json:"internal"`
+	ScopeID  EntityID `json:"scope_id,omitempty"`
+	ParentID EntityID `json:"parent_id,omitempty"`
+	State    State    `json:"state"`
 	// MergedInto is a merged entity's final survivor.
 	MergedInto   EntityID `json:"merged_into,omitempty"`
 	Name         string   `json:"name"`
