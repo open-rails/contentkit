@@ -2652,7 +2652,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders.",
+        "summary": "A poll with the caller's vote; a scheduled poll only for root:polls:write holders.",
         "parameters": [
           {
             "name": "id",
@@ -2754,6 +2754,7 @@
         "x-contentkit-auth": "staff",
         "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
+          "invalid_request",
           "not_found"
         ],
         "x-contentkit-error-sets": [
@@ -2975,6 +2976,7 @@
         "x-contentkit-auth": "staff",
         "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
+          "invalid_request",
           "not_found"
         ],
         "x-contentkit-error-sets": [
@@ -3042,6 +3044,7 @@
         "x-contentkit-auth": "staff",
         "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
+          "invalid_request",
           "not_configured",
           "not_found"
         ],
@@ -4287,7 +4290,7 @@
         "tags": [
           "moderation"
         ],
-        "summary": "Bans addresses or networks from commenting and answering polls, or replaces their bans.",
+        "summary": "Bans addresses or networks from commenting, or replaces their bans.",
         "requestBody": {
           "required": true,
           "content": {
