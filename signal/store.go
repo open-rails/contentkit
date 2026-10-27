@@ -499,12 +499,6 @@ func insertEnd(sizes []int, start int) int {
 	return end
 }
 
-// escapeCHString escapes a string for inline use in a ClickHouse literal.
-func escapeCHString(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	return strings.ReplaceAll(s, `'`, `\'`)
-}
-
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
