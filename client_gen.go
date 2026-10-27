@@ -1103,6 +1103,27 @@ func (c *Client) GetContent(ctx context.Context, id string, q GetContentQuery) (
 	return out, err
 }
 
+// GetVersionsQuery is the query of GetVersions.
+type GetVersionsQuery struct {
+	// required: 1-100 version ids
+	Ids []string
+}
+
+func (q GetVersionsQuery) values() url.Values {
+	v := url.Values{}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
+	}
+	return v
+}
+
+// GetVersions is GET /v1/versions (staff). Editions' catalog status by version id, for hosts that keep references to them: content, kind, languages, deletion, live and live_from, in ids' order. A purged edition is absent. No event fires when live_from passes; compare it with the time.
+func (c *Client) GetVersions(ctx context.Context, q GetVersionsQuery) ([]catalog.VersionStatus, error) {
+	var out []catalog.VersionStatus
+	err := c.call(ctx, http.MethodGet, "/v1/versions", q.values(), nil, &out)
+	return out, err
+}
+
 // GetVersionQuery is the query of GetVersion.
 type GetVersionQuery struct {
 	// the language to show text in; the site's first language, then any, when it has none
@@ -1777,6 +1798,8 @@ func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (en
 
 // GetManageEntitiesQuery is the query of GetManageEntities.
 type GetManageEntitiesQuery struct {
+	// only these entity ids (at most 100), in every state; one page, without state, cursor or page
+	Ids []string
 	// active (the default) or deleted, the restorable ones
 	State string
 	// only entities of this kind
@@ -1805,6 +1828,9 @@ type GetManageEntitiesQuery struct {
 
 func (q GetManageEntitiesQuery) values() url.Values {
 	v := url.Values{}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
+	}
 	if q.State != "" {
 		v.Set("state", q.State)
 	}
@@ -1844,10 +1870,51 @@ func (q GetManageEntitiesQuery) values() url.Values {
 	return v
 }
 
-// GetManageEntities is GET /v1/manage/entities (staff). Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads.
+// GetManageEntities is GET /v1/manage/entities (staff). Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads. With ids it resolves those entities in every state, deleted and merged ones included, each with its state and a merged one's final survivor (merged_into); unknown ids are absent.
 func (c *Client) GetManageEntities(ctx context.Context, q GetManageEntitiesQuery) (entities.EntityPage, error) {
 	var out entities.EntityPage
 	err := c.call(ctx, http.MethodGet, "/v1/manage/entities", q.values(), nil, &out)
+	return out, err
+}
+
+// GetManageEntitiesMatchQuery is the query of GetManageEntitiesMatch.
+type GetManageEntitiesMatchQuery struct {
+	// required: the entity kind
+	Kind string
+	// the entity the names are unique within; unscoped entities by default
+	Scope string
+	// match names in this language only; every language by default
+	Language string
+	// compare ContentKit's normalized forms, folding case, accents, whitespace and punctuation; exact text by default
+	Normalized *bool
+	// required: 1-100 whole names; repeat for each
+	Name []string
+}
+
+func (q GetManageEntitiesMatchQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Scope != "" {
+		v.Set("scope", q.Scope)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Normalized != nil {
+		v.Set("normalized", fmt.Sprint(*q.Normalized))
+	}
+	for _, s := range q.Name {
+		v.Add("name", s)
+	}
+	return v
+}
+
+// GetManageEntitiesMatch is GET /v1/manage/entities/match (staff). Resolves names to active, public entities of one kind within one scope whose canonical name or alias equals each name, literally or normalized: one result per name in order, each with at most two ids, two meaning ambiguous. Merged and deleted entities never match; nothing is created or reserved.
+func (c *Client) GetManageEntitiesMatch(ctx context.Context, q GetManageEntitiesMatchQuery) ([]entities.NameMatch, error) {
+	var out []entities.NameMatch
+	err := c.call(ctx, http.MethodGet, "/v1/manage/entities/match", q.values(), nil, &out)
 	return out, err
 }
 

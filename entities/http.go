@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/open-rails/authkit/auth"
@@ -65,10 +66,17 @@ var routes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities/{id}", Resource: "entities", Auth: httpapi.Public,
 		Doc:   "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and membership standing; a merged entity answers with its survivor.",
 		Query: []httpapi.Param{language}, Responses: []httpapi.Reply{httpapi.OK(EntityDetail{})}, Errors: notFound}, Serve: httpapi.H(handler.detail)},
-	staff(httpapi.GET, "/manage/entities", "Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads.", nil, httpapi.OK(EntityPage{}), httpapi.H(handler.manageList), nil,
+	staff(httpapi.GET, "/manage/entities", "Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads. With ids it resolves those entities in every state, deleted and merged ones included, each with its state and a merged one's final survivor (merged_into); unknown ids are absent.", nil, httpapi.OK(EntityPage{}), httpapi.H(handler.manageList), nil,
+		httpapi.List("ids", "only these entity ids (at most 100), in every state; one page, without state, cursor or page"),
 		httpapi.Text("state", "active (the default) or deleted, the restorable ones"), httpapi.Text("kind", "only entities of this kind"), httpapi.Text("parent", "only children of this entity"), httpapi.Text("scope", "only entities scoped by this entity"),
 		httpapi.Text("slug", "only the entity with this slug"), httpapi.Text("q", "match a canonical name, alias or slug"), httpapi.Text("letter", "only sort names starting with this letter"), language,
 		httpapi.Text("content_kind", "count contents of this kind"), httpapi.Text("sort", "name, count or newest"), httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: at most 200")),
+	staff(httpapi.GET, "/manage/entities/match", "Resolves names to active, public entities of one kind within one scope whose canonical name or alias equals each name, literally or normalized: one result per name in order, each with at most two ids, two meaning ambiguous. Merged and deleted entities never match; nothing is created or reserved.",
+		nil, httpapi.OK([]NameMatch{}), httpapi.H(handler.match), nil,
+		httpapi.Text("kind", "required: the entity kind"), httpapi.Text("scope", "the entity the names are unique within; unscoped entities by default"),
+		httpapi.Text("language", "match names in this language only; every language by default"),
+		httpapi.Bool("normalized", "compare ContentKit's normalized forms, folding case, accents, whitespace and punctuation; exact text by default"),
+		httpapi.Repeated("name", "required: 1-100 whole names; repeat for each")),
 	staff(httpapi.GET, "/manage/entities/{id}", "An entity's administration view, including internal classifications and their relationships.", nil, httpapi.OK(EntityDetail{}), httpapi.H(handler.manageDetail), notFound, language),
 
 	editor(httpapi.POST, "/entities", "Creates entities with their names and text; an auth_scope kind's gets its AuthKit scope."+editors, []EntityInput{}, httpapi.Created([]Entity{}),
@@ -261,6 +269,11 @@ func (h handler) listEntities(w http.ResponseWriter, r *http.Request, management
 		Sort: Sort(q.Get("sort")), Cursor: q.Get("cursor"), Page: page, Limit: limit, IncludeInternal: management}
 	if management {
 		opts.Query = q.Get("q")
+		for _, id := range strings.Split(strings.Join(q["ids"], ","), ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				opts.IDs = append(opts.IDs, EntityID(id))
+			}
+		}
 		switch q.Get("state") {
 		case "", string(StateActive):
 		case string(StateDeleted):
@@ -271,6 +284,20 @@ func (h handler) listEntities(w http.ResponseWriter, r *http.Request, management
 		}
 	}
 	out, err := h.as(r).List(r.Context(), opts)
+	reply(w, http.StatusOK, out, err)
+}
+
+func (h handler) match(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	m := MatchQuery{Kind: q.Get("kind"), Scope: EntityID(q.Get("scope")), Language: q.Get("language"), Names: q["name"]}
+	if v := q.Get("normalized"); v != "" {
+		var err error
+		if m.Normalized, err = strconv.ParseBool(v); err != nil {
+			fail(w, fmt.Errorf("%w: normalized is true or false", ErrInvalid))
+			return
+		}
+	}
+	out, err := h.s.MatchNames(r.Context(), m)
 	reply(w, http.StatusOK, out, err)
 }
 

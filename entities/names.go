@@ -201,7 +201,10 @@ func (s *Store) touch(ctx context.Context, q Querier, entities []Entity) error {
 	if err := s.namesChanged(ctx, q, ids); err != nil {
 		return err
 	}
-	return s.markDirty(ctx, q, entities)
+	if err := s.markDirty(ctx, q, entities); err != nil {
+		return err
+	}
+	return s.record(ctx, q, changesOf(EventUpdated, entities))
 }
 
 // namesChanged tells Options.NamesChanged that the entities' names or slugs

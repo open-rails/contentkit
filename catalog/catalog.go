@@ -90,8 +90,6 @@ type Options struct {
 
 	// DocumentsChanged queues search refresh with the catalog write.
 	DocumentsChanged func(ctx context.Context, q Querier) error
-	// References clears host-owned edition links during permanent purge.
-	References VersionReferenceOwner
 	Now        func() time.Time
 	Logger     *slog.Logger
 }
@@ -118,7 +116,6 @@ type Store struct {
 	onPurge        func(context.Context, pgx.Tx, []contentref.ContentRef) error
 	afterPurge     func(context.Context) error
 	documents      func(ctx context.Context, q Querier) error
-	references     VersionReferenceOwner
 	now            func() time.Time
 	log            *slog.Logger
 	totals         *cache.Cache[totalsKey, Total]
@@ -158,7 +155,7 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 		pool: opts.Pool, schema: opts.Schema, qs: pgx.Identifier{opts.Schema}.Sanitize(), tenant: opts.Tenant, cfg: opts.Kinds,
 		t:     catalogTables(opts.Schema),
 		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities, channels: opts.Channels,
-		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, afterPurge: opts.AfterPurge, documents: opts.DocumentsChanged, references: opts.References,
+		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, afterPurge: opts.AfterPurge, documents: opts.DocumentsChanged,
 		now: opts.Now, log: opts.Logger,
 	}
 	if s.accessG == nil {

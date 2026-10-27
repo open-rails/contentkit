@@ -34,12 +34,15 @@ type EventQuery struct {
 // EventRecord is an immutable committed catalog fact. IDs are decimal strings
 // so JSON clients do not lose bigint precision.
 type EventRecord struct {
-	ID         string          `json:"id"`
-	Version    int             `json:"version"`
-	Type       string          `json:"type"`
-	Kind       string          `json:"kind"`
-	ContentID  string          `json:"content_id"`
-	VersionID  string          `json:"version_id,omitempty"`
+	ID        string `json:"id"`
+	Version   int    `json:"version"`
+	Type      string `json:"type"`
+	Kind      string `json:"kind"`
+	ContentID string `json:"content_id"`
+	VersionID string `json:"version_id,omitempty"`
+	// EntityID is an entity event's subject; MergedInto its survivor.
+	EntityID   string          `json:"entity_id,omitempty"`
+	MergedInto string          `json:"merged_into,omitempty"`
 	OccurredAt time.Time       `json:"occurred_at"`
 	RecordedAt time.Time       `json:"recorded_at"`
 	Source     string          `json:"source"`
@@ -109,7 +112,8 @@ func (s *Store) ListEvents(ctx context.Context, query EventQuery) (EventPage, er
 		if err := json.Unmarshal(e.Data, &fact); err != nil {
 			return result, err
 		}
-		result.Events = append(result.Events, EventRecord{ID: e.ID, Version: e.Version, Type: e.Type, Kind: fact.Kind, ContentID: fact.ContentID, VersionID: fact.VersionID, OccurredAt: e.OccurredAt, RecordedAt: e.RecordedAt, Source: e.Source, Scope: e.Scope, Data: e.Data})
+		result.Events = append(result.Events, EventRecord{ID: e.ID, Version: e.Version, Type: e.Type, Kind: fact.Kind, ContentID: fact.ContentID, VersionID: fact.VersionID,
+			EntityID: fact.EntityID, MergedInto: fact.MergedInto, OccurredAt: e.OccurredAt, RecordedAt: e.RecordedAt, Source: e.Source, Scope: e.Scope, Data: e.Data})
 	}
 	return result, nil
 }
@@ -208,7 +212,7 @@ func (s *catalogSnapshot) Events(ctx context.Context, after int64, types []strin
 		}
 		r.Event.Source, r.Event.Scope = "contentkit", s.store.tenant
 
-		r.Event.Subject = eventlog.Subject{Type: fact.Kind, ID: fact.ContentID}
+		r.Event.Subject = eventlog.Subject{Type: fact.Kind, ID: fact.subject()}
 		result = append(result, r)
 	}
 	return result, rows.Err()
