@@ -201,7 +201,7 @@ func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/
 func (i Item) DownloadPrefix() string  { return i.prefix + layout.AreaDownload + "/" }
 func (i Item) PublicPrefix() string    { return i.prefix + layout.AreaPublic + "/" }
 func (i Item) OriginalsPrefix() string { return i.prefix + layout.AreaOriginals + "/" }
-func (i Item) FuturePrefix() string    { return i.prefix + layout.AreaFuture + "/" }
+func (i Item) InternalPrefix() string  { return i.prefix + layout.AreaInternal + "/" }
 func (i Item) TempPrefix() string {
 	if i.kind.Versions {
 		return i.prefix + layout.AreaTmp + "/"
@@ -245,7 +245,7 @@ func (i Item) Public(name string) (string, error) {
 }
 
 // PublicationKey locates one prepared public-preset rendition. Versions keep
-// their hash-named preparation in future; non-version assets retain their
+// their hash-named preparation in internal; non-version assets retain their
 // independent public-preset lifecycle.
 func (i Item) PublicationKey(p Publication, index int) (string, error) {
 	if index < 0 || index >= len(p.Names) {

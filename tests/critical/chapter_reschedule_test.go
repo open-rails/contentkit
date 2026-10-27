@@ -268,7 +268,7 @@ func TestProcessingWithdrawsHiddenCopyBeforeChapterDate(t *testing.T) {
 	var copied bytes.Buffer
 	must(t, (&png.Encoder{CompressionLevel: png.NoCompression}).Encode(&copied, decoded))
 	hold := m.wire.pause(t, func(r *http.Request) bool {
-		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/future/") && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
+		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
 	})
 	op := stageFile(t, admin, ref, "pages/30.png", copied.Bytes())
 	index := 1

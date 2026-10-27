@@ -107,7 +107,7 @@ func TestPublicationStorage(t *testing.T) {
 	})
 	for name, blob := range map[string]string{"original": original, "page": prepared, "cover": cover} {
 		area, _, valid := layout.SplitBlobRef(blob)
-		want := layout.AreaFuture
+		want := layout.AreaInternal
 		if name == "original" {
 			want = layout.AreaOriginals
 		}
@@ -162,7 +162,7 @@ func TestPublicationStorage(t *testing.T) {
 	must(t, err)
 	store.deleteFailure = preparedKey
 	if _, err := manifests.Promote(t.Context(), target, operation); err == nil {
-		t.Fatal("publication completed despite failed future-source removal")
+		t.Fatal("publication completed despite failed internal-source removal")
 	}
 	unfinished, _, err := manifests.Get(t.Context(), target)
 	must(t, err)
@@ -177,7 +177,7 @@ func TestPublicationStorage(t *testing.T) {
 		t.Fatalf("resume recopied a verified destination: ready=%v calls=%d", finished.Ready, store.calls)
 	}
 	if _, err := storage.store.Head(t.Context(), preparedKey); !errors.Is(err, media.ErrNotFound) {
-		t.Fatalf("completed move retained an unreferenced future source: %v", err)
+		t.Fatalf("completed move retained an unreferenced internal source: %v", err)
 	}
 	unchanged := uuid.NewString()
 	_, err = manifests.PreparePromotion(t.Context(), target, unchanged, []media.Promotion{
@@ -210,7 +210,7 @@ func TestPublicationStorage(t *testing.T) {
 	get(finished.Files[0].Blob, exact, http.StatusOK)
 
 	move := uuid.NewString()
-	_, err = manifests.PreparePromotion(t.Context(), target, move, []media.Promotion{{Source: finished.Files[0].Blob, Area: layout.AreaFuture}})
+	_, err = manifests.PreparePromotion(t.Context(), target, move, []media.Promotion{{Source: finished.Files[0].Blob, Area: layout.AreaInternal}})
 	must(t, err)
 	moved, err := manifests.Promote(t.Context(), target, move)
 	must(t, err)
