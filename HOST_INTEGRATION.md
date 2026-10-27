@@ -49,7 +49,7 @@ ContentKit names its staff permissions, always the full
 | `access.ContentEditOwn` | `root:content:edit-own` | read, edit, publish and manage media of content they created outside channels |
 | `access.ContentWrite` | `root:content:write` | write and publish content, delete and restore its versions, and manage its images |
 | `access.ContentViewRestricted` | `root:content:view-restricted` | see every content item in any state, listing, site or filter |
-| `access.PollsWrite` | `root:polls:write` | write and delete polls, options and images; see inactive ones |
+| `access.PollsWrite` | `root:polls:write` | write and delete polls, options and images; see scheduled ones |
 | `access.CommentsModerate` | `root:comments:moderate` | edit, delete and restore anyone's comments; list every comment |
 | `access.CommentsBan` | `root:comments:ban` | ban users from commenting anywhere in the tenant |
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
@@ -521,8 +521,9 @@ breaker. The engine's `contentkit_moderator` probe fails while it is tripped.
 Signed-out visitors only read unless `content.Options.Anonymous` says
 otherwise: `Comments` (under an `anon_name`), `Reactions` (likes and
 dislikes of content and comments, keyed by IP) and `Votes`
-(multiple-choice polls, keyed by IP). Free-text answers and favorites always
-need a signed-in actor. A refused anonymous attempt is `401 unauthorized`.
+(multiple-choice polls, keyed by IP and counted separately from signed-in
+votes, so one person can vote once each way and a changing address votes
+again). Favorites always need a signed-in actor. A refused anonymous attempt is `401 unauthorized`.
 `GET /config` answers the setting (`{"anonymous": {"comments", "reactions",
 "votes"}, "comment_max_length"}`) and `GET /{kind}/{id}/can-comment` carries
 `anonymous`, so a client shows a sign-in prompt or an anonymous form from the
@@ -547,7 +548,7 @@ in any `Per`"; an action with two must pass both.
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
 | `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
 | `favorite` | `POST` and `DELETE /{contents\|entities}/{id}/favorite` | 20 per minute |
-| `poll_vote` | `POST /polls/{id}/vote`, `POST /polls/{id}/answer` | 30 per minute |
+| `poll_vote` | `POST /polls/{id}/vote` | 30 per minute |
 
 Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
 `Reaction`, `Favorite`, `PollVote`, each `[]content.Rate{{Count, Per}}`).
@@ -624,12 +625,15 @@ restores the same notice, without adding another.
 
 Polls accept predefined choices only. `kind` defaults to `multiple_choice`;
 other kinds, including `free_text`, are rejected with `400 invalid_request`.
-Create a poll with at least two options, then vote through
+Create a poll with two to ten options in one of the site's languages (a
+question of at most 300 characters, options of at most 200), then vote through
 `POST /polls/{id}/vote`. A vote is final: concurrent retries never add another
-vote. Signed-out voting follows `Config.anonymous.votes`.
+vote. A signed-in vote stores no IP address. Signed-out voting follows
+`Config.anonymous.votes`.
 
 `closes_at` (optional, `PATCH`-able, `null` clears it) and `is_active = false`
-close a poll for voting; its results remain readable. Scheduled questions are
+close a poll for voting; its results remain readable, on its own link too.
+`closes_at` must come after `live_at`. Scheduled questions are
 visible only to staff until their opening time.
 
 Free-text submission, automatic grouping and classifier dependencies are

@@ -61,7 +61,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | GET | `/v1/channels/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a channel and whether the caller favorited it (never, signed out: then it must be visible). |
 | GET | `/v1/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
 | GET | `/v1/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `state`, `q`, `limit`, `offset`. |
-| GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders. |
+| GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote; a scheduled poll only for root:polls:write holders. |
 | POST | `/v1/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with at least two predefined options; only multiple_choice is supported. |
 | PATCH | `/v1/polls/{id}` | staff `root:polls:write` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
 | DELETE | `/v1/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll and its media folder. |
@@ -91,7 +91,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | POST | `/v1/moderation/banned-words` | staff `root:comments:moderate` | `BannedWordInput[]` | 200 `BannedWord[]` | Bans words, or changes what banned ones do: mask (the default) or reject. |
 | DELETE | `/v1/moderation/banned-words` | staff `root:comments:moderate` | `string[]` | 204 — | Unbans words. |
 | GET | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | — | 200 `IPBan[]` | The IP bans, newest first, expired ones included. |
-| POST | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `IPBanInput[]` | 200 `IPBan[]` | Bans addresses or networks from commenting and answering polls, or replaces their bans. |
+| POST | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `IPBanInput[]` | 200 `IPBan[]` | Bans addresses or networks from commenting, or replaces their bans. |
 | DELETE | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `string[]` | 204 — | Lifts the bans of addresses or networks. |
 
 ## Contents: content items, versions, catalog totals (`/v1`)
