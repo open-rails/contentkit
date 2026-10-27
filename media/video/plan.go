@@ -113,6 +113,38 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.DerivativeAr
 	return errors.Join(errs...)
 }
 
+// FailPending records cause as the failure of every upload whose video
+// outputs (preset's when not "") are still to be made: the item's derivative
+// job has no attempts left, so the upload would otherwise stay pending.
+func (c WorkerConfig) FailPending(ctx context.Context, args workqueue.DerivativeArgs, cause error) error {
+	e := c.Encoder
+	item, err := e.ms.Registry().Item(args.Ref)
+	if err != nil {
+		return err
+	}
+	_, err = e.ms.EditExisting(ctx, args.Ref, func(m *media.Manifest) error {
+		var failed []string
+		for _, f := range m.Files {
+			if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil {
+				continue
+			}
+			if slices.ContainsFunc(item.Kind().PrivateFor(f.Path), func(p *media.Private) bool {
+				return (args.Preset == "" || p.Name == args.Preset) && videoFamily(p) && e.todo(m, f, p)
+			}) {
+				failed = append(failed, f.Path)
+			}
+		}
+		for _, path := range failed {
+			m.SetFailed(path, cause)
+		}
+		return nil
+	})
+	if errors.Is(err, media.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
 // force marks preset's outputs (every preset of family when "") stale and
 // pending, and clears their uploads' failures, so they are redone.
 func (e *Encoder) force(ctx context.Context, item media.Item, preset string, family func(*media.Private) bool) error {

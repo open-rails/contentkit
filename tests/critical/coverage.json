@@ -1152,7 +1152,8 @@
         "TestMediaFailureRecovery/CK-J11-S06",
         "TestMediaFailureRecovery/CK-J11-S06/database-settlement-abort",
         "TestMediaFailureRecovery/CK-J11-S06/resource-failure-is-visible-and-regeneration-recovers",
-        "TestMediaFailureRecovery/CK-J11-S06/storage-refusal"
+        "TestMediaFailureRecovery/CK-J11-S06/storage-refusal",
+        "TestExhaustedVideoDerivativeRecordsFailure"
       ]
     },
     {

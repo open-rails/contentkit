@@ -414,9 +414,11 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 		return err
 	}
 	fail := func(ctx context.Context, cause error) error {
-		return full(ctx, w.manifests, job.Args.Ref, w.images.FailPending(ctx, media.ProcessJob{
-			Ref: job.Args.Ref, Preset: job.Args.Preset, Editor: job.Args.Editor,
-		}, cause))
+		err := w.images.FailPending(ctx, media.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Editor: job.Args.Editor}, cause)
+		if !job.Args.Editor {
+			err = errors.Join(err, w.video.FailPending(ctx, job.Args, cause))
+		}
+		return full(ctx, w.manifests, job.Args.Ref, err)
 	}
 	if err := w.c.checkAttemptBudget(ctx, job.JobRow, fail); err != nil {
 		return err

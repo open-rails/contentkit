@@ -161,7 +161,7 @@ func (c WorkerConfig) current(ctx context.Context, run encodeRun) (runWork, bool
 		return w, false, err
 	}
 	var ok bool
-	if w.f, ok = w.man.Get(run.File); !ok || w.f.Blob != run.Source || w.f.Gone {
+	if w.f, ok = w.man.Get(run.File); !ok || w.f.Blob != run.Source || w.f.Gone || w.f.Fail() != nil {
 		return w, false, nil
 	}
 	if w.p, w.fp, ok = e.runPreset(w.item.Kind(), w.f, run.Spec); !ok {

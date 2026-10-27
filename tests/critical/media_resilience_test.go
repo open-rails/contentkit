@@ -47,6 +47,7 @@ type mediaWire struct {
 	webpPuts            int
 	failManifest        bool
 	failWebP            bool
+	failVideo           bool
 	refusedManifestPuts int
 }
 
@@ -78,7 +79,9 @@ func newMediaWire(t *testing.T) *mediaWire {
 			w.refusedManifestPuts++
 		}
 		webp := r.Method == http.MethodPut && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
-		failWebP := w.failWebP && webp
+		// failVideo refuses encoder writes (chunks and renditions), not the upload's own placement.
+		encoderWrite := strings.Contains(r.URL.Path, "/future/") || strings.Contains(r.URL.Path, "/tmp/") && !strings.Contains(r.URL.Path, "/tmp/u-")
+		refuseOutput := w.failWebP && webp || w.failVideo && r.Method == http.MethodPut && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4") && encoderWrite
 		if webp {
 			w.webpPuts++
 		}
@@ -89,7 +92,7 @@ func newMediaWire(t *testing.T) *mediaWire {
 			hold = nil
 		}
 		w.mu.Unlock()
-		if failWebP {
+		if refuseOutput {
 			out.Header().Set("Content-Type", "application/xml")
 			out.WriteHeader(http.StatusForbidden)
 			_, _ = io.WriteString(out, `<Error><Code>AccessDenied</Code><Message>Owned fixture rendition write refused</Message></Error>`)

@@ -18,6 +18,9 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/worker"
+	"github.com/open-rails/contentkit/media/workqueue"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 )
 
 // The same actual derivative worker handles PNG and MP4. A held S3 output
@@ -155,4 +158,90 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	}
 	hold.unblock()
 	awaitMediaReady(t, admin, ref)
+}
+
+// A video whose encode keeps failing settles as a failed upload once the
+// derivative job's attempts run out, instead of staying pending.
+func TestExhaustedVideoDerivativeRecordsFailure(t *testing.T) {
+	m := newResilientMedia(t, func(c *ck.Config) {
+		c.Content.Kinds["clip"] = kinds.Kind{Route: "clip", Presentation: "player", Versions: kinds.VersionRules{Languages: "one", Hidden: true}}
+		c.Media.Config.Kinds = append(c.Media.Config.Kinds, media.Kind{Name: "clip", KeepOriginals: true,
+			Uploads: []media.Upload{{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 10 << 20}},
+			Private: []media.Private{{Name: "stream", From: "source", To: "streams/", HLS: &media.HLS{Ladder: []int{144}}}},
+		})
+	})
+	source := filepath.Join(t.TempDir(), "source.mp4")
+	command := exec.CommandContext(t.Context(), "ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=256x144:rate=12", "-t", "1", "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-movflags", "+faststart", source)
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("create real video source: %v %s", err, out)
+	}
+	video, err := os.ReadFile(source)
+	must(t, err)
+	admin := m.app.engine.Client()
+	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "clip", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Encode retries exhausted"}}}}})
+	must(t, err)
+	ref := media.RefBody{Kind: "clip", ID: item.ID, Version: item.Versions[0].ID}
+	_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(video)}})
+	must(t, err)
+	m.wire.mu.Lock()
+	m.wire.failVideo = true
+	m.wire.mu.Unlock()
+	config := m.config
+	config.VideoCodecs = []media.Codec{media.CodecH264}
+	config.VideoEncoder = "cpu"
+	config.Preset = "ultrafast"
+	config.TempDir = t.TempDir()
+	processor, err := worker.New(t.Context(), config)
+	must(t, err)
+	run, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- processor.Run(run) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(20 * time.Second):
+			t.Error("worker did not stop")
+		}
+	})
+	queue := m.queue(t)
+	var finished *rivertype.JobRow
+	waitForWithin(t, 2*time.Minute, func() bool {
+		jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.DerivativeArgs{}).Kind()))
+		must(t, err)
+		for _, job := range jobs.Jobs {
+			if job.State == rivertype.JobStateRetryable {
+				_, err := queue.JobRetry(t.Context(), job.ID)
+				must(t, err)
+			}
+			if job.State == rivertype.JobStateCancelled || job.State == rivertype.JobStateDiscarded || job.State == rivertype.JobStateCompleted {
+				finished = job
+				return true
+			}
+		}
+		return false
+	})
+	if finished.State != rivertype.JobStateCancelled || finished.Attempt != workqueue.MaxAttempts {
+		t.Fatalf("exhausted video derivative: state=%s attempt=%d errors=%+v", finished.State, finished.Attempt, finished.Errors)
+	}
+	read, err := admin.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Status: true})
+	must(t, err)
+	if read.Status == nil || read.Status.State != media.StateFailed || len(read.Status.Failures) != 1 || read.Status.Failures[0].Path != "source.mp4" {
+		t.Fatalf("exhausted video remained pending: %+v", read.Status)
+	}
+	logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+	must(t, err)
+	journal, err := media.NewPGJournal(m.pool, m.schema, nil)
+	must(t, err)
+	manifests, err := media.NewManifests(m.storage.store, m.config.Kinds, media.ManifestOptions{Locker: media.PGLocker(m.pool), Journal: journal})
+	must(t, err)
+	snapshot, _, err := manifests.Get(t.Context(), logical)
+	must(t, err)
+	upload, ok := snapshot.Get("source.mp4")
+	if !ok || upload.Fail() == nil || len(upload.Pending) != 0 {
+		t.Fatalf("video failure was not persisted: %+v", upload)
+	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/jackc/pgx/v5"
 	"log/slog"
 	"strings"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pglock"
@@ -51,7 +49,11 @@ func (c WorkerConfig) Run(ctx context.Context, job *river.Job[workqueue.Derivati
 	if err := c.Encoder.ms.Recover(ctx, job.Args.Ref); err != nil {
 		return err
 	}
-	return c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return c.convert(ctx, job) })
+	err := c.convert(ctx, job)
+	if errors.Is(err, media.ErrManifestTooLarge) {
+		return c.full(ctx, job.Args.Ref, err)
+	}
+	return err
 }
 
 // convert owns the whole conversion. Each attempt checkpoints at most one
@@ -168,64 +170,12 @@ func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.Deri
 	return nil
 }
 
-// store is the bucket the encoder writes, nil without an encoder.
-func (c WorkerConfig) store() media.Store {
-	if c.Encoder == nil {
-		return nil
-	}
-	return c.Encoder.store
-}
-
 func (c WorkerConfig) clearProgress(ctx context.Context, id int64) {
 	clearCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if err := workqueue.ClearProgress(clearCtx, c.Pool, c.Schema, id); err != nil {
 		c.Logger.WarnContext(clearCtx, "media/video: clear progress", "job", id, "error", err)
 	}
-}
-
-func (c WorkerConfig) runVideoJob(ctx context.Context, row *rivertype.JobRow, ref contentref.ContentRef, work func() error) error {
-	if err := c.restoreRescuedAttempt(ctx, row); err != nil {
-		return snoozeOnShutdown(ctx, err)
-	}
-	if row.Attempt > workqueue.MaxAttempts {
-		return river.JobCancel(fmt.Errorf("media/video: %d failed attempts", row.Attempt-1))
-	}
-	err := media.SnoozeUnavailable(ctx, c.store(), row, snoozeOnShutdown(ctx, work()))
-	if errors.Is(err, media.ErrManifestTooLarge) {
-		return c.full(ctx, ref, err)
-	}
-	var snooze *river.JobSnoozeError
-	var cancelled *river.JobCancelError
-	if err != nil && row.Attempt >= workqueue.MaxAttempts && !errors.As(err, &snooze) && !errors.As(err, &cancelled) {
-		return river.JobCancel(err)
-	}
-	return err
-}
-
-// River records a rescued hard-killed job as an error and keeps its attempt.
-// Only failures returned by a worker should consume the bounded retry budget.
-func (c WorkerConfig) restoreRescuedAttempt(ctx context.Context, job *rivertype.JobRow) error {
-	failures := 0
-	for _, attempt := range job.Errors {
-		if attempt.Error != "Stuck job rescued by JobRescuer" {
-			failures++
-		}
-	}
-	want := failures + 1
-	if job.Attempt <= want {
-		return nil
-	}
-	result, err := c.Pool.Exec(ctx, `UPDATE `+c.jobTable()+`
-SET attempt = $2 WHERE id = $1 AND state = 'running' AND attempt = $3`, job.ID, want, job.Attempt)
-	if err != nil {
-		return err
-	}
-	if result.RowsAffected() != 1 {
-		return fmt.Errorf("media/video: job %d changed while restoring rescued attempt", job.ID)
-	}
-	job.Attempt = want
-	return nil
 }
 
 // lockedSnooze is how long a job waits while another job of its item holds
