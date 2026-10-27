@@ -325,7 +325,11 @@ func (g *hiddenStartGallery) readable(t *testing.T, want ...string) {
 	waitForWithin(t, 45*time.Second, func() bool {
 		wakeDuePublicationJobs(t, g.a)
 		time.Sleep(550 * time.Millisecond)
+		before := got
 		got, read = g.paths(t, reader)
+		if !slices.Equal(before, got) {
+			t.Logf("readable %v, want %v", got, want)
+		}
 		return slices.Equal(got, want)
 	})
 	for range 4 {
