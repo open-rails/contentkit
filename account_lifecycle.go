@@ -25,13 +25,15 @@ func (e *Engine) AnonymizeAccount(ctx context.Context, accountID string) error {
 	if strings.TrimSpace(accountID) == "" {
 		return errors.New("contentkit: account id is required")
 	}
-	if err := e.recordAccountErasureIntent(ctx, []string{accountID}, false); err != nil {
-		return err
-	}
 	table := pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()
 	var state, anonymous string
 	err := pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, e.schema+"\x1ferasure\x1f"+e.cfg.Tenant+"\x1f"+accountID); err != nil {
+			return err
+		}
+		// The intent and the purging row commit together, so an app intent
+		// without either lifecycle state can only come from a catalog restore.
+		if err := e.recordAccountErasureIntent(ctx, tx, []string{accountID}, false); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `INSERT INTO `+table+` AS current (tenant_id,actor_id,state,anonymous_key)
