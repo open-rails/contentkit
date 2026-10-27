@@ -48,7 +48,6 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/signal"
@@ -543,16 +542,10 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	var frames media.FrameGrabber
-	if f, err := video.NewFrames(deps.Store); err == nil {
-		frames = f
-	} else {
-		e.log.Warn("contentkit: no frame picker", "err", err) // it needs ffmpeg on PATH
-	}
 	rate := func(r RateLimitConfig) media.RateLimit {
 		return media.RateLimit{PerSecond: r.PerSecond, Burst: r.Burst, Disabled: r.Disabled, Redis: deps.Redis}
 	}
-	if m.uploads, err = media.NewUploads(media.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Tickets: &ring, Frames: frames,
+	if m.uploads, err = media.NewUploads(media.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Tickets: &ring,
 		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit), Limiter: limiter}); err != nil {
 		return nil, err
 	}

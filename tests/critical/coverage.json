@@ -1224,6 +1224,44 @@
       ]
     },
     {
+      "id": "CK-J12-S02",
+      "journey": "CK-J12",
+      "behavior": "Frame ops make posters the worker grabs from the encoded video: the item's own, or another editable item's of any kind in the namespace; hosts decode nothing",
+      "status": "verified",
+      "evidence": [
+        "A real two-second H264 clip is encoded by the actual worker; frame ops at a time inside a frame, from another clip with a crop in source pixels, and into a site kind each produce the source's frame a player shows at that time (compared with ffmpeg's decode of the source against the neighbouring frame).",
+        "The API refuses a contributor's frame of a clip it cannot edit (403), a missing or non-video source (404), a time past the end and an unknown kind (400), a destination that takes no PNG (415) and from.kind on copy (400), and writes nothing."
+      ],
+      "cases": [
+        "TestMediaFramePosters"
+      ]
+    },
+    {
+      "id": "CK-J12-S03",
+      "journey": "CK-J12",
+      "behavior": "The poster picker browses the seek sprite, previews and crops the browser's own decode of the HLS rendition, and saves frame ops the worker grabs exactly",
+      "status": "verified",
+      "evidence": [
+        "The shipped VideoPosterPicker in Chromium against a worker-encoded clip: eight sprite tiles, an untainted non-blank preview at the chosen time, a crop from the captured rendition frame and a frame op; then another clip's video saved as a frame op with from. No request reaches a frame endpoint.",
+        "The browser's shown frames are compared with the worker's grabs: each grab is clearly nearer the shown frame than the source's neighbouring frames."
+      ],
+      "cases": [
+        "TestVideoPosterPickerBrowser"
+      ]
+    },
+    {
+      "id": "CK-J12-S04",
+      "journey": "CK-J12",
+      "behavior": "The stock worker binary publishes default renditions from the registry JSON without a database; hosts link no libvips",
+      "status": "verified",
+      "evidence": [
+        "The built cmd/media-worker publish-defaults renders ContentKit's avatar silhouette and a host default from MEDIA_DEFAULTS_DIR to create-only objects, prints MEDIA_GATEWAY_DEFAULTS naming exactly what it wrote, refuses a default no source holds, and writes nothing on repeat."
+      ],
+      "cases": [
+        "TestWorkerPublishesDefaults"
+      ]
+    },
+    {
       "id": "CK-J13-S01",
       "journey": "CK-J13",
       "behavior": "Private exact-file grant refuses a sibling file or another item",
@@ -5211,37 +5249,6 @@
         "Actual S3 plan/checksum and valid transfer, foreign/folder refusals, empty state after invalid/over-limit batches, accepted replay and changed-ID conflict.",
         "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
       ]
-    },
-    {
-      "id": "CK-API-096",
-      "method": "GET",
-      "path": "/v1/media/upload/frame",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/inherited_HEAD_credential_gate"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/inherited_HEAD_credential_gate"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
     },
     {
       "id": "CK-API-097",
@@ -9688,17 +9695,6 @@
       ]
     },
     {
-      "id": "ts:MediaClient.getFrame",
-      "name": "MediaClient.getFrame",
-      "status": "verified",
-      "cases": [
-        "TestTypeScriptVideoContracts/media_hls_transport"
-      ],
-      "evidence": [
-        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
-      ]
-    },
-    {
       "id": "ts:MediaClient.hlsBase",
       "name": "MediaClient.hlsBase",
       "status": "verified",
@@ -10911,6 +10907,30 @@
       "issue": "contentkit#260",
       "case": "TestMetadataManifestReadsUseTransactions/sibling_metadata_three_connections",
       "reason": "The separate version_publish worker and its transaction loop are deleted; preserve PendingTx one-connection behavior and existing unified release locking proofs."
+    },
+    {
+      "issue": "contentkit#262",
+      "reason": "Hosts run no media codecs: the poster picker decodes the encoded video in the browser and saves frame ops; a frame of another item's video is a frame op with from, grabbed by the worker.",
+      "operations": [
+        {
+          "id": "CK-API-096",
+          "method": "GET",
+          "path": "/v1/media/upload/frame",
+          "auth": "editor",
+          "permission": "root:content:write",
+          "day1_status": "partial-security-only; positive/full functionality deferred P1"
+        }
+      ],
+      "bindings": [
+        {
+          "id": "ts:MediaClient.getFrame",
+          "language": "ts",
+          "surface": "TS class member",
+          "name": "MediaClient.getFrame",
+          "source": "sdk/ui/src/client/media/client.ts",
+          "selection": "included-critical"
+        }
+      ]
     }
   ]
 }

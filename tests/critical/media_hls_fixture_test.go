@@ -98,8 +98,8 @@ func newTinyHLSConfiguredFixture(t *testing.T, private bool, configure func(*ck.
 		t.Fatalf("actual HLS child has no byte-range segments: %s", child.Body)
 	}
 	f.SegmentURL = playlistURIForTest(t, child.Body)
-	if !strings.HasPrefix(f.SegmentURL, m.storage.gateway.URL+"/") {
-		t.Fatalf("child playlist bypasses the gateway: %s", f.SegmentURL)
+	if !strings.HasPrefix(f.SegmentURL, m.app.cfg.Media.BaseURL+"/") {
+		t.Fatalf("child playlist bypasses the media host: %s", f.SegmentURL)
 	}
 	return f
 }

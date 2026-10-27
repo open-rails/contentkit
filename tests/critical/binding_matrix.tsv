@@ -157,7 +157,6 @@ ts:MediaClient.read	ts	TS class member	MediaClient.read	sdk/ui/src/client/media/
 ts:MediaClient.waitFor	ts	TS class member	MediaClient.waitFor	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.editorView	ts	TS class member	MediaClient.editorView	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.presets	ts	TS class member	MediaClient.presets	sdk/ui/src/client/media/client.ts	included-critical
-ts:MediaClient.getFrame	ts	TS class member	MediaClient.getFrame	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.hlsBase	ts	TS class member	MediaClient.hlsBase	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.hls	ts	TS class member	MediaClient.hls	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.uploadNamed	ts	TS class member	MediaClient.uploadNamed	sdk/ui/src/client/media/client.ts	included-critical

@@ -906,7 +906,7 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   `avatar.User()` (`github.com/open-rails/contentkit/media/avatar`) is the
   standard kind: JPEG, PNG and WebP up to 10 MiB, square WebP at 64, 128,
   256 and 512 pixels, a default silhouette (publish it with the other
-  defaults through `media/image.PublishDefaults`). Its preset is `Stable`:
+  defaults: `media-worker publish-defaults`). Its preset is `Stable`:
   besides its generations, the current image is kept at the logical names
   (`avatar-128.webp`), so its URL is built from the person's id and the
   gateway serves the default there until one is uploaded.
@@ -1030,7 +1030,6 @@ The upload route group serves the upload API at `/v1/media/upload`:
 | `POST /presign {ref, path, type, size, sha256}` | Checks the path's Upload and `CanUpload`; answers `exists`, one `put`, or a `multipart` ticket, and the `path` to commit (cleaned, with an extension, server-named for `Named`). |
 | `POST /parts`, `/parts/list`, `/complete`, `/abort` | Multipart parts bound to their SHA-256; resume; assemble. |
 | `POST /commit {ref, ops}` | Applies ops in one conditional write, then enqueues placement and processing. Each uploader's commits are rate limited (`UploadOptions.Commits`, default 1/s, burst 30; 429 `rate_limited`), except for exempt grants. |
-| `GET /frame?kind&id&path&t&w` | A JPEG still of a video upload for the frame picker (`UploadOptions.Frames`). |
 
 Uploads land at a staged name, `temp/u-{uuid}`, which presign answers as
 `blob` (or the folder's identical blob, with `exists`); the put op commits
@@ -1053,12 +1052,12 @@ code calls `Uploads.Ingest`, from a stream (`Body`) or the same copy (`From`).
 | `remove {path, takedown?}` | Removes an upload and its outputs (cancelling its processing). With `takedown` it also removes the frames grabbed from the upload and the zips that bundled it, then deletes at once the blobs the commit dropped, the removed uploads' editor views and staged objects, and the item's unused public files. With an exempt grant (`UploadGrant.Exempt`, staff) it instead deletes every private blob the item no longer references, earlier versions and all editor views included, which costs re-rendering them; sent again on the path already gone, it runs that sweep again. If a takedown's deletes fail it says so: staff complete it with the exempt takedown, otherwise the leftovers go at the grace sweep. For anyone else a takedown of a path already gone is `not_found`. |
 | `attach {path, index?, meta?}` | Makes an unattached upload part of the item. |
 | `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. Blobs copied from another item are reserved like uploads (rate limits, pending quota) before they move. |
-| `frame {path, t \| auto}` | Fills an upload from a frame of its `Frames` video; a new video grabs again. |
+| `frame {path, t \| auto, edit?, from?}` | Fills an upload from a frame of its `Frames` video, the one a player shows `t` seconds in; a new video grabs again. With `from: {kind?, id, version?, path}` the frame is of another item's video upload (`kind` defaults to this item's, in its namespace), which the editor must also be able to write; the upload must allow `image/png`, and the worker grabs it once, a still that later changes to that video leave alone. |
 | `meta {meta}` | Sets the template values (`{title}` in download names). |
 | `regenerate {preset?, force?}` | Asks the worker to redo stale outputs and retry uploads that failed for their current blob and edit, which any writer of the item may do; `force` redoes every output and needs an exempt grant. |
 
 `CanUpload` is asked for `UploadTarget{Ref, Path}` per op (the upload's stem;
-"" for item-wide ops), and for a copy's source too. A new item starts hidden
+"" for item-wide ops), and for a copy's or frame's source too. A new item starts hidden
 unless anonymous viewers may see it (`Hooks.Resolver`). `ProcessOnUpload`
 tells the SDK to commit uploads unattached as they land; readers leave them
 out until `attach`.
@@ -1132,12 +1131,13 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
 - Declared public presets remain public before release and after unpublishing.
   Publication and billing changes only change database access policy and private
   token issuance. There is no exposure method or worker.
-- Render the defaults from the deploy step:
-  `image.PublishDefaults(ctx, store, reg)` (it needs libvips) writes each
-  `Public.Default` from its kind's `Defaults` to
-  `{ns}/{kind}/_default/public/sha256-{digest}.webp` and returns the
-  mappings. `media.GatewayConfig(reg, publication.Defaults)` gives the
-  gateway's namespaces and `MEDIA_GATEWAY_DEFAULTS` (`layout.FormatDefaults`).
+- Render the defaults from the deploy step with the worker image:
+  `media-worker publish-defaults` (`MEDIA_KINDS_FILE`, `MEDIA_S3_*`, no
+  database) writes each `Public.Default` to
+  `{ns}/{kind}/_default/public/sha256-{digest}.webp` and prints the
+  gateway's `MEDIA_GATEWAY_DEFAULTS`. The images come from
+  `MEDIA_DEFAULTS_DIR`, over ContentKit's own (the avatar silhouette). A Go
+  worker build can call `image.PublishDefaults(ctx, store, reg)` itself.
 
 ### Processing and readiness
 

@@ -24,7 +24,7 @@ const (
 	OpRemove     = "remove"     // remove an upload and its outputs
 	OpAttach     = "attach"     // make an unattached upload part of the item
 	OpCopy       = "copy"       // copy an upload within the kind (CopyFrom), optionally with a new edit
-	OpFrame      = "frame"      // fill an upload from a frame of its Upload.Frames video
+	OpFrame      = "frame"      // fill an upload from a frame of its Upload.Frames video, or of another item's (From)
 	OpMeta       = "meta"       // set the template values (download names)
 	OpRegenerate = "regenerate" // redo stale outputs and retry failed uploads (of Preset), or every output with Force
 )
@@ -42,8 +42,8 @@ type Op struct {
 	Edit       *Edit          `json:"edit,omitempty"`      // put, edit, copy, frame
 	Unattached bool           `json:"unattached,omitempty"`
 	To         string         `json:"to,omitempty"`   // rename, copy (default the source's path)
-	From       *CopyFrom      `json:"from,omitempty"` // copy
-	T          *float64       `json:"t,omitempty"`    // frame: seconds into the video
+	From       *CopyFrom      `json:"from,omitempty"` // copy; frame: the video
+	T          *float64       `json:"t,omitempty"`    // frame: the one a player shows t seconds in
 	Auto       bool           `json:"auto,omitempty"` // frame: the worker chooses
 	Preset     string         `json:"preset,omitempty"`
 	Force      bool           `json:"force,omitempty"`
@@ -61,7 +61,10 @@ type Op struct {
 // of a versioned kind, one version's. Into
 // a published kind's item, it names a file of a version of the kind it
 // publishes: an upload, or a finished output, which comes alone, as an upload.
+// A frame op's names a video upload of any item in the namespace (Kind,
+// default this item's) the editor may edit; the worker grabs it once.
 type CopyFrom struct {
+	Kind    string `json:"kind,omitempty"` // frame only
 	ID      string `json:"id"`
 	Version string `json:"version,omitempty"`
 	Path    string `json:"path"`
@@ -104,12 +107,15 @@ func (op Op) validate() error {
 			return bad("to is required")
 		}
 	case OpCopy:
-		if op.From == nil || op.From.ID == "" || op.From.Path == "" {
-			return bad("from {id, path} is required")
+		if op.From == nil || op.From.ID == "" || op.From.Path == "" || op.From.Kind != "" {
+			return bad("from {id, path} is required; kind is for frame")
 		}
 	case OpFrame:
 		if (op.T == nil) == !op.Auto || op.T != nil && *op.T < 0 {
 			return bad("give t (seconds) or auto")
+		}
+		if op.From != nil && (op.From.ID == "" || op.From.Path == "") {
+			return bad("from {id, path} names the video")
 		}
 	case OpEdit, OpRemove, OpAttach, OpMeta, OpRegenerate:
 	default:
@@ -162,6 +168,8 @@ type opRun struct {
 	// copies are each copy op's source upload and outputs (by op index),
 	// already copied into the item.
 	copies map[int][]File
+	// frames are the videos frame ops name in other items, by op index.
+	frames map[int]File
 	// exempt is an exempt grant: its takedown of a path already gone is a
 	// retry, not an error.
 	exempt         bool
@@ -202,7 +210,7 @@ func (o *opRun) apply(n int, op Op) error {
 	case OpPut:
 		return o.put(op)
 	case OpFrame:
-		return o.frame(op)
+		return o.frame(n, op)
 	case OpCopy:
 		src := o.copies[n]
 		if op.From.ID == o.ref.ContentID && op.From.Version == o.ref.Version() {
@@ -271,7 +279,7 @@ func (o *opRun) apply(n int, op Op) error {
 			// The frames grabbed from it show it too.
 			stem, _ := splitExt(f.Path)
 			for _, x := range m.Files {
-				if g, _, _, _, ok := k.upload(x.Path); ok && x.IsUpload() && x.Frame != nil && k.Uploads[g].Frames == stem {
+				if g, _, _, _, ok := k.upload(x.Path); ok && x.IsUpload() && x.Frame != nil && x.Frame.From == nil && k.Uploads[g].Frames == stem {
 					gone = append(gone, x.Path)
 				}
 			}
@@ -532,7 +540,7 @@ func (o *opRun) regrab(path string) {
 	}
 	for j := range m.Files {
 		f := &m.Files[j]
-		if !f.IsUpload() || f.Frame == nil {
+		if !f.IsUpload() || f.Frame == nil || f.Frame.From != nil {
 			continue
 		}
 		if u, _, _, _, ok := k.upload(f.Path); ok && k.Uploads[u].Frames == k.Uploads[g].Path {
@@ -543,10 +551,25 @@ func (o *opRun) regrab(path string) {
 	}
 }
 
-// frame sets an upload to a frame grab of its Upload.Frames video.
-func (o *opRun) frame(op Op) error {
+// frame sets an upload to a frame grab of its Upload.Frames video, or of
+// the video op.From names.
+func (o *opRun) frame(n int, op Op) error {
 	k, m := o.k, o.m
 	g, stem, _, _, ok := k.upload(op.Path)
+	if op.From != nil {
+		if !ok || !slices.Contains(k.Uploads[g].Types, "image/png") {
+			return uploadErr(CodeType, "upload %q takes no frame: it does not allow image/png", op.Path)
+		}
+		v, ok := o.frames[n]
+		if !ok { // this item's, read under its lock
+			v, ok = uploadAt(m, op.From.Path)
+			if err := frameVideo(v, ok, op); err != nil {
+				return err
+			}
+		}
+		from := &CopyFrom{Kind: cmpOr(op.From.Kind, k.Name), ID: op.From.ID, Version: op.From.Version, Path: v.Path}
+		return o.placeFrame(g, stem, op, &Frame{Auto: op.Auto, From: from})
+	}
 	if !ok || k.Uploads[g].Frames == "" {
 		return uploadErr(CodeInvalid, "upload %q takes no frames", op.Path)
 	}
@@ -565,16 +588,50 @@ func (o *opRun) frame(op Op) error {
 	if v := m.Files[video]; op.T != nil && v.Dur > 0 && *op.T > v.Dur {
 		return uploadErr(CodeInvalid, "frame at %gs is past the video's %gs", *op.T, v.Dur)
 	}
-	f := File{Path: stem + ".png", Type: "image/png", Frame: &Frame{Auto: op.Auto}, Edit: op.Edit.Normalize()}
+	return o.placeFrame(g, stem, op, &Frame{Auto: op.Auto})
+}
+
+func (o *opRun) placeFrame(g int, stem string, op Op, frame *Frame) error {
+	f := File{Path: stem + ".png", Type: "image/png", Frame: frame, Edit: op.Edit.Normalize()}
 	if op.T != nil {
 		f.Frame.T = *op.T
 	}
 	i := o.stem(stem)
 	if i >= 0 {
-		f.Meta, f.Unattached = m.Files[i].Meta, m.Files[i].Unattached
+		f.Meta, f.Unattached = o.m.Files[i].Meta, o.m.Files[i].Unattached
 	}
-	f.Pending = k.Presets(f.Path, false)
+	f.Pending = o.k.Presets(f.Path, false)
 	return o.place(g, i, f, nil)
+}
+
+// uploadAt is the upload at path, or whose path's stem is path.
+func uploadAt(m *Manifest, path string) (File, bool) {
+	if f, ok := m.Get(path); ok {
+		return f, ok
+	}
+	for _, f := range m.Files {
+		if s, _ := splitExt(f.Path); f.IsUpload() && s == path {
+			return f, true
+		}
+	}
+	return File{}, false
+}
+
+// frameVideo checks the video upload v (found: ok) a frame op's From names.
+func frameVideo(v File, ok bool, op Op) error {
+	if !ok || !v.IsUpload() || !isVideoType(v.Type) || v.Gone || v.Fail() != nil {
+		return uploadErr(CodeNotFound, "no video upload %q in item %s", op.From.Path, op.From.ID)
+	}
+	if v.Unattached {
+		return uploadErr(CodeConflict, "the video %q is unattached: attach it first", v.Path)
+	}
+	if v.Blob == "" {
+		return uploadErr(CodeConflict, "video %q is still being placed; retry", v.Path)
+	}
+	if op.T != nil && v.Dur > 0 && *op.T > v.Dur {
+		return uploadErr(CodeInvalid, "frame at %gs is past the video's %gs", *op.T, v.Dur)
+	}
+	return nil
 }
 
 // copyFiles snapshots an upload and its derived files before an edit moves them.

@@ -45,10 +45,6 @@ type UploadOptions struct {
 	// Grace bounds the commit deadline below the lifetime of unfinished
 	// private allocations (JobsConfig.Grace). Default 24h.
 	Grace time.Duration
-	// Frames serves the frame picker (media/video.Frames); nil answers
-	// not_found. FrameConcurrency bounds grabs per process; default 2.
-	Frames           FrameGrabber
-	FrameConcurrency int
 	// ProcessOnUpload tells the SDK to commit each upload unattached as
 	// soon as it lands, so the worker processes it while the user arranges
 	// the rest; an attach op makes it part of the item.
@@ -64,7 +60,6 @@ type UploadOptions struct {
 type Uploads struct {
 	o       UploadOptions
 	reg     *Registry
-	frames  chan struct{}
 	commits rateLimiter
 }
 
@@ -94,10 +89,7 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	if o.Grace <= 0 {
 		o.Grace = 24 * time.Hour
 	}
-	if o.FrameConcurrency <= 0 {
-		o.FrameConcurrency = 2
-	}
-	return &Uploads{o: o, reg: reg, frames: make(chan struct{}, o.FrameConcurrency),
+	return &Uploads{o: o, reg: reg,
 		commits: newRateLimiter(o.Commits, commitLimit, "commit", time.Now, slog.Default())}, nil
 }
 
@@ -485,6 +477,10 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		return man, nil
 	}
+	frames, err := u.frameVideos(ctx, item, ops)
+	if err != nil {
+		return nil, err
+	}
 	copies, copied, err := u.copies(ctx, actor, grant, item, ops)
 	if err != nil {
 		return nil, err
@@ -495,7 +491,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	var prior *Manifest
 	man, err := u.o.Manifests.editOperation(editCtx, ref, false, bound{project: item.Kind().Unwritten}, mutation, func(m *Manifest) error {
 		prior = m.Clone()
-		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt, trusted: trusted}
+		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, frames: frames, exempt: grant.Exempt, trusted: trusted}
 		o.renames = map[string]string{}
 		for _, file := range prior.Files {
 			if file.IsUpload() {
@@ -686,7 +682,8 @@ func removesPending(m *Manifest, ops []Op) bool {
 }
 
 // authorizeOps checks every op's target once; the grants must agree on the
-// quota owner. A copy also needs the right to write its source.
+// quota owner. A copy, or a frame of another item's video, also needs the
+// right to write its source.
 func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Item, ops []Op) (UploadGrant, error) {
 	type target struct {
 		ref  contentref.ContentKey
@@ -729,6 +726,16 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 			}
 			t.Path, _ = splitExt(cmpOr(op.To, op.From.Path))
 		}
+		if op.Op == OpFrame && op.From != nil {
+			src, err := u.frameRef(item, op)
+			if err != nil {
+				return UploadGrant{}, err
+			}
+			stem, _ := splitExt(op.From.Path)
+			if _, err := check(UploadTarget{Ref: src, Path: stem}); err != nil {
+				return UploadGrant{}, err
+			}
+		}
 		destination, err := check(t)
 		if err != nil {
 			return UploadGrant{}, err
@@ -738,6 +745,45 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 		}
 	}
 	return *grant, nil
+}
+
+// frameRef is the item a frame op's From names, in item's namespace.
+func (u *Uploads) frameRef(item Item, op Op) (contentref.ContentRef, error) {
+	src, err := u.reg.VersionRef(cmpOr(op.From.Kind, item.Kind().Name), op.From.ID, op.From.Version)
+	if err != nil || src.TenantID != item.Ref().TenantID {
+		return src, uploadErr(CodeInvalid, "frame from %q: not a media item here", op.From.ID)
+	}
+	return src, nil
+}
+
+// frameVideos reads the videos frame ops name in other items, by op index.
+// The worker checks them again when it grabs.
+func (u *Uploads) frameVideos(ctx context.Context, item Item, ops []Op) (map[int]File, error) {
+	out := map[int]File{}
+	for n, op := range ops {
+		if op.Op != OpFrame || op.From == nil {
+			continue
+		}
+		src, err := u.frameRef(item, op)
+		if err != nil {
+			return nil, err
+		}
+		if src.Equal(item.Ref()) {
+			continue // read under the item's manifest lock
+		}
+		m, _, err := u.o.Manifests.Get(ctx, src)
+		if errors.Is(err, ErrNotFound) {
+			m = &Manifest{}
+		} else if err != nil {
+			return nil, err
+		}
+		v, ok := uploadAt(m, op.From.Path)
+		if err := frameVideo(v, ok, op); err != nil {
+			return nil, err
+		}
+		out[n] = v
+	}
+	return out, nil
 }
 
 // verify HEAD-checks the put names in item's folder: staged uploads in
@@ -1021,44 +1067,6 @@ func (u *Uploads) copied(ctx context.Context, item Item, copies map[int][]File) 
 		}
 	}
 	return g.Wait()
-}
-
-// Frame grabs a still of the video upload at path for the frame picker.
-func (u *Uploads) Frame(ctx context.Context, actor access.Actor, ref contentref.ContentRef, path string, t float64, width int) ([]byte, error) {
-	if u.o.Frames == nil {
-		return nil, uploadErr(CodeNotFound, "frames are not served here")
-	}
-	if t < 0 || width < 0 || width > 3840 {
-		return nil, uploadErr(CodeInvalid, "t must be at least 0 and w at most 3840")
-	}
-	item, err := u.item(ref)
-	if err != nil {
-		return nil, err
-	}
-	stem, _ := splitExt(path)
-	if _, err := u.authorize(ctx, actor, UploadTarget{Ref: ref, Path: stem}); err != nil {
-		return nil, err
-	}
-	m, _, err := u.o.Manifests.Get(ctx, ref)
-	if errors.Is(err, ErrNotFound) {
-		return nil, uploadErr(CodeNotFound, "no upload %q", path)
-	} else if err != nil {
-		return nil, err
-	}
-	f, ok := m.Get(path)
-	if !ok || !f.IsUpload() || !isVideoType(f.Type) || f.Source() == "" || f.Gone {
-		return nil, uploadErr(CodeNotFound, "no video upload %q", path)
-	}
-	if f.Blob == "" {
-		return nil, uploadErr(CodeConflict, "video %q is still being placed; retry", path)
-	}
-	select {
-	case u.frames <- struct{}{}:
-		defer func() { <-u.frames }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	return u.o.Frames.Frame(ctx, item, f, t, width)
 }
 
 func (u *Uploads) item(ref contentref.ContentRef) (Item, error) {

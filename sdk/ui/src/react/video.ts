@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { itemKey } from "../client/media/ref.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
-import { toContentKitError, type ContentKitError } from "../client/errors.js";
+import { ContentKitError, toContentKitError } from "../client/errors.js";
 import type { Edit, FileInfo, Op, ReadResult, RefBody } from "../client/generated/wire.js";
 import { samePath, type Progress } from "../client/media/client.js";
+import { classifyHlsError, hlsConfig, type PlaybackError } from "../client/playback.js";
+import { spriteCueAt, type SpriteCue } from "../client/player.js";
 import { useContentKitClient } from "./context.js";
+import { hlsLoading } from "./gallery.js";
+import { useSprite } from "./player.js";
 import { useMediaRead } from "./read.js";
 import { withUpload } from "./store.js";
 
 const asError = toContentKitError;
-const refKey = (ref: RefBody) => itemKey(ref);
 
 export interface VideoImagesOptions {
   ref: RefBody;
@@ -26,6 +28,8 @@ export interface VideoImagesOptions {
 export interface UseVideoImages {
   /** The video upload (its duration and size once probed); null without one. */
   video: FileInfo | null;
+  /** The video's playable HLS ladder: its folder in the read's `hls`; undefined until one is encoded. */
+  dir?: string;
   /** The poster upload: a frame ({t} or {auto}) or an uploaded image; null without one. */
   poster: FileInfo | null;
   loading: boolean;
@@ -42,146 +46,156 @@ export function useVideoImages(o: VideoImagesOptions): UseVideoImages {
   const posterPath = o.poster ?? "poster";
   const { read, set: update } = r;
   const set = useCallback((poster: FileInfo) => update(withUpload(read, posterPath, poster)), [read, posterPath, update]);
-  return { video: find(o.video ?? "source"), poster: find(posterPath), loading: r.loading, error: r.error, reload: r.reload, set };
+  const video = find(o.video ?? "source");
+  const dir = video ? read?.hls?.find((d) => read.files.some((f) => !f.upload && f.from === video.path && f.path.startsWith(d))) : undefined;
+  return { video, ...(dir ? { dir } : {}), poster: find(posterPath), loading: r.loading, error: r.error, reload: r.reload, set };
 }
 
 export interface FrameStripOptions {
   ref: RefBody;
-  /** The video upload's path (a read's, with its extension). */
-  path?: string;
-  /** Seconds; nothing is fetched until it is known. */
+  /** The video's HLS ladder folder (useVideoImages' `dir`); nothing loads without it. */
+  dir?: string;
+  /** Seconds; nothing shows until it is known. */
   duration?: number;
   /** Frames across the video. Default 8. */
   count?: number;
-  /** Pixels. Default 160. */
-  width?: number;
-  /** The first failed grab (the strip keeps going without it). */
-  onError?: (e: ContentKitError) => void;
   /** Overrides the provider's client. */
   client?: ContentKitClient;
 }
 
-export interface StripFrame {
-  time: number;
-  /** An object URL once fetched. */
-  url?: string;
+/** A tile of the seek sprite and the size of the sheet it cuts. */
+export interface SpriteTile extends SpriteCue {
+  sheetWidth: number;
+  sheetHeight: number;
 }
 
-/**
- * Evenly spaced frames for coarse browsing, fetched one at a time (the frame
- * endpoint allows two grabs at once per host), revoked on change or unmount.
- */
+export interface StripFrame {
+  time: number;
+  /** The sprite tile showing at time, once the sprite loads. */
+  tile?: SpriteTile;
+}
+
+/** Evenly spaced frames for coarse browsing: tiles of the ladder's seek sprite (sprite.vtt), one sheet for all. */
 export function useFrameStrip(o: FrameStripOptions): StripFrame[] {
   const { media } = useContentKitClient(o.client);
   const count = o.count ?? 8;
-  const width = o.width ?? 160;
   const duration = o.duration ?? 0;
-  const key = `${refKey(o.ref)}#${o.path ?? ""}#${duration}#${count}#${width}`;
-  const [state, setState] = useState<{ key: string; frames: StripFrame[] }>({ key: "", frames: [] });
-  const ref = useRef(o.ref);
-  ref.current = o.ref;
-  const onError = useRef(o.onError);
-  onError.current = o.onError;
-  useEffect(() => {
-    if (!(duration > 0) || !o.path) return;
-    const path = o.path;
-    const ctl = new AbortController();
-    let reported = false;
-    const times = Array.from({ length: count }, (_, i) => round3(((i + 0.5) / count) * duration));
-    const urls: string[] = [];
-    setState({ key, frames: times.map((time) => ({ time })) });
-    void (async () => {
-      for (const [i, time] of times.entries()) {
-        try {
-          const blob = await media.getFrame(ref.current, path, time, width, ctl.signal);
-          if (ctl.signal.aborted) return;
-          const url = URL.createObjectURL(blob);
-          urls.push(url);
-          setState((s) => (s.key === key ? { key, frames: s.frames.map((f, j) => (j === i ? { ...f, url } : f)) } : s));
-        } catch (e) {
-          if (ctl.signal.aborted) return;
-          if (!reported) onError.current?.(asError(e));
-          reported = true;
-        }
-      }
-    })();
-    return () => {
-      ctl.abort();
-      urls.forEach((u) => URL.revokeObjectURL(u));
-    };
-  }, [media, key, duration, count, width, o.path]);
-  return state.key === key ? state.frames : [];
+  const sprite = useSprite(o.dir ? `${media.hlsBase(o.ref, o.dir)}sprite.vtt?editor` : null, media.hls);
+  return useMemo(() => {
+    if (!(duration > 0)) return [];
+    return Array.from({ length: count }, (_, i) => {
+      const time = round3(((i + 0.5) / count) * duration);
+      const cue = sprite && spriteCueAt(sprite.cues, time);
+      return cue ? { time, tile: { ...cue, sheetWidth: sprite.width, sheetHeight: sprite.height } } : { time };
+    });
+  }, [sprite, count, duration]);
 }
 
 export interface VideoFrameOptions {
   ref: RefBody;
-  /** The video upload's path; nothing is fetched without it. */
-  path?: string;
-  /** Seconds; undefined fetches nothing. */
+  /** The video's HLS ladder folder (useVideoImages' `dir`); nothing loads without it. */
+  dir?: string;
+  /** Seconds; the video seeks there. */
   time?: number;
-  /** Pixels. Default 640. */
-  width?: number;
-  /** Debounce while scrubbing, ms. Default 120. */
-  delay?: number;
-  onError?: (e: ContentKitError) => void;
+  onError?: (e: PlaybackError) => void;
   /** Overrides the provider's client. */
   client?: ContentKitClient;
 }
 
 export interface UseVideoFrame {
-  /** The latest fetched frame; kept while the next one loads. */
-  url?: string;
-  /** The time url shows. */
+  /** Attach to the `<video>` that shows the frame. */
+  ref: (el: HTMLVideoElement | null) => void;
+  /** The time the video shows; undefined while it loads or seeks. */
   time?: number;
   loading: boolean;
-  error?: ContentKitError;
+  error?: PlaybackError;
+  /** The shown frame as a PNG at the rendition's size. */
+  capture: () => Promise<Blob>;
 }
 
-/** The exact frame at time, debounced while it changes. */
+/** Short side of the rendition frames are decoded from: the largest up to it. */
+const FRAME_RUNG = 1080;
+
+/**
+ * The frame a player shows at time, which a frame op at that time grabs,
+ * decoded in the browser from the ladder's largest rendition up to 1080p
+ * (hls.js; no server work). The `<video>` shows it; capture() copies it for
+ * a crop.
+ */
 export function useVideoFrame(o: VideoFrameOptions): UseVideoFrame {
   const { media } = useContentKitClient(o.client);
-  const width = o.width ?? 640;
-  const delay = o.delay ?? 120;
-  const [state, setState] = useState<UseVideoFrame>({ loading: false });
-  const ref = useRef(o.ref);
-  ref.current = o.ref;
-  const last = useRef<string | undefined>(undefined);
+  const [el, setEl] = useState<HTMLVideoElement | null>(null);
+  const [shown, setShown] = useState<{ src: string; time: number }>();
+  const [failed, setFailed] = useState<{ src: string; error: PlaybackError }>();
+  const src = o.dir ? `${media.hlsBase(o.ref, o.dir)}master.m3u8?editor` : undefined;
+  const want = useRef(o.time);
+  want.current = o.time;
   const onError = useRef(o.onError);
   onError.current = o.onError;
-  const key = refKey(o.ref);
   useEffect(() => {
-    if (o.time === undefined || !o.path) return;
-    const time = o.time;
-    const path = o.path;
-    const ctl = new AbortController();
-    setState((s) => ({ ...s, loading: true, error: undefined }));
-    const t = setTimeout(() => {
-      media.getFrame(ref.current, path, time, width, ctl.signal).then(
-        (blob) => {
-          if (ctl.signal.aborted) return;
-          if (last.current) URL.revokeObjectURL(last.current);
-          const url = (last.current = URL.createObjectURL(blob));
-          setState({ url, time, loading: false });
-        },
-        (e) => {
-          if (ctl.signal.aborted) return;
-          setState((s) => ({ ...s, loading: false, error: asError(e) }));
-          onError.current?.(asError(e));
-        },
-      );
-    }, delay);
-    return () => {
-      clearTimeout(t);
-      ctl.abort();
+    if (!el || !src) return;
+    let dead = false;
+    let destroy = () => {};
+    const fail = (error: PlaybackError) => {
+      if (dead) return;
+      dead = true;
+      destroy();
+      setFailed({ src, error });
+      onError.current?.(error);
     };
-  }, [media, key, o.path, o.time, width, delay]);
-  useEffect(
-    () => () => {
-      if (last.current) URL.revokeObjectURL(last.current);
-    },
-    [],
-  );
-  return state;
+    void import("hls.js").then(
+      ({ default: Hls }) => {
+        if (dead) return;
+        if (!Hls.isSupported()) return fail({ kind: "unsupported", code: "mse" });
+        const hls = new Hls({ ...hlsConfig, ...hlsLoading(() => media.hls), autoStartLoad: false, capLevelToPlayerSize: false, maxBufferLength: 4 });
+        destroy = () => hls.destroy();
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          const sides = hls.levels.map((l) => Math.min(l.width || l.height, l.height || l.width));
+          const under = sides.filter((side) => side <= FRAME_RUNG);
+          hls.currentLevel = sides.indexOf(under.length ? Math.max(...under) : Math.min(...sides));
+          hls.startLoad(want.current ?? 0);
+        });
+        hls.on(Hls.Events.ERROR, (_, d) => {
+          if (d.fatal) fail(classifyHlsError(d));
+        });
+        hls.attachMedia(el);
+        hls.loadSource(src);
+      },
+      () => fail({ kind: "unknown", code: "hls.js" }),
+    );
+    return () => {
+      dead = true;
+      destroy();
+    };
+  }, [el, src, media]);
+  useEffect(() => {
+    if (!el || !src || o.time === undefined) return;
+    const time = o.time;
+    const seek = () => {
+      el.currentTime = time;
+    };
+    const seeked = () => {
+      if (want.current === time) setShown({ src, time });
+    };
+    el.addEventListener("seeked", seeked);
+    if (el.readyState >= 1) seek();
+    else el.addEventListener("loadedmetadata", seek, { once: true });
+    return () => {
+      el.removeEventListener("seeked", seeked);
+      el.removeEventListener("loadedmetadata", seek);
+    };
+  }, [el, src, o.time]);
+  const capture = useCallback(async () => {
+    if (!el?.videoWidth || el.readyState < 2) throw new ContentKitError("decode", "no frame is shown yet");
+    const canvas = document.createElement("canvas");
+    canvas.width = el.videoWidth;
+    canvas.height = el.videoHeight;
+    canvas.getContext("2d")!.drawImage(el, 0, 0);
+    return new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new ContentKitError("decode", "the frame could not be copied"))), "image/png"));
+  }, [el]);
+  const error = failed && failed.src === src ? failed.error : undefined;
+  const time = shown && shown.src === src && shown.time === o.time ? shown.time : undefined;
+  return { ref: setEl, ...(time !== undefined ? { time } : {}), loading: !!src && o.time !== undefined && time === undefined && !error, ...(error ? { error } : {}), capture };
 }
 
 export type VideoSaveState =
@@ -212,8 +226,8 @@ export interface UseVideoPoster {
   /** The worker's choice of frame. */
   saveAuto: () => Promise<FileInfo | undefined>;
   /**
-   * A frame of another item's video upload (at path, time seconds) uploaded
-   * as the poster image, cropped by edit in the frame's pixels.
+   * A frame of another item's video upload (at path, time seconds): the
+   * worker grabs it once, cropped by edit in that video's pixels.
    */
   saveFrameFrom: (video: RefBody, path: string, time: number, edit?: Edit | null) => Promise<FileInfo | undefined>;
   reset: () => void;
@@ -261,16 +275,9 @@ export function useVideoPoster(o: VideoPosterOptions): UseVideoPoster {
     ),
     saveAuto: useCallback(() => frame({ auto: true }), [frame]),
     saveFrameFrom: useCallback(
-      (video, path, time, edit) => {
-        const { ref, path: to = "poster", timeout } = opts.current;
-        return run(async (onProgress) => {
-          const still = await media.getFrame(video, path, round3(time));
-          // GET /frame answers a JPEG.
-          const file = new File([still], "frame.jpg", { type: "image/jpeg" });
-          return media.put(file, { ref, path: to, edit, timeout, onProgress });
-        });
-      },
-      [media, run],
+      (video, path, time, edit) =>
+        frame({ t: round3(time), from: { kind: video.kind, id: video.id, ...(video.version ? { version: video.version } : {}), path }, ...(edit ? { edit } : {}) }),
+      [frame],
     ),
     reset: useCallback(() => setState({ status: "idle" }), []),
   };

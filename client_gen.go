@@ -1459,50 +1459,6 @@ func (c *Client) PostMediaUploadCommit(ctx context.Context, body media.CommitBod
 	return out, err
 }
 
-// GetMediaUploadFrameQuery is the query of GetMediaUploadFrame.
-type GetMediaUploadFrameQuery struct {
-	// the item's kind
-	Kind string
-	// the item's id
-	Id string
-	// a content kind's version id; absent for any other kind's item
-	Version string
-	// the video upload's path
-	Path string
-	// seconds into the video
-	T float64
-	// the still's width in pixels
-	W int
-}
-
-func (q GetMediaUploadFrameQuery) values() url.Values {
-	v := url.Values{}
-	if q.Kind != "" {
-		v.Set("kind", q.Kind)
-	}
-	if q.Id != "" {
-		v.Set("id", q.Id)
-	}
-	if q.Version != "" {
-		v.Set("version", q.Version)
-	}
-	if q.Path != "" {
-		v.Set("path", q.Path)
-	}
-	if q.T != 0 {
-		v.Set("t", fmt.Sprint(q.T))
-	}
-	if q.W != 0 {
-		v.Set("w", fmt.Sprint(q.W))
-	}
-	return v
-}
-
-// GetMediaUploadFrame is GET /v1/media/upload/frame (editor). A JPEG still of a video upload, for the frame picker (UploadOptions.Frames).
-func (c *Client) GetMediaUploadFrame(ctx context.Context, q GetMediaUploadFrameQuery) (*Reply, error) {
-	return c.raw(ctx, http.MethodGet, "/v1/media/upload/frame", q.values(), nil)
-}
-
 // GetMediaPresets is GET /v1/media/presets (open). Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public.
 func (c *Client) GetMediaPresets(ctx context.Context) ([]media.PresetRule, error) {
 	var out []media.PresetRule
