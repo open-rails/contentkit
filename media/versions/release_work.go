@@ -451,7 +451,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 				}
 			}
 			current, _, _ := layout.SplitBlobRef(blob)
-			if destination != layout.AreaFuture || current != destination {
+			if destination != layout.AreaInternal || current != destination {
 				plan.Copies = append(plan.Copies, media.Promotion{Source: blob, Area: destination})
 			}
 			identity = append(identity, []string{hex.EncodeToString(digest), destination})
@@ -471,7 +471,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 					if !pub.Ready() {
 						continue
 					}
-					destination := layout.AreaFuture
+					destination := layout.AreaInternal
 					if served[f.Path] {
 						destination = layout.AreaPublic
 					}
@@ -519,7 +519,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 				}
 				continue
 			}
-			destination := layout.AreaFuture
+			destination := layout.AreaInternal
 			if served[f.From] && f.Fail() == nil && !downloadOnly(k, f) {
 				if spec := private(k, f.Preset); spec != nil && spec.HostOnly {
 					continue
@@ -534,7 +534,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 					return nil, err
 				}
 			}
-			if destination != layout.AreaFuture {
+			if destination != layout.AreaInternal {
 				plan.View.Files = append(plan.View.Files, f)
 			}
 		}

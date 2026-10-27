@@ -17,7 +17,7 @@ import (
 )
 
 // Promotion selects one immutable object and its desired area inside the same
-// content item. Future is used when a previously released file is withdrawn.
+// content item. Internal is used when a previously released file is withdrawn.
 type Promotion struct {
 	Source string `json:"source"`
 	Area   string `json:"area"`
@@ -108,7 +108,7 @@ func validateDeliveries(deliveries []PublicationDelivery) error {
 			destination, destinationOK := layout.BlobDigest(f.Blob)
 			area, _, _ := layout.SplitBlobRef(f.Blob)
 			if !sourceOK || !destinationOK || !bytes.Equal(source, destination) ||
-				area != layout.AreaPublic && area != layout.AreaPrivate && area != layout.AreaFuture ||
+				area != layout.AreaPublic && area != layout.AreaPrivate && area != layout.AreaInternal ||
 				f.Type == "" || f.Size < 0 || f.Receipt != copyReceipt(d.ID, f) {
 				return errors.New("media: invalid delivery object")
 			}
@@ -141,7 +141,7 @@ func (m *Manifests) PreparePromotion(ctx context.Context, ref contentref.Content
 	seen := map[string]bool{}
 	for _, input := range inputs {
 		if _, valid := layout.BlobDigest(input.Source); !valid || seen[input.Source] ||
-			input.Area != layout.AreaPublic && input.Area != layout.AreaPrivate && input.Area != layout.AreaFuture {
+			input.Area != layout.AreaPublic && input.Area != layout.AreaPrivate && input.Area != layout.AreaInternal {
 			return nil, errors.New("media: invalid or duplicate promotion source")
 		}
 		seen[input.Source] = true
@@ -383,7 +383,7 @@ func (m *Manifests) verifyDelivery(ctx context.Context, key string, f DeliveryFi
 
 // WithdrawPromotion releases an operation's storage pins. Current canonical
 // file references and other operations still protect their own allocations.
-// To withdraw readable bytes, first Promote their desired future placement,
+// To withdraw readable bytes, first Promote their desired internal placement,
 // commit that reader state, then release obsolete operation pins with this call.
 func (m *Manifests) WithdrawPromotion(ctx context.Context, ref contentref.ContentRef, operation string) error {
 	id, err := uuid.Parse(operation)
