@@ -45,7 +45,6 @@ import (
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/video"
@@ -290,17 +289,8 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := migrations.ApplyAccounts(ctx, db, accountSchema); err != nil {
 		return err
 	}
-	if options.LegacyAccountKey != "" {
-		if e.scope == nil || !layout.ValidSegment(options.LegacyAccountKey) {
-			return errors.New("contentkit: LegacyAccountKey requires Scope and a valid key")
-		}
-		e.cfg.Accounts.Namespace = options.LegacyAccountKey
-	}
 	if err := e.resolveAccountKey(ctx); err != nil {
 		return err
-	}
-	if options.LegacyAccountKey != "" && e.cfg.Accounts.Namespace != options.LegacyAccountKey {
-		return ErrScopeConflict
 	}
 	if err := e.bindScope(ctx); err != nil {
 		return err
@@ -422,9 +412,6 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		if err != nil {
 			return nil, err
 		}
-	}
-	if err := media.ValidateVersionStorageMigration(ctx, m.reg, journal); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrMigrationsRequired, err)
 	}
 	limiter, err := e.entityLimiter()
 	if err != nil {
@@ -626,7 +613,7 @@ func (e *Engine) mount(deps Deps) error {
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
 		Entities: e.entities, Channels: e.channels, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
-		MeasuredEngagement: e.cfg.MeasuredEngagement, ActivityCohorts: e.cfg.ActivityCohorts}
+		ActivityCohorts: e.cfg.ActivityCohorts}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if o.Candidates != nil && !e.hub.SignalsConfigured() {
 		e.log.Warn("contentkit: Deps.Candidates needs the signal plane; similar and recommendations are off")

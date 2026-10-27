@@ -59,9 +59,6 @@ type Options struct {
 	// ActivitySigner preserves trusted event-time access facts. Nil retains
 	// legacy telemetry without normalized-population qualification.
 	ActivitySigner ActivitySigner
-	// MeasuredEngagement activates new measured writes only after the erasure
-	// executor cohort understands their storage. False leaves this API disabled.
-	MeasuredEngagement bool
 	// ActivityCohorts are ordered, application-defined readership categories.
 	ActivityCohorts []signal.ActivityCohort
 	// Entities names the entities on cards and in typeahead.

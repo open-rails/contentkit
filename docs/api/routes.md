@@ -286,7 +286,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `type_not_allowed` | 415 | The file type is not allowed in the upload path; `details.allowed` lists the types. |
 | `unauthorized` | 401 | The request needs a valid credential: it has none where the route needs one, or one that is expired, revoked or invalid. WWW-Authenticate says which. |
 | `unavailable` | 503 | The host's auth, media storage or signal plane cannot be reached, or a commit's recovery is pending; retry. |
-| `upgrade_required` | 503 | The media item was stored before v0.68 and must be migrated using ContentKit v0.119.1 before this release can read it. |
+| `upgrade_required` | 503 | The media item's publication is being restored and becomes readable when the restore finishes; retry later. |
 | `video_aspect_unsupported` | 422 | The video's display aspect is outside what its upload path accepts; `details` has `min_aspect` and `max_aspect` (width/height). |
 | `video_over_budget` | 422 | The planned encode costs more than its upload path allows, or the source averages under a frame a second. |
 | `video_too_large` | 422 | The video's frames are larger than its upload path allows. |

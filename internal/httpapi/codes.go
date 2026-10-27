@@ -75,7 +75,7 @@ var codes = []ErrorCode{
 	{CodeTenantMismatch, http.StatusInternalServerError, "A host port answered with another tenant's data: a configuration fault.", "Internal error."},
 	{"not_configured", http.StatusNotImplemented, "The capability needs a port the host did not configure; retrying does not help.", "This site does not offer this."},
 	{CodeUnavailable, http.StatusServiceUnavailable, "The host's auth, media storage or signal plane cannot be reached, or a commit's recovery is pending; retry.", "Temporarily unavailable; try again."},
-	{CodeUpgrade, http.StatusServiceUnavailable, "The media item was stored before v0.68 and must be migrated using ContentKit v0.119.1 before this release can read it.", "This media requires an administrator migration."},
+	{CodeUpgrade, http.StatusServiceUnavailable, "The media item's publication is being restored and becomes readable when the restore finishes; retry later.", "This media is temporarily unavailable."},
 }
 
 var byCode = func() map[string]ErrorCode {

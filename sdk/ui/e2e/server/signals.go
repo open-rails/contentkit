@@ -40,7 +40,6 @@ func prepareSignals(ctx context.Context, c config, cfg *contentkit.Config) (func
 		_ = admin.Close()
 		return nil, err
 	}
-	cfg.MeasuredEngagement = true // isolated fixture owns all writers and erasure executors
 	cfg.ClickHouse = contentkit.ClickHouseConfig{Addr: c.signalAddr, Username: c.signalUser, Password: c.signalPassword,
 		Database: c.signalDatabase, Cluster: c.signalCluster}
 	return func(ctx context.Context) error {
