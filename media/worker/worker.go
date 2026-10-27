@@ -414,9 +414,11 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 		return err
 	}
 	fail := func(ctx context.Context, cause error) error {
-		return full(ctx, w.manifests, job.Args.Ref, w.images.FailPending(ctx, media.ProcessJob{
-			Ref: job.Args.Ref, Preset: job.Args.Preset, Editor: job.Args.Editor,
-		}, cause))
+		pending := media.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Editor: job.Args.Editor}
+		return full(ctx, w.manifests, job.Args.Ref, errors.Join(
+			w.images.FailPending(ctx, pending, cause),
+			w.video.Encoder.FailPending(ctx, pending, cause),
+		))
 	}
 	if err := w.c.checkAttemptBudget(ctx, job.JobRow, fail); err != nil {
 		return err
@@ -465,7 +467,7 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	if err := full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj)); err != nil {
 		return err
 	}
-	return w.video.Run(ctx, job)
+	return full(ctx, w.manifests, pj.Ref, w.video.Run(ctx, job))
 }
 
 // full marks the item Full when a record of its outputs did not fit
