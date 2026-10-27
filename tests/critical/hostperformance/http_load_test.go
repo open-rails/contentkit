@@ -4,6 +4,7 @@ package hostperformance
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 )
 
 type httpCase struct {
+	Token                        string `json:"-"`
 	Name, Domain, Host, Language string
 	Query                        url.Values
 	Expected                     []string
@@ -39,6 +41,7 @@ type httpPage struct {
 }
 
 type httpSample struct {
+	StartedAt, EndedAt   time.Time
 	Case                 string  `json:"case"`
 	Seconds              float64 `json:"seconds"`
 	Status, Bytes, Cards int
@@ -140,18 +143,22 @@ func cloneQuery(v url.Values) url.Values {
 	return out
 }
 
-func (f *fixture) requestPage(ctx context.Context, c httpCase) (httpPage, httpSample) {
+func (f *fixture) requestPage(ctx context.Context, c httpCase) (page httpPage, sample httpSample) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	var page httpPage
-	sample := httpSample{Case: c.Name}
+	sample = httpSample{Case: c.Name}
 	start := time.Now()
+	sample.StartedAt = start
+	defer func() { sample.EndedAt = time.Now(); sample.Seconds = sample.EndedAt.Sub(start).Seconds() }()
 	req, e := http.NewRequestWithContext(ctx, http.MethodGet, f.server.URL+"/content/v1/contents?"+c.Query.Encode(), nil)
 	if e != nil {
 		sample.Error = e.Error()
 		return page, sample
 	}
 	req.Host = c.Host
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 	response, e := f.server.Client().Do(req)
 	if e != nil {
 		sample.Error = e.Error()
@@ -210,7 +217,17 @@ func (f *fixture) validatePage(c httpCase, page httpPage, sample *httpSample, of
 }
 
 func (f *fixture) httpChecks(label string) {
+	f.ch.phase.Store(label)
 	cases := f.httpCases()
+	var metadata []map[string]any
+	for _, c := range cases {
+		hash := sha256.New()
+		for _, id := range c.Expected {
+			fmt.Fprintln(hash, id)
+		}
+		metadata = append(metadata, map[string]any{"name": c.Name, "domain": c.Domain, "language": c.Language, "from": c.From, "until": c.Until, "covered_utc_days": int(c.Until.Sub(c.From) / (24 * time.Hour)), "expected_cards": len(c.Expected), "ordered_ids_sha256": fmt.Sprintf("%x", hash.Sum(nil))})
+	}
+	save(f.t, filepath.Join(f.out, label+"-cases.json"), metadata)
 	var receipts []httpSample
 	for _, c := range cases {
 		page, sample := f.requestPage(f.t.Context(), c)
@@ -220,7 +237,10 @@ func (f *fixture) httpChecks(label string) {
 			save(f.t, filepath.Join(f.out, label+"-functional.json"), receipts)
 			f.t.Fatalf("%s: %s", c.Name, sample.Error)
 		}
-		if len(c.Expected) > 24 && page.Next != "" {
+		if len(c.Expected) > 24 {
+			if page.Next == "" {
+				f.t.Fatalf("%s: missing next cursor with%d expected results", c.Name, len(c.Expected))
+			}
 			next := c
 			next.Query = cloneQuery(c.Query)
 			next.Query.Set("cursor", page.Next)
@@ -233,11 +253,33 @@ func (f *fixture) httpChecks(label string) {
 				save(f.t, filepath.Join(f.out, label+"-functional.json"), receipts)
 				f.t.Fatalf("%s: %s", next.Name, s.Error)
 			}
+
+			numbered := c
+			numbered.Query = cloneQuery(c.Query)
+			numbered.Query.Set("page", "2")
+			numbered.Query.Del("cursor")
+			numbered.Name += "/numbered2"
+			np, ns := f.requestPage(f.t.Context(), numbered)
+			f.validatePage(numbered, np, &ns, 24)
+			receipts = append(receipts, ns)
+			if ns.Error != "" {
+				save(f.t, filepath.Join(f.out, label+"-functional.json"), receipts)
+				f.t.Fatalf("%s: %s", numbered.Name, ns.Error)
+			}
 		}
 	}
 	save(f.t, filepath.Join(f.out, label+"-functional.json"), receipts)
 	for _, concurrency := range []int{1, 4, 8} {
 		f.httpLoad(label, concurrency, cases)
+	}
+	// One real signed-in reader has no seeded progress or custom preferences.
+	// Compare this ordinary account path separately from anonymous scope coverage.
+	f.readerToken = f.readerSignIn()
+	account := cases[0]
+	account.Name += "/account"
+	account.Token = f.readerToken
+	for _, concurrency := range []int{1, 4, 8} {
+		f.httpLoad(label+"-account", concurrency, []httpCase{account})
 	}
 }
 

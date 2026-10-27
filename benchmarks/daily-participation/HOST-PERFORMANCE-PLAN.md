@@ -42,8 +42,8 @@ and a known count oracle. Do not multiply these people/receipts by scope count.
 
 Start with 1,000 items and one day to validate the actual worker, HTTP response,
 filter and pagination oracles. Then use 100,000 works per app. Gallery editions
-have one language each, with an explicitly stated translated subset; video
-editions may have multiple languages. Historical daily rows follow available
+have one language each, using one primary edition per work in this baseline; translated/multilingual
+edition sensitivity is explicitly outside the measured input. Historical daily rows follow available
 editions/scopes rather than multiplying every item into every language. Available
 zero-reader days must still contribute zero. Exact distributions and generated
 row counts will be recorded with the fixture.
@@ -58,7 +58,7 @@ Separate phases:
    run the actual worker across all presets; this is not a year of raw ingestion.
 4. HTTP: preset and explicit 7/30/365/all-history ranges, representative
    domain/language/entity filters, first and subsequent pages, actual card bodies.
-   Measure serial requests and low concurrency (2 then4) alone and during a due
+   Measure serial requests and low concurrency (1,4,8) alone and during a due
    worker refresh. Record every error and validate response scope/order/metadata.
 
 ## Resources and receipts

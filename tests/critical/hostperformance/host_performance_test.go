@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,6 +99,9 @@ func (c *loggedCH) Query(ctx context.Context, q string, args ...any) (driver.Row
 }
 
 type fixture struct {
+	readerSignIn                       func() string
+	readerToken                        string
+	pg                                 *pgTrace
 	t                                  *testing.T
 	app, kind, schema, db, tenant, out string
 	items, users, days                 int
@@ -126,13 +130,20 @@ func TestHostPerformance(t *testing.T) {
 	for _, app := range apps {
 		t.Run(app, func(t *testing.T) {
 			f := newFixture(t, app, filepath.Join(out, app))
+			defer f.record()
 			f.seedCatalog()
 			f.seedRawDay()
 			f.refresh("raw_day")
 			f.verifyDaily()
 			f.httpChecks("raw_day_http")
 			f.refresh("finalized_reuse")
-			f.record()
+			if f.days > 1 {
+				f.seedHistory()
+				f.refresh("historical_presets")
+				f.httpChecks("historical_http")
+				f.duringRefresh()
+				f.combinedRecompute()
+			}
 		})
 	}
 }
@@ -151,7 +162,7 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	f.schema = "ck261hp_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
 	f.db = f.schema
 	f.day = time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -3)
-	f.now = f.day.AddDate(0, 0, 1)
+	f.now = f.day.Add(23 * time.Hour)
 	root := "../../../benchmarks/host-performance/models"
 	b, e := os.ReadFile(filepath.Join(root, app+"-model.yaml"))
 	must(t, e)
@@ -178,9 +189,22 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	f.model.Kinds[f.kind] = k
 	must(t, f.model.Validate())
 	save(t, filepath.Join(out, "model.json"), f.model)
+	f.ch = &loggedCH{prefix: f.schema}
+	f.ch.phase.Store("setup")
+	f.pg = &pgTrace{phase: &f.ch.phase}
 	cfg, e := pgxpool.ParseConfig(os.Getenv("CONTENTKIT_CRITICAL_PG"))
 	must(t, e)
+	// Each app gets its own logical database on the existing fixture cluster;
+	// PGroonga catalog/vacuum state from other owners cannot enter this run.
+	adminPool, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	must(t, err)
+	database := f.schema + "_db"
+	_, err = adminPool.Exec(t.Context(), "CREATE DATABASE "+pgx.Identifier{database}.Sanitize())
+	adminPool.Close()
+	must(t, err)
+	cfg.ConnConfig.Database = database
 	cfg.MaxConns = 12
+	cfg.ConnConfig.Tracer = f.pg
 	f.pool, e = pgxpool.NewWithConfig(t.Context(), cfg)
 	must(t, e)
 	t.Cleanup(f.pool.Close)
@@ -211,6 +235,8 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	must(t, e)
 	scope := ck.Scope{TenantID: ctid, AppID: aid}
 	f.tenant = aid.String()
+	reader := authtest.NewUser(t, ta)
+	f.readerSignIn = func() string { return authtest.SignIn(t, ta, reader).AccessToken }
 	policy, e := ckauth.NewAuthorization(t.Context(), ak, ckauth.AuthorizationConfig{Scope: scope, Issuer: authtest.Issuer, AppScope: scopeAuth})
 	must(t, e)
 	scoper, e := ckauth.AppScopes(ak, scope)
@@ -219,7 +245,7 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	must(t, ck.MigrateClickHouse(t.Context(), f.pool, c))
 	native, e := clickhouse.Open(&clickhouse.Options{Addr: []string{c.ClickHouse.Addr}, Auth: clickhouse.Auth{Database: f.db, Username: c.ClickHouse.Username, Password: c.ClickHouse.Password}, Settings: clickhouse.Settings{"max_threads": 2, "max_insert_threads": 2, "max_memory_usage": 1073741824, "use_query_cache": 0, "log_queries": 1}, ReadTimeout: 5 * time.Minute})
 	must(t, e)
-	f.ch = &loggedCH{Conn: native, prefix: f.schema}
+	f.ch.Conn = native
 	f.ch.phase.Store("setup")
 	t.Cleanup(func() { must(t, native.Close()) })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -241,7 +267,7 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	}
 	f.server = httptest.NewServer(mux)
 	t.Cleanup(f.server.Close)
-	save(t, filepath.Join(out, "metadata.json"), map[string]any{"app": app, "kind": f.kind, "schema": f.schema, "database": f.db, "tenant": f.tenant, "items": f.items, "users": f.users, "days": f.days, "raw_day": f.day, "clock": f.now, "groups": len(scopes), "snapshots": len(scopes) * len(k.Popularity), "base": "d0a9f52060c452537750cc5e55b625f58f95b3af", "limits": "real scoped ContentKit HTTP/River/PG/CH; synthetic catalog; no media bytes, ingress, billing or browser rendering"})
+	save(t, filepath.Join(out, "metadata.json"), map[string]any{"app": app, "kind": f.kind, "schema": f.schema, "database": f.db, "postgres_database": database, "tenant": f.tenant, "items": f.items, "users": f.users, "days": f.days, "raw_day": f.day, "clock": f.now, "groups": len(scopes), "snapshots": len(scopes) * len(k.Popularity), "base": "d0a9f52060c452537750cc5e55b625f58f95b3af", "go_max_procs": runtime.GOMAXPROCS(0), "edition_shape": "one primary-language edition per work; no translated-edition sensitivity", "limits": "real scoped ContentKit HTTP/River/PG/CH; synthetic catalog; no media bytes, ingress, billing or browser rendering"})
 	return f
 }
 func (f *fixture) seedCatalog() {
@@ -258,13 +284,16 @@ func (f *fixture) seedCatalog() {
 	for _, tag := range tags {
 		f.tagIDs[tag.Slug] = string(tag.ID)
 	}
-	item, e := admin.PostContents(ctx, catalog.ContentInput{Kind: f.kind, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Attributes: map[string]any{"format": "doujin"}, Text: map[string]catalog.VersionText{"en": {Title: "Synthetic benchmark template", Body: "Synthetic published edition body."}}}}})
+	attrs := map[string]any{}
+	if f.app == "doujins" {
+		attrs["format"] = "doujin"
+	}
+	item, e := admin.PostContents(ctx, catalog.ContentInput{Kind: f.kind, Attributes: attrs, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Attributes: attrs, Text: map[string]catalog.VersionText{"en": {Title: "Synthetic benchmark template", Body: "Synthetic published edition body."}}}}})
 	must(t, e)
 	_, e = admin.PostContentPublish(ctx, item.ID, catalog.PublishInput{})
 	must(t, e)
 	deadline := time.Now().Add(time.Minute)
 	for {
-		must(t, f.pool.QueryRow(ctx, "SELECT released FROM "+f.schema+".content_versions WHERE tenant_id=$1 AND id=$2", f.tenant, item.Versions[0].ID).Scan(new(bool)))
 		var live bool
 		must(t, f.pool.QueryRow(ctx, "SELECT released FROM "+f.schema+".content_versions WHERE tenant_id=$1 AND id=$2", f.tenant, item.Versions[0].ID).Scan(&live))
 		if live {
@@ -282,19 +311,33 @@ func (f *fixture) seedCatalog() {
 	f.phases = append(f.phases, map[string]any{"phase": "catalog_fixture", "seconds": time.Since(start).Seconds()})
 	save(t, filepath.Join(f.out, "phases.json"), f.phases)
 }
-func (f *fixture) refresh(label string) {
+func (f *fixture) refresh(label string) { f.refreshObserved(label, nil) }
+func (f *fixture) refreshObserved(label string, running chan<- struct{}) {
 	t := f.t
 	ctx := t.Context()
-	_, e := f.pool.Exec(ctx, "UPDATE "+f.schema+".content_popular_rankings SET computed_at=NULL WHERE tenant_id=$1", f.tenant)
+	_, e := f.pool.Exec(ctx, "UPDATE "+f.schema+".content_popular_rankings SET computed_at=$2 WHERE tenant_id=$1", f.tenant, f.now.Add(-2*time.Hour))
 	must(t, e)
 	f.ch.phase.Store(label)
 	start := time.Now()
 	job, e := f.fleet.Insert(ctx, refreshArgs{}, &river.InsertOpts{Queue: ck.QueueContentKit, MaxAttempts: 1})
 	must(t, e)
+	var observedRunning, attempted, completed time.Time
 	for {
 		j, e := f.fleet.JobGet(ctx, job.Job.ID)
 		must(t, e)
+		if j.AttemptedAt != nil {
+			attempted = *j.AttemptedAt
+		}
+		if j.State == rivertype.JobStateRunning && observedRunning.IsZero() {
+			observedRunning = time.Now()
+			if running != nil {
+				close(running)
+			}
+		}
 		if j.State == rivertype.JobStateCompleted {
+			if j.FinalizedAt != nil {
+				completed = *j.FinalizedAt
+			}
 			break
 		}
 		if j.State == rivertype.JobStateDiscarded || j.State == rivertype.JobStateRetryable {
@@ -311,7 +354,7 @@ func (f *fixture) refresh(label string) {
 	if n != want {
 		t.Fatalf("got%d snapshots want%d", n, want)
 	}
-	f.phases = append(f.phases, map[string]any{"phase": label, "seconds": time.Since(start).Seconds(), "job": job.Job.ID, "snapshots": n})
+	f.phases = append(f.phases, map[string]any{"phase": label, "seconds": time.Since(start).Seconds(), "job": job.Job.ID, "snapshots": n, "started_at": start, "observed_running_at": observedRunning, "attempted_at": attempted, "completed_at": completed})
 	save(t, filepath.Join(f.out, "phases.json"), f.phases)
 	f.ch.phase.Store("idle")
 	t.Log(label, time.Since(start), n)
@@ -320,8 +363,3 @@ func (f *fixture) refresh(label string) {
 type refreshArgs struct{}
 
 func (refreshArgs) Kind() string { return "contentkit_popular_refresh" }
-func (f *fixture) record() {
-	f.ch.mu.Lock()
-	defer f.ch.mu.Unlock()
-	save(f.t, filepath.Join(f.out, "queries.json"), f.ch.queries)
-}
