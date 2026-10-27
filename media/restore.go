@@ -66,7 +66,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 	versions := make(map[string]ObjectVersion, len(snap.Objects))
 	for _, object := range snap.Objects {
 		key, ok := layout.Parse(object.Key)
-		if !ok || key.Folder() != item.Prefix() || (key.Area != layout.AreaPrivate && key.Area != layout.AreaDownload && key.Area != layout.AreaTemp && key.Area != layout.AreaTmp && key.Area != layout.AreaOriginals && key.Area != layout.AreaFuture && key.Area != layout.AreaPublic) ||
+		if !ok || key.Folder() != item.Prefix() || (key.Area != layout.AreaPrivate && key.Area != layout.AreaDownload && key.Area != layout.AreaTemp && key.Area != layout.AreaTmp && key.Area != layout.AreaOriginals && key.Area != layout.AreaInternal && key.Area != layout.AreaPublic) ||
 			object.VersionID == "" || object.VersionID == "null" {
 			return nil, errors.New("media: snapshot contains an invalid object version")
 		}
@@ -186,7 +186,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 				name = layout.BlobName(digest, uuid.NewString())
 				from = layout.BlobRef(parsed.Area, parsed.Name)
 				if item.Kind().Versions {
-					area = layout.AreaFuture
+					area = layout.AreaInternal
 					if originals[from] {
 						area = layout.AreaOriginals
 					}
@@ -273,7 +273,7 @@ func (j *Jobs) finishPublicationRestore(ctx context.Context, item Item, commit m
 					continue
 				}
 				area, _, valid := layout.SplitBlobRef(file.Blob)
-				want := layout.AreaFuture
+				want := layout.AreaInternal
 				if file.IsUpload() {
 					want = layout.AreaOriginals
 				}

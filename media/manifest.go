@@ -112,7 +112,7 @@ type Publication struct {
 	// Generation suffixes every physical name; "" is a legacy publication,
 	// files a pre-v0.68 worker wrote at the logical names (always ready).
 	Generation string           `json:"generation"`
-	Blobs      []string         `json:"blobs,omitempty"` // version preset outputs prepared in future/, aligned with Names
+	Blobs      []string         `json:"blobs,omitempty"` // version preset outputs prepared in internal/, aligned with Names
 	Names      []string         `json:"names"`           // logical preset names at this position
 	State      PublicationState `json:"state"`
 	Dims       []Dims           `json:"dims"`
@@ -439,7 +439,7 @@ func (m *Manifest) Validate() error {
 				}
 				for _, blob := range p.Blobs {
 					area, _, valid := layout.SplitBlobRef(blob)
-					if !valid || area != layout.AreaFuture && area != layout.AreaPublic && area != layout.AreaPrivate {
+					if !valid || area != layout.AreaInternal && area != layout.AreaPublic && area != layout.AreaPrivate {
 						return errors.New("media: invalid public preparation or delivery area")
 					}
 				}

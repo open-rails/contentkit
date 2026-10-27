@@ -21,7 +21,7 @@ type PublicationStorageReport struct {
 }
 
 // MigratePublicationStorage retains original source bytes, stages existing
-// reader outputs in future, and queues each intended publication durably.
+// reader outputs in internal, and queues each intended publication durably.
 // Call after MigratePostgres and MigrateVersionStorage with old hosts/workers
 // stopped. It never runs at startup and never discovers unrecorded S3 objects.
 // Resolve legacy parent-wide billing entitlements to exact edition grants

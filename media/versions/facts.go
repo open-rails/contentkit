@@ -97,7 +97,7 @@ func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *media.Kind, v T
 	} else if err != nil {
 		return err
 	}
-	// Prepared future media is editor state. Reader counts and playability
+	// Prepared internal media is editor state. Reader counts and playability
 	// follow the active storage view once any publication has committed.
 	if active, err := s.activeRelease(ctx, tx, v); err != nil {
 		return err

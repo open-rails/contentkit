@@ -279,7 +279,7 @@ func (g *Grant) inspectionFile(f File) bool {
 		return false
 	}
 	area, _, valid := layout.SplitBlobRef(f.Blob)
-	if !valid || area != layout.AreaOriginals && area != layout.AreaFuture && area != layout.AreaPrivate && area != layout.AreaPublic {
+	if !valid || area != layout.AreaOriginals && area != layout.AreaInternal && area != layout.AreaPrivate && area != layout.AreaPublic {
 		return false
 	}
 	if f.IsUpload() {
@@ -346,7 +346,7 @@ func (g *Grant) URL(f File, dl bool) (string, error) {
 
 // editorSourceURL is used only by explicit editor reads. Retained uploads
 // remain inspectable independently of the viewer's ServeOriginals policy.
-// Unserved originals/future objects use a separate short-lived exact-key
+// Unserved originals/internal objects use a separate short-lived exact-key
 // storage capability; reader gateway tokens never open those areas.
 func (g *Grant) editorSourceURL(f File) (string, error) {
 	if !g.editorRead || !f.IsUpload() || f.Gone {
@@ -454,7 +454,7 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 
 // DownloadURL serves a published public/private file as an attachment named
 // name. Private downloads use an exact-file token after the caller's access
-// and quota checks. Originals, future preparation and legacy download/ objects
+// and quota checks. Originals, internal preparation and legacy download/ objects
 // are never exposed through the reader gateway.
 func (r *Reader) DownloadURL(item Item, f File, name string, ttl time.Duration) (string, time.Time, error) {
 	key, err := item.Blob(f.Blob)

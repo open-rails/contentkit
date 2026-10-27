@@ -6,7 +6,7 @@ This document describes the target; the integration remains in progress.
 Each gallery edition is an independently identified content item. Its exact
 `private` folder is an all-or-nothing token scope. Access to one edition never
 grants access to another edition of the gallery. Public files need no token;
-reader tokens cannot open `tmp`, `originals`, `future` or manifest files.
+reader tokens cannot open `tmp`, `originals`, `internal` or manifest files.
 
 An explicitly authorized read-only auditor can request administrative
 inspection of ready reader derivatives before release. These requests return
@@ -33,11 +33,11 @@ their lifetime protection. Renames update marker references, and removing a
 marker requires an explicit replacement rather than guessing another file.
 
 Uploads enter temporary storage, originals are retained, and prepared outputs
-wait in `future`. One durable publisher reconciles actual placement with the
+wait in `internal`. One durable publisher reconciles actual placement with the
 current chapter order, released chapters and item access policy. It copies and
 verifies destinations before adopting them and retiring obsolete sources.
 Inserted files in a released chapter are published; files moved into a future
-chapter return to `future`. Originals are retained independently.
+chapter return to `internal`. Originals are retained independently.
 
 Scheduled publication and immediate publication use the same durable work.
 Passing a date alone does not release content. Reader metadata changes after

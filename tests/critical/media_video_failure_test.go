@@ -67,7 +67,7 @@ func TestMediaVideoFailureRecovery(t *testing.T) {
 			}
 			if mode == "shutdown" {
 				hold := m.wire.pause(t, func(r *http.Request) bool {
-					return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/future/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4")
+					return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4")
 				})
 				stop := startVideoFailureWorker(t, m)
 				select {
@@ -97,7 +97,7 @@ func TestMediaVideoFailureRecovery(t *testing.T) {
 			var videoPuts int
 			m.wire.mu.Lock()
 			m.wire.refuseOutput = func(r *http.Request) bool {
-				if r.Method != http.MethodPut || !strings.Contains(r.URL.Path, "/future/") {
+				if r.Method != http.MethodPut || !strings.Contains(r.URL.Path, "/internal/") {
 					return false
 				}
 				kind := r.Header.Get("Content-Type")

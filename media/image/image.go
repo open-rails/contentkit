@@ -578,7 +578,7 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 			for i, name := range names {
 				sums[i] = sha(outs[name].webp)
 			}
-			prepared, err = p.c.Manifests.NewBlobs(ctx, item.Ref(), layout.AreaFuture, sums)
+			prepared, err = p.c.Manifests.NewBlobs(ctx, item.Ref(), layout.AreaInternal, sums)
 			if err != nil {
 				return d, err
 			}

@@ -1,7 +1,7 @@
 # Public media and processing events
 
 Each gallery edition owns one media folder and one audience access decision.
-Original uploads remain in `originals`; prepared reader outputs wait in `future`.
+Original uploads remain in `originals`; prepared reader outputs wait in `internal`.
 The durable publication worker moves released files into `public` or `private`,
 verifies them and retires obsolete locations in that same job. Public presets
 of an unpublished edition are prepared without exposing reader URLs. A private

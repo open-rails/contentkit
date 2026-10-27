@@ -33,7 +33,7 @@ type publicationLayoutPlan struct {
 }
 
 // MigratePublicationLayout explicitly stages a legacy item's uploads in
-// originals and its prepared outputs in future. Old writers and readers must
+// originals and its prepared outputs in internal. Old writers and readers must
 // be stopped. After this conversion the normal publisher applies the approved
 // released set before cutover. The marker is set only after exact old served
 // keys are confirmed absent; failed copies/deletes retain their known receipt.
@@ -269,7 +269,7 @@ func (m *Manifests) planPublicationLayout(ctx context.Context, item Item, operat
 		}
 		sourceRef := fromArea + "/" + name
 		identity := sourceRef + ":" + area
-		if area == layout.AreaFuture {
+		if area == layout.AreaInternal {
 			// Legacy copies could share a derived blob across virtual files.
 			// Their chapter membership can now diverge, so prepared outputs
 			// need independent allocation lifetimes keyed by existing paths.
@@ -317,7 +317,7 @@ func (m *Manifests) planPublicationLayout(ctx context.Context, item Item, operat
 			return nil, fmt.Errorf("media: original %q was not retained; resolve before migration", file.Path)
 		}
 		if file.Blob != "" && !file.Gone {
-			area := layout.AreaFuture
+			area := layout.AreaInternal
 			if file.IsUpload() {
 				area = layout.AreaOriginals
 			}
@@ -326,12 +326,12 @@ func (m *Manifests) planPublicationLayout(ctx context.Context, item Item, operat
 			}
 		}
 		if file.Editor != nil {
-			if file.Editor.Blob, err = copyRef(file.Editor.Blob, layout.AreaFuture, "editor:"+file.Path); err != nil {
+			if file.Editor.Blob, err = copyRef(file.Editor.Blob, layout.AreaInternal, "editor:"+file.Path); err != nil {
 				return nil, err
 			}
 		}
 		if file.Track != nil {
-			if file.Track.Index, err = copyRef(file.Track.Index, layout.AreaFuture, "track:"+file.Path); err != nil {
+			if file.Track.Index, err = copyRef(file.Track.Index, layout.AreaInternal, "track:"+file.Path); err != nil {
 				return nil, err
 			}
 		}
@@ -350,7 +350,7 @@ func (m *Manifests) planPublicationLayout(ctx context.Context, item Item, operat
 				if len(previous) == len(publication.Names) {
 					ref = previous[index]
 				}
-				if publication.Blobs[index], err = copyRef(ref, layout.AreaFuture, "public:"+file.Path+"\x00"+publication.Preset+"\x00"+name); err != nil {
+				if publication.Blobs[index], err = copyRef(ref, layout.AreaInternal, "public:"+file.Path+"\x00"+publication.Preset+"\x00"+name); err != nil {
 					return nil, err
 				}
 			}

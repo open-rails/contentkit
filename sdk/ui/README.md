@@ -1285,7 +1285,7 @@ and schedules follow the marker. Missing or duplicate markers require correction
 instead of silently selecting another file.
 
 Every chapter shares its version's access policy. Publication moves the selected
-files from that version's `future` area into `public` or `private`; one item
+files from that version's `internal` area into `public` or `private`; one item
 token opens its private folder and never a sibling version. Reader plans expose
 completed chapters and an optional `next_release_at` observation hint, without
 revealing future file paths. A due hint triggers another read, not local access.

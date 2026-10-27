@@ -90,7 +90,7 @@ func TestLegacyMediaStorageMigration(t *testing.T) {
 		}
 		// The new gateway intentionally rejects legacy nested-reader paths.
 		// Inspect the pinned old release's stored bytes without preserving a
-		// reader route that can bypass originals/future separation after cutover.
+		// reader route that can bypass originals/internal separation after cutover.
 		sourceKey := strings.TrimPrefix(oldURL.Path, layout.URLPrefix)
 		source, _, err := m.store.Get(t.Context(), sourceKey, media.GetOptions{})
 		must(t, err)
