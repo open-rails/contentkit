@@ -42,7 +42,14 @@ request directly; no readiness relay or additional preparation job is necessary.
 
 A failed ingest or derivative attempt retries through that same durable job.
 Video attempts checkpoint bounded work so successful chunks/renditions are not
-encoded again. Storage mutation and source identity rules remain authoritative.
+encoded again. After five failed attempts, the shared worker records remaining
+image, video, subtitle, and frame work as failed before cancelling the job.
+Completed outputs and checkpoints survive. Regeneration clears these failures,
+including frames that failed before producing their first blob. Shutdowns,
+checkpoint yields, and bounded storage-outage snoozes retain their existing
+retry behavior. Jobs cancelled by an older worker are not scanned automatically;
+regenerate affected items to retry their remaining outputs. Storage mutation and
+source identity rules remain authoritative.
 Content/media retention deletion belongs to the existing content-purge sweep;
 there is no separate media reaper or bucket-discovery scanner.
 
