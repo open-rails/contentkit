@@ -141,7 +141,9 @@ func TestHostPerformance(t *testing.T) {
 				f.seedHistory()
 				f.refresh("historical_presets")
 				f.httpChecks("historical_http")
-				f.duringRefresh()
+				if os.Getenv("HOST_PERF_PROFILE") != "representative" {
+					f.duringRefresh()
+				}
 				f.combinedRecompute()
 			}
 		})

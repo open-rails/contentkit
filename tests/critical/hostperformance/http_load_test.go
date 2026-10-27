@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -60,6 +61,10 @@ func (f *fixture) httpCases() []httpCase {
 		}
 		for _, language := range append([]string{""}, f.model.Languages...) {
 			for _, bucket := range f.model.Kinds[f.kind].Popularity {
+				representative := os.Getenv("HOST_PERF_PROFILE") == "representative"
+				if representative && (bucket.ID != "7d" && bucket.ID != "365d" && bucket.ID != "all" || bucket.ID == "all" && language != "") {
+					continue
+				}
 				var from, until *time.Time
 				var rank []string
 				must(t, f.pool.QueryRow(ctx, "SELECT content_ids,covered_from,covered_until FROM "+f.schema+".content_popular_rankings WHERE tenant_id=$1 AND kind=$2 AND period=$3 AND domain=$4 AND language=$5", f.tenant, f.kind, bucket.ID, domain.Name, language).Scan(&rank, &from, &until))
@@ -102,10 +107,12 @@ func (f *fixture) httpCases() []httpCase {
 				if len(base.Expected) == 0 {
 					t.Fatalf("scope has no known ranked public cards: %s", base.Name)
 				}
-				out = append(out, base)
+				if !representative || bucket.ID != "365d" {
+					out = append(out, base)
+				}
 				// The same covered range must select the same ordered IDs through
 				// the actual ClickHouse -> PostgreSQL arbitrary-range path.
-				if bucket.ID == "7d" || bucket.ID == "30d" || bucket.ID == "365d" {
+				if (!representative && (bucket.ID == "7d" || bucket.ID == "30d")) || bucket.ID == "365d" {
 					ranged := base
 					ranged.Name += "/range"
 					ranged.Query = cloneQuery(base.Query)
@@ -114,7 +121,7 @@ func (f *fixture) httpCases() []httpCase {
 					ranged.Query.Set("activity_until", until.UTC().Format(time.DateOnly))
 					out = append(out, ranged)
 				}
-				if bucket.ID == "7d" {
+				if bucket.ID == "7d" && (!representative || language == "") {
 					filtered := base
 					filtered.Name += "/public"
 					filtered.Query = cloneQuery(base.Query)
@@ -240,6 +247,9 @@ func (f *fixture) httpChecks(label string) {
 		if len(c.Expected) > 24 {
 			if page.Next == "" {
 				f.t.Fatalf("%s: missing next cursor with%d expected results", c.Name, len(c.Expected))
+			}
+			if os.Getenv("HOST_PERF_PROFILE") == "representative" && (c.Language != "" || c.Query.Get("sort") != "popular:7d" || c.Query.Get("access") != "") {
+				continue
 			}
 			next := c
 			next.Query = cloneQuery(c.Query)
