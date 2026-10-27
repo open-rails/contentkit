@@ -20,7 +20,7 @@ consumed once. Ingest and derivative concurrency are configured independently.
 Ingest validates the archive before attaching its files. The derivative attempt
 prepares page order and automatic cover inputs, then produces missing required
 outputs. Drafts receive the same preparation without becoming published.
-Generated edition outputs remain in `future/`.
+Generated edition outputs remain in `internal/`.
 
 Publish records intent for now or a future date. The existing release request
 waits until every required output is complete, copies the selected output set

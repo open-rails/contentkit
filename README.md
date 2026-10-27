@@ -617,7 +617,7 @@ do not implement multipart-abort lifecycle rules need equivalent server settings
 Media has two processing jobs: ingest and derivatives. Ingest validates an
 entire ZIP before attaching pages in bounded, replayable batches. The derivative
 job handles image presets and resumable video outputs for the same version,
-recording progress as work completes. Generated outputs wait in `future/`;
+recording progress as work completes. Generated outputs wait in `internal/`;
 publication waits for every required output before delivery and activation.
 The gateway's `public/` area stays public and `private/` stays token-protected.
 See [media jobs](docs/media-jobs.md).
@@ -627,6 +627,11 @@ registered as a recurring orphan-discovery job.
 
 A version's files live in its own folder, named by the version ID. The parent
 content item keeps its database identity and has no storage folder.
+
+Version areas are named for who may read them: `public/` everyone, `private/`
+signed readers, `internal/` and `originals/` editors only. The gateway serves
+only `public/` and `private/`; editors read `internal/` and `originals/` through
+short-lived exact-key storage capabilities.
 
 **Paywalls**: media gates each item through `Hooks.Resolver`. Reader grants
 cover permitted immutable files, limited by chapter release and access rules;

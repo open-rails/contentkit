@@ -60,7 +60,7 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 		t.Logf("release jobs=%s err=%v", jobs, err)
 	})
 	hold := m.wire.pause(t, func(r *http.Request) bool {
-		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/future/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4")
+		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4")
 	})
 	config := m.config
 	config.VideoCodecs = []media.Codec{media.CodecH264}
@@ -131,7 +131,7 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	}
 	// Replacing one input retains the old release until that output finishes.
 	hold = m.wire.pause(t, func(r *http.Request) bool {
-		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/future/") && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
+		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
 	})
 	before, err := m.app.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 	must(t, err)

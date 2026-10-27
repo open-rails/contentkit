@@ -59,7 +59,7 @@ func TestRestrictedDraftHLSInspection(t *testing.T) {
 	must(t, err)
 	ttl, err := strconv.Atoi(parsed.Query().Get("X-Amz-Expires"))
 	must(t, err)
-	if ttl <= 0 || ttl > 300 || parsed.Query().Get("X-Amz-Signature") == "" || parsed.Query().Get("t") != "" || !strings.Contains(parsed.Path, "/future/") {
+	if ttl <= 0 || ttl > 300 || parsed.Query().Get("X-Amz-Signature") == "" || parsed.Query().Get("t") != "" || !strings.Contains(parsed.Path, "/internal/") {
 		t.Fatal("prepared HLS bytes received a broad or unbounded capability")
 	}
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, segmentURL, nil)

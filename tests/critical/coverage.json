@@ -377,7 +377,8 @@
       "status": "verified",
       "evidence": [
         "Start markers derive half-open spans from source-file order. Independently released chapters can skip an unreleased middle; copied and inserted files follow their current chapter.",
-        "Valid item tokens grant all served private outputs of exactly that edition, never future/original bytes or unreleased metadata.",
+        "Valid item tokens grant all served private outputs of exactly that edition, never internal/original bytes or unreleased metadata.",
+        "An editor reads an unreleased internal/ output through its exact presigned capability with identical bytes; reader item, private-file and absent tokens get 404 from the real gateway for that key.",
         "When processing hides a page a released edition already serves, its completion re-plans the edition at once; a later chapter keeps its own date."
       ],
       "cases": [
@@ -386,6 +387,7 @@
         "TestCopiedPageChapterPlacement",
         "TestIndependentChaptersSkipUnreleasedMiddle",
         "TestCompletedPublicationReader",
+        "TestInternalArea/CK-J05-S04_editors_read_internal_and_readers_cannot",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange",
         "TestProcessingWithdrawsHiddenCopyBeforeChapterDate"
       ],
@@ -889,11 +891,14 @@
       "status": "verified",
       "evidence": [
         "A real Go upload produces public16/32 pixel covers and a48x32 private reader rendition with actual decoded image bytes. A built browser client also uploads and reads the concrete output.",
-        "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
+        "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution.",
+        "A real versioned upload prepares its reader output and both cover renditions in internal/ and its originals in originals/; release copies the outputs to served public/ or private/ keys readable through the gateway and retires the internal/ source."
       ],
       "cases": [
         "TestRealMediaIngest/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
-        "TestShippedBrowserClient/CK-J09-S01"
+        "TestShippedBrowserClient/CK-J09-S01",
+        "TestInternalArea/CK-J09-S01_versioned_derivatives_are_prepared_in_internal",
+        "TestInternalArea/CK-J09-S01_release_copies_internal_outputs_to_served_areas"
       ]
     },
     {

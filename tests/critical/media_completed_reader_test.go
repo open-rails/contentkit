@@ -59,7 +59,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 		out := current.Clone()
 		out.Deliveries = nil
 		if leakPreparation {
-			return out, nil // a malformed projection must still not mint future URLs
+			return out, nil // a malformed projection must still not mint internal URLs
 		}
 		out.Files = nil
 		for _, delivery := range current.Deliveries {
@@ -129,11 +129,11 @@ func TestCompletedPublicationReader(t *testing.T) {
 	original := put(layout.AreaOriginals, "video/mp4", []byte("retained original source"))
 	archive := put(layout.AreaOriginals, "application/zip", []byte("retained original archive"))
 	trackBytes := []byte("fixture-init-and-one-byte-range-segment")
-	trackSource = put(layout.AreaFuture, "video/mp4", trackBytes)
+	trackSource = put(layout.AreaInternal, "video/mp4", trackBytes)
 	index, err := json.Marshal(media.TrackIndex{Segments: []media.Segment{{Offset: 8, Length: int64(len(trackBytes) - 8), Seconds: 1}}})
 	must(t, err)
-	indexSource = put(layout.AreaFuture, "application/json", index)
-	publicSource = put(layout.AreaFuture, "video/mp4", []byte("released public preview"))
+	indexSource = put(layout.AreaInternal, "application/json", index)
+	publicSource = put(layout.AreaInternal, "video/mp4", []byte("released public preview"))
 	_, err = manifests.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
 		m.Files = []media.File{
 			{Path: "source.mp4", Blob: original, Type: "video/mp4", Size: 24},
@@ -238,7 +238,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 	must(t, err)
 	body, err := grant.MediaPlaylist(t.Context(), "streams/h264.mp4")
 	must(t, err)
-	if strings.Contains(string(body), "/future/") || !strings.Contains(string(body), "/private/") {
+	if strings.Contains(string(body), "/internal/") || !strings.Contains(string(body), "/private/") {
 		t.Fatalf("HLS did not use the completed delivery: %s", body)
 	}
 	omitIndex = true

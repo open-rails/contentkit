@@ -124,7 +124,7 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 			expected := layout.AreaOriginals
 			if profile == "host-only-mp4" {
 				virtual = "exports/source.mp4"
-				expected = layout.AreaFuture
+				expected = layout.AreaInternal
 			}
 			file, found := manifest.Get(virtual)
 			if !found {
