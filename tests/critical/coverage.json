@@ -435,8 +435,7 @@
         "Real registered workers establish availability and deduplicate completion; per-app publication queues isolate shared catalog tables. Explicit queue conversion preserves targets and unrelated or terminal history.",
         "Superseding a physically copied public attempt with the previous private policy must retire the abandoned public URL before completing; equivalent reader content cannot skip physical reconciliation. Bulk chapter imports refuse unsafe manifest-lock ordering without mutating catalog state.",
         "A forced two-session parent/request contention reproduces 40P01 before the fix; deterministic parent/version-before-request locking allows the durable request and its actual served bytes to complete.",
-        "Three-connection real sibling metadata publishers and a single-connection PendingTx read must validate manifests through their held SQL transaction; pool exhaustion behind the parent lock must not deadlock completion.",
-        "The separate version metadata publisher was removed in#260; its worker-specific exhaustion case is retired. The direct PendingTx one-connection assertion remains, alongside existing release lock-order tests."
+        "The separate version metadata publisher was removed in#260; its worker-specific exhaustion case is retired. Release lock-order tests remain."
       ],
       "cases": [
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
@@ -446,8 +445,7 @@
         "TestUnifiedReleaseMigrationKeepsCompletedRequest",
         "TestSupersededPublicCopyReturnsToPrivate",
         "TestImportChaptersRequiresManifestLockingWriter",
-        "TestPublicationSchedulingLocksParentBeforeRequest",
-        "TestVersionReadinessUsesHeldTransaction/pending_read_single_connection"
+        "TestPublicationSchedulingLocksParentBeforeRequest"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
