@@ -33,6 +33,11 @@ func popularSort(raw string) (string, bool) {
 	return id, name == SortPopular
 }
 
+// rangeSlots bounds concurrent reader-chosen ranges per process. Each is a
+// two-thread ClickHouse aggregation (up to ~765 MiB at host scale, #449), so
+// two already occupy a 2-CPU ClickHouse; more add only memory and queueing.
+const rangeSlots = 2
+
 // rangeOrder ranks only prepared daily counts. It neither admits a cache row
 // nor asks the worker to reconstruct historical activity.
 func (s *Service) rangeOrder(ctx context.Context, kind string, window signal.Window, reader Reader, raw string) (order, *PopularitySnapshot, error) {
@@ -51,7 +56,13 @@ func (s *Service) rangeOrder(ctx context.Context, kind string, window signal.Win
 	if window.From.Before(coverage.From) || window.To.After(coverage.To) {
 		return order{}, nil, &popularityRangeError{From: &coverage.From, Until: &coverage.To}
 	}
+	select {
+	case s.ranges <- struct{}{}:
+	case <-ctx.Done():
+		return order{}, nil, ctx.Err()
+	}
 	ids, err := popularity.Rank(ctx, s.o.Hub, s, kind, window, scope, PopularityDepth)
+	<-s.ranges
 	if err != nil {
 		return order{}, nil, err
 	}

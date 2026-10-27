@@ -86,6 +86,7 @@ type Service struct {
 	o         Options
 	t         tables
 	summaries summaryCache
+	ranges    chan struct{}
 }
 
 type tables struct {
@@ -118,7 +119,8 @@ func New(o Options) (*Service, error) {
 		entities: q("content_entities"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"), counts: q("content_interaction_counts"),
 		searches: q("content_searches"), searchMarks: q("content_search_marks"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments:    q("content_comments"),
-		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), rankings: q("content_popular_rankings"), reposts: q("content_channel_reposts")}}
+		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), rankings: q("content_popular_rankings"), reposts: q("content_channel_reposts")},
+		ranges: make(chan struct{}, rangeSlots)}
 	if o.Candidates != nil && !o.Hub.SignalsConfigured() {
 		return nil, errors.New("discovery: Candidates needs the signal plane")
 	}

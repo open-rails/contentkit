@@ -265,7 +265,7 @@ func (st *Store) DailyPopular(ctx context.Context, tenant, kind string, window W
 	params = append(params, limit)
 	query := `SELECT content_id,round(avg(toFloat64(readers)/(eligible+20.)),12) AS score
  FROM ` + st.db + `.popularity_daily FINAL WHERE tenant=? AND content_kind=? AND domain=? AND language=?` + predicate + `
- GROUP BY content_id HAVING sum(readers)>0 ORDER BY score DESC,content_id LIMIT ? SETTINGS max_threads=2, max_memory_usage=268435456, max_execution_time=15`
+ GROUP BY content_id HAVING sum(readers)>0 ORDER BY score DESC,content_id LIMIT ? SETTINGS max_threads=2`
 	rows, err := st.conn.Query(ctx, query, params...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: daily popularity: %w", err)
