@@ -121,9 +121,3 @@ func EntityKind(name string, gk kinds.EntityKind) Kind {
 	}
 	return k
 }
-
-// ChannelKind is the media declaration for a first-class channel's public cover
-// and avatar. It preserves the established channel storage identity.
-func ChannelKind(c kinds.Channels) Kind {
-	return EntityKind("channel", (kinds.Config{Channels: &c}).StorageModel().EntityKinds["channel"])
-}

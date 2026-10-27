@@ -310,10 +310,9 @@ Tenant account erasure fences the shared inbox and avatar first and dispatches
 app-owned deletion obligations to **all** tenant apps. Each obligation is
 idempotent and remains pending until completed; a failure in Hentai0 cannot be
 hidden by success in Doujins. App-only deletion/restriction affects that app's
-records and never accidentally calls shared account erasure. `EraseAppSubjects`
-cleans only the selected app. `EraseSubjects` cleans tenant account resources
-and the current app, with AuthKit's durable per-issuer purge callbacks delivering
-the other app obligations before final identity deletion.
+records and never accidentally calls shared account erasure. `AnonymizeAccount`
+deletes the account in the current app, with AuthKit's durable per-issuer purge
+callbacks delivering the other app obligations before final identity deletion.
 
 A catalog restored from backup must pass `ReplayErasureFences` before serving.
 `NewForErasureReplay` opens a restricted recovery engine with no serving or worker

@@ -60,11 +60,7 @@ func TestErasedProjectionAndHistoricalAnswers(t *testing.T) {
 	assertState(t, live.ID, true)
 	t.Run("CK-J23-S07_historical_answers_and_projection_rebuild_remain_erased", func(t *testing.T) {
 		for range 2 {
-			report, err := a.engine.EraseAppSubjects(t.Context(), []signal.Subject{{UserID: target.ID}})
-			must(t, err)
-			if !report.Complete() {
-				t.Fatalf("erasure incomplete: %+v", report)
-			}
+			must(t, a.engine.AnonymizeAccount(t.Context(), target.ID))
 		}
 		var removed, retained, otherApp int
 		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FILTER (WHERE tenant_id=$1 AND actor_id=$2), count(*) FILTER (WHERE tenant_id=$1 AND actor_id=$3),count(*) FILTER (WHERE tenant_id=$4 AND actor_id=$2) FROM `+w.schema+`.content_poll_answers`, a.cfg.Scope.AppID.String(), target.ID, live.ID, sibling.cfg.Scope.AppID.String()).Scan(&removed, &retained, &otherApp))

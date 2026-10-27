@@ -2,7 +2,6 @@ package versions
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -13,21 +12,6 @@ import (
 
 	"github.com/open-rails/contentkit/media"
 )
-
-// ReleaseRequest is one durable reconciliation attempt for an edition. Plan
-// freezes only when execution starts. A newer current request never replaces
-// the completed reader snapshot referenced by content_versions.release_id.
-type ReleaseRequest struct {
-	ID string
-	Target
-	ScheduledAt time.Time
-	State       string
-	Current     bool
-	Plan        json.RawMessage
-	Result      json.RawMessage
-	Error       string
-	CompletedAt *time.Time
-}
 
 func (s *Service) releaseRequestsTable() string {
 	return pgxIdent(s.o.Schema, "content_publication_requests")
@@ -169,57 +153,6 @@ func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target Tar
 	return media.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 		return client.InsertTx(ctx, tx, args, options)
 	}, releaseArgs{ID: id, Due: at}, river.InsertOpts{Queue: QueueFor(s.o.Tenant), ScheduledAt: at})
-}
-
-// releaseRequestTx locks one exact request. It returns pgx.ErrNoRows when the
-// request is absent in this tenant, including requests from another app.
-func (s *Service) releaseRequestTx(ctx context.Context, tx pgx.Tx, id string) (*ReleaseRequest, error) {
-	request := &ReleaseRequest{}
-	err := tx.QueryRow(ctx, `SELECT id::text,content_id,version_id,scheduled_at,state,current,plan,result,coalesce(error,''),completed_at
- FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, s.o.Tenant, id).
-		Scan(&request.ID, &request.Content, &request.Version, &request.ScheduledAt, &request.State, &request.Current,
-			&request.Plan, &request.Result, &request.Error, &request.CompletedAt)
-	if err != nil {
-		return nil, err
-	}
-	return request, nil
-}
-
-// setReleasePlanTx freezes the immutable input of a copy attempt. Retrying the
-// same plan is safe; changing a frozen plan requires a new request.
-func (s *Service) setReleasePlanTx(ctx context.Context, tx pgx.Tx, id string, plan json.RawMessage) error {
-	if len(plan) == 0 || !json.Valid(plan) {
-		return ErrInvalid
-	}
-	tag, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET plan=coalesce(plan,$3::jsonb),state='running',error=NULL,updated_at=clock_timestamp()
- WHERE tenant_id=$1 AND id=$2 AND current AND state NOT IN ('retiring','completed','cancelled') AND (plan IS NULL OR plan=$3::jsonb)`, s.o.Tenant, id, []byte(plan))
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return errRetired
-	}
-	return nil
-}
-
-// finishReleaseTx commits a verified result while the request is still current.
-// The caller updates reader snapshots, release_id and catalog state in this
-// same transaction. Scheduling a later chapter does not erase this result.
-func (s *Service) finishReleaseTx(ctx context.Context, tx pgx.Tx, id string, result json.RawMessage) error {
-	if len(result) == 0 || !json.Valid(result) {
-		return ErrInvalid
-	}
-	tag, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET result=$3::jsonb,state='completed',error=NULL,
- completed_at=coalesce(completed_at,$4),updated_at=clock_timestamp()
- WHERE tenant_id=$1 AND id=$2 AND (current OR state='retiring') AND plan IS NOT NULL AND state<>'cancelled'
- AND (state<>'completed' OR result=$3::jsonb)`, s.o.Tenant, id, []byte(result), s.o.Now())
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return errRetired
-	}
-	return nil
 }
 
 type releaseArgs struct {

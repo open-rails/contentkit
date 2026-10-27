@@ -16,11 +16,5 @@ type ContentRef = contentref.ContentRef
 // ContentKey is the comparable form of a ContentRef.
 type ContentKey = contentref.ContentKey
 
-// DocumentKey identifies one keyword document: a ContentRef in one language.
-type DocumentKey = search.DocumentKey
-
-// KeywordDocument is the host's canonical search input for one document.
-type KeywordDocument = search.KeywordDocument
-
 // Eligibility is the per-document visibility join; see search.Eligibility.
 type Eligibility = search.Eligibility

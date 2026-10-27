@@ -197,7 +197,7 @@ func (i Item) Prefix() string        { return i.prefix }
 func (i Item) ManifestKey() string   { return i.prefix + layout.ManifestName }
 func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/" }
 
-// DownloadPrefix is the folder's download/: files only a download token opens.
+// DownloadPrefix is the folder's download/: files the gateway never serves.
 func (i Item) DownloadPrefix() string  { return i.prefix + layout.AreaDownload + "/" }
 func (i Item) PublicPrefix() string    { return i.prefix + layout.AreaPublic + "/" }
 func (i Item) OriginalsPrefix() string { return i.prefix + layout.AreaOriginals + "/" }
@@ -207,18 +207,6 @@ func (i Item) TempPrefix() string {
 		return i.prefix + layout.AreaTmp + "/"
 	}
 	return i.prefix + layout.AreaTemp + "/"
-}
-
-// PublicOutput is a processor's destination. Version outputs remain unserved
-// until an explicit promotion creates their public delivery copy.
-func (i Item) PublicOutput(name string) (string, error) {
-	if !layout.ValidPublicName(name) {
-		return "", fmt.Errorf("media: invalid public output %q", name)
-	}
-	if i.kind.Versions {
-		return i.FuturePrefix() + name, nil
-	}
-	return i.Public(name)
 }
 
 // Blob is the key of an allocation by its reference: "sha256-{hex}-{uuid}"
@@ -276,13 +264,6 @@ func (k *Kind) DefaultKey(name string) string {
 
 // NS is the namespace the kind's items live in.
 func (k *Kind) NS() string { return k.ns }
-
-// PublicURL is a public file's URL:
-// {base}/v1/{namespace}/{kind}/{id}[/{version}]/public/{name}.
-func PublicURL(base string, ref contentref.ContentRef, name string) string {
-	return strings.TrimRight(base, "/") + layout.URLPrefix + layout.Prefix(ref.TenantID, ref.ContentKind, ref.ContentID, ref.Version()) +
-		layout.AreaPublic + "/" + name
-}
 
 // PublicURL is the URL of item ref's public name at the registry's BaseURL.
 func (r *Registry) PublicURL(ref contentref.ContentRef, name string) string {

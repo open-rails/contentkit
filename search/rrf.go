@@ -1,7 +1,6 @@
 package search
 
 import (
-	"fmt"
 	"math"
 	"sort"
 
@@ -30,28 +29,6 @@ type RRFHit struct {
 	Score float32
 }
 
-type RRFContribution struct {
-	ListIndex    int     `json:"list_index"` // zero-based source-list index
-	Rank         int     `json:"rank"`       // one-based rank within the source list
-	Weight       float32 `json:"weight"`
-	Contribution float32 `json:"contribution"`
-}
-
-type RRFTraceHit struct {
-	Hit           RRFHit            `json:"-"`
-	Key           RRFTraceKey       `json:"key"`
-	Score         float32           `json:"score"`
-	Contributions []RRFContribution `json:"contributions"`
-}
-
-type RRFTraceKey struct {
-	TenantID         string `json:"tenant_id"`
-	ContentKind      string `json:"content_kind"`
-	ContentID        string `json:"content_id"`
-	ContentVersionID string `json:"content_version_id,omitempty"`
-	Language         string `json:"language"`
-}
-
 func (k RRFKey) less(o RRFKey) bool {
 	if k.ContentKind != o.ContentKind {
 		return k.ContentKind < o.ContentKind
@@ -70,47 +47,13 @@ func (k RRFKey) less(o RRFKey) bool {
 
 // FuseRRF fuses multiple ranked lists (best-first) into one ranked list.
 func FuseRRF(lists [][]RRFKey, opts RRFOptions) []RRFHit {
-	out, _ := fuseRRF(lists, opts, false)
-	return out
-}
-
-// FuseRRFWithTrace returns the same ordered hits as FuseRRF plus the exact
-// source-list contributions used to compute each score.
-func FuseRRFWithTrace(lists [][]RRFKey, opts RRFOptions) ([]RRFTraceHit, error) {
-	for i, weight := range opts.Weights {
-		if !finiteFloat32(weight) {
-			return nil, fmt.Errorf("RRF weight %d must be finite", i)
-		}
-	}
-	hits, contributions := fuseRRF(lists, opts, true)
-	out := make([]RRFTraceHit, 0, len(hits))
-	for _, hit := range hits {
-		if !finiteFloat32(hit.Score) {
-			return nil, fmt.Errorf("RRF score overflow for %s", hit.ContentID)
-		}
-		out = append(out, RRFTraceHit{
-			Hit:           hit,
-			Key:           RRFTraceKey{TenantID: hit.TenantID, ContentKind: hit.ContentKind, ContentID: hit.ContentID, ContentVersionID: hit.ContentVersionID, Language: hit.Language},
-			Score:         hit.Score,
-			Contributions: contributions[hit.RRFKey],
-		})
-	}
-	return out, nil
-}
-
-func fuseRRF(lists [][]RRFKey, opts RRFOptions, includeTrace bool) ([]RRFHit, map[RRFKey][]RRFContribution) {
 	k := opts.K
 	if k <= 0 {
 		k = 60
 	}
 	scores := make(map[RRFKey]float32)
-	var contributions map[RRFKey][]RRFContribution
-	if includeTrace {
-		contributions = make(map[RRFKey][]RRFContribution)
-	}
 	for li, list := range lists {
 		w := float32(1.0)
-		// Keep the untraced API's existing handling of nonfinite weights.
 		if li < len(opts.Weights) && (opts.Weights[li] > 0 || finiteFloat32(opts.Weights[li])) {
 			w = opts.Weights[li]
 		}
@@ -118,13 +61,7 @@ func fuseRRF(lists [][]RRFKey, opts RRFOptions, includeTrace bool) ([]RRFHit, ma
 			continue
 		}
 		for i, item := range list {
-			rank := i + 1
-			ks := item
-			contribution := w / (float32(k) + float32(rank))
-			scores[ks] += contribution
-			if includeTrace {
-				contributions[ks] = append(contributions[ks], RRFContribution{ListIndex: li, Rank: rank, Weight: w, Contribution: contribution})
-			}
+			scores[item] += w / (float32(k) + float32(i+1))
 		}
 	}
 	out := make([]RRFHit, 0, len(scores))
@@ -137,7 +74,7 @@ func fuseRRF(lists [][]RRFKey, opts RRFOptions, includeTrace bool) ([]RRFHit, ma
 		}
 		return out[i].RRFKey.less(out[j].RRFKey)
 	})
-	return out, contributions
+	return out
 }
 
 func finiteFloat32(value float32) bool {

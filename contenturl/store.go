@@ -43,23 +43,7 @@ func New(opts Options) (*Store, error) {
 	return &Store{pool: opts.Pool, qs: qs, tenant: tenant}, nil
 }
 
-// Tenant is the tenant the store is pinned to.
-func (s *Store) Tenant() string { return s.tenant }
-
 func (s *Store) q() codes.Querier { return codes.Pgx(s.pool) }
-
-// write runs fn in a transaction.
-func (s *Store) write(ctx context.Context, fn func(codes.Querier) error) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
-	if err := fn(codes.Pgx(tx)); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
 
 func (s *Store) ref(r contentref.ContentRef) (codes.Key, error) {
 	if r.TenantID != s.tenant {
@@ -72,60 +56,6 @@ func (s *Store) ref(r contentref.ContentRef) (codes.Key, error) {
 		return codes.Key{}, fmt.Errorf("%w: codes name works, not versions", ErrInvalid)
 	}
 	return codes.Key{Kind: r.ContentKind, ID: r.ContentID}, nil
-}
-
-// Entry is one content record to register. Title (any text) becomes the
-// default slug through Slugify; Titles, keyed by language, the localized
-// slugs. Titles nil keeps the stored localized slugs; an empty map clears them.
-type Entry struct {
-	contentref.ContentRef
-	Title  string
-	Titles map[string]string
-}
-
-// Put gives every entry a code if it has none (codes never change) and sets
-// its slugs from the titles; it is idempotent. The result is aligned with
-// entries.
-func (s *Store) Put(ctx context.Context, entries ...Entry) ([]Link, error) {
-	in := make([]codes.Entry, len(entries))
-	for i, e := range entries {
-		k, err := s.ref(e.ContentRef)
-		if err != nil {
-			return nil, err
-		}
-		in[i] = codes.Entry{Key: k, Slug: Slugify(e.Title)}
-		if e.Titles != nil {
-			in[i].Slugs = make(map[string]string, len(e.Titles))
-			for l, t := range e.Titles {
-				in[i].Slugs[l] = Slugify(t)
-			}
-		}
-	}
-	var got map[codes.Key]string
-	err := s.write(ctx, func(q codes.Querier) (err error) {
-		got, err = codes.Put(ctx, q, s.qs, s.tenant, in)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	keys := make([]codes.Key, len(in))
-	for i, e := range in {
-		keys[i] = e.Key
-	}
-	links, err := s.links(ctx, keys)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Link, len(in))
-	for i, e := range in {
-		l, ok := links[e.Key]
-		if !ok || got[e.Key] == "" {
-			return nil, fmt.Errorf("contenturl: %s/%s has no code after Put", e.Kind, e.ID)
-		}
-		out[i] = l
-	}
-	return out, nil
 }
 
 const linkColumns = `t.content_kind, t.content_id, t.code, t.slug, t.slugs::text, coalesce(t.merged_into, '')`
@@ -310,21 +240,6 @@ WHERE NOT f.deleted AND f.live_from <= now()`, s.qs), s.tenant, contents, cs)
 		out[k] = id
 	}
 	return out, rows.Err()
-}
-
-// Merge makes from's code redirect to into's: both stay valid, from's resolves
-// to into. Use it when duplicate content is folded into one record. Both
-// must be registered (ErrNotFound); a merge back into from is ErrConflict.
-func (s *Store) Merge(ctx context.Context, from, into contentref.ContentRef) error {
-	f, err := s.ref(from)
-	if err != nil {
-		return err
-	}
-	t, err := s.ref(into)
-	if err != nil {
-		return err
-	}
-	return s.write(ctx, func(q codes.Querier) error { return codes.Merge(ctx, q, s.qs, s.tenant, f, t) })
 }
 
 // AliasKey names another system's identifier: the system (an import

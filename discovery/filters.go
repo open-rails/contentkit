@@ -67,11 +67,6 @@ func (f GuestFilterSetting) value() (string, error) {
 	return readerprefs.Hide, nil
 }
 
-const (
-	show = readerprefs.Show
-	hide = readerprefs.Hide
-)
-
 type filterInventory map[kinds.EntityRef]string
 
 func (s *Service) filterEntities(ctx context.Context) (filterInventory, error) {

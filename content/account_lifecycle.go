@@ -34,8 +34,7 @@ VALUES ($1,$2,'deleted') ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant
 }
 
 // AnonymizeAccount permanently removes account attribution without removing
-// comments or contribution rows. Counters are unchanged. EraseSubjects remains
-// the separate operation for callers that explicitly request data destruction.
+// comments or contribution rows. Counters are unchanged.
 func (rt *Runtime) AnonymizeAccount(ctx context.Context, actorID, anonymousID string) error {
 	if strings.TrimSpace(actorID) == "" {
 		return badRequest("subject id is required")
@@ -89,7 +88,7 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 	// A global fence would block a sibling's startup before its consumer could
 	// finish that sibling's still-pending anonymization.
 	if rt.eraseAccountReceipts != nil {
-		if err := rt.eraseAccountReceipts(ctx, []string{actorID}, false); err != nil {
+		if err := rt.eraseAccountReceipts(ctx, []string{actorID}); err != nil {
 			return err
 		}
 	}

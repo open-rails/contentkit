@@ -52,7 +52,7 @@ type Config struct {
 	Routes []Route
 
 	Endpoint, Region             string // path-style S3 endpoint; Region default us-east-1
-	AccessKeyID, SecretAccessKey string // read key for served private/download/public objects, including erasure-marker HEAD; scoped prefixes need missing-object 404s
+	AccessKeyID, SecretAccessKey string // read key for served private/public objects, including erasure-marker HEAD; scoped prefixes need missing-object 404s
 	Ring                         token.Ring
 	Hosts                        map[string][]string // legacy lower-case host -> namespaces; Routes selects scoped paths
 	Buckets                      map[string]string   // legacy namespace -> bucket; required for each legacy host namespace
@@ -284,17 +284,9 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 var errNoToken = errors.New("no token")
 
 // authorize accepts exact-file or whole-item private tokens from the URL or
-// an mt cookie (a browser may send several); for a download key only the URL's
-// download token of that key.
+// an mt cookie (a browser may send several).
 func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
 	now := time.Now()
-	if area == layout.AreaDownload {
-		t := r.URL.Query().Get("t")
-		if t == "" {
-			return errNoToken
-		}
-		return h.cfg.Ring.VerifyDownload(t, key, now)
-	}
 	var toks []string
 	if t := r.URL.Query().Get("t"); t != "" {
 		toks = append(toks, t)

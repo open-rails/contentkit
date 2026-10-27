@@ -11,7 +11,6 @@ import (
 	"github.com/open-rails/authkit/authtest"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/signal"
 )
 
 func TestAccountNotificationsOptional(t *testing.T) {
@@ -65,11 +64,7 @@ func TestAccountNotificationsOptional(t *testing.T) {
 		if response.StatusCode != http.StatusNotFound {
 			t.Fatalf("disabled inbox route returned HTTP%d", response.StatusCode)
 		}
-		report, err := engine.EraseAppSubjects(t.Context(), []signal.Subject{{UserID: owner.ID}})
-		must(t, err)
-		if !report.Complete() {
-			t.Fatal("content erasure depended on an optional notification inbox")
-		}
+		must(t, engine.AnonymizeAccount(t.Context(), owner.ID))
 		assertNoInbox(t)
 	})
 	t.Run("CK-J25-S19_partial_account_erasure_storage_fails_closed", func(t *testing.T) {

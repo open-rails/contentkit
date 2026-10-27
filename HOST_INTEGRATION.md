@@ -342,12 +342,12 @@ media:
   allows everything and marks nothing.
 - The route answers `200` JSON `FileDownload{url, name, type, size,
   expires_at}`; navigate to `url` (contentkit-ui's `useVersionDownload` and
-  `VersionDownloadButton` do). Files and unmarked zips are the media host's,
-  with a download token of that one `download/` key, so bytes never pass the
-  app; without the policy's `Name`, files are named `{title} [{version code}].{ext}`,
-  zips by the zip preset's `Download` template. A zip with marks is `archive?for=&mark=&name=&ticket=`,
-  relative to the download route: `GET .../versions/{vid}/archive` streams
-  it, marking the ticket's pages.
+  `VersionDownloadButton` do). Public and private files are the media host's,
+  a private one with an exact-file token, so bytes never pass the app;
+  without the policy's `Name`, files are named `{title} [{version code}].{ext}`,
+  zips by the zip preset's `Download` template. Zips and retained originals are
+  `archive?for=&mark=&name=&ticket=`, relative to the download route:
+  `GET .../versions/{vid}/archive` streams them, marking the ticket's pages.
 - `202 Pending` while the file is placed or produced, `403` locked or
   `download_unavailable`, `404` no download for the kind, `409 no_download`
   when the version has nothing to serve, `429 rate_limited` with
@@ -585,8 +585,8 @@ expired ban stays listed with `expired: true` until lifted or replaced.
 `403 comment_banned` with `ban: {scope, reason, until}` (never who banned);
 when both scopes apply it reports the one lasting longer
 (`*content.BannedError`, `errors.Is(err, content.ErrCommentBanned)`). Anonymous
-commenters have no identity to ban. `EraseSubjects` removes the bans of an
-erased user and of their owner scope, and blanks them as `banned_by`.
+commenters have no identity to ban. `AnonymizeAccount` removes the bans of a
+deleted user and of their owner scope, and blanks them as `banned_by`.
 
 ## Polls
 
@@ -602,8 +602,8 @@ visible only to staff until their opening time.
 
 Free-text submission, automatic grouping and classifier dependencies are
 removed. Historical free-text questions and answers remain stored but are not
-exposed by current poll routes or modified by imports. Account erasure still
-removes a subject's historical answers. No classification worker is registered.
+exposed by current poll routes or modified by imports. Account deletion
+detaches a subject's historical answers from the account. No classification worker is registered.
 
 ## Account lifecycle and interaction erasure
 
@@ -632,10 +632,10 @@ it does not affect `New`.
 
 For a purge, `New` returns `ErrErasureReplayRequired` only when this app's receipt
 exists but neither its local completion fence nor lifecycle state `purged`
-remains, proving a catalog restore. Unfinished explicit account erasures and
-app-only erasures without a local fence or `purging` row still block startup.
-Restore replay uses `AnonymizeAccount` for purge obligations, preserving anonymous
-contributions and removing restored comment, creator and owner attribution.
+remains, proving a catalog restore. An app intent without a local fence or
+`purging` row also blocks startup. Restore replay repeats `AnonymizeAccount`,
+preserving anonymous contributions and removing restored comment, creator and
+owner attribution.
 Retry replay until its report is complete; a cleanup failure returns an error
 and leaves work remaining.
 
@@ -648,39 +648,26 @@ the signed-in/anonymous reader split changes. Privileged content/entity imports
 and moderator provenance remain host responsibilities; this is not a general
 backup-restore or privileged-write policy.
 
-`EraseSubjects` remains an explicit destructive operation for a caller that
-intends to remove the subject's contributions instead of anonymizing them.
+The signal plane follows the [signal-plane contract](#signal-plane-account-deletion).
+A deliberately disabled signal plane is absent, not unfinished. Any
+configured-plane failure returns an error: keep the deletion pending and retry.
 
-`ck.EraseSubjects(ctx, subjects)` erases subjects from every configured
-plane: signals ([completion contract](#subject-erasure-completion-contract)),
-ContentKit interaction data, avatars (on the avatar primary; see Avatars)
-and data retained by moderation providers. A
-deliberately disabled signal plane is absent, not unfinished. Any
-configured-plane failure returns an error and an incomplete report: keep the
-host's obligation pending and retry (calls are idempotent). The host may
-acknowledge AuthKit as soon as it has durably accepted the deletion obligation
-in its own ledger; never hold that acknowledgement for provider availability.
-
-Content erasure commits atomically:
+Content anonymization commits atomically:
 
 - a permanent tenant/subject fence in `content_erased_subjects`; later writes by
   that subject fail with `content.ErrSubjectErased`;
-- removal of the subject's authenticated reactions, favorites, poll votes and
-  historical free-text answers, with exact counter decrements, and of comment bans of them or in
-  their owner scope (global bans they set stay, without their id);
-- redaction of the subject's unpublished payloads (held/rejected comments)
-  and their moderation metadata. An item with a previously approved payload keeps it
-  without republishing; a never-published item becomes a tombstone, keeping its
-  row and replies.
+- the subject's reactions, favorites and poll votes move to the anonymous key
+  with counts unchanged; comments (shown as `<Deleted>`), historical free-text
+  answers, authored items, owned entities and reposts lose the account id;
+- removal of the subject's comment notifications, creator profile, content
+  filter preferences and comment bans of them or in their owner scope (bans
+  they set stay, without their id).
 
-Anonymous IP interactions, other tenants/subjects, currently approved authored
-content (host retention policy) and externally stored media are untouched.
-Every guarded writer takes the subject fence before other source locks; erasure
-locks affected rows and applies rollup deltas in deterministic key order from
-rows actually deleted, never synthesizing missing rollup or option rows. Guarded
-mutations and erasure use explicit READ COMMITTED transactions, so a writer
-waiting on the subject lock sees the committed fence even under a REPEATABLE
-READ default.
+Other tenants and subjects and externally stored media are untouched.
+Every guarded writer takes the subject fence before other source locks.
+Guarded mutations and anonymization use explicit READ COMMITTED transactions,
+so a writer waiting on the subject lock sees the committed fence even under a
+REPEATABLE READ default.
 
 ### Provider data
 
@@ -702,8 +689,9 @@ erasure complete. Soft-deleting a poll is not a provider erasure.
 ### Recovery
 
 Fences and approved payload snapshots are durable user state. A restore must
-restore/reapply fences and replay the host deletion ledger through
-`EraseSubjects` before traffic resumes; provider erasure keeps the same
+restore/reapply fences and run `ReplayErasureFences` (`tools
+replay-content-erasures`), which repeats `AnonymizeAccount` for every recorded
+deletion, before traffic resumes; provider erasure keeps the same
 permanent-fence semantics across its own restores. Restored reactions and
 favorites of fenced subjects never export.
 
@@ -1025,8 +1013,8 @@ cfg.Avatars = &contentkit.AvatarsConfig{
 - contentkit-ui's `AvatarUpload` defaults to the viewer's avatar from the
   content model, `useAvatar(id)` builds an image, and both work unchanged
   on either site.
-- `EraseSubjects` erases avatars on the primary only; people are shared, so
-  the primary's erasure (the account deletion every site shares) removes
+- `AnonymizeAccount` erases avatars on the primary only; people are shared,
+  so the primary's deletion (the account deletion every site shares) removes
   them.
 
 ### Uploads and commit ops
@@ -1353,7 +1341,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
-  key reads only `*/private/*`, `*/download/*` and `*/public/*` of each; only the hosts write.
+  key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
 - **CDN**: may cache `public/` in a shared cache. Current publication URLs
   contain a generation; optional stable aliases follow the gateway's
   `public, max-age=300, stale-while-revalidate=86400` policy and ETag
@@ -1462,8 +1450,9 @@ reactions and comment threads never do.
   the overlap of allocating its revision. A failed sync advances nothing.
 - **Repair**: the engine re-sends every preference daily (zeros included),
   which repairs a sink loss.
-- **Erasure**: `ck.EraseSubjects` deletes the subject's rows behind the source
-  fence and fences the signal plane, which drops any late send.
+- **Account deletion**: `ck.AnonymizeAccount` moves the subject's rows to
+  an anonymous key behind the source fence and fences the signal plane, which
+  drops any late send.
 - **Restore**: after restoring PostgreSQL against a retained signal plane, the
   preference revision floor must be raised to the sink's newest revision
   before writers resume: `POST /v1/import` with `preference_floor` (only ever
@@ -1481,25 +1470,23 @@ pages at any bounds yields the single-page result. Clicks are signals of type
 `signal.TypeClick` carrying `render_id`/`position` (`Signal.WithAttribution`).
 Erased subjects are excluded through the erasure ledger at read time.
 
-## Subject erasure completion contract
+## Signal-plane account deletion
 
-`hub.EraseSubjects(ctx, subjects)` returns an `ErasureReport`; `Complete()` is
-true only when:
+`AnonymizeAccount` completes its signal step only when:
 
-1. the erasure is recorded in the `erasures` ledger with `insert_quorum` =
-   every replica; a down replica fails fast and deletes nothing;
-2. every row of the subjects is deleted from signals, compact state, daily
-   contributions, exposures and the kept pre-ContentKit tables on every
-   replica (`mutations_sync = 2`), re-counted as zero, and co-engagement pairs
-   they contributed to are removed;
+1. the old account is recorded in the `erasures` ledger with `insert_quorum` =
+   every replica; a down replica fails fast and moves nothing;
+2. every row of the account in signals, compact state, daily contributions,
+   exposures and the kept pre-ContentKit tables is copied to the anonymous key
+   and deleted on every replica (`mutations_sync = 2`), re-counted as zero;
 3. from the moment the ledger row is durable, every write, read, projection
    and export evaluates the ledger inside its own statement.
 
 The subject key is dead in that tenant forever. Residue (rows that landed
 after the fence or came back with a restore) is unreadable. Cleanup is
 explicit: the host can call `hub.EnforceErasures`; ContentKit does not schedule
-an erasure sweep. After a restore, re-erase the subjects deleted
-since the backup. A shared account exists in every tenant:
+an erasure sweep. After a restore, run `ReplayErasureFences` for the
+accounts deleted since the backup. A shared account exists in every tenant:
 each host erases its own tenant.
 
 ## Discovery candidates
@@ -1540,7 +1527,7 @@ rating behavior.
 - Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
 - Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
 - Wire `Options.Moderator` when comments require screening and grant `root:moderation:review` to reviewers. Polls use predefined choices.
-- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
+- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.AnonymizeAccount` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
