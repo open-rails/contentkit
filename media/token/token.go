@@ -119,15 +119,6 @@ func Expiry(now time.Time, ttl, window time.Duration) time.Time {
 	return time.Unix(intervals*w, 0).UTC()
 }
 
-// ItemScope covers every private file of one item: "{ns}/{kind}/{id}", or
-// "{ns}/{kind}/{id}/{version}" for a version's.
-func ItemScope(ns, kind, id, version string) string {
-	if version != "" {
-		return ns + "/" + kind + "/" + id + "/" + version
-	}
-	return ns + "/" + kind + "/" + id
-}
-
 // Sign signs scope until exp with the current key.
 func (r Ring) Sign(scope string, exp time.Time) string {
 	e := strconv.FormatInt(exp.Unix(), 10)
@@ -150,24 +141,6 @@ func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
 	}
 	return r.VerifyScope(tok, strings.TrimSuffix(k.Folder(), "/"), now)
 }
-
-// reserved are an item folder's own names, never a version.
-var reserved = []string{"manifest.json", "private", "download", "public", "temp", "tmp", "originals", "future"}
-
-// VerifyDownload checks tok for the download key
-// "{ns}/{kind}/{id}[/{version}]/download/{name}" at now: that one key's
-// download token.
-func (r Ring) VerifyDownload(tok, key string, now time.Time) error {
-	_, area, ok := keyFolder(key)
-	if !ok || area != layout.AreaDownload {
-		return ErrInvalid
-	}
-	return r.VerifyScope(tok, DownloadScope(key), now)
-}
-
-// DownloadScope is the scope of a download token for key: the key itself,
-// which no item scope equals.
-func DownloadScope(key string) string { return key }
 
 // VerifyScope checks tok for exactly scope at now.
 func (r Ring) VerifyScope(tok, scope string, now time.Time) error {

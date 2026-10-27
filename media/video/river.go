@@ -25,15 +25,11 @@ type WorkerConfig struct {
 	Encoder     *Encoder // its Manifests carry the host's registry
 	Pool        *pgxpool.Pool
 	Schema      string        // the host's worker schema (workqueue.ValidSchema)
-	MaxWorkers  int           // concurrent video jobs per process; default 1
 	ChunkTarget time.Duration // estimated CPU work per chunk; default 5 minutes
 	Logger      *slog.Logger
 }
 
 func (c WorkerConfig) defaults() WorkerConfig {
-	if c.MaxWorkers <= 0 {
-		c.MaxWorkers = 1
-	}
 	if c.ChunkTarget <= 0 {
 		c.ChunkTarget = 5 * time.Minute
 	}

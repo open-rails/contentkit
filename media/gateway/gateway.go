@@ -284,17 +284,9 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 var errNoToken = errors.New("no token")
 
 // authorize accepts exact-file or whole-item private tokens from the URL or
-// an mt cookie (a browser may send several); for a download key only the URL's
-// download token of that key.
+// an mt cookie (a browser may send several).
 func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
 	now := time.Now()
-	if area == layout.AreaDownload {
-		t := r.URL.Query().Get("t")
-		if t == "" {
-			return errNoToken
-		}
-		return h.cfg.Ring.VerifyDownload(t, key, now)
-	}
 	var toks []string
 	if t := r.URL.Query().Get("t"); t != "" {
 		toks = append(toks, t)

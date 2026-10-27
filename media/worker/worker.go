@@ -239,7 +239,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		if err := river.AddWorkerSafely(cfg.Workers, &ingestWorker{c: c, manifests: manifests, queue: queue}); err != nil {
 			return err
 		}
-		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, MaxWorkers: c.DerivativeWorkers, Logger: c.Logger}})
+		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Logger: c.Logger}})
 	}, nil, nil)
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
 		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
@@ -261,9 +261,6 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	}
 	return out, nil
 }
-
-// Client is the worker's River client (tests subscribe to its events).
-func (w *Worker) Client() *river.Client[pgx.Tx] { return w.client }
 
 // checkTimeout bounds one readiness check, so a bucket that accepts
 // connections and never answers cannot wedge Run.

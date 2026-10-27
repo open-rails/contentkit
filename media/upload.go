@@ -416,16 +416,9 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // Successful removes finish public cleanup before returning;
 // unreferenced private blobs go when a grace period old, or at once for a
 // takedown (Op.Takedown).
+// A successful commit records processing and notification effects durably
+// with the manifest mutation.
 func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, operationID string, ops []Op) (*Manifest, error) {
-	return u.CommitChecked(ctx, actor, ref, operationID, ops, nil)
-}
-
-// CommitChecked is Commit with an optional precondition evaluated under the
-// manifest lock before any operation is applied. A successful commit records
-// processing and notification effects durably with the manifest mutation.
-// Replays of the same operation ID return its receipt without rechecking an
-// obsolete precondition. The callback must not mutate the manifest.
-func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref contentref.ContentRef, operationID string, ops []Op, check func(*Manifest) error) (*Manifest, error) {
 	item, err := u.item(ref)
 	if err != nil {
 		return nil, err
@@ -501,11 +494,6 @@ func (u *Uploads) CommitChecked(ctx context.Context, actor access.Actor, ref con
 	defer cancel()
 	var prior *Manifest
 	man, err := u.o.Manifests.editOperation(editCtx, ref, false, bound{project: item.Kind().Unwritten}, mutation, func(m *Manifest) error {
-		if check != nil {
-			if err := check(m); err != nil {
-				return err
-			}
-		}
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt, trusted: trusted}
 		o.renames = map[string]string{}
@@ -1131,10 +1119,6 @@ func (m *Manifest) uploads() int {
 	}
 	return n
 }
-
-// UploadBytes is the storage charged for a manifest; deleting or erasing
-// the item releases it.
-func (m *Manifest) UploadBytes() int64 { return m.uploadBytes() }
 
 // ticket binds a multipart upload to its item, staged name, declared size
 // and type, and uploader. It is signed with the token ring under an "upload|"
