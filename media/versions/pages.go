@@ -549,7 +549,7 @@ func (s *Service) RestorePageNotice(ctx context.Context, actor access.Actor, t T
 		ops = append(ops, media.Op{Op: media.OpPut, Path: f.Path, Blob: blob, Edit: f.Edit, Meta: f.Meta, SourceName: pageMeta(f).SourceName})
 	}
 	if len(ops) > 0 {
-		if _, err = s.m.Uploads.CommitChecked(ctx, system, ref, uuid.NewString(), ops, nil); err != nil {
+		if _, err = s.m.Uploads.Commit(ctx, system, ref, uuid.NewString(), ops); err != nil {
 			return PageNotices{}, err
 		}
 	}

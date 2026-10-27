@@ -315,13 +315,6 @@ func compare(a, b string) int {
 	return 0
 }
 
-func (c *Content) images() map[string]string {
-	if c.Images == nil {
-		c.Images = map[string]string{}
-	}
-	return c.Images
-}
-
 // released projects durable completion. Chapters release independently; the
 // clock never grants access while their storage publication is unfinished.
 func released(ss []Segment) []Segment {

@@ -188,30 +188,11 @@ func LockSource(ctx context.Context, pool *pgxpool.Pool, tenant, version string)
 	return LockSources(ctx, pool, tenant, []string{version})
 }
 
-// lockVersion locks v's row in tx; ErrNotFound when it is gone.
-func (s *Service) lockVersion(ctx context.Context, tx pgx.Tx, v Target) error {
-	var id string
-	err := tx.QueryRow(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = $2 AND content_id = $3 FOR UPDATE`,
-		s.o.Tenant, v.Version, v.Content).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
-	return err
-}
-
 // pubRow is one publication.
 type pubRow struct {
 	ID     string
 	State  string
 	Source []byte
-}
-
-func (s *Service) loadPub(ctx context.Context, q querier, id string) (*pubRow, error) {
-	p, err := s.readPub(ctx, q, "p.id = $2", id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errRetired
-	}
-	return p, err
 }
 
 func (s *Service) current(ctx context.Context, q querier, v Target, kind string) (*pubRow, error) {
@@ -315,25 +296,6 @@ func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Tar
 	}
 	_, err = tx.Exec(ctx, `UPDATE `+s.t.publications+` SET state = 'current', ready_at = now() WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, id)
 	return err == nil, err
-}
-
-// manifest is v's item's manifest; an empty one before its first upload.
-func (s *Service) manifest(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target) (*media.Manifest, error) {
-	ref, err := s.ref(k.Name, v)
-	if err != nil {
-		return nil, err
-	}
-	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
-	if errors.Is(err, media.ErrNotFound) {
-		return &media.Manifest{V: media.ManifestVersion}, nil
-	}
-	return m, err
-}
-
-func sameJSON(a, b any) bool {
-	x, err1 := json.Marshal(a)
-	y, err2 := json.Marshal(b)
-	return err1 == nil && err2 == nil && bytes.Equal(x, y)
 }
 
 // sameBlob reports two allocations of the same bytes.

@@ -460,8 +460,6 @@ func (o *opRun) put(op Op) error {
 			return nil // unchanged source and edit
 		}
 	}
-	if !o.trusted && o.k.Versions {
-	}
 	f.Pending = k.Presets(f.Path, false)
 	if err := o.place(g, i, f, op.Index); err != nil {
 		return err

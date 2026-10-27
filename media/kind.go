@@ -21,12 +21,6 @@ type kindState struct {
 	patterns []pattern // parallel to Uploads
 }
 
-// IsBody reports path an upload of a Body upload: one of the body's images.
-func (k *Kind) IsBody(path string) bool {
-	i, _, _, _, ok := k.upload(path)
-	return ok && k.Uploads[i].Body
-}
-
 // levels validates a Versions kind's downloads and body images and derives
 // its reader publication configuration.
 func (k *Kind) levels() error {
@@ -749,18 +743,14 @@ func (h *HLS) validate() error {
 
 func validProfile(p string) bool { return p == VideoLive || p == VideoAnimation }
 
-func isVideoType(t string) bool    { return strings.HasPrefix(t, "video/") }
-func isImageType(t string) bool    { return strings.HasPrefix(t, "image/") }
-func isAudioType(t string) bool    { return strings.HasPrefix(t, "audio/") }
-func isSubtitleType(t string) bool { return slices.Contains(SubtitleTypes, t) }
+func isVideoType(t string) bool { return strings.HasPrefix(t, "video/") }
+func isImageType(t string) bool { return strings.HasPrefix(t, "image/") }
+func isAudioType(t string) bool { return strings.HasPrefix(t, "audio/") }
 
 // ImageTypes are the image types the image presets decode (media/image); an
 // upload feeding one accepts no other. SVG, BMP and JPEG XL are refused:
 // their libvips loaders are blocked as untrusted.
 var ImageTypes = []string{"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif", "image/heic", "image/heif", "image/tiff"}
-
-// SubtitleTypes are the subtitle types the Subtitles producer converts.
-var SubtitleTypes = []string{"text/vtt", "application/x-subrip", "text/x-ssa", "text/x-ass"}
 
 // Upload metadata keys ContentKit reads.
 const (

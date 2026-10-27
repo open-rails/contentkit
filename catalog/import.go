@@ -19,7 +19,6 @@ import (
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/versions"
 )
 
 // ImportContent is a content item as the bulk import writes it: its id,
@@ -860,44 +859,6 @@ func (s *Store) checkOwners(ctx context.Context, q Querier, ids []string) error 
 		return fmt.Errorf("%w: owner group %s", ErrNotFound, missing)
 	}
 	return nil
-}
-
-// republishImported are the stored versions whose effective rule or segments
-// the import changes, read before it writes: their publications follow.
-func (s *Store) republishImported(ctx context.Context, tx pgx.Tx, stored map[string]stamped, b importBatch) ([]versions.Target, error) {
-	var had []importVersionRow
-	for _, v := range b.versions {
-		if _, ok := stored[v.ID]; ok {
-			had = append(had, v)
-		}
-	}
-	if len(had) == 0 {
-		return nil, nil
-	}
-	data := func(v any) string { b, _ := json.Marshal(v); return string(b) }
-	rows, err := tx.Query(ctx, `SELECT r.content_id, r.id FROM jsonb_to_recordset($2::jsonb) AS r(id text, content_id text, access jsonb)
- JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = r.id
- JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id
- JOIN jsonb_to_recordset($3::jsonb) AS i(id text, access jsonb) ON i.id = r.content_id
- WHERE coalesce(v.access, c.access) IS DISTINCT FROM coalesce(r.access, i.access)
-  OR (r.id = ANY($4) AND (SELECT coalesce(jsonb_agg(jsonb_build_array(g.position, g.start_index, g.end_index, g.release_at, g.start_page) ORDER BY g.position), '[]')
-   FROM `+s.t.segments+` g WHERE g.tenant_id = $1 AND g.version_id = r.id) IS DISTINCT FROM
-   (SELECT coalesce(jsonb_agg(jsonb_build_array(n.position, n.start_index, n.end_index, n.release_at, n.start_page) ORDER BY n.position), '[]')
-   FROM jsonb_to_recordset($5::jsonb) AS n(version_id text, position int, start_index int, end_index int, release_at timestamptz, start_page text) WHERE n.version_id = r.id))
- ORDER BY r.id`, s.tenant, data(had), data(b.items), append([]string{}, b.segIDs...), data(append([]importSegmentRow{}, b.segments...)))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []versions.Target
-	for rows.Next() {
-		var t versions.Target
-		if err := rows.Scan(&t.Content, &t.Version); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
 }
 
 // ImportDeletes preserves the source's independent content tombstones and

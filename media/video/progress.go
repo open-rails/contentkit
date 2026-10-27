@@ -138,16 +138,6 @@ func (f *fileProgress) set(phase string) {
 	f.p.emit(true)
 }
 
-// stage records which encode stage the run is.
-func (f *fileProgress) stage(n, of int) {
-	if f == nil {
-		return
-	}
-	f.p.mu.Lock()
-	f.stageN, f.stages = n, of
-	f.p.mu.Unlock()
-}
-
 // probed records the duration and output directory before encoding.
 func (f *fileProgress) probed(duration float64, outDir string) {
 	if f == nil {
@@ -179,16 +169,6 @@ func (f *fileProgress) encoded(outTime float64) {
 	f.p.emit(false)
 }
 
-// uploads fixes the bytes left to upload once encoding has finished.
-func (f *fileProgress) uploads(total int64) {
-	if f == nil {
-		return
-	}
-	f.p.mu.Lock()
-	f.outTime, f.upTotal, f.upDone = f.duration, total, 0
-	f.p.mu.Unlock()
-}
-
 // moved counts bytes of an upload in flight.
 func (f *fileProgress) moved(n int64) {
 	if f == nil || n <= 0 {
@@ -210,15 +190,6 @@ func (f *fileProgress) transferred(n int64, d time.Duration) {
 	f.p.mu.Lock()
 	f.xferBytes += n
 	f.xferTime += d
-	f.p.mu.Unlock()
-}
-
-func (f *fileProgress) skipped(n int64) {
-	if f == nil {
-		return
-	}
-	f.p.mu.Lock()
-	f.upDone += n
 	f.p.mu.Unlock()
 }
 

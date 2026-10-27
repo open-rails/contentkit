@@ -578,11 +578,3 @@ func (j *PGJournal) forTenant(tenant string) *PGJournal {
 	}
 	return j
 }
-
-func (j *PGJournal) all() []*PGJournal {
-	out := []*PGJournal{j}
-	for _, v := range j.routes {
-		out = append(out, v)
-	}
-	return out
-}

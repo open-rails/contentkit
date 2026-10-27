@@ -11,9 +11,6 @@ import (
 // windows with equal weight inside, "all" unbounded.
 var Periods = []string{"7d", "30d", "90d", "365d", "all"}
 
-// DefaultPeriod is the window a listing gets when it names none.
-const DefaultPeriod = "30d"
-
 // WindowForPeriod maps a public period onto the window ending on now's UTC
 // day. Anything else is an error, never a silent default.
 func WindowForPeriod(period string, now time.Time) (signal.Window, error) {
