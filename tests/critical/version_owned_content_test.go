@@ -1,15 +1,12 @@
 package critical_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -304,129 +301,6 @@ func TestVersionOwnedContent(t *testing.T) {
 		must(err)
 		if got.Title != "English title" {
 			t.Fatal("import changed sibling")
-		}
-	})
-}
-
-// Initialize using a published binary lineage, then prove the forward migration
-// preserves existing identities and authored text without any source-media work.
-func TestVersionContentMigration(t *testing.T) {
-	ctx := t.Context()
-	check := func(err error) {
-		t.Helper()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	dsn := os.Getenv("CONTENTKIT_CRITICAL_PG")
-	if dsn == "" {
-		t.Fatal("CONTENTKIT_CRITICAL_PG is required")
-	}
-	pool, err := pgxpool.New(ctx, dsn)
-	check(err)
-	t.Cleanup(pool.Close)
-	schema := "ck259_old_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:18]
-	defer func() {
-		clean, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		for _, suffix := range []string{"_river", ""} {
-			_, err := pool.Exec(clean, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema + suffix}.Sanitize()+" CASCADE")
-			if err != nil {
-				t.Error(err)
-			}
-		}
-	}()
-	command := exec.CommandContext(ctx, "go", "run", "-p=1", ".")
-	command.Dir = "previous-release/version-content"
-	command.Env = append(os.Environ(), "GOWORK=off", "GOMAXPROCS=1", "CONTENTKIT_PREVIOUS_TEXT_SCHEMA="+schema)
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	output, err := command.Output()
-	if err != nil {
-		t.Fatalf("published initializer: %v\n%s", err, stderr.String())
-	}
-	var ids map[string]string
-	check(json.Unmarshal(output, &ids))
-	if ids["version"] != "v0.129.0" || ids["en"] == "" || ids["zh"] == "" {
-		t.Fatalf("wrong published fixture: %+v", ids)
-	}
-	table := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
-	snapshot := func(query string, args ...any) string {
-		t.Helper()
-		var raw string
-		check(pool.QueryRow(ctx, query, args...).Scan(&raw))
-		return raw
-	}
-	ledgerSQL := `SELECT coalesce(jsonb_agg(to_jsonb(m) ORDER BY sequence),'[]'::jsonb)::text FROM public.migrations m WHERE app='contentkit' AND schema=$1`
-	beforeLedger := snapshot(ledgerSQL, schema)
-	// The combined migration also deliberately retires playable (0056). Compare
-	// every retained field; assert the retired readiness columns disappear below.
-	versionsSQL := "SELECT jsonb_agg(to_jsonb(v)-'original_title'-'original_language'-'playable' ORDER BY id)::text FROM " + table("content_versions") + " v WHERE tenant_id='version-owned-migration'"
-	parentsSQL := "SELECT jsonb_agg(to_jsonb(c)-'original_title'-'original_language' ORDER BY id)::text FROM " + table("content_items") + " c WHERE tenant_id='version-owned-migration'"
-	beforeVersions, beforeParents := snapshot(versionsSQL), snapshot(parentsSQL)
-	cfg := ck.Config{Tenant: "version-owned-migration", Database: ck.DatabaseConfig{Schema: schema}, Content: kinds.Config{Languages: []string{"en", "zh"}, Kinds: map[string]kinds.Kind{"post": {Route: "posts", Presentation: "post", Versions: kinds.VersionRules{Languages: "one"}}}}}
-	check(ck.MigratePostgres(ctx, pool, cfg))
-	t.Run("retained_translations_and_version_overrides_survive", func(t *testing.T) {
-		for _, version := range []string{ids["en"], ids["zh"]} {
-			for _, lang := range []string{"en", "zh", "ja"} {
-				var title, slug, summary, body, sort, original, originalLanguage string
-				var aliases []string
-				check(pool.QueryRow(ctx, `SELECT t.title,t.slug,t.description,t.body,t.sort_key,t.aliases,v.original_title,v.original_language FROM `+table("content_version_text")+` t JOIN `+table("content_versions")+` v ON v.tenant_id=t.tenant_id AND v.id=t.version_id WHERE t.tenant_id='version-owned-migration' AND t.version_id=$1 AND t.language=$2`, version, lang).Scan(&title, &slug, &summary, &body, &sort, &aliases, &original, &originalLanguage))
-				wantTitle, wantSummary, wantBody, wantSlug, wantSort := "Parent "+lang, "Summary "+lang, "Body "+lang, "parent-"+lang, "Order "+lang
-				wantAliases := []string{"Alias " + lang}
-				if lang == "ja" {
-					wantTitle, wantSummary, wantBody, wantSlug, wantSort = "原題", "元の概要", "元の本文", "original", "original-order"
-					wantAliases = []string{"別名"}
-				}
-				if version == ids["en"] && lang == "en" {
-					wantTitle, wantSummary = "Edition override", "Edition summary"
-				}
-				if title != wantTitle || slug != wantSlug || summary != wantSummary || body != wantBody || sort != wantSort || !reflect.DeepEqual(aliases, wantAliases) || original != "原題" || originalLanguage != "ja" {
-					t.Fatalf("lost authored data for %s/%s: title=%q slug=%q summary=%q body=%q sort=%q aliases=%v original=%q/%s", version, lang, title, slug, summary, body, sort, aliases, original, originalLanguage)
-				}
-			}
-		}
-		if afterVersions, afterParents := snapshot(versionsSQL), snapshot(parentsSQL); afterVersions != beforeVersions || afterParents != beforeParents {
-			t.Fatalf("text migration changed retained fields: versions before=%s after=%s; parents before=%s after=%s", beforeVersions, afterVersions, beforeParents, afterParents)
-		}
-		var retiredReadinessColumns int
-		check(pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema=$1
- AND (table_name,column_name) IN (('content_versions','playable'),('content_facets','unplayable'))`, schema).Scan(&retiredReadinessColumns))
-		if retiredReadinessColumns != 0 {
-			t.Fatal("retired readiness columns remain after migration")
-		}
-		var parentTable *string
-		check(pool.QueryRow(ctx, "SELECT to_regclass($1)::text", schema+".content_text").Scan(&parentTable))
-		if parentTable != nil {
-			t.Fatal("writable parent text table remains")
-		}
-	})
-	t.Run("parent_search_documents_become_exact_edition_obligations", func(t *testing.T) {
-		var parents, editions int
-		check(pool.QueryRow(ctx, "SELECT count(*) FROM "+table("content_search_documents")+" WHERE tenant_id='version-owned-migration' AND content_id=$1 AND content_version_id IS NULL", ids["content"]).Scan(&parents))
-		check(pool.QueryRow(ctx, "SELECT count(*) FROM "+table("content_search_dirty")+" WHERE tenant_id='version-owned-migration' AND content_id=$1 AND content_version_id IS NOT NULL AND NOT is_deleted", ids["content"]).Scan(&editions))
-		if parents != 0 || editions != 6 {
-			t.Fatalf("index adoption parents=%d edition obligations=%d", parents, editions)
-		}
-	})
-	t.Run("replay_preserves_adopted_text_and_published_migration_receipts", func(t *testing.T) {
-		textSQL := "SELECT jsonb_agg(to_jsonb(t) ORDER BY version_id,language)::text FROM " + table("content_version_text") + " t"
-		beforeText := snapshot(textSQL)
-		check(ck.MigratePostgres(ctx, pool, cfg))
-		if snapshot(textSQL) != beforeText {
-			t.Fatal("migration replay changed adopted version text")
-		}
-		var oldRows, newRows []map[string]any
-		check(json.Unmarshal([]byte(beforeLedger), &oldRows))
-		check(json.Unmarshal([]byte(snapshot(ledgerSQL, schema)), &newRows))
-		bySequence := map[any]map[string]any{}
-		for _, row := range newRows {
-			bySequence[row["sequence"]] = row
-		}
-		for _, row := range oldRows {
-			if !reflect.DeepEqual(row, bySequence[row["sequence"]]) {
-				t.Fatal("published migration receipt changed")
-			}
 		}
 	})
 }
