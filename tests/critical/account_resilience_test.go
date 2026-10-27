@@ -28,7 +28,6 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	medias3 "github.com/open-rails/contentkit/media/s3"
-	notification "github.com/open-rails/contentkit/migration/legacyinbox"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -142,11 +141,7 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 		_, err = target.app.publishInbox(t.Context(), inboxPublication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: appReset.ID}, Origin: notify.Origin{System: "critical", Scope: target.app.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "app.private", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"App receipt"}`)}}})
 		must(t, err)
 	}
-	shared, err := notification.New(notification.Options{Pool: w.pool, Schema: w.schema, Tenant: a.cfg.Scope.AppID.String(), AppID: a.cfg.Scope.AppID.String(), Shared: &notification.Config{Schema: "contentkit_accounts", Namespace: (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Partition()}, AccountExists: func(ctx context.Context, id string) (bool, error) {
-		users, err := w.tenant[0].UserInfo().Get(ctx, []string{id})
-		u, exists := users[id]
-		return exists && u.ID == id, err
-	}})
+	shared, err := notifypg.New(w.pool, notifypg.Config{Schema: "contentkit_accounts", Scope: "contentkit:" + (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Partition()})
 	must(t, err)
 	sharedNotice, err := shared.Publish(t.Context(), notify.Input{Recipient: notify.Recipient{Audience: "user", ID: appReset.ID}, Origin: notify.Origin{System: "critical-shared", Scope: a.cfg.Scope.TenantID.String(), ID: uuid.NewString()}, Kind: "tenant.shared", Visibility: notify.VisibilityTenant, CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"Shared account receipt"}`)})
 	must(t, err)

@@ -1737,31 +1737,6 @@
       ]
     },
     {
-      "id": "CK-J25-S06",
-      "journey": "CK-J25",
-      "behavior": "Explicit one-time legacy handoff: Billing log replay commits receipt and consumer cursor together",
-      "status": "verified",
-      "evidence": [
-        "Actual retained OpenRails source and destination-owned receipt/cursor transaction; this path remains only for explicit migration, never a registered runtime poller. Existing before-commit and lost-ack controls continue to verify handoff retry without changing the general event log."
-      ],
-      "cases": [
-        "TestBillingInboxAtomicReplay/CK-J25-S06_two_consumers_commit_one_receipt_and_cursor"
-      ]
-    },
-    {
-      "id": "CK-J25-S07",
-      "journey": "CK-J25",
-      "behavior": "Explicit one-time legacy handoff: Consumer crash before/after commit cannot skip or duplicate source event effect",
-      "status": "verified",
-      "evidence": [
-        "Actual retained OpenRails source and destination-owned receipt/cursor transaction; this path remains only for explicit migration, never a registered runtime poller. Existing before-commit and lost-ack controls continue to verify handoff retry without changing the general event log."
-      ],
-      "cases": [
-        "TestBillingInboxCommitFailure/CK-J25-S07/before-commit",
-        "TestBillingInboxCommitFailure/CK-J25-S07/after-commit-before-ack"
-      ]
-    },
-    {
       "id": "CK-J26-S01",
       "journey": "CK-J26",
       "behavior": "Only committed mutations appear in source order",
@@ -1951,18 +1926,6 @@
       ]
     },
     {
-      "id": "CK-J25-S08",
-      "journey": "CK-J25",
-      "behavior": "Explicit handoff must finish before exact-source legacy polling jobs retire; runtime worker stays removed",
-      "status": "verified",
-      "evidence": [
-        "Public real billing access-loss event, actual persisted inbox cursor/receipt, missing/idle/discarded/running River states, preserved foreign-source/history rows and size-one pool; real worker registry refuses the retired kind. These executable assertions require a fresh successful strict run."
-      ],
-      "cases": [
-        "TestBillingInboxRetirement/CK-J25-S08_exact_handoff_retirement_and_no_runtime_worker"
-      ]
-    },
-    {
       "id": "CK-J25-S10",
       "journey": "CK-J25",
       "behavior": "Injected AuthKit inbox owns native reply/like publication and exact concurrent deduplication",
@@ -2012,18 +1975,6 @@
       ],
       "cases": [
         "TestAccountNotificationChannel/CK-J25-S13_reply_waits_for_concurrent_parent_deletion"
-      ]
-    },
-    {
-      "id": "CK-J25-S16",
-      "journey": "CK-J25",
-      "behavior": "Legacy shared account directory binds one merchant across apps and refuses another tenant or replacement merchant",
-      "status": "verified",
-      "evidence": [
-        "Real AuthKit app/tenant bindings and shared PostgreSQL; concurrent exact merchant binding from two same-tenant apps succeeds, replacement merchant and foreign tenant reuse are refused by the public migration store."
-      ],
-      "cases": [
-        "TestLegacyNotificationMerchantBinding/CK-J25-S16_shared_apps_cannot_reassign_legacy_merchant"
       ]
     },
     {
@@ -10319,17 +10270,6 @@
       "evidence": [
         "Executed by the real25-image upload/browser and authenticated processing stream journey: transfer bytes, incremental loaded thumbnails, editor reopen, durable completion, scope refusals and fresh authentication after expiry. The shipped browser facade delegates through its actual MediaApi transport; no progress mock or polling fallback is present.",
         "Focused execution passed127.081s on the combined source with the fixed AuthKit verifier. The strict final gate reruns these exact cases."
-      ]
-    },
-    {
-      "id": "go:Source.RetireInboxSync",
-      "name": "Source.RetireInboxSync",
-      "status": "verified",
-      "cases": [
-        "TestBillingInboxRetirement/CK-J25-S08_exact_handoff_retirement_and_no_runtime_worker"
-      ],
-      "evidence": [
-        "Public real billing access-loss event, actual persisted inbox cursor/receipt, missing/idle/discarded/running River states, preserved foreign-source/history rows and size-one pool; real worker registry refuses the retired kind. These executable assertions require a fresh successful strict run."
       ]
     },
     {
