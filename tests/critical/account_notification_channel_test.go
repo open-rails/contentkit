@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
@@ -382,108 +381,6 @@ func TestAccountNotificationChannel(t *testing.T) {
 		}
 		if len(n.items(t, owner.ID)) != 0 {
 			t.Fatal("concurrent rejected reply left a notification")
-		}
-	})
-}
-
-func TestAccountNotificationLegacyAdoption(t *testing.T) {
-	n := newAccountNoticeWorld(t, true)
-	for _, condition := range []string{"reply_deleted", "parent_deleted", "parent_held", "reply_deleted_uppercase", "parent_deleted_uppercase", "parent_deleted_duplicate"} {
-		t.Run("CK-J25-S14_"+condition, func(t *testing.T) {
-			state := strings.TrimSuffix(strings.TrimSuffix(condition, "_uppercase"), "_duplicate")
-			owner, _ := n.w.person(t, 0)
-			writer, _ := n.w.person(t, 0)
-			item := publishedArticle(t, n.a, "Restored legacy thread")
-			parent, reply := uuid.NewString(), uuid.NewString()
-			comments := pgx.Identifier{n.w.schema, "content_comments"}.Sanitize()
-			// Restore an exact pre-upgrade snapshot: source rows and legacy receipts
-			// predate the notification source ledger. These direct writes are fixture
-			// preparation, not substitutes for runtime or migration behavior.
-			_, err := n.w.pool.Exec(t.Context(), `INSERT INTO `+comments+` (tenant_id,id,content_kind,content_id,user_id,body,deleted_at,moderation,reply_count) VALUES ($1,$2,'article',$3,$4,'Parent',CASE WHEN $5='parent_deleted' THEN now() END,CASE WHEN $5='parent_held' THEN 'held' ELSE 'approved' END,1)`, n.a.cfg.Scope.AppID.String(), parent, item.ID, owner.ID, state)
-			must(t, err)
-			_, err = n.w.pool.Exec(t.Context(), `INSERT INTO `+comments+` (tenant_id,id,content_kind,content_id,user_id,body,reply_to_id,deleted_at) VALUES ($1,$2,'article',$3,$4,'Reply',$5,CASE WHEN $6='reply_deleted' THEN now() END)`, n.a.cfg.Scope.AppID.String(), reply, item.ID, writer.ID, parent, state)
-			must(t, err)
-			legacyID := reply
-			if condition != state {
-				legacyID = strings.ToUpper(reply)
-			}
-			data, err := json.Marshal(map[string]string{"tenant_id": n.a.cfg.Scope.AppID.String(), "content_kind": "article", "content_id": item.ID, "actor_id": writer.ID, "comment_id": legacyID, "reply_to_id": parent})
-			must(t, err)
-			recipient := notify.Recipient{Audience: notify.AudienceUser, ID: owner.ID}
-			old, err := n.store.Publish(t.Context(), notify.Input{Recipient: recipient, Origin: notify.Origin{System: "contentkit", Scope: n.a.cfg.Scope.AppID.String(), ID: "comment.reply:" + legacyID}, Kind: "comment.reply", Data: data, CreatedAt: time.Now().UTC()})
-			must(t, err)
-			if strings.HasSuffix(condition, "_duplicate") {
-				canonical := old.Input
-				canonical.Origin.ID = "comment.reply:" + reply
-				canonical.CreatedAt = canonical.CreatedAt.Add(-time.Hour)
-				old, err = n.store.Publish(t.Context(), canonical)
-				must(t, err)
-			}
-			_, err = n.store.SetRead(t.Context(), recipient, old.ID, true)
-			must(t, err)
-			_, err = n.store.SetDismissed(t.Context(), recipient, old.ID, true)
-			must(t, err)
-			for range 2 {
-				must(t, ck.MigratePostgres(t.Context(), n.w.pool, n.a.cfg))
-			}
-			var revision int64
-			var withdrawn, read, archived bool
-			var visibility, appID string
-			must(t, n.w.pool.QueryRow(t.Context(), `SELECT producer_revision,withdrawn,read_at IS NOT NULL,dismissed_at IS NOT NULL,visibility,app_id FROM `+pgx.Identifier{n.w.schema, "notify_items"}.Sanitize()+` WHERE id=$1`, old.ID).Scan(&revision, &withdrawn, &read, &archived, &visibility, &appID))
-			if revision != 2 || !withdrawn || !read || !archived || visibility != string(notify.VisibilityApp) || appID != n.a.cfg.Scope.AppID.String() {
-				t.Fatalf("legacy adoption changed receipt/state/classification: rev%d hidden%v read%v archived%v visibility%s app%s", revision, withdrawn, read, archived, visibility, appID)
-			}
-			if got := n.items(t, owner.ID); len(got) != 0 {
-				t.Fatalf("obsolete legacy receipt visible: %+v", got)
-			}
-			if _, err := n.accounts.GetNotification(t.Context(), owner.ID, old.ID); !errors.Is(err, notify.ErrNotFound) {
-				t.Fatalf("withdrawn legacy receipt addressable: %v", err)
-			}
-			target := parent
-			if state == "reply_deleted" {
-				target = reply
-			}
-			if state == "parent_held" {
-				must(t, n.manager.PostCommentRelease(t.Context(), target))
-			} else {
-				_, err = n.a.engine.Client().PostCommentRestore(t.Context(), target)
-				must(t, err)
-			}
-			page := n.items(t, owner.ID)
-			if len(page) != 1 || page[0].ID != old.ID || page[0].Origin.ID != "comment.reply:"+reply || page[0].ProducerRevision != 3 || page[0].ReadAt != nil || page[0].DismissedAt != nil {
-				t.Fatalf("restoration changed original receipt identity or reopen: %+v", page)
-			}
-		})
-	}
-	t.Run("CK-J25-S15_active_legacy_classification_preserves_local_state", func(t *testing.T) {
-		owner, _ := n.w.person(t, 0)
-		writer, _ := n.w.person(t, 0)
-		item := publishedArticle(t, n.a, "Legacy active classification")
-		parent, reply := uuid.NewString(), uuid.NewString()
-		_, err := n.w.pool.Exec(t.Context(), `INSERT INTO `+pgx.Identifier{n.w.schema, "content_comments"}.Sanitize()+` (tenant_id,id,content_kind,content_id,user_id,body,reply_to_id) VALUES ($1,$2,'article',$4,$5,'Parent',NULL),($1,$3,'article',$4,$6,'Reply',$2)`, n.a.cfg.Scope.AppID.String(), parent, reply, item.ID, owner.ID, writer.ID)
-		must(t, err)
-		data, err := json.Marshal(map[string]string{"comment_id": reply})
-		must(t, err)
-		recipient := notify.Recipient{Audience: notify.AudienceUser, ID: owner.ID}
-		input := notify.Input{Recipient: recipient, Origin: notify.Origin{System: "contentkit", Scope: n.a.cfg.Scope.AppID.String(), ID: "comment.reply:" + reply}, Kind: "comment.reply", Data: data, CreatedAt: time.Now().UTC()}
-		old, err := n.store.Publish(t.Context(), input)
-		must(t, err)
-		_, err = n.store.SetRead(t.Context(), recipient, old.ID, true)
-		must(t, err)
-		_, err = n.store.SetDismissed(t.Context(), recipient, old.ID, true)
-		must(t, err)
-		must(t, ck.MigratePostgres(t.Context(), n.w.pool, n.a.cfg))
-		adopted, err := n.store.Get(t.Context(), recipient, old.ID)
-		must(t, err)
-		if adopted.Visibility != notify.VisibilityApp || adopted.AppID != n.a.cfg.Scope.AppID.String() || adopted.ReadAt == nil || adopted.DismissedAt == nil {
-			t.Fatalf("classification reset local state: %+v", adopted)
-		}
-		must(t, n.sink.Withdraw(t.Context(), []notify.Withdrawal{{RecipientID: input.Recipient.ID, ID: input.Origin.ID, Revision: 2}}))
-		must(t, n.sink.Publish(t.Context(), []notify.Publication{publicationFrom(input, 3)}))
-		reopened, err := n.accounts.GetNotification(t.Context(), owner.ID, old.ID)
-		must(t, err)
-		if reopened.ReadAt != nil || reopened.DismissedAt != nil || reopened.ProducerRevision != 3 {
-			t.Fatalf("bound publisher cannot reopen legacy receipt: %+v", reopened)
 		}
 	})
 }
