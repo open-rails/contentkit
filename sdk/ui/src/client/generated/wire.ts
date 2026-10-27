@@ -77,6 +77,7 @@ export interface AdminComment {
   content_id: string;
   content_version_id?: string;
   deleted_at?: string;
+  author_hidden: boolean;
 }
 
 export interface AliasKey {

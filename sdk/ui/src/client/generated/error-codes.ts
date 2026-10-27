@@ -12,6 +12,7 @@ export type ErrorCode =
   | "comments_locked"
   | "conflict"
   | "download_unavailable"
+  | "duplicate_comment"
   | "event_cursor_expired"
   | "forbidden"
   | "gone"
@@ -58,6 +59,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   comments_locked: { status: 403, meaning: "The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them." },
   conflict: { status: 409, meaning: "A concurrent change, a path or slug already taken, or an operation id already used for another commit." },
   download_unavailable: { status: 403, meaning: "The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged." },
+  duplicate_comment: { status: 422, meaning: "An identical comment was already saved in the configured duplicate window." },
   event_cursor_expired: { status: 410, meaning: "The event cursor predates retained history or names a reset stream; resync current state before continuing." },
   forbidden: { status: 403, meaning: "The actor may not do this." },
   gone: { status: 410, meaning: "The content was removed." },

@@ -31,8 +31,8 @@ func (c *comments) notifyReply(ctx context.Context, tx pgx.Tx, replyID string) e
 	var ref contentref.ContentRef
 	err := tx.QueryRow(ctx, `SELECT reply.id::text,parent.user_id,coalesce(reply.user_id,''),parent.id::text,reply.content_kind,reply.content_id,reply.content_version_id
  FROM `+c.s.t.comments+` reply JOIN `+c.s.t.comments+` parent ON parent.id=reply.reply_to_id AND parent.tenant_id=reply.tenant_id
- WHERE reply.id=$1 AND reply.tenant_id=$2 AND reply.moderation='approved' AND reply.deleted_at IS NULL
- AND parent.moderation='approved' AND parent.deleted_at IS NULL AND parent.user_id IS NOT NULL`, replyID, c.s.tenant).
+ WHERE reply.id=$1 AND reply.tenant_id=$2 AND reply.moderation='approved' AND reply.deleted_at IS NULL AND NOT reply.author_hidden
+ AND parent.moderation='approved' AND parent.deleted_at IS NULL AND NOT parent.author_hidden AND parent.user_id IS NOT NULL`, replyID, c.s.tenant).
 		Scan(&replyID, &recipient, &actor, &parent, &ref.ContentKind, &ref.ContentID, &ref.ContentVersionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -47,8 +47,7 @@ func (c *comments) notifyReply(ctx context.Context, tx pgx.Tx, replyID string) e
 	return c.publishNotice(ctx, tx, recipient, "comment.reply", "comment.reply:"+replyID, commentNotice{ContentRef: ref, ActorID: actor, CommentID: replyID, ReplyToID: parent})
 }
 
-// notifyLike runs only after a real transition to +1. The durable reaction
-// revision identifies that transition; concurrent duplicate likes emit once.
+// notifyLike uses one identity per liker and comment across unlike/re-like.
 func (c *comments) notifyLike(ctx context.Context, tx pgx.Tx, actor access.Actor, cid string, ref contentref.ContentRef) error {
 	if !actor.Member() {
 		return nil
@@ -61,11 +60,7 @@ func (c *comments) notifyLike(ctx context.Context, tx pgx.Tx, actor access.Actor
 	if recipient == "" || recipient == actor.AccountID() {
 		return nil
 	}
-	var revision int64
-	if err := tx.QueryRow(ctx, `SELECT revision FROM `+c.s.t.reactions+` WHERE tenant_id=$1 AND content_kind='comment' AND content_id=$2 AND content_version_id IS NULL AND user_id=$3`, c.s.tenant, cid, actor.AccountID()).Scan(&revision); err != nil {
-		return fmt.Errorf("content: resolve like revision: %w", err)
-	}
-	return c.publishNotice(ctx, tx, recipient, "comment.liked", fmt.Sprintf("comment.liked:%d", revision), commentNotice{ContentRef: ref, ActorID: actor.AccountID(), CommentID: cid})
+	return c.publishNotice(ctx, tx, recipient, "comment.liked", "comment.liked:"+cid+":"+actor.AccountID(), commentNotice{ContentRef: ref, ActorID: actor.AccountID(), CommentID: cid})
 }
 
 func (c *comments) publishNotice(ctx context.Context, tx pgx.Tx, recipient, kind, eventID string, payload commentNotice) error {
@@ -136,13 +131,13 @@ func (c *comments) withdrawNotices(ctx context.Context, tx pgx.Tx, cid string) e
 	}
 }
 
-// restoreReplyNotices republishes the visible replies of a restored parent
-// with their existing identities and newer producer revisions.
-func (c *comments) restoreReplyNotices(ctx context.Context, tx pgx.Tx, cid string) error {
+// restoreNotices republishes visible replies and active likes with their
+// existing identities and newer producer revisions.
+func (c *comments) restoreNotices(ctx context.Context, tx pgx.Tx, cid string) error {
 	if err := c.notifyReply(ctx, tx, cid); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, `SELECT id::text FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND reply_to_id=$2 AND deleted_at IS NULL AND moderation='approved' ORDER BY id`, c.s.tenant, cid)
+	rows, err := tx.Query(ctx, `SELECT id::text FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND reply_to_id=$2 AND deleted_at IS NULL AND moderation='approved' AND NOT author_hidden ORDER BY id`, c.s.tenant, cid)
 	if err != nil {
 		return err
 	}
@@ -155,5 +150,51 @@ func (c *comments) restoreReplyNotices(ctx context.Context, tx pgx.Tx, cid strin
 			return err
 		}
 	}
+	rows, err = tx.Query(ctx, `SELECT n.recipient,r.user_id,c.content_kind,c.content_id,c.content_version_id
+FROM `+c.noticeTable()+` n JOIN `+c.s.t.comments+` c ON c.tenant_id=n.tenant_id AND c.id=n.comment_id
+JOIN `+c.s.t.reactions+` r ON r.tenant_id=c.tenant_id AND r.content_kind='comment' AND r.content_id=c.id::text
+ AND r.content_version_id IS NULL AND r.value=1 AND n.source_id='comment.liked:' || c.id::text || ':' || r.user_id
+WHERE c.tenant_id=$1 AND c.id=$2 AND c.moderation='approved' AND c.deleted_at IS NULL AND NOT c.author_hidden
+ AND n.kind='comment.liked' AND n.withdrawn`, c.s.tenant, cid)
+	if err != nil {
+		return err
+	}
+	type likeNotice struct {
+		recipient string
+		notice    commentNotice
+	}
+	likes, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (likeNotice, error) {
+		var out likeNotice
+		n := &out.notice
+		n.TenantID, n.CommentID = c.s.tenant, cid
+		err := row.Scan(&out.recipient, &n.ActorID, &n.ContentKind, &n.ContentID, &n.ContentVersionID)
+		return out, err
+	})
+	if err != nil {
+		return err
+	}
+	for _, like := range likes {
+		n := like.notice
+		if err := c.publishNotice(ctx, tx, like.recipient, "comment.liked", "comment.liked:"+cid+":"+n.ActorID, n); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (c *comments) withdrawLikeNotice(ctx context.Context, tx pgx.Tx, actor access.Actor, cid string) error {
+	if c.rt.notifier == nil || !actor.Member() {
+		return nil
+	}
+	var m notify.Withdrawal
+	err := tx.QueryRow(ctx, `UPDATE `+c.noticeTable()+` SET withdrawn=true,revision=revision+1
+WHERE tenant_id=$1 AND source_id=$2 AND NOT withdrawn RETURNING recipient,source_id,revision`,
+		c.s.tenant, "comment.liked:"+cid+":"+actor.AccountID()).Scan(&m.RecipientID, &m.ID, &m.Revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return c.rt.notifier.Withdraw(ctx, []notify.Withdrawal{m}, tx)
 }

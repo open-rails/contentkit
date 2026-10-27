@@ -294,17 +294,17 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []ImportCom
 		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.comments+` AS c (id, tenant_id, content_kind, content_id, content_version_id, language, reply_to_id,
- user_id, anon_name, body, deleted_at, created_at, updated_at)
+ user_id, anon_name, body, deleted_at, created_at, updated_at, author_hidden)
  SELECT r.id::uuid, $1, r.kind, r.content_id, r.version, r.language, r.reply_to::uuid, r.user_id, r.anon_name, r.body, r.deleted_at,
-  r.created_at, r.updated_at
+  r.created_at, r.updated_at, EXISTS (SELECT 1 FROM `+rt.hiddenAuthorsTable()+` h WHERE h.tenant_id=$1 AND h.actor_id=r.user_id)
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, kind text, content_id text, version text, language text, reply_to text, user_id text,
   anon_name text, body text, deleted_at timestamptz, created_at timestamptz, updated_at timestamptz)
  ON CONFLICT (tenant_id, id) DO UPDATE SET content_kind = EXCLUDED.content_kind, content_id = EXCLUDED.content_id, content_version_id = EXCLUDED.content_version_id,
-  language = EXCLUDED.language, reply_to_id = EXCLUDED.reply_to_id, user_id = EXCLUDED.user_id, anon_name = EXCLUDED.anon_name, body = EXCLUDED.body,
+  author_hidden = EXCLUDED.author_hidden, language = EXCLUDED.language, reply_to_id = EXCLUDED.reply_to_id, user_id = EXCLUDED.user_id, anon_name = EXCLUDED.anon_name, body = EXCLUDED.body,
   deleted_at = EXCLUDED.deleted_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
- WHERE c.tenant_id = $1 AND (c.content_kind, c.content_id, c.content_version_id, c.language, c.reply_to_id, c.user_id, c.anon_name, c.body, c.deleted_at, c.created_at)
+ WHERE c.tenant_id = $1 AND (c.content_kind, c.content_id, c.content_version_id, c.language, c.reply_to_id, c.user_id, c.anon_name, c.body, c.deleted_at, c.created_at, c.author_hidden)
   IS DISTINCT FROM (EXCLUDED.content_kind, EXCLUDED.content_id, EXCLUDED.content_version_id, EXCLUDED.language, EXCLUDED.reply_to_id, EXCLUDED.user_id,
-  EXCLUDED.anon_name, EXCLUDED.body, EXCLUDED.deleted_at, EXCLUDED.created_at)`, rt.tenant, string(data)); err != nil {
+  EXCLUDED.anon_name, EXCLUDED.body, EXCLUDED.deleted_at, EXCLUDED.created_at, EXCLUDED.author_hidden)`, rt.tenant, string(data)); err != nil {
 		return err
 	}
 	if err := rt.recount(ctx, tx, keys); err != nil {
@@ -503,7 +503,7 @@ n AS (SELECT k.kind, k.id, k.version,
  (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = -1)::int AS dislikes,
  (SELECT count(*) FROM `+s.t.favorites+` f WHERE f.tenant_id = $1 AND f.content_kind = k.kind AND f.content_id = k.id AND f.content_version_id IS NOT DISTINCT FROM k.version AND f.value = 1)::int AS favorites,
  (SELECT count(*) FROM `+s.t.comments+` c WHERE c.tenant_id = $1 AND c.content_kind = k.kind AND c.content_id = k.id AND c.content_version_id IS NOT DISTINCT FROM k.version
-   AND c.reply_to_id IS NULL AND c.deleted_at IS NULL AND c.moderation = 'approved')::int AS comments
+   AND c.reply_to_id IS NULL AND c.deleted_at IS NULL AND c.moderation = 'approved' AND NOT c.author_hidden)::int AS comments
  FROM k)
 UPDATE `+s.t.counts+` x SET likes = n.likes, dislikes = n.dislikes, favorites = n.favorites, comment_count = n.comments, updated_at = now()
 FROM n WHERE x.tenant_id = $1 AND x.content_kind = n.kind AND x.content_id = n.id AND x.content_version_id IS NOT DISTINCT FROM n.version
@@ -535,7 +535,7 @@ func (rt *Runtime) recountReplies(ctx context.Context, tx pgx.Tx, threads map[st
 	slices.Sort(ids)
 	s := rt.store
 	_, err := tx.Exec(ctx, `UPDATE `+s.t.comments+` p SET reply_count = n.replies FROM (SELECT x.id,
- (SELECT count(*) FROM `+s.t.comments+` r WHERE r.tenant_id = $1 AND r.reply_to_id = x.id AND r.deleted_at IS NULL AND r.moderation = 'approved')::int AS replies
+ (SELECT count(*) FROM `+s.t.comments+` r WHERE r.tenant_id = $1 AND r.reply_to_id = x.id AND r.deleted_at IS NULL AND r.moderation = 'approved' AND NOT r.author_hidden)::int AS replies
  FROM unnest($2::uuid[]) AS x(id)) n
  WHERE p.tenant_id = $1 AND p.id = n.id AND p.reply_count <> n.replies`, rt.tenant, ids)
 	return err

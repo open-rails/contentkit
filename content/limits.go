@@ -18,7 +18,7 @@ import (
 type Action string
 
 const (
-	ActionComment         Action = "comment"          // comment create, top-level or reply
+	ActionComment         Action = "comment"          // comment create or edit, top-level or reply
 	ActionCommentReaction Action = "comment_reaction" // like, dislike, neutral on a comment
 	ActionReaction        Action = "reaction"         // like, dislike, neutral on content
 	ActionFavorite        Action = "favorite"         // favorite and unfavorite

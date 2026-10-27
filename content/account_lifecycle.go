@@ -3,9 +3,13 @@ package content
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/versionid"
 )
 
 func (rt *Runtime) accountLifecycleTable() string {
@@ -31,6 +35,78 @@ VALUES ($1,$2,'deleted') ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant
 		return err
 	})
 	return err
+}
+
+func (rt *Runtime) hiddenAuthorsTable() string {
+	return pgx.Identifier{rt.schema, "content_hidden_authors"}.Sanitize()
+}
+
+// SetAccountHidden changes comment visibility without changing moderation or
+// account deletion state. Repeating the same state leaves counts unchanged.
+func (rt *Runtime) SetAccountHidden(ctx context.Context, actorID string, hidden bool) error {
+	if strings.TrimSpace(actorID) == "" {
+		return badRequest("subject id is required")
+	}
+	return pgx.BeginFunc(ctx, rt.store.pool, func(tx pgx.Tx) error {
+		if err := rt.lockErasureSubject(ctx, tx, actorID); err != nil {
+			return err
+		}
+		if hidden {
+			if _, err := tx.Exec(ctx, `INSERT INTO `+rt.hiddenAuthorsTable()+` (tenant_id,actor_id)
+VALUES ($1,$2) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, actorID); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `DELETE FROM `+rt.hiddenAuthorsTable()+` WHERE tenant_id=$1 AND actor_id=$2`, rt.tenant, actorID); err != nil {
+				return err
+			}
+		}
+		c := rt.comments
+		// Lock every affected comment and its parent at once, in id order, the
+		// order lockThread takes two of them in, so concurrent bans can't cycle.
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND (user_id=$2 OR id IN
+(SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2)) ORDER BY id FOR UPDATE`, rt.tenant, actorID); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT id::text FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2 AND author_hidden<>$3 ORDER BY id`, rt.tenant, actorID, hidden)
+		if err != nil {
+			return err
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			var replyTo *string
+			var deletedAt *time.Time
+			var state string
+			var k contentref.ContentKey
+			if err := tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET author_hidden=$3
+WHERE tenant_id=$1 AND id=$2 RETURNING reply_to_id::text,deleted_at,moderation,`+keyCols, rt.tenant, id, hidden).
+				Scan(&replyTo, &deletedAt, &state, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID)); err != nil {
+				return err
+			}
+			if state != ModerationApproved || deletedAt != nil {
+				continue
+			}
+			delta := 1
+			if hidden {
+				delta = -1
+			}
+			if err := c.count(ctx, tx, replyTo, k, delta); err != nil {
+				return err
+			}
+			if hidden {
+				err = c.withdrawNotices(ctx, tx, id)
+			} else {
+				err = c.restoreNotices(ctx, tx, id)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // AnonymizeAccount permanently removes account attribution without removing
@@ -64,6 +140,7 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 			`DELETE FROM ` + pgx.Identifier{rt.schema, "content_comment_notifications"}.Sanitize() + ` WHERE tenant_id=$1 AND recipient=$2`,
 			`UPDATE ` + s.t.pollAnswers + ` SET actor_id=NULL WHERE tenant_id=$1 AND actor_id=$2`,
 			`UPDATE ` + s.t.comments + ` SET user_id=NULL,anon_name='<Deleted>' WHERE tenant_id=$1 AND user_id=$2`,
+			`DELETE FROM ` + rt.hiddenAuthorsTable() + ` WHERE tenant_id=$1 AND actor_id=$2`,
 			`UPDATE ` + s.t.comments + ` SET moderated_by=NULL WHERE tenant_id=$1 AND moderated_by=$2`,
 			`DELETE FROM ` + s.t.commentBans + ` WHERE tenant_id=$1 AND (user_id=$2 OR scope='owner:' || $2)`,
 			`UPDATE ` + s.t.commentBans + ` SET banned_by='' WHERE tenant_id=$1 AND banned_by=$2`,

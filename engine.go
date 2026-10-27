@@ -620,7 +620,7 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
-		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
+		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength, DuplicateWindow: in.DuplicateWindow,
 		Logger: e.log,
 	}
 	if e.media != nil {

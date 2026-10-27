@@ -28,7 +28,8 @@ type PublicUser struct {
 
 // --- optional ports (nil -> documented default) ---
 
-// ContentProcessor sanitizes rich text on write. Default: strip tags.
+// ContentProcessor processes plain text on write. The default only trims whitespace;
+// callers render the result as text.
 type ContentProcessor interface {
 	Sanitize(ctx context.Context, raw string) (string, error)
 }

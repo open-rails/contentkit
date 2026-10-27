@@ -96,6 +96,8 @@ type InteractionsConfig struct {
 	Anonymous content.Anonymous `yaml:"anonymous" json:"anonymous"`
 	// CommentMaxLength is the longest comment in characters; 0 is the default.
 	CommentMaxLength int `yaml:"comment_max_length" json:"comment_max_length"`
+	// DuplicateWindow refuses identical comments within this duration; zero disables it.
+	DuplicateWindow time.Duration `yaml:"duplicate_window" json:"duplicate_window"`
 	// Limits are the per-actor rate limits, shared through Deps.Redis.
 	Limits LimitsConfig `yaml:"limits" json:"limits"`
 	// ModeratorTimeout bounds one moderation call (default 5s);

@@ -119,6 +119,13 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 		if name == "" {
 			return Comment{}, badRequest("anon_name is required for an anonymous comment")
 		}
+		if utf8.RuneCountInString(name) > 60 {
+			return Comment{}, badRequest("anon_name is at most 60 characters")
+		}
+		name, err = c.rt.rules.apply(ctx, name)
+		if err != nil {
+			return Comment{}, err
+		}
 		anonName = name
 	}
 
@@ -149,14 +156,18 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 		var targetReply *string
 		var targetDeleted *time.Time
 		var targetState, targetLanguage string
-		row := tx.QueryRow(ctx, `SELECT id::text, `+keyCols+`, reply_to_id::text, deleted_at, moderation, language FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = $1 FOR UPDATE`, in.ReplyToID, c.s.tenant)
-		if err := row.Scan(&in.ReplyToID, &target.TenantID, &target.ContentKind, &target.ContentID, versionid.Into(&target.ContentVersionID), &targetReply, &targetDeleted, &targetState, &targetLanguage); err != nil {
+		var targetHidden bool
+		if err := c.lockThread(ctx, tx, in.ReplyToID); err != nil {
+			return Comment{}, err
+		}
+		row := tx.QueryRow(ctx, `SELECT id::text, `+keyCols+`, reply_to_id::text, deleted_at, moderation, language, author_hidden FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = $1 FOR UPDATE`, in.ReplyToID, c.s.tenant)
+		if err := row.Scan(&in.ReplyToID, &target.TenantID, &target.ContentKind, &target.ContentID, versionid.Into(&target.ContentVersionID), &targetReply, &targetDeleted, &targetState, &targetLanguage, &targetHidden); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Comment{}, badRequest("comment to reply to not found")
 			}
 			return Comment{}, err
 		}
-		if target != key || targetState != ModerationApproved { // exactly one published target
+		if target != key || targetState != ModerationApproved || targetHidden { // exactly one published target
 			return Comment{}, badRequest("comment to reply to not found")
 		}
 		if targetDeleted != nil {
@@ -171,14 +182,33 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 		replyTo, in.Language = in.ReplyToID, targetLanguage
 	}
 
+	var hidden bool
+	if loggedIn {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.rt.hiddenAuthorsTable()+` WHERE tenant_id=$1 AND actor_id=$2)`, c.s.tenant, userID).Scan(&hidden); err != nil {
+			return Comment{}, err
+		}
+		if c.rt.duplicateWindow > 0 {
+			var duplicate bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.s.t.comments+` WHERE `+keyPred(1)+`
+				AND user_id=$5 AND reply_to_id IS NOT DISTINCT FROM $6::uuid AND language=$7 AND body=$8
+				AND deleted_at IS NULL AND created_at >= clock_timestamp() - $9::double precision * interval '1 second')`,
+				append(keyArgs(key), userID, replyTo, in.Language, clean, c.rt.duplicateWindow.Seconds())...).Scan(&duplicate); err != nil {
+				return Comment{}, err
+			}
+			if duplicate {
+				return Comment{}, errDuplicateComment
+			}
+		}
+	}
+
 	out := Comment{ReplyToID: in.ReplyToID, Body: clean, Language: in.Language}
-	row := tx.QueryRow(ctx, `INSERT INTO `+c.s.t.comments+` (`+keyCols+`, reply_to_id, user_id, anon_name, body, moderation, moderation_reason, moderation_verdict, id, language)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id::text, created_at, updated_at`,
-		append(keyArgs(key), replyTo, userID, anonName, clean, sc.state, sc.reason, sc.meta, contentref.NewID(), in.Language)...)
+	row := tx.QueryRow(ctx, `INSERT INTO `+c.s.t.comments+` (`+keyCols+`, reply_to_id, user_id, anon_name, body, moderation, moderation_reason, moderation_verdict, id, language, author_hidden)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id::text, created_at, updated_at`,
+		append(keyArgs(key), replyTo, userID, anonName, clean, sc.state, sc.reason, sc.meta, contentref.NewID(), in.Language, hidden)...)
 	if err := row.Scan(&out.ID, &out.CreatedAt, &out.UpdatedAt); err != nil {
 		return Comment{}, err
 	}
-	if sc.state == ModerationApproved {
+	if sc.state == ModerationApproved && !hidden {
 		var replyID *string
 		if replyTo != nil {
 			replyID = &in.ReplyToID
@@ -189,7 +219,7 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 		if err := c.notifyReply(ctx, tx, out.ID); err != nil {
 			return Comment{}, err
 		}
-	} else {
+	} else if sc.state != ModerationApproved {
 		out.Moderation, out.ModerationReason = sc.state, deref(sc.reason)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -335,7 +365,7 @@ type FeedItem struct {
 // references are resolved in one resolver call.
 func (c *comments) latest(ctx context.Context, actor access.Actor, language string, limit, offset int) ([]FeedItem, error) {
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+`, content_kind, content_id, content_version_id
-		FROM `+c.s.t.comments+` WHERE tenant_id = $1 AND deleted_at IS NULL AND moderation = 'approved' AND ($4 = '' OR language = $4)
+		FROM `+c.s.t.comments+` WHERE tenant_id = $1 AND deleted_at IS NULL AND moderation = 'approved' AND NOT author_hidden AND ($4 = '' OR language = $4)
 		ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`, c.s.tenant, limit, offset, language)
 	if err != nil {
 		return nil, err
@@ -410,7 +440,8 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, language stri
 type AdminComment struct {
 	Comment
 	contentref.ContentRef
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+	AuthorHidden bool       `json:"author_hidden"`
 }
 
 // adminList returns comments newest-first for moderation, soft-deleted, held
@@ -426,7 +457,7 @@ func (c *comments) adminList(ctx context.Context, kind, author string, limit, of
 		args = append(args, author)
 		where += fmt.Sprintf(` AND user_id = $%d`, len(args))
 	}
-	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+`, content_kind, content_id, content_version_id
+	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+`, content_kind, content_id, content_version_id, author_hidden
 		FROM `+c.s.t.comments+` WHERE tenant_id = $1`+where+`
 		ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`, args...)
 	if err != nil {
@@ -439,7 +470,7 @@ func (c *comments) adminList(ctx context.Context, kind, author string, limit, of
 		var it AdminComment
 		var replyTo, userID, anonName *string
 		var kindCol, id, version, state, reason string
-		if err := rows.Scan(&it.ID, &replyTo, &userID, &anonName, &it.Body, &it.Likes, &it.Dislikes, &it.ReplyCount, &it.DeletedAt, &it.CreatedAt, &it.UpdatedAt, &state, &reason, &it.Language, &kindCol, &id, versionid.Into(&version)); err != nil {
+		if err := rows.Scan(&it.ID, &replyTo, &userID, &anonName, &it.Body, &it.Likes, &it.Dislikes, &it.ReplyCount, &it.DeletedAt, &it.CreatedAt, &it.UpdatedAt, &state, &reason, &it.Language, &kindCol, &id, versionid.Into(&version), &it.AuthorHidden); err != nil {
 			return nil, err
 		}
 		it.Moderation, it.ModerationReason = state, reason
@@ -485,20 +516,21 @@ func (c *comments) restore(ctx context.Context, cid string) error {
 	var replyTo *string
 	var k contentref.ContentKey
 	var state string
+	var hidden bool
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET deleted_at = NULL, updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL
-		RETURNING reply_to_id::text, moderation, `+keyCols, cid, c.s.tenant).Scan(&replyTo, &state, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
+		RETURNING reply_to_id::text, moderation, author_hidden, `+keyCols, cid, c.s.tenant).Scan(&replyTo, &state, &hidden, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound // missing or not deleted
 	}
 	if err != nil {
 		return err
 	}
-	if state == ModerationApproved {
+	if state == ModerationApproved && !hidden {
 		if err := c.count(ctx, tx, replyTo, k, 1); err != nil {
 			return err
 		}
-		if err := c.restoreReplyNotices(ctx, tx, cid); err != nil {
+		if err := c.restoreNotices(ctx, tx, cid); err != nil {
 			return err
 		}
 	}
@@ -651,11 +683,12 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	if err := c.lockThread(ctx, tx, cid); err != nil {
 		return Comment{}, err
 	}
+	var hidden bool
 	var before string
 	var revision int64
 	var k contentref.ContentKey
-	err = tx.QueryRow(ctx, `SELECT moderation, moderation_revision, `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, cid, c.s.tenant).
-		Scan(&before, &revision, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
+	err = tx.QueryRow(ctx, `SELECT moderation, moderation_revision, author_hidden, `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, cid, c.s.tenant).
+		Scan(&before, &revision, &hidden, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Comment{}, ErrNotFound
 	}
@@ -667,21 +700,21 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	}
 	var cm Comment
 	replyTo, userID, anonName, _, err := scanComment(tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+`
-		SET published_body = CASE WHEN $3='approved' THEN NULL WHEN moderation='approved' THEN body ELSE published_body END, body = $2, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $3, moderation_reason = $4, moderation_verdict = $5, updated_at = now()
+		SET body = $2, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $3, moderation_reason = $4, moderation_verdict = $5, updated_at = now()
 		WHERE tenant_id = $6 AND id = $1 RETURNING `+commentCols, cid, clean, sc.state, sc.reason, sc.meta, c.s.tenant), &cm)
 	if err != nil {
 		return Comment{}, err
 	}
-	if delta := b2i(sc.state == ModerationApproved) - b2i(before == ModerationApproved); delta != 0 {
+	if delta := b2i(sc.state == ModerationApproved && !hidden) - b2i(before == ModerationApproved && !hidden); delta != 0 {
 		if err := c.count(ctx, tx, replyTo, k, delta); err != nil {
 			return Comment{}, err
 		}
 	}
-	if sc.state == ModerationApproved && before != ModerationApproved {
-		if err := c.restoreReplyNotices(ctx, tx, cid); err != nil {
+	if !hidden && sc.state == ModerationApproved && before != ModerationApproved {
+		if err := c.restoreNotices(ctx, tx, cid); err != nil {
 			return Comment{}, err
 		}
-	} else if sc.state != ModerationApproved && before == ModerationApproved {
+	} else if !hidden && sc.state != ModerationApproved && before == ModerationApproved {
 		if err := c.withdrawNotices(ctx, tx, cid); err != nil {
 			return Comment{}, err
 		}
@@ -712,16 +745,17 @@ func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid strin
 	var replyTo *string
 	var k contentref.ContentKey
 	var state string
+	var hidden bool
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET deleted_at = now(), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-		RETURNING reply_to_id::text, moderation, `+keyCols, cid, c.s.tenant).Scan(&replyTo, &state, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
+		RETURNING reply_to_id::text, moderation, author_hidden, `+keyCols, cid, c.s.tenant).Scan(&replyTo, &state, &hidden, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // already deleted
 	}
 	if err != nil {
 		return err
 	}
-	if state == ModerationApproved {
+	if state == ModerationApproved && !hidden {
 		if err := c.count(ctx, tx, replyTo, k, -1); err != nil {
 			return err
 		}
@@ -808,14 +842,15 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 	}
 	var deletedAt *time.Time
 	var state string
+	var hidden bool
 	// Key by the stored id: every spelling of cid is one comment, one reaction.
-	if err := tx.QueryRow(ctx, `SELECT id::text, deleted_at, moderation FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, cid, c.s.tenant).Scan(&cid, &deletedAt, &state); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id::text, deleted_at, moderation, author_hidden FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, cid, c.s.tenant).Scan(&cid, &deletedAt, &state, &hidden); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ReactionCounts{}, ErrNotFound
 		}
 		return ReactionCounts{}, err
 	}
-	if deletedAt != nil || state != ModerationApproved {
+	if deletedAt != nil || state != ModerationApproved || hidden {
 		return ReactionCounts{}, ErrNotFound
 	}
 	key := c.rt.Ref(KindComment, cid).Key()
@@ -830,6 +865,11 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 	}
 	if dLikes > 0 {
 		if err := c.notifyLike(ctx, tx, actor, cid, ref); err != nil {
+			return ReactionCounts{}, err
+		}
+	}
+	if dLikes < 0 {
+		if err := c.withdrawLikeNotice(ctx, tx, actor, cid); err != nil {
 			return ReactionCounts{}, err
 		}
 	}
@@ -859,7 +899,7 @@ func commentRoutes() []httpapi.Route[*comments] {
 				Doc:     "Comments on " + noun + " in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
 				Query:   targetQuery(typ),
 				Request: CommentInput{}, Responses: []httpapi.Reply{httpapi.Created(Comment{}), httpapi.Accepted(Comment{})},
-				Errors: []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
+				Errors: []string{CodeCommentBanned, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeForbidden, CodeModerationRejected, CodeDuplicateComment, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 				Serve: func(c *comments) http.HandlerFunc { return c.handleCreate(typ) }})
 	}
 	return append(append(out, otherCommentRoutes...), commentModerationRoutes...)
@@ -890,7 +930,7 @@ var otherCommentRoutes = []httpapi.Route[*comments]{
 		Doc:       "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. Its author can't edit it while it is held or rejected.",
 		Request:   CommentEdit{},
 		Responses: []httpapi.Reply{httpapi.OK(Comment{}), httpapi.Accepted(Comment{})},
-		Errors:    []string{CodeCommentBanned, CodeCommentModerated, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
+		Errors:    []string{CodeCommentBanned, CodeCommentModerated, CodeCommentTooLong, CodeCommentsClosed, CodeCommentsLocked, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited}},
 		Serve: httpapi.H((*comments).handleEdit)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
 		Doc:       "Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder.",
@@ -912,9 +952,27 @@ type Restored struct {
 	Restored bool `json:"restored"`
 }
 
+// maxCommentOffset bounds offset paging on comment lists, which reads and
+// discards every skipped row.
+const maxCommentOffset = 10000
+
+// commentPage is parsePage for comment lists, refusing offsets past
+// maxCommentOffset.
+func commentPage(w http.ResponseWriter, req *http.Request) (limit, offset int, ok bool) {
+	limit, offset = parsePage(req)
+	if offset > maxCommentOffset {
+		writeErr(w, badRequest("offset is at most %d", maxCommentOffset))
+		return 0, 0, false
+	}
+	return limit, offset, true
+}
+
 func (c *comments) handleList(w http.ResponseWriter, req *http.Request, target contentref.ContentRef) {
 	actor := c.rt.actor(req.Context())
-	limit, offset := parsePage(req)
+	limit, offset, ok := commentPage(w, req)
+	if !ok {
+		return
+	}
 	q := req.URL.Query()
 	list, err := c.list(req.Context(), actor, target, q.Get("language"), q.Get("sort"), limit, offset)
 	if err != nil {
@@ -931,7 +989,10 @@ func (c *comments) handleAdminList(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	limit, offset := parsePage(req)
+	limit, offset, ok := commentPage(w, req)
+	if !ok {
+		return
+	}
 	q := req.URL.Query()
 	items, err := c.adminList(req.Context(), q.Get("content_kind"), strings.TrimSpace(q.Get("author")), limit, offset)
 	if err != nil {
@@ -956,7 +1017,10 @@ func (c *comments) handleRestore(w http.ResponseWriter, req *http.Request) {
 
 func (c *comments) handleLatest(w http.ResponseWriter, req *http.Request) {
 	actor := c.rt.actor(req.Context())
-	limit, offset := parsePage(req)
+	limit, offset, ok := commentPage(w, req)
+	if !ok {
+		return
+	}
 	items, err := c.latest(req.Context(), actor, req.URL.Query().Get("language"), limit, offset)
 	if err != nil {
 		writeErr(w, err)
@@ -967,7 +1031,10 @@ func (c *comments) handleLatest(w http.ResponseWriter, req *http.Request) {
 
 func (c *comments) handleReplies(w http.ResponseWriter, req *http.Request) {
 	actor := c.rt.actor(req.Context())
-	limit, offset := parsePage(req)
+	limit, offset, ok := commentPage(w, req)
+	if !ok {
+		return
+	}
 	list, err := c.replies(req.Context(), actor, req.PathValue("cid"), limit, offset)
 	if err != nil {
 		writeErr(w, err)
@@ -1009,6 +1076,10 @@ func (c *comments) handleCreate(typ TargetType) http.HandlerFunc {
 
 func (c *comments) handleEdit(w http.ResponseWriter, req *http.Request) {
 	actor := c.rt.actor(req.Context())
+	if err := c.rt.limit(req.Context(), ActionComment, actor); err != nil {
+		writeErr(w, err)
+		return
+	}
 	var in CommentEdit
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)

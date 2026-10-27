@@ -197,8 +197,8 @@ func TestAccountNotificationChannel(t *testing.T) {
 		must(t, err)
 		_, err = n.a.client(writerToken).PostCommentDislike(t.Context(), parent.ID)
 		must(t, err)
-		if len(n.items(t, owner.ID)) != 2 {
-			t.Fatal("self/anonymous/dislike emitted an extra notice")
+		if len(n.items(t, owner.ID)) != 1 {
+			t.Fatal("dislike did not withdraw the like notice")
 		}
 		_, err = n.a.client(writerToken).PostCommentLike(t.Context(), parent.ID)
 		must(t, err)
@@ -206,12 +206,31 @@ func TestAccountNotificationChannel(t *testing.T) {
 		sources := map[string]bool{}
 		for _, notice := range notices {
 			if sources[notice.Origin.ID] {
-				t.Fatal("different like transitions reused identity")
+				t.Fatal("duplicate like notice identity")
 			}
 			sources[notice.Origin.ID] = true
 		}
-		if len(notices) != 3 || len(n.items(t, writer.ID)) != 0 {
+		if len(notices) != 2 || len(n.items(t, writer.ID)) != 0 {
 			t.Fatalf("wrong transition or sender inbox: %+v", notices)
+		}
+		likeID := "comment.liked:" + parent.ID + ":" + writer.ID
+		if !sources[likeID] {
+			t.Fatalf("missing stable like identity: %+v", notices)
+		}
+		_, err = n.a.client(writerToken).DeleteCommentReaction(t.Context(), parent.ID)
+		must(t, err)
+		if len(n.items(t, owner.ID)) != 1 {
+			t.Fatal("unlike did not withdraw the like notice")
+		}
+		_, err = n.a.client(writerToken).PostCommentLike(t.Context(), parent.ID)
+		must(t, err)
+		if got := n.items(t, owner.ID); len(got) != 2 {
+			t.Fatalf("re-like duplicated the notice: %+v", got)
+		}
+		var identities int
+		must(t, n.w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{n.w.schema, "content_comment_notifications"}.Sanitize()+` WHERE tenant_id=$1 AND source_id=$2`, n.a.cfg.Scope.AppID.String(), likeID).Scan(&identities))
+		if identities != 1 {
+			t.Fatalf("like identities=%d; want 1", identities)
 		}
 		legacy, err := n.legacy.List(t.Context(), notify.Recipient{Audience: notify.AudienceUser, ID: owner.ID}, notify.ListOptions{})
 		must(t, err)
@@ -486,4 +505,132 @@ func TestAccountNotificationLegacyAdoption(t *testing.T) {
 			t.Fatalf("bound publisher cannot reopen legacy receipt: %+v", reopened)
 		}
 	})
+}
+
+func TestHiddenCommentAuthors(t *testing.T) {
+	n := newAccountNoticeWorld(t)
+	a := n.a
+	owner, ownerToken := n.w.person(t, 0)
+	writer, writerToken := n.w.person(t, 0)
+	ownerClient, writerClient, public := a.client(ownerToken), a.client(writerToken), a.client("")
+	item := publishedArticle(t, a, "Hidden authors")
+	parent := postComment(t, ownerClient, item.ID, "Visible parent")
+	top := postComment(t, writerClient, item.ID, "Hidden top level")
+	reply := n.reply(t, writerToken, item.ID, parent.ID, "Hidden reply")
+	child := n.reply(t, ownerToken, item.ID, top.ID, "Visible child")
+	held := postComment(t, writerClient, item.ID, "Held before hiding")
+	approvedLater := postComment(t, writerClient, item.ID, "Approve while hidden")
+	must(t, n.manager.PostCommentHold(t.Context(), held.ID))
+	must(t, n.manager.PostCommentHold(t.Context(), approvedLater.ID))
+	_, err := ownerClient.PostCommentLike(t.Context(), top.ID)
+	must(t, err)
+	_, err = ownerClient.PostCommentLike(t.Context(), reply.ID)
+	must(t, err)
+	if len(n.items(t, owner.ID)) != 1 || len(n.items(t, writer.ID)) != 3 {
+		t.Fatal("missing initial reply/like notices")
+	}
+	checkCounts := func(wantTop, wantReplies int) {
+		t.Helper()
+		var count int
+		must(t, n.w.pool.QueryRow(t.Context(), `SELECT comment_count FROM `+pgx.Identifier{n.w.schema, "content_interaction_counts"}.Sanitize()+` WHERE tenant_id=$1 AND content_kind='article' AND content_id=$2 AND content_version_id IS NULL`, a.cfg.Scope.AppID.String(), item.ID).Scan(&count))
+		if count != wantTop {
+			t.Fatalf("comment_count=%d; want %d", count, wantTop)
+		}
+		if got := ownComment(t, ownerClient, item.ID, parent.ID).ReplyCount; got != wantReplies {
+			t.Fatalf("reply_count=%d; want %d", got, wantReplies)
+		}
+		standing, err := public.GetContentCanComment(t.Context(), item.ID, ck.GetContentCanCommentQuery{})
+		must(t, err)
+		if standing.Count == nil || *standing.Count != wantTop {
+			t.Fatalf("standing count=%v; want %d", standing.Count, wantTop)
+		}
+	}
+	checkCounts(2, 1)
+	for range 2 {
+		must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, true))
+		checkCounts(1, 0)
+	}
+	assertCommentVisibility(t, public, item.ID, top.ID, false)
+	assertCommentVisibility(t, writerClient, item.ID, top.ID, true)
+	replies, err := public.GetCommentReplies(t.Context(), parent.ID, ck.GetCommentRepliesQuery{})
+	must(t, err)
+	if len(replies) != 0 {
+		t.Fatalf("hidden reply visible: %+v", replies)
+	}
+	latest, err := public.GetCommentsLatest(t.Context(), ck.GetCommentsLatestQuery{Limit: 100})
+	must(t, err)
+	for _, cm := range latest {
+		if cm.UserID == writer.ID {
+			t.Fatalf("hidden author in latest: %+v", cm)
+		}
+	}
+	admin, err := n.manager.GetCommentsAdmin(t.Context(), ck.GetCommentsAdminQuery{Author: writer.ID})
+	must(t, err)
+	if len(admin) != 4 {
+		t.Fatalf("admin lost hidden comments: %+v", admin)
+	}
+	for _, cm := range admin {
+		if !cm.AuthorHidden {
+			t.Fatalf("admin omitted hidden state: %+v", cm)
+		}
+	}
+	queue, err := n.manager.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: content.KindComment})
+	must(t, err)
+	if len(queue.Items) != 2 {
+		t.Fatalf("hidden held comments missing: %+v", queue)
+	}
+	if len(n.items(t, owner.ID)) != 0 || len(n.items(t, writer.ID)) != 0 {
+		t.Fatal("hiding retained reply/like notices")
+	}
+	must(t, n.manager.PostCommentRelease(t.Context(), approvedLater.ID))
+	created := postComment(t, writerClient, item.ID, "Created while hidden")
+	assertCommentVisibility(t, public, item.ID, created.ID, false)
+	must(t, n.manager.PostCommentHold(t.Context(), created.ID))
+	checkCounts(1, 0)
+	must(t, n.manager.PostCommentRelease(t.Context(), created.ID))
+	_, err = writerClient.PatchComment(t.Context(), created.ID, content.CommentEdit{Body: "Edited while hidden"})
+	must(t, err)
+	must(t, writerClient.DeleteComment(t.Context(), top.ID))
+	_, err = n.manager.PostCommentRestore(t.Context(), top.ID)
+	must(t, err)
+	checkCounts(1, 0)
+	if len(n.items(t, writer.ID)) != 0 {
+		t.Fatal("restoring while hidden published notices")
+	}
+	for range 2 {
+		must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, false))
+		checkCounts(4, 1)
+	}
+	for _, cm := range []content.Comment{top, approvedLater, created} {
+		assertCommentVisibility(t, public, item.ID, cm.ID, true)
+	}
+	assertCommentVisibility(t, public, item.ID, held.ID, false)
+	if ownComment(t, writerClient, item.ID, held.ID).Moderation != content.ModerationHeld {
+		t.Fatal("unhide changed the pre-existing hold")
+	}
+	replies, err = public.GetCommentReplies(t.Context(), parent.ID, ck.GetCommentRepliesQuery{})
+	must(t, err)
+	if len(replies) != 1 || replies[0].ID != reply.ID {
+		t.Fatalf("unhide did not restore replies: %+v", replies)
+	}
+	latest, err = public.GetCommentsLatest(t.Context(), ck.GetCommentsLatestQuery{Limit: 100})
+	must(t, err)
+	seen := map[string]bool{}
+	for _, cm := range latest {
+		seen[cm.ID] = true
+	}
+	for _, cm := range []content.Comment{top, reply, child, approvedLater, created} {
+		if !seen[cm.ID] {
+			t.Fatalf("unhide did not restore latest comment %s", cm.ID)
+		}
+	}
+	if len(n.items(t, owner.ID)) != 1 || len(n.items(t, writer.ID)) != 3 {
+		t.Fatal("unhide did not restore reply/like notices")
+	}
+	must(t, a.engine.SetAccountDeleted(t.Context(), writer.ID, true))
+	must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, true))
+	must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, false))
+	if got := ownComment(t, public, item.ID, top.ID); got.AnonName != "<Deleted>" || got.UserID != "" {
+		t.Fatalf("unhide changed deletion presentation: %+v", got)
+	}
 }
