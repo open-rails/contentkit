@@ -1,7 +1,7 @@
 // Command media-worker is the stock media worker (media/worker) for hosts
 // whose registry is plain data: it reads it from a JSON file
-// (media.Registry's JSON). Hosts with a Private.Choose or Hooks.Failed build
-// their own worker from the code that builds their registry instead.
+// (media.Registry's JSON). Hosts with a Hooks.Failed build their own worker
+// from the code that builds their registry instead.
 //
 // Environment: worker.FromEnv and Config.TuningFromEnv, plus
 //
