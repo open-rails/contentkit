@@ -61,7 +61,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | GET | `/v1/channels/{id}/favorite` | public | — | 200 `FavoriteState` | The favorite count of a channel and whether the caller favorited it (never, signed out: then it must be visible). |
 | GET | `/v1/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
 | GET | `/v1/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `state`, `q`, `limit`, `offset`. |
-| GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote; a scheduled or inactive poll only for root:polls:write holders. |
+| GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote; a scheduled poll only for root:polls:write holders. |
 | POST | `/v1/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with at least two predefined options; only multiple_choice is supported. |
 | PATCH | `/v1/polls/{id}` | staff `root:polls:write` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
 | DELETE | `/v1/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll and its media folder. |
@@ -91,7 +91,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | POST | `/v1/moderation/banned-words` | staff `root:comments:moderate` | `BannedWordInput[]` | 200 `BannedWord[]` | Bans words, or changes what banned ones do: mask (the default) or reject. |
 | DELETE | `/v1/moderation/banned-words` | staff `root:comments:moderate` | `string[]` | 204 — | Unbans words. |
 | GET | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | — | 200 `IPBan[]` | The IP bans, newest first, expired ones included. |
-| POST | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `IPBanInput[]` | 200 `IPBan[]` | Bans addresses or networks from commenting and answering polls, or replaces their bans. |
+| POST | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `IPBanInput[]` | 200 `IPBan[]` | Bans addresses or networks from commenting, or replaces their bans. |
 | DELETE | `/v1/moderation/ip-bans` | staff `root:comments:moderate` | `string[]` | 204 — | Lifts the bans of addresses or networks. |
 
 ## Contents: content items, versions, catalog totals (`/v1`)
@@ -285,7 +285,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `type_not_allowed` | 415 | The file type is not allowed in the upload path; `details.allowed` lists the types. |
 | `unauthorized` | 401 | The request needs a valid credential: it has none where the route needs one, or one that is expired, revoked or invalid. WWW-Authenticate says which. |
 | `unavailable` | 503 | The host's auth, media storage or signal plane cannot be reached, or a commit's recovery is pending; retry. |
-| `upgrade_required` | 503 | The media item was stored before v0.68 and must be migrated using ContentKit v0.119.1 before this release can read it. |
+| `upgrade_required` | 503 | The media item's publication is being restored and becomes readable when the restore finishes; retry later. |
 | `video_aspect_unsupported` | 422 | The video's display aspect is outside what its upload path accepts; `details` has `min_aspect` and `max_aspect` (width/height). |
 | `video_over_budget` | 422 | The planned encode costs more than its upload path allows, or the source averages under a frame a second. |
 | `video_too_large` | 422 | The video's frames are larger than its upload path allows. |

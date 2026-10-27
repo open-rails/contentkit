@@ -36,13 +36,9 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 		return nil, nil
 	}
 	kind, preset := a.kind()
-	if e.scope != nil && !e.cfg.Media.LegacyLayout {
+	if e.scope != nil {
 		kind.Namespace = ""
 		kind.Account = true
-	}
-	if e.cfg.Media.LegacyLayout && e.cfg.Accounts != nil {
-		kind.Namespace = e.cfg.Accounts.Namespace
-		kind.Account = false
 	}
 	out := &engineAvatars{urls: e.media.reg}
 	if a.Primary != "" {

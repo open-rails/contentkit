@@ -181,9 +181,6 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return nil, err
 		}
 	}
-	if err := media.ValidateVersionStorageMigration(ctx, c.Kinds, journal); err != nil {
-		return nil, fmt.Errorf("media/worker: version storage migration required: %w", err)
-	}
 	// A stock worker can replace published renditions too. Install the same
 	// synchronous catalog barrier as embedded writers before any DELETE.
 	registryConfig := c.Kinds.Config()
@@ -200,9 +197,6 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	manifests, err := media.NewManifests(c.Store, c.Kinds, media.ManifestOptions{Locker: media.PGLocker(c.Pool), Journal: journal, CleanupGrace: c.Grace})
 	if err != nil {
 		return nil, err
-	}
-	if err := manifests.ValidatePublicationLayoutMigration(ctx); err != nil {
-		return nil, fmt.Errorf("media/worker: publication layout migration required: %w", err)
 	}
 	uploads, err := media.NewUploads(media.UploadOptions{Store: c.Store, Manifests: manifests})
 	if err != nil {

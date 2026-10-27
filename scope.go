@@ -114,7 +114,7 @@ func (c Config) withScope() (Config, *Scope, error) {
 	if c.Accounts != nil {
 		accounts := *c.Accounts
 		if accounts.Namespace != "" {
-			return c, nil, errors.New("contentkit: scoped Accounts.Namespace is derived; use MigrationOptions.LegacyAccountKey to adopt existing storage")
+			return c, nil, errors.New("contentkit: scoped Accounts.Namespace is derived; remove it")
 		}
 		if accounts.Namespace == "" {
 			accounts.Namespace = (layout.Scope{TenantID: scope.TenantID.String()}).Partition()

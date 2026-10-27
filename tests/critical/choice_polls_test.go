@@ -3,12 +3,14 @@ package critical_test
 import (
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
@@ -51,7 +53,7 @@ func TestChoicePolls(t *testing.T) {
 	t.Run("CK-J30-S01_predefined_choices_reject_retired_writes", func(t *testing.T) {
 		raw("/polls", `{"kind":"free_text","question":"Unsupported","language":"en"}`, 400)
 		raw("/import", `{"source":"removed-answers","answers":[]}`, 400)
-		_, err := admin.PostPolls(t.Context(), content.PollInput{Question: "Too few", Options: input.Options[:1]})
+		_, err := admin.PostPolls(t.Context(), content.PollInput{Question: "Too few", Language: "en", Options: input.Options[:1]})
 		requireError(t, err, 400, "invalid_request")
 		_, err = voter.PostPolls(t.Context(), input)
 		requireError(t, err, 403, "forbidden")
@@ -94,6 +96,11 @@ func TestChoicePolls(t *testing.T) {
 		if got.TotalVotes != 1 || got.MyOption != p.Options[0].ID || got.Options[0].VoteCount != 1 || got.Options[1].VoteCount != 0 {
 			t.Fatalf("duplicate/final vote changed counts: %+v", got)
 		}
+		var ip *string
+		must(t, w.pool.QueryRow(t.Context(), `SELECT ip::text FROM `+w.schema+`.content_poll_votes WHERE tenant_id=$1 AND question_id=$2 AND user_id=$3`, a.cfg.Scope.AppID.String(), p.ID, person.ID).Scan(&ip))
+		if ip != nil {
+			t.Fatalf("signed-in vote stored an IP: %q", *ip)
+		}
 		_, err = other.PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[1].ID})
 		must(t, err)
 		for range 2 {
@@ -118,10 +125,17 @@ func TestChoicePolls(t *testing.T) {
 		inactive := false
 		_, err = admin.PatchPoll(t.Context(), p.ID, content.PollUpdate{IsActive: &inactive})
 		must(t, err)
+		got, err := a.client("").GetPoll(t.Context(), p.ID)
+		must(t, err)
+		if !got.Closed {
+			t.Fatalf("inactive poll is not closed: %+v", got)
+		}
 		_, err = other.PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[0].ID})
 		requireError(t, err, 400, "invalid_request")
 		past := time.Now().Add(-time.Minute)
+		live := past.Add(-time.Hour)
 		closed := input
+		closed.LiveAt = &live
 		closed.ClosesAt = &past
 		p = create(closed)
 		_, err = other.PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[0].ID})
@@ -146,12 +160,141 @@ func TestChoicePolls(t *testing.T) {
 			t.Fatal("historical poll was converted")
 		}
 	})
+	t.Run("CK-J30-S01_close_must_follow_resulting_live_time", func(t *testing.T) {
+		live := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+		closes := live.Add(time.Hour)
+		scheduled := input
+		scheduled.LiveAt, scheduled.ClosesAt = &live, &closes
+		p := create(scheduled)
+		later, earlier := closes.Add(time.Hour), live.Add(-time.Hour)
+		for _, update := range []content.PollUpdate{
+			{LiveAt: &later},
+			{ClosesAt: content.Nullable[time.Time]{Set: true, Value: &earlier}},
+			{LiveAt: &closes},
+			{ClosesAt: content.Nullable[time.Time]{Set: true, Value: &live}},
+		} {
+			_, err := admin.PatchPoll(t.Context(), p.ID, update)
+			requireError(t, err, 400, "invalid_request")
+			if !strings.Contains(err.Error(), "closes_at must be after live_at") {
+				t.Fatal(err)
+			}
+		}
+		got, err := admin.GetPoll(t.Context(), p.ID)
+		must(t, err)
+		if !got.LiveAt.Equal(live) || got.ClosesAt == nil || !got.ClosesAt.Equal(closes) {
+			t.Fatalf("invalid patch changed poll dates: %+v", got)
+		}
+		got, err = admin.PatchPoll(t.Context(), p.ID, content.PollUpdate{ClosesAt: content.Nullable[time.Time]{Set: true, Value: &later}})
+		must(t, err)
+		if got.ClosesAt == nil || !got.ClosesAt.Equal(later) {
+			t.Fatalf("valid patch did not change closes_at: %+v", got)
+		}
+		got, err = admin.PatchPoll(t.Context(), p.ID, content.PollUpdate{LiveAt: &later, ClosesAt: content.Nullable[time.Time]{Set: true}})
+		must(t, err)
+		if !got.LiveAt.Equal(later) || got.ClosesAt != nil {
+			t.Fatalf("clearing closes_at did not allow later live_at: %+v", got)
+		}
+		_, err = admin.PatchPoll(t.Context(), uuid.NewString(), content.PollUpdate{LiveAt: &later})
+		requireError(t, err, 404, "not_found")
+		past := time.Now().Add(-time.Minute)
+		closed := input
+		closed.ClosesAt = &past
+		_, err = admin.PostPolls(t.Context(), closed)
+		requireError(t, err, 400, "invalid_request")
+	})
+	t.Run("CK-J30-S01_poll_editor_limits", func(t *testing.T) {
+		options := make([]content.PollOptionInput, 11)
+		for i := range options {
+			options[i] = content.PollOptionInput{Label: "Choice", Position: i}
+		}
+		for _, in := range []content.PollInput{
+			{Question: input.Question, Language: "en", Options: options},
+			{Question: strings.Repeat("界", 301), Language: "en", Options: input.Options},
+			{Question: input.Question, Language: "unknown", Options: input.Options},
+			{Question: input.Question, Options: input.Options},
+			{Question: input.Question, Language: "en", Options: []content.PollOptionInput{{Label: strings.Repeat("界", 201)}, {Label: "No"}}},
+		} {
+			_, err := admin.PostPolls(t.Context(), in)
+			requireError(t, err, 400, "invalid_request")
+		}
+		question, label := strings.Repeat("界", 300), strings.Repeat("界", 200)
+		options[0].Label = " " + label + " "
+		p := create(content.PollInput{Question: " " + question + " ", Language: "en", Options: options[:9]})
+		if p.Question != question || p.Options[0].Label != label {
+			t.Fatalf("poll text was not trimmed: %+v", p)
+		}
+		long := label + "界"
+		_, err := admin.PostPollOptions(t.Context(), p.ID, content.PollOptionPatch{Label: &long})
+		requireError(t, err, 400, "invalid_request")
+		_, err = admin.PatchPollOption(t.Context(), p.ID, p.Options[0].ID, content.PollOptionPatch{Label: &long})
+		requireError(t, err, 400, "invalid_request")
+		_, err = admin.PostPollOptions(t.Context(), p.ID, content.PollOptionPatch{Label: &label})
+		must(t, err)
+		_, err = admin.PostPollOptions(t.Context(), p.ID, content.PollOptionPatch{Label: &label})
+		requireError(t, err, 400, "invalid_request")
+		question += "界"
+		_, err = admin.PatchPoll(t.Context(), p.ID, content.PollUpdate{Question: &question})
+		requireError(t, err, 400, "invalid_request")
+	})
+	t.Run("CK-J30-S01_vote_and_option_delete_serialize", func(t *testing.T) {
+		three := input
+		three.Options = append(slices.Clone(input.Options), content.PollOptionInput{Label: "Spring", Position: 2})
+		tenant := a.cfg.Scope.AppID.String()
+		racer, racerToken := w.person(t, 0)
+		racing := a.client(racerToken)
+		blocked := func(holder pgx.Tx) {
+			t.Helper()
+			waitForWithin(t, 10*time.Second, func() bool {
+				var waiting bool
+				must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, holder.Conn().PgConn().PID()).Scan(&waiting))
+				return waiting
+			})
+		}
+
+		// Delete first: a vote waiting on it finds the option gone.
+		p := create(three)
+		holder, err := w.pool.Begin(t.Context())
+		must(t, err)
+		defer holder.Rollback(t.Context())
+		_, err = holder.Exec(t.Context(), `SELECT 1 FROM `+w.schema+`.content_poll_questions WHERE tenant_id=$1 AND id=$2 FOR NO KEY UPDATE`, tenant, p.ID)
+		must(t, err)
+		_, err = holder.Exec(t.Context(), `DELETE FROM `+w.schema+`.content_poll_options WHERE tenant_id=$1 AND id=$2`, tenant, p.Options[2].ID)
+		must(t, err)
+		voted := make(chan error, 1)
+		go func() {
+			_, err := racing.PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[2].ID})
+			voted <- err
+		}()
+		blocked(holder)
+		must(t, holder.Commit(t.Context()))
+		requireError(t, <-voted, 400, "invalid_request")
+
+		// Vote first: the delete waits for it, then removes the option and its vote.
+		p = create(three)
+		holder, err = w.pool.Begin(t.Context())
+		must(t, err)
+		defer holder.Rollback(t.Context())
+		_, err = holder.Exec(t.Context(), `SELECT 1 FROM `+w.schema+`.content_poll_questions WHERE tenant_id=$1 AND id=$2 FOR SHARE`, tenant, p.ID)
+		must(t, err)
+		deleted := make(chan error, 1)
+		go func() { deleted <- admin.DeletePollOption(t.Context(), p.ID, p.Options[2].ID) }()
+		blocked(holder)
+		_, err = holder.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_poll_votes(tenant_id, question_id, option_id, user_id) VALUES ($1, $2, $3, $4)`, tenant, p.ID, p.Options[2].ID, racer.ID)
+		must(t, err)
+		must(t, holder.Commit(t.Context()))
+		must(t, <-deleted)
+		var left int
+		must(t, w.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM `+w.schema+`.content_poll_options WHERE tenant_id=$1 AND id=$2) + (SELECT count(*) FROM `+w.schema+`.content_poll_votes WHERE tenant_id=$1 AND option_id=$2)`, tenant, p.Options[2].ID).Scan(&left))
+		if left != 0 {
+			t.Fatalf("deleted option or its vote survived: %d rows", left)
+		}
+	})
 }
 
 func TestAnonymousChoicePolls(t *testing.T) {
 	w := newWorld(t, func(c *ck.Config) { c.Interactions.Anonymous.Votes = true; c.Interactions.Limits.Disabled = true })
 	a := w.apps[0]
-	poll, err := a.engine.Client().PostPolls(t.Context(), content.PollInput{Question: "Anonymous choice", Options: []content.PollOptionInput{{Label: "Yes"}, {Label: "No", Position: 1}}})
+	poll, err := a.engine.Client().PostPolls(t.Context(), content.PollInput{Question: "Anonymous choice", Language: "en", Options: []content.PollOptionInput{{Label: "Yes"}, {Label: "No", Position: 1}}})
 	must(t, err)
 	for range 2 {
 		got, err := a.client("").PostPollVote(t.Context(), poll.ID, content.PollVote{OptionID: poll.Options[0].ID})

@@ -12,8 +12,7 @@ import (
 // tenant avatar journal, allocations and publication metadata. A scoped engine
 // derives the account key or loads its immutable adopted key from the binding.
 type AccountsConfig struct {
-	// Namespace is legacy-only. Scoped engines use MigrationOptions.LegacyAccountKey
-	// once during adoption instead of configuring an independent namespace.
+	// Namespace is for unscoped engines; scoped engines derive it.
 	Namespace string         `json:"namespace" yaml:"namespace"`
 	Schema    string         `json:"schema" yaml:"schema"`
 	Avatars   *AvatarsConfig `json:"avatars,omitempty" yaml:"avatars,omitempty"`
@@ -47,10 +46,10 @@ func (c Config) withAccounts() (Config, error) {
 	if c.Avatars != nil {
 		avatars := *c.Avatars
 		kind, _ := avatars.kind()
-		if (c.Media == nil || c.Media.Scope.IsZero() || c.Media.LegacyLayout) && avatars.Kind != nil && kind.Namespace != "" && kind.Namespace != a.Namespace {
+		if (c.Media == nil || c.Media.Scope.IsZero()) && avatars.Kind != nil && kind.Namespace != "" && kind.Namespace != a.Namespace {
 			return c, fmt.Errorf("contentkit: avatar kind namespace must match Accounts.Namespace")
 		}
-		if c.Media != nil && !c.Media.Scope.IsZero() && !c.Media.LegacyLayout {
+		if c.Media != nil && !c.Media.Scope.IsZero() {
 			kind.Namespace = ""
 			kind.Account = true
 		} else {

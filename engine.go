@@ -45,7 +45,6 @@ import (
 	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/media/video"
@@ -283,22 +282,6 @@ func (e *Engine) migrate(ctx context.Context) error {
 func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) error {
 	db := stdlib.OpenDBFromPool(e.pool)
 	defer db.Close()
-	if err := e.preflightCatalogEventMigration(ctx); err != nil {
-		return err
-	}
-	retiredTenants := []string{e.cfg.Tenant}
-	if e.scope != nil && e.scope.AppID.String() != e.cfg.Tenant {
-		retiredTenants = append(retiredTenants, e.scope.AppID.String())
-	}
-	if err := preflightOfferJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
-		return err
-	}
-	if err := preflightPublishingJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
-		return err
-	}
-	if err := e.preflightUnifiedReleases(ctx); err != nil {
-		return err
-	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
@@ -306,66 +289,27 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := migrations.ApplyAccounts(ctx, db, accountSchema); err != nil {
 		return err
 	}
-	if options.LegacyAccountKey != "" {
-		if e.scope == nil || !layout.ValidSegment(options.LegacyAccountKey) {
-			return errors.New("contentkit: LegacyAccountKey requires Scope and a valid key")
-		}
-		e.cfg.Accounts.Namespace = options.LegacyAccountKey
-	}
 	if err := e.resolveAccountKey(ctx); err != nil {
 		return err
-	}
-	if options.LegacyAccountKey != "" && e.cfg.Accounts.Namespace != options.LegacyAccountKey {
-		return ErrScopeConflict
 	}
 	if err := e.bindScope(ctx); err != nil {
 		return err
 	}
 	if options.explicit {
-		// Finish declared owners before the historical lifecycle handoff scans
-		// pending scopes. A retry after a lost provider reply must converge here,
-		// not enqueue redundant background provisioning for the reserved entity.
+		// A retry after a lost provider reply must converge here, not enqueue
+		// redundant background provisioning for the reserved entity.
 		if err := catalog.InitializeFixedOwners(ctx, e.pool, e.schema, e.cfg.Tenant, e.cfg.Content, options.Scopes); err != nil {
-			return err
-		}
-		if err := e.adoptCommentNoticeIdentities(ctx); err != nil {
 			return err
 		}
 	}
 	if err := e.avatarPlacement(ctx, options.explicit); err != nil {
 		return err
 	}
-	// The guarded schema migration succeeded: obsolete waiting jobs can now
-	// be cancelled without discarding an unsynchronized billing write.
-	if err := retireOfferJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
-		return err
-	}
-	if err := retirePublishingJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
-		return err
-	}
 	if options.SkipQueues {
-		return errors.Join(e.validateCatalogEventHandoff(ctx), e.validateUnifiedReleases(ctx))
+		return nil
 	}
 	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
-	}
-	if options.explicit {
-		if err := e.migratePublicationQueues(ctx); err != nil {
-			return err
-		}
-		if err := e.migrateUnifiedReleases(ctx); err != nil {
-			return err
-		}
-	} else {
-		if err := e.validatePublicationQueues(ctx); err != nil {
-			return err
-		}
-		if err := e.validateUnifiedReleases(ctx); err != nil {
-			return err
-		}
-	}
-	if err := e.migrateCatalogEvents(ctx); err != nil {
-		return err
 	}
 	if account, ok := e.accountMediaStorage(); ok {
 		if err := workqueue.Migrate(ctx, e.pool, account.WorkerSchema); err != nil {
@@ -378,42 +322,6 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		}
 		if err := workqueue.Migrate(ctx, e.pool, m.WorkerSchema); err != nil {
 			return fmt.Errorf("contentkit: media worker queue migrations: %w", err)
-		}
-		reg, journal, err := e.cleanupStorage()
-		if err != nil {
-			return err
-		}
-		accountWorkerSchema := ""
-		if account, ok := e.accountMediaStorage(); ok {
-			accountWorkerSchema = account.WorkerSchema
-		}
-		ingest, err := workqueue.NewWithAccounts(e.pool, reg, m.WorkerSchema, accountWorkerSchema)
-		if err != nil {
-			return err
-		}
-		if err = ingest.AdoptVersionImports(ctx, e.riverSchema, e.schema, e.cfg.Tenant); err != nil {
-			return fmt.Errorf("contentkit: ZIP import handoff: %w", err)
-		}
-		ttl, window := m.Delivery.TTL, m.Delivery.Window
-		if ttl <= 0 {
-			ttl = time.Hour
-		}
-		if window <= 0 {
-			window = token.DefaultWindow
-		}
-		retention := max(24*time.Hour, ttl+window+time.Second)
-		if err := media.MigrateCleanup(ctx, e.pool, reg, journal, e.riverSchema, retention); err != nil {
-			return fmt.Errorf("contentkit: media cleanup migration: %w", err)
-		}
-		publish, err := versions.ProcessingPublisher(e.pool, e.riverSchema, e.schema, reg)
-		if err != nil {
-			return err
-		}
-		if err := media.MigrateProcessing(ctx, e.pool, reg, journal, e.riverSchema, ingest, publish); err != nil {
-			return fmt.Errorf("contentkit: media processing handoff: %w", err)
-		}
-		if err := versions.MigrateReaderSnapshots(ctx, e.pool, e.schema, e.cfg.Tenant, e.riverSchema, reg); err != nil {
-			return fmt.Errorf("contentkit: reader snapshot migration: %w", err)
 		}
 	}
 	return nil
@@ -505,9 +413,6 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 			return nil, err
 		}
 	}
-	if err := media.ValidateVersionStorageMigration(ctx, m.reg, journal); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrMigrationsRequired, err)
-	}
 	limiter, err := e.entityLimiter()
 	if err != nil {
 		return nil, err
@@ -522,9 +427,6 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal,
 		Processes: m.queue, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
 		return nil, err
-	}
-	if err := m.jobs.Manifests().ValidatePublicationLayoutMigration(ctx); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrMigrationsRequired, err)
 	}
 	d := mc.Delivery
 	signing, err := token.ParseKey(d.SigningKey)
@@ -711,7 +613,7 @@ func (e *Engine) mount(deps Deps) error {
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
 		Entities: e.entities, Channels: e.channels, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
-		MeasuredEngagement: e.cfg.MeasuredEngagement, ActivityCohorts: e.cfg.ActivityCohorts}
+		ActivityCohorts: e.cfg.ActivityCohorts}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if o.Candidates != nil && !e.hub.SignalsConfigured() {
 		e.log.Warn("contentkit: Deps.Candidates needs the signal plane; similar and recommendations are off")

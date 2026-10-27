@@ -623,31 +623,11 @@ publication waits for every required output before delivery and activation.
 The gateway's `public/` area stays public and `private/` stays token-protected.
 See [media jobs](docs/media-jobs.md).
 
-For upgrades from the old per-folder timers, stop old media hosts and workers,
-run the host's normal `MigratePostgres` command, then start the new cohort. The
-migration atomically transfers queued folder deletions to the deletion ledger
-and cancels obsolete timers; running old jobs block migration. Old uncertain
-manifest writes must first be settled by the previous release, because their
-original accepted input was not stored. Read-only startup rejects
-unmigrated timers. Standalone media hosts call `media.MigrateCleanup` with their
-registry, routed journal and River schema. `SweepAll` and `SweepOrphans` remain
-explicit repair tools, rather than periodic bucket-wide work. Neither is
+`SweepAll` and `SweepOrphans` are explicit repair tools, rather than periodic bucket-wide work. Neither is
 registered as a recurring orphan-discovery job.
 
-Moving an existing nested version layout to the flat version-owned layout also
-requires the explicit object-store phase, after PostgreSQL migrations and with
-old writers/workers stopped:
-
-```go
-report, err := contentkit.MigrateVersionStorage(ctx, pool, cfg, store)
-```
-
-The pass checkpoints and verifies each copy before scheduling retirement of its
-old keys. A retry resumes those receipts; startup never copies files and refuses
-an incomplete migration. The parent content item keeps its database identity
-and has no storage folder. Deploy a gateway that understands exact-file grants
-before starting hosts that issue them; the new gateway also accepts existing
-folder grants during the transition.
+A version's files live in its own folder, named by the version ID. The parent
+content item keeps its database identity and has no storage folder.
 
 **Paywalls**: media gates each item through `Hooks.Resolver`. Reader grants
 cover permitted immutable files, limited by chapter release and access rules;

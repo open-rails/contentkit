@@ -49,7 +49,7 @@ ContentKit names its staff permissions, always the full
 | `access.ContentEditOwn` | `root:content:edit-own` | read, edit, publish and manage media of content they created outside channels |
 | `access.ContentWrite` | `root:content:write` | write and publish content, delete and restore its versions, and manage its images |
 | `access.ContentViewRestricted` | `root:content:view-restricted` | see every content item in any state, listing, site or filter |
-| `access.PollsWrite` | `root:polls:write` | write and delete polls, options and images; see inactive ones |
+| `access.PollsWrite` | `root:polls:write` | write and delete polls, options and images; see scheduled ones |
 | `access.CommentsModerate` | `root:comments:moderate` | edit, delete and restore anyone's comments; list every comment |
 | `access.CommentsBan` | `root:comments:ban` | ban users from commenting anywhere in the tenant |
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
@@ -521,8 +521,9 @@ breaker. The engine's `contentkit_moderator` probe fails while it is tripped.
 Signed-out visitors only read unless `content.Options.Anonymous` says
 otherwise: `Comments` (under an `anon_name`), `Reactions` (likes and
 dislikes of content and comments, keyed by IP) and `Votes`
-(multiple-choice polls, keyed by IP). Free-text answers and favorites always
-need a signed-in actor. A refused anonymous attempt is `401 unauthorized`.
+(multiple-choice polls, keyed by IP and counted separately from signed-in
+votes, so one person can vote once each way and a changing address votes
+again). Favorites always need a signed-in actor. A refused anonymous attempt is `401 unauthorized`.
 `GET /config` answers the setting (`{"anonymous": {"comments", "reactions",
 "votes"}, "comment_max_length"}`) and `GET /{kind}/{id}/can-comment` carries
 `anonymous`, so a client shows a sign-in prompt or an anonymous form from the
@@ -545,7 +546,7 @@ in any `Per`"; an action with two must pass both.
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
 | `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
 | `favorite` | `POST` and `DELETE /{contents\|entities}/{id}/favorite` | 20 per minute |
-| `poll_vote` | `POST /polls/{id}/vote`, `POST /polls/{id}/answer` | 30 per minute |
+| `poll_vote` | `POST /polls/{id}/vote` | 30 per minute |
 
 Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
 `Reaction`, `Favorite`, `PollVote`, each `[]content.Rate{{Count, Per}}`).
@@ -592,12 +593,15 @@ deleted user and of their owner scope, and blanks them as `banned_by`.
 
 Polls accept predefined choices only. `kind` defaults to `multiple_choice`;
 other kinds, including `free_text`, are rejected with `400 invalid_request`.
-Create a poll with at least two options, then vote through
+Create a poll with two to ten options in one of the site's languages (a
+question of at most 300 characters, options of at most 200), then vote through
 `POST /polls/{id}/vote`. A vote is final: concurrent retries never add another
-vote. Signed-out voting follows `Config.anonymous.votes`.
+vote. A signed-in vote stores no IP address. Signed-out voting follows
+`Config.anonymous.votes`.
 
 `closes_at` (optional, `PATCH`-able, `null` clears it) and `is_active = false`
-close a poll for voting; its results remain readable. Scheduled questions are
+close a poll for voting; its results remain readable, on its own link too.
+`closes_at` must come after `live_at`. Scheduled questions are
 visible only to staff until their opening time.
 
 Free-text submission, automatic grouping and classifier dependencies are
@@ -831,10 +835,9 @@ layouts.
   visibility, plus segments' release and the rule's preview;
   a version's media writes its pages, duration, size and
   audio onto `content_versions` (`Facets` refreshes listings). A `Publish`
-  kind reaches viewers only through `{kind}.published` items: one per
-  segment of its pages, a locked version's previews (its rule's, else its
-  kind's `preview`), and one playback item,
-  planned by `GET /v1/contents/{id}/versions/{vid}/reader`. Page-archive
+  kind's reader (its page segments, a locked version's previews (its rule's,
+  else its kind's `preview`) and its playback) is planned by
+  `GET /v1/contents/{id}/versions/{vid}/reader`. Page-archive
   imports, reader metadata and downloads (a host watermark, quota buckets)
   complete it. A reader version with no cover of its own gets its leading
   released page as its cover (an upload marked `auto_cover`); a cover an
@@ -1213,31 +1216,6 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
 - Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
   their referenced blobs. Normal processing rebuilds declared public presets.
 
-## Deploying the media job simplification
-
-Stop old enqueueing hosts and media workers before the final queue check.
-No nonterminal `contentkit_media_purge` or `contentkit_media_upgrade` job may
-remain when hosts without those handlers start. Finish required work with the
-previous release. A CDN relay with no configured callback, or an upgrade for
-already-finished current namespaces, can be cancelled explicitly while the
-old producers are stopped; retain its River history. Check current configured
-kinds and routed namespaces, rather than treating historical rows for retired
-namespaces as current migration failures.
-
-## Migrating pre-v0.68 media
-
-Media stored by v0.67 or earlier must be migrated using ContentKit v0.119.1
-before deploying this release. Stop the old worker, run that release's
-`Jobs.Upgrade` until `UpgradeStatus.Done` is true for every configured kind,
-and resolve any current-namespace failures. Finish pending commit recovery
-before moving the host, gateway and workers forward together. A finished
-folder scan or completed River job alone does not establish migration success.
-
-This release has no automatic legacy conversion job or conversion API. It
-refuses version 2 manifests with `media.ErrUpgradeRequired` (HTTP 503
-`upgrade_required`) and leaves their objects untouched. Historical upgrade
-progress and failure records remain in the database; they are not deleted.
-
 ## Upgrading from v0.69
 
 Post bodies store image references (`contentkit:i-{uuid}`), never URLs;
@@ -1538,9 +1516,7 @@ The same channel/group identity makes caller retries safe, including a lost
 remote response after commit. Incomplete/deleted channels grant no authority.
 There is no `contentkit_entity_sync` or replacement lifecycle job. Imports finish
 their channel calls after committing identity, then report provider failures per
-record so replay uses the same external IDs. Explicit upgrade preflight requires
-old actionable lifecycle work completed by the previous version before retiring
-its remaining no-op queued rows; terminal history and foreign work are retained.
+record so replay uses the same external IDs.
 
 ## Authored content and editions
 

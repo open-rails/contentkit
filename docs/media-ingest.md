@@ -27,8 +27,4 @@ The existing upload authorizer must explicitly return `UploadGrant.ArchiveTo` eq
 
 Old unfinished ZIP uploads without a verified admission require an authorized re-commit. They are not silently processed as an exempt system user.
 
-## Upgrade
-
-Stop old producers and workers before worker migrations0003/0004. Migration0003 replaces unfinished standalone audio conversions with one immediately eligible ingest/ready pass per affected item, then cancels the old conversions without deleting source media or terminal history. This refreshes playback metadata for originals whose conversion had not finished. Migration0004 converts nonterminal placement requests to ingestion while preserving their row IDs and completed history. The host's explicit migration step transfers valid old `contentkit_version_import` requests into its configured external worker schema in the same transaction that cancels their old rows. A running or ambiguous old request is an actionable refusal. Repeated handoff does not duplicate ingestion requests.
-
 Image processing still owns pixel/frame limits, the application's original-size ceiling, page analysis and renditions. Video processing retains its existing codecs, soundtracks and checkpoints. Audio attachments use authorized originals without a conversion job. The three processing kinds are ingest, image and video. Other metadata, readiness and cleanup jobs are separate from these processing jobs.

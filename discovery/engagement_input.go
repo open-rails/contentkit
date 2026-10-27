@@ -42,9 +42,6 @@ type EngagementBatch struct {
 // access receipt. Short positive partials are retained; person qualification
 // happens after aggregation, so two legitimate 600ms partials are not lost.
 func (s *Service) RecordEngagement(ctx context.Context, actor access.Actor, in EngagementBatch) error {
-	if !s.o.MeasuredEngagement {
-		return ErrNoSignals
-	}
 	if err := s.signals(); err != nil {
 		return err
 	}
