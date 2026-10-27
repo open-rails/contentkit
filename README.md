@@ -446,7 +446,7 @@ directly enqueues version metadata work in `MEDIA_HOST_RIVER_SCHEMA`, so the sto
 (`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`)
 needs only the registry as JSON (`MEDIA_KINDS_FILE`): an engine's is
 `Config.MediaKinds()`, which `contentkit media-config -config contentkit.yaml`
-prints. Hosts with a `Private.Choose` build their own:
+prints. Hosts with a `Hooks.Failed` build their own:
 
 ```go
 cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_WORKER_SCHEMA, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_*
