@@ -150,12 +150,18 @@ func (c *comments) restoreNotices(ctx context.Context, tx pgx.Tx, cid string) er
 			return err
 		}
 	}
-	rows, err = tx.Query(ctx, `SELECT n.recipient,r.user_id,c.content_kind,c.content_id,c.content_version_id
-FROM `+c.noticeTable()+` n JOIN `+c.s.t.comments+` c ON c.tenant_id=n.tenant_id AND c.id=n.comment_id
+	return c.restoreLikeNotices(ctx, tx, cid, "")
+}
+
+func (c *comments) restoreLikeNotices(ctx context.Context, tx pgx.Tx, cid, actorID string) error {
+	rows, err := tx.Query(ctx, `SELECT c.user_id,r.user_id,c.content_kind,c.content_id,c.content_version_id
+FROM `+c.s.t.comments+` c
 JOIN `+c.s.t.reactions+` r ON r.tenant_id=c.tenant_id AND r.content_kind='comment' AND r.content_id=c.id::text
- AND r.content_version_id IS NULL AND r.value=1 AND n.source_id='comment.liked:' || c.id::text || ':' || r.user_id
+ AND r.content_version_id IS NULL AND r.value=1 AND NOT r.author_hidden AND r.user_id<>c.user_id
+LEFT JOIN `+c.noticeTable()+` n ON n.tenant_id=c.tenant_id AND n.recipient=c.user_id
+ AND n.source_id='comment.liked:' || c.id::text || ':' || r.user_id
 WHERE c.tenant_id=$1 AND c.id=$2 AND c.moderation='approved' AND c.deleted_at IS NULL AND NOT c.author_hidden
- AND n.kind='comment.liked' AND n.withdrawn`, c.s.tenant, cid)
+ AND ($3='' OR r.user_id=$3) AND (n.source_id IS NULL OR n.withdrawn)`, c.s.tenant, cid, actorID)
 	if err != nil {
 		return err
 	}
@@ -182,14 +188,14 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND c.moderation='approved' AND c.deleted_at IS
 	return nil
 }
 
-func (c *comments) withdrawLikeNotice(ctx context.Context, tx pgx.Tx, actor access.Actor, cid string) error {
-	if c.rt.notifier == nil || !actor.Member() {
+func (c *comments) withdrawLikeNotice(ctx context.Context, tx pgx.Tx, actorID, cid string) error {
+	if c.rt.notifier == nil || actorID == "" {
 		return nil
 	}
 	var m notify.Withdrawal
 	err := tx.QueryRow(ctx, `UPDATE `+c.noticeTable()+` SET withdrawn=true,revision=revision+1
 WHERE tenant_id=$1 AND source_id=$2 AND NOT withdrawn RETURNING recipient,source_id,revision`,
-		c.s.tenant, "comment.liked:"+cid+":"+actor.AccountID()).Scan(&m.RecipientID, &m.ID, &m.Revision)
+		c.s.tenant, "comment.liked:"+cid+":"+actorID).Scan(&m.RecipientID, &m.ID, &m.Revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

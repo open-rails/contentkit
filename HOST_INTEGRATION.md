@@ -611,6 +611,9 @@ comments, published counts and account comment statistics. Authors can still
 see their own hidden comments in threads/replies and their standing count,
 just as they see their held comments; the latest feed remains public-only.
 Staff lists keep them. New comments by a hidden author are stored hidden.
+The account's likes and dislikes on comments, content and entities also stop
+counting and notifying until unhidden; favorites and poll votes are unaffected.
+Reactions remain stored, and those hidden at permanent anonymization stay uncounted.
 
 Only approved, undeleted comments with `author_hidden=false` contribute to
 `comment_count` or `reply_count` or publish notices. Hiding withdraws reply

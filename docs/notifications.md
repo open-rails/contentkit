@@ -22,6 +22,9 @@ and comment: unliking withdraws it and liking again reopens the same notice.
 Self replies/likes and anonymous recipients do not produce notices. Payloads
 carry content/comment references and the actor ID, not copied comment bodies.
 Hosts resolve those references through their normal content access rules.
+Hiding an account withdraws its comment-like notices and suppresses notices for
+likes made while hidden. Unhiding publishes its current likes with the same
+identities only for approved, undeleted comments whose authors are not hidden.
 
 Deleting or hiding a parent preserves its replies, but withdraws their notices
 to that parent. Deleting or hiding a reply withdraws that reply's exact emitted

@@ -384,8 +384,9 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []ImportRe
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.reactions+` AS x (tenant_id, content_kind, content_id, content_version_id, user_id, ip, value, revision,
- created_at, updated_at)
- SELECT $1, r.kind, r.id, r.version, r.user_id, r.ip, r.value, `+s.nextRevision()+`, r.created_at, r.updated_at
+ created_at, updated_at, author_hidden)
+ SELECT $1, r.kind, r.id, r.version, r.user_id, r.ip, r.value, `+s.nextRevision()+`, r.created_at, r.updated_at,
+ EXISTS (SELECT 1 FROM `+rt.hiddenAuthorsTable()+` h WHERE h.tenant_id=$1 AND h.actor_id=r.user_id)
  FROM jsonb_to_recordset($2::jsonb) AS r(kind text, id text, version text, user_id text, ip text, value smallint, created_at timestamptz, updated_at timestamptz)
  ON CONFLICT `+part.target+` DO UPDATE SET value = EXCLUDED.value, revision = `+s.nextRevision()+`, updated_at = EXCLUDED.updated_at
  WHERE x.value <> EXCLUDED.value`, rt.tenant, string(data)); err != nil {
@@ -499,8 +500,8 @@ ON CONFLICT (tenant_id, content_kind, content_id, content_version_id) DO NOTHING
 	}
 	if _, err := tx.Exec(ctx, `WITH k AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS k(kind text, id text, version text)),
 n AS (SELECT k.kind, k.id, k.version,
- (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = 1)::int AS likes,
- (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = -1)::int AS dislikes,
+ (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = 1 AND NOT r.author_hidden)::int AS likes,
+ (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = -1 AND NOT r.author_hidden)::int AS dislikes,
  (SELECT count(*) FROM `+s.t.favorites+` f WHERE f.tenant_id = $1 AND f.content_kind = k.kind AND f.content_id = k.id AND f.content_version_id IS NOT DISTINCT FROM k.version AND f.value = 1)::int AS favorites,
  (SELECT count(*) FROM `+s.t.comments+` c WHERE c.tenant_id = $1 AND c.content_kind = k.kind AND c.content_id = k.id AND c.content_version_id IS NOT DISTINCT FROM k.version
    AND c.reply_to_id IS NULL AND c.deleted_at IS NULL AND c.moderation = 'approved' AND NOT c.author_hidden)::int AS comments
@@ -515,8 +516,8 @@ FROM n WHERE x.tenant_id = $1 AND x.content_kind = n.kind AND x.content_id = n.i
 		return nil
 	}
 	_, err = tx.Exec(ctx, `UPDATE `+s.t.comments+` c SET likes = n.likes, dislikes = n.dislikes FROM (SELECT x.id,
- (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id IS NULL AND r.value = 1)::int AS likes,
- (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id IS NULL AND r.value = -1)::int AS dislikes
+ (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id IS NULL AND r.value = 1 AND NOT r.author_hidden)::int AS likes,
+ (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = $3 AND r.content_id = x.id AND r.content_version_id IS NULL AND r.value = -1 AND NOT r.author_hidden)::int AS dislikes
  FROM unnest($2::text[]) AS x(id)) n
  WHERE c.tenant_id = $1 AND c.id = n.id::uuid AND (c.likes, c.dislikes) IS DISTINCT FROM (n.likes, n.dislikes)`, rt.tenant, comments, KindComment)
 	return err

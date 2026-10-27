@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/versionid"
@@ -49,26 +50,28 @@ func (rt *Runtime) SetAccountHidden(ctx context.Context, actorID string, hidden 
 	if strings.TrimSpace(actorID) == "" {
 		return badRequest("subject id is required")
 	}
-	return pgx.BeginFunc(ctx, rt.store.pool, func(tx pgx.Tx) error {
+	return pgx.BeginTxFunc(ctx, rt.store.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		if err := rt.lockErasureSubject(ctx, tx, actorID); err != nil {
 			return err
 		}
+		var tag pgconn.CommandTag
+		var err error
 		if hidden {
-			if _, err := tx.Exec(ctx, `INSERT INTO `+rt.hiddenAuthorsTable()+` (tenant_id,actor_id)
-VALUES ($1,$2) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, actorID); err != nil {
-				return err
-			}
+			tag, err = tx.Exec(ctx, `INSERT INTO `+rt.hiddenAuthorsTable()+` (tenant_id,actor_id)
+VALUES ($1,$2) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, actorID)
 		} else {
-			if _, err := tx.Exec(ctx, `DELETE FROM `+rt.hiddenAuthorsTable()+` WHERE tenant_id=$1 AND actor_id=$2`, rt.tenant, actorID); err != nil {
-				return err
-			}
+			tag, err = tx.Exec(ctx, `DELETE FROM `+rt.hiddenAuthorsTable()+` WHERE tenant_id=$1 AND actor_id=$2`, rt.tenant, actorID)
+		}
+		if err != nil {
+			return err
 		}
 		c := rt.comments
 		// Lock every affected comment and its parent at once, in id order, the
 		// order lockThread takes two of them in. Content rollups follow, once
 		// each in key order, as recount and erasure lock them.
 		if _, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND (user_id=$2 OR id IN
-(SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2)) ORDER BY id FOR UPDATE`, rt.tenant, actorID); err != nil {
+(SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2) OR id::text IN
+(SELECT content_id FROM `+c.s.t.reactions+` WHERE tenant_id=$1 AND user_id=$2 AND content_kind='comment')) ORDER BY id FOR UPDATE`, rt.tenant, actorID); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT id::text FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2 AND author_hidden<>$3 ORDER BY id`, rt.tenant, actorID, hidden)
@@ -83,7 +86,8 @@ VALUES ($1,$2) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, actorID)
 		if hidden {
 			delta = -1
 		}
-		rollups := map[contentref.ContentKey]int{}
+		type counts struct{ likes, dislikes, comments int }
+		rollups := map[contentref.ContentKey]counts{}
 		for _, id := range ids {
 			var replyTo *string
 			var deletedAt *time.Time
@@ -98,7 +102,9 @@ WHERE tenant_id=$1 AND id=$2 RETURNING reply_to_id::text,deleted_at,moderation,`
 				continue
 			}
 			if replyTo == nil {
-				rollups[k] += delta
+				n := rollups[k]
+				n.comments += delta
+				rollups[k] = n
 			} else if err := c.count(ctx, tx, replyTo, k, delta); err != nil {
 				return err
 			}
@@ -111,12 +117,64 @@ WHERE tenant_id=$1 AND id=$2 RETURNING reply_to_id::text,deleted_at,moderation,`
 				return err
 			}
 		}
+		if tag.RowsAffected() != 0 {
+			rows, err := tx.Query(ctx, `UPDATE `+c.s.t.reactions+` SET author_hidden=$3
+WHERE tenant_id=$1 AND user_id=$2 RETURNING `+keyCols+`,value`, rt.tenant, actorID, hidden)
+			if err != nil {
+				return err
+			}
+			type reaction struct {
+				key   contentref.ContentKey
+				value int16
+			}
+			reactions, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (reaction, error) {
+				var r reaction
+				err := row.Scan(&r.key.TenantID, &r.key.ContentKind, &r.key.ContentID, versionid.Into(&r.key.ContentVersionID), &r.value)
+				return r, err
+			})
+			if err != nil {
+				return err
+			}
+			for _, r := range reactions {
+				if r.value == 0 {
+					continue
+				}
+				likes, dislikes := 0, 0
+				if r.value == 1 {
+					likes = delta
+				} else {
+					dislikes = delta
+				}
+				n := rollups[r.key]
+				n.likes += likes
+				n.dislikes += dislikes
+				rollups[r.key] = n
+				if r.key.ContentKind != KindComment || r.key.ContentVersionID != "" {
+					continue
+				}
+				if _, err := tx.Exec(ctx, `UPDATE `+c.s.t.comments+` SET likes=likes+$3,dislikes=dislikes+$4
+WHERE tenant_id=$1 AND id::text=$2`, rt.tenant, r.key.ContentID, likes, dislikes); err != nil {
+					return err
+				}
+				if r.value == 1 {
+					if hidden {
+						err = c.withdrawLikeNotice(ctx, tx, actorID, r.key.ContentID)
+					} else {
+						err = c.restoreLikeNotices(ctx, tx, r.key.ContentID, actorID)
+					}
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
 		keys := slices.Collect(maps.Keys(rollups))
 		slices.SortFunc(keys, func(a, b contentref.ContentKey) int {
 			return strings.Compare(a.ContentKind+"\x00"+a.ContentID+"\x00"+a.ContentVersionID, b.ContentKind+"\x00"+b.ContentID+"\x00"+b.ContentVersionID)
 		})
 		for _, k := range keys {
-			if err := bumpCounts(ctx, tx, c.s, k, 0, 0, 0, rollups[k]); err != nil {
+			n := rollups[k]
+			if err := bumpCounts(ctx, tx, c.s, k, n.likes, n.dislikes, 0, n.comments); err != nil {
 				return err
 			}
 		}

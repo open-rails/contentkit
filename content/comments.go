@@ -869,7 +869,7 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 		}
 	}
 	if dLikes < 0 {
-		if err := c.withdrawLikeNotice(ctx, tx, actor, cid); err != nil {
+		if err := c.withdrawLikeNotice(ctx, tx, viewerID(actor), cid); err != nil {
 			return ReactionCounts{}, err
 		}
 	}

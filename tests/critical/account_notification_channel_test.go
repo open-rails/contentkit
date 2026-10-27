@@ -23,6 +23,7 @@ import (
 	notifypg "github.com/open-rails/authkit/notify/postgres"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
@@ -632,5 +633,215 @@ func TestHiddenCommentAuthors(t *testing.T) {
 	must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, false))
 	if got := ownComment(t, public, item.ID, top.ID); got.AnonName != "<Deleted>" || got.UserID != "" {
 		t.Fatalf("unhide changed deletion presentation: %+v", got)
+	}
+}
+
+func TestHiddenCommentAuthorReactions(t *testing.T) {
+	n := newAccountNoticeWorld(t)
+	a := n.a
+	owner, ownerToken := n.w.person(t, 0)
+	writer, writerToken := n.w.person(t, 0)
+	ownerClient, writerClient, public := a.client(ownerToken), a.client(writerToken), a.client("")
+	item := publishedArticle(t, a, "Hidden reactions")
+	second := publishedArticle(t, a, "Reactions made while hidden")
+	postComment(t, writerClient, item.ID, "Author and reactor on the same content")
+	parent := postComment(t, ownerClient, item.ID, "Existing like")
+	fresh := postComment(t, ownerClient, item.ID, "New hidden like")
+	negative := postComment(t, ownerClient, item.ID, "New hidden dislike")
+	imported := postComment(t, ownerClient, item.ID, "Imported hidden like")
+	_, err := writerClient.PostCommentLike(t.Context(), parent.ID)
+	must(t, err)
+	_, err = writerClient.PostContentLike(t.Context(), item.ID, ck.PostContentLikeQuery{})
+	must(t, err)
+	_, err = public.PostCommentLike(t.Context(), parent.ID)
+	must(t, err)
+	_, err = public.PostContentLike(t.Context(), item.ID, ck.PostContentLikeQuery{})
+	must(t, err)
+	_, err = writerClient.PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
+	must(t, err)
+
+	checkCounts := func(kind, id string, likes, dislikes int) {
+		t.Helper()
+		var gotLikes, gotDislikes int
+		must(t, n.w.pool.QueryRow(t.Context(), `SELECT coalesce(sum(likes),0),coalesce(sum(dislikes),0) FROM `+pgx.Identifier{n.w.schema, "content_interaction_counts"}.Sanitize()+` WHERE tenant_id=$1 AND content_kind=$2 AND content_id=$3 AND content_version_id IS NULL`, a.cfg.Scope.AppID.String(), kind, id).Scan(&gotLikes, &gotDislikes))
+		if gotLikes != likes || gotDislikes != dislikes {
+			t.Fatalf("%s/%s counts=%d/%d; want %d/%d", kind, id, gotLikes, gotDislikes, likes, dislikes)
+		}
+		if kind == content.KindComment {
+			cm := ownComment(t, ownerClient, item.ID, id)
+			if cm.Likes != likes || cm.Dislikes != dislikes {
+				t.Fatalf("comment columns=%d/%d; want %d/%d", cm.Likes, cm.Dislikes, likes, dislikes)
+			}
+		}
+	}
+	checkNotices := func(ids ...string) {
+		t.Helper()
+		got := n.items(t, owner.ID)
+		want := map[string]bool{}
+		for _, id := range ids {
+			want["comment.liked:"+id+":"+writer.ID] = true
+		}
+		if len(got) != len(want) {
+			t.Fatalf("notices=%+v; want %v", got, want)
+		}
+		for _, notice := range got {
+			if !want[notice.Origin.ID] {
+				t.Fatalf("unexpected notice: %+v", notice)
+			}
+		}
+	}
+	importReactions := func(rows ...importer.ReactionRecord) {
+		t.Helper()
+		out, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "hidden-reactions", Reactions: rows})
+		must(t, err)
+		if len(out.Failed) != 0 || out.Written[importer.SectionReactions] != len(rows) {
+			t.Fatalf("reaction import failed: %+v", out)
+		}
+	}
+	recount := func() {
+		t.Helper()
+		var rows []importer.ReactionRecord
+		for _, id := range []string{parent.ID, fresh.ID, negative.ID, imported.ID} {
+			rows = append(rows, importer.ReactionRecord{Target: importer.TargetRef{Comment: &importer.Ref{ID: id}}, IP: "203.0.113.44", Value: 0})
+		}
+		for _, id := range []string{item.ID, second.ID} {
+			rows = append(rows, importer.ReactionRecord{Target: importer.TargetRef{Content: &importer.Ref{ID: id}}, IP: "203.0.113.44", Value: 0})
+		}
+		importReactions(rows...)
+	}
+	checkHidden := func() {
+		t.Helper()
+		checkCounts(content.KindComment, parent.ID, 1, 0)
+		for _, id := range []string{fresh.ID, negative.ID, imported.ID} {
+			checkCounts(content.KindComment, id, 0, 0)
+		}
+		checkCounts("article", item.ID, 1, 0)
+		checkCounts("article", second.ID, 0, 0)
+		checkNotices()
+		standing, err := public.GetContentCanComment(t.Context(), item.ID, ck.GetContentCanCommentQuery{})
+		must(t, err)
+		if standing.Count == nil || *standing.Count != 4 {
+			t.Fatalf("hidden author's comment rollup=%v; want 4", standing.Count)
+		}
+		fav, err := writerClient.GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
+		must(t, err)
+		if !fav.Favorited || fav.Count == nil || *fav.Count != 1 {
+			t.Fatalf("hiding changed favorite: %+v", fav)
+		}
+	}
+	checkCounts(content.KindComment, parent.ID, 2, 0)
+	checkCounts("article", item.ID, 2, 0)
+	checkNotices(parent.ID)
+	for range 2 {
+		must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, true))
+		checkHidden()
+	}
+	_, err = writerClient.PostCommentLike(t.Context(), fresh.ID)
+	must(t, err)
+	_, err = writerClient.DeleteCommentReaction(t.Context(), fresh.ID)
+	must(t, err)
+	checkHidden()
+	_, err = writerClient.PostCommentLike(t.Context(), fresh.ID)
+	must(t, err)
+	_, err = writerClient.PostCommentDislike(t.Context(), negative.ID)
+	must(t, err)
+	_, err = writerClient.PostContentDislike(t.Context(), item.ID, ck.PostContentDislikeQuery{})
+	must(t, err)
+	_, err = writerClient.PostContentLike(t.Context(), second.ID, ck.PostContentLikeQuery{})
+	must(t, err)
+	importReactions(importer.ReactionRecord{Target: importer.TargetRef{Comment: &importer.Ref{ID: imported.ID}}, UserID: writer.ID, Value: 1})
+	checkHidden()
+	recount()
+	checkHidden()
+	for id, value := range map[string]int16{parent.ID: 1, fresh.ID: 1, negative.ID: -1, imported.ID: 1} {
+		if got := ownComment(t, writerClient, item.ID, id).Mine; got != value {
+			t.Fatalf("hidden reaction %s mine=%d; want %d", id, got, value)
+		}
+	}
+	state, err := writerClient.GetContentReaction(t.Context(), item.ID, ck.GetContentReactionQuery{})
+	must(t, err)
+	if state.Mine != -1 {
+		t.Fatalf("hidden content reaction was not stored: %+v", state)
+	}
+	_, err = public.PostCommentDislike(t.Context(), parent.ID)
+	must(t, err)
+	checkCounts(content.KindComment, parent.ID, 0, 1)
+	_, err = public.PostCommentLike(t.Context(), parent.ID)
+	must(t, err)
+	checkHidden()
+
+	for range 2 {
+		for range 2 {
+			must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, false))
+			checkCounts(content.KindComment, parent.ID, 2, 0)
+			checkCounts(content.KindComment, fresh.ID, 1, 0)
+			checkCounts(content.KindComment, negative.ID, 0, 1)
+			checkCounts(content.KindComment, imported.ID, 1, 0)
+			checkCounts("article", item.ID, 1, 1)
+			checkCounts("article", second.ID, 1, 0)
+			checkNotices(parent.ID, fresh.ID, imported.ID)
+			standing, err := public.GetContentCanComment(t.Context(), item.ID, ck.GetContentCanCommentQuery{})
+			must(t, err)
+			if standing.Count == nil || *standing.Count != 5 {
+				t.Fatalf("restored author's comment rollup=%v; want 5", standing.Count)
+			}
+		}
+		for range 2 {
+			must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, true))
+			checkHidden()
+		}
+	}
+	must(t, a.engine.AnonymizeAccount(t.Context(), writer.ID))
+	must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, false))
+	recount()
+	checkCounts(content.KindComment, parent.ID, 1, 0)
+	for _, id := range []string{fresh.ID, negative.ID, imported.ID} {
+		checkCounts(content.KindComment, id, 0, 0)
+	}
+	checkCounts("article", item.ID, 1, 0)
+	checkCounts("article", second.ID, 0, 0)
+	checkNotices()
+	var retained int
+	must(t, n.w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{n.w.schema, "content_reactions"}.Sanitize()+` WHERE tenant_id=$1 AND anonymous_actor_id IS NOT NULL AND user_id IS NULL AND author_hidden AND value<>0`, a.cfg.Scope.AppID.String()).Scan(&retained))
+	if retained != 6 {
+		t.Fatalf("hidden anonymized reactions=%d; want 6", retained)
+	}
+}
+
+func TestHiddenReactorNoticeVisibility(t *testing.T) {
+	n := newAccountNoticeWorld(t)
+	a := n.a
+	owner, ownerToken := n.w.person(t, 0)
+	writer, writerToken := n.w.person(t, 0)
+	item := publishedArticle(t, a, "Hidden reactor notice eligibility")
+	held := postComment(t, a.client(ownerToken), item.ID, "Held target")
+	deleted := postComment(t, a.client(ownerToken), item.ID, "Deleted target")
+	hidden := postComment(t, a.client(ownerToken), item.ID, "Hidden target")
+	must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, true))
+	for _, id := range []string{held.ID, deleted.ID, hidden.ID} {
+		_, err := a.client(writerToken).PostCommentLike(t.Context(), id)
+		must(t, err)
+	}
+	must(t, n.manager.PostCommentHold(t.Context(), held.ID))
+	must(t, n.manager.PostCommentRelease(t.Context(), held.ID))
+	if got := n.items(t, owner.ID); len(got) != 0 {
+		t.Fatalf("release notified for a hidden reactor: %+v", got)
+	}
+	must(t, n.manager.PostCommentHold(t.Context(), held.ID))
+	must(t, a.client(ownerToken).DeleteComment(t.Context(), deleted.ID))
+	must(t, a.engine.SetAccountHidden(t.Context(), owner.ID, true))
+	must(t, a.engine.SetAccountHidden(t.Context(), writer.ID, false))
+	if got := n.items(t, owner.ID); len(got) != 0 {
+		t.Fatalf("unhiding reactor notified for invisible comments: %+v", got)
+	}
+	must(t, a.engine.SetAccountHidden(t.Context(), owner.ID, false))
+	if got := n.items(t, owner.ID); len(got) != 1 || got[0].Origin.ID != "comment.liked:"+hidden.ID+":"+writer.ID {
+		t.Fatalf("unhiding author restored ineligible notices: %+v", got)
+	}
+	must(t, n.manager.PostCommentRelease(t.Context(), held.ID))
+	_, err := n.manager.PostCommentRestore(t.Context(), deleted.ID)
+	must(t, err)
+	if got := n.items(t, owner.ID); len(got) != 3 {
+		t.Fatalf("restoring comments lost likes made while hidden: %+v", got)
 	}
 }
