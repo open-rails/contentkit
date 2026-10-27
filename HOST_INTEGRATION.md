@@ -1538,9 +1538,7 @@ The same channel/group identity makes caller retries safe, including a lost
 remote response after commit. Incomplete/deleted channels grant no authority.
 There is no `contentkit_entity_sync` or replacement lifecycle job. Imports finish
 their channel calls after committing identity, then report provider failures per
-record so replay uses the same external IDs. Explicit upgrade preflight requires
-old actionable lifecycle work completed by the previous version before retiring
-its remaining no-op queued rows; terminal history and foreign work are retained.
+record so replay uses the same external IDs.
 
 ## Authored content and editions
 
