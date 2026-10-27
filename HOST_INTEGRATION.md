@@ -835,10 +835,9 @@ layouts.
   visibility, plus segments' release and the rule's preview;
   a version's media writes its pages, duration, size and
   audio onto `content_versions` (`Facets` refreshes listings). A `Publish`
-  kind reaches viewers only through `{kind}.published` items: one per
-  segment of its pages, a locked version's previews (its rule's, else its
-  kind's `preview`), and one playback item,
-  planned by `GET /v1/contents/{id}/versions/{vid}/reader`. Page-archive
+  kind's reader (its page segments, a locked version's previews (its rule's,
+  else its kind's `preview`) and its playback) is planned by
+  `GET /v1/contents/{id}/versions/{vid}/reader`. Page-archive
   imports, reader metadata and downloads (a host watermark, quota buckets)
   complete it. A reader version with no cover of its own gets its leading
   released page as its cover (an upload marked `auto_cover`); a cover an
@@ -1230,31 +1229,6 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   reset with a stable operation ID. Neither needs a media host queue.
 - Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
   their referenced blobs. Normal processing rebuilds declared public presets.
-
-## Deploying the media job simplification
-
-Stop old enqueueing hosts and media workers before the final queue check.
-No nonterminal `contentkit_media_purge` or `contentkit_media_upgrade` job may
-remain when hosts without those handlers start. Finish required work with the
-previous release. A CDN relay with no configured callback, or an upgrade for
-already-finished current namespaces, can be cancelled explicitly while the
-old producers are stopped; retain its River history. Check current configured
-kinds and routed namespaces, rather than treating historical rows for retired
-namespaces as current migration failures.
-
-## Migrating pre-v0.68 media
-
-Media stored by v0.67 or earlier must be migrated using ContentKit v0.119.1
-before deploying this release. Stop the old worker, run that release's
-`Jobs.Upgrade` until `UpgradeStatus.Done` is true for every configured kind,
-and resolve any current-namespace failures. Finish pending commit recovery
-before moving the host, gateway and workers forward together. A finished
-folder scan or completed River job alone does not establish migration success.
-
-This release has no automatic legacy conversion job or conversion API. It
-refuses version 2 manifests with `media.ErrUpgradeRequired` (HTTP 503
-`upgrade_required`) and leaves their objects untouched. Historical upgrade
-progress and failure records remain in the database; they are not deleted.
 
 ## Upgrading from v0.69
 

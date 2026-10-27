@@ -85,10 +85,7 @@ type MigrationOptions struct {
 	// SkipQueues skips main River and media-worker queue migrations, matching
 	// a host command's --skip-river option. Account/catalog migrations still run.
 	SkipQueues bool
-	// LegacyAccountKey adopts an existing account inbox key during explicit
-	// provisioning. Runtime discovers it through the persisted tenant binding.
-	LegacyAccountKey string
-	explicit         bool
+	explicit   bool
 }
 
 // MigratePostgres prepares all configured ContentKit PostgreSQL storage and

@@ -28,7 +28,7 @@ func (c Config) AccountMedia() (AccountMediaStorage, bool, error) {
 	return s, ok, nil
 }
 func (e *Engine) accountMediaStorage() (AccountMediaStorage, bool) {
-	if e.scope == nil || e.cfg.Media == nil || e.cfg.Media.LegacyLayout || e.cfg.Avatars == nil || e.cfg.Avatars.Primary != "" {
+	if e.scope == nil || e.cfg.Media == nil || e.cfg.Avatars == nil || e.cfg.Avatars.Primary != "" {
 		return AccountMediaStorage{}, false
 	}
 	schema, _ := e.accountStorage()

@@ -145,10 +145,6 @@ type Publish struct {
 	Download string `json:"download,omitempty"`
 }
 
-// PublishedSuffix is retained only to identify retired legacy storage during
-// migration. New registries never register a kind with this suffix.
-const PublishedSuffix = ".published"
-
 // VideoLimits bound what one video upload may cost the worker; an
 // upload past them fails (video_too_long, video_too_large,
 // video_over_budget) before any encode runs.

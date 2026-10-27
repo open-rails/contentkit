@@ -99,17 +99,13 @@ WHERE tenant_id=$1 AND content_kind=ANY($2) AND due_at<=$3 ORDER BY due_at,folde
 			return processed, errors.Join(failures, err)
 		}
 		processed++
-		item, legacy, err := jr.resolveFolder(ctx, jr.pool, j.cfg.Registry, c.prefix)
+		item, err := jr.resolveFolder(ctx, jr.pool, j.cfg.Registry, c.prefix)
 		var wait time.Duration
 		if err == nil && item.Ref().TenantID != tenant {
 			err = ErrCommitIdentity
 		}
 		if err == nil {
-			if legacy {
-				err = j.cleanLegacyPublication(ctx, item, c.operations)
-			} else {
-				wait, err = j.cleanupFolder(ctx, item, c.operations)
-			}
+			wait, err = j.cleanupFolder(ctx, item, c.operations)
 		}
 		if err != nil {
 			failures = errors.Join(failures, fmt.Errorf("purge media %s: %w", c.prefix, err))
@@ -137,9 +133,6 @@ WHERE tenant_id=$1 AND folder_prefix=$2 AND revision=$3`, tenant, c.prefix, c.re
 }
 
 func (j *Jobs) cleanupFolder(ctx context.Context, item Item, operations []uuid.UUID) (time.Duration, error) {
-	if item.Ref().Version() != "" && item.Prefix() != item.Kind().prefix(item.Ref().ContentID, item.Ref().Version()) {
-		return 0, j.cleanVersionStorage(ctx, item, operations)
-	}
 	result, err := j.sweep(ctx, item.Prefix())
 	if err != nil {
 		return 0, err
@@ -180,4 +173,14 @@ func (j *Jobs) cleanupFolder(ctx context.Context, item Item, operations []uuid.U
 		wait = max(wait, intent.Effects.CleanupAt.Sub(j.cfg.Now()))
 	}
 	return max(wait, result.Wait), nil
+}
+
+func (r *Registry) cleanupKinds(tenant string) []string {
+	var out []string
+	for _, kind := range r.all {
+		if kind.ns == tenant {
+			out = append(out, kind.Name)
+		}
+	}
+	return out
 }

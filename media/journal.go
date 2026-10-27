@@ -67,28 +67,24 @@ type folderDeletion struct {
 }
 
 type journalEffects struct {
-	FolderDelete       *folderDeletion           `json:"folder_delete,omitempty"`
-	Manifest           []byte                    `json:"manifest,omitempty"` // exact admitted conditional PUT, owned by its ingest/processor job
-	Ingest             bool                      `json:"ingest,omitempty"`   // processing was admitted before the S3 write
-	VersionStoragePlan *versionStoragePlan       `json:"version_storage_plan,omitempty"`
-	VersionStorage     *versionStorageRetirement `json:"version_storage,omitempty"`
-	LegacyPublication  *legacyPublication        `json:"legacy_publication,omitempty"`
-	CleanupAt          time.Time                 `json:"cleanup_at,omitempty"`
-	CleanupDelete      bool                      `json:"cleanup_delete,omitempty"` // repeat this operation's exact retired targets
-	Deletion           bool                      `json:"deletion,omitempty"`       // explicit purge may fence an unreadable root without decoding it
-	Erasure            bool                      `json:"erasure,omitempty"`        // permanent lifecycle; a version's catalog purge owns retries
-	Cleanup            bool                      `json:"cleanup,omitempty"`        // allocation retirement, no manifest PUT
-	Allocate           []string                  `json:"allocate,omitempty"`       // physical names owned before a producer sends bytes
-	Adopt              []string                  `json:"adopt,omitempty"`          // a legacy item's existing objects, owned by the upgrade's incarnation
-	Incarnation        string                    `json:"incarnation,omitempty"`    // allocation lifetime, read from S3 under this lease
-	Settlement         Settlement                `json:"settlement"`
-	Cancel             bool                      `json:"cancel,omitempty"`
-	Process            *ProcessJob               `json:"process,omitempty"`
-	Renames            map[string]string         `json:"renames,omitempty"`
-	RemovedPaths       []string                  `json:"removed_paths,omitempty"`
-	Public             []string                  `json:"public,omitempty"`  // exact retired public names, selected before PUT
-	Mirror             []Mirror                  `json:"mirror,omitempty"`  // Stable presets' new current files, copied to their logical names
-	Private            []string                  `json:"private,omitempty"` // exact takedown targets, selected before PUT
+	FolderDelete  *folderDeletion   `json:"folder_delete,omitempty"`
+	Manifest      []byte            `json:"manifest,omitempty"` // exact admitted conditional PUT, owned by its ingest/processor job
+	Ingest        bool              `json:"ingest,omitempty"`   // processing was admitted before the S3 write
+	CleanupAt     time.Time         `json:"cleanup_at,omitempty"`
+	CleanupDelete bool              `json:"cleanup_delete,omitempty"` // repeat this operation's exact retired targets
+	Deletion      bool              `json:"deletion,omitempty"`       // explicit purge may fence an unreadable root without decoding it
+	Erasure       bool              `json:"erasure,omitempty"`        // permanent lifecycle; a version's catalog purge owns retries
+	Cleanup       bool              `json:"cleanup,omitempty"`        // allocation retirement, no manifest PUT
+	Allocate      []string          `json:"allocate,omitempty"`       // physical names owned before a producer sends bytes
+	Incarnation   string            `json:"incarnation,omitempty"`    // allocation lifetime, read from S3 under this lease
+	Settlement    Settlement        `json:"settlement"`
+	Cancel        bool              `json:"cancel,omitempty"`
+	Process       *ProcessJob       `json:"process,omitempty"`
+	Renames       map[string]string `json:"renames,omitempty"`
+	RemovedPaths  []string          `json:"removed_paths,omitempty"`
+	Public        []string          `json:"public,omitempty"`  // exact retired public names, selected before PUT
+	Mirror        []Mirror          `json:"mirror,omitempty"`  // Stable presets' new current files, copied to their logical names
+	Private       []string          `json:"private,omitempty"` // exact takedown targets, selected before PUT
 }
 
 // prepareCleanup retires exact allocations while the operation still owns
@@ -357,9 +353,6 @@ func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects jour
 				return err
 			}
 		}
-		if err := j.adoptTx(ctx, tx, c, effects); err != nil {
-			return err
-		}
 		if effects.Ingest {
 			if effects.Cancel {
 				if _, err := j.queue.CancelTx(ctx, tx, c.Ref); err != nil {
@@ -449,31 +442,6 @@ AND content_kind = $4 AND content_id = $5 AND content_version_id IS NOT DISTINCT
 	}
 	if !known {
 		return ErrCommitPending
-	}
-	return nil
-}
-
-// adoptTx records a legacy item's objects under the upgrade's incarnation
-// before its manifest PUT. A retry after an absent attempt moves them to its
-// own incarnation; a retired object is never adopted again. Keys repeat when
-// files share a blob; each is adopted once.
-func (j *PGJournal) adoptTx(ctx context.Context, tx pgx.Tx, c *manifestCommit, effects journalEffects) error {
-	j = j.forTenant(c.Ref.TenantID)
-	if len(effects.Adopt) == 0 {
-		return nil
-	}
-	var all bool
-	err := tx.QueryRow(ctx, `WITH k AS (SELECT DISTINCT key FROM unnest($3::text[]) AS key),
-a AS (INSERT INTO `+j.allocations+` AS a (tenant_id, folder_prefix, object_key, incarnation)
-SELECT $1, $2, key, $4 FROM k
-ON CONFLICT (tenant_id, object_key) DO UPDATE SET incarnation = EXCLUDED.incarnation
-WHERE a.folder_prefix = EXCLUDED.folder_prefix AND a.retired_at IS NULL RETURNING 1)
-SELECT (SELECT count(*) FROM a) = (SELECT count(*) FROM k)`, c.Ref.TenantID, c.Folder, effects.Adopt, effects.Incarnation).Scan(&all)
-	if err != nil {
-		return err
-	}
-	if !all {
-		return ErrAllocationRetired
 	}
 	return nil
 }

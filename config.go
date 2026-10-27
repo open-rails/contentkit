@@ -23,7 +23,6 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/avatar"
-	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -58,10 +57,6 @@ type Config struct {
 	// contentkit_clickhouse probe fails with the cause. The engine retries a
 	// down one in the background and turns signals back on when it answers.
 	ClickHouse ClickHouseConfig `yaml:"clickhouse" json:"clickhouse"`
-	// MeasuredEngagement enables the measured reader write API after every
-	// account-erasure executor has upgraded. Keep false through a mixed-writer
-	// rollout; reads and legacy history remain available. No migration runs here.
-	MeasuredEngagement bool `yaml:"measured_engagement,omitempty" json:"measured_engagement,omitempty"`
 	// ActivityCohorts defines application-owned daily readership buckets. First
 	// match wins; nil reports totals without audience-specific categories.
 	ActivityCohorts []signal.ActivityCohort `yaml:"activity_cohorts,omitempty" json:"activity_cohorts,omitempty"`
@@ -125,11 +120,6 @@ type Rate struct {
 // tenant; content kinds' media are their versions', and each entity kind
 // gains cover media, media.ForContent) and how ContentKit serves it.
 type MediaConfig struct {
-	// LegacyLayout is a migration-only compatibility mode. It retains old object
-	// paths while Scope still enforces ownership. Before rollback, require a
-	// successful media.VerifyLayoutRollback checkpoint (or reverse-copy plan).
-	LegacyLayout bool `yaml:"legacy_layout,omitempty" json:"legacy_layout,omitempty"`
-
 	media.Config `yaml:",inline"`
 	// WorkerSchema holds the media worker's queue (cmd/media-worker's
 	// MEDIA_WORKER_SCHEMA); empty is Database.Schema plus "_media_worker".
@@ -181,9 +171,6 @@ type AvatarsConfig struct {
 // media.NewRegistry.
 func (c Config) MediaKinds() (media.Config, error) {
 	c.Content = c.Content.StorageModel()
-	if c.Scope != nil && c.Media != nil && c.Media.LegacyLayout && (c.Avatars != nil || c.Accounts != nil && c.Accounts.Avatars != nil) {
-		return media.Config{}, errors.New("contentkit: rollback avatar workers require the saved legacy registry; the scoped engine resolves the account key at startup")
-	}
 	var err error
 	c, _, err = c.withScope()
 	if err != nil {
@@ -197,10 +184,6 @@ func (c Config) MediaKinds() (media.Config, error) {
 		return media.Config{}, errors.New("contentkit: Config.Media is not set")
 	}
 	mc, tenant := c.Media.Config, strings.TrimSpace(c.Tenant)
-	if c.Media.LegacyLayout {
-		mc.Scope = layout.Scope{}
-		mc.Namespace = tenant
-	}
 	if !mc.Scope.IsZero() {
 		if mc.Namespace != "" {
 			return media.Config{}, errors.New("contentkit: scoped media derives its root; remove Media.Namespace")
@@ -219,12 +202,7 @@ func (c Config) MediaKinds() (media.Config, error) {
 	}
 	if a := c.Avatars; a != nil && a.Primary == "" {
 		kind, preset := a.kind()
-		if c.Media.LegacyLayout {
-			kind.Account = false
-			if c.Accounts != nil {
-				kind.Namespace = c.Accounts.Namespace
-			}
-		} else if !mc.Scope.IsZero() {
+		if !mc.Scope.IsZero() {
 			kind.Namespace = ""
 			kind.Account = true
 		}
