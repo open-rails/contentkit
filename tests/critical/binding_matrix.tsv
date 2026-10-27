@@ -103,7 +103,6 @@ go:AppID.MarshalText	go	Go root factory/config/value	AppID.MarshalText	scope.go	
 go:TenantID.UnmarshalText	go	Go root factory/config/value	TenantID.UnmarshalText	scope.go	included critical host/value specification; use public literal values
 go:AppID.UnmarshalText	go	Go root factory/config/value	AppID.UnmarshalText	scope.go	included critical host/value specification; use public literal values
 go:Scope.Validate	go	Go root factory/config/value	Scope.Validate	scope.go	included critical host/value specification; use public literal values
-go:MigrateVersionStorage	go	Go root factory/config/value	MigrateVersionStorage	version_storage.go	included critical host/value specification; use public literal values
 ts:CatalogClient.listEvents	ts	TS class member	CatalogClient.listEvents	sdk/ui/src/client/catalog.ts	included-critical
 ts:CatalogClient.totals	ts	TS class member	CatalogClient.totals	sdk/ui/src/client/catalog.ts	included-critical
 ts:BansClient.list	ts	TS class member	BansClient.list	sdk/ui/src/client/content/bans.ts	included-critical

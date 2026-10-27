@@ -189,12 +189,6 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 	if err := riverhelpers.ValidateMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return required(err)
 	}
-	if err := e.validatePublicationQueues(ctx); err != nil {
-		return required(err)
-	}
-	if err := e.validateUnifiedReleases(ctx); err != nil {
-		return required(err)
-	}
 	if account, ok := e.accountMediaStorage(); ok {
 		if err := workqueue.Validate(ctx, e.pool, account.WorkerSchema); err != nil {
 			return required(err)
@@ -202,16 +196,6 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 	}
 	if m := e.cfg.Media; m != nil {
 		if err := workqueue.Validate(ctx, e.pool, m.WorkerSchema); err != nil {
-			return required(err)
-		}
-		reg, journal, err := e.cleanupStorage()
-		if err != nil {
-			return required(err)
-		}
-		if err := media.ValidateCleanupMigration(ctx, e.pool, reg, journal, e.riverSchema); err != nil {
-			return required(err)
-		}
-		if err := media.ValidateProcessingMigration(ctx, e.pool, reg, e.riverSchema); err != nil {
 			return required(err)
 		}
 	}
@@ -225,9 +209,6 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 		if errors.Is(err, ErrScopeConflict) {
 			return err
 		}
-		return required(err)
-	}
-	if err := e.validateCatalogEventHandoff(ctx); err != nil {
 		return required(err)
 	}
 	return nil

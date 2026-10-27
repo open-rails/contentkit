@@ -2,8 +2,6 @@ package critical_test
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +11,6 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 )
 
@@ -72,78 +69,4 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
 		got, err := b.client("").GetContent(t.Context(), ib.ID, ck.GetContentQuery{})
 		return err == nil && got.Live
 	})
-}
-
-type publicationMigrationJob struct {
-	kind string
-	args json.RawMessage
-}
-
-func (j publicationMigrationJob) Kind() string                 { return j.kind }
-func (j publicationMigrationJob) MarshalJSON() ([]byte, error) { return j.args, nil }
-
-func TestPublicationQueueMigrationPreservesOwners(t *testing.T) {
-	w := newWorld(t)
-	a, b := w.apps[0], w.apps[1]
-	create := func(app *application) catalog.Content {
-		t.Helper()
-		item, err := app.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Queue migration"}}}}})
-		must(t, err)
-		return item
-	}
-	ia, ib := create(a), create(b)
-	client, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
-	must(t, err)
-	insert := func(kind, queue string, args any) int64 {
-		t.Helper()
-		raw, err := json.Marshal(args)
-		must(t, err)
-		job, err := client.Insert(t.Context(), publicationMigrationJob{kind: kind, args: raw}, &river.InsertOpts{Queue: queue})
-		must(t, err)
-		return job.Job.ID
-	}
-	jA := insert("contentkit_content_purge_deleted", catalog.Queue, map[string]string{"content": ia.ID, "version": ia.Versions[0].ID})
-	jB := insert("contentkit_content_purge_deleted", catalog.Queue, map[string]string{"content": ib.ID, "version": ib.Versions[0].ID})
-	foreign := insert("contentkit_content_purge_deleted", "other_application_queue", map[string]string{"content": ia.ID, "version": ia.Versions[0].ID})
-	periodic := insert("contentkit_content_publish_due", catalog.Queue, map[string]string{})
-	completed := insert("contentkit_content_purge_deleted", catalog.Queue, map[string]string{"content": ia.ID, "version": ia.Versions[0].ID})
-	_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job SET state='completed',finalized_at=now() WHERE id=$1`, completed)
-	must(t, err)
-	_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job SET state='running',attempted_at=now() WHERE id=$1`, jA)
-	must(t, err)
-	err = ck.MigratePostgres(t.Context(), w.pool, a.cfg)
-	if err == nil || !strings.Contains(err.Error(), "stop legacy publication workers") {
-		t.Fatalf("running legacy publisher did not block migration: %v", err)
-	}
-	_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job SET state='available' WHERE id=$1`, jA)
-	must(t, err)
-	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
-	for id, queue := range map[int64]string{
-		jA: catalog.QueueFor(a.cfg.Scope.AppID.String()), jB: catalog.QueueFor(b.cfg.Scope.AppID.String()),
-		foreign: "other_application_queue", completed: catalog.Queue,
-	} {
-		job, err := client.JobGet(t.Context(), id)
-		must(t, err)
-		if job.Queue != queue {
-			t.Fatalf("job %d moved to %s, expected %s", id, job.Queue, queue)
-		}
-	}
-	old, err := client.JobGet(t.Context(), periodic)
-	must(t, err)
-	if old.State != rivertype.JobStateCancelled {
-		t.Fatalf("unscoped periodic row was not retired after replacement: %s", old.State)
-	}
-	// Each application explicitly converts only its owned publication obligations.
-	for _, app := range w.apps {
-		must(t, ck.MigratePostgres(t.Context(), w.pool, app.cfg))
-	}
-	var oldJobs, requests int
-	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job
- WHERE kind IN ('contentkit_content_publish_due','contentkit_catalog_publish_due')
- AND state IN ('available','pending','retryable','scheduled')`).Scan(&oldJobs))
-	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_publication_requests`).Scan(&requests))
-	if oldJobs != 0 || requests != 0 {
-		t.Fatalf("retired sweep created work for draft editions: old jobs=%d requests=%d", oldJobs, requests)
-	}
-	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
 }

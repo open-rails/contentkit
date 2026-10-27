@@ -201,9 +201,6 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := manifests.ValidatePublicationLayoutMigration(ctx); err != nil {
-		return nil, fmt.Errorf("media/worker: publication layout migration required: %w", err)
-	}
 	uploads, err := media.NewUploads(media.UploadOptions{Store: c.Store, Manifests: manifests})
 	if err != nil {
 		return nil, err

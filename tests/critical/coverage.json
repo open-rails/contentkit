@@ -20,28 +20,6 @@
       ]
     },
     {
-      "id": "CK-J01-S02",
-      "journey": "CK-J01",
-      "behavior": "Previous released schema migration preserves public identities and reads",
-      "status": "verified",
-      "evidence": [
-        "The actual public v0.125.0 initializer records its module version, creates and publishes content. Current read-only startup refuses its schema, explicit migration preserves item/version IDs, code and body through embedded and HTTP reads, and repeated migration preserves revision.",
-        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification.",
-        "A pinned publicv0.112.1 executable writes actual legacy nested media; current public migration copies real bytes once while preserving content/version/blob identities. Existingv0.125 text migration remains an independent profile.",
-        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required.",
-        "Explicit storage conversion refuses old/incomplete layouts, resumes verified copies and retirement, and preserves immutable source identities.",
-        "Pinned public0.126.1 initializer seeds the actual deployed schema and obsolete jobs/timed associations. Upgrade refuses unsafe work before DDL, requires explicit resolution, preserves identities and all old migration receipts, then succeeds idempotently. Focused run passed75.617s; exact hosted aggregate still required."
-      ],
-      "cases": [
-        "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity",
-        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity",
-        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/anonymous_HTTP",
-        "TestPreviousReleaseMigration/CK-J01-S02_prior_released_schema_requires_upgrade_and_preserves_identity/embedded_host",
-        "TestPublicationStorage",
-        "TestReleasedEntityJobUpgrade"
-      ]
-    },
-    {
       "id": "CK-J01-S03",
       "journey": "CK-J01",
       "behavior": "SkipMigrations checks prepared schema without DDL",
@@ -433,10 +411,10 @@
     {
       "id": "CK-J05-S06",
       "journey": "CK-J05",
-      "behavior": "Concurrent durable publication and queue migration preserve ownership and completion facts",
+      "behavior": "Concurrent durable publication preserves ownership and completion facts",
       "status": "verified",
       "evidence": [
-        "Real registered workers establish availability and deduplicate completion; per-app publication queues isolate shared catalog tables. Explicit queue conversion preserves targets and unrelated or terminal history.",
+        "Real registered workers establish availability and deduplicate completion; per-app publication queues isolate shared catalog tables. Publication storage copies durably across lost copy responses.",
         "Superseding a physically copied public attempt with the previous private policy must retire the abandoned public URL before completing; equivalent reader content cannot skip physical reconciliation. Bulk chapter imports refuse unsafe manifest-lock ordering without mutating catalog state.",
         "A forced two-session parent/request contention reproduces 40P01 before the fix; deterministic parent/version-before-request locking allows the durable request and its actual served bytes to complete.",
         "The separate version metadata publisher was removed in#260; its worker-specific exhaustion case is retired. Release lock-order tests remain."
@@ -444,12 +422,10 @@
       "cases": [
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
         "TestPublicationQueuesIsolateSharedCatalogApps",
-        "TestPublicationQueueMigrationPreservesOwners",
-        "TestUnifiedReleaseMigration",
-        "TestUnifiedReleaseMigrationKeepsCompletedRequest",
         "TestSupersededPublicCopyReturnsToPrivate",
         "TestImportChaptersRequiresManifestLockingWriter",
-        "TestPublicationSchedulingLocksParentBeforeRequest"
+        "TestPublicationSchedulingLocksParentBeforeRequest",
+        "TestPublicationStorage"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -2039,37 +2015,6 @@
       ]
     },
     {
-      "id": "CK-J25-S14",
-      "journey": "CK-J25",
-      "behavior": "Explicit legacy migration preserves chosen receipt IDs while retiring obsolete notices",
-      "status": "verified",
-      "evidence": [
-        "Restored pre-upgrade source/receipt snapshots enter public MigratePostgres twice. Deleted/held receipts become hidden without losing read/archive/classification; canonical duplicate wins and later public restoration reopens exactly that original ID.",
-        "Executable mapping prepared for independent review; qualification requires this exact case to execute and pass in the strict runner on the final integrated candidate."
-      ],
-      "cases": [
-        "TestAccountNotificationLegacyAdoption/CK-J25-S14_reply_deleted",
-        "TestAccountNotificationLegacyAdoption/CK-J25-S14_parent_deleted",
-        "TestAccountNotificationLegacyAdoption/CK-J25-S14_parent_held",
-        "TestAccountNotificationLegacyAdoption/CK-J25-S14_reply_deleted_uppercase",
-        "TestAccountNotificationLegacyAdoption/CK-J25-S14_parent_deleted_uppercase",
-        "TestAccountNotificationLegacyAdoption/CK-J25-S14_parent_deleted_duplicate"
-      ]
-    },
-    {
-      "id": "CK-J25-S15",
-      "journey": "CK-J25",
-      "behavior": "Active unclassified legacy receipts adopt fixed app visibility without losing local state",
-      "status": "verified",
-      "evidence": [
-        "Public migration classifies only the native app origin; existing read/archive remain. The fixed AuthKit publisher can then withdraw/reopen the same exact receipt with newer revisions.",
-        "Executable mapping prepared for independent review; qualification requires this exact case to execute and pass in the strict runner on the final integrated candidate."
-      ],
-      "cases": [
-        "TestAccountNotificationLegacyAdoption/CK-J25-S15_active_legacy_classification_preserves_local_state"
-      ]
-    },
-    {
       "id": "CK-J25-S16",
       "journey": "CK-J25",
       "behavior": "Legacy shared account directory binds one merchant across apps and refuses another tenant or replacement merchant",
@@ -2103,8 +2048,7 @@
         "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
       ],
       "cases": [
-        "TestContentPurgeRetriesSignalCleanup",
-        "TestContentSignalPurgeJobMigration"
+        "TestContentPurgeRetriesSignalCleanup"
       ]
     },
     {
@@ -2134,14 +2078,13 @@
     {
       "id": "CK-J16-S08",
       "journey": "CK-J16",
-      "behavior": "Entity lifecycle writes persist exact work and legacy retirement preserves foreign history",
+      "behavior": "Entity lifecycle writes persist exact work",
       "status": "verified",
       "evidence": [
         "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
       ],
       "cases": [
-        "TestEntityLifecycleWithoutReconciliation",
-        "TestEntityJobMigration"
+        "TestEntityLifecycleWithoutReconciliation"
       ]
     },
     {
@@ -2423,7 +2366,6 @@
       "behavior": "Each edition owns independently authored text and media references",
       "status": "verified",
       "evidence": [
-        "Executed against real PostgreSQL/AuthKit using public operations. Migration owner runs actual published ContentKit0.129.0, checks retained translations/overrides/IDs/access and immutable receipts, then replays. Focused evidence is in259-version-content gitdir; combined final qualification remains required.",
         "Exact-edition search uses existing document keys and hit version IDs; parent documents are retired and version dirty obligations seeded during migration. Initial focused match/filter proof passed; expanded final integrated execution remains required."
       ],
       "cases": [
@@ -2433,21 +2375,6 @@
         "TestVersionOwnedContent/hidden_initial_version_and_import_use_the_same_contract",
         "TestVersionOwnedContent/title_sort_and_cursor_use_the_displayed_edition",
         "TestVersionOwnedContent/search_and_typeahead_keep_the_matching_version"
-      ]
-    },
-    {
-      "id": "CK-J01-S40",
-      "journey": "CK-J01",
-      "behavior": "Adopt published parent text into independent version rows without losing retained data",
-      "status": "verified",
-      "evidence": [
-        "Executed against real PostgreSQL/AuthKit using public operations. Migration owner runs actual published ContentKit0.129.0, checks retained translations/overrides/IDs/access and immutable receipts, then replays. Focused evidence is in259-version-content gitdir; combined final qualification remains required.",
-        "Exact-edition search uses existing document keys and hit version IDs; parent documents are retired and version dirty obligations seeded during migration. Initial focused match/filter proof passed; expanded final integrated execution remains required."
-      ],
-      "cases": [
-        "TestVersionContentMigration/retained_translations_and_version_overrides_survive",
-        "TestVersionContentMigration/replay_preserves_adopted_text_and_published_migration_receipts",
-        "TestVersionContentMigration/parent_search_documents_become_exact_edition_obligations"
       ]
     },
     {
@@ -8834,7 +8761,6 @@
       "name": "MigratePostgres",
       "status": "verified",
       "cases": [
-        "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity",
         "TestFixedSiteChannelMigration",
         "TestFixedSiteChannelAuthorizationScope",
         "TestConfiguredOwnerProvisioning",
@@ -9090,17 +9016,6 @@
       ],
       "evidence": [
         "Canonical public configuration identity literals, invalid decoder preservation, JSON/text round trips and nonzero/distinct provisioning exercise the selected value binding without storage."
-      ]
-    },
-    {
-      "id": "go:MigrateVersionStorage",
-      "name": "MigrateVersionStorage",
-      "status": "verified",
-      "cases": [
-        "TestLegacyMediaStorageMigration/CK-J01-S02_real_legacy_version_media_copies_once_and_preserves_identity"
-      ],
-      "evidence": [
-        "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
       ]
     },
     {

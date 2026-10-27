@@ -48,19 +48,7 @@ that retained prefix, or names history replaced by a restore/reset, returns
 HTTP 410 with `event_cursor_expired`; resync current state before starting again.
 A cursor does not confer permission or select another app.
 
-## Upgrade from callback delivery
-
-Stop old application writers and event-delivery workers while running the full
-explicit PostgreSQL migration. Its preflight rejects a running legacy delivery
-worker; that check does not replace the operator's stopped-writer fence.
-
-SQL32 preserves all retained purge facts in a one-time handoff table before
-removing the old delivered flag. The full migration converts each app's handoff
-rows into its existing durable signal-erasure jobs, then removes only the rows
-successfully queued in that same transaction. It also retires pending old event
-delivery and billing-notification poll jobs. `SkipQueues` leaves required work
-pending, and runtime validation refuses to start that app until the full
-migration completes. Other apps' handoff rows remain untouched.
+## Purge recording
 
 New purges use an explicit same-transaction `OnPurge` callback to record required
 cleanup; ordinary event readers do not control deletion or other domain work.
