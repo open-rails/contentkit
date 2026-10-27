@@ -918,7 +918,7 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   replaces it. `Max` caps an Upload's files, `Frames` lets the `frame` op
   grab the upload from a video upload, `Named` lets the server name it (`i-{uuid}`, inline images;
   it needs a `Max`).
-- **Private presets** have one producer: `Image` (per-file `Choose` in Go),
+- **Private presets** have one producer: `Image` (with `Shapes`, below),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
   track's segment table is its own private blob), `MP4` (one rung, H.264),
   `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
@@ -936,6 +936,20 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   packs the resulting original-format pages in reading order. Upgrade the
   worker/gateway cohort before declaring this registry, then regenerate
   existing items to replace an old download rendition.
+  `Shapes` give an image preset another `Image` for uploads of another
+  aspect (width:height), wider than `WiderThan` and no wider than
+  `NoWiderThan` (unset is open). They are data, so the stock worker runs
+  them; they never overlap and keep the preset's format and animation; an
+  upload in none renders `Image`. Tall pages keep more height, wide pages
+  more width:
+
+  ```json
+  {"name": "low", "from": "originals/{name}", "to": "low-res/{name}.webp",
+   "image": {"width": 1206, "height": 2096, "quality": 90},
+   "shapes": [
+     {"no_wider_than": "1:2", "image": {"width": 1206, "height": 5065, "quality": 90}},
+     {"wider_than": "1:1", "image": {"width": 2412, "height": 2096, "quality": 90}}]}
+  ```
 - **Public presets** render an upload through its edit at fixed names,
   `{w}` for each width (a width past the edited image renders at its width,
   so every name exists). The object carries its `from` and `fp` as metadata.
@@ -978,8 +992,8 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   holds a shared namespace, in its bucket and journal, processed by its
   worker; other sites reach it through its API (Avatars below) and serve
   its files from their media hosts (`MEDIA_GATEWAY_BUCKETS`).
-- The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; `Choose`
-  and hooks are not included): an engine's is `Config.MediaKinds()`, printed
+- The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; hooks
+  are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
 
 ### Avatars

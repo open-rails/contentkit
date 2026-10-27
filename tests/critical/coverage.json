@@ -2351,6 +2351,19 @@
       "evidence": [
         "Reviewed actual PNG/FFmpeg audiovisual source and S3 write barrier test: image completion alone does not activate release, completed mixed outputs do, and pending replacement retains the prior reader snapshot. Final runtime execution remains required."
       ]
+    },
+    {
+      "id": "CK-J09-S31",
+      "journey": "CK-J09",
+      "behavior": "Image preset shapes are registry data: the stock worker renders tall, wide and square pages at their shape's size",
+      "status": "verified",
+      "cases": [
+        "TestImageShapePresets/CK-J09-S31_registry_validates_shapes_and_unmeasured_uploads_use_the_preset_image",
+        "TestImageShapePresets/CK-J09-S31_stock_worker_renders_tall_wide_and_square_pages_by_shape_from_registry_json"
+      ],
+      "evidence": [
+        "A worker whose registry is the media-config JSON parsed back (ParseConfig, NewRegistry) renders real PNG pages through libvips and S3: exactly 1:2 renders the tall image, a portrait and a square page the preset image, a wide page the wide image, each with one WebP write. NewRegistry refuses overlapping, unbounded, empty, unreduced, other-format, other-animation and non-image shapes. Focused local run passed; mutations (shape from recorded size only; inclusive wide bound) failed it."
+      ]
     }
   ],
   "review_notes": {
