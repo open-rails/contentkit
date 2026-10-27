@@ -779,7 +779,7 @@ func TestHiddenCommentAuthorReactions(t *testing.T) {
 			checkCounts(content.KindComment, imported.ID, 1, 0)
 			checkCounts("article", item.ID, 1, 1)
 			checkCounts("article", second.ID, 1, 0)
-			checkNotices(parent.ID, fresh.ID, imported.ID)
+			checkNotices(parent.ID, fresh.ID)
 			standing, err := public.GetContentCanComment(t.Context(), item.ID, ck.GetContentCanCommentQuery{})
 			must(t, err)
 			if standing.Count == nil || *standing.Count != 5 {

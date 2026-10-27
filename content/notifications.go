@@ -158,10 +158,10 @@ func (c *comments) restoreLikeNotices(ctx context.Context, tx pgx.Tx, cid, actor
 FROM `+c.s.t.comments+` c
 JOIN `+c.s.t.reactions+` r ON r.tenant_id=c.tenant_id AND r.content_kind='comment' AND r.content_id=c.id::text
  AND r.content_version_id IS NULL AND r.value=1 AND NOT r.author_hidden AND r.user_id<>c.user_id
-LEFT JOIN `+c.noticeTable()+` n ON n.tenant_id=c.tenant_id AND n.recipient=c.user_id
- AND n.source_id='comment.liked:' || c.id::text || ':' || r.user_id
+JOIN `+c.noticeTable()+` n ON n.tenant_id=c.tenant_id AND n.recipient=c.user_id
+ AND n.source_id='comment.liked:' || c.id::text || ':' || r.user_id AND n.withdrawn
 WHERE c.tenant_id=$1 AND c.id=$2 AND c.moderation='approved' AND c.deleted_at IS NULL AND NOT c.author_hidden
- AND ($3='' OR r.user_id=$3) AND (n.source_id IS NULL OR n.withdrawn)`, c.s.tenant, cid, actorID)
+ AND ($3='' OR r.user_id=$3)`, c.s.tenant, cid, actorID)
 	if err != nil {
 		return err
 	}
@@ -186,6 +186,21 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND c.moderation='approved' AND c.deleted_at IS
 		}
 	}
 	return nil
+}
+
+// recordHiddenLike keeps a hidden liker's like as a withdrawn notice identity,
+// so unhiding restores it like any withdrawn notice; a like that never had an
+// identity (an import) never notifies.
+func (c *comments) recordHiddenLike(ctx context.Context, tx pgx.Tx, actor access.Actor, cid string) error {
+	if c.rt.notifier == nil || !actor.Member() {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO `+c.noticeTable()+` (tenant_id,comment_id,recipient,source_id,kind,withdrawn,created_at)
+SELECT c.tenant_id,c.id,c.user_id,'comment.liked:'||c.id::text||':'||$3,'comment.liked',true,clock_timestamp()
+FROM `+c.s.t.comments+` c JOIN `+c.rt.hiddenAuthorsTable()+` h ON h.tenant_id=c.tenant_id AND h.actor_id=$3
+WHERE c.tenant_id=$1 AND c.id=$2 AND c.user_id IS NOT NULL AND c.user_id<>$3
+ON CONFLICT (tenant_id,recipient,source_id) DO NOTHING`, c.s.tenant, cid, actor.AccountID())
+	return err
 }
 
 func (c *comments) withdrawLikeNotice(ctx context.Context, tx pgx.Tx, actorID, cid string) error {

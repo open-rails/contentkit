@@ -66,8 +66,8 @@ VALUES ($1,$2) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, actorID)
 			return err
 		}
 		c := rt.comments
-		// Lock every affected comment and its parent at once, in id order, the
-		// order lockThread takes two of them in. Content rollups follow, once
+		// Lock every affected comment, its parent and the comments the account
+		// reacted to at once, in id order, the order lockThread takes two in. Content rollups follow, once
 		// each in key order, as recount and erasure lock them.
 		if _, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND (user_id=$2 OR id IN
 (SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2) OR id::text IN
@@ -153,7 +153,7 @@ WHERE tenant_id=$1 AND user_id=$2 RETURNING `+keyCols+`,value`, rt.tenant, actor
 					continue
 				}
 				if _, err := tx.Exec(ctx, `UPDATE `+c.s.t.comments+` SET likes=likes+$3,dislikes=dislikes+$4
-WHERE tenant_id=$1 AND id::text=$2`, rt.tenant, r.key.ContentID, likes, dislikes); err != nil {
+WHERE tenant_id=$1 AND id=$2::uuid`, rt.tenant, r.key.ContentID, likes, dislikes); err != nil {
 					return err
 				}
 				if r.value == 1 {
