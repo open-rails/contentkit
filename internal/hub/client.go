@@ -123,15 +123,7 @@ type SearchResult struct {
 // language are grouped per work before Offset and Limit apply; each hit
 // carries the matched document's reference and language.
 func (c *Client) Search(ctx context.Context, userText string, opts SearchOptions) (SearchResult, error) {
-	return c.search(ctx, userText, opts, nil)
-}
-
-// SearchWithTrace executes Search and returns opt-in retrieval provenance. On
-// failure, the returned trace contains all work completed before the error.
-func (c *Client) SearchWithTrace(ctx context.Context, userText string, opts SearchOptions) (SearchResult, SearchTrace, error) {
-	var trace SearchTrace
-	result, err := c.search(ctx, userText, opts, &trace)
-	return result, trace, err
+	return c.search(ctx, userText, opts)
 }
 
 // effectiveLimits resolves the page and document window sizes.
@@ -149,8 +141,8 @@ func (c *Client) effectiveLimits(opts SearchOptions) (limit, offset, candidateLi
 	return limit, offset, candidateLimit
 }
 
-func (c *Client) search(ctx context.Context, userText string, opts SearchOptions, trace *SearchTrace) (SearchResult, error) {
-	groups, truncated, err := c.searchGroups(ctx, userText, opts, trace)
+func (c *Client) search(ctx context.Context, userText string, opts SearchOptions) (SearchResult, error) {
+	groups, truncated, err := c.searchGroups(ctx, userText, opts)
 	result := SearchResult{Truncated: truncated}
 	if err != nil {
 		return result, err
@@ -159,37 +151,25 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 	selected, hasMore := page(groups, offset, limit)
 	result.HasMore = hasMore || truncated
 	result.Hits = make([]SearchHit, 0, len(selected))
-	for i, g := range selected {
+	for _, g := range selected {
 		result.Hits = append(result.Hits, hitFromGroup(g))
-		if trace != nil {
-			trace.Results = append(trace.Results, resultTraceFromGroup(offset+i+1, g))
-		}
 	}
 	return result, nil
 }
 
 // searchGroups retrieves and groups the complete bounded document windows,
 // before either ordinary pagination or personalized ranking.
-func (c *Client) searchGroups(ctx context.Context, userText string, opts SearchOptions, trace *SearchTrace) ([]group, bool, error) {
+func (c *Client) searchGroups(ctx context.Context, userText string, opts SearchOptions) ([]group, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var truncated bool
 	q := normalize.Query(userText)
-	if trace != nil {
-		*trace = initializeSearchTrace(c, q, opts)
-	}
-	fail := func(category string, err error) ([]group, bool, error) {
-		if trace != nil {
-			trace.ErrorCategory = category
-		}
-		return nil, truncated, err
-	}
 	if opts.Offset < 0 {
-		return fail("validation", fmt.Errorf("Offset must not be negative"))
+		return nil, truncated, fmt.Errorf("Offset must not be negative")
 	}
 	_, _, candidateLimit := c.effectiveLimits(opts)
 	if candidateLimit > search.MaxCandidateLimit {
-		return fail("validation", fmt.Errorf("effective CandidateLimit must not exceed %d", search.MaxCandidateLimit))
+		return nil, truncated, fmt.Errorf("effective CandidateLimit must not exceed %d", search.MaxCandidateLimit)
 	}
 	language := strings.TrimSpace(opts.Language)
 	if language == "" {
@@ -197,37 +177,29 @@ func (c *Client) searchGroups(ctx context.Context, userText string, opts SearchO
 	}
 	languages, err := resolveLanguageModes(language, opts.LanguageMode)
 	if err != nil {
-		return fail("validation", fmt.Errorf("invalid SearchOptions.LanguageMode %q", opts.LanguageMode))
+		return nil, truncated, fmt.Errorf("invalid SearchOptions.LanguageMode %q", opts.LanguageMode)
 	}
 	kinds := cloneAndTrim(opts.ContentKinds)
 	if len(kinds) == 0 {
-		return fail("validation", fmt.Errorf("ContentKinds is required"))
+		return nil, truncated, fmt.Errorf("ContentKinds is required")
 	}
 	if q == "" || !normalize.HasAnyLetterOrNumber(q) {
-		if trace != nil {
-			trace.EmptyReason = EmptyReasonNormalizedQuery
-		}
 		return nil, false, nil
 	}
 
 	var docs []groupedDoc
 	for i, lang := range languages {
 		requested := i == 0
-		keyword, keywordIndex, err := c.searchKeyword(ctx, userText, lang, candidateLimit, kinds, opts, trace)
+		keyword, err := c.searchKeyword(ctx, userText, lang, candidateLimit, kinds, opts)
 		if err != nil {
 			return nil, truncated, err
 		}
 		truncated = truncated || keyword.Truncated
-		for rank, h := range keyword.Hits {
-			docs = append(docs, groupedDoc{ref: h.ContentRef, language: h.Language, priority: h.Priority, score: h.Score, requested: requested,
-				scoreKind: ScoreKeywordMatch, contributions: []ContributionTrace{{SourceIndex: keywordIndex, SourceRank: rank + 1, Weight: 1, Contribution: h.Score}}})
+		for _, h := range keyword.Hits {
+			docs = append(docs, groupedDoc{ref: h.ContentRef, language: h.Language, priority: h.Priority, score: h.Score, requested: requested})
 		}
 	}
-	groups := groupByContent(docs)
-	if len(groups) == 0 && trace != nil {
-		trace.EmptyReason = EmptyReasonNoCandidates
-	}
-	return groups, truncated, nil
+	return groupByContent(docs), truncated, nil
 }
 
 // KeywordMatch selects matching (content_id, content_version_id) pairs in
@@ -258,24 +230,9 @@ func (c *Client) searchOptions(lang string, limit int, kinds []string, opts Sear
 		Eligibility: opts.Eligibility}
 }
 
-// searchKeyword runs one language's keyword window and returns its trace source index.
-func (c *Client) searchKeyword(ctx context.Context, q string, language string, limit int, kinds []string, opts SearchOptions, trace *SearchTrace) (search.Result, int, error) {
-	traceIndex := beginSourceTrace(trace, BackendKeyword, language, ScoreKeywordMatch, limit)
-	result, err := search.KeywordSearch(ctx, c.pool, q, c.searchOptions(language, limit, kinds, opts))
-	if err != nil {
-		failSourceTrace(trace, traceIndex, "keyword")
-		return result, traceIndex, err
-	}
-	completeSourceTrace(trace, traceIndex, candidateTraces(result.Hits))
-	return result, traceIndex, nil
-}
-
-func candidateTraces(hits []search.Hit) []CandidateTrace {
-	out := make([]CandidateTrace, 0, len(hits))
-	for i, h := range hits {
-		out = append(out, CandidateTrace{Key: TraceKey{ContentRef: h.ContentRef, Language: h.Language}, Rank: i + 1, Score: h.Score})
-	}
-	return out
+// searchKeyword runs one language's keyword window.
+func (c *Client) searchKeyword(ctx context.Context, q string, language string, limit int, kinds []string, opts SearchOptions) (search.Result, error) {
+	return search.KeywordSearch(ctx, c.pool, q, c.searchOptions(language, limit, kinds, opts))
 }
 
 type TypeaheadOptions struct {

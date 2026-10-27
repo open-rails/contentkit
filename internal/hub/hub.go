@@ -185,7 +185,7 @@ func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions
 
 	limit, offset, _ := h.client.effectiveLimits(opts.SearchOptions)
 
-	groups, truncated, err := h.client.searchGroups(ctx, userText, opts.SearchOptions, nil)
+	groups, truncated, err := h.client.searchGroups(ctx, userText, opts.SearchOptions)
 	if err != nil {
 		return SearchResult{}, err
 	}
