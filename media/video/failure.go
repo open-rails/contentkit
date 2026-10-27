@@ -34,7 +34,9 @@ func (e *Encoder) FailPending(ctx context.Context, job media.ProcessJob, cause e
 					}
 				}
 			}
-			if job.Preset == "" && f.Frame != nil {
+			if job.Preset == "" && f.Frame != nil && f.Frame.From != nil {
+				pending = pending || f.Blob == ""
+			} else if job.Preset == "" && f.Frame != nil {
 				v, ok := item.Kind().FramesVideo(m, f.Path)
 				pending = pending || ok && v.Blob != "" && (f.Blob == "" || f.Frame.Of != v.Blob)
 			}

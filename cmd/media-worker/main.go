@@ -12,6 +12,12 @@
 // the bucket with backoff, reporting both on /statusz and app_dependency_up.
 // It runs no DDL: the host's migration step applies workqueue.Migrate to
 // MEDIA_WORKER_SCHEMA, so DATABASE_URL can be an unprivileged role.
+//
+// `media-worker publish-defaults` publishes the default images the kinds'
+// public presets name (Public.Default) and prints MEDIA_GATEWAY_DEFAULTS for
+// the gateway. It needs MEDIA_KINDS_FILE and MEDIA_S3_*, no database.
+// MEDIA_DEFAULTS_DIR holds the host's own default images, over ContentKit's
+// (media/avatar). Hosts link no codecs; this is where defaults are rendered.
 package main
 
 import (
@@ -23,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,7 +44,18 @@ import (
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	if err := run(log); err != nil {
+	var err error
+	switch args := os.Args[1:]; strings.Join(args, " ") {
+	case "":
+		err = run(log)
+	case "publish-defaults":
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		err = publishDefaults(ctx, os.Stdout)
+		stop()
+	default:
+		err = fmt.Errorf("unknown command %q: run without arguments, or publish-defaults", strings.Join(args, " "))
+	}
+	if err != nil {
 		log.Error("media-worker", "error", err)
 		os.Exit(1)
 	}
@@ -46,9 +64,13 @@ func main() {
 func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	kinds, err := loadKinds(os.Getenv("MEDIA_KINDS_FILE"))
+	declared, err := readKinds(os.Getenv("MEDIA_KINDS_FILE"))
 	if err != nil {
 		return err
+	}
+	kinds, err := media.NewRegistry(declared)
+	if err != nil {
+		return fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}
 	cfg, err := worker.FromEnv(ctx)
 	if err != nil {
@@ -159,17 +181,18 @@ func gauge(b bool) float64 {
 	return 0
 }
 
-func loadKinds(path string) (*media.Registry, error) {
+// readKinds reads the registry JSON (`contentkit media-config`).
+func readKinds(path string) (media.Config, error) {
 	if path == "" {
-		return nil, fmt.Errorf("MEDIA_KINDS_FILE is required")
+		return media.Config{}, fmt.Errorf("MEDIA_KINDS_FILE is required")
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
+		return media.Config{}, fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}
 	cfg, err := media.ParseConfig(b)
 	if err != nil {
-		return nil, fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
+		return media.Config{}, fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}
-	return media.NewRegistry(cfg)
+	return cfg, nil
 }

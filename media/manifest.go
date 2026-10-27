@@ -73,7 +73,7 @@ type File struct {
 	Staged     string           `json:"staged,omitempty"`     // "u-{uuid}" in temp/ until the worker hashes and places it at Blob
 	CreateID   string           `json:"create_id,omitempty"`  // create-only put receipt; retained through placement and processing
 	Edit       *Edit            `json:"edit,omitempty"`       // crop and rotate in source pixels
-	Frame      *Frame           `json:"frame,omitempty"`      // grabbed from the Upload.Frames video
+	Frame      *Frame           `json:"frame,omitempty"`      // grabbed from a video (the frame op)
 	Meta       map[string]any   `json:"meta,omitempty"`       // lang, label, …
 	Unattached bool             `json:"unattached,omitempty"` // processed on upload, not yet part of the item
 	Gone       bool             `json:"gone,omitempty"`       // blob dropped (KeepOriginals false); the hash stays for provenance
@@ -178,13 +178,16 @@ func (m *Manifest) SetPublication(from string, p Publication) {
 	}
 }
 
-// Frame is an upload grabbed from a frame of its Upload.Frames video at T
-// seconds; Auto lets the worker choose T. Of is the video blob it was
-// grabbed from: a new video grabs again.
+// Frame is an upload grabbed from a frame of its Upload.Frames video: the
+// one a player shows T seconds in; Auto lets the worker choose T. Of is the video blob it was
+// grabbed from: a new video grabs again. From names another item's video
+// instead (Kind always set): grabbed once, it is a still that video's
+// changes leave alone.
 type Frame struct {
-	T    float64 `json:"t,omitempty"`
-	Auto bool    `json:"auto,omitempty"`
-	Of   string  `json:"of,omitempty"`
+	T    float64   `json:"t,omitempty"`
+	Auto bool      `json:"auto,omitempty"`
+	Of   string    `json:"of,omitempty"`
+	From *CopyFrom `json:"from,omitempty"`
 }
 
 // Failure is why an upload's blob through its edit cannot be processed.
@@ -504,6 +507,10 @@ func (m *Manifest) Clone() *Manifest {
 		}
 		if f.Frame != nil {
 			x := *f.Frame
+			if x.From != nil {
+				from := *x.From
+				x.From = &from
+			}
 			f.Frame = &x
 		}
 		if f.Failed != nil {

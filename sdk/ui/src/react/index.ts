@@ -159,6 +159,7 @@ export {
   useVideoImages,
   useVideoPoster,
   type FrameStripOptions,
+  type SpriteTile,
   type StripFrame,
   type UseVideoFrame,
   type UseVideoImages,
