@@ -1146,13 +1146,21 @@
       "status": "verified",
       "evidence": [
         "Actual storage refusal, database settlement abort and resource failure stay observable; retry/regeneration recovers durable state without pretending prior completion.",
+        "Focused local race checks cover exhausted HLS, MP4, subtitle and poster work, early image failure, regeneration with unchanged completed outputs/chunks, and video shutdown/resume. This is not full-suite qualification.",
         "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
       ],
       "cases": [
         "TestMediaFailureRecovery/CK-J11-S06",
         "TestMediaFailureRecovery/CK-J11-S06/database-settlement-abort",
         "TestMediaFailureRecovery/CK-J11-S06/resource-failure-is-visible-and-regeneration-recovers",
-        "TestMediaFailureRecovery/CK-J11-S06/storage-refusal"
+        "TestMediaFailureRecovery/CK-J11-S06/storage-refusal",
+        "TestMediaWorkerRecovery/exhausted-image-job-records-failure-and-cancels",
+        "TestMediaVideoFailureRecovery/video",
+        "TestMediaVideoFailureRecovery/mp4",
+        "TestMediaVideoFailureRecovery/subtitle",
+        "TestMediaVideoFailureRecovery/poster",
+        "TestMediaVideoFailureRecovery/image-before-video",
+        "TestMediaVideoFailureRecovery/shutdown"
       ]
     },
     {

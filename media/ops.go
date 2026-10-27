@@ -185,9 +185,10 @@ func (o *opRun) apply(n int, op Op) error {
 			return uploadErr(CodeNotFound, "kind %q has no preset %q", k.Name, op.Preset)
 		}
 		// Uploads that failed for their current blob and edit are retried:
-		// their presets are pending again, as after a new upload.
+		// their presets are pending again, as after a new upload. A generated
+		// frame can fail before it has its first blob and must be retried too.
 		for i, f := range m.Files {
-			if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() == nil {
+			if !f.IsUpload() || f.Gone || f.Blob == "" && f.Frame == nil || f.Fail() == nil {
 				continue
 			}
 			presets := k.Presets(f.Path, false)
