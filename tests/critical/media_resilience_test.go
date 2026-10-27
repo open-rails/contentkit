@@ -47,6 +47,7 @@ type mediaWire struct {
 	webpPuts            int
 	failManifest        bool
 	failWebP            bool
+	refuseOutput        func(*http.Request) bool
 	refusedManifestPuts int
 }
 
@@ -82,6 +83,7 @@ func newMediaWire(t *testing.T) *mediaWire {
 		if webp {
 			w.webpPuts++
 		}
+		refuseOutput := w.refuseOutput != nil && w.refuseOutput(r)
 		hold := w.hold
 		if hold != nil && hold.match(r) {
 			w.hold = nil
@@ -89,7 +91,7 @@ func newMediaWire(t *testing.T) *mediaWire {
 			hold = nil
 		}
 		w.mu.Unlock()
-		if failWebP {
+		if failWebP || refuseOutput {
 			out.Header().Set("Content-Type", "application/xml")
 			out.WriteHeader(http.StatusForbidden)
 			_, _ = io.WriteString(out, `<Error><Code>AccessDenied</Code><Message>Owned fixture rendition write refused</Message></Error>`)
