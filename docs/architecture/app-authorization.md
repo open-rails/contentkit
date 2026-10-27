@@ -121,42 +121,64 @@ AuthKit-to-ContentKit tenant crosswalk as an adoption shortcut.
 
 ## Erasure and restore
 
-`EraseSubjects` erases the shared account resources plus this engine's local
-activity. AuthKit's configured `Token.AccountIssuers` and durable `OnPurge`
-deliveries invoke that work for every tenant app and prevent final account
-purge while any app still has an unfinished obligation. A failed callback
-remains retryable after restart. ContentKit does not duplicate that coordinator.
+Hosts pass no `OnPurge` callback. AuthKit purges the account first and records
+`user.purged` in its retained event log. Each host's event reader calls
+`AnonymizeAccount` and advances its cursor only after success. Failed cleanup
+remains pending for retry after an outage or restart. Anonymization removes
+account attribution while retaining comments and anonymous contributions.
 
-`EraseAppSubjects` is a privileged app-only erasure boundary. It permanently
-fences local activity and app notices while preserving the tenant inbox,
-avatars and sibling apps. This is not a new account-registration or user
-reset flow. Shared account erasure intents are committed before signal,
-content or media cleanup, even with notifications disabled. Explicit full
-account erasure records a tenant-wide intent; app erasure and ordinary account
-anonymization record an app intent. These intents survive completion. Existing
-AuthKit tombstones also remain authoritative, and database guards fence older
-delayed publishers. Historical completion receipts backfill only their recorded
-app's intent because they can also represent ordinary anonymization.
+`EraseSubjects` remains the explicit destructive operation for shared account
+resources and this app's activity. `EraseAppSubjects` permanently fences local
+activity and app notices while preserving the tenant inbox, avatars and sibling
+apps. Shared erasure intents are committed before cleanup, even with notifications
+disabled. Explicit full erasure records a tenant-wide intent (`app_id=''`);
+app erasure and ordinary anonymization record an app intent. Intents survive
+completion. AuthKit's `notify_recipients.erased_at` in the shared ContentKit scope
+also records a purge obligation. A tenant-wide explicit intent takes precedence
+over anonymization. Historical receipts backfill only their recorded app's intent.
 
-A content-only restore must preserve the shared account store. Normal scoped
-startup refuses `ErrErasureReplayRequired` when shared intents or tombstones are missing
-their local content fences or completed cleanup receipt. Full account cleanup
-has a separate receipt in the preserved account schema, keyed by tenant, app
-and actor. Successful `EraseSubjects` or `AnonymizeAccount` writes it;
-`EraseAppSubjects` never does. A global tombstone requires both this app's receipt and the avatar
-primary's receipt, so a secondary cannot discharge failed shared media cleanup.
-A source SQL commit alone does not complete erasure while another plane failed.
-The operator's replay tool opens
-`NewForErasureReplay`, calls `ReplayErasureFences` until complete, closes it,
-and starts the normal engine. The repair engine cannot serve routes or its
-in-process client, compose/start jobs, or automatically migrate schemas.
-Replay erases restored app data without erasing shared avatars or receipts.
-If full account cleanup has not finished (including historical global erasures
-without a receipt), explicitly run `tools replay-content-erasures --complete-accounts`
-on the avatar primary first and then the other apps. This invokes
-`ReplayAccountErasures` before local replay; it retries the full obligation,
-including avatar cleanup, without starting background workers or serving.
-AuthKit's durable purge fanout remains the ordinary retry coordinator.
+A content-only restore must preserve the shared account store. This app's
+completion receipt and local `engine_cleanup_complete` fence commit in one
+transaction. For ordinary purges, startup returns `ErrErasureReplayRequired`
+when this app has a receipt but neither that fence nor lifecycle state
+`purged` remains: evidence of a catalog restore. A pending purge without an
+app intent or receipt can start so its event reader can finish. It never waits
+for another app's receipt. A sibling may therefore start while the avatar primary is still
+deleting the shared avatar file; its URL remains reachable until cleanup.
+The `contentkit_account_anonymization` probe fails when a purge obligation older
+than 15 minutes, within the last 30 days, still lacks this app's receipt. It does
+not block startup.
+
+Explicit erasure retains its startup barrier: this app and the avatar primary
+must have receipts, and local cleanup must be complete. App-only erasures with
+no local completion fence and no `purging` or `purged` lifecycle row also require
+replay, independently of whether the subject now has a purge obligation.
+Successful `EraseSubjects` or `AnonymizeAccount` writes an account receipt;
+`EraseAppSubjects` never does.
+
+The operator's replay tool opens `NewForErasureReplay`, calls
+`ReplayErasureFences` until complete, closes it, and starts the normal engine.
+The repair engine cannot serve routes or its in-process client, compose/start
+jobs, or automatically migrate schemas. Replay sends purge-origin subjects
+through `AnonymizeAccount`, preserving anonymous contributions and clearing
+restored comment, creator and owner attribution. This also resumes the app's
+avatar responsibility. Other subjects retain destructive app erasure behavior.
+`ReplayAccountErasures` likewise anonymizes purge-origin subjects, including
+receipt-backed obligations without an inbox. Failed anonymization leaves the
+report incomplete and returns the error; retry until complete.
+
+A purge obligation with this app's intent but no receipt is ambiguous after a
+restore: it may be an app-only erasure followed by an AuthKit purge, or an
+interrupted anonymization. Both replay methods run `EraseAppSubjects` first to
+honour a possible explicit deletion request, then `AnonymizeAccount` to clear
+creators and ownership and write this app's receipt. Other purge obligations
+retain the anonymization-only path.
+
+For unfinished explicit full erasures, run
+`tools replay-content-erasures --complete-accounts` on the avatar primary first,
+then the other apps. This invokes `ReplayAccountErasures` before local replay,
+without starting workers or serving. Ordinary purge retries belong to each
+host's event reader; no periodic erasure sweep is required.
 
 ## Evidence and remaining work
 
