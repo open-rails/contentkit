@@ -622,9 +622,15 @@ func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
 	if _, _, _, _, ok := k.upload(sample); ok {
 		return fmt.Errorf("To %q overlaps an upload path", p.To)
 	}
+	if len(p.Shapes) > 0 && p.Image == nil {
+		return errors.New("Shapes need an Image producer")
+	}
 	switch {
 	case p.Image != nil:
-		return p.Image.validate()
+		if err := p.Image.validate(); err != nil {
+			return err
+		}
+		return validateShapes(*p.Image, p.Shapes)
 	case p.HLS != nil:
 		return p.HLS.validate()
 	case p.MP4 != nil:
@@ -702,6 +708,29 @@ func (im Image) validate() error {
 		im.Blur < 0 || im.MinWidth < 0 || !im.Aspect.Valid() ||
 		im.Fit != FitInside && im.Fit != FitCover || im.Animation != AnimationAllow && im.Animation != AnimationReject {
 		return fmt.Errorf("invalid image spec %+v", im)
+	}
+	return nil
+}
+
+// validateShapes requires bounded, nonempty, disjoint shapes whose images
+// keep base's format and animation.
+func validateShapes(base Image, shapes []Shape) error {
+	for i, s := range shapes {
+		if s.WiderThan.Native() && s.NoWiderThan.Native() || !s.WiderThan.Valid() || !s.NoWiderThan.Valid() ||
+			!spans(s.WiderThan, s.NoWiderThan) {
+			return fmt.Errorf("shape %d: set WiderThan, NoWiderThan or both (reduced W:H), the first narrower", i)
+		}
+		if s.Image.Format != base.Format || s.Image.Animation != base.Animation {
+			return fmt.Errorf("shape %d: keep the preset's format and animation", i)
+		}
+		if err := s.Image.validate(); err != nil {
+			return fmt.Errorf("shape %d: %w", i, err)
+		}
+		for j, o := range shapes[:i] {
+			if spans(s.WiderThan, o.NoWiderThan) && spans(o.WiderThan, s.NoWiderThan) {
+				return fmt.Errorf("shapes %d and %d overlap", j, i)
+			}
+		}
 	}
 	return nil
 }
