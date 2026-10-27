@@ -371,17 +371,6 @@ func (h *Hub) Forget(ctx context.Context, subject signal.Subject, contentKind, c
 	return store.Forget(ctx, h.tenant, subject, contentKind, contentID)
 }
 
-// EraseSubjects permanently erases subjects from this tenant's signal plane:
-// see signal.Store.EraseSubjects for the completion contract. Shared accounts
-// exist in several tenants: each host erases its own tenant.
-func (h *Hub) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return signal.ErasureReport{}, err
-	}
-	return store.EraseSubjects(ctx, []string{h.tenant}, subjects)
-}
-
 // AnonymizeSubject preserves anonymous engagement while unlinking an account.
 func (h *Hub) AnonymizeSubject(ctx context.Context, old, anonymous signal.Subject) error {
 	store, err := h.requireStore()

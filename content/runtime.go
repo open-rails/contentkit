@@ -99,7 +99,7 @@ type Options struct {
 	NotificationPublisher notify.Publisher
 	// EraseAccountReceipts connects the existing account cleanup lifecycle.
 	// Nil is used by standalone content runtimes without shared account storage.
-	EraseAccountReceipts func(context.Context, []string, bool) error
+	EraseAccountReceipts func(context.Context, []string) error
 
 	// Logger receives the access log: each request at DEBUG, a 500 at ERROR
 	// with its cause. nil -> slog.Default().
@@ -110,7 +110,7 @@ type Options struct {
 // services, exposing one mountable http.Handler.
 type Runtime struct {
 	notifier             notify.Publisher
-	eraseAccountReceipts func(context.Context, []string, bool) error
+	eraseAccountReceipts func(context.Context, []string) error
 	store                *store
 	schema               string
 	tenant               string

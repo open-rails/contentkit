@@ -130,7 +130,7 @@ for _, r := range routes {
   in-process transport (for example `PostContents`,
   `CreateContent`).
 - `Ready` fails until `Start`; `Probes` are the optional dependencies
-  (ClickHouse, the bucket, Redis); `EraseSubjects` is account erasure.
+  (ClickHouse, the bucket, Redis); `AnonymizeAccount` is account deletion.
 - `Config.Avatars` is people's avatars: held by one site's engine, the
   primary, which other sites sharing its people forward their avatar
   writes to (HOST_INTEGRATION "Avatars").
@@ -781,9 +781,9 @@ routes (signals, exposures, history, popular, similar, recommend) land with
 - Similar and recommended content draw candidates from `Deps.Candidates`
   (default: co-engagement); see
   [discovery candidates](HOST_INTEGRATION.md#discovery-candidates).
-- `EraseSubjects` is account erasure with a quorum-written fence; see
-  [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract)
-  and, for interaction data, [interaction erasure](HOST_INTEGRATION.md#interaction-erasure).
+- `AnonymizeAccount` is account deletion with a quorum-written fence; see
+  [HOST_INTEGRATION.md](HOST_INTEGRATION.md#signal-plane-account-deletion)
+  and, for interaction data, [account lifecycle](HOST_INTEGRATION.md#account-lifecycle-and-interaction-erasure).
 - Reactions and favorites reach the signal plane from their own revisioned
   rows: the engine's preference job syncs changes every five minutes using a
   revision watermark with a five-minute commit overlap, and re-sends all rows

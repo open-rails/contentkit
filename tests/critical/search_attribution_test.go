@@ -223,21 +223,29 @@ func TestBrowserSearchEngagementAttribution(t *testing.T) {
 		t.Fatal("another app exported this reader's query/visit")
 	}
 	// Clearing the autocomplete history leaves event attribution intact under
-	// its separately approved retention; permanent subject erasure removes both.
+	// its separately approved retention; account deletion detaches both.
 	must(t, reader.DeleteMeSearches(t.Context(), ck.DeleteMeSearchesQuery{}))
 	kept, err := store.Attribution(t.Context(), tenant, signal.AttributionOptions{Stage: signal.StageRendered})
 	must(t, err)
 	if len(kept.Renders) == 0 {
 		t.Fatal("clearing recent search unexpectedly erased event attribution")
 	}
-	erased, err := a.engine.EraseAppSubjects(t.Context(), []signal.Subject{{UserID: user.ID}})
-	must(t, err)
-	if !erased.Complete() {
-		t.Fatalf("attribution erasure incomplete: %+v", erased)
-	}
+	must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
 	after, err := store.Attribution(t.Context(), tenant, signal.AttributionOptions{Stage: signal.StageRendered})
 	must(t, err)
-	if len(after.Renders) != 0 || len(after.Unattributed) != 0 {
-		t.Fatal("erased subject query/click remained exportable")
+	for _, render := range after.Renders {
+		if render.Subject.UserID == user.ID {
+			t.Fatal("deleted account still owns an exported render")
+		}
+		for _, click := range render.Clicks {
+			if click.Subject.UserID == user.ID {
+				t.Fatal("deleted account still owns an exported click")
+			}
+		}
+	}
+	for _, click := range after.Unattributed {
+		if click.Subject.UserID == user.ID {
+			t.Fatal("deleted account still owns an unattributed click")
+		}
 	}
 }
