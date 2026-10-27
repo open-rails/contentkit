@@ -237,9 +237,6 @@ type errorBody struct {
 	Code  string `json:"code"`
 }
 
-// Tenant is the tenant whose codes the router resolves.
-func (r *Router) Tenant() string { return r.store.Tenant() }
-
 // AliasLookup is legacy identifiers to resolve, at most MaxAliases.
 type AliasLookup struct {
 	Aliases []AliasKey `json:"aliases"`

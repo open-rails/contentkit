@@ -33,7 +33,7 @@ func (e *Engine) AnonymizeAccount(ctx context.Context, accountID string) error {
 		}
 		// The intent and the purging row commit together, so an app intent
 		// without either lifecycle state can only come from a catalog restore.
-		if err := e.recordAccountErasureIntent(ctx, tx, []string{accountID}, false); err != nil {
+		if err := e.recordAccountErasureIntent(ctx, tx, []string{accountID}); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `INSERT INTO `+table+` AS current (tenant_id,actor_id,state,anonymous_key)
@@ -59,7 +59,7 @@ RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Tenant, accountID).Scan
 	if err := e.eraseAvatars(ctx, []string{accountID}); err != nil {
 		return err
 	}
-	if err := e.completeErasure(ctx, []string{accountID}, true); err != nil {
+	if err := e.completeErasure(ctx, []string{accountID}); err != nil {
 		return err
 	}
 	_, err = e.pool.Exec(ctx, `UPDATE `+table+` SET state='purged',anonymous_key=NULL WHERE tenant_id=$1 AND actor_id=$2 AND state='purging'`, e.cfg.Tenant, accountID)

@@ -236,12 +236,6 @@ func (s *Store) fillStanding(ctx context.Context, actor access.Actor, items []*C
 	return nil
 }
 
-// Tenant is the store's tenant.
-func (s *Store) Tenant() string { return s.tenant }
-
-// Kinds is the store's content model.
-func (s *Store) Kinds() kinds.Config { return s.cfg }
-
 // Ref is a content item's reference.
 func (s *Store) Ref(kind, id string) contentref.ContentRef { return contentref.New(s.tenant, kind, id) }
 

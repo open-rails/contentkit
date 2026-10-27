@@ -157,33 +157,6 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, s
 	return out, rows.Err()
 }
 
-// HistoryCount returns the total row count History would paginate over.
-func (st *Store) HistoryCount(ctx context.Context, tenant string, subject Subject, opts HistoryOptions) (int64, error) {
-	if err := subject.Validate(); err != nil {
-		return 0, err
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, `SELECT toInt64(count())
-FROM (%s)
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, st.readingState(subjectScope), st.subjectNotErased(), workLevel)
-	args, _, err := historyFilter(&sb, append(scopeArgs(tenant, subject.Kind(), subject.Key()), tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)), opts)
-	if err != nil {
-		return 0, err
-	}
-	rows, err := st.conn.Query(ctx, sb.String(), args...)
-	if err != nil {
-		return 0, fmt.Errorf("signal: history count: %w", err)
-	}
-	defer rows.Close()
-	var n int64
-	if rows.Next() {
-		if err := rows.Scan(&n); err != nil {
-			return 0, fmt.Errorf("signal: history count scan: %w", err)
-		}
-	}
-	return n, rows.Err()
-}
-
 // SeenIDs returns the subject's seen-set for one content kind: work ids with
 // max_progress > 0. This is the signal-plane half of the unseen anti-join.
 func (st *Store) SeenIDs(ctx context.Context, tenant string, subject Subject, contentKind string) (map[string]struct{}, error) {

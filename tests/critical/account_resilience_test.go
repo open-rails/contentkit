@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -188,7 +187,7 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	if accountObjects() == 0 {
 		t.Fatal("avatar positive control has no actual account media")
 	}
-	t.Run("CK-J23-S06_app_only_replay_preserves_shared_inbox_avatar_and_sibling_data", func(t *testing.T) {
+	t.Run("CK-J23-S06_app_deletion_replay_preserves_shared_inbox_and_sibling_data", func(t *testing.T) {
 		for _, app := range []*application{a, sibling} {
 			inbox, err := app.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
 			must(t, err)
@@ -196,50 +195,51 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 				t.Fatalf("shared/app inbox positive controls absent: %+v", inbox)
 			}
 		}
-		report, err := a.engine.EraseAppSubjects(t.Context(), []signal.Subject{{UserID: appReset.ID}})
-		must(t, err)
-		if !report.Complete() {
-			t.Fatalf("app-only erasure incomplete: %+v", report)
-		}
+		must(t, a.engine.AnonymizeAccount(t.Context(), appReset.ID))
 		recovery, err := ck.NewForErasureReplay(t.Context(), a.cfg, a.deps)
 		must(t, err)
 		defer func() { must(t, recovery.Close(context.Background())) }()
-		report, err = recovery.ReplayErasureFences(t.Context())
+		report, err := recovery.ReplayErasureFences(t.Context())
 		must(t, err)
 		if !report.Complete() {
-			t.Fatal("app-only replay did not finish")
+			t.Fatal("app replay did not finish")
 		}
 		inbox, err := a.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
 		must(t, err)
 		if len(inbox.Items) != 1 || inbox.Items[0].ID != sharedNotice.ID {
-			t.Fatal("app-only replay erased or duplicated shared account receipt")
+			t.Fatal("app replay erased or duplicated shared account receipt")
 		}
 		inbox, err = sibling.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
 		must(t, err)
 		if len(inbox.Items) != 2 {
-			t.Fatal("app-only replay changed sibling inbox")
+			t.Fatal("app replay changed sibling inbox")
 		}
 		favorite, err := sibling.client(appResetCredential).GetContentFavorite(t.Context(), siblingItem.ID, ck.GetContentFavoriteQuery{})
 		must(t, err)
 		if !favorite.Favorited {
-			t.Fatal("app-only replay erased sibling activity")
+			t.Fatal("app replay erased sibling activity")
+		}
+		retained, err := a.client("").GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
+		must(t, err)
+		if retained.Count == nil || *retained.Count != 3 {
+			t.Fatalf("app replay lost an anonymous contribution: %+v", retained)
 		}
 		localState, err := signalStore.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: appReset.ID}, []signal.ContentRef{signalRef})
 		must(t, err)
 		if len(localState) != 0 {
-			t.Fatal("app-only replay left target signal attribution")
+			t.Fatal("app replay left target signal attribution")
 		}
 		siblingRef := contentref.New(sibling.cfg.Scope.AppID.String(), "article", siblingItem.ID)
 		otherState, err := signalStore.States(t.Context(), sibling.cfg.Scope.AppID.String(), signal.Subject{UserID: appReset.ID}, []signal.ContentRef{siblingRef})
 		must(t, err)
 		if _, exists := otherState[siblingRef.Key()]; !exists {
-			t.Fatal("app-only replay erased same subject in sibling signal partition")
+			t.Fatal("app replay erased same subject in sibling signal partition")
 		}
 		response, err := http.Get(resetAvatar)
 		must(t, err)
 		response.Body.Close()
-		if response.StatusCode != 200 {
-			t.Fatal("app-only replay erased shared account avatar")
+		if response.StatusCode != 404 {
+			t.Fatal("deleted account avatar remained visible")
 		}
 	})
 	t.Run("CK-J24-S01_CK-J24-S02_soft_delete_and_restore_preserve_signal_and_avatar", func(t *testing.T) {
@@ -312,7 +312,7 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		}
 		counts, err := a.client("").GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
 		must(t, err)
-		if counts.Count == nil || *counts.Count != 2 {
+		if counts.Count == nil || *counts.Count != 3 {
 			t.Fatal("anonymization lost a retained contribution")
 		}
 		inbox, err := a.accountInbox(credential).List(t.Context(), inboxQuery{})
@@ -415,7 +415,7 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		}
 		counts, err := a.client("").GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
 		must(t, err)
-		if counts.Count == nil || *counts.Count != 2 {
+		if counts.Count == nil || *counts.Count != 3 {
 			t.Fatal("retry double-counted or lost an anonymous contribution")
 		}
 		must(t, sibling.engine.AnonymizeAccount(t.Context(), user.ID))
@@ -447,30 +447,16 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 			t.Fatal("terminal fence lost private-resource erasure")
 		}
 	})
-	t.Run("explicit_account_erasure_requires_and_finishes_sibling_replay", func(t *testing.T) {
-		// The explicit destructive API is separate from ordinary account
-		// anonymization. Use the account whose app-only reset above deliberately
-		// preserved a real avatar, shared receipt and sibling contributions.
-		report, err := a.engine.EraseSubjects(t.Context(), []signal.Subject{{UserID: appReset.ID}})
-		must(t, err)
-		if !report.Complete() {
-			t.Fatalf("explicit full erasure incomplete: %+v", report)
-		}
-		response, err := http.Get(resetAvatar)
-		must(t, err)
-		response.Body.Close()
-		if response.StatusCode != 404 {
-			t.Fatal("full account erasure left shared avatar visible")
-		}
+	t.Run("pending_identity_purge_lets_sibling_start_and_replay_finishes_it", func(t *testing.T) {
+		eraseAuthKitAccount(t, w, a, appReset.ID)
 		sibling.server.Close()
 		must(t, sibling.engine.Close(t.Context()))
-		bad, err := ck.New(t.Context(), sibling.cfg, sibling.deps)
-		if bad != nil || !errors.Is(err, ck.ErrErasureReplayRequired) {
-			t.Fatalf("sibling served before its full-account cleanup: %v", err)
-		}
+		pending, err := ck.New(t.Context(), sibling.cfg, sibling.deps)
+		must(t, err)
+		must(t, pending.Close(t.Context()))
 		sibling.engine, err = ck.NewForErasureReplay(t.Context(), sibling.cfg, sibling.deps)
 		must(t, err)
-		report, err = sibling.engine.ReplayAccountErasures(t.Context())
+		report, err := sibling.engine.ReplayAccountErasures(t.Context())
 		must(t, err)
 		if !report.Complete() {
 			t.Fatalf("sibling account replay incomplete: %+v", report)
@@ -491,8 +477,8 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		}
 		favorite, err := sibling.client(appResetCredential).GetContentFavorite(t.Context(), siblingItem.ID, ck.GetContentFavoriteQuery{})
 		must(t, err)
-		if favorite.Favorited || favorite.Count == nil || *favorite.Count != 1 {
-			t.Fatalf("full replay lost unrelated anonymous contribution or retained target: %+v", favorite)
+		if favorite.Favorited || favorite.Count == nil || *favorite.Count != 2 {
+			t.Fatalf("full replay lost an anonymous contribution or kept attribution: %+v", favorite)
 		}
 	})
 }

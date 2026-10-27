@@ -96,22 +96,6 @@ func keyArgs(k contentref.ContentKey) []any {
 	return []any{k.TenantID, k.ContentKind, k.ContentID, versionid.Arg(k.ContentVersionID)}
 }
 
-// refColumns unzips references into positional arrays for unnest pairing.
-func refColumns(refs []contentref.ContentRef) (kinds, ids []string, versions []*string) {
-	kinds, ids, versions = make([]string, len(refs)), make([]string, len(refs)), make([]*string, len(refs))
-	for i, r := range refs {
-		kinds[i], ids[i], versions[i] = r.ContentKind, r.ContentID, r.ContentVersionID
-	}
-	return kinds, ids, versions
-}
-
-// refsIn is the predicate of rows keyed by one of the references in
-// positional arrays bound at $n..$n+2; tenant is bound separately.
-func refsIn(n int) string {
-	return "EXISTS (SELECT 1 FROM unnest($" + strconv.Itoa(n) + "::text[], $" + strconv.Itoa(n+1) + "::text[], $" + strconv.Itoa(n+2) +
-		"::text[]) AS r(kind, id, version) WHERE content_kind = r.kind AND content_id = r.id AND content_version_id IS NOT DISTINCT FROM r.version)"
-}
-
 // beginMutation fixes the isolation required by the source-fence protocol.
 // After an advisory-lock wait, the fence query must see the eraser's committed
 // row, even when the host configured a repeatable-read session default.

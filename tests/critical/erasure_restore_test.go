@@ -12,24 +12,11 @@ import (
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/signal"
 )
 
 func TestRestoredAccountAnonymization(t *testing.T) {
-	for _, tc := range []struct {
-		accountReplay bool
-		appErasure    bool
-	}{
-		{},
-		{accountReplay: true},
-		{appErasure: true},
-		{accountReplay: true, appErasure: true},
-	} {
-		name := fmt.Sprintf("account_replay_%t", tc.accountReplay)
-		if tc.appErasure {
-			name += "_app_erasure_then_purge"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, accountReplay := range []bool{false, true} {
+		t.Run(fmt.Sprintf("account_replay_%t", accountReplay), func(t *testing.T) {
 			w := newWorld(t)
 			a := w.apps[0]
 			user, token, channel := ownedChannel(t, w, a, "Restored owner")
@@ -64,23 +51,8 @@ func TestRestoredAccountAnonymization(t *testing.T) {
 			if createdBy != user.ID || owner != user.ID || len(item.Creators) != 1 || item.Creators[0].UserID != user.ID {
 				t.Fatal("restore fixture lacks creator and ownership attribution")
 			}
-			if tc.appErasure {
-				report, err := a.engine.EraseAppSubjects(t.Context(), []signal.Subject{{UserID: user.ID}})
-				must(t, err)
-				if !report.Complete() {
-					t.Fatalf("initial app erasure incomplete: %+v", report)
-				}
-			}
 			eraseAuthKitAccount(t, w, a, user.ID)
-			if tc.appErasure {
-				var receipt bool
-				must(t, w.pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM contentkit_accounts.content_account_erasure_receipts WHERE tenant_id=$1 AND app_id=$2 AND actor_id=$3)", a.cfg.Scope.TenantID.String(), a.cfg.Scope.AppID.String(), user.ID).Scan(&receipt))
-				if receipt {
-					t.Fatal("app-only erasure unexpectedly wrote an account receipt")
-				}
-			} else {
-				must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
-			}
+			must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
 			a.server.Close()
 			must(t, a.engine.Close(t.Context()))
 			tx, err := w.pool.Begin(t.Context())
@@ -105,7 +77,7 @@ func TestRestoredAccountAnonymization(t *testing.T) {
 			must(t, err)
 			defer func() { must(t, recovery.Close(context.Background())) }()
 			replay := recovery.ReplayErasureFences
-			if tc.accountReplay {
+			if accountReplay {
 				replay = recovery.ReplayAccountErasures
 			}
 			for range 2 {
@@ -140,17 +112,8 @@ WHERE a.tenant_id=$1 AND a.actor_id=$2`, a.cfg.Scope.AppID.String(), user.ID, a.
 			}
 			favorite, err = a.client("").GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
 			must(t, err)
-			wantCount := 1
-			if tc.appErasure {
-				wantCount = 0
-				var favorites int
-				must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+qs+".content_favorites WHERE tenant_id=$1 AND content_id=$2", a.cfg.Scope.AppID.String(), item.ID).Scan(&favorites))
-				if favorites != 0 {
-					t.Fatal("app erasure replay kept an anonymous favorite")
-				}
-			}
-			if favorite.Count == nil || *favorite.Count != wantCount {
-				t.Fatalf("replayed favorite count: got %+v want %d", favorite, wantCount)
+			if favorite.Count == nil || *favorite.Count != 1 {
+				t.Fatalf("replayed favorite count: got %+v want 1", favorite)
 			}
 		})
 	}
@@ -168,20 +131,16 @@ func TestRestoredErasureFence(t *testing.T) {
 	// These are actual pre-erasure rows copied inside this owned database,
 	// equivalent to restoring the app's interaction tables. Shared account
 	// tombstones stay current, just as required by the recovery contract.
-	tables := []string{"content_favorites", "content_interaction_counts", "content_erased_subjects"}
+	tables := []string{"content_favorites", "content_interaction_counts", "content_erased_subjects", "content_account_lifecycle"}
 	for _, table := range tables {
 		_, err := w.pool.Exec(t.Context(), "CREATE TABLE "+qs+"."+pgx.Identifier{"backup_" + table}.Sanitize()+" AS TABLE "+qs+"."+pgx.Identifier{table}.Sanitize())
 		must(t, err)
 	}
-	report, err := a.engine.EraseAppSubjects(t.Context(), []signal.Subject{{UserID: user.ID}})
-	must(t, err)
-	if !report.Complete() {
-		t.Fatalf("initial erasure incomplete: %+v", report)
-	}
+	must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
 	state, err := client.GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
 	must(t, err)
-	if state.Favorited || state.Count == nil || *state.Count != 0 {
-		t.Fatalf("initial erasure did not clear real favorite: %+v", state)
+	if state.Favorited || state.Count == nil || *state.Count != 1 {
+		t.Fatalf("deletion did not keep the favorite anonymously: %+v", state)
 	}
 	a.server.Close()
 	must(t, a.engine.Close(t.Context()))
@@ -213,8 +172,8 @@ func TestRestoredErasureFence(t *testing.T) {
 		a.server = mountEngine(t, a.engine)
 		state, err := a.client(token).GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
 		must(t, err)
-		if state.Favorited || state.Count == nil || *state.Count != 0 {
-			t.Fatalf("replay resurrected old attribution: %+v", state)
+		if state.Favorited || state.Count == nil || *state.Count != 1 {
+			t.Fatalf("replay did not end as live deletion (anonymous, counted once): %+v", state)
 		}
 		_, err = a.client(token).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
 		requireError(t, err, 403, "forbidden")
@@ -255,11 +214,7 @@ CREATE TRIGGER critical_pause_favorite BEFORE INSERT ON %s.content_favorites FOR
 			return n == 1
 		})
 		go func() {
-			report, err := a.engine.EraseAppSubjects(ctx, []signal.Subject{{UserID: user.ID}})
-			if err == nil && !report.Complete() {
-				err = fmt.Errorf("erasure incomplete: %+v", report)
-			}
-			erased <- err
+			erased <- a.engine.AnonymizeAccount(ctx, user.ID)
 		}()
 		waitFor(t, func() bool {
 			var n int
@@ -272,15 +227,15 @@ CREATE TRIGGER critical_pause_favorite BEFORE INSERT ON %s.content_favorites FOR
 		must(t, <-erased)
 		state, err := a.client(token).GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
 		must(t, err)
-		if state.Favorited || state.Count == nil || *state.Count != 0 {
-			t.Fatalf("pre-erasure writer survived the completed fence: %+v", state)
+		if state.Favorited || state.Count == nil || *state.Count != 1 {
+			t.Fatalf("pre-deletion write kept its attribution or was lost: %+v", state)
 		}
 		_, err = a.client(token).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
 		requireError(t, err, 403, "forbidden")
 		_, sibling := w.person(t, 0)
 		state, err = a.client(sibling).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
 		must(t, err)
-		if !state.Favorited || state.Count == nil || *state.Count != 1 {
+		if !state.Favorited || state.Count == nil || *state.Count != 2 {
 			t.Fatalf("fence blocked an unrelated reader: %+v", state)
 		}
 	})

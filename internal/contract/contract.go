@@ -8,14 +8,9 @@ package contract
 //go:generate go run ./gen -root ../..
 
 import (
-	"bytes"
-	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
 	"github.com/open-rails/contentkit/internal/httpapi"
 
@@ -61,29 +56,6 @@ func Files(fsys fs.FS) (map[string][]byte, error) {
 		SDKDir + "wire.ts":        m.wireTS(),
 		SDKDir + "error-codes.ts": errorCodesTS(),
 	}, nil
-}
-
-// ErrStale is a committed generated file that no longer matches the catalog.
-var ErrStale = errors.New("generated contract files are stale")
-
-// Verify fails when a generated file in fsys differs from what the catalog
-// renders, and names each one.
-func Verify(fsys fs.FS) error {
-	files, err := Files(fsys)
-	if err != nil {
-		return err
-	}
-	var stale []string
-	for name, want := range files {
-		if got, err := fs.ReadFile(fsys, name); err != nil || !bytes.Equal(got, want) {
-			stale = append(stale, name)
-		}
-	}
-	if len(stale) == 0 {
-		return nil
-	}
-	sort.Strings(stale)
-	return fmt.Errorf("%w; run `go generate ./internal/contract` and review the change:\n  %s", ErrStale, strings.Join(stale, "\n  "))
 }
 
 // Write renders every generated file into the repository at root.

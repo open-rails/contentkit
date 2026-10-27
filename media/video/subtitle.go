@@ -110,9 +110,6 @@ func (e *Encoder) subtitle(ctx context.Context, item media.Item, f media.File, p
 	})
 }
 
-// subtitleDemuxers are the sidecar formats ffmpeg reads (SSA through "ass").
-var subtitleDemuxers = []string{"srt", "ass"}
-
 // convertSubtitle converts a sidecar of type typ (its parser: WebVTT, SRT or
 // SSA/ASS, never sniffed) to clean WebVTT.
 func (e *Encoder) convertSubtitle(ctx context.Context, dir, typ string, raw []byte, lang, charset string) ([]byte, error) {

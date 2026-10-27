@@ -110,42 +110,6 @@ ORDER BY 1, 2, 3, 4`, cols[0], cols[1], cols[2], versions, cols[3], cols[4])
 	return rows.Err()
 }
 
-// PublicImages returns ref's current public images (Images for one item). A
-// missing item has none.
-func (m *Manifests) PublicImages(ctx context.Context, ref contentref.ContentRef) ([]PublicImage, error) {
-	images, err := m.Images(ctx, ImageQuery{Ref: ref})
-	if err != nil {
-		return nil, err
-	}
-	return images[0], nil
-}
-
-// PresetImages returns, per ref in order, its first current image of preset,
-// else the preset's default (DefaultImage), else one without renditions. One
-// query for the whole list.
-func (m *Manifests) PresetImages(ctx context.Context, preset string, refs ...contentref.ContentRef) ([]PublicImage, error) {
-	qs := make([]ImageQuery, len(refs))
-	for i, ref := range refs {
-		qs[i] = ImageQuery{Ref: ref, Preset: preset}
-	}
-	found, err := m.Images(ctx, qs...)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]PublicImage, len(refs))
-	for i, ref := range refs {
-		switch def, ok := m.reg.DefaultImage(ref, preset); {
-		case len(found[i]) > 0:
-			out[i] = found[i][0]
-		case ok:
-			out[i] = def
-		default:
-			out[i] = PublicImage{Preset: preset}
-		}
-	}
-	return out, nil
-}
-
 // Avatars returns, per id in order, the person's avatar (Config.Avatars) at
 // its Stable preset's logical names: their current image, else the
 // gateway's default. Built from the ids, never looked up; none without

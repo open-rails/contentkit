@@ -439,8 +439,7 @@
         "Real registered workers establish availability and deduplicate completion; per-app publication queues isolate shared catalog tables. Explicit queue conversion preserves targets and unrelated or terminal history.",
         "Superseding a physically copied public attempt with the previous private policy must retire the abandoned public URL before completing; equivalent reader content cannot skip physical reconciliation. Bulk chapter imports refuse unsafe manifest-lock ordering without mutating catalog state.",
         "A forced two-session parent/request contention reproduces 40P01 before the fix; deterministic parent/version-before-request locking allows the durable request and its actual served bytes to complete.",
-        "Three-connection real sibling metadata publishers and a single-connection PendingTx read must validate manifests through their held SQL transaction; pool exhaustion behind the parent lock must not deadlock completion.",
-        "The separate version metadata publisher was removed in#260; its worker-specific exhaustion case is retired. The direct PendingTx one-connection assertion remains, alongside existing release lock-order tests."
+        "The separate version metadata publisher was removed in#260; its worker-specific exhaustion case is retired. Release lock-order tests remain."
       ],
       "cases": [
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
@@ -450,8 +449,7 @@
         "TestUnifiedReleaseMigrationKeepsCompletedRequest",
         "TestSupersededPublicCopyReturnsToPrivate",
         "TestImportChaptersRequiresManifestLockingWriter",
-        "TestPublicationSchedulingLocksParentBeforeRequest",
-        "TestVersionReadinessUsesHeldTransaction/pending_read_single_connection"
+        "TestPublicationSchedulingLocksParentBeforeRequest"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -1584,14 +1582,14 @@
     {
       "id": "CK-J23-S06",
       "journey": "CK-J23",
-      "behavior": "App-only replay preserves shared inbox/avatar and sibling app data",
+      "behavior": "Replay of an app's account deletion preserves the shared inbox and sibling app data",
       "status": "verified",
       "evidence": [
-        "App-only reset and recovery preserve a real shared account avatar, tenant-wide receipt, sibling inbox, same-account sibling favorite and signal partition. Only the targeted app activity and private receipt disappear.",
+        "Deletion and recovery in one app keep the tenant-wide receipt, sibling inbox, same-account sibling favorite and signal partition, and keep the deleted account's contributions anonymously. The app's notices, the account's signal attribution and its avatar on the primary disappear.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
-        "TestAccountAnonymizationRecoveryAcrossStores/CK-J23-S06_app_only_replay_preserves_shared_inbox_avatar_and_sibling_data",
+        "TestAccountAnonymizationRecoveryAcrossStores/CK-J23-S06_app_deletion_replay_preserves_shared_inbox_and_sibling_data",
         "TestClickHouseErasureRetry/CK-J23-S06_replay_clears_only_target_app_subject"
       ]
     },
@@ -2236,24 +2234,22 @@
       "behavior": "Erasure intent survives a catalog restore with notifications omitted",
       "status": "verified",
       "evidence": [
-        "Real pre-erasure favorite/count/local-fence rows are restored while the shared account store stays current. App-only and whole-account erasures refuse normal startup, explicit replay removes restored activity, future writes remain fenced, and the app-only intent preserves sibling app startup and activity. The pre-fix regression failed both variants with engine=true, error=nil and one restored favorite."
+        "Real pre-deletion favorite/count/local-fence rows are restored while the shared account store stays current. Normal startup refuses, replay detaches the restored favorite and keeps it anonymously, future writes remain fenced, and the app intent preserves sibling app startup and activity."
       ],
       "cases": [
-        "TestOptionalInboxRestoreErasure/app_only",
-        "TestOptionalInboxRestoreErasure/whole_account"
+        "TestOptionalInboxRestoreErasure"
       ]
     },
     {
       "id": "CK-J25-S21",
       "journey": "CK-J25",
-      "behavior": "Failed cleanup retains intent and cannot discharge the full account obligation",
+      "behavior": "Failed cleanup retains intent and replay finishes it",
       "status": "verified",
       "evidence": [
-        "An owned PostgreSQL delete trigger rolls back the content cleanup. The shared intent remains, local fences are absent, startup refuses, and recovery finishes only after the fault is removed. Local replay cannot discharge a missing full-account completion receipt."
+        "An owned PostgreSQL update trigger rolls back the content anonymization. The shared intent remains, local fences are absent, and replay finishes the deletion after the fault is removed while keeping the contribution anonymously."
       ],
       "cases": [
-        "TestOptionalInboxFailedErasure/app_only",
-        "TestOptionalInboxFailedErasure/whole_account"
+        "TestOptionalInboxFailedErasure"
       ]
     },
     {
@@ -5271,7 +5267,7 @@
       "selection": "included-critical functionality and security",
       "status": "verified",
       "cases": [
-        "TestAccountAnonymizationRecoveryAcrossStores/CK-J23-S06_app_only_replay_preserves_shared_inbox_avatar_and_sibling_data",
+        "TestAccountAnonymizationRecoveryAcrossStores/CK-J23-S06_app_deletion_replay_preserves_shared_inbox_and_sibling_data",
         "TestAccountAnonymizationRecoveryAcrossStores/CK-J24-S01_CK-J24-S02_soft_delete_and_restore_preserve_signal_and_avatar",
         "TestHTTPAuthenticationMatrix/CK-API-098_GET_/v1/media/{kind}/{id}/expired_credential",
         "TestHTTPAuthenticationMatrix/CK-API-098_GET_/v1/media/{kind}/{id}/foreign_app_key",
@@ -5290,7 +5286,7 @@
       ],
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
-        "Non-versioned shared-avatar read returns an actual image URL; real HTTP visibility and app-only/account erasure controls witness the data.",
+        "Non-versioned shared-avatar read returns an actual image URL; real HTTP visibility and account deletion controls witness the data.",
         "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
       ]
     },
@@ -8239,10 +8235,10 @@
       "status": "verified",
       "cases": [
         "TestAccountAnonymizationRecoveryAcrossStores/CK-J24-S01_CK-J24-S02_soft_delete_and_restore_preserve_signal_and_avatar",
-        "TestAccountAnonymizationRecoveryAcrossStores/CK-J23-S06_app_only_replay_preserves_shared_inbox_avatar_and_sibling_data"
+        "TestAccountAnonymizationRecoveryAcrossStores/CK-J23-S06_app_deletion_replay_preserves_shared_inbox_and_sibling_data"
       ],
       "evidence": [
-        "Non-versioned shared-avatar read returns an actual image URL; real HTTP visibility and app-only/account erasure controls witness the data.",
+        "Non-versioned shared-avatar read returns an actual image URL; real HTTP visibility and account deletion controls witness the data.",
         "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
       ]
     },
@@ -8669,31 +8665,6 @@
       ]
     },
     {
-      "id": "go:Engine.EraseSubjects",
-      "name": "Engine.EraseSubjects",
-      "status": "verified",
-      "cases": [
-        "TestAccountAnonymizationRecoveryAcrossStores/explicit_account_erasure_requires_and_finishes_sibling_replay"
-      ],
-      "evidence": [
-        "Explicit full erasure removes real shared avatar/inbox; sibling refuses startup until replay, repeats idempotently and preserves unrelated contribution.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "go:Engine.EraseAppSubjects",
-      "name": "Engine.EraseAppSubjects",
-      "status": "verified",
-      "cases": [
-        "TestClickHouseErasureRetry/CK-J23-S03_signal_outage_cannot_report_completed_erasure",
-        "TestAccountAnonymizationRecoveryAcrossStores/CK-J23-S06_app_only_replay_preserves_shared_inbox_avatar_and_sibling_data"
-      ],
-      "evidence": [
-        "Actual CH outage leaves an incomplete report; app-only erase/replay preserves shared avatar/inbox and sibling-app data.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
       "id": "go:Engine.ReplayErasureFences",
       "name": "Engine.ReplayErasureFences",
       "status": "verified",
@@ -8712,10 +8683,10 @@
       "name": "Engine.ReplayAccountErasures",
       "status": "verified",
       "cases": [
-        "TestAccountAnonymizationRecoveryAcrossStores/explicit_account_erasure_requires_and_finishes_sibling_replay"
+        "TestAccountAnonymizationRecoveryAcrossStores/pending_identity_purge_lets_sibling_start_and_replay_finishes_it"
       ],
       "evidence": [
-        "Explicit full erasure removes real shared avatar/inbox; sibling refuses startup until replay, repeats idempotently and preserves unrelated contribution.",
+        "A pending AuthKit purge does not block sibling startup; replay finishes it, repeats idempotently, erases the shared inbox and keeps contributions anonymously.",
         "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
       ]
     },
@@ -8774,7 +8745,7 @@
       "status": "verified",
       "cases": [
         "TestAccountAnonymizationRecoveryAcrossStores/CK-J24-S01_CK-J24-S02_soft_delete_and_restore_preserve_signal_and_avatar",
-        "TestAccountAnonymizationRecoveryAcrossStores/explicit_account_erasure_requires_and_finishes_sibling_replay"
+        "TestAccountAnonymizationRecoveryAcrossStores/pending_identity_purge_lets_sibling_start_and_replay_finishes_it"
       ],
       "evidence": [
         "Shared schema and separate worker schema are checked; the resulting account worker processes a real avatar whose shared lifecycle effects are verified.",

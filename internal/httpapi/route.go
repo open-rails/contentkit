@@ -8,8 +8,6 @@ package httpapi
 import (
 	"fmt"
 	"net/http"
-	"slices"
-	"sort"
 	"strings"
 )
 
@@ -352,14 +350,4 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal, CodeUnavailable}
 	}
 	return nil
-}
-
-// AllErrors is every code the route can answer, sorted.
-func (s Spec) AllErrors() []string {
-	out := slices.Clone(s.Errors)
-	for _, set := range s.ErrorSets() {
-		out = append(out, ErrorSet(set)...)
-	}
-	sort.Strings(out)
-	return slices.Compact(out)
 }

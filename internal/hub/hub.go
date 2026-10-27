@@ -31,20 +31,11 @@ type Config struct {
 	PG       *pgxpool.Pool
 	PGSchema string
 
-	// Content-plane defaults (as in ClientConfig).
 	DefaultLanguage string
-	DefaultLimit    int
-	// DefaultRRFK controls deterministic popularity fusion in personalized search (default 60).
-	DefaultRRFK int
 
-	// Signal plane (ClickHouse). Optional: omit CH to run content-only
-	// (signal methods return ErrSignalPlaneDisabled). CHDatabase
-	// is the hub's dedicated ClickHouse database; apply
-	// migrations.ClickHouse and gate startup on signal.CheckSchema.
-	CH         signal.Conn
-	CHDatabase string
 	// SignalPlane: a signal plane is configured that SetSignals opens later;
-	// until then signal methods return ErrSignalPlaneDown.
+	// until then signal methods return ErrSignalPlaneDown. Without it signal
+	// methods return ErrSignalPlaneDisabled.
 	SignalPlane bool
 
 	// Tenant is the single tenant of this embedded hub. Required: every
@@ -55,12 +46,14 @@ type Config struct {
 // Hub is one tenant's search client and signal plane: the engine's internal
 // surface the discovery routes build on.
 type Hub struct {
-	defaultRRFK int
-	client      *Client
-	store       atomic.Pointer[signal.Store]
-	configured  bool
-	tenant      string
+	client     *Client
+	store      atomic.Pointer[signal.Store]
+	configured bool
+	tenant     string
 }
+
+// searchRRFK is the fusion constant of personalized search.
+const searchRRFK = 60
 
 // New builds the hub of one tenant.
 func New(cfg Config) (*Hub, error) {
@@ -69,35 +62,12 @@ func New(cfg Config) (*Hub, error) {
 		Schema:          cfg.PGSchema,
 		Tenant:          cfg.Tenant,
 		DefaultLanguage: cfg.DefaultLanguage,
-		DefaultLimit:    cfg.DefaultLimit,
 	})
 	if err != nil {
 		return nil, err
 	}
-	h := &Hub{
-		client:      client,
-		defaultRRFK: cfg.DefaultRRFK,
-		tenant:      client.Tenant(),
-		configured:  cfg.CH != nil || cfg.SignalPlane,
-	}
-	if h.defaultRRFK <= 0 {
-		h.defaultRRFK = 60
-	}
-	if cfg.CH != nil {
-		store, err := signal.NewStore(cfg.CH, cfg.CHDatabase)
-		if err != nil {
-			return nil, err
-		}
-		h.store.Store(store)
-	}
-	return h, nil
+	return &Hub{client: client, tenant: client.Tenant(), configured: cfg.SignalPlane}, nil
 }
-
-// Client returns the underlying content-plane client (advanced use).
-func (h *Hub) Client() *Client { return h.client }
-
-// Tenant returns the pinned tenant value.
-func (h *Hub) Tenant() string { return h.tenant }
 
 // Content returns a reference to a work of this hub's tenant.
 func (h *Hub) Content(contentKind, contentID string) ContentRef {
@@ -185,7 +155,7 @@ func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions
 
 	limit, offset, _ := h.client.effectiveLimits(opts.SearchOptions)
 
-	groups, truncated, err := h.client.searchGroups(ctx, userText, opts.SearchOptions, nil)
+	groups, truncated, err := h.client.searchGroups(ctx, userText, opts.SearchOptions)
 	if err != nil {
 		return SearchResult{}, err
 	}
@@ -234,7 +204,7 @@ func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions
 		return popularity[popList[i].Ref().Content().Key()] > popularity[popList[j].Ref().Content().Key()]
 	})
 	fused := search.FuseRRF([][]search.RRFKey{contentList, popList}, search.RRFOptions{
-		K:       h.defaultRRFK,
+		K:       searchRRFK,
 		Weights: []float32{1, p.PopularityWeight},
 	})
 
@@ -322,36 +292,6 @@ func (h *Hub) SetSignals(s *signal.Store) { h.store.Store(s) }
 // SignalsConfigured reports whether the hub has a signal plane, up or down.
 func (h *Hub) SignalsConfigured() bool { return h.configured }
 
-// RepairProjections is the bounded explicit projection repair (see
-// signal.Store.RepairProjections). Use IngestedSince for a known interruption
-// or Rebuild over a window after projection changes. Failures reach the caller.
-func (h *Hub) RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return signal.RepairResult{}, err
-	}
-	return store.RepairProjections(ctx, h.tenant, opts)
-}
-
-// Inventory reports canonical event volume per content kind and signal type.
-func (h *Hub) Inventory(ctx context.Context) ([]signal.InventoryRow, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	return store.Inventory(ctx, h.tenant)
-}
-
-// PurgeContentKinds irreversibly deletes whole content kinds from this tenant's
-// signal plane (see signal.Store.PurgeContentKinds).
-func (h *Hub) PurgeContentKinds(ctx context.Context, contentKinds []string) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.PurgeContentKinds(ctx, h.tenant, contentKinds)
-}
-
 // RecordExposures logs one row per result list and stage (served, rendered,
 // visible) so clicks can be attributed to what was actually exposed. Hosts call
 // it once per list per stage, never per item.
@@ -361,34 +301,6 @@ func (h *Hub) RecordExposures(ctx context.Context, exposures []signal.Exposure) 
 		return err
 	}
 	return store.RecordExposures(ctx, h.tenant, exposures)
-}
-
-// ForgetExposures clears a subject's result-list exposures (search history).
-func (h *Hub) ForgetExposures(ctx context.Context, subject signal.Subject) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.ForgetExposures(ctx, h.tenant, subject)
-}
-
-// ForgetExposuresBefore clears only exposures from before the host's clear request.
-func (h *Hub) ForgetExposuresBefore(ctx context.Context, subject signal.Subject, before time.Time) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.ForgetExposuresBefore(ctx, h.tenant, subject, before)
-}
-
-// Attribution exports renders at one stage with their clicks joined (see
-// signal.Store.Attribution); the evaluation dataset source.
-func (h *Hub) Attribution(ctx context.Context, opts signal.AttributionOptions) (signal.AttributionPage, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return signal.AttributionPage{}, err
-	}
-	return store.Attribution(ctx, h.tenant, opts)
 }
 
 // --- Signal plane ---
@@ -459,17 +371,6 @@ func (h *Hub) Forget(ctx context.Context, subject signal.Subject, contentKind, c
 	return store.Forget(ctx, h.tenant, subject, contentKind, contentID)
 }
 
-// EraseSubjects permanently erases subjects from this tenant's signal plane:
-// see signal.Store.EraseSubjects for the completion contract. Shared accounts
-// exist in several tenants: each host erases its own tenant.
-func (h *Hub) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return signal.ErasureReport{}, err
-	}
-	return store.EraseSubjects(ctx, []string{h.tenant}, subjects)
-}
-
 // AnonymizeSubject preserves anonymous engagement while unlinking an account.
 func (h *Hub) AnonymizeSubject(ctx context.Context, old, anonymous signal.Subject) error {
 	store, err := h.requireStore()
@@ -477,26 +378,6 @@ func (h *Hub) AnonymizeSubject(ctx context.Context, old, anonymous signal.Subjec
 		return err
 	}
 	return store.AnonymizeSubject(ctx, h.tenant, old, anonymous)
-}
-
-// EnforceErasures physically removes residue of every recorded erasure of
-// this tenant (see signal.Store.EnforceErasures). The host invokes it explicitly;
-// ContentKit does not schedule an erasure sweep.
-func (h *Hub) EnforceErasures(ctx context.Context) (signal.ErasureReport, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return signal.ErasureReport{}, err
-	}
-	return store.EnforceErasures(ctx, h.tenant)
-}
-
-// HistoryCount returns the total row count History would paginate over.
-func (h *Hub) HistoryCount(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) (int64, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return 0, err
-	}
-	return store.HistoryCount(ctx, h.tenant, subject, opts)
 }
 
 // SeenIDs returns the subject's seen-set for one content kind (the
@@ -533,16 +414,6 @@ func (h *Hub) Activity(ctx context.Context, contentKind string, window signal.Wi
 		return nil, err
 	}
 	return store.Activity(ctx, h.tenant, contentKind, window, cohorts...)
-}
-
-func clampInt(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 func (h *Hub) CompletedCount(ctx context.Context, subject signal.Subject, kind string) (int64, error) {

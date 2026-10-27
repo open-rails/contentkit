@@ -2,7 +2,7 @@ package hub
 
 import "sort"
 
-// groupedDoc is one scored document with its retrieval provenance.
+// groupedDoc is one scored document.
 type groupedDoc struct {
 	ref      ContentRef
 	language string
@@ -10,9 +10,7 @@ type groupedDoc struct {
 	score    float32
 	// requested is true when the document language is the request language,
 	// not a fallback.
-	requested     bool
-	scoreKind     ScoreKind
-	contributions []ContributionTrace
+	requested bool
 }
 
 // group is one content item: ranked by its best document in any searched

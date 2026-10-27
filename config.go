@@ -155,7 +155,7 @@ type MediaConfig struct {
 // sets Primary and keeps none: its people's avatar uploads, edits and
 // editor reads go to the primary with Key, its media host serves the
 // primary's files (the gateway maps the kind's namespace to the primary's
-// bucket), and the primary's EraseSubjects erases them.
+// bucket), and the primary's AnonymizeAccount erases them.
 type AvatarsConfig struct {
 	// Kind is the avatar kind; nil is avatar.User() (accounts/user).
 	Kind *media.Kind `yaml:"kind" json:"kind"`

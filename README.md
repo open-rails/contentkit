@@ -77,7 +77,6 @@ A reference to another catalog is an error, never remapped. See [scope.go](scope
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, entity popularity through the `Catalog` port (`*entities.Store`) |
 | `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; popular and standing orders; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
-| `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
 | `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |
 | `e2e` | its own module: every route end to end over PostgreSQL, MinIO and a real AuthKit |
@@ -131,7 +130,7 @@ for _, r := range routes {
   in-process transport (for example `PostContents`,
   `CreateContent`).
 - `Ready` fails until `Start`; `Probes` are the optional dependencies
-  (ClickHouse, the bucket, Redis); `EraseSubjects` is account erasure.
+  (ClickHouse, the bucket, Redis); `AnonymizeAccount` is account deletion.
 - `Config.Avatars` is people's avatars: held by one site's engine, the
   primary, which other sites sharing its people forward their avatar
   writes to (HOST_INTEGRATION "Avatars").
@@ -417,18 +416,16 @@ always holds the bytes of its name. The optional `UploadLimiter`
 **Media gateway** (`cmd/media-gateway`, `media/gateway`, image
 `ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone
 (`public, max-age=300, stale-while-revalidate=86400`, falling back to the
-kind's `_default` for declared names), `private/sha256-{hex}` with an authorized
-item token or exact-file token (`private, immutable`), and
-`download/sha256-{hex}-{uuid}` only with a `?t=` download token of that one
-key (the version download route's). An item token opens every private file of
-its item or none, never a download. Versioned reader grants use exact-file
+kind's `_default` for declared names) and `private/sha256-{hex}` with an
+authorized item token or exact-file token (`private, immutable`). An item token
+opens every private file of its item or none. Versioned reader grants use exact-file
 tokens in `?t=` so an older grant cannot open newly uploaded or unreleased
 pages; ordinary whole-item grants may use the `mt` cookie. `?dl={name}` serves the file as a download
 under that name when it has the file's type. Everything else and every denial
 is one `no-store` 404. It keeps no state: rate limit the media host at the
 ingress; the read API limits the items a viewer opens per hour
 (`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key
-reading only `*/private/*`, `*/download/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
+reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
 `_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_HOSTS`
 (`media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),
 `MEDIA_GATEWAY_BUCKETS`, each namespace's bucket, one per app
@@ -784,9 +781,9 @@ routes (signals, exposures, history, popular, similar, recommend) land with
 - Similar and recommended content draw candidates from `Deps.Candidates`
   (default: co-engagement); see
   [discovery candidates](HOST_INTEGRATION.md#discovery-candidates).
-- `EraseSubjects` is account erasure with a quorum-written fence; see
-  [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract)
-  and, for interaction data, [interaction erasure](HOST_INTEGRATION.md#interaction-erasure).
+- `AnonymizeAccount` is account deletion with a quorum-written fence; see
+  [HOST_INTEGRATION.md](HOST_INTEGRATION.md#signal-plane-account-deletion)
+  and, for interaction data, [account lifecycle](HOST_INTEGRATION.md#account-lifecycle-and-interaction-erasure).
 - Reactions and favorites reach the signal plane from their own revisioned
   rows: the engine's preference job syncs changes every five minutes using a
   revision watermark with a five-minute commit overlap, and re-sends all rows

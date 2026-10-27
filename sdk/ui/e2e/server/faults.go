@@ -241,9 +241,7 @@ func (f *faults) expire(r *http.Request) *http.Request {
 	}
 	q := r.URL.Query()
 	scope := strings.TrimSuffix(parsed.Folder(), "/")
-	if parsed.Area == layout.AreaDownload {
-		scope = token.DownloadScope(key)
-	} else if f.h.ring.VerifyScope(q.Get("t"), token.PrivateFileScope(key), time.Now()) == nil {
+	if f.h.ring.VerifyScope(q.Get("t"), token.PrivateFileScope(key), time.Now()) == nil {
 		scope = token.PrivateFileScope(key)
 	}
 	q.Set("t", f.h.ring.Sign(scope, time.Now().Add(-time.Hour)))

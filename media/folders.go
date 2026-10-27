@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
@@ -25,22 +24,6 @@ func (e *FolderNotEmptyError) Error() string {
 	return fmt.Sprintf("%v: %s holds %s", ErrFolderNotEmpty, e.Prefix, strings.Join(e.Keys, ", "))
 }
 func (e *FolderNotEmptyError) Unwrap() error { return ErrFolderNotEmpty }
-
-// Create starts a new item: it writes its empty manifest and fails with
-// ErrFolderNotEmpty if the folder already holds any object. Hosts call it
-// when they create the item's row, so a reused id surfaces there.
-func (m *Manifests) Create(ctx context.Context, ref contentref.ContentRef) (*Manifest, error) {
-	item, err := m.reg.Item(ref)
-	if err != nil {
-		return nil, err
-	}
-	if keys, err := m.keys(ctx, item, item.Prefix(), 3); err != nil {
-		return nil, err
-	} else if len(keys) > 0 {
-		return nil, &FolderNotEmptyError{Prefix: item.Prefix(), Keys: keys}
-	}
-	return m.Edit(ctx, ref, func(m *Manifest) error { return nil })
-}
 
 // requireFresh backs a folder's first manifest: public files with no
 // manifest are a previous item's leftovers (uploads may precede a first
