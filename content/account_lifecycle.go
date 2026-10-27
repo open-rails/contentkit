@@ -2,6 +2,8 @@ package content
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -63,7 +65,8 @@ VALUES ($1,$2) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, actorID)
 		}
 		c := rt.comments
 		// Lock every affected comment and its parent at once, in id order, the
-		// order lockThread takes two of them in, so concurrent bans can't cycle.
+		// order lockThread takes two of them in. Content rollups follow, once
+		// each in key order, as recount and erasure lock them.
 		if _, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND (user_id=$2 OR id IN
 (SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2)) ORDER BY id FOR UPDATE`, rt.tenant, actorID); err != nil {
 			return err
@@ -76,6 +79,11 @@ VALUES ($1,$2) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, actorID)
 		if err != nil {
 			return err
 		}
+		delta := 1
+		if hidden {
+			delta = -1
+		}
+		rollups := map[contentref.ContentKey]int{}
 		for _, id := range ids {
 			var replyTo *string
 			var deletedAt *time.Time
@@ -89,11 +97,9 @@ WHERE tenant_id=$1 AND id=$2 RETURNING reply_to_id::text,deleted_at,moderation,`
 			if state != ModerationApproved || deletedAt != nil {
 				continue
 			}
-			delta := 1
-			if hidden {
-				delta = -1
-			}
-			if err := c.count(ctx, tx, replyTo, k, delta); err != nil {
+			if replyTo == nil {
+				rollups[k] += delta
+			} else if err := c.count(ctx, tx, replyTo, k, delta); err != nil {
 				return err
 			}
 			if hidden {
@@ -102,6 +108,15 @@ WHERE tenant_id=$1 AND id=$2 RETURNING reply_to_id::text,deleted_at,moderation,`
 				err = c.restoreNotices(ctx, tx, id)
 			}
 			if err != nil {
+				return err
+			}
+		}
+		keys := slices.Collect(maps.Keys(rollups))
+		slices.SortFunc(keys, func(a, b contentref.ContentKey) int {
+			return strings.Compare(a.ContentKind+"\x00"+a.ContentID+"\x00"+a.ContentVersionID, b.ContentKind+"\x00"+b.ContentID+"\x00"+b.ContentVersionID)
+		})
+		for _, k := range keys {
+			if err := bumpCounts(ctx, tx, c.s, k, 0, 0, 0, rollups[k]); err != nil {
 				return err
 			}
 		}
