@@ -185,10 +185,45 @@ type Private struct {
 	MP4       *MP4       `json:"mp4,omitempty"`
 	Zip       string     `json:"zip,omitempty"` // the files under this prefix, in manifest order: "high/"
 	Subtitles *Subtitles `json:"subtitles,omitempty"`
-	// Choose is an optional per-file image spec (Go only, not in the JSON
-	// registry); nil keeps Image.
-	Choose func(f File) *Image `json:"-"`
+	// Shapes render an Image preset's uploads of another shape: an upload
+	// whose oriented size is in one renders its Image, any other (or one not
+	// yet measured) renders Image. Shapes never overlap.
+	Shapes []Shape `json:"shapes,omitempty"`
 }
+
+// Shape is a range of upload aspects (width:height), wider than WiderThan
+// and no wider than NoWiderThan; an unset bound is open. Tall pages (height
+// at least twice the width) are NoWiderThan 1:2; wide ones WiderThan 1:1.
+// Image keeps its preset's Format and Animation.
+type Shape struct {
+	WiderThan   Aspect `json:"wider_than,omitzero"`
+	NoWiderThan Aspect `json:"no_wider_than,omitzero"`
+	Image       Image  `json:"image"`
+}
+
+// ImageFor is an Image preset's rendering of an upload of size d: its
+// shape's Image, else Image.
+func (p *Private) ImageFor(d Dims) Image {
+	for _, s := range p.Shapes {
+		if s.contains(d) {
+			return s.Image
+		}
+	}
+	return *p.Image
+}
+
+func (s Shape) contains(d Dims) bool {
+	if d.W <= 0 || d.H <= 0 {
+		return false
+	}
+	a := Aspect{d.W, d.H}
+	return (s.WiderThan.Native() || wider(a, s.WiderThan)) && (s.NoWiderThan.Native() || !wider(a, s.NoWiderThan))
+}
+
+// spans reports aspects wider than lo and no wider than hi; unset is open.
+func spans(lo, hi Aspect) bool { return lo.Native() || hi.Native() || wider(hi, lo) }
+
+func wider(a, b Aspect) bool { return a.W*b.H > b.W*a.H }
 
 // Public is a fixed public image: {To} with {w} at each of Widths (or one
 // file without Widths), rendered from an upload through its edit, at

@@ -287,9 +287,8 @@ func (r *Registry) PresetRules() []PresetRule {
 	return out
 }
 
-// MarshalJSON is the registry as data (no hooks, defaults, Choose or
-// derived kinds, which NewRegistry derives again): the stock worker's
-// MEDIA_KINDS_FILE.
+// MarshalJSON is the registry as data (no hooks, defaults or derived kinds,
+// which NewRegistry derives again): the stock worker's MEDIA_KINDS_FILE.
 func (r *Registry) MarshalJSON() ([]byte, error) {
 	cfg := r.cfg
 	cfg.Kinds = cfg.Kinds[:r.declared]

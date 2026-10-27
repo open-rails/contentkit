@@ -235,7 +235,7 @@ func (p *Processor) todo(ctx context.Context, item media.Item, m *media.Manifest
 			}
 			outs := m.Outputs(f.Path, pr.Name)
 			if job.Force || slices.Contains(f.Pending, pr.Name) || len(outs) != 1 || outs[0].Path != k.OutputPath(pr, f.Path) ||
-				outs[0].FP != media.SpecFP(f, spec(pr, f), Recipe) {
+				outs[0].FP != media.SpecFP(f, pr.ImageFor(media.Dims{W: f.W, H: f.H}), Recipe) {
 				w.private = append(w.private, pr)
 			}
 		}
@@ -267,16 +267,6 @@ func (p *Processor) todo(ctx context.Context, item media.Item, m *media.Manifest
 		}
 	}
 	return out, nil
-}
-
-// spec is pr's image for upload f: Choose's, else the preset's.
-func spec(pr *media.Private, f media.File) media.Image {
-	if pr.Choose != nil {
-		if im := pr.Choose(f); im != nil {
-			return *im
-		}
-	}
-	return *pr.Image
 }
 
 // publicStale reports a public preset whose names are missing or carry
@@ -659,10 +649,13 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 		d.publications = append(d.publications, publication)
 	}
 	for _, pr := range w.private {
-		s := spec(pr, w.src)
-		if _, err := probe(src, w.src.Type, p.rules(s.Animation)); err != nil {
+		// The probed size picks the shape, so an unmeasured upload renders
+		// its own on the first pass; shapes keep the preset's animation.
+		info, err := probe(src, w.src.Type, p.rules(pr.Image.Animation))
+		if err != nil {
 			return p.permanent(d, err)
 		}
+		s := pr.ImageFor(info.dims())
 		out, dims, err := encode(src, w.src.Type, s, w.src.Edit)
 		if err != nil {
 			return p.permanent(d, err)
