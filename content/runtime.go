@@ -227,9 +227,6 @@ func (rt *Runtime) checkSchema(ctx context.Context) error {
 	return nil
 }
 
-// Tenant returns the tenant this runtime is scoped to.
-func (rt *Runtime) Tenant() string { return rt.tenant }
-
 // Ref returns a reference to a work of this runtime's tenant.
 func (rt *Runtime) Ref(contentKind, contentID string) contentref.ContentRef {
 	return contentref.New(rt.tenant, contentKind, contentID)
@@ -299,14 +296,6 @@ func (rt *Runtime) canonicalRef(requested, resolved contentref.ContentRef) (cont
 		return contentref.ContentRef{}, err
 	}
 	return resolved, nil
-}
-
-// gate resolves a target and enforces the required access level. The
-// returned reference is the resolver's canonical identity (a merged group's
-// survivor); callers store and query by it, never by the requested one.
-func (rt *Runtime) gate(ctx context.Context, requested contentref.ContentRef, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
-	ref, _, err := rt.resolveTarget(ctx, requested, actor, needAccessible)
-	return ref, err
 }
 
 // resolveTarget is gate that also returns the resolution (its Owner).

@@ -218,12 +218,6 @@ func (v *Viewer) CanPostToChannel(ctx context.Context, id string) (bool, error) 
 // root:content:write: they see everything inside the domain boundary.
 func (v *Viewer) Staff() bool { return v.staff }
 
-// Domain is the request entrypoint and its visibility policy.
-func (v *Viewer) Domain() kinds.Domain { return v.domain }
-
-// Actor is the viewer's actor.
-func (v *Viewer) Actor() access.Actor { return v.actor }
-
 // HiddenContentFilters copies the optional, public entity filters currently
 // hidden by this viewer, by content kind. Required, fixed and internal rules
 // are domain policy, never optional filters.

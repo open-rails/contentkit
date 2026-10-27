@@ -82,18 +82,6 @@ func (j *Jobs) EnqueueProcessing(ctx context.Context, job ProcessJob) error {
 	return j.cfg.Processes.Enqueue(ctx, job)
 }
 
-// ScheduleSweep records one due-cleanup obligation, without creating a River
-// job. Successful manifest edits already record this atomically themselves.
-func (j *Jobs) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error {
-	item, err := j.cfg.Registry.Item(ref)
-	if err != nil {
-		return err
-	}
-	return pgx.BeginFunc(ctx, j.cfg.Journal.pool, func(tx pgx.Tx) error {
-		return j.cfg.Journal.scheduleCleanupTx(ctx, tx, item.Ref(), item.Prefix(), j.cfg.Now().Add(j.cfg.Grace), nil, false)
-	})
-}
-
 // Deletion is one item to delete. Owner is its quota owner (UploadGrant.Owner),
 // "" for none; with a Limiter configured the owner's usage is released.
 // OperationID is required for Purge; queued deletion uses its River job id.

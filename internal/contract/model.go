@@ -392,15 +392,6 @@ func (m *model) enumOf(f field) string {
 	return m.fields[pkgName(f.owner)+"."+f.owner.Name()+"."+f.name]
 }
 
-func enumValues(name string) []string {
-	for _, e := range enums {
-		if e.name == name {
-			return e.values
-		}
-	}
-	return nil
-}
-
 // enumIndex finds the string constants declared with a named string type:
 // the values its wire field takes.
 type enumIndex struct {

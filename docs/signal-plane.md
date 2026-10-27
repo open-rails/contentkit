@@ -33,7 +33,7 @@ access and content-filter policy before returning its card.
   trusted event-time eligibility for free/premium audience normalization. Retired
   per-tab identities are never copied into this denominator.
 - `erasures` permanently fences erased identities. New writes, reads, projection
-  repair, subject rekeying and operator retirement all honor the fence.
+  repair and operator retirement all honor the fence.
 
 ## Measurements and transport
 
@@ -58,8 +58,8 @@ until another successful interaction for the same user/item recomputes them.
 An untouched item may remain stale indefinitely. There is no automatic repair
 job or reconnect-triggered rebuild. Operators can call `RepairProjections`
 explicitly for a known incident or calculation change, following `Next` with
-`After` until complete. That operation reports its errors. Subject erasure,
-content forgetting and subject rekeying retain their existing failure reporting.
+`After` until complete. That operation reports its errors. Subject erasure
+and content forgetting retain their existing failure reporting.
 
 Positive short measurements accumulate; qualification requires at least one second
 of active attention. Pages need one second of attention before their covered units

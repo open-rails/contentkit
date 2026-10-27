@@ -13,11 +13,6 @@ import (
 // The catalog calls these in its writing transaction: a target is a content
 // (every version's item) or one version.
 
-// RepublishTx queues versions' publication after their segments changed.
-func (s *Service) RepublishTx(ctx context.Context, tx pgx.Tx, targets []Target) error {
-	return s.SchedulePublicationTx(ctx, tx, targets)
-}
-
 // DeleteTx permanently fences targets while their catalog rows are locked.
 // The caller commits this claim before Delete erases storage, so retirement
 // hooks never wait on catalog locks held by the erasing transaction.

@@ -100,7 +100,7 @@ func TestGatewayCapabilities(t *testing.T) {
 		item := ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute))
 		control(t, first, item)
 		control(t, second, item)
-		deny(t, download, ring.Sign(token.DownloadScope(download), time.Now().Add(time.Minute)), "")
+		deny(t, download, ring.Sign(download, time.Now().Add(time.Minute)), "")
 		deny(t, download, item, "")
 		deny(t, download, grant(first), "")
 	})

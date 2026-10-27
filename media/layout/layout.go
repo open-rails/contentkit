@@ -4,7 +4,7 @@
 //	{namespace}/{kind}/{id}/manifest.json         gzip JSON; never served
 //	                       /private/sha256-{hex}-{uuid}  uploads, derived files, editor views
 //	                       /private/sha256-{hex}  a pre-v0.68 item's blob, kept by the upgrade
-//	                       /download/sha256-{hex}-{uuid} originals, full-resolution files and archives: only a download token opens them
+//	                       /download/sha256-{hex}-{uuid} originals, full-resolution files and archives: never served by the gateway
 //	                       /public/{name}         app-declared names, e.g. cover-460.webp
 //	                       /temp/{name}           in-flight writes and staged uploads (u-{uuid}); never served
 //	{namespace}/{kind}/{id}/{version}/...         a content version's item, laid out alike

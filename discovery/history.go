@@ -305,24 +305,6 @@ func identifiers(values ...string) error {
 	return nil
 }
 
-// progressMax is a version's size: pages for a reader, seconds for a
-// player, percent for a post.
-func progressMax(presentation string, v versionFacts) uint32 {
-	switch presentation {
-	case "reader":
-		if v.pages != nil && *v.pages > 0 {
-			return uint32(*v.pages)
-		}
-	case "player":
-		if v.duration != nil && *v.duration >= 1000 {
-			return uint32(*v.duration / 1000)
-		}
-	case "post":
-		return 100
-	}
-	return 0
-}
-
 func (s *Service) targets(ctx context.Context, ids []string) (map[string]target, error) {
 	rows, err := s.o.Pool.Query(ctx, `SELECT c.id, c.kind, coalesce(v.id, ''), v.pages, v.duration_ms FROM `+s.t.items+` c
  LEFT JOIN `+s.t.versions+` v ON v.tenant_id = c.tenant_id AND v.content_id = c.id WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.o.Tenant, ids)

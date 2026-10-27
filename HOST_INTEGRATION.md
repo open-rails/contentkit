@@ -342,12 +342,12 @@ media:
   allows everything and marks nothing.
 - The route answers `200` JSON `FileDownload{url, name, type, size,
   expires_at}`; navigate to `url` (contentkit-ui's `useVersionDownload` and
-  `VersionDownloadButton` do). Files and unmarked zips are the media host's,
-  with a download token of that one `download/` key, so bytes never pass the
-  app; without the policy's `Name`, files are named `{title} [{version code}].{ext}`,
-  zips by the zip preset's `Download` template. A zip with marks is `archive?for=&mark=&name=&ticket=`,
-  relative to the download route: `GET .../versions/{vid}/archive` streams
-  it, marking the ticket's pages.
+  `VersionDownloadButton` do). Public and private files are the media host's,
+  a private one with an exact-file token, so bytes never pass the app;
+  without the policy's `Name`, files are named `{title} [{version code}].{ext}`,
+  zips by the zip preset's `Download` template. Zips and retained originals are
+  `archive?for=&mark=&name=&ticket=`, relative to the download route:
+  `GET .../versions/{vid}/archive` streams them, marking the ticket's pages.
 - `202 Pending` while the file is placed or produced, `403` locked or
   `download_unavailable`, `404` no download for the kind, `409 no_download`
   when the version has nothing to serve, `429 rate_limited` with
@@ -1341,7 +1341,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
-  key reads only `*/private/*`, `*/download/*` and `*/public/*` of each; only the hosts write.
+  key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
 - **CDN**: may cache `public/` in a shared cache. Current publication URLs
   contain a generation; optional stable aliases follow the gateway's
   `public, max-age=300, stale-while-revalidate=86400` policy and ETag
