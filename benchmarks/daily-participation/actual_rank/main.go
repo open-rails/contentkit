@@ -67,7 +67,7 @@ func main() {
 		must(os.WriteFile(filepath.Join(out, label+".sql"), []byte(query+"\n"), 0600))
 	}
 	exec("database", "CREATE DATABASE "+db)
-	b, e := os.ReadFile("migrations/clickhouse/0006_daily_popularity.up.sql")
+	b, e := os.ReadFile("migrations/clickhouse/0001_baseline.up.sql")
 	must(e)
 	s := string(b)
 	start := strings.Index(s, "CREATE TABLE IF NOT EXISTS popularity_daily ")
