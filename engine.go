@@ -873,11 +873,16 @@ type Probe struct {
 
 // Probes lists the optional dependencies the engine degrades without, for the
 // host's dependency supervisor: the signal plane, the media bucket, Redis and
-// the moderator (failing while its breaker holds writes for review).
+// the moderator (failing while its breaker holds writes for review). Scoped
+// engines also report account purges from the last 30 days stuck beyond the
+// event reader's 15-minute grace period.
 func (e *Engine) Probes() []Probe { return slices.Clone(e.probes) }
 
 func (e *Engine) newProbes(deps Deps) []Probe {
 	var out []Probe
+	if e.scope != nil {
+		out = append(out, Probe{Name: "contentkit_account_anonymization", Check: e.checkAccountAnonymization})
+	}
 	if e.signals != nil {
 		out = append(out, Probe{Name: "contentkit_clickhouse", Check: e.signals.check})
 	}
@@ -898,8 +903,8 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 }
 
 // EraseSubjects erases the shared account inbox/avatar plus this app's data.
-// The identity lifecycle must invoke it for EVERY app of the tenant; AuthKit's
-// AccountIssuers and required OnPurge cleanup coordinate that work and retry.
+// Explicit erasure must invoke it for EVERY app of the tenant. Ordinary
+// AuthKit user.purged consumers call AnonymizeAccount instead.
 // It does not discover or erase another engine's catalog on its own.
 //
 // It erases subjects from every plane: signals, interaction data,
@@ -940,7 +945,7 @@ func (e *Engine) eraseSubjects(ctx context.Context, subjects []signal.Subject, a
 		}
 	}
 	// Commit intent before any signal, content or media cleanup can run.
-	if err := e.recordAccountErasureIntent(ctx, actors, account); err != nil {
+	if err := e.recordAccountErasureIntent(ctx, e.pool, actors, account); err != nil {
 		return signal.ErasureReport{Remaining: map[string]uint64{"account_plane": 1}}, err
 	}
 	report, signalErr := e.hub.EraseSubjects(ctx, subjects)

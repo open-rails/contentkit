@@ -8,9 +8,153 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit/authtest"
+	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/signal"
 )
+
+func TestRestoredAccountAnonymization(t *testing.T) {
+	for _, tc := range []struct {
+		accountReplay bool
+		appErasure    bool
+	}{
+		{},
+		{accountReplay: true},
+		{appErasure: true},
+		{accountReplay: true, appErasure: true},
+	} {
+		name := fmt.Sprintf("account_replay_%t", tc.accountReplay)
+		if tc.appErasure {
+			name += "_app_erasure_then_purge"
+		}
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			a := w.apps[0]
+			user, token, channel := ownedChannel(t, w, a, "Restored owner")
+			authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(user.ID), w.contributor)
+			startPublicationRuntime(t, a)
+			client := a.client(token)
+			credits := []catalog.Creator{{UserID: user.ID, Role: "author"}}
+			item, err := client.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Creators: &credits,
+				Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Restored attribution", Body: "Published contribution"}}}}})
+			must(t, err)
+			_, err = client.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+			must(t, err)
+			awaitEditionPublication(t, a, client, item.ID, item.Versions[0].ID)
+			comment := postComment(t, client, item.ID, "Keep this discussion")
+			favorite, err := client.PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
+			must(t, err)
+			if favorite.Count == nil || *favorite.Count != 1 || readComment(t, a, item.ID, comment.ID).UserID != user.ID {
+				t.Fatal("restore fixture lacks attributed contributions")
+			}
+			qs := pgx.Identifier{w.schema}.Sanitize()
+			tables := []string{"content_comments", "content_favorites", "content_interaction_counts", "content_creators", "content_erased_subjects", "content_account_lifecycle"}
+			for _, table := range tables {
+				_, err := w.pool.Exec(t.Context(), "CREATE TABLE "+qs+"."+pgx.Identifier{"backup_" + table}.Sanitize()+" AS TABLE "+qs+"."+pgx.Identifier{table}.Sanitize())
+				must(t, err)
+			}
+			// Restore only attribution columns on parents; replacing parent rows
+			// would cascade-delete unrelated catalog and publication records.
+			_, err = w.pool.Exec(t.Context(), "CREATE TABLE "+qs+".backup_owners AS SELECT i.id AS content_id,i.created_by,e.id AS entity_id,e.owner_user_id FROM "+qs+".content_items i CROSS JOIN "+qs+".content_entities e WHERE i.tenant_id=$1 AND i.id=$2 AND e.tenant_id=$1 AND e.id=$3", a.cfg.Scope.AppID.String(), item.ID, channel.ID)
+			must(t, err)
+			var createdBy, owner string
+			must(t, w.pool.QueryRow(t.Context(), "SELECT created_by,owner_user_id FROM "+qs+".backup_owners").Scan(&createdBy, &owner))
+			if createdBy != user.ID || owner != user.ID || len(item.Creators) != 1 || item.Creators[0].UserID != user.ID {
+				t.Fatal("restore fixture lacks creator and ownership attribution")
+			}
+			if tc.appErasure {
+				report, err := a.engine.EraseAppSubjects(t.Context(), []signal.Subject{{UserID: user.ID}})
+				must(t, err)
+				if !report.Complete() {
+					t.Fatalf("initial app erasure incomplete: %+v", report)
+				}
+			}
+			eraseAuthKitAccount(t, w, a, user.ID)
+			if tc.appErasure {
+				var receipt bool
+				must(t, w.pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM contentkit_accounts.content_account_erasure_receipts WHERE tenant_id=$1 AND app_id=$2 AND actor_id=$3)", a.cfg.Scope.TenantID.String(), a.cfg.Scope.AppID.String(), user.ID).Scan(&receipt))
+				if receipt {
+					t.Fatal("app-only erasure unexpectedly wrote an account receipt")
+				}
+			} else {
+				must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
+			}
+			a.server.Close()
+			must(t, a.engine.Close(t.Context()))
+			tx, err := w.pool.Begin(t.Context())
+			must(t, err)
+			defer tx.Rollback(context.Background())
+			for _, table := range tables {
+				name := qs + "." + pgx.Identifier{table}.Sanitize()
+				_, err := tx.Exec(t.Context(), "DELETE FROM "+name+"; INSERT INTO "+name+" SELECT * FROM "+qs+"."+pgx.Identifier{"backup_" + table}.Sanitize())
+				must(t, err)
+			}
+			_, err = tx.Exec(t.Context(), "UPDATE "+qs+".content_items i SET created_by=b.created_by FROM "+qs+".backup_owners b WHERE i.tenant_id=$1 AND i.id=b.content_id", a.cfg.Scope.AppID.String())
+			must(t, err)
+			_, err = tx.Exec(t.Context(), "UPDATE "+qs+".content_entities e SET owner_user_id=b.owner_user_id FROM "+qs+".backup_owners b WHERE e.tenant_id=$1 AND e.id=b.entity_id", a.cfg.Scope.AppID.String())
+			must(t, err)
+			must(t, tx.Commit(t.Context()))
+			a.cfg.Database.SkipMigrations = true
+			bad, err := ck.New(t.Context(), a.cfg, a.deps)
+			if bad != nil || !errors.Is(err, ck.ErrErasureReplayRequired) {
+				t.Fatalf("restored attribution served before anonymization replay: %v", err)
+			}
+			recovery, err := ck.NewForErasureReplay(t.Context(), a.cfg, a.deps)
+			must(t, err)
+			defer func() { must(t, recovery.Close(context.Background())) }()
+			replay := recovery.ReplayErasureFences
+			if tc.accountReplay {
+				replay = recovery.ReplayAccountErasures
+			}
+			for range 2 {
+				report, err := replay(t.Context())
+				must(t, err)
+				if !report.Complete() {
+					t.Fatalf("anonymization replay incomplete: %+v", report)
+				}
+			}
+			var state string
+			var complete, receipt, unlinked bool
+			must(t, w.pool.QueryRow(t.Context(), `SELECT a.state,a.anonymous_key IS NULL,f.engine_cleanup_complete,
+EXISTS(SELECT 1 FROM contentkit_accounts.content_account_erasure_receipts r WHERE r.tenant_id=$3 AND r.app_id=$1::text::uuid AND r.actor_id=$2)
+FROM `+qs+`.content_account_lifecycle a JOIN `+qs+`.content_erased_subjects f USING (tenant_id,actor_id)
+WHERE a.tenant_id=$1 AND a.actor_id=$2`, a.cfg.Scope.AppID.String(), user.ID, a.cfg.Scope.TenantID.String()).Scan(&state, &unlinked, &complete, &receipt))
+			if state != "purged" || !unlinked || !complete || !receipt {
+				t.Fatalf("replay did not finish local and account cleanup: %s %v %v %v", state, unlinked, complete, receipt)
+			}
+			must(t, w.pool.QueryRow(t.Context(), "SELECT coalesce(i.created_by,''),coalesce(e.owner_user_id,'') FROM "+qs+".content_items i CROSS JOIN "+qs+".content_entities e WHERE i.tenant_id=$1 AND i.id=$2 AND e.tenant_id=$1 AND e.id=$3", a.cfg.Scope.AppID.String(), item.ID, channel.ID).Scan(&createdBy, &owner))
+			var creators, attributedFavorites int
+			must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+qs+".content_creators WHERE tenant_id=$1 AND user_id=$2", a.cfg.Scope.AppID.String(), user.ID).Scan(&creators))
+			must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+qs+".content_favorites WHERE tenant_id=$1 AND (user_id=$2 OR anonymous_actor_id IS NULL)", a.cfg.Scope.AppID.String(), user.ID).Scan(&attributedFavorites))
+			if createdBy != "" || owner != "" || creators != 0 || attributedFavorites != 0 {
+				t.Fatal("replay retained creator, owner or favorite attribution")
+			}
+			a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+			must(t, err)
+			a.server = mountEngine(t, a.engine)
+			kept := readComment(t, a, item.ID, comment.ID)
+			if kept.UserID != "" || kept.AnonName != "<Deleted>" || kept.Body != comment.Body || kept.Author != nil {
+				t.Fatalf("replay resurrected comment attribution or lost discussion: %+v", kept)
+			}
+			favorite, err = a.client("").GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
+			must(t, err)
+			wantCount := 1
+			if tc.appErasure {
+				wantCount = 0
+				var favorites int
+				must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+qs+".content_favorites WHERE tenant_id=$1 AND content_id=$2", a.cfg.Scope.AppID.String(), item.ID).Scan(&favorites))
+				if favorites != 0 {
+					t.Fatal("app erasure replay kept an anonymous favorite")
+				}
+			}
+			if favorite.Count == nil || *favorite.Count != wantCount {
+				t.Fatalf("replayed favorite count: got %+v want %d", favorite, wantCount)
+			}
+		})
+	}
+}
 
 func TestRestoredErasureFence(t *testing.T) {
 	w := newWorld(t)

@@ -615,13 +615,30 @@ account id, so older UI clients display the same label. Ownership remains in
 storage until purge and is restored with the account.
 Check current account state before replaying an old deletion/restoration event.
 
-On `user.purged`, call `ck.AnonymizeAccount(ctx, id)` and advance the application's
+Pass no `OnPurge` callback: AuthKit purges first and records `user.purged`.
+Each host's event reader calls `ck.AnonymizeAccount(ctx, id)` and advances its
 cursor only after it succeeds. Comments and anonymous reaction/favorite/vote
 contributions remain, with their existing counts. Their fresh random actor
 key preserves one-person-per-work ranking across versions and interaction
 types. Reading statistics use that anonymous key too; the temporary account-to-key mapping is discarded on
 completion. Inbox, avatar, recent-search and provider cleanup remains part of
-the operation. A failure is retryable. No periodic erasure sweep is required.
+the operation. A failure is retryable. No periodic erasure sweep is required:
+the event reader keeps the obligation pending until completion. Normal startup
+allows unfinished purges, including ones the reader has not reached, and never
+waits on the avatar primary's receipt for them. The shared avatar URL can remain
+reachable until its primary finishes. The `contentkit_account_anonymization`
+probe reports purge obligations older than 15 minutes without this app's receipt;
+it does not affect `New`.
+
+For a purge, `New` returns `ErrErasureReplayRequired` only when this app's receipt
+exists but neither its local completion fence nor lifecycle state `purged`
+remains, proving a catalog restore. Unfinished explicit account erasures and
+app-only erasures without a local fence or `purging` row still block startup.
+Restore replay uses `AnonymizeAccount` for purge obligations, preserving anonymous
+contributions and removing restored comment, creator and owner attribution.
+Retry replay until its report is complete; a cleanup failure returns an error
+and leaves work remaining.
+
 For replicated ClickHouse, configure `ClickHouse.Cluster` with the complete
 single-shard replica set, and route its connection pool only within that set.
 Cleanup verifies Keeper membership and waits for cluster-wide synchronization

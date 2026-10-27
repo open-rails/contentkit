@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/notify"
+	notifypg "github.com/open-rails/authkit/notify/postgres"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
@@ -31,6 +32,30 @@ import (
 	notification "github.com/open-rails/contentkit/migration/legacyinbox"
 	"github.com/open-rails/contentkit/signal"
 )
+
+func eraseAuthKitAccount(t *testing.T, w *world, a *application, id string) {
+	t.Helper()
+	schema := "contentkit_accounts"
+	if a.cfg.Accounts != nil {
+		schema = a.cfg.Accounts.Schema
+	}
+	store, err := notifypg.New(w.pool, notifypg.Config{Schema: schema, Scope: "contentkit:" + (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Partition()})
+	must(t, err)
+	must(t, store.EraseRecipient(t.Context(), notify.Recipient{Audience: notify.AudienceUser, ID: id}))
+}
+
+func checkAnonymizationProbe(t *testing.T, engine *ck.Engine, pending bool) {
+	t.Helper()
+	for _, probe := range engine.Probes() {
+		if probe.Name == "contentkit_account_anonymization" {
+			if err := probe.Check(t.Context()); (err != nil) != pending {
+				t.Fatalf("account anonymization probe: pending=%v err=%v", pending, err)
+			}
+			return
+		}
+	}
+	t.Fatal("account anonymization probe missing")
+}
 
 func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	lifetime := t
@@ -240,6 +265,25 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 			t.Fatal("restoration did not recover original attribution")
 		}
 	})
+	t.Run("authkit_purge_allows_restart_before_consumer", func(t *testing.T) {
+		eraseAuthKitAccount(t, w, a, user.ID)
+		wire.cut()
+		for _, app := range []*application{a, sibling} {
+			app.server.Close()
+			must(t, app.engine.Close(t.Context()))
+			app.cfg.Database.SkipMigrations = true
+			app.deps.ClickHouse = borrowed
+			app.engine, err = ck.New(t.Context(), app.cfg, app.deps)
+			must(t, err)
+			app.server = mountEngine(lifetime, app.engine)
+			checkAnonymizationProbe(t, app.engine, false)
+		}
+		_, err := w.pool.Exec(t.Context(), `UPDATE contentkit_accounts.notify_recipients SET erased_at=now()-interval '16 minutes' WHERE scope=$1 AND audience='user' AND recipient=$2`, "contentkit:"+(layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Partition(), user.ID)
+		must(t, err)
+		for _, app := range []*application{a, sibling} {
+			checkAnonymizationProbe(t, app.engine, true)
+		}
+	})
 	t.Run("CK-J24-S05_database_commit_failure_keeps_attribution_and_retry_pending", func(t *testing.T) {
 		qs := pgx.Identifier{w.schema}.Sanitize()
 		_, err := w.pool.Exec(t.Context(), fmt.Sprintf(`CREATE FUNCTION %s.critical_reject_anonymization() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.actor_id=TG_ARGV[0] THEN RAISE EXCEPTION 'owned account commit refusal'; END IF; RETURN NEW; END$$;
@@ -278,14 +322,20 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		}
 		inbox, err = sibling.accountInbox(credential).List(t.Context(), inboxQuery{})
 		must(t, err)
-		if len(inbox.Items) != 1 {
-			t.Fatal("one app erased the sibling's pending consumer work")
+		if len(inbox.Items) != 0 {
+			t.Fatal("AuthKit purge retained the sibling's private inbox")
+		}
+		for _, replay := range []func(context.Context) (signal.ErasureReport, error){a.engine.ReplayErasureFences, a.engine.ReplayAccountErasures} {
+			report, err := replay(t.Context())
+			if err == nil || report.Complete() || report.Remaining["account_plane"] == 0 {
+				t.Fatalf("failed anonymization replay lost its pending obligation: report=%+v err=%v", report, err)
+			}
 		}
 	})
 	a.server.Close()
 	must(t, a.engine.Close(t.Context()))
 	a.deps.ClickHouse = direct
-	a.engine, err = ck.NewForErasureReplay(t.Context(), a.cfg, a.deps)
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
 	t.Run("CK-J23-S01_CK-J24-S05_storage_fence_hides_avatar_before_physical_cleanup", func(t *testing.T) {
 		failDelete.Store(true)
@@ -310,14 +360,28 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		if len(history) != 0 {
 			t.Fatal("old account still reads history after anonymization fence")
 		}
+		sibling.server.Close()
+		must(t, sibling.engine.Close(t.Context()))
+		sibling.deps.ClickHouse = direct
+		sibling.engine, err = ck.New(t.Context(), sibling.cfg, sibling.deps)
+		must(t, err)
+		must(t, sibling.engine.AnonymizeAccount(t.Context(), user.ID))
+		must(t, sibling.engine.Close(t.Context()))
+		sibling.engine, err = ck.New(t.Context(), sibling.cfg, sibling.deps)
+		must(t, err)
+		sibling.server = mountEngine(lifetime, sibling.engine)
+		checkAnonymizationProbe(t, sibling.engine, false)
+		checkAnonymizationProbe(t, a.engine, true)
 	})
 	must(t, a.engine.Close(t.Context()))
-	a.engine, err = ck.NewForErasureReplay(t.Context(), a.cfg, a.deps)
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
 	t.Run("CK-J24-S05_reopened_consumer_finishes_all_stores_once", func(t *testing.T) {
 		failDelete.Store(false)
 		must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
 		must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
+		checkAnonymizationProbe(t, a.engine, false)
+		checkAnonymizationProbe(t, sibling.engine, false)
 		// No public API exposes this transient mapping. The privacy invariant
 		// requires proving the owned store discarded the account-to-anonymous
 		// link after the cross-store operation completed.
@@ -355,6 +419,7 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 			t.Fatal("retry double-counted or lost an anonymous contribution")
 		}
 		must(t, sibling.engine.AnonymizeAccount(t.Context(), user.ID))
+		checkAnonymizationProbe(t, sibling.engine, false)
 		kept := readComment(t, sibling, siblingItem.ID, siblingComment.ID)
 		if kept.UserID != "" || kept.Body != siblingComment.Body {
 			t.Fatal("sibling consumer did not independently anonymize its contribution")
