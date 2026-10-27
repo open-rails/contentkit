@@ -16,8 +16,8 @@ import (
 )
 
 // ProcessingPublisher wakes the accepted release from a processor's completion
-// transaction, including stock external workers. It preserves its requested date
-// and a follow-up when an older snapshot job is already running.
+// transaction, including stock external workers. It preserves an unreleased
+// edition's requested date and a follow-up when an older snapshot job is running.
 func ProcessingPublisher(pool *pgxpool.Pool, riverSchema, contentSchema string, registry *media.Registry) (func(context.Context, pgx.Tx, contentref.ContentRef) error, error) {
 	if pool == nil || contentSchema == "" || registry == nil {
 		return nil, errors.New("versions: processing publisher needs pool, content schema and registry")
