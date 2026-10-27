@@ -46,12 +46,7 @@ and survive removal of the content rows. A ClickHouse outage leaves those
 references pending without holding back unrelated PostgreSQL or media deletion.
 After ClickHouse acknowledges the deletion, the sweep removes the references;
 a lost acknowledgment is safe to retry. There is no separate
-`contentkit_forget_contents` worker or timer. During upgrades, the explicit
-stopped-writer migration transfers owned pending old jobs into these records
-and preserves terminal history and other apps' work. Discarded jobs also retain
-outstanding erasure obligations; migration copies those obligations without
-rewriting their failed history. A later explicit migration may replay them,
-which is safe because deletion is idempotent.
+`contentkit_forget_contents` worker or timer.
 
 Purge never mutates OpenRails products, prices, purchases or payment history.
 The host manages product archival directly through OpenRails; those billing

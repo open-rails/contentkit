@@ -188,7 +188,7 @@ func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error)
 	case errors.Is(err, ErrUnavailable):
 		status, code, msg = http.StatusServiceUnavailable, "unavailable", "media storage is unavailable"
 	case errors.Is(err, ErrPublicationLayoutRequired):
-		status, code, msg = http.StatusServiceUnavailable, CodeUpgrade, "media publication layout migration is required"
+		status, code, msg = http.StatusServiceUnavailable, CodeUpgrade, "media publication is being restored"
 	case errors.Is(err, ErrEditorReadUnsupported):
 		status, code, msg = http.StatusServiceUnavailable, "unavailable", "editor media delivery is unavailable"
 	case errors.Is(err, ErrUpgradeRequired):

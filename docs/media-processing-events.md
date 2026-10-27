@@ -20,11 +20,6 @@ no separate version metadata worker. Only completed storage delivery activates r
 and release-dependent catalog state. Processing remains independent of an
 editor's publication instruction. There is no source-managed event consumer.
 
-This change requires a stopped-writer upgrade: stop older hosts and media
-workers before applying the new migrations and restart the matching release.
-Published migration files must not be rewritten. The upgrade must retire old
-waiting exposure/readiness jobs without losing pending metadata work.
-
 Processing events originated in ContentKit #247; the publication model is #250.
 
 ## Observation interfaces
@@ -53,11 +48,6 @@ catalog key, including when several apps share one River schema.
 Removed interfaces: `media.Jobs.Expose`, `ExposeTx` on media/version/entity
 folders, `media.HostQueue`, `worker.Config.HostQueue` and `MEDIA_HOST_QUEUE`.
 Keep `HostSchema` / `MEDIA_HOST_RIVER_SCHEMA` for the release queue.
-Standalone integrations run `media.MigrateProcessing` alongside their explicit
-migration step. It refuses running old lifecycle jobs, retires only owned
-waiting rows, preserves history and other namespaces, and queues one normal
-derivative pass per known item using an existing journal receipt. No bucket discovery
-or recurring backfill job is installed.
 
 ## Live editor status
 
