@@ -80,11 +80,8 @@ see [popularity-policy.md](popularity-policy.md). Audience-normalized ranking
 requires trusted access and population coverage. Without it, the ranker explicitly
 returns unavailable, allowing discovery's current catalog feedback fallback.
 
-Measurement writes default off. Migrations add the new state without breaking old
-writers. Upgrade all writers and erasure executors, enforce erasures, then perform
-the explicit operator cleanup before activation; see
-[measured-engagement-rollout.md](measured-engagement-rollout.md). Startup never
-performs this destructive retirement.
+See [measured-engagement-rollout.md](measured-engagement-rollout.md) for what
+counts as measured reading.
 
 Old queued `contentkit_projection_repair` rows follow River's ordinary unknown-kind
 attempt handling; they do not block startup. See [removed periodic jobs](../HOST_INTEGRATION.md#removed-periodic-jobs).

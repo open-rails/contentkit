@@ -633,14 +633,7 @@ var (
 	// ErrManifestUnreadable: a stored manifest over MaxManifestBytes, written
 	// before the bound; it does not decode.
 	ErrManifestUnreadable = errors.New("media: stored manifest over its size limit")
-	// ErrUpgradeRequired: a manifest stored before v0.68 (version 2), which
-	// must be migrated with ContentKit v0.119.1 before this release can read
-	// or edit it; HTTP answers 503 upgrade_required.
-	ErrUpgradeRequired = errors.New("media: item stored before v0.68 must be upgraded with ContentKit v0.119.1")
 )
-
-// legacyManifestVersion is refused until migrated by a previous release.
-const legacyManifestVersion = 2
 
 // encodeManifest writes m as gzip JSON (HTML characters unescaped: a name of
 // "<" costs one byte) and records its JSON length.
@@ -685,14 +678,12 @@ func DecodeManifest(b []byte) (*Manifest, error) { return decodeManifest(b) }
 
 // decodeManifest reads gzip JSON (or plain JSON), at most MaxManifestBytes
 // of it (ErrManifestUnreadable past that), indexes it and records its JSON
-// length. A version 2 manifest is ErrUpgradeRequired.
+// length.
 func decodeManifest(b []byte) (*Manifest, error) {
 	m, err := decodeStored(b)
 	switch {
 	case err != nil:
 		return nil, err
-	case m.V == legacyManifestVersion:
-		return nil, ErrUpgradeRequired
 	case m.V != ManifestVersion:
 		return nil, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
 	}

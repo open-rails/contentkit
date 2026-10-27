@@ -56,15 +56,11 @@ The browser uses AuthKit's `authClient.notifications`, `NotificationInbox` and
 ContentKit has no intermediate notification transport or duplicate components.
 General retained platform event logs and `preference_sync` are independent.
 
-## Upgrade from the previous inbox
+## Account cleanup
 
-Use the [coordinated adoption procedure](account-notifications.md). Existing
-receipts, read/archive state, source ordering and erasure fences are preserved.
-`migration/legacyinbox` and `notification/openrails.Source.Consume` exist only for
-explicit one-time legacy handoff. They are not registered workers or normal
-publication/read APIs. The retired `contentkit_openrails_inbox_sync` job cannot
-be started by the new runtime; only its exact configured source's unfinished
-jobs are canceled after the final source cursor is consumed.
+The host's AuthKit inbox scope for ContentKit must be `contentkit:` followed by
+ContentKit's account key (`tenant_<tenant ID>` for a scoped engine); account
+cleanup reads erasures under exactly that scope.
 
 Account lifecycle cleanup retains its established canonical account/app erasure
 fences and content-only restore checks. The narrow cleanup adapter calls

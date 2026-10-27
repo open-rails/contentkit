@@ -629,20 +629,8 @@ See [media jobs](docs/media-jobs.md).
 `SweepAll` and `SweepOrphans` are explicit repair tools, rather than periodic bucket-wide work. Neither is
 registered as a recurring orphan-discovery job.
 
-Moving an existing nested version layout to the flat version-owned layout also
-requires the explicit object-store phase, after PostgreSQL migrations and with
-old writers/workers stopped:
-
-```go
-report, err := contentkit.MigrateVersionStorage(ctx, pool, cfg, store)
-```
-
-The pass checkpoints and verifies each copy before scheduling retirement of its
-old keys. A retry resumes those receipts; startup never copies files and refuses
-an incomplete migration. The parent content item keeps its database identity
-and has no storage folder. Deploy a gateway that understands exact-file grants
-before starting hosts that issue them; the new gateway also accepts existing
-folder grants during the transition.
+A version's files live in its own folder, named by the version ID. The parent
+content item keeps its database identity and has no storage folder.
 
 **Paywalls**: media gates each item through `Hooks.Resolver`. Reader grants
 cover permitted immutable files, limited by chapter release and access rules;

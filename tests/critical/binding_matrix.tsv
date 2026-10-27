@@ -218,7 +218,6 @@ ts:MediaApi.watch	ts	TS client streaming method	MediaApi.watch	sdk/ui/src/client
 ts:MediaClient.watch	ts	TS client streaming method	MediaClient.watch	sdk/ui/src/client/media/client.ts	included-critical media247 streaming/UI acceptance
 ts:ContentUpload	ts	TS exported component	ContentUpload	sdk/ui/src/components/admin/content-upload.tsx	included-critical media247 streaming/UI acceptance
 ts:MediaProcessingPanel	ts	TS exported component	MediaProcessingPanel	sdk/ui/src/components/media-processing-panel.tsx	included-critical media247 streaming/UI acceptance
-go:Source.RetireInboxSync	go	Go explicit migration method	Source.RetireInboxSync	notification/openrails/retire.go	included-critical
 go:authkit.MigrationScopes	go	Go AuthKit migration adapter	authkit.MigrationScopes	adapters/authkit/migration.go	included-critical
 go:kinds.Config	go	Go content model configuration	kinds.Config	kinds/kinds.go	included-critical
 go:Client.GetChannelComments	go	Go generated Client route	Client.GetChannelComments	client_gen.go	included-critical channel253 contract

@@ -281,7 +281,7 @@ func (j *Jobs) itemFolders(ctx context.Context, k *Kind) iter.Seq2[contentref.Co
 			}
 			last = key.Folder()
 			if k.Versions && key.Version != "" {
-				continue // retained nested source folders belong only to migration/cleanup
+				continue // the current layout never writes nested version folders
 			}
 			item, err := j.itemForFolder(ctx, last)
 			if err != nil {

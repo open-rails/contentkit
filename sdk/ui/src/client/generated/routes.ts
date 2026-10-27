@@ -230,7 +230,7 @@ export const CONTENTKIT_ERROR_SETS: Readonly<Record<string, readonly string[]>> 
   "module:import": ["internal_error", "unavailable"],
   "module:kinds": ["internal_error"],
   "module:media": ["internal_error", "not_found", "rate_limited", "unavailable", "upgrade_required"],
-  "module:upload": ["internal_error", "unavailable", "upgrade_required"],
+  "module:upload": ["internal_error", "unavailable"],
   "module:versions": ["internal_error", "not_found", "unavailable"],
   "request": ["invalid_request"],
 };
