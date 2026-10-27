@@ -3,7 +3,6 @@ package signal
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -35,9 +34,6 @@ type ErasureReport struct {
 	// Remaining counts rows still attributable to the subjects per table after
 	// the pass; every value is zero when erasure is complete.
 	Remaining map[string]uint64
-	// PairsRemoved counts co-engagement pair rows removed because an erased
-	// subject contributed to a work in them.
-	PairsRemoved uint64
 }
 
 // Complete reports whether no attributable rows remain.
@@ -51,8 +47,8 @@ func (r ErasureReport) Complete() bool {
 }
 
 // subjectTables hold rows keyed by (tenant, subject_kind, subject).
-var subjectTables = []string{"signals", "subject_content_state", "subject_content_daily", "exposures", "population_observations",
-	"engagement_segments", "engagement_state", "engagement_daily", "legacy_reading_state", "measured_population_observations"}
+var subjectTables = []string{"signals", "exposures", "engagement_segments", "engagement_state", "engagement_daily",
+	"legacy_reading_state", "measured_population_observations"}
 
 // maxErasurePasses bounds the delete-and-verify loop of one erasure: a row
 // landing between a pass's mutation and its count is deleted by the next pass.
@@ -67,9 +63,7 @@ const maxErasurePasses = 3
 //     replica drops or hides the subjects' rows (the barrier): the subject
 //     key is dead in the tenant forever;
 //  2. every row of the subjects that existed when the pass ran is deleted from
-//     signals, compact state, daily contributions and exposures on every replica (mutations_sync = 2) and re-counted as zero;
-//  3. co-engagement pairs touching works the subjects contributed to are
-//     removed.
+//     signals, compact state, daily contributions and exposures on every replica (mutations_sync = 2) and re-counted as zero.
 //
 // A writer or projection that observed the pre-erasure state can still leave
 // residue rows; they are unreadable by (1) and EnforceErasures removes them
@@ -165,14 +159,11 @@ func (st *Store) EnforceErasures(ctx context.Context, tenant string) (ErasureRep
 
 // erasePasses runs eraseWhere until nothing remains or maxErasurePasses.
 func (st *Store) erasePasses(ctx context.Context, tenant, filter string, args []any) (ErasureReport, error) {
-	var pairs uint64
 	for pass := 1; ; pass++ {
 		report, err := st.eraseWhere(ctx, tenant, filter, args)
 		if err != nil {
 			return report, err
 		}
-		pairs += report.PairsRemoved
-		report.PairsRemoved = pairs
 		if report.Complete() || pass == maxErasurePasses {
 			return report, nil
 		}
@@ -181,51 +172,7 @@ func (st *Store) erasePasses(ctx context.Context, tenant, filter string, args []
 
 func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []any) (ErasureReport, error) {
 	report := ErasureReport{Remaining: map[string]uint64{}}
-	tables, err := st.activeSubjectTables(ctx)
-	if err != nil {
-		return report, err
-	}
-	optional, err := st.existing(ctx, []string{"content_pairs"})
-	if err != nil {
-		return report, err
-	}
-	pairs := []string{"engagement_pairs"}
-	if len(optional) > 0 {
-		pairs = append(pairs, "content_pairs")
-	}
-	// Pairs first: the contributed work set is read from the rows being
-	// erased, and passed as literals so every replica deletes the same pairs
-	// (replicated mutations reject subqueries as nondeterministic).
-	works, err := st.contributedContent(ctx, tenant, filter, args)
-	if err != nil {
-		return report, err
-	}
-	for start := 0; start < len(works); start += mutationTupleChunk {
-		chunk := works[start:min(start+mutationTupleChunk, len(works))]
-		tuples := make([]string, len(chunk))
-		pairArgs := make([]any, 0, 1+4*len(chunk))
-		pairArgs = append(pairArgs, tenant)
-		for i, w := range chunk {
-			tuples[i] = "(?, ?)"
-			pairArgs = append(pairArgs, w[0], w[1])
-		}
-		in := "(" + strings.Join(tuples, ", ") + ")"
-		pairArgs = append(pairArgs, pairArgs[1:]...)
-		where := fmt.Sprintf("tenant = ? AND ((content_kind_a, content_id_a) IN %[1]s OR (content_kind_b, content_id_b) IN %[1]s)", in)
-		for _, table := range pairs {
-			n, err := st.count(ctx, table, tenant, where[len("tenant = ? AND "):], pairArgs[1:])
-			if err != nil {
-				return report, err
-			}
-			if n == 0 {
-				continue
-			}
-			if err := st.mutate(ctx, table, where, pairArgs...); err != nil {
-				return report, err
-			}
-			report.PairsRemoved += n
-		}
-	}
+	tables := subjectTables
 	for _, table := range tables {
 		if err := st.mutate(ctx, table, "tenant = ? AND "+filter, append([]any{tenant}, args...)...); err != nil {
 			return report, err
@@ -244,45 +191,10 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 // mutationTupleChunk bounds the literal IN list of one mutation.
 const mutationTupleChunk = 1000
 
-// contributedContent lists the works (kind, id) the filtered subjects have
-// daily rows for; version rows collapse onto their work.
-func (st *Store) contributedContent(ctx context.Context, tenant, filter string, args []any) ([][2]string, error) {
-	var parts []string
-	var bindings []any
-	tables, err := st.activeSubjectTables(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, table := range tables {
-		if !slices.Contains([]string{"subject_content_daily", "engagement_daily", "engagement_segments", "legacy_reading_state"}, table) {
-			continue
-		}
-		parts = append(parts, fmt.Sprintf(`SELECT content_kind,content_id FROM %s.%s WHERE tenant=? AND %s`, st.db, table, filter))
-		bindings = append(bindings, tenant)
-		bindings = append(bindings, args...)
-	}
-	q := `SELECT DISTINCT content_kind,content_id FROM (` + strings.Join(parts, " UNION ALL ") + `) ORDER BY content_kind,content_id`
-	rows, err := st.conn.Query(ctx, q, bindings...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: contributed content: %w", err)
-	}
-	defer rows.Close()
-	var out [][2]string
-	for rows.Next() {
-		var w [2]string
-		if err := rows.Scan(&w[0], &w[1]); err != nil {
-			return nil, err
-		}
-		out = append(out, w)
-	}
-	return out, rows.Err()
-}
-
 func (r *ErasureReport) merge(o ErasureReport) {
 	for k, v := range o.Remaining {
 		r.Remaining[k] += v
 	}
-	r.PairsRemoved += o.PairsRemoved
 }
 
 func (st *Store) count(ctx context.Context, table, tenant, filter string, args []any) (uint64, error) {

@@ -480,10 +480,7 @@ type CoEngagedOptions struct {
 	// MaxSubjects caps the anchor's qualified readers (defaults to 10000).
 	// Readers are selected by a stable identity hash, with identity tie-breakers.
 	MaxSubjects int
-	// SkipRollup forces the query-time event scan even when the content_pairs
-	// rollup has rows (e.g. for freshness-critical reads).
-	SkipRollup bool
-	Limit      int // default 50
+	Limit       int // default 50
 }
 
 // CoEngagedHit is one co-engaged work. Strength is the NET co-engaged subject
