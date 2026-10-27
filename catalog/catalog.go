@@ -125,15 +125,15 @@ type Store struct {
 }
 
 type tables struct {
-	items, creators, versions, versionText, segments, facets, events string
-	entities, entityNames, memberships, prefs, counts, docs          string
-	reactions, favorites, comments, accessHistory                    string
+	items, creators, versions, versionText, segments, facets string
+	entities, entityNames, memberships, prefs, counts, docs  string
+	reactions, favorites, comments, accessHistory            string
 }
 
 func catalogTables(schema string) tables {
 	q := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
 	return tables{items: q("content_items"), creators: q("content_creators"), versions: q("content_versions"),
-		versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), events: q("content_events"),
+		versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"),
 		entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
 		prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),
 		reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")}
@@ -192,7 +192,7 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 	if s.totals, err = cache.New(totalsPolicy, s.loadTotals); err != nil {
 		return nil, err
 	}
-	if _, err := s.pool.Exec(ctx, `SELECT 1 FROM `+s.t.items+` LIMIT 0; SELECT 1 FROM `+s.t.facets+` LIMIT 0; SELECT position,boundary,event_version FROM `+s.t.events+` LIMIT 0; SELECT epoch FROM `+s.qs+`.content_event_epoch LIMIT 0; SELECT position FROM `+s.qs+`.content_event_streams LIMIT 0; SELECT boundary,recorded_at FROM `+s.qs+`.eventlog_events LIMIT 0; SELECT ordinal FROM `+s.qs+`.eventlog_pending LIMIT 0`); err != nil {
+	if _, err := s.pool.Exec(ctx, `SELECT 1 FROM `+s.t.items+` LIMIT 0; SELECT 1 FROM `+s.t.facets+` LIMIT 0; SELECT epoch FROM `+s.qs+`.content_event_epoch LIMIT 0; SELECT boundary,recorded_at FROM `+s.qs+`.eventlog_events LIMIT 0; SELECT ordinal FROM `+s.qs+`.eventlog_pending LIMIT 0`); err != nil {
 		return nil, fmt.Errorf("catalog: schema %q lacks the catalog tables (apply contentkit.Migrate): %w", s.schema, err)
 	}
 	return s, nil

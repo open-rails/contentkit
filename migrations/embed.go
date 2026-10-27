@@ -43,7 +43,7 @@ func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 		return fmt.Errorf("contentkit: Schema: %w", err)
 	}
 	// MigrateKit creates the selected schema under its migration lock.
-	steps, err := postgresChain(ctx, db, schema)
+	steps, err := migratekit.Load(Postgres, ".")
 	if err != nil {
 		return fmt.Errorf("contentkit: load PostgreSQL migrations: %w", err)
 	}
@@ -78,11 +78,7 @@ func ValidatePostgres(ctx context.Context, db *sql.DB, schema string) error {
 	if _, err := search.QuoteSchema(schema); err != nil {
 		return err
 	}
-	steps, err := postgresChain(ctx, db, schema)
-	if err != nil {
-		return err
-	}
-	return migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ValidateAllApplied(ctx, steps)
+	return migratekit.ValidatePostgresMigrations(ctx, db, migratekit.MigrationSource{App: "contentkit", Schema: schema, FS: Postgres})
 }
 
 // ValidateAccounts is the read-only counterpart of ApplyAccounts.
