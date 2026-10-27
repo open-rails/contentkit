@@ -64,10 +64,12 @@ func (s *Service) SchedulePublicationTx(ctx context.Context, tx pgx.Tx, targets 
 	return nil
 }
 
-// wakePublicationTx resumes an accepted publication without changing its date.
+// wakePublicationTx resumes an accepted publication without the processor's clock.
 // A processor observes readiness; it does not submit new publication intent.
 // The request's stored deadline also keeps external workers independent of the
 // host's clock. A frozen plan gets a successor at that same accepted deadline.
+// Processing can change a released edition's pages, so a request parked at a
+// later date moves back to when the live release completed and re-plans.
 func (s *Service) wakePublicationTx(ctx context.Context, tx pgx.Tx, target Target) error {
 	if tx == nil {
 		return errors.New("versions: publication wakeup requires a transaction")
@@ -76,15 +78,21 @@ func (s *Service) wakePublicationTx(ctx context.Context, tx pgx.Tx, target Targe
 		return err
 	}
 	var at time.Time
-	err := tx.QueryRow(ctx, `SELECT scheduled_at FROM `+s.releaseRequestsTable()+`
- WHERE tenant_id=$1 AND content_id=$2 AND version_id=$3 AND current AND state<>'cancelled' FOR UPDATE`,
-		s.o.Tenant, target.Content, target.Version).Scan(&at)
+	var completed *time.Time
+	err := tx.QueryRow(ctx, `SELECT r.scheduled_at,CASE WHEN v.released THEN live.completed_at END
+ FROM `+s.releaseRequestsTable()+` r JOIN `+s.t.versions+` v ON v.tenant_id=r.tenant_id AND v.id=r.version_id
+ LEFT JOIN `+s.releaseRequestsTable()+` live ON live.tenant_id=v.tenant_id AND live.id=v.release_id
+ WHERE r.tenant_id=$1 AND r.content_id=$2 AND r.version_id=$3 AND r.current AND r.state<>'cancelled' FOR UPDATE OF r`,
+		s.o.Tenant, target.Content, target.Version).Scan(&at, &completed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The normal intent check leaves an unpublished draft without a job.
 		return s.SchedulePublicationTx(ctx, tx, []Target{target})
 	}
 	if err != nil {
 		return err
+	}
+	if completed != nil && completed.Before(at) {
+		at = *completed
 	}
 	return s.scheduleReleaseAtTx(ctx, tx, target, at)
 }

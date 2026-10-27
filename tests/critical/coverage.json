@@ -399,7 +399,8 @@
       "status": "verified",
       "evidence": [
         "Start markers derive half-open spans from source-file order. Independently released chapters can skip an unreleased middle; copied and inserted files follow their current chapter.",
-        "Valid item tokens grant all served private outputs of exactly that edition, never future/original bytes or unreleased metadata."
+        "Valid item tokens grant all served private outputs of exactly that edition, never future/original bytes or unreleased metadata.",
+        "When processing hides a page a released edition already serves, its completion re-plans the edition at once; a later chapter keeps its own date."
       ],
       "cases": [
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
@@ -411,7 +412,8 @@
         "TestBlankAndLastChapterStarts",
         "TestIndependentChaptersSkipUnreleasedMiddle",
         "TestCompletedPublicationReader",
-        "TestScheduledPolicyPublishesWithoutStorageAreaChange"
+        "TestScheduledPolicyPublishesWithoutStorageAreaChange",
+        "TestProcessingWithdrawsHiddenCopyBeforeChapterDate"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },

@@ -2,11 +2,15 @@ package critical_test
 
 import (
 	"bytes"
+	"image/png"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
@@ -216,5 +220,111 @@ func TestIndependentChaptersSkipUnreleasedMiddle(t *testing.T) {
 		if chapter.StartPage != "" || !chapter.Released || chapter.Start < 0 || chapter.End > 2 {
 			t.Fatalf("catalog leaked authoring markers or uncompressed future ranges: %+v", chapter)
 		}
+	}
+}
+
+// A release held at the source lock serves a pixel copy of chapter two before processing
+// hides it. Processing completion must withdraw it at once; chapter two keeps its date.
+func TestProcessingWithdrawsHiddenCopyBeforeChapterDate(t *testing.T) {
+	m := newResilientMedia(t, func(c *ck.Config) {
+		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
+	})
+	m.start(t)
+	admin, reader := m.app.engine.Client(), m.app.client("")
+	tenant := publicationTenant(m.app)
+	ref := galleryRef(t, admin, "Processing after release")
+	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{
+		{Path: "pages/01.png", Type: "image/png", Body: bytes.NewReader(chapterImage(t, 31))},
+		{Path: "pages/20.png", Type: "image/png", Body: bytes.NewReader(chapterImage(t, 97))},
+	})
+	must(t, err)
+	awaitMediaReady(t, admin, ref)
+	future := m.clock.now().Add(time.Hour)
+	_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, catalog.SegmentsInput{Segments: []catalog.SegmentInput{
+		{Title: "One", StartPage: "pages/01.png"}, {Title: "Two", StartPage: "pages/20.png", ReleaseAt: &future},
+	}})
+	must(t, err)
+	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+	must(t, err)
+	served := func() []string {
+		view, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+		if err != nil {
+			return nil
+		}
+		var paths []string
+		for _, file := range view.Files {
+			if file.URL != "" {
+				paths = append(paths, file.Path)
+			}
+		}
+		return paths
+	}
+	waitForChapterPublication(t, func() bool { return slices.Equal(served(), []string{"reader/01.webp"}) })
+	waitFor(t, func() bool { return currentReleaseJob(t, m.app, ref.Version).Due.Equal(future) })
+
+	// Different bytes with the same pixels: only page analysis finds the copy.
+	decoded, err := png.Decode(bytes.NewReader(chapterImage(t, 97)))
+	must(t, err)
+	var copied bytes.Buffer
+	must(t, (&png.Encoder{CompressionLevel: png.NoCompression}).Encode(&copied, decoded))
+	hold := m.wire.pause(t, func(r *http.Request) bool {
+		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/future/") && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
+	})
+	op := stageFile(t, admin, ref, "pages/30.png", copied.Bytes())
+	index := 1
+	op.Index = &index
+	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{op}})
+	must(t, err)
+	select {
+	case <-hold.arrived:
+	case <-time.After(60 * time.Second):
+		t.Fatal("the copy's reader image never reached the held storage write")
+	}
+	waitForWithin(t, 45*time.Second, func() bool {
+		var busy int
+		must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.schema + "_river", "river_job"}.Sanitize()+`
+ WHERE kind='contentkit_version_release' AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&busy))
+		return busy == 0
+	})
+	unlock, err := versions.LockSource(t.Context(), m.pool, tenant, ref.Version)
+	must(t, err)
+	t.Cleanup(unlock)
+	queued := func(want int) {
+		t.Helper()
+		waitFor(t, func() bool {
+			var n int
+			must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted
+ AND ((classid::bigint << 32) | objid::bigint)=hashtextextended($1,0)`, "contentkit:media:contentkit:versions:"+tenant+":"+ref.Version).Scan(&n))
+			return n == want
+		})
+	}
+	// Publishing again queues a release ahead of the derivative job's page selection.
+	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+	must(t, err)
+	queued(1)
+	hold.unblock()
+	queued(2)
+	unlock()
+	waitForWithin(t, 45*time.Second, func() bool {
+		var leaked bool
+		must(t, m.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{m.schema, "content_publication_requests"}.Sanitize()+`
+ WHERE tenant_id=$1 AND version_id=$2 AND state='completed' AND result->'pages'->'pages' @> '[{"path":"pages/30.png"}]')`, tenant, ref.Version).Scan(&leaked))
+		return leaked
+	})
+	deadline := time.Now().Add(45 * time.Second)
+	for paths := served(); !slices.Equal(paths, []string{"reader/01.webp"}); paths = served() {
+		if time.Now().After(deadline) {
+			t.Fatalf("copy of chapter two hidden by processing stayed public until the chapter date: %v", paths)
+		}
+		time.Sleep(550 * time.Millisecond)
+	}
+	// The corrected view is served while its release is still retiring, before
+	// that release parks the next request.
+	deadline = time.Now().Add(15 * time.Second)
+	for due := currentReleaseJob(t, m.app, ref.Version).Due; !due.Equal(future); due = currentReleaseJob(t, m.app, ref.Version).Due {
+		if time.Now().After(deadline) {
+			t.Fatalf("chapter two moved from its date after the correction: %s, want %s", due, future)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
