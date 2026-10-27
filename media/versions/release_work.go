@@ -331,18 +331,24 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 		served := map[string]bool{}
 		retained := map[string]bool{}
 		var ordering []page
+		current := m
 		if k.Publish != nil {
-			for _, f := range sourcePages(k, m) {
-				if media.PageIncluded(f) {
-					ordering = append(ordering, page{Path: f.Path, Source: f.Key(), SourceHash: k.PageID(f)})
-				}
-			}
 			groups, err := s.segments(ctx, tx, []string{t.Version})
 			if err != nil {
 				return nil, err
 			}
-			holds := standIns(groups[t.Version], sourcePages(k, m))
-			chapters, err := resolveChapterStarts(readableStarts(groups[t.Version], sourcePages(k, m)), ordering)
+			// Page analysis is saved before the derivative job re-saves the
+			// selection, so plan against the selection it is about to save.
+			current = m.Clone()
+			guardSegmentedPages(k, current, legacyPageRanges(groups[t.Version]))
+			persistPageSelection(k, current)
+			for _, f := range sourcePages(k, current) {
+				if media.PageIncluded(f) {
+					ordering = append(ordering, page{Path: f.Path, Source: f.Key(), SourceHash: k.PageID(f)})
+				}
+			}
+			holds := standIns(groups[t.Version], sourcePages(k, current))
+			chapters, err := resolveChapterStarts(readableStarts(groups[t.Version], sourcePages(k, current)), ordering)
 			if err != nil {
 				return nil, err
 			}
@@ -382,7 +388,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 						}
 					}
 				}
-				part := m.Clone()
+				part := current.Clone()
 				part.Files = slices.DeleteFunc(part.Files, func(f media.File) bool {
 					return f.IsUpload() && !selected[f.Path] || !f.IsUpload() && !selected[f.From]
 				})
@@ -470,7 +476,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t Target) (*releas
 			identity = append(identity, []string{hex.EncodeToString(digest), destination})
 			return nil
 		}
-		for _, file := range m.Files {
+		for _, file := range current.Files {
 			f := file
 			if f.Unattached || f.Gone {
 				continue
