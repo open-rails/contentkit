@@ -362,9 +362,7 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 						return rep, err
 					}
 					m, _, err := j.manifests.get(ctx, item.ManifestKey())
-					if errors.Is(err, ErrUpgradeRequired) {
-						continue // preserve old formats for migration with the previous release
-					} else if err != nil && !errors.Is(err, ErrNotFound) {
+					if err != nil && !errors.Is(err, ErrNotFound) {
 						return rep, err
 					}
 					incarnation := ""
