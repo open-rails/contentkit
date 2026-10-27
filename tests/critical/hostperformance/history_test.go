@@ -100,8 +100,10 @@ func (f *fixture) overlapLoad(label string, concurrency int, cases []httpCase) {
 func (f *fixture) ageLastCheckpoint() {
 	f.ch.phase.Store("age_owned_checkpoint")
 	must(f.t, f.ch.Exec(f.t.Context(), "ALTER TABLE "+f.db+".popularity_daily_prepared DELETE WHERE tenant=? AND content_kind=? AND day=? SETTINGS mutations_sync=2", f.tenant, f.kind, f.day))
+	// Replicated tables silently drop a block identical to a recent insert, so a
+	// second aging would otherwise leave the day without any checkpoint.
 	for _, scope := range f.model.Kinds[f.kind].Popularity[0].ActivityScopes() {
-		must(f.t, f.ch.Exec(f.t.Context(), "INSERT INTO "+f.db+".popularity_daily_prepared (tenant,content_kind,domain,language,day,computed_at) VALUES(?,?,?,?,?,?)", f.tenant, f.kind, scope.Domain, scope.Language, f.day, f.day.Add(23*time.Hour)))
+		must(f.t, f.ch.Exec(f.t.Context(), "INSERT INTO "+f.db+".popularity_daily_prepared (tenant,content_kind,domain,language,day,computed_at) SETTINGS insert_deduplicate=0 VALUES(?,?,?,?,?,?)", f.tenant, f.kind, scope.Domain, scope.Language, f.day, f.day.Add(23*time.Hour)))
 	}
 }
 func (f *fixture) combinedRecompute() {
