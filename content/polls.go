@@ -42,10 +42,11 @@ type PollOption struct {
 // PollMultipleChoice is the supported poll kind.
 const PollMultipleChoice = "multiple_choice"
 
+// Poll input limits, matching the SDK editor.
 const (
-	MaxPollOptions        = 10
-	MaxPollQuestionLength = 300
-	MaxPollOptionLength   = 200
+	maxPollOptions        = 10
+	maxPollQuestionLength = 300
+	maxPollOptionLength   = 200
 )
 
 // Poll is a question, its predefined options and the caller's own vote.
@@ -104,8 +105,8 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (P
 	if in.Question == "" {
 		return Poll{}, badRequest("question is required")
 	}
-	if utf8.RuneCountInString(in.Question) > MaxPollQuestionLength {
-		return Poll{}, badRequest("question is longer than %d characters", MaxPollQuestionLength)
+	if utf8.RuneCountInString(in.Question) > maxPollQuestionLength {
+		return Poll{}, badRequest("question is longer than %d characters", maxPollQuestionLength)
 	}
 	if in.Language == "" {
 		return Poll{}, badRequest("language is required")
@@ -120,23 +121,16 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (P
 	if len(in.Options) < 2 {
 		return Poll{}, badRequest("a poll needs at least 2 options")
 	}
-	if len(in.Options) > MaxPollOptions {
-		return Poll{}, badRequest("a poll has at most %d options", MaxPollOptions)
-	}
-	liveAt := time.Now()
-	if in.LiveAt != nil {
-		liveAt = *in.LiveAt
-	}
-	if in.ClosesAt != nil && !in.ClosesAt.After(liveAt) {
-		return Poll{}, badRequest("closes_at must be after live_at")
+	if len(in.Options) > maxPollOptions {
+		return Poll{}, badRequest("a poll has at most %d options", maxPollOptions)
 	}
 	for i := range in.Options {
 		in.Options[i].Label = strings.TrimSpace(in.Options[i].Label)
 		if in.Options[i].Label == "" {
 			return Poll{}, badRequest("option %d label is required", i)
 		}
-		if utf8.RuneCountInString(in.Options[i].Label) > MaxPollOptionLength {
-			return Poll{}, badRequest("option %d label is longer than %d characters", i, MaxPollOptionLength)
+		if utf8.RuneCountInString(in.Options[i].Label) > maxPollOptionLength {
+			return Poll{}, badRequest("option %d label is longer than %d characters", i, maxPollOptionLength)
 		}
 	}
 
@@ -147,9 +141,15 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (P
 	defer tx.Rollback(ctx)
 
 	var id string
-	if err := tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollQuestions+`
-		(id, tenant_id, kind, question, language, live_at, closes_at) VALUES ($7, $1, $2, $3, $4, COALESCE($5, now()), $6)
-		RETURNING id::text`, p.s.tenant, in.Kind, in.Question, in.Language, in.LiveAt, in.ClosesAt, contentref.NewID()).Scan(&id); err != nil {
+	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollQuestions+`
+		(id, tenant_id, kind, question, language, live_at, closes_at)
+		SELECT $7, $1, $2, $3, $4, COALESCE($5::timestamptz, now()), $6::timestamptz
+		WHERE $6::timestamptz IS NULL OR $6::timestamptz > COALESCE($5::timestamptz, now())
+		RETURNING id::text`, p.s.tenant, in.Kind, in.Question, in.Language, in.LiveAt, in.ClosesAt, contentref.NewID()).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Poll{}, badRequest("closes_at must be after live_at")
+	}
+	if err != nil {
 		return Poll{}, err
 	}
 	for _, o := range in.Options {
@@ -179,8 +179,8 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in Po
 		if q == "" {
 			return Poll{}, badRequest("question cannot be blank")
 		}
-		if utf8.RuneCountInString(q) > MaxPollQuestionLength {
-			return Poll{}, badRequest("question is longer than %d characters", MaxPollQuestionLength)
+		if utf8.RuneCountInString(q) > maxPollQuestionLength {
+			return Poll{}, badRequest("question is longer than %d characters", maxPollQuestionLength)
 		}
 		in.Question = &q
 	}
@@ -192,7 +192,7 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in Po
 	var liveAt time.Time
 	var closesAt *time.Time
 	err = tx.QueryRow(ctx, `SELECT live_at, closes_at FROM `+p.s.t.pollQuestions+`
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice' FOR UPDATE`, id, p.s.tenant).Scan(&liveAt, &closesAt)
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice' FOR NO KEY UPDATE`, id, p.s.tenant).Scan(&liveAt, &closesAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Poll{}, ErrNotFound
 	}
@@ -205,7 +205,7 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in Po
 	if in.ClosesAt.Set {
 		closesAt = in.ClosesAt.Value
 	}
-	if closesAt != nil && !closesAt.After(liveAt) {
+	if (in.LiveAt != nil || in.ClosesAt.Set) && closesAt != nil && !closesAt.After(liveAt) {
 		return Poll{}, badRequest("closes_at must be after live_at")
 	}
 	_, err = tx.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
@@ -685,8 +685,8 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	label := strings.TrimSpace(*in.Label)
-	if utf8.RuneCountInString(label) > MaxPollOptionLength {
-		writeErr(w, badRequest("label is longer than %d characters", MaxPollOptionLength))
+	if utf8.RuneCountInString(label) > maxPollOptionLength {
+		writeErr(w, badRequest("label is longer than %d characters", maxPollOptionLength))
 		return
 	}
 	ctx := req.Context()
@@ -712,22 +712,17 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if options >= MaxPollOptions {
-		writeErr(w, badRequest("a poll has at most %d options", MaxPollOptions))
+	if options >= maxPollOptions {
+		writeErr(w, badRequest("a poll has at most %d options", maxPollOptions))
 		return
 	}
 	var o PollOption
 	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollOptions+`
 		(tenant_id, question_id, label, position)
-		SELECT q.tenant_id, q.id, $2, COALESCE($3, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE tenant_id = q.tenant_id AND question_id = q.id))
-		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.tenant_id = $4 AND q.deleted_at IS NULL AND q.kind = '`+PollMultipleChoice+`'
+		VALUES ($4, $1, $2, COALESCE($3, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE tenant_id = $4 AND question_id = $1)))
 		RETURNING id::text, label, position, vote_count`,
 		id, label, in.Position, p.s.tenant).
 		Scan(&o.ID, &o.Label, &o.Position, &o.VoteCount)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeErr(w, ErrNotFound)
-		return
-	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -762,8 +757,8 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 			writeErr(w, badRequest("label cannot be blank"))
 			return
 		}
-		if utf8.RuneCountInString(l) > MaxPollOptionLength {
-			writeErr(w, badRequest("label is longer than %d characters", MaxPollOptionLength))
+		if utf8.RuneCountInString(l) > maxPollOptionLength {
+			writeErr(w, badRequest("label is longer than %d characters", maxPollOptionLength))
 			return
 		}
 		in.Label = &l
