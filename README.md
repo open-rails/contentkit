@@ -623,15 +623,7 @@ publication waits for every required output before delivery and activation.
 The gateway's `public/` area stays public and `private/` stays token-protected.
 See [media jobs](docs/media-jobs.md).
 
-For upgrades from the old per-folder timers, stop old media hosts and workers,
-run the host's normal `MigratePostgres` command, then start the new cohort. The
-migration atomically transfers queued folder deletions to the deletion ledger
-and cancels obsolete timers; running old jobs block migration. Old uncertain
-manifest writes must first be settled by the previous release, because their
-original accepted input was not stored. Read-only startup rejects
-unmigrated timers. Standalone media hosts call `media.MigrateCleanup` with their
-registry, routed journal and River schema. `SweepAll` and `SweepOrphans` remain
-explicit repair tools, rather than periodic bucket-wide work. Neither is
+`SweepAll` and `SweepOrphans` are explicit repair tools, rather than periodic bucket-wide work. Neither is
 registered as a recurring orphan-discovery job.
 
 Moving an existing nested version layout to the flat version-owned layout also
