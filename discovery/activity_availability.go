@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -16,16 +15,10 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-// maxAccessHistory bounds both the historical query result and the external
-// interval table sent to the signal plane. Exceeding it is an explicit error,
-// never a truncated ranking with invented missing availability.
-const maxAccessHistory = 100_000
-
 type accessHistoryState struct {
-	Kind       string     `json:"kind"`
-	LiveFrom   *time.Time `json:"live_from"`
-	Deleted    bool       `json:"deleted"`
-	Unplayable bool       `json:"unplayable"`
+	Kind     string     `json:"kind"`
+	LiveFrom *time.Time `json:"live_from"`
+	Deleted  bool       `json:"deleted"`
 	// LegacyListing is read only from snapshots captured before listing policies
 	// were removed. New snapshots omit it; historical availability stays intact.
 	LegacyListing string           `json:"listing"`
@@ -72,7 +65,7 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
 	}
 	out.From, out.Until, out.Known = from, until, true
 	rows, err := s.o.Pool.Query(ctx, `WITH candidates AS (
- SELECT DISTINCT content_id,version_id FROM `+history+` WHERE tenant_id=$1 AND snapshot->>'kind'=$2 AND ($6::text[] IS NULL OR content_id=ANY($6))
+ SELECT DISTINCT content_id,version_id FROM `+history+` WHERE tenant_id=$1 AND snapshot->>'kind'=$2 AND ($5::text[] IS NULL OR content_id=ANY($5))
 ), prior AS (
  SELECT DISTINCT ON (h.version_id) h.id,h.content_id,h.version_id,h.occurred_at,h.snapshot
  FROM `+history+` h JOIN candidates c USING(content_id,version_id)
@@ -82,7 +75,7 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
  WHERE h.tenant_id=$1 AND h.occurred_at>$3 AND h.occurred_at<$4
 ) SELECT id::text,content_id,version_id,occurred_at,snapshot FROM (
  SELECT * FROM prior UNION ALL SELECT * FROM recent
-) states ORDER BY states.version_id,states.occurred_at,states.id LIMIT $5`, s.o.Tenant, kind, from, until, maxAccessHistory+1, contents)
+) states ORDER BY states.version_id,states.occurred_at,states.id`, s.o.Tenant, kind, from, until, contents)
 	if err != nil {
 		return out, err
 	}
@@ -104,9 +97,6 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
 	if err := rows.Err(); err != nil {
 		return out, err
 	}
-	if len(states) > maxAccessHistory {
-		return out, fmt.Errorf("%w: access history exceeds %d intervals", ErrInvalid, maxAccessHistory)
-	}
 	var intervals []signal.AccessInterval
 	for i, row := range states {
 		end := until
@@ -117,7 +107,7 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
 		if begin.Before(from) {
 			begin = from
 		}
-		if row.state.Kind != kind || row.state.Deleted || row.state.Unplayable || row.state.LiveFrom == nil || (row.state.LegacyListing != "" && row.state.LegacyListing != "listed") ||
+		if row.state.Kind != kind || row.state.Deleted || row.state.LiveFrom == nil || (row.state.LegacyListing != "" && row.state.LegacyListing != "listed") ||
 			scope.Language != "" && !slices.Contains(row.state.Languages, scope.Language) {
 			continue
 		}
@@ -127,7 +117,7 @@ func (s *Service) Availability(ctx context.Context, kind string, window signal.W
 		if !begin.Before(end) {
 			continue
 		}
-		rule := access.Rule{Level: row.state.Level, Tiers: row.state.Tiers, Entity: row.state.Entity, Releases: row.state.Releases}
+		rule := access.Rule{Level: row.state.Level, Tiers: row.state.Tiers, ChannelID: row.state.Entity, Releases: row.state.Releases}
 		appendPart := func(a, b time.Time) {
 			_, audience, tiers := activityAudience(rule, a)
 			if a.Before(b) {

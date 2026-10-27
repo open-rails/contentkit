@@ -8,15 +8,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
-	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"log/slog"
+	"time"
 )
 
-// ProcessingPublisher inserts real version metadata work directly from a
-// processor's completion transaction, including stock external workers. It
-// preserves a follow-up when an older snapshot job is already running.
+// ProcessingPublisher wakes the accepted release from a processor's completion
+// transaction, including stock external workers. It preserves its requested date
+// and a follow-up when an older snapshot job is already running.
 func ProcessingPublisher(pool *pgxpool.Pool, riverSchema, contentSchema string, registry *media.Registry) (func(context.Context, pgx.Tx, contentref.ContentRef) error, error) {
 	if pool == nil || contentSchema == "" || registry == nil {
 		return nil, errors.New("versions: processing publisher needs pool, content schema and registry")
@@ -43,8 +44,46 @@ func ProcessingPublisher(pool *pgxpool.Pool, riverSchema, contentSchema string, 
 				return err
 			}
 		}
-		return media.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-			return client.InsertTx(ctx, tx, args, opts)
-		}, publishArgs{Content: ref.ContentID, Version: ref.Version()}, river.InsertOpts{Queue: QueueFor(catalog)})
+		service := publicationService(pool, contentSchema, catalog, registry)
+		service.client = client
+		return service.wakePublicationTx(ctx, tx, Target{Content: ref.ContentID, Version: ref.Version()})
+
 	}, nil
+}
+
+// publicationService is the narrow storage/scheduling subset used by stock
+// processors. It creates no authentication runtime or separate job handler.
+func publicationService(pool *pgxpool.Pool, schema, tenant string, reg *media.Registry) *Service {
+	q := func(name string) string { return pgxIdent(schema, name) }
+	return &Service{o: Options{Pool: pool, Schema: schema, Tenant: tenant, Now: time.Now}, reg: reg,
+		t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"), publications: q("content_version_publications"), entities: q("content_entities"), facets: q("content_facets")}}
+}
+
+// PrepareDerivatives prepares page order and automatic cover inputs inside the
+// existing derivative attempt. Drafts get the same preparation without publishing.
+func PrepareDerivatives(pool *pgxpool.Pool, schema string, manifests *media.Manifests, uploads *media.Uploads) func(context.Context, contentref.ContentRef) error {
+	return func(ctx context.Context, ref contentref.ContentRef) error {
+		reg := manifests.Registry()
+		k, err := reg.Kind(ref.ContentKind)
+		if err != nil {
+			return err
+		}
+		if !k.Versions || ref.Version() == "" || k.Publish == nil {
+			return nil
+		}
+		tenant := k.NS()
+		if scope, ok := reg.Scope(); ok {
+			if err := pool.QueryRow(ctx, `SELECT catalog_key FROM `+pgxIdent(schema, "content_app_bindings")+` WHERE tenant_id=$1::uuid AND app_id=$2::uuid`, scope.TenantID, scope.AppID).Scan(&tenant); err != nil {
+				return err
+			}
+		}
+		s := publicationService(pool, schema, tenant, reg)
+		s.o.Logger = slog.Default()
+		s.m = Media{Manifests: manifests, Uploads: uploads}
+		t := Target{Content: ref.ContentID, Version: ref.Version()}
+		if err := s.preparePageSelection(ctx, k, t); err != nil && !errors.Is(err, media.ErrNotFound) {
+			return err
+		}
+		return s.applyCover(ctx, k, t)
+	}
 }

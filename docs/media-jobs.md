@@ -1,35 +1,62 @@
 # Media jobs
 
-Media job model for ContentKit #242. Deployment requires the coordinated adoption described below.
+ContentKit uses two media processing job types and one release job:
 
-Media processing uses three worker job kinds: ingest, image and video. Original audio is pass-through. Host integration retains known-deadline cleanup, non-version folder deletion and interrupted-commit recovery. Public exposure and readiness relay jobs are removed; see [processing events](media-processing-events.md).
+| Operation | River kind | Queue |
+|---|---|---|
+| Validate/unpack/attach uploads | `contentkit_media_ingest` | `media_ingest` |
+| Generate required image/video outputs | `contentkit_media_derivatives` | `media_derivatives` |
+| Deliver and activate a complete edition | `contentkit_version_release` | catalog-scoped versions queue |
 
-## One resumable video conversion
+A version can contain images and video. Its derivative job uses the configured
+image presets and video codecs/renditions, including soundtracks. Original audio
+is pass-through. Chunking and encoder checkpoints are internal progress, not
+separate River job types. Completed work survives retries; source/incarnation
+checks prevent stale work from replacing newer uploads. A force request is
+consumed once. Ingest and derivative concurrency are configured independently.
 
-`contentkit_media_video` runs on `media_video`. One River row owns a video conversion request through planning, encoding and rendition publication. Chunking is an internal checkpoint mechanism, not a separate River job graph.
+## Processing and publication are separate
 
-Each attempt validates the current source/preset, completes bounded missing work and records successful outputs. Completed chunks survive interruption. Finished lower renditions become playable before later renditions finish. The same job yields at chunk boundaries so shorter waiting conversions get a turn; worker resource limits still bound CPU and scratch use. A force request is consumed once, and progressive readiness is delivered even when the job yields.
+Ingest validates the archive before attaching its files. The derivative attempt
+prepares page order and automatic cover inputs, then produces missing required
+outputs. Drafts receive the same preparation without becoming published.
+Generated edition outputs remain in `future/`.
 
-Keep the existing durable encoding checkpoints and source/incarnation checks. Remove child-job fan-out, separate assembly scheduling, light/encode queue aliases and unused one-shot worker selection. Preserve cancellation, stale-source rejection, temporary-output recovery and idempotent publication.
+Publish records intent for now or a future date. The existing release request
+waits until every required output is complete, copies the selected output set
+into `public/` or `private/`, verifies it, then activates the reader snapshot.
+An existing completed release remains readable while a replacement processes.
+A video becoming partially playable does not complete publication.
 
-## Remove obsolete host work
+There is no standalone playable flag, daily playable scan, version preparation
+worker, body-image-copy worker or version-fork operation. New versions have their
+own text and media. The media gateway retains its simple rule: files actually in
+`public/` are public; `private/` requires the appropriate authorization token.
 
-Remove the unused CDN-purge callback/relay surface. Current D/H hosts do not configure it, so retiring objects already produces no CDN invalidation through that callback. Actual storage deletion remains a durable operation. Public presets remain public independently of visibility.
+## Progress and retries
 
-Remove the legacy pre-v0.68 manifest conversion runtime and its recurring upgrade job. Current routed media kinds in DEV/PROD are fully upgraded with zero current failures. Preserve historical database records and applied SQL, including an old DEV failure outside current namespaces. Older installations must finish conversion using v0.119.1 before this upgrade; old-format refusal remains explicit.
+Processors update canonical manifests/checkpoints and append retained processing
+facts. Admin JSON, Go and SSE observers can show partial progress without exposing
+partially complete releases. Normal processing completion wakes an accepted release
+request directly; no readiness relay or additional preparation job is necessary.
 
-## Keep the durable boundaries
+A failed ingest or derivative attempt retries through that same durable job.
+Video attempts checkpoint bounded work so successful chunks/renditions are not
+encoded again. Storage mutation and source identity rules remain authoritative.
+Content/media retention deletion belongs to the existing content-purge sweep;
+there is no separate media reaper or bucket-discovery scanner.
 
-- Placement validates and hashes staged uploads before producers consume immutable sources.
-- Image and video processing retain their own resource/concurrency profiles.
-- Folder deletion bridges committed database deletion to object storage and fences later writes.
-- Deadline cleanup processes exact recorded obligations, including delayed uploads.
-- Processors append retained progress/completion events and enqueue real version metadata work in one transaction.
-- The existing version metadata worker updates facts, facets, covers and reader snapshots.
-- Recovery finishes known interrupted storage commits and integration effects.
+## Adoption
 
-## Adoption and verification
+Use matching host libraries, media-worker images and KEDA triggers. Configure
+`IngestWorkers`, `DerivativeWorkers` and `JobTimeout`; stock workers use
+`MEDIA_WORKER_INGEST_CONCURRENCY` and `MEDIA_WORKER_CONCURRENCY`.
 
-Retire old queued video stages through a forward worker migration while preserving completed history and successful checkpoints. Do not edit applied migrations. Coordinate old producer/worker retirement, the new public library/worker images and KEDA selectors; an empty-queue snapshot alone is insufficient for a rolling cutover.
+Before the hard cut, finish accepted old image/video/preparation/copy work using
+the previous implementation, then stop old producers and workers before migration.
+Preserve existing job history, original files and published migration bytes.
+No compatibility handler or new obsolete-job repair guard is introduced.
 
-Adapt existing real PostgreSQL/S3/FFmpeg tests for checkpoint resume, progressive playback, fairness, force consumption, stale sources, missing temporary outputs, cancellation and output formats. Verify the pinned River snooze behavior and availability after worker restart. Keep declared public/private storage, explicit deletion and late-write lifecycle assertions when removing callback-only tests.
+Qualify actual PostgreSQL/S3/FFmpeg behavior: mixed media, complete-output release,
+last-good reader snapshots, interruption/retry, force consumption, stale sources,
+codec outputs, per-version access, progress observation and retained deletion.

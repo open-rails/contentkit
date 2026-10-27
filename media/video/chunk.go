@@ -212,7 +212,7 @@ func (c WorkerConfig) overTenantShare(ctx context.Context, tenant string) (bool,
   EXISTS (SELECT 1 FROM `+c.jobTable()+` WHERE kind = $1
     AND (state = 'available' OR state IN ('retryable', 'scheduled') AND scheduled_at <= now())
     AND args->'ref'->>'tenant_id' IS DISTINCT FROM $2)`,
-		(workqueue.VideoArgs{}).Kind(), tenant).Scan(&own, &running, &otherWaiting)
+		(workqueue.DerivativeArgs{}).Kind(), tenant).Scan(&own, &running, &otherWaiting)
 	if err != nil {
 		return false, err
 	}

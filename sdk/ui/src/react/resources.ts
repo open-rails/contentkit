@@ -123,7 +123,10 @@ export class ResourceStore {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
         const error = toContentKitError(e);
-        if (error.code !== "aborted") this.update(s, { loading: false, loaded: true, error });
+        // A superseded request returned above. An abort from the still-current
+        // fetch must settle too; otherwise no request remains but loading stays
+        // true forever. Keep the error until an explicit retry succeeds.
+        this.update(s, { loading: false, loaded: true, error });
       },
     );
   }
@@ -209,7 +212,7 @@ export class ResourceStore {
     // Cards in lists (pages) and rails (arrays) show a content's counts and the viewer's state.
     const cards = (id: string, fn: (card: Card) => Card) =>
       patch<Page<Card> | Card[]>(
-        (t) => t.type === "cards" || t.type === "history",
+        (t) => t.type === "cards" || t.type === "history" || t.type === "channel-feed",
         (data) => {
           const each = (list: Card[]) => (list.some((x) => x.id === id) ? list.map((x) => (x.id === id ? fn(x) : x)) : list);
           if (Array.isArray(data)) return each(data);
@@ -274,15 +277,15 @@ export class ResourceStore {
       case "content.saved":
         patch<Content | null>((t) => t.type === "content" && t.id === c.content.id, () => c.content);
         // A state, kind or text change can move it between lists: refetch them.
-        this.invalidate((t) => t.type === "contents" || t.type === "cards" || t.type === "daily-releases" || (t.type === "content-detail" && t.id === c.content.id));
+        this.invalidate((t) => t.type === "contents" || t.type === "cards" || t.type === "channel-feed" || t.type === "daily-releases" || (t.type === "content-detail" && t.id === c.content.id));
         this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.content.id);
         break;
       case "content.changed":
-        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards" || t.type === "daily-releases" || t.type === "history");
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards" || t.type === "channel-feed" || t.type === "daily-releases" || t.type === "history");
         this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.id);
         break;
       case "content.deleted":
-        items<{ id: string }>(["contents", "cards", "history"], (x) => (x.id === c.id ? null : x));
+        items<{ id: string }>(["contents", "cards", "history", "channel-feed"], (x) => (x.id === c.id ? null : x));
         this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || (t.type === "contents" && t.scope === "deleted") || t.type === "daily-releases");
         this.invalidate((t) => t.type === "standing" && t.target?.type === "contents" && t.target.id === c.id);
         break;
@@ -305,14 +308,20 @@ export class ResourceStore {
       case "ban.lifted":
         this.invalidate((t) => (t.type === "bans" && t.scope === c.scope) || t.type === "standing");
         break;
+      case "channels.changed":
+        this.invalidate((t) => t.type.startsWith("channel") || t.type === "cards" || t.type === "content-detail");
+        break;
+      case "channel.reposts.changed":
+        this.invalidate((t) => t.type === "channel-feed" && t.id === c.id);
+        break;
       case "entities.changed":
         this.invalidate((t) => t.type.startsWith("entit") || t.type === "daily-releases");
         break;
       case "contentFilters.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates" || t.type === "daily-releases");
+        this.invalidate((t) => t.type === "cards" || t.type === "channel-feed" || t.type === "history" || t.type === "release-dates" || t.type === "daily-releases");
         break;
       case "access.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("entit") || t.type === "daily-releases" || t.type === "standing");
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("entit") || t.type === "daily-releases" || t.type === "standing" || t.type.startsWith("channel"));
         break;
       case "engagement.changed":
         this.invalidate((t) => t.type === "history" || t.type === "cards" || t.type === "daily-releases" || t.type === "standing" || t.type.startsWith("stats") || (t.type === "content-detail" && !!t.id && c.ids.includes(t.id)));

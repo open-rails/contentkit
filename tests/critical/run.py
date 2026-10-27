@@ -139,10 +139,10 @@ def main():
         if missing:
             raise ValueError("missing real fixture settings: " + ", ".join(missing))
         env = dict(os.environ, GOWORK="off", GOMAXPROCS=os.getenv("GOMAXPROCS", "2"))
-        # The combined publication/entity suite includes real legacy binaries,
-        # media processing and browsers. Its 15-minute run reached the next
-        # owner only seven seconds before expiry; retain a bounded full run.
-        command = ["go", "test", "-json", "-count=1", "-p", "1", "-timeout=20m"]
+        # The full real-service suite exceeded twenty minutes after 1,501
+        # named passes, while still advancing through TypeScript contracts.
+        # Keep every required owner and leave room for media/browser execution.
+        command = ["go", "test", "-json", "-count=1", "-p", "1", "-timeout=30m"]
         if args.race:
             command.append("-race")
         if args.focus:

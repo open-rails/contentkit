@@ -55,16 +55,15 @@ ContentKit names its staff permissions, always the full
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
 | `access.EntitiesWrite` | `root:entities:write` | create, edit, merge and delete entities, and set memberships |
 
-A site-owned or user-owned entity kind with `auth_scope` (channels) has its own
-permissions, held in each entity's AuthKit scope, whose persona declares
-`access.EntityPermissions(kind)`: `{kind}:content:create` (own submissions),
-`{kind}:content:edit-own` (own posts), `{kind}:content:write` (all its content),
-`{kind}:settings:manage` (the entity),
-`{kind}:media:write` and `{kind}:comments:moderate` (delete, hold, release
-and ban on the entity's content). The host defines roles and assignments. For
-scoped entities, current AuthKit grants determine authority; an owner attribution
-alone grants nothing. See [Posts and channels](docs/posts-and-channels.md) for
-contributor, editor and moderator policies.
+Channels have their own AuthKit group in the `channel` persona. Declare
+`access.ChannelPermissions()` and compose host-defined contributor, editor and
+moderator roles from those capabilities. `channel:content:create` permits own
+submissions, `channel:content:edit-own` manages own posts, and
+`channel:content:write` manages all content/versions in that channel. Settings,
+channel media and comment moderation have separate capabilities. Current grants
+determine authority; metadata associations and owner attribution grant nothing.
+See [Posts and channels](docs/posts-and-channels.md) for the complete configuration,
+normal migration call and fixed-blog/creator-channel examples.
 
 Declare them in the auth's roles from the constants, so a rename breaks the
 build instead of drifting:
@@ -303,7 +302,7 @@ Detail, cards (lists, search, typeahead, rails, similar, recommendations,
 entity pages, `me` favorites and history), the reader plan and interactions
 apply it; the media read API lists a locked item's public files alone (its
 cover, and previews where named), never its private files or their count.
-Staff, creators and owner-entity editors see everything. Sitemaps,
+Staff, creators and primary-channel editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
 
@@ -390,7 +389,6 @@ Ports (in `content` unless qualified):
 | `Media` | no | poll images and avatars in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment bodies (default strips tags) |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment publishes; absent = publish (see Moderation) |
-| `AnswerClassifier` | no | `Classify(Answer) → GroupAssignment` when a free-text answer revision is stored; results are source-owned; absent = free-text polls are refused (see Free-text polls) |
 
 **Authors.** Comments, replies, the latest-comments feed, held items and
 bans show each author as `{id, name, username, avatar, avatar_srcset}`:
@@ -414,13 +412,13 @@ their publication going current; headless publishing already waits.
 **Content and poll images.** Every file of a content lives in a version,
 `{tenant}/{kind}/{id}/{version}/`: there is no content-level item, and
 versions share no files. A version's cover is one of its uploads with a
-public preset (shown while locked). Its copy of the body's images is its
+public preset (shown while locked). Its body images are its
 `Body` uploads (`Named`, with a private image preset and no public one, of a
 kind that publishes nothing): private files behind the version's item token,
 so a locked version's body images reach nobody else, and its openers, free or
 paid, are signed them as they are pages. A body image taken by `POST
-/contents/{id}/images` is copied into every other version, and a new version
-copies its sibling's (its fork source, else the first version). Poll images
+/contents/{id}/images` belongs only to its selected version. New versions begin
+empty and receive explicit uploads; no sibling text or images are copied. Poll images
 live in `{tenant}/poll/{poll_id}/`. Each is a `Named` upload (the server
 names it `i-{uuid}`).
 
@@ -503,7 +501,7 @@ Banned words and IP bans are data staff edit (`root:comments:moderate`):
 the default, replaces each word containing it with asterisks; `reject`
 refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
 (`{"network", "reason", "until"}`: an address or CIDR network). They apply to
-every comment and free-text answer before the moderator; an IP-banned write
+every comment before the moderator; an IP-banned write
 answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
 
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
@@ -590,29 +588,22 @@ when both scopes apply it reports the one lasting longer
 commenters have no identity to ban. `EraseSubjects` removes the bans of an
 erased user and of their owner scope, and blanks them as `banned_by`.
 
-## Free-text polls
+## Polls
 
-`content_poll_questions.kind` is `multiple_choice` (options + votes, as
-before) or `free_text`: one answer per signed-in actor in
-`content_poll_answers`, editable until the poll closes. `closes_at` (optional,
-`PATCH`-able, `null` clears it) and `is_active = false` close a poll for votes and answers alike
-(`400 poll is closed`); results stay readable. Anonymous actors cannot answer
-(an IP-keyed editable answer would let NAT neighbours overwrite each other).
+Polls accept predefined choices only. `kind` defaults to `multiple_choice`;
+other kinds, including `free_text`, are rejected with `400 invalid_request`.
+Create a poll with at least two options, then vote through
+`POST /polls/{id}/vote`. A vote is final: concurrent retries never add another
+vote. Signed-out voting follows `Config.anonymous.votes`.
 
-Creating a free-text poll without `Options.Classifier` is refused (`501`,
-`content.ErrNoClassifier`). Each stored or edited answer is classified right
-after commit; a classifier failure keeps the answer with `classified: false`
-and the engine's reclassify job retries every pending answer every 10
-minutes, each sweep from the start. The classifier
-returns a group id and label for an immutable `(tenant, answer_id, revision)`.
-ContentKit CAS-persists that assignment only while the revision is current.
-Membership, labels and counts are read from these durable assignments:
-`GET /polls/{id}` (and the list) returns `answer_count`, `groups`
-(`[{id, label, count}]`, sorted by count desc, label, id) and the caller's
-`my_answer`. There is no provider results-read dependency. Identical answer
-retries retain revision/time and completed classification. An edit clears the
-old assignment until the new revision is classified; late old results cannot win.
-`POST /polls/{id}/answer {"text"}` creates or replaces the caller's answer.
+`closes_at` (optional, `PATCH`-able, `null` clears it) and `is_active = false`
+close a poll for voting; its results remain readable. Scheduled questions are
+visible only to staff until their opening time.
+
+Free-text submission, automatic grouping and classifier dependencies are
+removed. Historical free-text questions and answers remain stored but are not
+exposed by current poll routes or modified by imports. Account erasure still
+removes a subject's historical answers. No classification worker is registered.
 
 ## Account lifecycle and interaction erasure
 
@@ -646,7 +637,7 @@ intends to remove the subject's contributions instead of anonymizing them.
 `ck.EraseSubjects(ctx, subjects)` erases subjects from every configured
 plane: signals ([completion contract](#subject-erasure-completion-contract)),
 ContentKit interaction data, avatars (on the avatar primary; see Avatars)
-and data retained by moderator/classifier providers. A
+and data retained by moderation providers. A
 deliberately disabled signal plane is absent, not unfinished. Any
 configured-plane failure returns an error and an incomplete report: keep the
 host's obligation pending and retry (calls are idempotent). The host may
@@ -658,7 +649,7 @@ Content erasure commits atomically:
 - a permanent tenant/subject fence in `content_erased_subjects`; later writes by
   that subject fail with `content.ErrSubjectErased`;
 - removal of the subject's authenticated reactions, favorites, poll votes and
-  answers, with exact counter decrements, and of comment bans of them or in
+  historical free-text answers, with exact counter decrements, and of comment bans of them or in
   their owner scope (global bans they set stay, without their id);
 - redaction of the subject's unpublished payloads (held/rejected comments)
   and their moderation metadata. An item with a previously approved payload keeps it
@@ -676,7 +667,7 @@ READ default.
 
 ### Provider data
 
-Moderators/classifiers that retain personal data must configure
+Moderators that retain personal data must configure
 `content.Options.ProviderDataEraser`. Its `EraseSubjects(ctx, tenant, actorIDs)`
 runs after the SQL commit and must durably fence those subjects and remove
 retained data, including against calls already in flight; a queued delete is
@@ -830,7 +821,7 @@ layouts.
   such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
   writes).
 - **Content versions.** `media/versions` answers media's hooks from the
-  content model: editors (staff, creators, owner-entity editors) upload, a
+  content model: editors (staff, creators, primary-channel editors) upload, a
   person their own avatar; reads follow the catalog's
   visibility, plus segments' release and the rule's preview;
   a version's media writes its pages, duration, size and
@@ -838,7 +829,7 @@ layouts.
   kind reaches viewers only through `{kind}.published` items: one per
   segment of its pages, a locked version's previews (its rule's, else its
   kind's `preview`), and one playback item,
-  planned by `GET /v1/contents/{id}/versions/{vid}/reader`. Forks, page-archive
+  planned by `GET /v1/contents/{id}/versions/{vid}/reader`. Page-archive
   imports, reader metadata and downloads (a host watermark, quota buckets)
   complete it. A reader version with no cover of its own gets its leading
   released page as its cover (an upload marked `auto_cover`); a cover an
@@ -1317,7 +1308,7 @@ and `hentai0_media_worker`, and passes it everywhere:
 It is required. Hosts sharing a database must never share one: a worker
 drains every job in its schema, so it would take another host's jobs (same
 queue and job kinds) and fail them against its own registry and bucket. Queue
-names (`media_ingest`, `media_image`, `media_video`) are fixed within a schema.
+names (`media_ingest`, `media_derivatives`) are fixed within a schema.
 Every accepted upload passes through `media_ingest`, so a worker must run even
 for kinds without presets. Ingest preserves uploaded audio without conversion;
 video processing retains its configured soundtracks. Autoscalers (KEDA) can
@@ -1410,23 +1401,27 @@ the host's periodic jobs. The worker migrates its schema itself.
 
 ## Entities
 
-`entities.Store` owns the app's artists, tags, series, characters, channels and
+`entities.Store` owns the app's artists, tags, series, characters and
 collections; their kinds come from `kinds.Config.EntityKinds`. Shared and
 version-level associations are replaced independently. Writes refresh association
 facets in the same transaction. Entity counts and automatic covers are derived
 on reads, so edits and release times take effect without a recount job.
-Creator-owned or permission-scoped entity changes enqueue exact durable lifecycle
-sync; ordinary staff-managed entities need no lifecycle worker. The entity routes
-remain `/v1/entities…` and `/v1/contents/{id}/entities`.
+Channels have a separate `/channels` interface and cannot be read or changed
+through ordinary metadata operations. Channel lifecycle changes call AuthKit synchronously and return failures;
+descriptive entities need no authorization lifecycle worker.
+The entity routes remain `/v1/entities…` and `/v1/contents/{id}/entities`.
 
 Keyword documents enrich content with active associations and their ancestors.
 Collection associations remain active until explicitly changed; subscription
 and rental expiry belong to the entitlement provider.
 
-Legacy HTTP fields (`group_id`, `groups`, `exclude_groups`, `owner_group_id`),
+Stable descriptive membership fields (`groups`, `exclude_groups`) and channel
+access-rule fields (`group_id`),
 access values (`group`, `group_ppv`), billing key namespaces (`:group:`) and
 AuthKit permission strings and deterministic scope identities retain their
-encodings. They refer to entities; real AuthKit permission groups remain groups.
+encodings. Descriptive membership fields refer to entities; access-rule `group_id` and
+`group`/`group_ppv` refer to paid channel membership. Real AuthKit permission
+groups hold editorial roles independently of those read entitlements.
 
 ## Preference boundary (reactions and favorites into the signal plane)
 
@@ -1510,15 +1505,16 @@ thin results fall back to engagement.
 
 ## Popularity (policy-ranked)
 
-A filtered `popular` list ranks measured people and bounded quality in the
-selected activity window live, normalizing trusted free/premium populations.
-Without a signal plane, or without population lineage for the window, it is the
-explicit standing order (`ranking.policy=standing_wilson`, `mode=standing`):
-one vote per person from current reactions and favorites last changed in the
-window, Wilson-scored and erasure-fenced. Windowed `top_rated` uses the same
-standing over reactions; all-time `top_rated` is the catalog's current rating.
-Nothing reads cached facet scores. See
-[docs/popularity-policy.md](docs/popularity-policy.md) for the formula.
+Hosts declare popularity presets per content kind and scope. Preset requests
+read stored rankings; arbitrary whole-UTC-day ranges read prepared daily counts.
+The score is the mean daily `U/(N+20)`, where `U` counts qualified participants
+once per person/item/day and `N` is the day's active eligible audience. Arbitrary
+range requests outside trustworthy prepared coverage are rejected; an unprepared
+preset stays pending. Recent days remain provisional through the 24-hour receipt window,
+then finalized days are retained and reused until an explicit rebuild. See
+[docs/popularity-policy.md](docs/popularity-policy.md) for qualification,
+coverage, refresh and retention semantics. `top_rated` keeps its separate
+rating behavior.
 
 ## Migration checklist
 
@@ -1526,26 +1522,44 @@ Nothing reads cached facet scores. See
 - Create and reuse one `contentkit.Engine` per tenant.
 - Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
 - Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
-- Wire `Options.Moderator`, `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
+- Wire `Options.Moderator` when comments require screening and grant `root:moderation:review` to reviewers. Polls use predefined choices.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
 
-Entity lifecycle changes enqueue `contentkit_entity_sync` in the same transaction
-as the entity write, including imports and writes made before local workers start.
-That job provisions or retires channel editor groups and follows channel deletion
-or restoration into its owned content. There is no periodic entity reconciliation
-scan. River retains failed work for explicit retry after its normal attempt limit.
-Standalone entity stores must point `entities.Options.RiverSchema` at migrated
-River tables (by default, `<entity-schema>_river`).
+Channel create/delete/restore calls the existing AuthKit client synchronously.
+The same channel/group identity makes caller retries safe, including a lost
+remote response after commit. Incomplete/deleted channels grant no authority.
+There is no `contentkit_entity_sync` or replacement lifecycle job. Imports finish
+their channel calls after committing identity, then report provider failures per
+record so replay uses the same external IDs. Explicit upgrade preflight requires
+old actionable lifecycle work completed by the previous version before retiring
+its remaining no-op queued rows; terminal history and foreign work are retained.
+
+## Authored content and editions
+
+The parent item carries shared identity, channel/editorial policy, creator credits
+and inherited metadata associations. `VersionInput.Text` owns titles, summaries,
+rich body text and aliases; source/original titles and uploaded files also belong
+to the edition. The version's languages determine which edition a language-specific
+feed selects. Shared metadata is combined with that edition's own metadata for
+presentation without mutating siblings.
+
+Hosts create an initial edition with `ContentInput.Versions`, including hidden
+single-edition post kinds, and edit it through the normal version interface.
+New additional versions have no inherited text/media. `Content.title`, `body`,
+`description` and `images` are read-only projections from `selected_version_id`,
+not parent storage or another writable surface. Parent text routes and version
+fork/copy controls are removed. Ordinary source uploads and derivative processing
+remain observable through the existing media progress interface.
 
 ## Post contributors and attribution
 
 A host grants typed capabilities through its AuthKit roles. `ContentCreate`
-permits personal posts outside channels; `EntityContentCreate(kind)` permits
-posting in one channel. `ContentEditOwn` and `EntityContentEditOwn(kind)` permit
+permits personal posts outside channels; `ChannelContentCreate` permits
+posting in one channel. `ContentEditOwn` and `ChannelContentEditOwn` permit
 editing and publishing the caller's own posts. A normal contributor role grants
 both create and edit-own. A submission-only role can grant create alone: its
 author can read the submitted draft but cannot edit, publish or upload media.
@@ -1553,17 +1567,31 @@ Current create or edit-own authority is required for an author's private reads;
 edit-own is required for mutations. Removing those grants applies on the next
 request, even when the account remains recorded as the author.
 
-`ContentWrite` and `EntityContentWrite(kind)` retain broad staff/team-editor
+`ContentWrite` and `ChannelContentWrite` retain broad staff/team-editor
 semantics. Read-restricted auditors can see drafts but are not media editors.
-For a scoped channel, AuthKit's current owner/team roles are authoritative;
-`owner_user_id` metadata does not bypass revoked grants. A host that deliberately
-uses a user-owned kind without an auth scope retains its direct-owner model.
-Site-owned channels can also have an auth scope to delegate settings, media,
-content or comment moderation to a group; site ownership alone doesn't grant
-ordinary users access. Creating site-owned channels stays staff-only.
+For every channel, AuthKit's current owner/team roles are authoritative;
+`owner_user_id` attribution does not bypass revoked grants. A missing or retired
+authoring group grants no direct-owner fallback. Fixed staff blogs use the same
+channel model as creator feeds, with `creation: staff` and optional delegated
+blog-editor assignments. Channel-bearing items share their parent channel and
+read policy across all versions; channel-free kinds retain their configured
+version access behavior.
 
 Personal authority also requires immutable `content_items.created_by`, set from
 the authenticated tenant account. Editable creator credits are display metadata,
 not grants. Imported content without `created_by` remains staff/channel-managed.
 App-level own-post permissions never authorize access to arbitrary channels.
 OpenRails continues to own paid audience entitlements and their expiration.
+
+### Removed periodic jobs
+
+`contentkit_reclassify` and `contentkit_projection_repair` are no longer
+registered or scheduled. Existing rows do not block startup or migrations.
+River handles an unknown kind as an ordinary failed attempt and discards the
+job when its stored attempt limit is exhausted (three for these former timers).
+No application handler runs. Terminal history remains, and queues the fleet
+does not consume are unaffected.
+
+No special ContentKit cleanup option is required. An operator who wants to
+remove queue noise can use River's existing cancellation tools on reviewed
+exact job IDs; empty arguments on the shared queue do not establish app ownership.

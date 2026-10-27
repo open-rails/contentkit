@@ -28,7 +28,7 @@ export interface ContentAdminProps extends AdminFlowProps, AdminRouteProps {
   content?: Pick<ContentManagerProps, "renderEditor" | "contentHref">;
   entities?: Pick<EntityManagerProps, "renderContent" | "contentHref">;
   moderation?: Pick<CommentModerationProps, "itemHref" | "userHref" | "sections">;
-  polls?: Pick<PollManagerProps, "freeText" | "maxOptions">;
+  polls?: Pick<PollManagerProps, "maxOptions">;
 }
 
 const SECTIONS: readonly ContentAdminSection[] = ["contents", "entities", "moderation", "polls", "statistics"];
@@ -61,7 +61,7 @@ function knownKinds(wanted: readonly string[] | undefined, configured: object): 
 }
 
 function entityKinds(wanted: readonly string[] | undefined, model: ContentModel): string[] {
-  return knownKinds(wanted ?? Object.keys(model.entity_kinds).filter((kind) => model.entity_kinds[kind]?.owner !== "user").sort(), model.entity_kinds);
+  return knownKinds(wanted ?? Object.keys(model.entity_kinds).sort(), model.entity_kinds);
 }
 
 function decode(part: string | undefined): string | undefined {

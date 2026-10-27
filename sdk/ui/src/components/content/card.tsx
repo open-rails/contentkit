@@ -2,10 +2,12 @@ import { FavouriteIcon, LockIcon, SparklesIcon, ThumbsUpIcon, Tick02Icon } from 
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ReleaseNotice } from "./release-notice.js";
 import { cn } from "cn";
+import { ChannelAvatar, ChannelLink, type ChannelLike } from "../channels/parts.js";
 import { Fragment, useCallback, useContext, useLayoutEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import type { Card, CardAccess, Chip as EntityChip } from "../../client/generated/wire.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { ratio } from "../../client/aspect.js";
+import { renewOriginLink } from "../../client/navigation-origin.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext } from "../../react/context.js";
@@ -14,7 +16,7 @@ import { Badge } from "#ckui/ui/badge";
 import { HoverPreview } from "../hover-preview.js";
 import { RenditionImg } from "../rendition-img.js";
 import { RelativeTime } from "../social/parts.js";
-import { EntityAvatar, EntityLink, labelOf, type EntityLike, type Labels } from "../entities/parts.js";
+import { labelOf, type Labels } from "../entities/parts.js";
 
 export interface ContentCardProps {
   card: Card;
@@ -54,10 +56,10 @@ export interface ContentCardProps {
   tiers?: readonly string[];
   /** Display names of kinds, traits and tiers by identifier. */
   labels?: Labels;
-  /** Show the owner group (a channel) when the card has one; default true, false on that group's own feed. */
-  owner?: boolean;
-  /** The owner group's link; default its canonical path. */
-  ownerHref?: (g: EntityLike) => string | undefined;
+  /** Show the original channel; defaults true, including reposted content. */
+  showChannel?: boolean;
+  /** The original channel's link; default its canonical path. */
+  channelHref?: (g: ChannelLike) => string | undefined;
   /** Over the cover: the host's badges for the card, placed in the cover's box; clicks reach the card. */
   decorate?: (card: Card) => ReactNode;
   /** The title the card shows, e.g. without a prefix its entity rows repeat; default its title, else its code. */
@@ -147,13 +149,21 @@ function useLink(url: string | undefined, before?: () => void) {
   const navigate = useContext(ContentKitContext)?.navigate;
   return useCallback(
     (e: MouseEvent<HTMLAnchorElement>) => {
+      if (e.defaultPrevented || e.button !== 0) return;
+      const target = renewOriginLink(e.currentTarget.getAttribute("href") ?? url ?? "", true);
+      e.currentTarget.href = target;
       before?.();
       if (!navigate || !url || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       e.preventDefault();
-      navigate(url);
+      navigate(target);
     },
     [navigate, url, before],
   );
+}
+
+function prepareNativeLink(e: MouseEvent<HTMLAnchorElement>) {
+  if (e.type === "auxclick" && e.button !== 1) return;
+  e.currentTarget.href = renewOriginLink(e.currentTarget.href, e.type === "auxclick");
 }
 
 /** Which chips of a one-line list fit whole beside its "+N": `through` counts chips in list order (breakpoint-hidden ones included), `fitted` the ones that show, `squeezed` when even the first one does not fit and must shrink; null until measured. `chipsKey` names the chips rendered, so new ones are measured. */
@@ -195,7 +205,7 @@ function useChipFit(list: HTMLUListElement | null, total: number, chipsKey: stri
 }
 
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, entityKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, owner = true, ownerHref, decorate, cardTitle, status = true, dimDisliked = true, children, className }: ContentCardProps) {
+export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, entityKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, showChannel = true, channelHref, decorate, cardTitle, status = true, dimDisliked = true, children, className }: ContentCardProps) {
   const m = useMessages();
   const { presets } = usePresets({ client });
   const coverAspect = aspectRatio ?? ratio(presets.find((p) => p.kind === card.kind && p.name === "cover")?.aspect);
@@ -281,7 +291,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       {item}
     </Fragment>)}
   </p>;
-  const titleLink = <a href={url} onClick={onClick} className={cn("text-lg leading-snug font-medium break-words focus-visible:underline sm:text-xl", titlePosition === "cover" ? "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 via-black/60 to-transparent px-3 pt-10 pb-3 text-white hover:underline" : "hover:underline")} data-ckui="card-title">
+  const titleLink = <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className={cn("text-lg leading-snug font-medium break-words focus-visible:underline sm:text-xl", titlePosition === "cover" ? "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 via-black/60 to-transparent px-3 pt-10 pb-3 text-white hover:underline" : "hover:underline")} data-ckui="card-title">
     <span className="line-clamp-2">{title}</span>
     {lock && <span className="sr-only"> ({lock})</span>}
     {dim && <span className="sr-only"> ({t("contents.disliked")})</span>}
@@ -290,7 +300,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   return (
     <article ref={setArticle} className={cn("group/card relative grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       <div className="relative overflow-hidden rounded-lg" data-ckui="card-cover">
-        <a href={url} onClick={onClick} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
+        <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
           <div data-ckui="card-cover-frame" data-disliked={dim || undefined} className={cn(coverAspect === undefined && (shape === "landscape" ? "aspect-video" : "aspect-[3/4]"), "transition-[opacity,filter]", dim && "opacity-50 brightness-75", st.deleted && "opacity-60 grayscale")} style={coverAspect === undefined ? undefined : { aspectRatio: coverAspect }}>
             {loadMedia ? <RenditionImg
               outputs={card.cover}
@@ -322,7 +332,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       <div className="grid gap-1">
         {titlePosition === "below" && titleLink}
         {entityStyle === "text" && entityList}
-        {owner && card.owner && <OwnerChip entity={card.owner} href={ownerHref} loadMedia={loadMedia} />}
+        {showChannel && card.channel && <ChannelChip channel={card.channel} href={channelHref} loadMedia={loadMedia} />}
         {traits.length > 0 && <div className="flex flex-wrap gap-1" data-ckui="card-traits">
           {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
         </div>}
@@ -354,28 +364,26 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   );
 }
 
-/** The group that owns a content (a channel): its avatar and name, linking to its page. */
-export function OwnerChip({ entity, href, className, loadMedia = true }: { entity: EntityLike; href?: (g: EntityLike) => string | undefined; className?: string; loadMedia?: boolean }) {
-  return (
-    <span className={cn("flex min-w-0 text-xs text-muted-foreground", className)} data-ckui="card-owner" data-id={entity.id}>
-      <EntityLink entity={entity} href={href} className="inline-flex min-w-0 items-center gap-1.5 hover:text-foreground">
-        {loadMedia ? <EntityAvatar entity={entity} className="size-5 shrink-0 text-[0.625rem]" /> : <span className="size-5 shrink-0 rounded-full bg-muted" aria-hidden />}
-        <span className="truncate">{entity.name || entity.slug}</span>
-      </EntityLink>
-    </span>
-  );
+/** The original channel, independent of where a post is reposted. */
+export function ChannelChip({ channel, href, className, loadMedia = true }: { channel: ChannelLike; href?: (channel: ChannelLike) => string | undefined; className?: string; loadMedia?: boolean }) {
+  return <span className={cn("flex min-w-0 text-xs text-muted-foreground", className)} data-ckui="card-channel" data-id={channel.id}>
+    <ChannelLink channel={channel} href={href} className="inline-flex min-w-0 items-center gap-1.5 hover:text-foreground">
+      {loadMedia ? <ChannelAvatar channel={channel} className="size-5 shrink-0 text-[0.625rem]" /> : <span className="size-5 shrink-0 rounded-full bg-muted" aria-hidden />}
+      <span className="truncate">{channel.name || channel.slug}</span>
+    </ChannelLink>
+  </span>;
 }
 
 function MetaLink({ url, name }: { url?: string; name: string }) {
   const onClick = useLink(url);
-  return url ? <a href={url} onClick={onClick} className="hover:text-foreground hover:underline">{name}</a> : <span>{name}</span>;
+  return url ? <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className="hover:text-foreground hover:underline">{name}</a> : <span>{name}</span>;
 }
 
 function Chip({ url, name, variant = "chips" }: { url?: string; name: string; variant?: "chips" | "text" }) {
   const onClick = useLink(url);
   const cls = variant === "text" ? "text-sm text-muted-foreground" : "inline-block rounded-md border border-border px-1.5 py-0.5 text-sm text-muted-foreground";
   return url ? (
-    <a href={url} onClick={onClick} className={cn(cls, "hover:text-foreground", variant === "text" ? "hover:underline" : "hover:bg-muted")}>
+    <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className={cn(cls, "hover:text-foreground", variant === "text" ? "hover:underline" : "hover:bg-muted")}>
       {name}
     </a>
   ) : (
@@ -384,12 +392,12 @@ function Chip({ url, name, variant = "chips" }: { url?: string; name: string; va
 }
 
 export interface PostCardProps extends Omit<ContentCardProps, "shape" | "aspectRatio" | "titlePosition" | "chips" | "entityKinds" | "filterEntity" | "entityStyle" | "entityLayout" | "metadata" | "cardTitle"> {
-  /** Above the title: the post's channel or author; default its owner group's chip. */
+  /** Above the title: the post's channel or author; default its channel's chip. */
   byline?: ReactNode;
 }
 
 /** A post in a feed: a wide cover, its title, when it was published and what unlocking it costs. */
-export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = true, ownerHref, loadMedia = true, showCounts = true, decorate, children, className }: PostCardProps) {
+export function PostCard({ card, href, onOpen, tiers, labels, byline, showChannel = true, channelHref, loadMedia = true, showCounts = true, decorate, children, className }: PostCardProps) {
   const m = useMessages();
   const url = href ? href(card) : card.path;
   const open = useCallback(() => onOpen?.(card), [onOpen, card]);
@@ -398,8 +406,8 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, owner = tr
   const title = card.title || card.code;
   return (
     <article className={cn("relative grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
-      {byline ?? (owner && card.owner && <OwnerChip entity={card.owner} href={ownerHref} loadMedia={loadMedia} className="text-sm" />)}
-      <a href={url} onClick={onClick} className="grid gap-2">
+      {byline ?? (showChannel && card.channel && <ChannelChip channel={card.channel} href={channelHref} loadMedia={loadMedia} className="text-sm" />)}
+      <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className="grid gap-2">
         <span className="font-medium break-words hover:underline" data-ckui="card-title">
           {title}
         </span>

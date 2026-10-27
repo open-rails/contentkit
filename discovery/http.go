@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/open-rails/authkit/auth"
 
@@ -63,7 +64,7 @@ var (
 		httpapi.List("ids", "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters"),
 		httpapi.List("groups", "group ids every listed version is in; a position sort orders by the first"),
 		httpapi.List("exclude_groups", "group ids no listed version is in"),
-		httpapi.List("owner_group", "owner group ids (channels): only content one of them owns"),
+		httpapi.List("channel_id", "primary channel ids: only content one of them owns"),
 		httpapi.List("creators", "user ids: only content one of them is credited on"),
 		httpapi.List("access", "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them"),
 		httpapi.List("tiers", "configured tiers: only content locked behind one of them"),
@@ -77,10 +78,10 @@ var (
 	cardEntities   = httpapi.List("card_entities", "the group kinds cards name; every kind with a page by default")
 	pageParams     = []httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}
 	numberedPage   = httpapi.Int("page", "a numbered page from 1 instead of cursor; summary then comes with every page; page × limit is at most 10,000")
-	sortParam      = httpapi.Text("sort", "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest")
+	sortParam      = httpapi.Text("sort", "newest, oldest, title, popular[:bucket], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest")
 	activityParams = []httpapi.Param{
-		httpapi.Text("activity_from", "custom popularity activity window: inclusive UTC date YYYY-MM-DD; requires activity_until, kind and sort=popular; not a publication-date filter"),
-		httpapi.Text("activity_until", "custom popularity activity window: exclusive UTC date YYYY-MM-DD; requires activity_from, kind and sort=popular"),
+		httpapi.Text("activity_from", "inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only"),
+		httpapi.Text("activity_until", "exclusive UTC date; requires activity_from, kind and sort=popular"),
 	}
 	signals = []string{"not_configured"}
 )
@@ -104,6 +105,9 @@ func dailyFilterParams() []httpapi.Param {
 }
 
 var routes = []httpapi.Route[handler]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/channels/{id}/contents", Resource: "discovery", Auth: httpapi.Public,
+		Doc:   "Lists a channel's published originals and repost references, once per original. Original publication, read, language, and domain policies always apply; reposting grants no editing or reading rights.",
+		Query: params(readerParams, pageParams), Responses: []httpapi.Reply{httpapi.OK(ContentPage{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.channelFeed)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/library", Resource: "discovery", Auth: httpapi.User,
 		Doc:       "Content covered by the reader's purchased content or version entitlements, within the current domain's hard visibility boundary.",
 		Query:     []httpapi.Param{httpapi.Text("language", "title language"), httpapi.Text("cursor", "previous next_cursor"), httpapi.Int("limit", "page size: 20 by default, at most 100")},
@@ -230,7 +234,7 @@ func filterOf(r *http.Request) Filter {
 	}
 	return Filter{Kind: q.Get("kind"), IDs: ids, Entities: list(q.Get("groups")), ExcludeEntities: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
 		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), PublishedWithin: q.Get("published_within"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
-		OwnerEntities: list(q.Get("owner_group")), Creators: list(q.Get("creators")), Access: list(q.Get("access")), Tiers: list(q.Get("tiers"))}
+		ChannelIDs: list(q.Get("channel_id")), Creators: list(q.Get("creators")), Access: list(q.Get("access")), Tiers: list(q.Get("tiers"))}
 }
 
 func (h handler) releases(w http.ResponseWriter, r *http.Request) {
@@ -523,5 +527,17 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	c, _ := httpapi.LookupErrorCode(code)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(c.Status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code})
+	body := map[string]any{"error": msg, "code": code}
+	var rangeError *popularityRangeError
+	if errors.As(err, &rangeError) {
+		details := map[string]string{}
+		if rangeError.From != nil {
+			details["available_from"] = rangeError.From.UTC().Format(time.DateOnly)
+		}
+		if rangeError.Until != nil {
+			details["available_until"] = rangeError.Until.UTC().Format(time.DateOnly)
+		}
+		body["details"] = details
+	}
+	_ = json.NewEncoder(w).Encode(body)
 }

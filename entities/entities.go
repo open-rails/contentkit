@@ -134,11 +134,11 @@ type Entity struct {
 	Attributes  map[string]any `json:"attributes"`
 	Cover       *Cover         `json:"cover,omitempty"`
 	Avatar      *Avatar        `json:"avatar,omitempty"`
-	OwnerUserID string         `json:"owner_user_id,omitempty"`
+	OwnerUserID string         `json:"-"`
 	// AuthScope is the AuthKit group whose holders of
 	// access.EntitySettingsManage edit it; ContentKit provisions it for a
 	// kind with auth_scope (Options.Scopes).
-	AuthScope string    `json:"auth_scope,omitempty"`
+	AuthScope string    `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Revision  int64     `json:"revision"`
@@ -194,10 +194,6 @@ type Options struct {
 	// Owned deletes the content a deleted user-owned entity owns
 	// (owner_entity) and restores it with the entity: the catalog. Optional.
 	Owned OwnedContent
-	// Queue is the River queue of entity syncs; DefaultQueue when empty.
-	Queue string
-	// RiverSchema holds durable lifecycle jobs; Schema + "_river" when empty.
-	RiverSchema string
 	// Logger receives the HTTP API's failures. nil -> slog.Default().
 	Logger *slog.Logger
 }
@@ -221,27 +217,25 @@ type OwnedContent interface {
 
 // Store is one tenant's entities.
 type Store struct {
-	pool        *pgxpool.Pool
-	tx          pgx.Tx
-	qs          string
-	schema      string
-	tenant      string
-	cfg         kinds.Config
-	changed     func(ctx context.Context, q Querier, contentIDs []string) error
-	renamed     func(ctx context.Context, q Querier, entityIDs []string) error
-	documents   func(ctx context.Context, q Querier) error
-	references  References
-	covers      CoverResolver
-	gate        *access.Gate
-	scopes      Scopes
-	folders     Folders
-	keep        time.Duration
-	owned       OwnedContent
-	queue       string
-	riverSchema string
-	log         *slog.Logger
-	as          *writer
-	river       *riverBinding
+	channels   bool // private reserved-channel storage handle
+	pool       *pgxpool.Pool
+	tx         pgx.Tx
+	qs         string
+	schema     string
+	tenant     string
+	cfg        kinds.Config
+	changed    func(ctx context.Context, q Querier, contentIDs []string) error
+	renamed    func(ctx context.Context, q Querier, entityIDs []string) error
+	documents  func(ctx context.Context, q Querier) error
+	references References
+	covers     CoverResolver
+	gate       *access.Gate
+	scopes     Scopes
+	folders    Folders
+	keep       time.Duration
+	owned      OwnedContent
+	log        *slog.Logger
+	as         *writer
 }
 
 // New validates the options and returns the store.
@@ -263,28 +257,17 @@ func New(opts Options) (*Store, error) {
 	if err := opts.Kinds.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
+	opts.Kinds = opts.Kinds.StorageModel()
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
-	}
-	queue := opts.Queue
-	if queue == "" {
-		queue = DefaultQueue
-	}
-	riverSchema := strings.TrimSpace(opts.RiverSchema)
-	if riverSchema == "" {
-		riverSchema = strings.TrimSpace(opts.Schema) + "_river"
-	}
-	if _, err := search.QuoteSchema(riverSchema); err != nil {
-		return nil, fmt.Errorf("%w: RiverSchema: %v", ErrInvalid, err)
 	}
 	keep := opts.DeletedRetention
 	if keep <= 0 {
 		keep = DefaultDeletedRetention
 	}
 	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, renamed: opts.NamesChanged, documents: opts.DocumentsChanged, references: opts.References,
-		covers: opts.Covers, gate: opts.Gate, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, queue: queue, riverSchema: riverSchema, log: log,
-		river: &riverBinding{}}, nil
+		covers: opts.Covers, gate: opts.Gate, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, log: log}, nil
 }
 
 // Tenant returns the tenant this store is scoped to.
@@ -349,7 +332,7 @@ func mapPGError(err error) error {
 
 func (s *Store) entityKind(kind string) (kinds.EntityKind, error) {
 	gk, ok := s.cfg.EntityKinds[kind]
-	if !ok {
+	if !ok || (kind == "channel") != s.channels {
 		return gk, fmt.Errorf("%w: group kind %q is not configured", ErrInvalid, kind)
 	}
 	return gk, nil

@@ -21,6 +21,7 @@ import { useReleaseReveal } from "./release-reveal.js";
 import { ContentSummaryTile } from "./summary-tile.js";
 import { ContentCard, type ContentCardProps } from "./card.js";
 import { PagedContentGrid, PagedSearchResults } from "./paged-grid.js";
+import { eventId } from "../../client/beacons.js";
 
 export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" | "children" | "className"> {
   /** Where the list is, for exposures and click attribution: "home", "search", "similar". */
@@ -86,7 +87,7 @@ export function cardGridLayout(layout?: CardGridLayout): { className: string; st
 
 /** A list carries exact selection-wide counts when the API was asked for them. */
 type SummaryList = UseList<Card> & { summary?: ListingSummary };
-type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string; horizontal?: boolean };
+type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string; horizontal?: boolean; searchQuery?: string; queryID?: string; ranker?: string; positionOffset?: number; settledEmpty?: boolean };
 
 /** A list's cards and summary controls share one responsive, animated grid. */
 export function CardGrid(p: GridProps) {
@@ -101,7 +102,7 @@ export function CardGrid(p: GridProps) {
   return <CardGridBody key={session.key} {...p} />;
 }
 
-function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, ...p }: GridProps) {
+function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, searchQuery, queryID, ranker, positionOffset = 0, settledEmpty, ...p }: GridProps) {
   const m = useMessages();
   const { t } = m;
   const { kinds } = useKinds({ client: p.client });
@@ -142,14 +143,14 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
         }
         continue;
       }
-      result.push({ key: card.id, card, position: i + 1 });
+      result.push({ key: card.id, card, position: positionOffset + i + 1 });
     }
     if (lockedTile && !inserted) result.push({ key: "premium-summary", premium: true });
     const limit = mobile && p.mobileCardLimit !== undefined ? p.mobileCardLimit : p.cardLimit;
     return limit !== undefined && Number.isFinite(limit) ? result.slice(0, Math.max(0, Math.floor(limit))) : result;
-  }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit]);
+  }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit, positionOffset]);
   const shown = useMemo(() => entries.flatMap((entry) => ("premium" in entry ? [] : [{ ...entry.card, position: entry.position }])), [entries]);
-  const exposure = useExposure(shown, { surface: p.surface ?? "list", render, client: p.client });
+  const exposure = useExposure(shown, { surface: p.surface ?? "list", render, client: p.client, query_id: queryID, search_query: searchQuery, ranker, settledEmpty });
   const [sentinel, near] = useNearViewport({ margin: "600px 0px", leaveMargin: "1200px 0px" });
   const { hasMore, loadingMore, loadMore, error } = list;
   useEffect(() => {
@@ -234,7 +235,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
                   <ContentCard
                     card={entry.card}
                     client={p.client}
-                    href={p.href}
+                    href={(card) => exposure.href(card.id, entry.position, p.href ? p.href(card) : card.path)}
                     shape={p.shape}
                     aspectRatio={p.aspectRatio}
                     titlePosition={p.titlePosition}
@@ -250,11 +251,11 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, .
                     showCounts={p.showCounts}
                     tiers={p.tiers ?? kinds?.tiers}
                     labels={p.labels}
-                    owner={p.owner}
-                    ownerHref={p.ownerHref}
+                    showChannel={p.showChannel}
+                    channelHref={p.channelHref}
                     decorate={p.decorate}
                     cardTitle={p.cardTitle}
-                    onOpen={() => exposure.click(entry.card.id, entry.position)}
+                    onOpen={() => exposure.click(entry.card.id, entry.position, exposure.href(entry.card.id, entry.position, p.href ? p.href(entry.card) : entry.card.path))}
                   />
                 )}
               </li>
@@ -364,6 +365,7 @@ function CursorSearchResults({ query, entityHref, ...p }: SearchResultsProps) {
     [query, p.pageSize, p.locked],
   );
   const list = useSearch(q, { client: p.client });
+  const queryID = useMemo(() => eventId(), [JSON.stringify(query)]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!query.q.trim()) return null;
   return (
     <>
@@ -374,6 +376,10 @@ function CursorSearchResults({ query, entityHref, ...p }: SearchResultsProps) {
         {...p}
         list={list}
         render={JSON.stringify(q)}
+        queryID={queryID}
+        searchQuery={query.q}
+        settledEmpty={!list.loading && !list.error && list.items.length === 0}
+        ranker={query.sort ?? "relevance"}
         filterKinds={query.kind ? [query.kind] : undefined}
         filterLanguage={query.display_language ?? query.language}
       />

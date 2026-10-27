@@ -24,12 +24,12 @@ var (
 		[]string{"queue", "state", "priority"}, nil)
 	oldestAvailableDesc = prometheus.NewDesc("media_video_oldest_available_seconds", "Age of the oldest runnable media job, or zero when none is runnable.",
 		[]string{"queue", "priority"}, nil)
-	tenantBacklogDesc = prometheus.NewDesc("media_video_tenant_backlog", "Video jobs waiting to run by tenant.",
+	tenantBacklogDesc = prometheus.NewDesc("media_video_tenant_backlog", "Derivative jobs waiting to run by tenant.",
 		[]string{"tenant"}, nil)
 	collectionSuccessDesc = prometheus.NewDesc("media_video_queue_collection_success", "Whether the current queue snapshot was read successfully (1) or failed (0).", nil, nil)
 )
 
-var queues = [...]string{workqueue.IngestQueue, workqueue.ImageQueue, workqueue.VideoQueue}
+var queues = [...]string{workqueue.IngestQueue, workqueue.DerivativeQueue}
 var activeStates = [...]string{"available", "pending", "retryable", "running", "scheduled"}
 
 // Collector serves the latest queue snapshot read by an always-on host's River

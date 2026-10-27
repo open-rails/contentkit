@@ -29,10 +29,13 @@ func InitializeFixedOwners(ctx context.Context, pool *pgxpool.Pool, schema, tena
 	refs := map[string]kinds.EntityRef{}
 	var fixedKinds []string
 	for kind, k := range model.Kinds {
-		if k.OwnerEntity != nil {
-			refs[k.OwnerEntity.Kind+"/"+k.OwnerEntity.Slug] = *k.OwnerEntity
+		if k.Channel != nil && k.Channel.Fixed != "" {
+			refs["channel/"+k.Channel.Fixed] = kinds.EntityRef{Kind: "channel", Slug: k.Channel.Fixed}
 			fixedKinds = append(fixedKinds, kind)
 		}
+	}
+	if err := validateChannelModel(ctx, pool, schema, tenant, model); err != nil {
+		return err
 	}
 	if len(refs) == 0 {
 		return nil
@@ -43,6 +46,7 @@ func InitializeFixedOwners(ctx context.Context, pool *pgxpool.Pool, schema, tena
 	if err := model.Validate(); err != nil {
 		return err
 	}
+	model = model.StorageModel()
 	keys := make([]string, 0, len(refs))
 	for key, ref := range refs {
 		if model.EntityKinds[ref.Kind].AuthScope && scopes == nil {
@@ -58,6 +62,7 @@ func InitializeFixedOwners(ctx context.Context, pool *pgxpool.Pool, schema, tena
 	if err != nil {
 		return err
 	}
+	store = store.ChannelStorage()
 	s := &Store{pool: pool, schema: schema, qs: pgx.Identifier{schema}.Sanitize(), tenant: tenant, cfg: model, t: catalogTables(schema), now: time.Now}
 	owners := map[string]fixedOwnerIdentity{}
 	locked := func(fn func(pgx.Tx) error) error {
@@ -144,7 +149,7 @@ func (s *Store) configuredOwner(ctx context.Context, tx pgx.Tx, ref kinds.Entity
 func (s *Store) bindFixedOwnerContents(ctx context.Context, tx pgx.Tx, model kinds.Config, fixedKinds []string, owners map[string]fixedOwnerIdentity, write bool) error {
 	tenant := s.tenant
 	for _, kind := range fixedKinds {
-		ref := model.Kinds[kind].OwnerEntity
+		ref := kinds.EntityRef{Kind: "channel", Slug: model.Kinds[kind].Channel.Fixed}
 		owner := owners[ref.Kind+"/"+ref.Slug].id
 		// Keep the original access policy. A formerly private blog must be resolved
 		// explicitly rather than silently opened by this ownership migration.
@@ -214,6 +219,30 @@ func (s *Store) bindFixedOwnerContents(ctx context.Context, tx pgx.Tx, model kin
 			return err
 		}
 		if err := s.markDocuments(ctx, tx, ids); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateChannelModel(ctx context.Context, pool *pgxpool.Pool, schema, tenant string, model kinds.Config) error {
+	if model.Channels == nil {
+		return nil
+	}
+	if pool == nil {
+		return errors.New("catalog: channel migration requires a pool")
+	}
+	q := pgx.Identifier{schema}.Sanitize()
+	for kind, k := range model.Kinds {
+		if k.Channel == nil {
+			continue
+		}
+		var bad string
+		err := pool.QueryRow(ctx, `SELECT v.id FROM `+q+`.content_versions v JOIN `+q+`.content_items c ON c.tenant_id=v.tenant_id AND c.id=v.content_id WHERE c.tenant_id=$1 AND c.kind=$2 AND c.state<>'deleted' AND v.state<>'deleted' AND (c.owner_entity_id IS NOT NULL OR $3) AND v.access IS DISTINCT FROM c.access LIMIT 1`, tenant, kind, k.Channel.Fixed != "").Scan(&bad)
+		if err == nil {
+			return invalid("channel version %s has a distinct audience rule; resolve it before changing to shared parent access", bad)
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 	}

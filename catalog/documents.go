@@ -11,41 +11,34 @@ import (
 	"github.com/open-rails/contentkit/search"
 )
 
-// Content items are keyword documents of their own: one per item and
-// language it has text in (no version), built by the search worker
-// from that text with the names of the item's timeless entities as keywords. Dated curation uses
-// runtime entity filters; it does not enter clock-dependent keyword text. Drafts and deleted items have
-// none; whom a document shows to is the visibility rule's, at query time
-// (Viewer.Eligibility).
+// Keyword documents describe one published edition in one declared language.
+// The existing search key already carries a version ID; metadata is inherited
+// through that edition's effective facets, never from a sibling's associations.
 
-// DocumentKinds are the content kinds the catalog documents.
 func (s *Store) DocumentKinds() []string { return slices.Sorted(maps.Keys(s.cfg.Kinds)) }
 
-// ListDocuments pages the published items of kind with text in language, in
-// id order, for backfill.
+// ListDocuments pages edition references for the existing search backfill.
 func (s *Store) ListDocuments(ctx context.Context, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	rows, err := s.pool.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.kind = $2 AND c.state = 'published' AND c.id > $4
- AND EXISTS (SELECT 1 FROM `+s.t.versions+` live WHERE live.tenant_id=c.tenant_id AND live.content_id=c.id AND live.state='published' AND live.released)
- AND (EXISTS (SELECT 1 FROM `+s.t.text+` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3)
- OR ($6 AND (coalesce(c.original_title,'')<>'' OR EXISTS (
- SELECT 1 FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released AND t.title<>''))))
- ORDER BY c.id LIMIT $5`,
-		s.tenant, kind, language, cursor, limit+1, s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion)
+	rows, err := s.pool.Query(ctx, `SELECT v.content_id,v.id FROM `+s.t.versions+` v
+ JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+ LEFT JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id AND t.language=$3
+ WHERE c.tenant_id=$1 AND c.kind=$2 AND c.state='published' AND v.state='published' AND v.released
+ AND v.id>$4 AND $3=ANY(v.languages) AND (coalesce(t.title,'')<>'' OR ($6 AND coalesce(v.original_title,'')<>''))
+ ORDER BY v.id LIMIT $5`, s.tenant, kind, language, cursor, limit+1, s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion)
 	if err != nil {
 		return nil, "", false, err
 	}
 	defer rows.Close()
-	var refs []contentref.ContentRef
+	refs := []contentref.ContentRef{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, version string
+		if err := rows.Scan(&id, &version); err != nil {
 			return nil, "", false, err
 		}
-		refs = append(refs, s.Ref(kind, id))
+		refs = append(refs, s.Ref(kind, id).WithVersion(version))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, "", false, err
@@ -56,94 +49,69 @@ func (s *Store) ListDocuments(ctx context.Context, kind, language, cursor string
 	}
 	next := cursor
 	if len(refs) > 0 {
-		next = refs[len(refs)-1].ContentID
+		next = refs[len(refs)-1].Version()
 	}
 	return refs, next, done, nil
 }
 
-// BuildDocuments returns the current document of each published item of
-// refs with text in language; the others get none, which deletes theirs.
+// BuildDocuments returns exactly the requested editions. A missing, unpublished
+// or nonmatching-language edition deletes its own document, not another version.
 func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
-	var ids []string
-	for _, r := range refs {
-		if r.TenantID == s.tenant && r.ContentKind == kind && r.Version() == "" {
-			ids = append(ids, r.ContentID)
+	var ids, versions []string
+	for _, ref := range refs {
+		if ref.TenantID == s.tenant && ref.ContentKind == kind && ref.Version() != "" {
+			ids = append(ids, ref.ContentID)
+			versions = append(versions, ref.Version())
 		}
 	}
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT c.id, t.title, t.aliases, coalesce(c.original_title,''),
- ARRAY(SELECT vt.title FROM `+s.t.versions+` v JOIN `+s.t.versionText+` vt ON vt.tenant_id=v.tenant_id AND vt.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state='published' AND v.released
- AND vt.language=ANY(v.languages) AND vt.title<>'' ORDER BY (vt.language=$3) DESC,v.position,vt.language),
+	rows, err := s.pool.Query(ctx, `SELECT c.id,v.id,coalesce(t.title,''),coalesce(t.aliases,'{}'::text[]),coalesce(v.original_title,''),
  ARRAY(SELECT k.name FROM `+s.t.entities+` g CROSS JOIN LATERAL (
-   SELECT n.name, n.kind = 'alias' AS alias, n.language FROM `+s.t.entityNames+` n
-   WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND (n.kind = 'alias' OR n.language IN ($3, $5))
-   UNION ALL
-   SELECT coalesce((SELECT n.name FROM `+s.t.entityNames+` n WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND n.kind = 'name' ORDER BY n.language LIMIT 1), g.slug), false, ''
-   WHERE NOT EXISTS (SELECT 1 FROM `+s.t.entityNames+` n WHERE n.tenant_id = g.tenant_id AND n.entity_id = g.id AND n.kind = 'name' AND n.language IN ($3, $5))) k
-  WHERE g.tenant_id = c.tenant_id AND g.state = 'active' AND NOT g.internal AND g.id = ANY(`+s.qs+`.content_keyword_entity_ids(c.tenant_id,c.id))
-  ORDER BY k.alias, g.kind, g.slug, k.language = $3 DESC, k.name)
- FROM `+s.t.items+` c LEFT JOIN `+s.t.text+` t ON t.tenant_id = c.tenant_id AND t.content_id = c.id AND t.language = $3
- WHERE c.tenant_id = $1 AND c.id = ANY($2) AND c.kind = $4 AND c.state = 'published'
- AND EXISTS (SELECT 1 FROM `+s.t.versions+` live WHERE live.tenant_id=c.tenant_id AND live.content_id=c.id AND live.state='published' AND live.released)`, s.tenant, ids, language, kind, s.defaultLanguage())
+  SELECT n.name,n.kind='alias' AS alias,n.language FROM `+s.t.entityNames+` n
+  WHERE n.tenant_id=g.tenant_id AND n.entity_id=g.id AND (n.kind='alias' OR n.language IN($3,$5))
+  UNION ALL SELECT coalesce((SELECT n.name FROM `+s.t.entityNames+` n WHERE n.tenant_id=g.tenant_id AND n.entity_id=g.id AND n.kind='name' ORDER BY n.language LIMIT 1),g.slug),false,''
+  WHERE NOT EXISTS(SELECT 1 FROM `+s.t.entityNames+` n WHERE n.tenant_id=g.tenant_id AND n.entity_id=g.id AND n.kind='name' AND n.language IN($3,$5))) k
+ WHERE g.tenant_id=c.tenant_id AND g.state='active' AND NOT g.internal AND g.id=ANY(f.entity_ids)
+ ORDER BY k.alias,g.kind,g.slug,k.language=$3 DESC,k.name)
+ FROM unnest($2::text[],$6::text[]) wanted(content_id,version_id)
+ JOIN `+s.t.items+` c ON c.tenant_id=$1 AND c.id=wanted.content_id
+ JOIN `+s.t.versions+` v ON v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.id=wanted.version_id
+ JOIN `+s.t.facets+` f ON f.tenant_id=v.tenant_id AND f.version_id=v.id
+ LEFT JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id AND t.language=$3
+ WHERE c.kind=$4 AND c.state='published' AND v.state='published' AND v.released AND $3=ANY(v.languages)`, s.tenant, ids, language, kind, s.defaultLanguage(), versions)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var docs []search.KeywordDocument
 	for rows.Next() {
-		var id, original string
-		var title *string
-		var aliases, keywords, editionTitles []string
-		if err := rows.Scan(&id, &title, &aliases, &original, &editionTitles, &keywords); err != nil {
+		var id, version, title, original string
+		var aliases, keywords []string
+		if err := rows.Scan(&id, &version, &title, &aliases, &original, &keywords); err != nil {
 			return nil, err
 		}
-		doc := search.KeywordDocument{DocumentKey: search.DocumentKey{ContentRef: s.Ref(kind, id), Language: language}, Keywords: keywords}
-		switch {
-		case title != nil || s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion:
-			if title != nil {
-				doc.Title = *title
+		if s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion {
+			if title == "" {
+				title = original
+			} else if original != "" {
+				aliases = append(aliases, original)
 			}
-			doc.Aliases = aliases
-			if s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion {
-				if original != "" {
-					doc.Aliases = append(doc.Aliases, original)
-				}
-				if doc.Title != "" {
-					doc.Aliases = append(doc.Aliases, doc.Title)
-				}
-				doc.Aliases = append(doc.Aliases, editionTitles...)
-				if len(editionTitles) > 0 {
-					doc.Title = editionTitles[0]
-				} else if original != "" {
-					doc.Title = original
-				}
-				if doc.Title == "" {
-					continue
-				}
-			}
-		default:
+		}
+		if title == "" {
 			continue
 		}
-		if s.cfg.Kinds[kind].TitlePolicy == kinds.TitleOriginalAndVersion {
-			aliases := []string{}
-			for _, alias := range doc.Aliases {
-				if strings.TrimSpace(alias) != "" && alias != doc.Title && !slices.Contains(aliases, alias) {
-					aliases = append(aliases, alias)
-				}
-			}
-			doc.Aliases = aliases
+		aliases = uniqueKeywords(aliases)
+		aliases = slices.DeleteFunc(aliases, func(alias string) bool { return strings.TrimSpace(alias) == "" || alias == title })
+		if len(aliases) > 64 {
+			aliases = aliases[:64]
 		}
-		if len(doc.Aliases) > 64 {
-			doc.Aliases = doc.Aliases[:64]
+		keywords = uniqueKeywords(keywords)
+		if len(keywords) > 256 {
+			keywords = keywords[:256]
 		}
-		doc.Keywords = uniqueKeywords(doc.Keywords)
-		if len(doc.Keywords) > 256 {
-			doc.Keywords = doc.Keywords[:256]
-		}
-		docs = append(docs, doc)
+		docs = append(docs, search.KeywordDocument{DocumentKey: search.DocumentKey{ContentRef: s.Ref(kind, id).WithVersion(version), Language: language}, Title: title, Aliases: aliases, Keywords: keywords})
 	}
 	return docs, rows.Err()
 }

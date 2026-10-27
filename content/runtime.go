@@ -73,14 +73,12 @@ type Options struct {
 	// ModeratorCooldown is how long writes are held without calling the
 	// moderator after it failed repeatedly (default 30s); see CheckModerator.
 	ModeratorCooldown time.Duration
-	// Classifier groups free-text poll answers; nil refuses free-text polls.
-	Classifier AnswerClassifier
 
 	// Media stores poll images in ContentKit media; nil refuses image writes
 	// with 501 not_configured. See Media.
 	Media *Media
 
-	// ProviderDataEraser is required when moderator/classifier ports retain
+	// ProviderDataEraser is required when moderator ports retain
 	// external personal data.
 	// Nil explicitly means stateless ports; never remove it during an outage.
 	ProviderDataEraser ProviderDataEraser
@@ -124,7 +122,6 @@ type Runtime struct {
 	processor            ContentProcessor
 	moderator            ContentModerator
 	breaker              *moderatorBreaker
-	classifier           AnswerClassifier
 	providerEraser       ProviderDataEraser
 	anonymous            Anonymous
 	commentMax           int
@@ -164,7 +161,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if _, entity := opts.Kinds.EntityKinds[KindComment]; content || entity {
 		return nil, fmt.Errorf("content: kind %q is reserved", KindComment)
 	}
-	if opts.ProviderDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
+	if opts.ProviderDataEraser == nil && !policyIsStateless(opts.Moderator) {
 		return nil, fmt.Errorf("content: retaining policy ports require ProviderDataEraser; stateless ports must declare StatelessPolicy")
 	}
 	if opts.CommentMaxLength < 0 {
@@ -191,7 +188,6 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		processor:      processor,
 		moderator:      opts.Moderator,
 		breaker:        newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
-		classifier:     opts.Classifier,
 		providerEraser: opts.ProviderDataEraser,
 		anonymous:      opts.Anonymous,
 		commentMax:     orDefault(opts.CommentMaxLength, DefaultCommentMaxLength),
@@ -266,8 +262,11 @@ func (rt *Runtime) accessLog(next http.Handler) http.Handler {
 
 // --- shared helpers used by every module ---
 
-// isRegistered reports a content kind or entity kind interactions target.
+// isRegistered reports a content, metadata or enabled channel target.
 func (rt *Runtime) isRegistered(kind string) bool {
+	if kind == "channel" {
+		return rt.cfg.Channels != nil
+	}
 	_, content := rt.cfg.Kinds[kind]
 	_, entity := rt.cfg.EntityKinds[kind]
 	return content || entity

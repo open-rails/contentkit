@@ -460,7 +460,6 @@ func (o *opRun) put(op Op) error {
 		}
 	}
 	if !o.trusted && o.k.Versions {
-		delete(m.Meta, "fork_failed") // versions: an editor's own upload settles a fork that gave up
 	}
 	f.Pending = k.Presets(f.Path, false)
 	if err := o.place(g, i, f, op.Index); err != nil {

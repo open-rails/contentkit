@@ -54,7 +54,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		must(t, err)
 		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(owner.ID), persona.OwnerRole())
 		prior := w.clock.now().Add(-time.Hour)
-		imported, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "typescript-critical", Contents: []importer.ContentRecord{{ExternalID: "historically-deleted", Kind: "article", State: "deleted", PublishedAt: &prior, PublishAt: &prior, DeletedAt: &prior, Text: map[string]catalog.Text{"en": {Title: "Restorable imported item", Body: "Retained historical body"}}}}})
+		imported, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "typescript-critical", Contents: []importer.ContentRecord{importer.ContentRecord{ExternalID: "historically-deleted", Kind: "article", State: "deleted", PublishedAt: &prior, PublishAt: &prior, DeletedAt: &prior, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "historically-deleted" + "/version", Text: map[string]catalog.VersionText{"en": {Title: "Restorable imported item", Body: "Retained historical body"}}}}}}})
 		must(t, err)
 		if len(imported.Failed) != 0 || imported.Written["contents"] != 1 {
 			t.Fatalf("public import fixture did not preserve independently deleted content: %+v", imported)
@@ -84,6 +84,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 	t.Run("discovery_entities", func(t *testing.T) {
 		w := newWorld(t, func(c *ck.Config) {
 			c.Content.EntityKinds["tag"] = kinds.EntityKind{Route: "tags", MembershipScopes: []kinds.MembershipScope{kinds.ContentScope}}
+			c.Content.Channels.Entities = []string{"tag"}
 			kind := c.Content.Kinds["article"]
 			kind.Entities = []string{"tag"}
 			c.Content.Kinds["article"] = kind
@@ -98,12 +99,12 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		must(t, err)
 		a.server = mountEngine(t, a.engine)
 		startPublicationRuntime(t, a)
-		owner, token, channel := ownedEntity(t, w, a, "TypeScript owned channel")
+		owner, token, channel := ownedChannel(t, w, a, "TypeScript owned channel")
 		reader, readerToken := w.person(t, 0)
 		persona, err := w.auth.Persona("app")
 		must(t, err)
 		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(owner.ID), persona.OwnerRole())
-		paid, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &access.Rule{Level: access.PPV}, Text: map[string]catalog.Text{"en": {Title: "Purchased TypeScript library", Body: "Granted body"}}})
+		paid, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Access: &access.Rule{Level: access.PPV}, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Purchased TypeScript library", Body: "Granted body"}}}}})
 		must(t, err)
 		_, err = a.engine.Client().PostContentPublish(t.Context(), paid.ID, catalog.PublishInput{})
 		must(t, err)
@@ -123,7 +124,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		}
 		foreign := publishedArticle(t, w.apps[1], "TypeScriptNeedle foreign app")
 		runTypeScriptContract(t, "discovery_entities", map[string]any{"base": a.server.URL + "/content", "owner": token, "reader": readerToken, "ownerID": owner.ID, "channel": string(channel.ID), "foreign": foreign.ID, "paid": paid.ID, "paidVersion": paid.Versions[0].ID}, []string{
-			"EntitiesClient.create", "EntitiesClient.update", "EntitiesClient.remove", "EntitiesClient.mine", "DiscoveryClient.library", "DiscoveryClient.list", "DiscoveryClient.knownCards", "DiscoveryClient.search", "DiscoveryClient.typeahead", "DiscoveryClient.adminSuggestions", "DiscoveryClient.similar", "DiscoveryClient.recommendations", "DiscoveryClient.releaseDates", "DiscoveryClient.releases",
+			"EntitiesClient.create", "EntitiesClient.update", "EntitiesClient.remove", "ChannelsClient.mine", "ChannelsClient.create", "ChannelsClient.get", "ChannelsClient.list", "ChannelsClient.update", "ChannelsClient.entities", "ChannelsClient.setEntities", "ChannelsClient.repost", "ChannelsClient.removeRepost", "ChannelsClient.contents", "ChannelsClient.remove", "DiscoveryClient.library", "DiscoveryClient.list", "DiscoveryClient.knownCards", "DiscoveryClient.search", "DiscoveryClient.typeahead", "DiscoveryClient.adminSuggestions", "DiscoveryClient.similar", "DiscoveryClient.recommendations", "DiscoveryClient.releaseDates", "DiscoveryClient.releases",
 		})
 	})
 

@@ -117,14 +117,14 @@ func TestRetainedLog(t *testing.T) {
 		qs := pgx.Identifier{w.schema}.Sanitize()
 		// A real deferred database constraint forces commit failure. The
 		// assertions remain public content/log reads, not SQL text matching.
-		_, err = w.pool.Exec(t.Context(), `CREATE FUNCTION `+qs+`.critical_reject() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.original_title='rollback-fixture' THEN RAISE EXCEPTION 'critical injected commit failure'; END IF; RETURN NEW; END$$;
+		_, err = w.pool.Exec(t.Context(), `CREATE FUNCTION `+qs+`.critical_reject() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.kind='article' THEN RAISE EXCEPTION 'critical injected commit failure'; END IF; RETURN NEW; END$$;
 CREATE CONSTRAINT TRIGGER critical_reject AFTER INSERT ON `+qs+`.content_items DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION `+qs+`.critical_reject()`)
 		must(t, err)
 		defer func() {
 			_, err := w.pool.Exec(context.Background(), `DROP TRIGGER critical_reject ON `+qs+`.content_items; DROP FUNCTION `+qs+`.critical_reject()`)
 			must(t, err)
 		}()
-		_, err = admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", OriginalTitle: "rollback-fixture"})
+		_, err = admin.PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "rollback-fixture"}}}}})
 		requireError(t, err, 500, "internal_error")
 		items, err := admin.GetManage(t.Context(), ck.GetManageQuery{Q: "rollback-fixture"})
 		must(t, err)
@@ -157,18 +157,19 @@ CREATE CONSTRAINT TRIGGER zzz_critical_delay AFTER INSERT ON %s.eventlog_pending
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 		defer cancel()
 		first, second := make(chan error, 1), make(chan error, 1)
-		update := func(id, title string, done chan<- error) {
-			_, err := admin.PatchContent(ctx, id, catalog.ContentPatch{OriginalTitle: &title})
+		update := func(id string, done chan<- error) {
+			mode := "closed"
+			_, err := admin.PatchContent(ctx, id, catalog.ContentPatch{Comments: &mode})
 			done <- err
 		}
-		go update(one.ID, "first request waits at commit", first)
+		go update(one.ID, first)
 		waitFor(t, func() bool {
 			var blocked int
 			err := w.pool.QueryRow(ctx, "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted", barrier).Scan(&blocked)
 			must(t, err)
 			return blocked > 0
 		})
-		go update(two.ID, "second request", second)
+		go update(two.ID, second)
 		secondFinished := false
 		waitFor(t, func() bool {
 			select {

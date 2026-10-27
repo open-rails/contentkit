@@ -52,19 +52,31 @@ type AttributedClick struct {
 	// Exposed reports whether the clicked content is in the render's list at
 	// the requested stage. False means "not exposed at this stage", never negative.
 	Exposed bool
+	// Visits contain only measurements carrying this exact click ID and subject.
+	// An empty list means no engagement was observed, not a proven bounce.
+	Visits []AttributedVisit
+}
+
+type AttributedVisit struct {
+	VisitID    string
+	VersionIDs []string
+	ActiveMS   uint64
+	Coverage   float64
+	Completed  bool
 }
 
 // AttributedRender is one render at one stage with its clicks joined.
 type AttributedRender struct {
-	RenderID   string
-	QueryID    string
-	Surface    string
-	Ranker     string
-	Language   string
-	Subject    Subject
-	OccurredAt time.Time
-	Shown      []Placement
-	Clicks     []AttributedClick
+	RenderID    string
+	QueryID     string
+	SearchQuery string
+	Surface     string
+	Ranker      string
+	Language    string
+	Subject     Subject
+	OccurredAt  time.Time
+	Shown       []Placement
+	Clicks      []AttributedClick
 	// Continued is true when earlier clicks of this render were on the previous
 	// page: the header repeats, the clicks do not. Merge by RenderID.
 	Continued bool
@@ -126,7 +138,7 @@ func (st *Store) Attribution(ctx context.Context, tenant string, opts Attributio
 		}
 		if next != nil {
 			page.Next = next.encode()
-			return page, nil
+			return page, st.attributeVisits(ctx, tenant, &page)
 		}
 		cur = attributionCursor{Scope: scope, Phase: phaseUnattributed}
 	}
@@ -137,7 +149,7 @@ func (st *Store) Attribution(ctx context.Context, tenant string, opts Attributio
 	if next != nil {
 		page.Next = next.encode()
 	}
-	return page, nil
+	return page, st.attributeVisits(ctx, tenant, &page)
 }
 
 // attributionRenders fills the renders phase of one page and returns the
@@ -242,10 +254,10 @@ func (st *Store) attributionUnattributed(ctx context.Context, page *AttributionP
 func (st *Store) stageRenders(ctx context.Context, tenant string, opts AttributionOptions, cur attributionCursor, limit int) ([]AttributedRender, bool, error) {
 	pred, args := st.exposurePredicate(tenant, opts)
 	var sb strings.Builder
-	fmt.Fprintf(&sb, `SELECT render_id, c.1, c.2, c.3, c.4, c.5, c.6, c.7, c.8, c.9, c.10, c.11, c.12
+	fmt.Fprintf(&sb, `SELECT render_id, c.1, c.2, c.3, c.4, c.5, c.6, c.7, c.8, c.9, c.10, c.11, c.12, c.13
 FROM (
     SELECT render_id,
-        argMax(tuple(query_id, surface, ranker, language, subject_kind, subject, content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts), version) AS c
+        argMax(tuple(query_id, surface, ranker, language, subject_kind, subject, content_kinds, content_ids, content_version_ids, positions, occurred_at, access_contexts, search_query), version) AS c
     FROM %s.exposures
     WHERE %s`, st.db, pred)
 	if cur.Render != "" {
@@ -272,7 +284,7 @@ FROM (
 			positions            []uint32
 			contexts             []string
 		)
-		if err := rows.Scan(&r.RenderID, &r.QueryID, &r.Surface, &r.Ranker, &r.Language, &kind, &key, &kinds, &ids, &versions, &positions, &r.OccurredAt, &contexts); err != nil {
+		if err := rows.Scan(&r.RenderID, &r.QueryID, &r.Surface, &r.Ranker, &r.Language, &kind, &key, &kinds, &ids, &versions, &positions, &r.OccurredAt, &contexts, &r.SearchQuery); err != nil {
 			return nil, false, fmt.Errorf("signal: attribution scan: %w", err)
 		}
 		if key != "" {

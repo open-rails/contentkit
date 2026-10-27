@@ -1,0 +1,6 @@
+{
+  "repository": "doujins",
+  "head": "cde13c2fdfe4e9d3e00cb2c21d2be8c934e40e27",
+  "model_file": "internal/contentkitembed/content.yaml",
+  "host_file": "config.example.yaml"
+}

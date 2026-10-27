@@ -125,6 +125,7 @@ var expectedSchema = map[string]tableSpec{
 			{"content_kinds", "Array(LowCardinality(String))"}, {"content_ids", "Array(String)"}, {"content_version_ids", "Array(String)"},
 			{"positions", "Array(UInt32)"}, {"occurred_at", "DateTime('UTC')"}, {"version", "UInt128"},
 			{"access_contexts", "Array(String)"},
+			{"search_query", "String"},
 			{"ingested_at", "DateTime64(6, 'UTC')"},
 		},
 	},

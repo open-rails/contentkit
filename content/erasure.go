@@ -14,9 +14,8 @@ import (
 	"github.com/open-rails/contentkit/internal/versionid"
 )
 
-// ProviderDataEraser deletes personal data retained by optional moderator and
-// classifier implementations. Success means a durable tenant/subject fence is
-// installed: Classify/Screen calls begun before erasure cannot recreate data
+// ProviderDataEraser deletes personal data retained by optional moderation providers. Success means a durable tenant/subject fence is
+// installed: Screen calls begun before erasure cannot recreate data
 // when they complete later. Merely queuing a delete is not success. Calls are
 // idempotent; implementations must preserve fences across restore/restart.
 // A host using multiple retaining providers must implement a composite eraser.
@@ -136,6 +135,9 @@ func (rt *Runtime) eraseSubjects(ctx context.Context, actorIDs []string, account
 		if _, err := tx.Exec(ctx, `INSERT INTO `+rt.erasedSubjectsTable()+` (tenant_id,actor_id,engine_cleanup_complete) VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO UPDATE SET engine_cleanup_complete=false`, rt.tenant, id); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE `+pgx.Identifier{rt.schema, "content_channel_reposts"}.Sanitize()+` SET actor_id=NULL WHERE tenant_id=$1 AND actor_id=ANY($2)`, rt.tenant, ids); err != nil {
+		return err
 	}
 	if err := rt.eraseInteractions(ctx, tx, ids); err != nil {
 		return err

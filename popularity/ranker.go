@@ -2,7 +2,6 @@ package popularity
 
 import (
 	"context"
-	"slices"
 	"time"
 
 	"github.com/open-rails/contentkit/signal"
@@ -10,52 +9,62 @@ import (
 
 // Source is one tenant's signal plane; the engine's hub satisfies it.
 type Source interface {
-	Popular(ctx context.Context, contentKind string, opts signal.PopularOptions) ([]signal.PopularHit, error)
-	// ReadContent lists the works of kind read in window.
-	ReadContent(ctx context.Context, kind string, window signal.Window) ([]string, error)
-	// PopulationCoverage is when trusted audience observations start for scope.
+	PrepareDailyPopularity(ctx context.Context, kind string, availability signal.Availability, scope signal.ActivityScope, rebuild bool) (signal.DailyPopularityPreparation, error)
+	DailyPopular(ctx context.Context, kind string, window signal.Window, scope signal.ActivityScope, limit int) ([]signal.PopularHit, error)
+	DailyPopularityCoverage(ctx context.Context, kind string, scope signal.ActivityScope) (signal.Window, bool, error)
 	PopulationCoverage(ctx context.Context, kind string, scope signal.ActivityScope, window signal.Window) (time.Time, bool, error)
 }
 
-// AvailabilityProvider supplies immutable publication and access history for a
-// common covered portion of a requested activity window, for the given
-// contents of the kind.
+// AvailabilityProvider supplies immutable publication and access history.
 type AvailabilityProvider interface {
 	Availability(ctx context.Context, kind string, window signal.Window, scope signal.ActivityScope, contents []string) (signal.Availability, error)
 }
 
-// Rank returns up to limit works of kind with qualified readers in window,
-// best first. Without trusted audience history it returns none: missing
-// lineage never becomes unnormalized reach.
-func Rank(ctx context.Context, source Source, availability AvailabilityProvider, kind string, window signal.Window, scope signal.ActivityScope, limit int) ([]string, error) {
-	contents, err := source.ReadContent(ctx, kind, window)
+// Prepare prepares every known day once per kind/scope in the existing worker.
+// It retains closed days independently of configured preset windows. Until is
+// the worker's single refresh-cycle time, not a reader-supplied query boundary.
+// Returned coverage contains only successfully prepared UTC days.
+func Prepare(ctx context.Context, source Source, availability AvailabilityProvider, kind string, until time.Time, scope signal.ActivityScope) (signal.Window, error) {
+	return prepare(ctx, source, availability, kind, until, scope, false)
+}
+
+// Rebuild explicitly recalculates historical corrections/imports. It reports
+// errors and creates no scheduled repair work.
+func Rebuild(ctx context.Context, source Source, availability AvailabilityProvider, kind string, until time.Time, scope signal.ActivityScope) (signal.Window, error) {
+	return prepare(ctx, source, availability, kind, until, scope, true)
+}
+
+func prepare(ctx context.Context, source Source, availability AvailabilityProvider, kind string, until time.Time, scope signal.ActivityScope, rebuild bool) (signal.Window, error) {
+	a, err := availability.Availability(ctx, kind, signal.AllTime(), scope, nil)
 	if err != nil {
-		return nil, err
+		return signal.Window{}, err
 	}
-	a, err := availability.Availability(ctx, kind, window, scope, contents)
-	if err != nil || !a.Known {
-		return nil, err
-	}
-	a.Intervals = slices.Clone(a.Intervals)
-	from, known, err := source.PopulationCoverage(ctx, kind, scope, window)
-	if err != nil || !known {
-		return nil, err
-	}
-	if from.After(a.From) {
-		a.From = from
-		for i := range a.Intervals {
-			if a.Intervals[i].From.Before(from) {
-				a.Intervals[i].From = from
+	if a.Known {
+		from, known, err := source.PopulationCoverage(ctx, kind, scope, signal.AllTime())
+		if err != nil {
+			return signal.Window{}, err
+		}
+		if known {
+			if from.After(a.From) {
+				a.From = from
+			}
+			if until.Before(a.Until) {
+				a.Until = until
+			}
+			if _, err := source.PrepareDailyPopularity(ctx, kind, a, scope, rebuild); err != nil {
+				return signal.Window{}, err
 			}
 		}
 	}
-	// Audience intervals may be sub-day; the canonical signal window stays
-	// whole-day while normalization clips every numerator/denominator to a.
-	p := PolicyV2.Priors
-	hits, err := source.Popular(ctx, kind, signal.PopularOptions{Window: window, Limit: limit, RankExpr: PolicyV2.RankExpr(),
-		Normalization: &signal.NormalizationOptions{Availability: a, Scope: scope, PriorWeight: 20,
-			Quality: signal.NormalizationPriors{Engagement: p.Engagement, EngagementWeight: p.EngagementWeight,
-				Completion: p.Completion, CompletionWeight: p.CompletionWeight, Approval: p.Approval, ApprovalWeight: p.ApprovalWeight, RevisitWeight: p.RevisitWeight}}})
+	covered, _, err := source.DailyPopularityCoverage(ctx, kind, scope)
+	return covered, err
+}
+
+// Rank reads only the prepared daily scalars. Public requests may read an
+// arbitrary whole-day range after checking DailyPopularityCoverage; they never
+// invoke preparation or scan raw receipts.
+func Rank(ctx context.Context, source Source, _ AvailabilityProvider, kind string, window signal.Window, scope signal.ActivityScope, limit int) ([]string, error) {
+	hits, err := source.DailyPopular(ctx, kind, window, scope, limit)
 	if err != nil {
 		return nil, err
 	}

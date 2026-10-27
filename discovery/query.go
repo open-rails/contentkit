@@ -44,10 +44,7 @@ type Reader struct {
 // Filter selects contents: what lists, search and release dates share.
 type Filter struct {
 	Kind string
-	// keepUnplayable keeps versions whose media does not play yet, which
-	// browsing leaves out: a reader's own history, favorites, reactions and
-	// known cards.
-	keepUnplayable bool
+
 	// named are entities a search names; the reader's content filters do not
 	// hide them.
 	named []string
@@ -76,9 +73,11 @@ type Filter struct {
 	// ViewStatus is unseen, in_progress or completed: the signed-in
 	// reader's own.
 	ViewStatus string
-	// OwnerEntities keeps content one of these entities owns (a channel's feed);
+	// ChannelIDs keeps content one of these channels owns (the original feed);
 	// owning is not membership and opens nothing.
-	OwnerEntities []string
+	ChannelIDs []string
+	// includeReposts is enabled only by the public channel feed.
+	includeReposts bool
 	// Creators keeps content one of these users is credited on.
 	Creators []string
 	// Access keeps content at one of these levels: public is what anyone
@@ -143,7 +142,6 @@ func (s *Service) compileKnown(ctx context.Context, r Reader, f Filter) (*sel, e
 		}
 		return nil, err
 	}
-	f.keepUnplayable = true
 	return s.compileWithViewer(ctx, r, f, v)
 }
 
@@ -172,7 +170,7 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 			return nil, fmt.Errorf("%w: time zone %q", ErrInvalid, f.TimeZone)
 		}
 	}
-	owners, err := uniqueIDs("owner_group", f.OwnerEntities)
+	owners, err := uniqueIDs("channel_id", f.ChannelIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -210,9 +208,6 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 	q.and("f.tenant_id = @d_tenant", nil)
 	q.and("("+listed+")", args)
 	// A video lists once it plays; its page still opens it.
-	if !f.keepUnplayable {
-		q.and(v.Playable("f"), nil)
-	}
 	if f.IDs != nil {
 		if len(f.IDs) == 0 || len(f.IDs) > 100 {
 			return nil, fmt.Errorf("%w: 1-100 content ids", ErrInvalid)
@@ -243,7 +238,13 @@ func (s *Service) compileWithViewer(ctx context.Context, r Reader, f Filter, v *
 		q.and("NOT (f.entity_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": excluded})
 	}
 	if len(owners) > 0 {
-		q.and("f.owner_entity_id = ANY(@d_owners::text[])", pgx.NamedArgs{"d_owners": owners})
+		owned := "f.owner_entity_id = ANY(@d_owners::text[])"
+		if f.includeReposts {
+			owned = "(" + owned + " OR EXISTS (SELECT 1 FROM " + s.t.reposts + " rp WHERE rp.tenant_id=f.tenant_id AND rp.content_id=f.content_id AND rp.channel_id=ANY(@d_owners::text[])))"
+			// A public feed never exposes unpublished or deleted originals, even to staff.
+			q.and("NOT f.deleted AND f.live_from <= @cv_now::timestamptz AND (@cv_language = '' OR @cv_language = ANY(f.languages))", nil)
+		}
+		q.and(owned, pgx.NamedArgs{"d_owners": owners})
 	}
 	if cs, err := uniqueIDs("creators", f.Creators); err != nil {
 		return nil, err
@@ -315,7 +316,7 @@ func (s *Service) accessFilter(q *sel, levels, tiers []string) error {
 		return err
 	}
 	for _, l := range levels {
-		if !slices.Contains([]access.Level{access.Public, access.TierLevel, access.EntityLevel, access.PPV, access.EntityPPV}, access.Level(l)) {
+		if !slices.Contains([]access.Level{access.Public, access.TierLevel, access.ChannelLevel, access.PPV, access.ChannelPPV}, access.Level(l)) {
 			return fmt.Errorf("%w: access %q is public, tier, group, ppv or group_ppv", ErrInvalid, l)
 		}
 	}
@@ -480,9 +481,12 @@ type order struct {
 	edition bool
 }
 
-// titleKey is a content's title sort key in the display language's text.
-const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key, ''), x.title)) FROM %s x WHERE x.tenant_id = f.tenant_id AND x.content_id = f.content_id
- ORDER BY x.language = @d_display DESC, array_position(@d_langs::text[], x.language), x.language LIMIT 1), '')`
+// titleKey belongs to the edition selected by this query's language, access
+// and entity filters. A sibling's title must not sort or paginate its card.
+const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key,''),nullif(x.title,''),CASE WHEN v.kind=ANY(@d_sort_title_kinds::text[]) THEN nullif(v.original_title,'') END,''))
+ FROM (SELECT cv.*,f.kind FROM %[2]s cv WHERE cv.tenant_id=f.tenant_id AND cv.id=f.version_id) v
+ LEFT JOIN LATERAL (SELECT t.title,t.sort_key FROM %[1]s t WHERE t.tenant_id=v.tenant_id AND t.version_id=v.id
+ ORDER BY t.language=@d_display DESC,array_position(v.languages,t.language),t.language LIMIT 1) x ON true),'')`
 
 func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, error) {
 	raw = s.sortName(raw, f.Kind)
@@ -491,20 +495,23 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	if hasPeriod && name != SortPopular && name != SortTopRated {
 		return o, fmt.Errorf("%w: sort %q takes no period", ErrInvalid, raw)
 	}
-	if hasPeriod && !slices.Contains(popularity.Periods, period) {
+	if hasPeriod && name == SortTopRated && !slices.Contains(popularity.Periods, period) {
 		return o, fmt.Errorf("%w: sort period %q is one of %v", ErrInvalid, period, popularity.Periods)
 	}
 	switch name {
 	case SortNewest, SortOldest:
 		o.expr, o.cast, o.desc = "coalesce(f.published_at, 'epoch'::timestamptz)", "timestamptz", name == SortNewest
 	case SortTitle:
-		o.expr, o.cast, o.desc = fmt.Sprintf(titleKey, s.t.text), "text", false
-	case SortPopular:
-		window, err := popularity.WindowForPeriod(cmpOr(period, popularity.DefaultPeriod), s.now())
-		if err != nil {
-			return o, err
+		o.expr, o.cast, o.desc, o.edition = fmt.Sprintf(titleKey, s.t.versionText, s.t.versions), "text", false, true
+		titleKinds := []string{}
+		for kind, model := range s.o.Kinds.Kinds {
+			if model.TitlePolicy == kinds.TitleOriginalAndVersion {
+				titleKinds = append(titleKinds, kind)
+			}
 		}
-		return s.standingOrder(raw, window, true), nil
+		o.args["d_sort_title_kinds"] = titleKinds
+	case SortPopular:
+		return o, fmt.Errorf("%w: popular requires an explicit kind and configured bucket", ErrInvalid)
 	case SortTopRated:
 		if period == "" || period == "all" {
 			o.expr = content.RatingSQL("coalesce(counts.likes, 0)", "coalesce(counts.dislikes, 0)")

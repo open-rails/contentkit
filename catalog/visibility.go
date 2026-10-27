@@ -204,6 +204,16 @@ func hasKey(m map[string]bool, k string) bool {
 	return ok
 }
 
+// CanPostToChannel checks current destination posting authority. It grants no
+// authority over an original referenced by a repost.
+func (v *Viewer) CanPostToChannel(ctx context.Context, id string) (bool, error) {
+	if v.staffWrite {
+		return true, nil
+	}
+	got, err := v.s.entityAllowed(ctx, v.s.pool, v.actor, []string{id}, true)
+	return got[id], err
+}
+
 // Staff reports a viewer holding root:content:view-restricted or
 // root:content:write: they see everything inside the domain boundary.
 func (v *Viewer) Staff() bool { return v.staff }
@@ -282,7 +292,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		if v.management {
 			return scope, args
 		}
-		return "(" + scope + " AND " + soft + ")", args
+		return "(" + scope + " AND " + soft + " AND " + v.channelReady(alias) + ")", args
 	}
 	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND " + soft
 	if v.mode == access.Hide {
@@ -295,7 +305,15 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	held := "(" + f("deleted") + " AND @cv_include_deleted::boolean AND " + live + " AND (EXISTS (" +
 		"SELECT 1 FROM unnest(@cv_owned_contents::text[], @cv_owned_versions::text[]) AS owned(content_id,version_id) WHERE owned.content_id=" +
 		f("content_id") + " AND owned.version_id=" + f("version_id") + ") OR @cv_owned_candidates::boolean))"
-	return "(" + scope + " AND (" + public + " OR " + held + " OR " + v.privileged(alias) + "))", args
+	return "(" + scope + " AND " + v.channelReady(alias) + " AND (" + public + " OR " + held + " OR " + v.privileged(alias) + "))", args
+}
+
+// channelReady keeps incomplete or withdrawn authoring homes out of public
+// readers and discovery. Deleted rows may still reach the existing exact-version
+// purchase retention check; this predicate alone never grants access. Explicit
+// staff management still inspects pending records.
+func (v *Viewer) channelReady(alias string) string {
+	return "(" + alias + ".owner_entity_id IS NULL OR EXISTS(SELECT 1 FROM " + v.s.t.entities + " source_channel WHERE source_channel.tenant_id=" + alias + ".tenant_id AND source_channel.id=" + alias + ".owner_entity_id AND source_channel.kind='channel' AND ((source_channel.state='active' AND source_channel.auth_scope IS NOT NULL) OR (source_channel.state='deleted' AND " + alias + ".deleted))))"
 }
 
 // privileged is the SQL test, over Listed's args, of a row whose channel the
@@ -303,18 +321,6 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 func (v *Viewer) privileged(alias string) string {
 	return "(" + alias + ".owner_entity_id = ANY(@cv_editors::text[]) OR (@cv_user <> '' AND EXISTS (SELECT 1 FROM " + v.s.t.items +
 		" authored WHERE authored.tenant_id = " + alias + ".tenant_id AND authored.id = " + alias + ".content_id AND authored.created_by = @cv_user AND ((authored.owner_entity_id IS NULL AND @cv_own_app::boolean) OR authored.owner_entity_id=ANY(@cv_own_channels::text[])))))"
-}
-
-// Playable is a boolean SQL predicate over the content_facets row aliased
-// alias, to AND with Listed (it uses Listed's args): versions that play, or
-// that the viewer may see before they do as staff, channel editor or
-// creator. Browsing applies it; a reader's own history and saved items do
-// not.
-func (v *Viewer) Playable(alias string) string {
-	if v.staff {
-		return "true"
-	}
-	return "(NOT " + alias + ".unplayable OR " + v.privileged(alias) + ")"
 }
 
 // Indexable is a boolean SQL predicate over the content_facets row aliased
@@ -325,8 +331,7 @@ func (v *Viewer) Playable(alias string) string {
 func (v *Viewer) Indexable(alias string) (string, pgx.NamedArgs) {
 	scope, args := v.policies.SQL(alias, "ci_domain")
 	args["ci_now"] = v.now
-	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND NOT " + alias +
-		".unplayable AND " + scope + ")", args
+	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND " + scope + " AND " + v.channelReady(alias) + ")", args
 }
 
 // facetRow is one version as the visibility rule reads it.
@@ -373,7 +378,8 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
  (coalesce(c.created_by, '') = $3 AND $3 <> '')
  FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id = f.tenant_id AND c.id = f.content_id
  JOIN `+s.t.versions+` ver ON ver.tenant_id = f.tenant_id AND ver.id = f.version_id
- WHERE f.tenant_id = $1 AND f.content_id = ANY($2) ORDER BY f.content_id, f.position, f.version_id`, s.tenant, ids, viewerID(v.actor))
+ WHERE f.tenant_id = $1 AND f.content_id = ANY($2) AND ($4 OR `+v.channelReady("f")+`)
+ ORDER BY f.content_id, f.position, f.version_id`, s.tenant, ids, viewerID(v.actor), v.management && v.staff)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +435,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	}
 	items := make([]access.Item, 0, len(live)+len(held))
 	for _, r := range live {
-		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: r.rule, Entities: r.entityIDs})
+		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: r.rule})
 	}
 	for _, r := range held {
 		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: access.Rule{Level: access.PPV}})
@@ -570,7 +576,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 			continue
 		}
 		o := owners[ref.ContentID]
-		res := resolve.Resolution{Ref: ref, Editor: iv.editor, ReadRestricted: iv.readRestricted, Owner: o.creator, Comments: o.comments, OwnerEntity: o.entity}
+		res := resolve.Resolution{Ref: ref, Editor: iv.editor, ReadRestricted: iv.readRestricted, Owner: o.creator, Comments: o.comments, Channel: o.entity}
 		for _, ver := range iv.versions {
 			if want := ref.Version(); want == "" || ver.versionID == want {
 				res.Visible = true
@@ -588,7 +594,7 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 // user-owned owner entity.
 type ownership struct {
 	creator, comments string
-	entity            *resolve.OwnerEntity
+	entity            *resolve.Channel
 }
 
 func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership, error) {
@@ -603,12 +609,12 @@ func (s *Store) owners(ctx context.Context, ids []string) (map[string]ownership,
 	for rows.Next() {
 		var id string
 		var o ownership
-		var g resolve.OwnerEntity
+		var g resolve.Channel
 		if err := rows.Scan(&id, &o.comments, &o.creator, &g.ID, &g.Kind, &g.Owner, &g.Scope); err != nil {
 			return nil, err
 		}
-		if g.ID != "" && (s.cfg.EntityKinds[g.Kind].Owner == "user" || s.cfg.EntityKinds[g.Kind].AuthScope) {
-			if s.cfg.EntityKinds[g.Kind].AuthScope && g.Scope == "" {
+		if g.ID != "" && g.Kind == "channel" {
+			if g.Scope == "" {
 				// Keep the channel ban boundary while refusing the owner fallback.
 				g.Owner = ""
 			}

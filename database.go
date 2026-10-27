@@ -118,15 +118,13 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, option
 		return err
 	}
 	for _, kind := range e.cfg.Content.Kinds {
-		if kind.OwnerEntity == nil {
+		if kind.Channel == nil || kind.Channel.Fixed == "" {
 			continue
 		}
 		if err := e.cfg.Content.Validate(); err != nil {
 			return err
 		}
-		if !e.cfg.Content.EntityKinds[kind.OwnerEntity.Kind].AuthScope {
-			continue
-		}
+
 		if opt.Scopes == nil {
 			return errors.New("contentkit: configured auth_scope owner requires MigrationOptions.Scopes")
 		}
@@ -192,6 +190,9 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 		return required(err)
 	}
 	if err := e.validatePublicationQueues(ctx); err != nil {
+		return required(err)
+	}
+	if err := e.validateUnifiedReleases(ctx); err != nil {
 		return required(err)
 	}
 	if account, ok := e.accountMediaStorage(); ok {

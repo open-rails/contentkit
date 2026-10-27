@@ -82,7 +82,7 @@ func (s *Store) AddEdges(ctx context.Context, edges []Edge) error {
 		}
 		var inactive int
 		if err := q.QueryRow(ctx, fmt.Sprintf(`SELECT count(*) FROM jsonb_to_recordset($2::jsonb) AS r("from" text, "to" text), LATERAL unnest(ARRAY[r."from", r."to"]) AS e(id)
- WHERE NOT EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = $1 AND g.id = e.id AND g.state = 'active')`, s.table("content_entities")), s.tenant, data).Scan(&inactive); err != nil {
+ WHERE NOT EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = $1 AND g.id = e.id AND g.state = 'active' AND g.kind<>'channel')`, s.table("content_entities")), s.tenant, data).Scan(&inactive); err != nil {
 			return err
 		}
 		if inactive > 0 {

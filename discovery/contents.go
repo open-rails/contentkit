@@ -10,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/popularity"
 )
 
 // ListOptions select one page of a list.
@@ -19,7 +18,7 @@ type ListOptions struct {
 	Filter
 	// Sort is newest, oldest, title, popular[:period], top_rated[:period],
 	// most_favorited, position or random; the kind's configured
-	// sort, else newest, by default. Periods are popularity.Periods.
+	// sort, else newest, by default. Popular suffixes are configured bucket IDs.
 	Sort string
 	// ActivityFrom and ActivityUntil choose a custom popularity window of whole
 	// UTC dates [from, until). Both require SortPopular and an explicit Kind.
@@ -77,9 +76,6 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 	sort := s.sortName(o.Sort, o.Kind)
 	if custom {
 		sort = historicalSort(o.Kind, window)
-		if _, err := decodeCursor(o.Cursor, sort); err != nil {
-			return ContentPage{Contents: []Card{}}, err
-		}
 	}
 	o.Filter, err = publicationCursor(o.Filter, o.Cursor, sort)
 	if err != nil {
@@ -90,19 +86,11 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 		return ContentPage{Contents: []Card{}}, err
 	}
 	var srt order
+	var snapshot *PopularitySnapshot
 	if custom {
-		srt, err = s.historicalOrder(ctx, o.Kind, customPeriod(window), window, o.Reader)
-	} else if name, period, _ := strings.Cut(sort, ":"); name == SortPopular && o.Kind != "" && s.o.Hub.SignalsConfigured() {
-		if period == "" {
-			period = popularity.DefaultPeriod
-		}
-		window, err = popularity.WindowForPeriod(period, s.now())
-		if err != nil {
-			err = fmt.Errorf("%w: %w", ErrInvalid, err)
-		} else {
-			srt, err = s.historicalOrder(ctx, o.Kind, period, window, o.Reader)
-			srt.raw = sort
-		}
+		srt, snapshot, err = s.rangeOrder(ctx, o.Kind, window, o.Reader, sort)
+	} else if id, popular := popularSort(sort); popular {
+		srt, snapshot, err = s.popularOrder(ctx, o.Kind, id, o.Reader, sort)
 	} else {
 		srt, err = s.parseSort(ctx, o.Sort, o.Filter)
 	}
@@ -119,7 +107,10 @@ func (s *Service) List(ctx context.Context, o ListOptions) (ContentPage, error) 
 		return ContentPage{Contents: []Card{}}, err
 	}
 	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
-	out := ContentPage{Contents: cards, NextCursor: next}
+	if err == nil && o.Filter.includeReposts {
+		err = s.repostContext(ctx, q, o.Filter.ChannelIDs[0], cards)
+	}
+	out := ContentPage{Contents: cards, NextCursor: next, Popularity: snapshot}
 	if err == nil && o.Summary && o.Cursor == "" {
 		out.Summary, err = s.cachedListingSummary(ctx, o.Filter, q, srt)
 	}

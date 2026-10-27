@@ -38,8 +38,7 @@ func TestScheduledPolicyPublishesWithoutStorageAreaChange(t *testing.T) {
 	create := func(title string, release access.Release) catalog.Content {
 		t.Helper()
 		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery",
-			Access: &access.Rule{Level: access.PPV, Releases: []access.Release{release}},
-			Text:   map[string]catalog.Text{"en": {Title: title, Body: "Released policy body"}},
+			Access: &access.Rule{Level: access.PPV, Releases: []access.Release{release}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title, Body: "Released policy body"}}}},
 		})
 		must(t, err)
 		return item

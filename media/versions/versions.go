@@ -1,11 +1,10 @@
-// Package versions binds media to content versions. A content kind's media
-// items are its versions, {kind, content, version}; a content has none of
+// Package versions publishes content versions and binds their optional media.
+// A kind's media items are its versions, {kind, content, version}; a content has none of
 // its own. This package answers media's
 // hooks from the content model (who uploads, who reads, the facts a
 // version's media yields), records immutable ready-file snapshots for viewers
-// (chapter metadata, signed previews and playback), forks and imports versions' media, copies body
-// images between versions, and serves the reader plan, reader metadata and
-// downloads.
+// (chapter metadata, signed previews and playback), and serves the reader plan,
+// reader metadata and downloads. Each version receives its own explicit uploads.
 //
 // Whether a viewer sees, opens or edits a content or a version is the
 // catalog's decision over the access gate, ContentKit's own
@@ -60,6 +59,9 @@ type Options struct {
 	Pool   *pgxpool.Pool
 	Kinds  kinds.Config       // the site's content and entity kinds
 	Auth   auth.Authenticator // the host's: staff and group scope checks
+	// MediaConfigured requires Bind before a release can run. A service without
+	// media still owns publication requests, completed access and deadlines.
+	MediaConfigured bool
 	// AccountExists verifies avatar targets in this tenant's account directory.
 	// Scoped engines install it; nil preserves the legacy host contract.
 	AccountExists func(context.Context, string) (bool, error)
@@ -85,7 +87,7 @@ type Media struct {
 	Reader    *media.Reader // signs file downloads; nil serves none
 }
 
-// Service is media for content versions.
+// Service owns publication for content versions and their optional media.
 type Service struct {
 	o   Options
 	t   tables
@@ -101,7 +103,7 @@ type tables struct {
 	items, versions, segments, publications, entities, facets string
 }
 
-// New validates o. Build the media runtime with Hooks, then Bind it.
+// New validates o. When media is configured, build it with Hooks, then Bind it.
 func New(o Options) (*Service, error) {
 	if o.Tenant == "" || o.Schema == "" || o.Pool == nil || o.Resolver == nil || o.Facets == nil {
 		return nil, errors.New("versions: Tenant, Schema, Pool, Resolver and Facets are required")
@@ -258,8 +260,7 @@ var (
 	// ErrNotFound is a content or version that does not exist, or that the
 	// viewer may not see.
 	ErrNotFound = errors.New("versions: not found")
-	// ErrNotReady is a version whose media is still processing, being
-	// forked or imported, or not yet published.
+	// ErrNotReady is a version whose media is still processing or not yet published.
 	ErrNotReady = errors.New("versions: media not ready")
 	// ErrNoDownload is a version without the file its kind's download
 	// serves: nothing uploaded, or an upload that failed or was dropped.

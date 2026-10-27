@@ -19,7 +19,7 @@ type Count struct {
 // liveListed reads completed-publication facets. live_from is populated only
 // after durable publication; a scheduled date alone never creates availability.
 // Counts and automatic covers follow committed edits without projection jobs.
-const liveListed = `NOT f.deleted AND NOT f.unplayable AND f.live_from IS NOT NULL AND f.live_from <= now()`
+const liveListed = `NOT f.deleted AND f.live_from IS NOT NULL AND f.live_from <= now()`
 
 // coveredKinds are the content kinds whose locked view shows covers.
 func (s *Store) coveredKinds() []string {

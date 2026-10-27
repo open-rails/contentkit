@@ -12,10 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/internal/hub"
-	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -52,7 +52,7 @@ func (s *Service) eligibility(q *sel) *search.Eligibility {
 		args[k] = v
 	}
 	return &search.Eligibility{SQL: fmt.Sprintf(`SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM %s f
- WHERE f.content_id = sd.content_id AND f.kind = sd.content_kind AND %s)`, s.t.facets, q.predicate()), Args: args}
+ WHERE f.content_id = sd.content_id AND f.version_id=sd.content_version_id AND f.kind = sd.content_kind AND %s)`, s.t.facets, q.predicate()), Args: args}
 }
 
 func (s *Service) searchKinds(kind string) []string {
@@ -119,18 +119,14 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 	}
 	base := hub.SearchOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind), Eligibility: s.eligibility(q)}
 	if o.Sort != "" && o.Sort != SortRelevance {
-		srt, err := s.parseSort(ctx, o.Sort, o.Filter)
-		if name, period, _ := strings.Cut(o.Sort, ":"); err == nil && name == SortPopular && o.Kind != "" && s.o.Hub.SignalsConfigured() {
-			if period == "" {
-				period = popularity.DefaultPeriod
-			}
-			window, windowErr := popularity.WindowForPeriod(period, s.now())
-			if windowErr != nil {
-				return empty, windowErr
-			}
-			srt, err = s.historicalOrder(ctx, o.Kind, period, window, o.Reader)
-			srt.raw = o.Sort
+		var srt order
+		var snapshot *PopularitySnapshot
+		if id, popular := popularSort(o.Sort); popular {
+			srt, snapshot, err = s.popularOrder(ctx, o.Kind, id, o.Reader, o.Sort)
+		} else {
+			srt, err = s.parseSort(ctx, o.Sort, o.Filter)
 		}
+
 		if err != nil {
 			return empty, err
 		}
@@ -139,13 +135,13 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 		if err != nil {
 			return empty, err
 		}
-		q.and("f.content_id IN ("+match.SQL+")", match.Args)
+		q.and("(f.content_id,f.version_id) IN ("+match.SQL+")", match.Args)
 		picks, next, err := s.page(ctx, q, srt, o.Cursor, limit, offset)
 		if err != nil {
 			return empty, err
 		}
 		cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
-		return SearchPage{ContentPage: ContentPage{Contents: cards, NextCursor: next}}, err
+		return SearchPage{ContentPage: ContentPage{Contents: cards, NextCursor: next, Popularity: snapshot}}, err
 	}
 	cur, err := decodeCursor(o.Cursor, SortRelevance)
 	if err != nil {
@@ -161,7 +157,11 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 	if a := o.Actor; a.Member() && !o.Unpersonalized {
 		opts.Personalize = &hub.Personalization{Subject: signal.Subject{UserID: a.AccountID()}, DemoteSeen: true,
 			Popularity: func(ctx context.Context, kind string, ids []string) (map[string]float64, error) {
-				return s.rankedScores(ctx, s.rankingFor(ctx, o.Reader, kind, popularity.DefaultPeriod), ids)
+				key, ok := s.rankingFor(ctx, o.Reader, kind, "")
+				if !ok {
+					return nil, nil
+				}
+				return s.rankedScores(ctx, key, ids)
 			}}
 	}
 	res, err := s.o.Hub.Search(ctx, text, opts)
@@ -169,10 +169,12 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result SearchPag
 		return empty, err
 	}
 	ids := make([]string, 0, len(res.Hits))
+	refs := make([]contentref.ContentRef, 0, len(res.Hits))
 	for _, h := range res.Hits {
 		ids = append(ids, h.ContentID)
+		refs = append(refs, h.ContentRef)
 	}
-	picks, err := s.pickAmong(ctx, q, ids)
+	picks, err := s.pickSearchMatches(ctx, q, refs)
 	if err != nil {
 		return empty, err
 	}
@@ -226,11 +228,11 @@ func (s *Service) Typeahead(ctx context.Context, o TypeaheadOptions) (Typeahead,
 	if err != nil {
 		return out, err
 	}
-	ids := make([]string, 0, len(hits))
-	for _, h := range hits {
-		ids = append(ids, h.ContentID)
+	refs := make([]contentref.ContentRef, 0, len(hits))
+	for _, hit := range hits {
+		refs = append(refs, hit.ContentRef)
 	}
-	picks, err := s.pickAmong(ctx, q, ids)
+	picks, err := s.pickSearchMatches(ctx, q, refs)
 	if err != nil {
 		return out, err
 	}
@@ -327,4 +329,18 @@ func (s *Service) namedEntities(ctx context.Context, text string) ([]string, err
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+// Search grouping picks one matching document per item before pagination.
+// Preserve that exact edition during hydration instead of choosing a sibling.
+func (s *Service) pickSearchMatches(ctx context.Context, q *sel, hits []contentref.ContentRef) ([]pick, error) {
+	ids, versions := make([]string, 0, len(hits)), make([]string, 0, len(hits))
+	for _, hit := range hits {
+		if hit.Version() != "" {
+			ids = append(ids, hit.ContentID)
+			versions = append(versions, hit.Version())
+		}
+	}
+	selected := q.with("f.version_id=ANY(@d_search_versions::text[])", pgx.NamedArgs{"d_search_versions": versions})
+	return s.pickAmong(ctx, selected, ids)
 }

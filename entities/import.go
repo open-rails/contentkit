@@ -59,7 +59,7 @@ func (s *Store) bound(tx pgx.Tx) *Store {
 // the content a moved or deleted entity reaches follow. A merged entity is
 // ErrConflict; a taken slug too. An active entity of an auth_scope kind keeps
 // the AuthKit scope it names or has; one with neither is provisioned, by the
-// scope sync job, only with provision (else ErrInvalid).
+// caller after commit with provision (else ErrInvalid).
 func (s *Store) ImportEntities(ctx context.Context, q pgx.Tx, in []ImportEntity, provision bool) error {
 	if len(in) == 0 {
 		return nil
@@ -185,7 +185,7 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
  ORDER BY r.ordinal
  ON CONFLICT (tenant_id, id) DO UPDATE SET slug = EXCLUDED.slug, internal = EXCLUDED.internal, scope_id = EXCLUDED.scope_id, parent_id = EXCLUDED.parent_id, state = EXCLUDED.state,
   attributes = EXCLUDED.attributes, cover = CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END,
-  avatar = EXCLUDED.avatar, owner_user_id = EXCLUDED.owner_user_id, auth_scope = coalesce(EXCLUDED.auth_scope, g.auth_scope),
+  avatar = EXCLUDED.avatar, owner_user_id = EXCLUDED.owner_user_id, auth_scope = CASE WHEN g.kind='channel' AND g.state IS DISTINCT FROM EXCLUDED.state THEN NULL ELSE coalesce(EXCLUDED.auth_scope,g.auth_scope) END,
   created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, revision = g.revision + 1
  WHERE (g.slug, g.internal, g.scope_id, g.parent_id, g.state, g.attributes, g.avatar, g.owner_user_id, g.auth_scope, g.created_at, g.cover)
   IS DISTINCT FROM (EXCLUDED.slug, EXCLUDED.internal, EXCLUDED.scope_id, EXCLUDED.parent_id, EXCLUDED.state, EXCLUDED.attributes, EXCLUDED.avatar, EXCLUDED.owner_user_id,
@@ -284,21 +284,15 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 	if err := s.markDirty(ctx, q, marks); err != nil {
 		return err
 	}
-	// Scope changes and owned-content deletion/restoration are admitted with
-	// the imported entity, even when no workers run in this process.
-	var sync []string
-	for _, g := range marks {
-		before, exists := stored[string(g.ID)]
-		ownedChanged := s.cfg.EntityKinds[g.Kind].Owner == "user" && (!exists || before.State != g.State)
-		if ownedChanged || g.State != StateActive && g.AuthScope != "" || provision && slices.Contains(s.unscoped([]Entity{g}), string(g.ID)) {
-			sync = append(sync, string(g.ID))
-		}
-	}
-	return s.queueSync(ctx, q, sync)
+
+	return nil
 }
 
 // checkImport validates one entity's own fields against its kind.
 func (s *Store) checkImport(g *ImportEntity) (importRow, error) {
+	if !s.channels && (g.OwnerUserID != "" || g.AuthScope != "") {
+		return importRow{}, fmt.Errorf("%w: metadata has no authoring owner or scope", ErrInvalid)
+	}
 	kind := strings.TrimSpace(g.Kind)
 	gk, err := s.entityKind(kind)
 	if err != nil {

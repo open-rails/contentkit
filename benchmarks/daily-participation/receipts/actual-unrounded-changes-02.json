@@ -1,0 +1,371 @@
+[
+  {
+    "current_id": "00000001-0000-7000-8000-000000017960",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.000961323394484946,
+    "position": 1969,
+    "previous_id": "00000001-0000-7000-8000-00000001793f",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017961",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.000961323394484946,
+    "position": 1970,
+    "previous_id": "00000001-0000-7000-8000-000000017940",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017962",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.000961323394484946,
+    "position": 1971,
+    "previous_id": "00000001-0000-7000-8000-000000017941",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017963",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.000961323394484946,
+    "position": 1972,
+    "previous_id": "00000001-0000-7000-8000-000000017942",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017964",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.000961323394484946,
+    "position": 1973,
+    "previous_id": "00000001-0000-7000-8000-000000017943",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017965",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.000961323394484946,
+    "position": 1974,
+    "previous_id": "00000001-0000-7000-8000-000000017944",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017966",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.000961323394484946,
+    "position": 1975,
+    "previous_id": "00000001-0000-7000-8000-000000017945",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017967",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.000961323394484946,
+    "position": 1976,
+    "previous_id": "00000001-0000-7000-8000-000000017946",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001793f",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1977,
+    "previous_id": "00000001-0000-7000-8000-000000017947",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017940",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1978,
+    "previous_id": "00000001-0000-7000-8000-000000017948",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017941",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1979,
+    "previous_id": "00000001-0000-7000-8000-000000017949",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017942",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1980,
+    "previous_id": "00000001-0000-7000-8000-00000001794a",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017943",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1981,
+    "previous_id": "00000001-0000-7000-8000-00000001794b",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017944",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1982,
+    "previous_id": "00000001-0000-7000-8000-00000001794c",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017945",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1983,
+    "previous_id": "00000001-0000-7000-8000-00000001794d",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017946",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1984,
+    "previous_id": "00000001-0000-7000-8000-00000001794e",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017947",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1985,
+    "previous_id": "00000001-0000-7000-8000-00000001794f",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017948",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1986,
+    "previous_id": "00000001-0000-7000-8000-000000017950",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017949",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1987,
+    "previous_id": "00000001-0000-7000-8000-000000017951",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001794a",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1988,
+    "previous_id": "00000001-0000-7000-8000-000000017952",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001794b",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1989,
+    "previous_id": "00000001-0000-7000-8000-000000017953",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001794c",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1990,
+    "previous_id": "00000001-0000-7000-8000-000000017954",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001794d",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1991,
+    "previous_id": "00000001-0000-7000-8000-000000017955",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001794e",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1992,
+    "previous_id": "00000001-0000-7000-8000-000000017956",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001794f",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1993,
+    "previous_id": "00000001-0000-7000-8000-000000017957",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017950",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1994,
+    "previous_id": "00000001-0000-7000-8000-000000017958",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017951",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1995,
+    "previous_id": "00000001-0000-7000-8000-000000017959",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017952",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1996,
+    "previous_id": "00000001-0000-7000-8000-00000001795a",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017953",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1997,
+    "previous_id": "00000001-0000-7000-8000-00000001795b",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017954",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1998,
+    "previous_id": "00000001-0000-7000-8000-00000001795c",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017955",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 1999,
+    "previous_id": "00000001-0000-7000-8000-00000001795d",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017956",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2000,
+    "previous_id": "00000001-0000-7000-8000-00000001795e",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017957",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2001,
+    "previous_id": "00000001-0000-7000-8000-00000001795f",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.0009613233944849458
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017958",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2002,
+    "previous_id": "00000001-0000-7000-8000-000000017960",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.000961323394484946
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-000000017959",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2003,
+    "previous_id": "00000001-0000-7000-8000-000000017961",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.000961323394484946
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001795a",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2004,
+    "previous_id": "00000001-0000-7000-8000-000000017962",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.000961323394484946
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001795b",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2005,
+    "previous_id": "00000001-0000-7000-8000-000000017963",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.000961323394484946
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001795c",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2006,
+    "previous_id": "00000001-0000-7000-8000-000000017964",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.000961323394484946
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001795d",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2007,
+    "previous_id": "00000001-0000-7000-8000-000000017965",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.000961323394484946
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001795e",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2008,
+    "previous_id": "00000001-0000-7000-8000-000000017966",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.000961323394484946
+  },
+  {
+    "current_id": "00000001-0000-7000-8000-00000001795f",
+    "current_item_score_before": 0.0009613233944849458,
+    "current_item_score_now": 0.0009613233944849458,
+    "position": 2009,
+    "previous_id": "00000001-0000-7000-8000-000000017967",
+    "previous_item_score_before": 0.0009613233944849458,
+    "previous_item_score_now": 0.000961323394484946
+  }
+]

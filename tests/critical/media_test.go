@@ -154,7 +154,7 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	must(t, err)
 	registry, err := media.NewRegistry(config)
 	must(t, err)
-	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, ImageWorkers: 1, ImageSources: 1, VideoWorkers: 1, ShutdownGrace: time.Second}
+	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second}
 	if accountPrimary {
 		workerConfig.AccountSchema, workerConfig.AccountWorkerSchema = accountStorage.Schema, accountStorage.WorkerSchema
 	}
@@ -226,7 +226,7 @@ func TestRealMediaIngest(t *testing.T) {
 		}
 	})
 	t.Run("CK-J09-S01_real_image_upload_produces_a_readable_rendition", func(t *testing.T) {
-		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{"en": {Title: "Image processing"}}})
+		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Image processing"}}}}})
 		must(t, err)
 		if len(item.Versions) != 1 {
 			t.Fatal("gallery fixture lacks its edition")

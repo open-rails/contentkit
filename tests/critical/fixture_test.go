@@ -110,7 +110,7 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 	w.globalReviewer = w.roles.Root.Role("reviewer", moderate)
 	channel := w.roles.Persona("channel")
 	channelPermissions := map[string]iam.Perm{}
-	for _, permission := range access.EntityPermissions("channel") {
+	for _, permission := range access.ChannelPermissions() {
 		channelPermissions[permission] = channel.Declare(permission)[0]
 	}
 	w.channelWriter = channel.Role("writer", channelPermissions["channel:content:write"])
@@ -169,8 +169,8 @@ func (w *world) newApplication(t *testing.T, tenant *authkit.Client, tid iam.Ten
 	// All apps share tables so missing tenant/app predicates cannot hide
 	// behind separately provisioned databases or schemas.
 	cfg := ck.Config{Scope: &scope, Database: ck.DatabaseConfig{Schema: w.schema},
-		Content: kinds.Config{Languages: []string{"en", "de"}, Tiers: []string{"gold"}, EntityKinds: map[string]kinds.EntityKind{"channel": {Route: "channels", Owner: "user", AuthScope: true, MaxPerOwner: 1}}, Kinds: map[string]kinds.Kind{
-			"article": {Route: "articles", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
+		Content: kinds.Config{Languages: []string{"en", "de"}, Tiers: []string{"gold"}, Channels: &kinds.Channels{Creation: "users", Route: "channels", MaxPerOwner: 1}, EntityKinds: map[string]kinds.EntityKind{}, Kinds: map[string]kinds.Kind{
+			"article": {Channel: &kinds.ChannelPolicy{}, Route: "articles", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			"gallery": {Route: "galleries", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Segments: true},
 		}},
 	}
@@ -257,7 +257,7 @@ func must(t testing.TB, err error) {
 func publishedArticle(t *testing.T, a *application, title string) catalog.Content {
 	t.Helper()
 	startPublicationRuntime(t, a)
-	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: title, Body: "Published body: " + title}}})
+	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title, Body: "Published body: " + title}}}}})
 	must(t, err)
 	item, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)

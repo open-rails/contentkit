@@ -1,0 +1,65 @@
+# Structural ContentKit model. Languages, filters and sites come from config.yaml.
+tiers: [premium]
+token_claims: [premium]
+# One internal staff channel; normal ContentKit migration creates its editor group.
+channels: {creation: staff}
+content_kinds:
+  gallery:
+    # Prepared choices; scope declarations are supplied from the host model below.
+    popularity:
+      - {id: 7d, days: 7}
+      - {id: 30d, days: 30}
+      - {id: 90d, days: 90}
+      - {id: 365d, days: 365}
+      - {id: all, all: true}
+    title_policy: original_and_version
+    # All galleries accept comments; editors cannot close or hide them.
+    comment_modes: [open]
+    # Subscription access only; individual content purchases are disabled.
+    access_levels: [public, tier]
+    access_scope: version
+    route: g
+    # SEO path: /{lang}/g/{CODE}/{series}/{title}.
+    path_entity: series
+    presentation: reader
+    # Locked galleries show their cover, title and groups only (owner ruling, #135).
+    locked: {show: [cover, entities]}
+    versions: {languages: one, traits: [manhwa_style]}
+    segments: true
+    entities: [tag, artist, character, series, voice_actor, translator]
+    attributes:
+      format: {type: enum, values: [doujin, manga, comic, cgset, collection], filterable: true, required: true}
+    sort: newest
+  blog:
+    # One official staff-managed channel; its posts are always public/free.
+    channel: {fixed: blog}
+    # Official blog posts are always public; paid access is disabled.
+    access_levels: [public]
+    route: blog
+    entities: [tag]
+    presentation: post
+    locked: {show: [cover, entities]}
+    versions: {languages: one, hidden: true}
+entity_kinds:
+  # Creatable kinds take new names typed in the content editor.
+  tag:
+    route: tags
+    membership_scopes: [content, version]
+    creatable: true
+    # featured: legacy's curated tag list (tags.released).
+    attributes: {categorical: {type: bool}, featured: {type: bool}}
+  # Artists, series, characters and voice actors show an avatar (docs/media.md).
+  artist:
+    route: artists
+    creatable: true
+    avatar: true
+    attributes:
+      type: {type: enum, values: [person, organization], filterable: true}
+      external_link: {type: string}
+      featured: {type: bool}
+  # Franchises; a parent may organize the legacy directory, never page order.
+  series: {route: series, parent: series, creatable: true, avatar: true, attributes: {categorical: {type: bool}}}
+  character: {route: characters, scoped_by: series, creatable: true, avatar: true}
+  voice_actor: {route: voice-actors, version_level: true, avatar: true, attributes: {external_link: {type: string}}}
+  # Our own translations (legacy protect) are versions in translator group doujins-com.
+  translator: {route: translators, version_level: true}

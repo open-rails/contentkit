@@ -104,7 +104,7 @@ func imports(k *media.Kind, m *media.Manifest) []media.File {
 
 // pagesOf is m's pages ready to publish.
 func pagesOf(k *media.Kind, m *media.Manifest) ([]page, error) {
-	if m.Meta[forkMeta] != nil || len(imports(k, m)) > 0 {
+	if len(imports(k, m)) > 0 {
 		return nil, ErrNotReady
 	}
 	out := []page{} // never nil: snapshots store pages as an array, which SQL counts
@@ -144,9 +144,6 @@ func pagesOf(k *media.Kind, m *media.Manifest) ([]page, error) {
 
 // tracksOf is m's audio ready to publish.
 func tracksOf(k *media.Kind, m *media.Manifest) ([]track, error) {
-	if m.Meta[forkMeta] != nil {
-		return nil, ErrNotReady
-	}
 	out := []track{}
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Playback, f.Path) {
@@ -177,7 +174,7 @@ func tracksOf(k *media.Kind, m *media.Manifest) ([]track, error) {
 	return out, nil
 }
 
-// lockSource serializes a version's publication with its forks and imports.
+// lockSource serializes a version's publication with source edits and imports.
 func (s *Service) lockSource(ctx context.Context, v Target) (func(), error) {
 	return LockSource(ctx, s.o.Pool, s.o.Tenant, v.Version)
 }

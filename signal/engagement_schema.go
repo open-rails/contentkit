@@ -31,7 +31,7 @@ var measuredSchema = map[string]tableSpec{
 			columnSpec{"revision", "UInt64"}, columnSpec{"visit_id", "String"}, columnSpec{"segment_id", "String"}, columnSpec{"occurred_at", "DateTime64(6, 'UTC')"},
 			columnSpec{"active_ms", "UInt32"}, columnSpec{"covered_units", "Array(UInt32)"}, columnSpec{"unit_attention", "Map(UInt32, UInt64)"},
 			columnSpec{"unit_total", "UInt32"}, columnSpec{"unit_scale", "UInt32"}, columnSpec{"resume", "String"}, columnSpec{"access_context", "String"},
-			columnSpec{"measurement", "String"}, columnSpec{"version", "UInt128"}, columnSpec{"ingested_at", "DateTime64(6, 'UTC')"}),
+			columnSpec{"measurement", "String"}, columnSpec{"version", "UInt128"}, columnSpec{"ingested_at", "DateTime64(6, 'UTC')"}, columnSpec{"origin_click_id", "String"}),
 	},
 	"engagement_state": {
 		engine: "ReplacingMergeTree", version: "version", sortingKey: "tenant, subject_kind, subject, content_kind, content_id, content_version_id",

@@ -32,6 +32,8 @@ type Config struct {
 	ContentFilters ContentFilters        `json:"content_filters,omitempty" yaml:"content_filters"`
 	Kinds          map[string]Kind       `json:"content_kinds" yaml:"content_kinds"`
 	EntityKinds    map[string]EntityKind `json:"entity_kinds,omitempty" yaml:"entity_kinds"`
+	Channels       *Channels             `json:"channels,omitempty" yaml:"channels"`
+	channelStorage bool
 }
 
 // ContentFilters is one app's shared entity-filter policy. Filters apply to
@@ -148,13 +150,12 @@ type Kind struct {
 	// Entities are the entity kinds content of this kind may join.
 	Entities   []string             `json:"entities,omitempty" yaml:"entities"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
-	// OwnerEntity fixes this kind to one site-owned channel, resolved by kind
-	// and slug in the current app. Permissions and access are configured separately.
-	// The referenced channel must be provisioned explicitly before writes.
-	// Omitted preserves caller-selected ownership, including creator channels.
-	OwnerEntity *EntityRef `json:"owner_entity,omitempty" yaml:"owner_entity"`
+	// Channel declares the one channel governing the overall item and all versions.
+	Channel *ChannelPolicy `json:"channel,omitempty" yaml:"channel"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
+	// Popularity declares the prepared ranking choices, in display/default order.
+	Popularity []PopularityBucket `json:"popularity,omitempty" yaml:"popularity"`
 	// Locked is what a viewer who does not open its content sees of it;
 	// nil is DefaultLocked.
 	Locked *Locked `json:"locked,omitempty" yaml:"locked"`
@@ -334,21 +335,21 @@ type EntityKind struct {
 	ScopedBy string `json:"scoped_by,omitempty" yaml:"scoped_by"`
 	// Owner is "site" (staff-managed) or "user" (channels, playlists): a
 	// signed-in person creates a user-owned entity and owns it.
-	Owner string `json:"owner,omitempty" yaml:"owner"`
+	Owner string `json:"-" yaml:"-"`
 	// MaxPerOwner caps the active entities of the kind one person owns; 0 is
 	// no cap. Staff are not capped.
-	MaxPerOwner int `json:"max_per_owner,omitempty" yaml:"max_per_owner"`
+	MaxPerOwner int `json:"-" yaml:"-"`
 	// Avatar gives site-owned entities a square avatar beside their cover;
 	// user-owned kinds always have one.
 	Avatar bool `json:"avatar,omitempty" yaml:"avatar"`
 	// Uploads limit what editors other than staff upload to a user-owned
 	// entity's media.
-	Uploads UploadLimits `json:"uploads,omitzero" yaml:"uploads"`
+	Uploads UploadLimits `json:"-" yaml:"-"`
 	// Entitled entities expose membership backed by their stable entitlement key.
-	Entitled bool `json:"entitled,omitempty" yaml:"entitled"`
+	Entitled bool `json:"-" yaml:"-"`
 	// AuthScope entities name an AuthKit group whose permissions govern their
 	// content (OnlyDemo channels).
-	AuthScope bool `json:"auth_scope,omitempty" yaml:"auth_scope"`
+	AuthScope bool `json:"-" yaml:"-"`
 	// MembershipScopes declares where this entity kind can be attached.
 	// Omitted keeps the legacy default: content, or version with VersionLevel.
 	MembershipScopes []MembershipScope `json:"membership_scopes,omitempty" yaml:"membership_scopes"`
@@ -433,6 +434,12 @@ func (c Config) Validate() error {
 		return nil
 	}
 	for name, gk := range c.EntityKinds {
+		if name != "channel" && (gk.Owner == "user" || gk.AuthScope || gk.Entitled || gk.MaxPerOwner != 0 || gk.Uploads != (UploadLimits{})) {
+			return fmt.Errorf("%w: authoring ownership, scopes and paid membership belong to channels, not metadata kind %s", ErrInvalid, name)
+		}
+		if name == "channel" && !c.channelStorage {
+			return fmt.Errorf("%w: channel is configured through channels, not entity_kinds", ErrInvalid)
+		}
 		if !identRE.MatchString(name) {
 			return fmt.Errorf("%w: group kind %q", ErrInvalid, name)
 		}
@@ -456,6 +463,9 @@ func (c Config) Validate() error {
 			seenScopes[scope] = true
 		}
 		for _, ref := range []string{gk.Parent, gk.ScopedBy} {
+			if ref == "channel" {
+				return fmt.Errorf("%w: metadata does not parent or scope channels", ErrInvalid)
+			}
 			if _, ok := c.EntityKinds[ref]; ref != "" && !ok {
 				return fmt.Errorf("%w: group kind %s names unknown group kind %q", ErrInvalid, name, ref)
 			}
@@ -466,7 +476,7 @@ func (c Config) Validate() error {
 		if gk.MaxPerOwner < 0 || gk.MaxPerOwner > 0 && gk.Owner != "user" {
 			return fmt.Errorf("%w: group kind %s: max_per_owner is a non-negative cap of user-owned groups", ErrInvalid, name)
 		}
-		if u := gk.Uploads; u.FilesPerHour < 0 || u.BytesPerDay < 0 || u.QuotaBytes < 0 || u != (UploadLimits{}) && gk.Owner != "user" {
+		if u := gk.Uploads; u.FilesPerHour < 0 || u.BytesPerDay < 0 || u.QuotaBytes < 0 || u != (UploadLimits{}) && gk.Owner != "user" && name != "channel" {
 			return fmt.Errorf("%w: group kind %s: uploads are non-negative limits of user-owned groups", ErrInvalid, name)
 		}
 		for _, r := range gk.Roles {
@@ -478,7 +488,34 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
+	if ch := c.Channels; ch != nil {
+		if ch.Creation != "staff" && ch.Creation != "users" {
+			return fmt.Errorf("%w: channels.creation must be staff or users", ErrInvalid)
+		}
+		if !c.channelStorage {
+			if err := route("channels", ch.Route); err != nil {
+				return err
+			}
+		}
+		if ch.MaxPerOwner < 0 || ch.MaxPerOwner > 0 && ch.Creation != "users" {
+			return fmt.Errorf("%w: channels.max_per_owner requires users creation", ErrInvalid)
+		}
+		if u := ch.Uploads; u.FilesPerHour < 0 || u.BytesPerDay < 0 || u.QuotaBytes < 0 {
+			return fmt.Errorf("%w: channel upload limits must be nonnegative", ErrInvalid)
+		}
+		for _, name := range ch.Entities {
+			if _, ok := c.EntityKinds[name]; !ok || name == "channel" {
+				return fmt.Errorf("%w: unknown channel metadata kind %q", ErrInvalid, name)
+			}
+		}
+	}
 	for name, k := range c.Kinds {
+		if name == "channel" {
+			return fmt.Errorf("%w: channel is reserved for authoring channels", ErrInvalid)
+		}
+		if err := c.validatePopularity(name, k.Popularity); err != nil {
+			return err
+		}
 		if k.AccessScope != "" && k.AccessScope != AccessContent && k.AccessScope != AccessVersion {
 			return fmt.Errorf("%w: kind %s has invalid access_scope %q", ErrInvalid, name, k.AccessScope)
 		}
@@ -526,15 +563,22 @@ func (c Config) Validate() error {
 			}
 		}
 		for _, g := range k.Entities {
-			if _, ok := c.EntityKinds[g]; !ok {
+			if _, ok := c.EntityKinds[g]; !ok || g == "channel" {
 				return fmt.Errorf("%w: kind %s names unknown group kind %q", ErrInvalid, name, g)
 			}
 		}
-		if ref := k.OwnerEntity; ref != nil {
-			owner, ok := c.EntityKinds[ref.Kind]
-			if !ok || strings.TrimSpace(ref.Slug) == "" || strings.TrimSpace(ref.Slug) != ref.Slug ||
-				owner.Owner == "user" || owner.ScopedBy != "" {
-				return fmt.Errorf("%w: kind %s owner_entity must name an unscoped site-owned entity", ErrInvalid, name)
+		if policy := k.Channel; policy != nil {
+			if c.Channels == nil {
+				return fmt.Errorf("%w: kind %s uses channels without channels configuration", ErrInvalid, name)
+			}
+			if policy.Fixed != "" && (strings.TrimSpace(policy.Fixed) != policy.Fixed || !routeRE.MatchString(policy.Fixed)) {
+				return fmt.Errorf("%w: kind %s has invalid fixed channel slug", ErrInvalid, name)
+			}
+			if policy.Fixed != "" && c.Channels.Creation == "users" {
+				return fmt.Errorf("%w: fixed channels require staff creation", ErrInvalid)
+			}
+			if k.AccessScope == AccessVersion {
+				return fmt.Errorf("%w: channel content uses parent-level access", ErrInvalid)
 			}
 		}
 		if e := k.PathEntity; e != "" && (!slices.Contains(k.Entities, e) || !c.EntityKinds[e].AllowsMembership(ContentScope)) {
@@ -716,6 +760,9 @@ func (a Attribute) normalize(v any) (any, error) {
 // first path segment of its pages (contenturl.Routes).
 func (c Config) Routes() map[string]string {
 	out := map[string]string{}
+	if c.Channels != nil && c.Channels.Route != "" {
+		out["channel"] = c.Channels.Route
+	}
 	for name, k := range c.Kinds {
 		out[name] = k.Route
 	}

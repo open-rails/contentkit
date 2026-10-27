@@ -180,6 +180,7 @@ type AvatarsConfig struct {
 // and a host building its own worker gives it, with its hooks, to
 // media.NewRegistry.
 func (c Config) MediaKinds() (media.Config, error) {
+	c.Content = c.Content.StorageModel()
 	if c.Scope != nil && c.Media != nil && c.Media.LegacyLayout && (c.Avatars != nil || c.Accounts != nil && c.Accounts.Avatars != nil) {
 		return media.Config{}, errors.New("contentkit: rollback avatar workers require the saved legacy registry; the scoped engine resolves the account key at startup")
 	}
@@ -354,9 +355,7 @@ type Deps struct {
 
 	// Moderator screens comments; nil publishes every comment.
 	Moderator content.ContentModerator
-	// Classifier entities free-text poll answers; nil refuses free-text polls.
-	Classifier content.AnswerClassifier
-	// ProviderDataEraser erases what a retaining Moderator or Classifier
+	// ProviderDataEraser erases what a retaining Moderator
 	// keeps; required with one.
 	ProviderDataEraser content.ProviderDataEraser
 	// Processor sanitizes comments, BodyProcessor content items' rich-text

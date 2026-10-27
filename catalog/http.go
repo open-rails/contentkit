@@ -24,7 +24,7 @@ import (
 // totalsPath is the totals route under a ContentKit mount.
 var totalsPath = httpapi.Contents.Prefix() + "/catalog/totals"
 
-func init() { httpapi.Register(httpapi.Contents, routes) }
+func init() { routes = append(routes, repostRoutes...); httpapi.Register(httpapi.Contents, routes) }
 
 const editorsDoc = " The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority."
 
@@ -56,9 +56,9 @@ var routes = []httpapi.Route[*Store]{
 		Query: []httpapi.Param{languageParam}, Responses: []httpapi.Reply{httpapi.OK(Version{})}, Errors: []string{httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleGetVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage", Resource: "contents", Auth: httpapi.Public,
-		Doc: "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's posts when they currently edit that channel.",
+		Doc: "Content items to manage, newest first: drafts, scheduled, held and live ones; deleted ones on their own. App content:write holders see all; others see their own posts with current edit-own permission, or a channel's original posts when they currently edit that channel.",
 		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published (live) or deleted; every state but deleted by default"),
-			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
+			httpapi.Text("channel_id", "only this primary channel's content, which the caller edits"),
 			httpapi.Text("access", "only items whose own rule has this level: public, tier, group, ppv or group_ppv"), httpapi.Text("tier", "only items whose rule names this configured tier"),
 			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), httpapi.Text("code", "only the item with this content code (any spelling), in every state unless state narrows it"),
 			httpapi.List("ids", "only these content ids (at most 100), in every state unless state narrows it"), languageParam}, httpapi.Page...),
@@ -67,7 +67,7 @@ var routes = []httpapi.Route[*Store]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/{kind}", Resource: "contents", Auth: httpapi.Public,
 		Doc: "Content items to manage for one configured kind. Uses the same permissions and filters as the cross-kind /manage listing. Unknown kinds return not_found.",
 		Query: append([]httpapi.Param{httpapi.Text("state", "draft, scheduled, published or deleted"),
-			httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
+			httpapi.Text("channel_id", "only this primary channel's content, which the caller edits"),
 			httpapi.Text("access", "only items whose own rule has this level: public, tier, group, ppv or group_ppv"), httpapi.Text("tier", "only items whose rule names this configured tier"),
 			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case"), httpapi.Text("code", "only the item with this content code (any spelling), in every state unless state narrows it"),
 			httpapi.List("ids", "only these content ids (at most 100), in every state unless state narrows it"), languageParam}, httpapi.Page...),
@@ -75,7 +75,7 @@ var routes = []httpapi.Route[*Store]{
 		Serve: httpapi.H((*Store).handleManage)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/{kind}/count", Resource: "contents", Auth: httpapi.Public,
 		Doc: "How many items of one kind the caller manages under the /manage/{kind} filters: exact up to 10,000; beyond that, truncated marks a lower bound.",
-		Query: []httpapi.Param{httpapi.Text("state", "draft, scheduled, published or deleted"), httpapi.Text("owner_group", "only this owner group's, which the caller edits"),
+		Query: []httpapi.Param{httpapi.Text("state", "draft, scheduled, published or deleted"), httpapi.Text("channel_id", "only this primary channel's content, which the caller edits"),
 			httpapi.Text("access", "only items whose own rule has this level: public, tier, group, ppv or group_ppv"), httpapi.Text("tier", "only items whose rule names this configured tier"),
 			httpapi.Text("q", "only items whose title, description or body contains this text, ignoring case")},
 		Responses: []httpapi.Reply{httpapi.OK(ManageCount{})}, Errors: []string{httpapi.CodeNotFound}},
@@ -102,22 +102,12 @@ var routes = []httpapi.Route[*Store]{
 		Doc:       "Returns a published or scheduled content item to a draft." + editorsDoc,
 		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleUnpublish)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/text/{language}", Resource: "contents", Auth: httpapi.Public,
-		Doc:     "Sets a content item's text in one language." + editorsDoc,
-		Request: Text{}, Responses: []httpapi.Reply{httpapi.OK(Content{})},
-		Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
-		Serve: httpapi.H((*Store).handlePutText)},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/text/{language}", Resource: "contents", Auth: httpapi.Public,
-		Doc:       "Removes a content item's text in one language." + editorsDoc,
-		Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
-		Serve: httpapi.H((*Store).handleDeleteText)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/creators", Resource: "contents", Auth: httpapi.Public,
 		Doc:     "Replaces a content item's creators." + editorsDoc,
 		Request: CreatorsInput{}, Responses: []httpapi.Reply{httpapi.OK(Content{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handlePutCreators)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/images", Resource: "contents", Auth: httpapi.Public,
-		Doc: "Takes a body image uploaded to one version (its private files): copies it into every other version, since versions share no files, " +
-			"and returns the reference to store in the body and a URL that shows it to the editor now." + editorsDoc,
+		Doc:     "Returns a reference and editor preview for an inline image uploaded to the selected version. No sibling version is changed." + editorsDoc,
 		Request: BodyImageInput{}, Responses: []httpapi.Reply{httpapi.OK(InlineImage{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound, "not_configured"}},
 		Serve: httpapi.H((*Store).handleImage)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/versions", Resource: "contents", Auth: httpapi.Public,
@@ -516,34 +506,6 @@ func (s *Store) handleUnpublish(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, r, http.StatusOK, r.PathValue("id"))
 }
 
-func (s *Store) handlePutText(w http.ResponseWriter, r *http.Request) {
-	actor, err := writer(r.Context())
-	var in Text
-	if err == nil {
-		err = decode(r, &in)
-	}
-	if err == nil {
-		err = s.PutText(r.Context(), actor, []TextPut{{ContentID: r.PathValue("id"), Language: r.PathValue("language"), Text: &in}})
-	}
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	s.respond(w, r, http.StatusOK, r.PathValue("id"))
-}
-
-func (s *Store) handleDeleteText(w http.ResponseWriter, r *http.Request) {
-	actor, err := writer(r.Context())
-	if err == nil {
-		err = s.PutText(r.Context(), actor, []TextPut{{ContentID: r.PathValue("id"), Language: r.PathValue("language")}})
-	}
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	s.respond(w, r, http.StatusOK, r.PathValue("id"))
-}
-
 func (s *Store) handlePutCreators(w http.ResponseWriter, r *http.Request) {
 	actor, err := writer(r.Context())
 	var in CreatorsInput
@@ -700,7 +662,7 @@ func (s *Store) handleManage(w http.ResponseWriter, r *http.Request) {
 				only = append(only, id)
 			}
 		}
-		ids, err = s.Manage(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerEntity: q.Get("owner_group"),
+		ids, err = s.Manage(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), Channel: q.Get("channel_id"),
 			Text: q.Get("q"), Code: q.Get("code"), Access: q.Get("access"), Tier: q.Get("tier"), IDs: only, Limit: limit, Offset: offset})
 	}
 	var v *Viewer
@@ -743,8 +705,8 @@ type ManageQuery struct {
 	Kind string
 	// State is draft, scheduled, published (live) or deleted; "" is every
 	// state but deleted.
-	State       string
-	OwnerEntity string
+	State   string
+	Channel string
 	// Text matches title, description or body, ignoring case.
 	Text string
 	// Code selects the item with this content code; with State "" it matches
@@ -763,7 +725,7 @@ type ManageQuery struct {
 const MaxManageIDs = 100
 
 // Manage lists the ids of items actor manages, newest first: every item for
-// root:content:write holders; else what they created, or with OwnerEntity the
+// root:content:write holders; else what they created, or with Channel the
 // entity's items when they edit it.
 func (s *Store) Manage(ctx context.Context, actor access.Actor, q ManageQuery) ([]string, error) {
 	if q.Limit <= 0 {
@@ -800,12 +762,12 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 		return "", nil, err
 	}
 	entity := false
-	if q.OwnerEntity != "" && !rights.write {
-		editors, err := s.entityEditor(ctx, s.pool, actor, []string{q.OwnerEntity})
+	if q.Channel != "" && !rights.write {
+		editors, err := s.entityEditor(ctx, s.pool, actor, []string{q.Channel})
 		if err != nil {
 			return "", nil, err
 		}
-		if !editors[q.OwnerEntity] {
+		if !editors[q.Channel] {
 			return "", nil, ErrForbidden
 		}
 		entity = true
@@ -851,14 +813,13 @@ func (s *Store) manageSelection(ctx context.Context, actor access.Actor, q Manag
 	return `SELECT c.id FROM ` + s.t.items + ` c WHERE c.tenant_id = $1 AND ` + state + `
  AND ($2 = '' OR c.kind = $2) AND ($3 = '' OR c.owner_entity_id = $3)
  AND ($4 OR $5 OR (c.created_by=$6 AND $6<>'' AND ((c.owner_entity_id IS NULL AND $12::boolean) OR c.owner_entity_id=ANY($13::text[]))))
- AND ($7 = '' OR strpos(lower(coalesce(c.original_title,'')),lower($7))>0 OR EXISTS (
- SELECT 1 FROM ` + s.t.versions + ` v JOIN ` + s.t.versionText + ` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND strpos(lower(t.title),lower($7))>0)
- OR EXISTS (SELECT 1 FROM ` + s.t.text + ` t WHERE t.tenant_id = c.tenant_id AND t.content_id = c.id
-  AND (strpos(lower(t.title), lower($7)) > 0 OR strpos(lower(t.description), lower($7)) > 0 OR strpos(lower(t.body), lower($7)) > 0)))
+ AND ($7='' OR EXISTS (SELECT 1 FROM ` + s.t.versions + ` v LEFT JOIN ` + s.t.versionText + ` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND
+ (strpos(lower(coalesce(v.original_title,'')),lower($7))>0 OR strpos(lower(coalesce(t.title,'')),lower($7))>0
+ OR strpos(lower(coalesce(t.description,'')),lower($7))>0 OR strpos(lower(coalesce(t.body,'')),lower($7))>0)))
  AND ($10 = '' OR EXISTS (SELECT 1 FROM ` + s.qs + `.content_codes k WHERE k.tenant_id = c.tenant_id AND k.content_kind = c.kind AND k.content_id = c.id AND k.code = $10))
  AND (cardinality($11::text[]) = 0 OR c.id = ANY($11::text[]))`,
-		[]any{s.tenant, q.Kind, q.OwnerEntity, rights.write, entity, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs), own.app, own.entities}, nil
+		[]any{s.tenant, q.Kind, q.Channel, rights.write, entity, viewerID(actor), strings.TrimSpace(q.Text), q.Limit, q.Offset, code, orEmpty(q.IDs), own.app, own.entities}, nil
 }
 
 // ManageCount is how many items a manage listing selects.
@@ -880,7 +841,7 @@ func (s *Store) handleManageCount(w http.ResponseWriter, r *http.Request) {
 	var out ManageCount
 	if err == nil {
 		q := r.URL.Query()
-		out, err = s.CountManaged(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), OwnerEntity: q.Get("owner_group"),
+		out, err = s.CountManaged(r.Context(), actor, ManageQuery{Kind: kind, State: q.Get("state"), Channel: q.Get("channel_id"),
 			Text: q.Get("q"), Access: q.Get("access"), Tier: q.Get("tier")})
 	}
 	if err != nil {
@@ -925,7 +886,7 @@ func (s *Store) accessCond(level, tier string) (string, error) {
 	switch access.Level(level) {
 	case "":
 		return "", nil
-	case access.Public, access.TierLevel, access.EntityLevel, access.PPV, access.EntityPPV:
+	case access.Public, access.TierLevel, access.ChannelLevel, access.PPV, access.ChannelPPV:
 	default:
 		return "", invalid("access %q must be public, tier, group, ppv or group_ppv", level)
 	}

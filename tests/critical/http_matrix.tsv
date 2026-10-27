@@ -37,7 +37,6 @@ CK-API-035	GET	/v1/polls/{id}	public		partial-security-only; positive/full funct
 CK-API-036	PATCH	/v1/polls/{id}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
 CK-API-037	DELETE	/v1/polls/{id}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
 CK-API-038	POST	/v1/polls/{id}/vote	public		partial-security-only; positive/full functionality deferred P1
-CK-API-039	POST	/v1/polls/{id}/answer	user		partial-security-only; positive/full functionality deferred P1
 CK-API-040	PUT	/v1/polls/{id}/image	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
 CK-API-041	POST	/v1/polls/{id}/options	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
 CK-API-042	PATCH	/v1/polls/{id}/options/{oid}	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
@@ -50,10 +49,10 @@ CK-API-048	GET	/v1/global-comment-bans	staff	root:comments:ban	included-critical
 CK-API-049	GET	/v1/global-comment-bans/{user}	staff	root:comments:ban	included-critical functionality and security
 CK-API-050	PUT	/v1/global-comment-bans/{user}	staff	root:comments:ban	included-critical functionality and security
 CK-API-051	DELETE	/v1/global-comment-bans/{user}	staff	root:comments:ban	included-critical functionality and security
-CK-API-052	GET	/v1/entities/{id}/held-comments	person		included-critical functionality and security
-CK-API-053	GET	/v1/entities/{id}/comment-bans	person		included-critical functionality and security
-CK-API-054	PUT	/v1/entities/{id}/comment-bans/{user}	person		included-critical functionality and security
-CK-API-055	DELETE	/v1/entities/{id}/comment-bans/{user}	person		included-critical functionality and security
+CK-API-052	GET	/v1/channels/{id}/held-comments	person		included-critical functionality and security
+CK-API-053	GET	/v1/channels/{id}/comment-bans	person		included-critical functionality and security
+CK-API-054	PUT	/v1/channels/{id}/comment-bans/{user}	person		included-critical functionality and security
+CK-API-055	DELETE	/v1/channels/{id}/comment-bans/{user}	person		included-critical functionality and security
 CK-API-056	GET	/v1/contents/{id}/can-comment	public		included-critical functionality and security
 CK-API-057	GET	/v1/entities/{id}/can-comment	public		included-critical functionality and security
 CK-API-058	GET	/v1/moderation/held	staff	root:moderation:review	included-critical functionality and security
@@ -80,8 +79,6 @@ CK-API-078	GET	/v1/contents	public		included-critical functionality and security
 CK-API-079	POST	/v1/contents/{id}/restore	public		included-critical functionality and security
 CK-API-080	POST	/v1/contents/{id}/publish	public		included-critical functionality and security
 CK-API-081	POST	/v1/contents/{id}/unpublish	public		included-critical functionality and security
-CK-API-082	PUT	/v1/contents/{id}/text/{language}	public		partial-security-only; positive/full functionality deferred P1
-CK-API-083	DELETE	/v1/contents/{id}/text/{language}	public		partial-security-only; positive/full functionality deferred P1
 CK-API-084	PUT	/v1/contents/{id}/creators	public		partial-security-only; positive/full functionality deferred P1
 CK-API-085	POST	/v1/contents/{id}/images	public		partial-security-only; positive/full functionality deferred P1
 CK-API-086	POST	/v1/contents/{id}/versions	public		partial-security-only; positive/full functionality deferred P1
@@ -109,7 +106,7 @@ CK-API-107	PATCH	/v1/entities/{id}	editor	root:entities:write	included-critical 
 CK-API-108	DELETE	/v1/entities/{id}	editor	root:entities:write	included-critical functionality and security
 CK-API-109	GET	/v1/manage/entities	staff	root:entities:write	included-critical functionality and security
 CK-API-110	GET	/v1/manage/entities/{id}	staff	root:entities:write	included-critical functionality and security
-CK-API-111	GET	/v1/me/entities	user		included-critical functionality and security
+CK-API-111	GET	/v1/me/channels	user		included-critical functionality and security
 CK-API-112	PUT	/v1/entities/{id}/names	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
 CK-API-113	POST	/v1/entities/{id}/names	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
 CK-API-114	DELETE	/v1/entities/{id}/names	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
@@ -129,7 +126,6 @@ CK-API-133	POST	/v1/contents/{id}/versions/{version}/page-notices/{notice}/dismi
 CK-API-134	POST	/v1/contents/{id}/versions/{version}/page-notices/{notice}/restore	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
 CK-API-135	GET	/v1/contents/{id}/versions/{version}/reader	public		partial-security-only; positive/full functionality deferred P1
 CK-API-136	PUT	/v1/contents/{id}/versions/{version}/reader	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
-CK-API-137	POST	/v1/contents/{id}/versions/{version}/fork	user		partial-security-only; positive/full functionality deferred P1
 CK-API-138	GET	/v1/contents/{id}/versions/{version}/download	public		included-critical functionality and security
 CK-API-139	GET	/v1/contents/{id}/versions/{version}/archive	public		included-critical functionality and security
 CK-API-140	GET	/v1/me/library	user		included-critical functionality and security
@@ -159,3 +155,25 @@ CK-API-164	GET	/v1/me/stats	user		partial-security-only; positive/full functiona
 CK-API-165	GET	/v1/manage/search-suggestions	public		included-critical functionality and security
 CK-API-166	POST	/v1/import	staff	root:import:write	partial-security-only; positive/full functionality deferred P1
 CK-API-167	POST	/v1/import/external-ids	staff	root:import:write	partial-security-only; positive/full functionality deferred P1
+CK-API-168	GET	/v1/channels/{id}/comments	public		included-critical functionality and security
+CK-API-169	POST	/v1/channels/{id}/comments	public		included-critical functionality and security
+CK-API-170	POST	/v1/channels/{id}/like	public		included-critical functionality and security
+CK-API-171	POST	/v1/channels/{id}/dislike	public		included-critical functionality and security
+CK-API-172	DELETE	/v1/channels/{id}/reaction	public		included-critical functionality and security
+CK-API-173	GET	/v1/channels/{id}/reaction	public		included-critical functionality and security
+CK-API-174	POST	/v1/channels/{id}/favorite	user		included-critical functionality and security
+CK-API-175	DELETE	/v1/channels/{id}/favorite	user		included-critical functionality and security
+CK-API-176	GET	/v1/channels/{id}/favorite	public		included-critical functionality and security
+CK-API-177	GET	/v1/channels/{id}/can-comment	public		included-critical functionality and security
+CK-API-178	PUT	/v1/channels/{id}/reposts/{content_id}	editor	root:content:write	included-critical functionality and security
+CK-API-179	DELETE	/v1/channels/{id}/reposts/{content_id}	editor	root:content:write	included-critical functionality and security
+CK-API-180	GET	/v1/manage/channels	staff	root:channels:write	included-critical functionality and security
+CK-API-181	GET	/v1/channels	public		included-critical functionality and security
+CK-API-182	POST	/v1/channels	editor	root:channels:write	included-critical functionality and security
+CK-API-183	GET	/v1/channels/{id}	public		included-critical functionality and security
+CK-API-184	PATCH	/v1/channels/{id}	editor	root:channels:write	included-critical functionality and security
+CK-API-185	DELETE	/v1/channels/{id}	editor	root:channels:write	included-critical functionality and security
+CK-API-186	GET	/v1/manage/channels/{id}	staff	root:channels:write	included-critical functionality and security
+CK-API-187	GET	/v1/channels/{id}/entities	public		included-critical functionality and security
+CK-API-188	PUT	/v1/channels/{id}/entities	editor	root:channels:write	included-critical functionality and security
+CK-API-189	GET	/v1/channels/{id}/contents	public		included-critical functionality and security

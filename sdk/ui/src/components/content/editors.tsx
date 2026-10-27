@@ -1,7 +1,7 @@
 import { cn } from "cn";
 import { chapterRanges } from "../../client/chapters.js";
 import { publicationOf, publicationPhase } from "../../client/publication.js";
-import { saveEditionAccess, selectedEdition } from "../../client/edition-access.js";
+import { contentAccess, saveContentAccess, selectedEdition } from "../../client/edition-access.js";
 import { createPortal } from "react-dom";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Add01Icon } from "@hugeicons/core-free-icons";
@@ -13,6 +13,8 @@ import type { Content, ContentModel, Rule, SegmentInput, Version, VersionState }
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { useKinds } from "../../react/entities.js";
+import { useChannel } from "../../react/channels.js";
+import { ChannelPicker } from "../channels/directory.js";
 import { useMediaRead } from "../../react/read.js";
 import { usePresets } from "../../react/public.js";
 import { useContentScope } from "../../react/use-resource.js";
@@ -29,7 +31,7 @@ import { Skeleton } from "#ckui/ui/skeleton";
 import { MediaFolderEditor } from "../media-folder-editor.js";
 import { SortableList } from "../sortable-list.js";
 import { ErrorLine, useAction } from "../social/parts.js";
-import { EntityPicker, labelOf, useEntityNames, type Labels } from "../entities/parts.js";
+import { labelOf, type Labels } from "../entities/parts.js";
 import { AttributeFields, formOf } from "../entities/fields.js";
 import { MembershipEditor } from "../entities/memberships.js";
 import { useDraft } from "../../react/use-draft.js";
@@ -252,7 +254,7 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
   );
 }
 
-/** A rule's form: level, tiers, group (the content's owner group by default), the preview its kind has and optional audience releases. */
+/** A rule's form: level, tiers, channel (the parent item's channel by default), the preview its kind has and optional audience releases. */
 export function RuleFields({ value, onChange, model, kind, owner, labels, client }: { value: Rule; onChange: (r: Rule) => void; model: ContentModel | null; kind: string; owner?: string; labels?: Labels; client: ContentKitClient }) {
   const { t } = useMessages();
   const id = useId();
@@ -261,15 +263,10 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
   const declaredLevels = spec?.access_levels;
   const fixedTier = !!declaredLevels?.length && tiers.length === 1;
   const levels = declaredLevels?.length ? LEVELS.filter((level) => declaredLevels.includes(level)) : LEVELS;
-  const entityKinds = Object.entries(model?.entity_kinds ?? {})
-    .filter(([, g]) => g.entitled || g.auth_scope)
-    .map(([k]) => k);
-  const releaseLevels = levels.filter((level) => level === "public" || level === "tier" && tiers.length > 0 || level === "group" && entityKinds.length > 0);
-  // Picked once the model has loaded: its first group kind until one is chosen.
-  const [chosenKind, setEntityKind] = useState<string>();
-  const entityKind = chosenKind ?? entityKinds[0] ?? "";
-  const named = useEntityNames(value.group_id ? [value.group_id] : [], { client });
-  const group = value.group_id ? named.get(value.group_id) : undefined;
+  const hasChannels = !!model?.channels?.entitled;
+  const releaseLevels = levels.filter((level) => level === "public" || level === "tier" && tiers.length > 0 || level === "group" && hasChannels);
+  const named = useChannel(value.group_id, { client });
+  const group = named.channel;
   const set = (patch: Partial<Rule>) => onChange({ ...value, ...patch });
   const pages = spec?.presentation === "reader";
   return (
@@ -287,7 +284,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
             <SelectValue>{(v: string) => t(`contentEditor.level_${v as Rule["level"]}`)}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            {levels.filter((l) => (l !== "tier" || tiers.length) && (!l.startsWith("group") || entityKinds.length)).map((l) => (
+            {levels.filter((l) => (l !== "tier" || tiers.length) && (!l.startsWith("group") || hasChannels)).map((l) => (
               <SelectItem key={l} value={l}>
                 {t(`contentEditor.level_${l}`)}
               </SelectItem>
@@ -317,21 +314,8 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
               {group ? group.name || group.slug : value.group_id}
             </span>
           ) : null}
-          {entityKinds.length > 1 && (
-            <Select value={entityKind} onValueChange={(v) => setEntityKind(String(v))}>
-              <SelectTrigger size="sm" aria-label={t("entityEditor.edgeKind")}>
-                <SelectValue>{(v: string) => labelOf(labels, v)}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {entityKinds.map((k) => (
-                  <SelectItem key={k} value={k}>
-                    {labelOf(labels, k)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {entityKind && <EntityPicker key={entityKind} kind={entityKind} label={t("contentEditor.entity")} client={client} onPick={(g) => set({ group_id: g.id })} />}
+          {hasChannels && !owner && <ChannelPicker label={t("channels.channel")} client={client} onPick={(channel) => set({ group_id: channel.id })} />}
+
         </div>
       )}
       {value.level !== "public" && (
@@ -362,7 +346,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
               <SelectContent>{releaseLevels.map((level) => <SelectItem key={level} value={level}>{t(`contentEditor.level_${level as Rule["level"]}`)}</SelectItem>)}</SelectContent>
             </Select>
             {release.level === "tier" && tiers.map((tier) => <label key={tier} className="flex items-center gap-1"><Switch aria-label={labelOf(labels, tier)} checked={release.tiers?.includes(tier) ?? false} onCheckedChange={(on) => change({ tiers: on ? [...(release.tiers ?? []), tier] : release.tiers?.filter((t) => t !== tier) })} />{labelOf(labels, tier)}</label>)}
-            {release.level === "group" && <><span>{release.group_id}</span><EntityPicker kind={entityKind} label={t("contentEditor.entity")} client={client} onPick={(g) => change({ group_id: g.id })} /></>}
+            {release.level === "group" && <><span>{release.group_id}</span><ChannelPicker label={t("channels.channel")} client={client} onPick={(channel) => change({ group_id: channel.id })} /></>}
             <Button type="button" variant="ghost" size="sm" onClick={() => set({ releases: value.releases!.filter((_, i) => i !== index) })}>{t("contentEditor.removeRelease")}</Button>
           </div>;
         })}
@@ -372,7 +356,7 @@ export function RuleFields({ value, onChange, model, kind, owner, labels, client
   );
 }
 
-/** A rule the server takes: a group level names its group. */
+/** A rule the server takes: a channel level names its channel. */
 export const complete = (r: Rule) => (!grouped(r.level) || !!r.group_id) && (r.releases ?? []).every((release) => !!release.at && (release.level !== "tier" || !!release.tiers?.length) && (release.level !== "group" || !!release.group_id));
 
 /** A rule as stored: empty previews and absent fields left out. */
@@ -399,7 +383,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
   const client = useContentKitClient(p.client);
   const { model } = useKind(content.kind, p.client);
   const version = selectedEdition(content);
-  const rule = useDraft(version?.access ?? (model ? defaultAccessRule(model, content.kind) : { level: "public" } as Rule));
+  const rule = useDraft(contentAccess(content) ?? (model ? defaultAccessRule(model, content.kind) : { level: "public" } as Rule));
   const reload = useEditorReload(content, p.client);
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
@@ -410,13 +394,13 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
         className="grid gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!version) return;
+          if (!content.channel_id && !version) return;
           setSaved(false);
           const settle = rule.checkpoint();
-          void save.run(() => saveEditionAccess(client.contents, content, cleanRule(rule.value), version.id)).then((d) => d && setSaved(settle(d.access ?? rule.value)));
+          void save.run(() => saveContentAccess(client.contents, content, cleanRule(rule.value), version?.id)).then((d) => d && setSaved(settle(contentAccess(d, version?.id) ?? rule.value)));
         }}
       >
-        <RuleFields value={rule.value} onChange={(r) => { rule.edit(r); setSaved(false); }} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />
+        <RuleFields value={rule.value} onChange={(r) => { rule.edit(r); setSaved(false); }} model={model} kind={content.kind} owner={content.channel_id} labels={p.labels} client={client} />
         <ErrorLine error={save.error} />
         <div className="flex justify-end gap-2 border-t border-border pt-4">
           <Button
@@ -428,7 +412,7 @@ function AccessForm({ content, ...p }: Common & { content: Content }) {
               const settle = rule.checkpoint();
               void save.run(reload).then((d) => {
                 if (!d) return;
-                settle(d.versions.find((v) => v.id === version?.id)?.access ?? rule.value);
+                settle(contentAccess(d, version?.id) ?? rule.value);
                 setSaved(false);
               });
             }}
@@ -593,32 +577,17 @@ function LanguageFields({ languages, value, many, onChange }: { languages: reado
   );
 }
 
-/** A sibling a new version may start from, and what it has to copy. */
-export interface VersionSource {
-  id: string;
-  label: string;
-  audio: boolean;
-  chapters: boolean;
-}
-
-export function AddVersion({ languages, many, pending, sources, onAdd, heading = true, collapsible = false }: {
+export function AddVersion({ languages, many, pending, onAdd, heading = true, collapsible = false }: {
   languages: readonly string[];
   many: boolean;
   pending: boolean;
-  /** Offers "Start from" one of these: the new version copies its files, and its audio and chapters when ticked. */
-  sources?: readonly VersionSource[];
-  onAdd: (v: { languages: string[] }, from?: { from: string; playback: boolean; segments: boolean }) => void;
+  onAdd: (v: { languages: string[] }) => void;
   heading?: boolean;
   collapsible?: boolean;
 }) {
   const { t } = useMessages();
-  const id = useId();
   const [shown, setShown] = useState(!collapsible);
   const [langs, setLangs] = useState<string[]>([]);
-  const [from, setFrom] = useState(NONE);
-  const [audio, setAudio] = useState(true);
-  const [chapters, setChapters] = useState(false);
-  const source = sources?.find((s) => s.id === from);
   // In its own card section it gets a divider; inside a dialog (heading off) the dialog frames it.
   const frame = cn("grid gap-3", heading && "border-t border-border pt-4");
   if (!shown)
@@ -639,41 +608,6 @@ export function AddVersion({ languages, many, pending, sources, onAdd, heading =
         </div>
       )}
       <LanguageFields languages={languages} value={langs} many={many} onChange={setLangs} />
-      {!!sources?.length && (
-        <div className="grid w-full gap-2" data-ckui="add-version-source">
-          <Label htmlFor={`${id}-from`}>{t("readerEditor.startFrom")}</Label>
-          <Select value={from} onValueChange={(v) => setFrom(String(v ?? NONE))}>
-            <SelectTrigger id={`${id}-from`} size="sm" className="w-fit">
-              <SelectValue>{(v: string) => sources.find((s) => s.id === v)?.label ?? t("readerEditor.startEmpty")}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NONE}>{t("readerEditor.startEmpty")}</SelectItem>
-              {sources.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-sm text-pretty text-muted-foreground">{t("readerEditor.startFromHelp")}</p>
-          {source && (source.audio || source.chapters) && (
-            <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
-              {source.audio && (
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" className="size-4 accent-primary" checked={audio} onChange={(e) => setAudio(e.target.checked)} />
-                  {t("readerEditor.copyAudio")}
-                </label>
-              )}
-              {source.chapters && (
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" className="size-4 accent-primary" checked={chapters} onChange={(e) => setChapters(e.target.checked)} />
-                  {t("readerEditor.copyChapters")}
-                </label>
-              )}
-            </div>
-          )}
-        </div>
-      )}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
@@ -681,7 +615,7 @@ export function AddVersion({ languages, many, pending, sources, onAdd, heading =
           variant="outline"
           disabled={pending || !langs.length}
           onClick={() => {
-            onAdd({ languages: langs }, source && { from: source.id, playback: source.audio && audio, segments: source.chapters && chapters });
+            onAdd({ languages: langs });
             setLangs([]);
             if (collapsible) setShown(false);
           }}
@@ -752,7 +686,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
     if(!valid)return false;
     setSaved(false);
     const settle=fields.checkpoint();
-    const accessChanged = fields.dirty.includes("rule");
+    const accessChanged = !content.channel_id && fields.dirty.includes("rule");
     const out=await save.run(()=>client.contents.updateVersion(content.id,v.id,{languages:langs,traits,publish_at:fromLocalInput(at),...(state?{state}:{}),...(accessChanged?{access:cleanRule(rule)}:{})}));
     if(!out)return false;
     const clean=settle(seed(out));setSaved(clean);return clean;
@@ -834,7 +768,7 @@ function VersionForm({ content, version: v, model, media, chapters = true, befor
             </fieldset>
           )}
           {scheduleTarget === undefined ? schedule : scheduleTarget && createPortal(schedule, scheduleTarget)}
-          <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} owner={content.owner_group_id} labels={p.labels} client={client} />
+          {!content.channel_id && <RuleFields value={rule} onChange={(rule)=>edit({rule})} model={model} kind={content.kind} labels={p.labels} client={client} />}
           {publicationOf(v)?.error && <ErrorLine>{publicationOf(v)!.error}</ErrorLine>}
           <ErrorLine error={save.error} />
           <div className="flex flex-wrap items-center gap-3">

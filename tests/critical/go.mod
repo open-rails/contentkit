@@ -9,8 +9,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/open-rails/authkit v1.41.0
-	github.com/open-rails/contentkit v0.129.0
-	github.com/open-rails/contentkit/adapters/authkit v0.12.0
+	github.com/open-rails/contentkit v0.131.1
+	github.com/open-rails/contentkit/adapters/authkit v0.14.0
 	golang.org/x/image v0.46.0
 )
 
@@ -138,7 +138,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect

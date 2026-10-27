@@ -44,15 +44,13 @@ type Resolution struct {
 	// Comments is the item's comments setting: open (also ""), closed or
 	// hidden.
 	Comments string
-	// OwnerGroup is the user-owned group whose comment moderators
-	// (access.GroupCommentsModerate in its scope, and its owner) moderate the
-	// item's comments: a content item's owner group, or the group itself;
-	// nil when none.
-	OwnerEntity *OwnerEntity
+	// Channel names the primary authoring home whose current moderators manage
+	// this item and all its versions. Repost destinations never replace it.
+	Channel *Channel
 }
 
-// OwnerGroup names a user-owned group with what its permission checks need.
-type OwnerEntity struct {
+// Channel is the stored primary channel identity and its permission scope.
+type Channel struct {
 	Kind, ID, Owner, Scope string
 }
 

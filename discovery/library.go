@@ -102,9 +102,7 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
 	// a grant never publishes an unreleased edition. Deleted purchased editions
 	// retain live_from and can still appear.
 	rows, err := s.o.Pool.Query(ctx, `SELECT c.id,c.kind,c.state='deleted' OR c.deleted_at IS NOT NULL,
- CASE WHEN c.kind=ANY(@edition_titles::text[])
- THEN coalesce(nullif(ed.title,''),nullif(c.original_title,''),t.title,'') ELSE coalesce(t.title,'') END,
- CASE WHEN c.kind=ANY(@edition_titles::text[]) AND coalesce(ed.title,'')<>'' THEN ed.language ELSE coalesce(t.language,'') END,
+ coalesce(ed.title,''),coalesce(ed.language,''),
  ed.ids
  FROM `+s.t.items+` c
  JOIN LATERAL (
@@ -113,7 +111,7 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
    (array_agg(vt.language ORDER BY coalesce(@language=ANY(v.languages),false) DESC,v.position,v.id) FILTER(WHERE coalesce(vt.title,'')<>''))[1] AS language
   FROM `+s.t.versions+` v
   LEFT JOIN `+s.t.facets+` f ON f.tenant_id=v.tenant_id AND f.version_id=v.id
-  LEFT JOIN LATERAL (SELECT title,language FROM `+s.t.versionText+` x WHERE x.tenant_id=v.tenant_id AND x.version_id=v.id
+  LEFT JOIN LATERAL (SELECT coalesce(nullif(title,''),CASE WHEN c.kind=ANY(@edition_titles::text[]) THEN nullif(v.original_title,'') END,'') title,language FROM `+s.t.versionText+` x WHERE x.tenant_id=v.tenant_id AND x.version_id=v.id
    ORDER BY x.language=@language DESC,array_position(v.languages,x.language),array_position(@languages::text[],x.language),x.language LIMIT 1) vt ON true
   WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id
    AND EXISTS (SELECT 1 FROM unnest(@versions::text[], @version_parents::text[]) held(version_id, content_id)
@@ -122,8 +120,7 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q LibraryQuer
    AND `+scope+`
   HAVING count(*)>0
  ) ed ON true
- LEFT JOIN LATERAL(SELECT title,language FROM `+s.t.text+` x WHERE x.tenant_id=c.tenant_id AND x.content_id=c.id
-  ORDER BY x.language=@language DESC,array_position(@languages::text[],x.language),x.language LIMIT 1)t ON true
+
  WHERE c.tenant_id=@tenant AND c.id=ANY(@ids::text[]) AND (@cursor='' OR c.id<@cursor)
  ORDER BY c.id DESC LIMIT @limit`, args)
 	if err != nil {

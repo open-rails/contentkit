@@ -136,7 +136,7 @@ func (s *Service) pathsChanged(ctx context.Context, tx pgx.Tx, ref contentref.Co
 	if err := applyChapterPaths(ctx, tx, s.t.segments, s.o.Tenant, ref.Version(), renames, removed); err != nil {
 		return err
 	}
-	return s.enqueueTx(ctx, tx, publishArgs{Content: ref.ContentID, Version: ref.Version()})
+	return s.SchedulePublicationTx(ctx, tx, []Target{{Content: ref.ContentID, Version: ref.Version()}})
 }
 
 // ChapterPathHooks installs the same marker contract in stock worker recovery.

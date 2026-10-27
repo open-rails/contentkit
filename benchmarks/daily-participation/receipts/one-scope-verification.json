@@ -1,0 +1,26 @@
+[
+  {
+    "bucket": "scope0_7d",
+    "unique_sorted_ids": 100000,
+    "sample_scores_checked": 8,
+    "all_repeats_identical": true
+  },
+  {
+    "bucket": "scope0_30d",
+    "unique_sorted_ids": 100000,
+    "sample_scores_checked": 8,
+    "all_repeats_identical": true
+  },
+  {
+    "bucket": "scope0_365d",
+    "unique_sorted_ids": 100000,
+    "sample_scores_checked": 8,
+    "all_repeats_identical": true
+  },
+  {
+    "bucket": "scope0_all",
+    "unique_sorted_ids": 100000,
+    "sample_scores_checked": 8,
+    "all_repeats_identical": true
+  }
+]

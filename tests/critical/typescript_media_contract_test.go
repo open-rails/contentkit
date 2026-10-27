@@ -46,7 +46,7 @@ func TestTypeScriptMediaContracts(t *testing.T) {
 	})
 	t.Run("media_named_inline", func(t *testing.T) {
 		_, a, fixture := typeScriptMediaWorld(t)
-		item, err := a.client(fixture["owner"].(string)).PostContents(t.Context(), catalog.ContentInput{Kind: "article", Text: map[string]catalog.Text{"en": {Title: "Inline image post"}}})
+		item, err := a.client(fixture["owner"].(string)).PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Inline image post"}}}}})
 		must(t, err)
 		fixture["inlineRef"] = media.RefBody{Kind: "article", ID: item.ID, Version: item.Versions[0].ID}
 		runTypeScriptContract(t, "media_named_inline", fixture, []string{"MediaClient.uploadNamed", "MediaClient.uploadInline", "VersionsClient.download"})

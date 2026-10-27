@@ -10,7 +10,6 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
 )
 
 func TestDurableTextPublication(t *testing.T) {
@@ -25,9 +24,9 @@ func TestDurableTextPublication(t *testing.T) {
 		must(t, fleet.Stop(ctx))
 	})
 	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
-	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Text: map[string]catalog.Text{
+	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{
 		"en": {Title: "Durable release", Body: "Publication follows completed work"},
-	}})
+	}}}})
 	must(t, err)
 	due := w.clock.now().Add(time.Hour)
 	queued, err := admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: &due})
@@ -36,10 +35,15 @@ func TestDurableTextPublication(t *testing.T) {
 		t.Fatal("accepted publication was reported as completed before its worker ran")
 	}
 	var jobs int
-	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job
- WHERE kind='contentkit_content_publish_due' AND args->>'content'=$1 AND scheduled_at=$2`, item.ID, due).Scan(&jobs))
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job j
+ JOIN `+w.schema+`.content_publication_requests r ON r.id::text=j.args->>'id'
+ WHERE j.kind='contentkit_version_release' AND r.content_id=$1 AND j.scheduled_at=$2`, item.ID, due).Scan(&jobs))
 	if jobs != 1 {
 		t.Fatalf("accepted publication has %d durable scheduled jobs, want one", jobs)
+	}
+	request := currentReleaseJob(t, a, item.Versions[0].ID)
+	if !request.Due.Equal(due) {
+		t.Fatalf("accepted request due=%v, want %v", request.Due, due)
 	}
 	actual := due.Add(2 * time.Hour)
 	w.clock.set(actual)
@@ -58,19 +62,10 @@ func TestDurableTextPublication(t *testing.T) {
 			t.Fatalf("unfinished publication emitted a completed fact: %+v", event)
 		}
 	}
-	// The fixture clock advances independently from River's wall clock. An
-	// immediate run of the real registered worker catches up the overdue work.
-	job, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
-	must(t, err)
+	// Only wake the accepted request; no periodic scan can rescue missing work.
+	wakeDuePublicationJobs(t, a)
 	must(t, fleet.Start(t.Context()))
-	waitFor(t, func() bool {
-		row, err := fleet.JobGet(t.Context(), job.Job.ID)
-		must(t, err)
-		if row.State == rivertype.JobStateDiscarded {
-			t.Fatalf("publication worker failed: %+v", row.Errors)
-		}
-		return row.State == rivertype.JobStateCompleted
-	})
+	awaitDuePublications(t, a)
 	published, err := reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 	must(t, err)
 	if !published.Live || !published.Decision.Allowed || published.Body != "Publication follows completed work" {
@@ -104,49 +99,26 @@ func TestDurableTextPublication(t *testing.T) {
 		t.Fatalf("new edition did not copy its creation default: %+v", added.Access)
 	}
 	must(t, admin.DeleteContentVersion(t.Context(), item.ID, edition.ID))
-	// The injected catalog clock is now hours ahead of River's wall clock.
-	// Wake the registered worker explicitly for each newly accepted immediate
-	// edit, just as above; do not wait for that synthetic future wall-clock date.
-	deletedJob, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
-	must(t, err)
-	waitFor(t, func() bool {
-		row, err := fleet.JobGet(t.Context(), deletedJob.Job.ID)
-		must(t, err)
-		if row.State == rivertype.JobStateDiscarded {
-			t.Fatalf("deleted publication worker failed: %+v", row.Errors)
-		}
-		return row.State == rivertype.JobStateCompleted
-	})
+	awaitDuePublications(t, a)
 	// Deletion hides the edition from ordinary readers while retaining its
 	// completed publication for exact-key holders until physical purge.
 	_, err = reader.GetVersion(t.Context(), edition.ID, ck.GetVersionQuery{})
 	requireError(t, err, 404, "not_found")
 	_, err = admin.PatchContentVersion(t.Context(), item.ID, edition.ID, catalog.VersionInput{State: catalog.StatePublished})
 	must(t, err)
-	_, err = fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
-	must(t, err)
+	awaitDuePublications(t, a)
 	waitFor(t, func() bool {
 		got, err := reader.GetContentVersion(t.Context(), item.ID, edition.ID, ck.GetContentVersionQuery{})
 		return err == nil && got.Live
 	})
 	publicAt := actual.Add(time.Hour)
 	protected, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery",
-		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: publicAt, Level: access.Public}}},
-		Text:   map[string]catalog.Text{"en": {Title: "Audience promotion", Body: "Still protected until publication work completes"}},
+		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: publicAt, Level: access.Public}}}, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Audience promotion", Body: "Still protected until publication work completes"}}}},
 	})
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), protected.ID, catalog.PublishInput{})
 	must(t, err)
-	dueJob, err := fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_publish_due"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String())})
-	must(t, err)
-	waitFor(t, func() bool {
-		row, err := fleet.JobGet(t.Context(), dueJob.Job.ID)
-		must(t, err)
-		if row.State == rivertype.JobStateDiscarded {
-			t.Fatalf("protected publication worker failed: %+v", row.Errors)
-		}
-		return row.State == rivertype.JobStateCompleted
-	})
+	awaitDuePublications(t, a)
 	locked, err := reader.GetContent(t.Context(), protected.ID, ck.GetContentQuery{})
 	must(t, err)
 	if !locked.Live || locked.Decision.Allowed || locked.Body != "" {

@@ -14,15 +14,15 @@ type KeyKind uint8
 const (
 	KeyContent KeyKind = iota + 1 // <tenant>:content:<id>: legacy parent grant; audit/migration only
 	KeyVersion                    // <tenant>:content:<id>/<version>: one version
-	KeyEntity                     // <tenant>:group:<id>: every member of an entity, and content whose rule names it
+	KeyChannel                    // <tenant>:group:<id>: a channel membership named by an explicit rule
 	KeyTier                       // <tier>: a tier from config, such as premium
 )
 
 const (
 	contentNamespace = "content"
 	// Existing billing products and purchases retain this opaque namespace.
-	entityNamespace = "group"
-	maxTenant       = 64
+	channelNamespace = "group"
+	maxTenant        = 64
 	// MaxKeyBytes bounds a key: <tenant>:content:<id>/<version>.
 	MaxKeyBytes = maxTenant + len(":content:") + 36 + 1 + 36
 )
@@ -35,7 +35,7 @@ var ErrNotContentKey = errors.New("access: not a content key")
 type Key struct {
 	kind    KeyKind
 	tenant  string
-	id      string // the content or entity id
+	id      string // the content or channel id
 	version string // KeyVersion
 }
 
@@ -51,8 +51,8 @@ func VersionKey(tenant, content, version string) (Key, error) {
 	return makeKey(KeyVersion, tenant, content, version)
 }
 
-// EntityKey is the key of entity id.
-func EntityKey(tenant, id string) (Key, error) { return makeKey(KeyEntity, tenant, id, "") }
+// ChannelKey is the key of channel id.
+func ChannelKey(tenant, id string) (Key, error) { return makeKey(KeyChannel, tenant, id, "") }
 
 // TierKey is a tier's key, its bare name: ^[a-z][a-z0-9_-]{0,62}$.
 func TierKey(name string) (Key, error) {
@@ -65,8 +65,8 @@ func TierKey(name string) (Key, error) {
 // ContentPrefix is the keyspace of a tenant's content and version keys.
 func ContentPrefix(tenant string) string { return tenant + ":" + contentNamespace + ":" }
 
-// EntityPrefix is the keyspace of a tenant's entity keys.
-func EntityPrefix(tenant string) string { return tenant + ":" + entityNamespace + ":" }
+// ChannelPrefix is the keyspace of a tenant's channel keys.
+func ChannelPrefix(tenant string) string { return tenant + ":" + channelNamespace + ":" }
 
 // ParseKey parses a key string. Anything outside the grammar is
 // ErrNotContentKey, a bare string that is not a valid tier name included.
@@ -82,8 +82,8 @@ func ParseKey(s string) (Key, error) {
 	switch {
 	case !ok:
 		return Key{}, fmt.Errorf("%w: %q", ErrNotContentKey, s)
-	case ns == entityNamespace:
-		return EntityKey(tenant, id)
+	case ns == channelNamespace:
+		return ChannelKey(tenant, id)
 	case ns != contentNamespace:
 		return Key{}, fmt.Errorf("%w: namespace %q", ErrNotContentKey, ns)
 	}
@@ -96,7 +96,7 @@ func ParseKey(s string) (Key, error) {
 // Kind returns what the key grants; 0 for the zero Key.
 func (k Key) Kind() KeyKind { return k.kind }
 
-// Tenant is the tenant of a content, version or entity key.
+// Tenant is the tenant of a content, version or channel key.
 func (k Key) Tenant() string { return k.tenant }
 
 // Content is the content id of a content or version key.
@@ -110,9 +110,9 @@ func (k Key) Content() string {
 // Version is the version id of a version key.
 func (k Key) Version() string { return k.version }
 
-// Entity is the entity id of an entity key.
-func (k Key) Entity() string {
-	if k.kind == KeyEntity {
+// Entity is the channel id of an channel key.
+func (k Key) Channel() string {
+	if k.kind == KeyChannel {
 		return k.id
 	}
 	return ""
@@ -133,8 +133,8 @@ func (k Key) String() string {
 		return ContentPrefix(k.tenant) + k.id
 	case KeyVersion:
 		return ContentPrefix(k.tenant) + k.id + "/" + k.version
-	case KeyEntity:
-		return EntityPrefix(k.tenant) + k.id
+	case KeyChannel:
+		return ChannelPrefix(k.tenant) + k.id
 	case KeyTier:
 		return k.id
 	}

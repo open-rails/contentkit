@@ -1,0 +1,35 @@
+{
+  "database": "ck261_20261026_210446_3e3ddbf5",
+  "container": "ck254-contracts-ch",
+  "items": 100000,
+  "days": 365,
+  "scopes": 1,
+  "rows_expected": 36500000,
+  "daily_users": 60000,
+  "distinct_items_per_user_day_assumption": 10,
+  "qualified_item_user_days_assumption_per_year": 219000000,
+  "threads": 2,
+  "max_memory_bytes": 2147483648,
+  "query_cache": false,
+  "server": {
+    "version": "25.8.33.6",
+    "timezone": "UTC"
+  },
+  "python": "3.12.3",
+  "started_utc": "2026-10-26T21:04:46.538363+00:00",
+  "scope_populations": [
+    60000
+  ],
+  "pilot_scale_note": "Tier geometry implies items*6 qualified item-days/day in scope0; the 60k*10 assumption matches only the full100k-item run.",
+  "semantics": "round(avg(U/(N+20)),12) over rows/days present; every synthetic item available every day",
+  "limits": [
+    "Daily scalars are synthetic; no people or raw receipt deduplication is executed.",
+    "Repeated visits are generated as excluded diagnostic counts, not added to U.",
+    "Three-scope mode uses overlapping synthetic audience subsets; it is not source eligibility proof.",
+    "First observed run follows insertion and is not a controlled cold-cache run.",
+    "No cache flushing or service restart; concurrent shared-host work may affect latency.",
+    "All-time equals available fixture history (365 days in full run).",
+    "No production scoring, erasure, rollout or current-algorithm parity claim."
+  ],
+  "completed_utc": "2026-10-26T21:05:05.641583+00:00"
+}

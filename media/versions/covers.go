@@ -2,7 +2,6 @@ package versions
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"path"
 	"strings"
@@ -75,25 +74,26 @@ func (s *Service) applyCover(ctx context.Context, k *media.Kind, t Target) error
 	return err
 }
 
-// coverSource is the leading page upload of version t, whose manifest is m,
-// from its current ready-file snapshot; nil without one.
+// coverSource uses the prepared authoring page order, so generating the cover
+// never depends on an already-published reader snapshot.
 func (s *Service) coverSource(ctx context.Context, t Target, m *media.Manifest) (*media.File, error) {
-	p, err := s.current(ctx, s.o.Pool, t, kindPages)
-	if err != nil || p == nil || m == nil {
-		return nil, err
-	}
-	var snap pagesSnapshot
-	if err := json.Unmarshal(p.Source, &snap); err != nil {
-		return nil, err
-	}
-	if len(snap.Pages) == 0 {
+	if m == nil {
 		return nil, nil
 	}
-	f, ok := m.Get(snap.Pages[0].Path)
-	if !ok || f.Blob == "" {
-		return nil, nil
+	v, err := s.one(ctx, t)
+	if err != nil {
+		return nil, err
 	}
-	return &f, nil
+	k, err := s.reg.Kind(v.Kind)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range sourcePages(k, m) {
+		if media.PageIncluded(f) && f.Blob != "" && f.Fail() == nil {
+			return &f, nil
+		}
+	}
+	return nil, nil
 }
 
 // coverPath reports path an upload of the cover upload pattern.

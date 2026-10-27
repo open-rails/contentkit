@@ -13,16 +13,16 @@ import (
 // entities. The scope directory is narrowed to this app and credential ceilings
 // by heldScopes, as it is for Mine. It never enumerates catalog content.
 func (s *Store) ContentEditorEntities(ctx context.Context, a auth.Authenticator, actor access.Actor) ([]EntityID, error) {
-	return s.contentAuthorityEntities(ctx, a, actor, func(kind string) []string { return []string{access.EntityContentWrite(kind)} })
+	return s.contentAuthorityEntities(ctx, a, actor, func(kind string) []string { return []string{access.ChannelContentWrite} })
 }
 
 // ContentAuthorEntities returns channels where the current credential may read
 // or edit its own posts. This does not confer authority over other authors.
 func (s *Store) ContentAuthorEntities(ctx context.Context, a auth.Authenticator, actor access.Actor, editing bool) ([]EntityID, error) {
 	return s.contentAuthorityEntities(ctx, a, actor, func(kind string) []string {
-		permissions := []string{access.EntityContentEditOwn(kind), access.EntityContentWrite(kind)}
+		permissions := []string{access.ChannelContentEditOwn, access.ChannelContentWrite}
 		if !editing {
-			permissions = append(permissions, access.EntityContentCreate(kind))
+			permissions = append(permissions, access.ChannelContentCreate)
 		}
 		return permissions
 	})
@@ -44,7 +44,7 @@ func (s *Store) contentAuthorityEntities(ctx context.Context, a auth.Authenticat
 	}
 	err = s.read(ctx, func(q Querier) error {
 		rows, err := q.Query(ctx, `SELECT id,kind,coalesce(auth_scope,''),coalesce(owner_user_id=$2,false) FROM `+s.table("content_entities")+`
- WHERE tenant_id=$1 AND state='active' AND (owner_user_id=$2 OR auth_scope=ANY($3::text[])) ORDER BY id`, s.tenant, actor.AccountID(), scopeIDs)
+ WHERE tenant_id=$1 AND kind='channel' AND state='active' AND auth_scope IS NOT NULL AND (owner_user_id=$2 OR auth_scope=ANY($3::text[])) ORDER BY id`, s.tenant, actor.AccountID(), scopeIDs)
 		if err != nil {
 			return err
 		}
@@ -56,7 +56,7 @@ func (s *Store) contentAuthorityEntities(ctx context.Context, a auth.Authenticat
 			if err := rows.Scan(&id, &kind, &scope, &owner); err != nil {
 				return err
 			}
-			if scope == "" && owner && !s.cfg.EntityKinds[kind].AuthScope || slices.ContainsFunc(permissions(kind), func(permission string) bool { return slices.Contains(held[scope], permission) }) {
+			if slices.ContainsFunc(permissions(kind), func(permission string) bool { return slices.Contains(held[scope], permission) }) {
 				out = append(out, id)
 			}
 		}

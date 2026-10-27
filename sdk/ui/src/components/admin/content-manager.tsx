@@ -11,7 +11,7 @@ import type { Content, EntityCard, EntityDetail, ManageCount, Rule, Version } fr
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
-import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
+import { useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { useContent } from "../../react/contents.js";
 import { useKinds } from "../../react/entities.js";
 import { keyOf, useContentScope, usePaged, useResource } from "../../react/use-resource.js";
@@ -67,7 +67,7 @@ export interface ContentManagerProps extends AdminFlowProps, AdminRouteProps {
   noun?: { one: string; other: string };
 }
 
-/** Whether the caller manages content: root:content:write holders, creators and owner-group editors. */
+/** Whether the caller manages content: root:content:write holders, creators and channel editors. */
 export function useContentManagerAccess(o: FlowClientOptions = {}): StaffAccess<"contents"> {
   return useStaffAccess(["contents"] as const, o);
 }
@@ -697,8 +697,8 @@ export interface ContentEditorProps {
   /** Registers the editor's confirmation before the enclosing flow leaves it. */
   onLeaveGuard?: (guard: (() => Promise<boolean>) | undefined) => void;
   labels?: Labels;
-  /** A new item's owner group: a channel its editors write for. */
-  ownerEntity?: string;
+  /** A new item's primary channel. Omit when the kind has a fixed channel. */
+  channelId?: string;
   /** Entities a new item starts linked to, e.g. the series it was created from; ignored for an existing item. */
   entities?: readonly EntityCard[];
   /** After create: show the new item (the editor goes on editing it). */
@@ -739,15 +739,16 @@ export function ContentEditor(p:ContentEditorProps){
   return <StandardContentEditor key={boundary.key} {...props}/>;
 }
 
-function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerEntity, entities, onCreated, onDeleted, onCancel, onError, management, noun }: ContentEditorProps) {
-  const client = useContentKitClient(own);
+function StandardContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, channelId, entities, onCreated, onDeleted, onCancel, onError, management, noun }: ContentEditorProps) {
+  const { client, store, scope } = useContentScope(own);
   const m = useMessages();
   const { t } = m;
   const ids = useId();
   const languageName = useLanguageName();
   const languages = choices(offered, languageName);
   const [language, setLanguage] = useState(languages[0]?.value ?? "en");
-  const ed = useContent(id, kind, language, { client });
+  const [selectedVersion, setSelectedVersion] = useState<string>();
+  const ed = useContent(id, kind, language, { client, version: selectedVersion });
   // A hidden version's cover is edited here; a visible version's in its own form.
   const model = useKinds({ client }).kinds;
   const hidden = !!model?.kinds[kind]?.versions.hidden;
@@ -759,16 +760,22 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   const [notice, setNotice] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
   const item = ed.content;
+  const parentID = id ?? item?.id;
+  // An exact-edition response deliberately contains only that edition. Keep
+  // the parent's visible edition index for navigation and shared metadata.
+  const parent = useResource<Content>(store, parentID ? keyOf("content", scope, parentID, language, undefined) : null,
+    { type: "content", id: parentID }, (signal) => client.contents.get(parentID!, language, signal));
+  const whole = parent.data ?? item;
   const versionChoices = useMemo(
-    () => (item?.versions ?? []).map((v) => ({ id: v.id, label: versionLabel(v, languageName, labels) })),
-    [item?.versions, languageName, labels],
+    () => (whole?.versions ?? []).map((v) => ({ id: v.id, languages: v.languages, label: versionLabel(v, languageName, labels) })),
+    [whole?.versions, languageName, labels],
   );
   useEffect(() => {
     if (!item) return;
-    const stored = item.text?.[language];
+    const stored = ed.version?.text?.[language];
     setForm((f) => f ?? { title: stored?.title ?? "", description: stored?.description ?? "", body: stored?.body ?? "",
       publishAt: item.publish_at && !item.live ? localInput(new Date(item.publish_at)) : "" });
-  }, [item, language]);
+  }, [item, language, ed.version]);
   const { imageSrc } = ed;
   const shown = useMemo(
     () => (form?.body ?? "").replace(imageRefs(), (ref, name: string) => {
@@ -794,11 +801,11 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     report(err, "content.save");
   };
   const text = () => ({ title: f.title.trim(), description: f.description.trim(), body: f.body });
-  const stored = item?.text?.[language];
+  const stored = ed.version?.text?.[language];
   const dirty = f.title.trim() !== (stored?.title ?? "") || f.description.trim() !== (stored?.description ?? "") || f.body !== (stored?.body ?? "");
   // The server normalizes what it stores, so the form takes the stored text back.
-  const synced = (c: Content) => {
-    const saved = c.text?.[language];
+  const synced = (version: Version) => {
+    const saved = version.text?.[language];
     set({ title: saved?.title ?? "", description: saved?.description ?? "", body: saved?.body ?? "" });
   };
   const save = async () => {
@@ -807,7 +814,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     if (!f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       if (!item) {
-        const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: model?.kinds[kind]?.owner_entity ? undefined : ownerEntity });
+        const created = await ed.create({ kind, versions: [{ languages: [language], text: { [language]: text() } }], channel_id: model?.kinds[kind]?.channel?.fixed ? undefined : channelId });
         // Starting entities link once the item exists; version-level kinds need a version first.
         const linked = (entities ?? []).filter((g) => model?.kinds[kind]?.entities?.includes(g.kind) && allowsEntityScope(model.entity_kinds[g.kind], "content"));
         if (linked.length) {
@@ -818,7 +825,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
         onCreated?.(created);
         return;
       }
-      synced(await ed.putText(text()));
+      synced(await ed.saveText(text()));
       setNotice(t("pollEditor.saved"));
     } catch (e) {
       fail(e);
@@ -830,7 +837,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     if (live && dirty && !f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       // Publishing makes the stored text public, so unsaved edits are saved first.
-      if (live && dirty) synced(await ed.putText(text()));
+      if (live && dirty) synced(await ed.saveText(text()));
       if (live) await ed.publish(f.publishAt ? new Date(f.publishAt).toISOString() : undefined);
       else await ed.unpublish();
       setNotice(t(live ? "contentManager.publishedNotice" : "contentManager.unpublishedNotice"));
@@ -982,6 +989,16 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                   )}
                   <span aria-hidden>·</span>
                   <span className="font-mono text-xs">{item.code}</span>
+                  {!hidden && versionChoices.length > 1 && <Select value={ed.version?.id ?? ""} onValueChange={async (value) => {
+                    if (dirty && !(await confirm({ title: t("contentManager.switchLanguage"), description: t("contentManager.discardLanguageEdits"), confirm: t("readerEditor.discard") }))) return;
+                    const chosen = versionChoices.find((version) => version.id === value);
+                    setSelectedVersion(String(value));
+                    if (chosen?.languages[0]) setLanguage(chosen.languages[0]);
+                    setForm(null);
+                  }}>
+                    <SelectTrigger size="sm" aria-label={t("contentEditor.versions")}><SelectValue>{(value: string) => versionChoices.find((v) => v.id === value)?.label ?? value}</SelectValue></SelectTrigger>
+                    <SelectContent>{versionChoices.map((v) => <SelectItem key={v.id} value={v.id}>{v.label}</SelectItem>)}</SelectContent>
+                  </Select>}
                   {languages.length > 1 && (
                     <>
                       <span aria-hidden>·</span>
@@ -1141,7 +1158,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
           {/* Versions Container (outside form for HTML5 valid nesting) */}
           {item && (
             <div data-ckui="content-versions">
-              <VersionsEditor content={item} client={client} onError={onError} labels={labels} />
+              <VersionsEditor content={whole ?? item} client={client} onError={onError} labels={labels} />
             </div>
           )}
         </div>

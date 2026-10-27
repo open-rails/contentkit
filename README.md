@@ -42,7 +42,8 @@ See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
 | `Scope.AppID` | one tenant-owned app and its separate content catalog, such as Doujins or Hentai0 |
 | `content_id` | the host-owned work: a gallery, a video, a listing; a canonical UUIDv7, never reused ([Content ids](HOST_INTEGRATION.md#content-ids)) |
 | `content_version_id` | one selectable version of that work (optional) |
-| `entity_id` | an associated tag, artist, series, character, channel, playlist or featured rail |
+| `channel_id` | the overall item's primary authoring channel |
+| `entity_id` | an associated tag, artist, series, character, playlist or featured rail |
 | `ContentRef` | `{TenantID, ContentKind, ContentID, ContentVersionID *string}` — the typed reference every API, key, index and cursor carries |
 
 A language is metadata on a document or version, never part of a reference.
@@ -69,8 +70,8 @@ A reference to another catalog is an error, never remapped. See [scope.go](scope
 | `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, subtitles, frame grabs; `Frames` for the frame picker |
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
-| `catalog` | content items of the configured kinds (a blog is kind `blog`): per-language text, creators, versions, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
-| `content` | comments (in language threads), reactions, favorites, polls (multiple-choice and free-text) and their counts on content items, versions and entities; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
+| `catalog` | content items of the configured kinds (a blog is kind `blog`): shared identity and creators; versions own localized text, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
+| `content` | comments (in language threads), reactions, favorites, polls with predefined choices and their counts on content items, versions and entities; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) port, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | Indexed keyword search (exact/alias/substring/prefix/typo, EN/ZH/JA/KO) with eligibility, documents and dirty queue, RRF |
 | `entities` | storage for content entities by kind (`kinds.Config.EntityKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles and positions; effective entities for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
@@ -109,7 +110,7 @@ for _, r := range routes {
 - With `Database.SkipMigrations: true`, `New` checks prepared storage read-only.
   Run the explicit host migration command first; it calls the applicable
   PostgreSQL, media and ClickHouse migration stages. `MigratePostgres` also
-  provisions configured fixed owner entities and their groups through
+  provisions configured fixed channels and their groups through
   `MigrationOptions.Scopes`; hosts need no separate seeding code. The default `false` retains
   embedded startup migrations. Catalog tables use `Database.Schema` (default
   `contentkit`); account tables can use a separately shared schema. PGroonga and
@@ -120,7 +121,7 @@ for _, r := range routes {
   versions' (`media.ForContent`, the `media/versions` service). All content
   belongs to ContentKit: hosts create it through `/v1/contents` (or `Client()`).
 - `Start` runs every background job: search indexing, preference sync,
-  projection repair, publication events, event retention and content purge,
+  popularity refresh, publication events, event retention and content purge,
   and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and
@@ -154,7 +155,7 @@ normalization and the editor's reversible [page review](docs/api/uploads.md#page
 |---|---|---|
 | `ContentRoutes` | `/v1`: the content model (`GET /v1/kinds`), content items and versions (`/v1/contents`, `/v1/manage or /v1/manage/{kind}`), catalog totals, comments, reactions, favorites, polls, comment bans, moderation | always |
 | `UploadRoutes` | `/v1/media/upload` | `Config.Media` |
-| `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, fork, download | `Config.Media` |
+| `MediaRoutes` | `/v1/media`: reads and HLS playlists; `/v1/contents/{id}/versions/{vid}/…`: reader plan and metadata, download | `Config.Media` |
 | `CodeRoutes` | `/v1/codes/{code}` | always |
 | `EntityRoutes` | `/v1/entities`, `/v1/contents/{id}/entities`: listings and pages, writes for `root:entities:write` | always |
 | `DiscoveryRoutes` | public lists/search, history and `/v1/me/library` for purchased content | always; purchased access uses `Deps.Billing` |
@@ -169,7 +170,7 @@ normalization and the editor's reversible [page review](docs/api/uploads.md#page
 Refusals carry `auth.Refuse`'s status and `WWW-Authenticate`; an auth outage
 is 503. ContentKit names its staff permissions (`access.Permissions()`); the
 host declares them in its auth's roles from those constants. They are
-root-wide; per-item rights (creators, owner-entity editors) are the catalog's. Behind a
+root-wide; per-item rights (creators, primary-channel editors) are the catalog's. Behind a
 proxy, set `Request.RemoteAddr` to the client's address before the routes:
 anonymous reactions, votes and limits are keyed by it. No content kind may
 be named `media`, `codes`, `entities`, `contents`, `kinds`, `catalog` or `notifications`.
@@ -250,8 +251,8 @@ The model is returned by `/kinds` and enforced on creation, updates, version
 overrides and imports. Allowed access levels are `public`, `tier`, `ppv`,
 `group`, `group_ppv`; an omitted list permits every level. Comment modes are
 `open`, `closed`, `hidden`. Tier names come from `tiers`; their products and
-prices are defined in OpenRails. An entity kind with `entitled: true` exposes
-entitlement-based standing, without defining a price. Changing the model does
+prices are defined in OpenRails. `channels.entitled: true` exposes
+channel-membership standing, without defining a price or making every post paid. Changing the model does
 not rewrite existing access rules or billing products.
 
 ContentKit defines stable entitlement keys; OpenRails grants them without
@@ -261,7 +262,7 @@ interpreting their syntax:
 |---|---|
 | `access.ContentKey` → `<tenant>:content:<id>` | legacy audit/migration only; grants no edition access |
 | `access.VersionKey` → `<tenant>:content:<id>/<version>` | one version |
-| `access.EntityKey` → `<tenant>:group:<id>` | associated content whose rules permit that entity entitlement |
+| `access.ChannelKey` → `<tenant>:group:<id>` | channel-owned content whose parent policy requires that membership |
 | `access.TierKey` → `premium` | versions whose rule names that tier |
 
 Use these existing keys in an OpenRails product's `entitlements`. A product may
@@ -290,10 +291,11 @@ return err
 Here `billing` is `github.com/open-rails/openrails/billing`; amounts are in
 millionths of a currency unit, so the example price is $5. The same calls work
 through the embedded or remote OpenRails client. Price history, retries and
-checkout are owned by OpenRails. A channel product uses `access.EntityKey`
+checkout are owned by OpenRails. A channel product uses `access.ChannelKey`
 instead, while a Premium product grants the configured tier key.
 
-`Rule` is stored on content and optional version overrides. It is validated
+`Rule` is stored on content and, for channel-free kinds, optional version
+overrides. Channel posts share the overall item's policy. It is validated
 against the model and projected onto `content_facets`. `Gate` reads grants
 through `access.Billing.Held`; optional `access.TenureReader` supplies account
 statistics. Access decisions expose `Sell` entitlement keys and `Requires` as
@@ -565,7 +567,7 @@ Personalized, watermarked archives stream per request with
 Ordinary reader archives use the bounded, on-demand private cache described
 above; only non-reader ZIP processing presets are generated ahead of time.
 
-**Video** (`media/video`): one `contentkit_media_video` job on `media_video` owns
+**Video** (`media/video`): the unified `contentkit_media_derivatives` job on `media_derivatives` owns
 planning, conversion and publication. It checkpoints bounded encoded ranges,
 yields between them so shorter videos can run, and resumes successful ranges
 after shutdown. An `HLS` preset encodes the ladder (rung = short
@@ -616,11 +618,13 @@ versions expire after one day; permanent noncurrent versions retain the host's
 configured restore window. Lifecycle execution is asynchronous. Backends that
 do not implement multipart-abort lifecycle rules need equivalent server settings.
 
-Media has three processing jobs: ingest, image and video. Ingest validates an
-entire ZIP before attaching pages in bounded, replayable batches; image work
-commits bounded source batches. Those processors append retained progress facts
-directly after their commits and complete with real version metadata work.
-Declared public files stay public independently of publication and billing.
+Media has two processing jobs: ingest and derivatives. Ingest validates an
+entire ZIP before attaching pages in bounded, replayable batches. The derivative
+job handles image presets and resumable video outputs for the same version,
+recording progress as work completes. Generated outputs wait in `future/`;
+publication waits for every required output before delivery and activation.
+The gateway's `public/` area stays public and `private/` stays token-protected.
+See [media jobs](docs/media-jobs.md).
 
 For upgrades from the old per-folder timers, stop old media hosts and workers,
 run the host's normal `MigratePostgres` command, then start the new cohort. The
@@ -661,7 +665,10 @@ content URLs, React hooks and styled components. See
 ## Entities
 
 Entity kinds come from `kinds.Config.EntityKinds` (ordered, parent, scoped_by,
-owner, entitled, auth_scope, version_level, roles, attributes).
+version_level, roles, attributes). They describe content; channel ownership and
+authority are configured separately with `channels` and a content kind's `channel`
+policy. See [Posts and channels](docs/posts-and-channels.md) for fixed staff blogs,
+creator feeds and reposts.
 Reader editors use one page per stable version code. Shared entity edits use
 `PUT /contents/{id}/entities/shared`; per-version credits use
 `PUT /contents/{id}/versions/{vid}/entities`. Catalog responses keep the same
@@ -680,25 +687,45 @@ automatic entity covers read current facets and release timestamps; no periodic
 recount or timed-membership job is needed. Manual entity covers remain explicit.
 Likes and favorites keep their existing atomic counters.
 
-The engine builds `entities.Store` from `Config.Content` and serves it as
-`EntityRoutes`. Creator channels retain their editor teams and optional billing
-entitlements. Their lifecycle changes enqueue exact durable sync work in the
-writing transaction, including when no local worker is running. Ordinary
-staff-managed tags, series and channels do not need that work.
+The engine builds separate entity and channel interfaces from `Config.Content`.
+Metadata operations use `/entities`; channel operations use `/channels`. Channels
+retain their editor teams and optional billing entitlements. Their lifecycle
+operations call AuthKit directly, report failures and support idempotent caller
+retries. No entity/channel sync worker is registered. Physical deletion stays
+with the content-purge sweep. Ordinary tags and series need no lifecycle work.
+One primary channel governs the overall item and all of its versions; a repost
+only references that original from another channel and grants no editing rights.
 
-Go and relational names use entity. Existing HTTP fields such as `group_id`,
-access values `group`/`group_ppv`, and billing keys containing `:group:` retain
-their encodings so saved policies, grants and purchases keep working.
+Channel access uses `access.ChannelLevel`, `access.ChannelPPV` and
+`access.Rule.ChannelID`. Its existing JSON field `group_id`, access values
+`group`/`group_ppv`, and opaque billing keys containing `:group:` keep their
+encodings so saved policies, frozen plans and purchases retain their identities.
+These are channel membership rules, not permission granted by descriptive tags.
 
-## Content
+## Content and versions
+
+An overall item holds shared identity, its primary channel/editorial authority,
+creators and inherited entity associations. Every edition owns its authored title,
+summary, body/HTML, language, original title and media. An English gallery and a
+Chinese edition can use completely different image bytes while inheriting the
+same artist/series/tag associations. Each edition can add its own associations.
+
+Create initial editions through `ContentInput.Versions` and edit their text/media
+through the version interface. Omitting initial versions creates one empty
+edition; adding another version starts empty. There is no automatic body-image
+propagation or copy-version operation. Reader `Content` and discovery cards
+project the selected edition's presentation, identified by `selected_version_id`;
+that convenience does not put content back onto the parent or borrow a sibling's
+text/files. See [import](docs/import.md) and [migration](docs/migration.md).
+
 
 `catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
 Writes are batches; each transaction keeps `content_facets` current (rules
 through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
 documents dirty, queues `content_events` and calls media (republish,
-fork, delete). Content edits do not rename or reprice billing products. Published with a
-future `publish_at` becomes visible when that time arrives; the periodic job
-records publication and runs its side effects. A deleted item
+delete). Content edits do not rename or reprice billing products. Published with a
+future `publish_at` is publication intent; readers see the completed release
+after its deadline and required media preparation finish. A deleted item
 stays readable to holders of its own keys; its media is erased after
 `DeletedRetention`. OpenRails retains product and purchase identity after
 content and media are gone; deleting content does not delete billing history. A
@@ -711,7 +738,7 @@ has arrived, the domain's scope and the viewer's content filters. Every
 published item can be listed; its edition's access rule controls reading.
 It uses `access.Filter.SQL` for lists
 and `Gate.Decide` for items; staff (`root:content:view-restricted`),
-creators and owner-entity editors see everything. Discovery lists and searches
+creators and primary-channel editors see everything. Discovery lists and searches
 under it; media and interactions resolve through it. Held text goes to the
 shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
 (`kinds`, `languages`) counts what anyone and each tier opens, per kind and
@@ -761,8 +788,9 @@ routes (signals, exposures, history, popular, similar, recommend) land with
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract)
   and, for interaction data, [interaction erasure](HOST_INTEGRATION.md#interaction-erasure).
 - Reactions and favorites reach the signal plane from their own revisioned
-  rows: the engine's preference job syncs them (watermark with a commit
-  overlap) and re-sends them daily; see
+  rows: the engine's preference job syncs changes every five minutes using a
+  revision watermark with a five-minute commit overlap, and re-sends all rows
+  daily; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 
 ## Testing

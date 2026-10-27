@@ -1,0 +1,162 @@
+[
+  {
+    "cpu_system_us": 82136,
+    "cpu_user_us": 3870687,
+    "duration_ms": 1997,
+    "memory_bytes": 51766004,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050246_0",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 81368,
+    "cpu_user_us": 4549280,
+    "duration_ms": 2327,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050249_1",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 94008,
+    "cpu_user_us": 4161014,
+    "duration_ms": 2139,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050252_2",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 102681,
+    "cpu_user_us": 4340555,
+    "duration_ms": 2229,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050255_3",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 99997,
+    "cpu_user_us": 4557723,
+    "duration_ms": 2349,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 4096,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050258_4",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 90824,
+    "cpu_user_us": 3907388,
+    "duration_ms": 2011,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050261_5",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 103974,
+    "cpu_user_us": 4543838,
+    "duration_ms": 2342,
+    "memory_bytes": 51765876,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050263_6",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 184214,
+    "cpu_user_us": 6796924,
+    "duration_ms": 3502,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050266_7",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 174056,
+    "cpu_user_us": 6399432,
+    "duration_ms": 3321,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 86016,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050271_8",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 100010,
+    "cpu_user_us": 5122748,
+    "duration_ms": 2627,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050275_9",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 113713,
+    "cpu_user_us": 4512527,
+    "duration_ms": 2345,
+    "memory_bytes": 51765876,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050278_10",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 146035,
+    "cpu_user_us": 5997714,
+    "duration_ms": 3106,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050281_11",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 112547,
+    "cpu_user_us": 4246685,
+    "duration_ms": 2195,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050285_12",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 109432,
+    "cpu_user_us": 4872749,
+    "duration_ms": 2523,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050288_13",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 119692,
+    "cpu_user_us": 4317105,
+    "duration_ms": 2241,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050291_14",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  },
+  {
+    "cpu_system_us": 128826,
+    "cpu_user_us": 5222533,
+    "duration_ms": 2695,
+    "memory_bytes": 51766036,
+    "os_read_bytes": 0,
+    "query_id": "ck261_actual_20261026_212751_actual_repeat_1793050294_15",
+    "read_bytes": 2336000935,
+    "read_rows": 36500000
+  }
+]

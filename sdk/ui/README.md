@@ -110,7 +110,7 @@ operation. This does not change the operation's result or its authentication.
   `media.uploadNamed(ref, file)` resolves the name content routes take
   (`contents.setCover(id, version, name)`: every file of a content lives in a
   version); `media.uploadInline({kind, id, version}, file)` puts a body image
-  in the version's private files, copied into the other versions, and
+  in that version's private files only, and
   resolves its reference (`ref`, `contentkit:i-{uuid}`, what the body stores:
   `imageRef(name)`) and a URL that shows it now; `polls.uploadImage` and
   `polls.uploadOptionImage` do both steps. Reads resolve references: a
@@ -169,13 +169,13 @@ const editor = usePollEditor(pollId);                // staff
 A content editor puts `text.body` in its rich-text field and inserts what
 `uploadImage(file)` resolves: URLs that show the images now (the file for a
 fresh upload, public files, signed editor views of an unpublished item's
-images, read and refreshed as needed). `putText({ title, body })` stores each
+images, read and refreshed as needed). `saveText({ title, body })` stores each
 of those URLs as the image's reference (`storedBody(html)` does the same for
 a host's own save); `coverSrc` shows the cover, `imageSrc(name)` any image.
 
 ```tsx
 const editor = useContent(id, "blog", "en");
-<RichText value={editor.text?.body} onImage={editor.uploadImage} onSave={(html) => editor.putText({ title, body: html })} />
+<RichText value={editor.text?.body} onImage={editor.uploadImage} onSave={(html) => editor.saveText({ title, body: html })} />
 <img src={editor.coverSrc} alt="" />
 ```
 
@@ -579,8 +579,7 @@ fullscreen and a mini player.
 `Comments` (threads with one-level replies, tombstones, held and rejected
 states shown to their author, reactions, edit, delete, ban and rate-limit
 notices, the server's longest comment), `ReactionButtons`, `FavoriteButton` (with the server's count)
-and `Poll` (a final vote with results scaled to the leading option, or a
-free-text answer and its groups; `results="always"` shows results before
+and `Poll` (a final vote with results scaled to the leading option; `results="always"` shows results before
 voting). Signed-out visitors comment under a name, react and vote where the
 server allows it (`content.Options.Anonymous`, read from the comment standing
 and `client.config()`); elsewhere they are asked to sign in (`onSignIn`, the
@@ -599,7 +598,7 @@ Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
 
 ## Entities
 
-Tags, artists, series, characters, channels and rails: the kinds the site's
+Tags, artists, series, characters and rails: the kinds the site's
 content model declares. `useKinds()` reads it (`GET /v1/kinds`); until that
 route is served, pass the host's model as `initial` (and `kinds` to the
 components below).
@@ -627,6 +626,38 @@ const content = useContentEntities(contentId); // content.set(memberships, kinds
 - `labels` names kinds, attributes, roles and values by identifier; others
   show humanized. Covers render `cover.renditions`; `renderCover` stands in
   until entity reads carry them.
+
+## Channels and reposts
+
+Channels own a content item's authoring permissions across all its versions.
+Metadata entities describe items or channels and never grant editing rights.
+A fixed staff blog uses the same interface as creator channels; its configured
+`channel: {fixed: blog}` hides the channel choice in `ContentEditor`.
+
+```tsx
+const channel = useChannel(id);
+const mine = useMyChannels(); // live can_post, writer, owner and other permission flags
+await client.channels.create({ slug: "studio", names: [{ language: "en", kind: "name", name: "Studio" }] });
+await client.channels.repost(destinationId, contentId);
+await client.channels.removeRepost(destinationId, contentId); // leaves the original intact
+
+<ChannelBanner channel={channel.channel} onCheckout={openBilling} />
+<ChannelFeed channelId={id} renderCard={(card) => <PostCard card={card} />} />
+<ContentEditor kind="post" id={null} channelId={id} />
+<RepostButton contentId={post.id} originalChannelId={post.channel_id} />
+```
+
+`ChannelDirectory`, `ChannelAvatar`, `ChannelCover` and `ChannelImageEditor`
+provide the public channel and image UI. `ChannelPicker` chooses a channel for
+an access rule; `SearchBox channels` includes channel-name suggestions.
+`ChannelMembershipBox` delegates purchases to the host's OpenRails flow.
+The client owns no billing catalog or entitlement-expiry worker.
+
+`client.channels.contents()` includes originals and repost references, retaining
+the original content ID, versions, comments and reactions. Every read still
+checks the original's publication and access. Reposting grants no editorial or
+reading authority. Destination choices come from `/me/channels`, so callers do
+not need to assume that AuthKit group IDs and channel IDs are equal.
 
 ## Reference administration workbench
 
@@ -671,7 +702,7 @@ of content editing.
 
 The optional `content` props are `renderEditor` and `contentHref`; `entities`
 accepts `renderContent`; `moderation` accepts `itemHref`, `userHref` and
-`sections`; `polls` accepts `freeText` and `maxOptions`. These are the existing
+`sections`; `polls` accepts `maxOptions`. These are the existing
 managers' extension points. Without `renderEditor`, body editing uses the
 manager's HTML field; the rich text editor is an optional peer dependency.
 Changing the client or the provider's viewer/access/language scope resets the
@@ -683,24 +714,34 @@ version editing remain in the content editor. Site-specific import,
 review and publishing workflows can use the individual managers and media
 components without adopting this workbench.
 
-## Original and edition titles
+## Version-owned text
 
-A host can set `title_policy: original_and_version` on a content kind. The
-parent then carries optional `original_title` and `original_language`, while
-`version.text[language].title` is the edition's display title. The reader editor
-shows one shared Original title and a Display title bound to the selected
-version's language; changing one edition never rewrites sibling titles.
+Every edition owns its title, slug, summary, body, sort key, aliases and optional
+original title/language. Create an item with its initial version:
 
-The default `localized` policy retains generic `content.text[language]`
-behavior. Those stored texts are preserved under the edition policy too.
-Public titles resolve from the selected edition, then the original, then the
-legacy localized title. An original's language may remain unknown; do not label
-an existing English translation as the source title.
+```ts
+await client.contents.create({
+  kind: "blog",
+  versions: [{ languages: ["en"], text: { en: { title: "Hello", body: "<p>Welcome</p>" } } }],
+});
+```
 
-For existing content, `catalog.BackfillVersionTitles` is an explicit migration
-helper: it copies only missing titles from exactly matching content languages
-and does not overwrite existing edition text or invent source titles. Hosts
-call it from their migration command, rather than server startup.
+This also applies to a kind that hides its single version. To edit text, call
+`contents.updateVersion(contentId, versionId, { text })`; the map replaces that
+edition's localized text. `useContent(...).saveText` updates its selected edition
+and language. An added version begins empty and receives explicit uploads.
+
+`Content.title`, `Content.body` and other display fields are read-only projections
+of `selected_version_id`. Editors use `version.text`; there is no parent text
+map or sibling body fallback. `useContentDetail` retains the visible edition index
+for navigation while resolving text and image URLs from the exact selected
+edition. Inline images resolve only against that edition's
+media. A host using `title_policy: original_and_version` displays that version's
+localized title or its own original title, never another version's title.
+
+The forward schema migration preserves existing text in its existing editions
+without moving or deleting any source images. Hosts use the normal migration
+command; no additional title-copy helper or background worker is needed.
 
 ## Daily readership statistics
 
@@ -780,7 +821,7 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
 - **`PollManager`**: every poll by language, month or day, state (live,
   scheduled, closed, inactive) and question; create and edit through
   `PollEditor` at `basePath/new` and `basePath/{id}`; delete with a typed
-  confirmation. Props: `languages`, `freeText`, `maxOptions`, `pageSize`.
+  confirmation. Props: `languages`, `maxOptions`, `pageSize`.
   `usePollManagerAccess()`.
 
   ```tsx
@@ -789,9 +830,9 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
 
 For reader content, each version has a canonical editor URL under the manager:
 `<basePath>/<contentCode>/versions/<versionCode>`. An older content-only URL
-opens its first version. Shared gallery text and entities are explicitly marked;
-version traits, credits, files, chapters and reading metadata edit only the
-selected version. Version navigation warns before discarding unsaved changes.
+opens its first version. The overall item holds shared entities and channel authority;
+titles, summaries, bodies, traits, credits, files, chapters and reading metadata
+edit only the selected version. Version navigation warns before discarding unsaved changes.
 The host still owns navigation outside the flow, including browser Back handling.
 
 - **`ContentManager`**: the items of one `kind` the caller manages, by
@@ -1197,7 +1238,7 @@ OpenRails owns products, prices, purchases and entitlement grants. The access
 and version editors change content rules; they do not edit a second billing
 catalog. Use OpenRails or billing-ui directly for product and price management.
 
-`Paywall` and `MembershipBox` call the host's `onCheckout({ key })` with an
+`Paywall` and `ChannelMembershipBox` call the host's `onCheckout({ key })` with an
 entitlement key. The host resolves it through OpenRails and opens its billing
 flow. These components never create free grants or infer a price. The purchased
 content library remains available as `client.discovery.library()`.

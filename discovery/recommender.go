@@ -55,10 +55,9 @@ type RecommendOptions struct {
 	// IncludeSeen keeps already-seen works in results (default: excluded).
 	IncludeSeen bool
 
-	// Popular lists up to limit works of kind, best first, by popularity in
-	// period. It fills out results on cold start or thin candidate sets: the
-	// last 30 days, then all time. Nil skips it.
-	Popular func(ctx context.Context, kind, period string, limit int) ([]string, error)
+	// Popular fills cold or thin results from the kind's default prepared bucket.
+	// Nil skips popularity fill.
+	Popular func(ctx context.Context, kind string, limit int) ([]string, error)
 
 	// Backfill fills what popularity leaves short, from works no signal
 	// names; nil leaves the list short.
@@ -227,11 +226,9 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 	}
 
 	for _, kind := range kinds {
-		for _, period := range []string{"30d", "all"} {
-			if opts.Popular != nil {
-				if err := r.fillPopular(ctx, f, opts.Popular, kind, period, limit); err != nil {
-					return nil, err
-				}
+		if opts.Popular != nil {
+			if err := r.fillPopular(ctx, f, opts.Popular, kind, limit); err != nil {
+				return nil, err
 			}
 		}
 		if f.full() || opts.Backfill == nil {
@@ -252,12 +249,12 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 	return f.out, nil
 }
 
-// fillPopular fills f from kind's popularity in period.
-func (r Recommender) fillPopular(ctx context.Context, f *filter, popular func(context.Context, string, string, int) ([]string, error), kind, period string, limit int) error {
+// fillPopular fills f from kind's default prepared bucket.
+func (r Recommender) fillPopular(ctx context.Context, f *filter, popular func(context.Context, string, int) ([]string, error), kind string, limit int) error {
 	// Oversample so exclusions still leave enough to fill, deeper while a
 	// full read leaves the list short.
 	for depth := clampInt((limit-len(f.out))*3, 20, 500); !f.full(); depth *= 4 {
-		pop, err := popular(ctx, kind, period, depth)
+		pop, err := popular(ctx, kind, depth)
 		if err != nil {
 			return err
 		}

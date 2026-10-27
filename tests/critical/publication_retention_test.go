@@ -43,8 +43,8 @@ func TestDeletedEditionRetainsCompletedPublication(t *testing.T) {
 			admin := a.engine.Client()
 			item, err := admin.PostContents(t.Context(), catalog.ContentInput{
 				Kind: kind, Access: &access.Rule{Level: test.level},
-				Text:     map[string]catalog.Text{"en": {Title: "Retained purchase", Body: "Previously released text"}},
-				Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}},
+
+				Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Retained purchase", Body: "Previously released text"}}}, {Languages: []string{"de"}, Text: map[string]catalog.VersionText{"en": {Title: "Retained purchase", Body: "Previously released text"}}}},
 			})
 			must(t, err)
 			ref := media.RefBody{Kind: kind, ID: item.ID, Version: item.Versions[0].ID}

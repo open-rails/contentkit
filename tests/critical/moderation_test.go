@@ -20,7 +20,7 @@ import (
 func authoredArticle(t *testing.T, a *application, author *ck.Client, entity string) catalog.Content {
 	t.Helper()
 	startPublicationRuntime(t, a)
-	in := catalog.ContentInput{Kind: "article", OwnerEntityID: entity, Text: map[string]catalog.Text{"en": {Title: "Moderated thread", Body: "Readable article"}}}
+	in := catalog.ContentInput{Kind: "article", ChannelID: entity, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Moderated thread", Body: "Readable article"}}}}}
 	if author == nil {
 		author = a.engine.Client()
 	}
@@ -138,10 +138,10 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		postComment(t, client, mine.ID, "Lift restores commenting")
 	})
 	t.Run("CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity", func(t *testing.T) {
-		_, _, one := ownedEntity(t, w, a, "Moderated channel")
-		_, _, two := ownedEntity(t, w, a, "Other channel")
+		_, _, one := ownedChannel(t, w, a, "Moderated channel")
+		_, _, two := ownedChannel(t, w, a, "Other channel")
 		moderator, moderatorToken := w.person(t, 0)
-		group, err := ckauth.EntityScopeID(*a.cfg.Scope, one.AuthScope)
+		group, err := ckauth.ChannelScopeID(*a.cfg.Scope, one.AuthScope)
 		must(t, err)
 		authtest.GrantRole(t, w.tenant[0], iam.GroupByID(group), iam.UserSubject(moderator.ID), w.channelModerator)
 		writer, writerToken := w.person(t, 0)
@@ -152,43 +152,43 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		must(t, client.PostCommentHold(t.Context(), comment.ID))
 		assertCommentVisibility(t, a.client(""), first.ID, comment.ID, false)
 		assertCommentVisibility(t, viewer, first.ID, comment.ID, true)
-		held, err := client.GetEntityHeldComments(t.Context(), string(one.ID), ck.GetEntityHeldCommentsQuery{})
+		held, err := client.GetChannelHeldComments(t.Context(), string(one.ID), ck.GetChannelHeldCommentsQuery{})
 		must(t, err)
 		if len(held.Items) != 1 || held.Items[0].ID != comment.ID || held.Items[0].Body != comment.Body {
 			t.Fatalf("scoped held queue lost actual comment: %+v", held)
 		}
-		_, err = client.GetEntityHeldComments(t.Context(), string(two.ID), ck.GetEntityHeldCommentsQuery{})
+		_, err = client.GetChannelHeldComments(t.Context(), string(two.ID), ck.GetChannelHeldCommentsQuery{})
 		requireError(t, err, 403, "forbidden")
 		requireError(t, client.PostCommentHold(t.Context(), other.ID), 403, "forbidden")
 		assertCommentVisibility(t, a.client(""), second.ID, other.ID, true)
 		must(t, client.PostCommentRelease(t.Context(), comment.ID))
 		assertCommentVisibility(t, a.client(""), first.ID, comment.ID, true)
-		_, err = client.PostContents(t.Context(), catalog.ContentInput{Kind: "article", OwnerEntityID: string(one.ID)})
+		_, err = client.PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(one.ID)})
 		requireError(t, err, 403, "forbidden")
-		_, err = client.PutEntityCommentBan(t.Context(), string(two.ID), writer.ID, content.BanInput{})
+		_, err = client.PutChannelCommentBan(t.Context(), string(two.ID), writer.ID, content.BanInput{})
 		requireError(t, err, 403, "forbidden")
-		ban, err := client.PutEntityCommentBan(t.Context(), string(one.ID), writer.ID, content.BanInput{Reason: "Entity boundary"})
+		ban, err := client.PutChannelCommentBan(t.Context(), string(one.ID), writer.ID, content.BanInput{Reason: "Entity boundary"})
 		must(t, err)
-		if ban.Scope != content.EntityScope(string(one.ID)) {
+		if ban.Scope != content.ChannelScope(string(one.ID)) {
 			t.Fatalf("wrong entity ban: %+v", ban)
 		}
-		standing, err := viewer.GetEntityCanComment(t.Context(), string(one.ID), ck.GetEntityCanCommentQuery{})
+		standing, err := viewer.GetChannelCanComment(t.Context(), string(one.ID), ck.GetChannelCanCommentQuery{})
 		must(t, err)
 		if standing.CanComment || standing.Ban == nil {
 			t.Fatal("entity standing omitted the active scoped ban")
 		}
-		_, err = viewer.PostEntityComments(t.Context(), string(one.ID), content.CommentInput{Body: "blocked on entity"})
+		_, err = viewer.PostChannelComments(t.Context(), string(one.ID), content.CommentInput{Body: "blocked on entity"})
 		requireError(t, err, 403, "comment_banned")
 		_, err = viewer.PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "blocked on owned content"}, ck.PostContentCommentsQuery{})
 		requireError(t, err, 403, "comment_banned")
 		postComment(t, viewer, second.ID, "Other channel still open")
-		bans, err := client.GetEntityCommentBans(t.Context(), string(one.ID), ck.GetEntityCommentBansQuery{})
+		bans, err := client.GetChannelCommentBans(t.Context(), string(one.ID), ck.GetChannelCommentBansQuery{})
 		must(t, err)
 		if len(bans) != 1 || bans[0].UserID != writer.ID {
 			t.Fatalf("entity ban list mismatch: %+v", bans)
 		}
-		must(t, client.DeleteEntityCommentBan(t.Context(), string(one.ID), writer.ID))
-		standing, err = viewer.GetEntityCanComment(t.Context(), string(one.ID), ck.GetEntityCanCommentQuery{})
+		must(t, client.DeleteChannelCommentBan(t.Context(), string(one.ID), writer.ID))
+		standing, err = viewer.GetChannelCanComment(t.Context(), string(one.ID), ck.GetChannelCanCommentQuery{})
 		must(t, err)
 		if !standing.CanComment {
 			t.Fatal("entity standing did not observe the lifted ban")

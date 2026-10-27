@@ -10,20 +10,21 @@ import (
 	ck "github.com/open-rails/contentkit"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/entities"
 )
 
-func ownedEntity(t *testing.T, w *world, a *application, title string) (authtest.User, string, entities.Entity) {
+func ownedChannel(t *testing.T, w *world, a *application, title string) (authtest.User, string, channels.Channel) {
 	t.Helper()
 	user := authtest.NewUser(t, a.tenant)
 	user.TOTP = authtest.EnrollTOTP(t, a.tenant, user)
 	token := authtest.SignIn(t, a.tenant, user).AccessToken
-	created, err := a.client(token).PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: "channel-" + user.ID, Names: []entities.Name{{Language: "en", Kind: "name", Name: title}}}})
+	created, err := a.client(token).PostChannels(t.Context(), channels.Input{Slug: "channel-" + user.ID, Names: []entities.Name{{Language: "en", Kind: "name", Name: title}}})
 	must(t, err)
-	if len(created) != 1 || created[0].OwnerUserID != user.ID || created[0].AuthScope == "" {
+	if created.OwnerUserID != user.ID || created.AuthScope == "" {
 		t.Fatalf("owned channel fixture has wrong authority: %+v", created)
 	}
-	return user, token, created[0]
+	return user, token, created
 }
 
 func TestEntityConcurrentOwnershipAndStaleScopes(t *testing.T) {
@@ -35,19 +36,19 @@ func TestEntityConcurrentOwnershipAndStaleScopes(t *testing.T) {
 		token := authtest.SignIn(t, a.tenant, owner).AccessToken
 		client := a.client(token)
 		type result struct {
-			entities []entities.Entity
-			err      error
+			channel channels.Channel
+			err     error
 		}
 		results, start := make(chan result, 4), make(chan struct{})
 		for i := range 4 {
 			go func() {
 				<-start
-				rows, err := client.PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: fmt.Sprintf("raced-%s-%d", owner.ID, i), Names: []entities.Name{{Language: "en", Kind: "name", Name: "Concurrent owner slot"}}}})
+				rows, err := client.PostChannels(t.Context(), channels.Input{Slug: fmt.Sprintf("raced-%s-%d", owner.ID, i), Names: []entities.Name{{Language: "en", Kind: "name", Name: "Concurrent owner slot"}}})
 				results <- result{rows, err}
 			}()
 		}
 		close(start)
-		var winner entities.Entity
+		var winner channels.Channel
 		successes := 0
 		for range 4 {
 			r := <-results
@@ -55,21 +56,21 @@ func TestEntityConcurrentOwnershipAndStaleScopes(t *testing.T) {
 				requireError(t, r.err, 409, "limit_reached")
 				continue
 			}
-			if len(r.entities) != 1 {
-				t.Fatalf("unexpected race result: %+v", r.entities)
+			if r.channel.ID == "" {
+				t.Fatalf("unexpected race result: %+v", r.channel)
 			}
 			successes++
-			winner = r.entities[0]
+			winner = r.channel
 		}
 		if successes != 1 {
 			t.Fatalf("concurrent max-per-owner admitted %d entities", successes)
 		}
-		mine, err := client.GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
+		mine, err := client.GetMeChannels(t.Context(), ck.GetMeChannelsQuery{})
 		must(t, err)
-		if len(mine.Entities) != 1 || mine.Entities[0].ID != winner.ID {
+		if len(mine.Channels) != 1 || mine.Channels[0].ID != winner.ID {
 			t.Fatalf("race left more than the winner: %+v", mine)
 		}
-		groupID, err := ckauth.EntityScopeID(*a.cfg.Scope, winner.AuthScope)
+		groupID, err := ckauth.ChannelScopeID(*a.cfg.Scope, winner.AuthScope)
 		must(t, err)
 		memberships, err := w.auth.ListMemberships(t.Context(), iam.UserSubject(owner.ID), iam.PageRequest{Limit: 100})
 		must(t, err)
@@ -87,14 +88,14 @@ func TestEntityConcurrentOwnershipAndStaleScopes(t *testing.T) {
 		}
 	})
 	t.Run("CK-J03-S06_CK-J16-S03_deleted_and_rebound_scope_refuses_existing_editor", func(t *testing.T) {
-		_, _, entity := ownedEntity(t, w, a, "Stale authority")
+		_, _, entity := ownedChannel(t, w, a, "Stale authority")
 		writer, token := w.person(t, 0)
-		id, err := ckauth.EntityScopeID(*a.cfg.Scope, entity.AuthScope)
+		id, err := ckauth.ChannelScopeID(*a.cfg.Scope, entity.AuthScope)
 		must(t, err)
 		group := iam.GroupByID(id)
 		authtest.GrantRole(t, w.tenant[0], group, iam.UserSubject(writer.ID), w.channelWriter)
 		client := a.client(token)
-		input := catalog.ContentInput{Kind: "article", OwnerEntityID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Before scope retirement"}}}
+		input := catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Before scope retirement"}}}}}
 		created, err := client.PostContents(t.Context(), input)
 		must(t, err)
 		must(t, w.auth.DeleteGroup(t.Context(), group))
@@ -130,7 +131,7 @@ func TestEntityConcurrentOwnershipAndStaleScopes(t *testing.T) {
 		requireError(t, err, 403, "forbidden")
 		current, err := a.engine.Client().GetContent(t.Context(), created.ID, ck.GetContentQuery{})
 		must(t, err)
-		if current.OwnerEntityID != string(entity.ID) || current.Title != "Before scope retirement" {
+		if current.ChannelID != string(entity.ID) || current.Title != "Before scope retirement" {
 			t.Fatalf("refused stale writes changed content: %+v", current)
 		}
 		unchanged, err := a.engine.Client().GetManage(t.Context(), ck.GetManageQuery{Q: "Before scope retirement"})
@@ -145,29 +146,29 @@ func TestOwnedEntityAuthority(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	t.Run("CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app", func(t *testing.T) {
-		owner, token, entity := ownedEntity(t, w, a, "one channel")
-		id, err := ckauth.EntityScopeID(*a.cfg.Scope, entity.AuthScope)
+		owner, token, entity := ownedChannel(t, w, a, "one channel")
+		id, err := ckauth.ChannelScopeID(*a.cfg.Scope, entity.AuthScope)
 		must(t, err)
 		group, err := w.auth.Group(t.Context(), iam.GroupByID(id))
 		must(t, err)
 		if group.TenantID.String() != a.cfg.Scope.TenantID.String() || group.Persona.String() != "channel" {
 			t.Fatalf("provisioned scope has wrong ownership: %+v", group)
 		}
-		managed, err := a.engine.Client().GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+		managed, err := a.engine.Client().GetManageChannels(t.Context(), ck.GetManageChannelsQuery{})
 		must(t, err)
-		if len(managed.Entities) != 1 || managed.Entities[0].ID != entity.ID {
+		if len(managed.Channels) != 1 || managed.Channels[0].ID != entity.ID {
 			t.Fatalf("management list lost its actual entity: %+v", managed)
 		}
-		_, err = a.client(token).GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+		_, err = a.client(token).GetManageChannels(t.Context(), ck.GetManageChannelsQuery{})
 		requireError(t, err, 403, "forbidden")
-		foreign, err := w.apps[1].engine.Client().GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "channel"})
+		foreign, err := w.apps[1].engine.Client().GetManageChannels(t.Context(), ck.GetManageChannelsQuery{})
 		must(t, err)
-		if len(foreign.Entities) != 0 {
+		if len(foreign.Channels) != 0 {
 			t.Fatal("management entity listing crossed app boundary")
 		}
-		_, err = w.apps[1].client(token).PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{Text: []entities.Text{{Language: "en", Description: "cross-app edit"}}})
+		_, err = w.apps[1].client(token).PatchChannel(t.Context(), string(entity.ID), channels.Update{Text: []entities.Text{{Language: "en", Description: "cross-app edit"}}})
 		requireError(t, err, 404, "not_found")
-		current, err := a.client(token).GetEntity(t.Context(), string(entity.ID), ck.GetEntityQuery{})
+		current, err := a.client(token).GetChannel(t.Context(), string(entity.ID), ck.GetChannelQuery{})
 		must(t, err)
 		if current.OwnerUserID != owner.ID {
 			t.Fatal("cross-app request changed the entity")
@@ -179,52 +180,52 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		}
 	})
 	t.Run("CK-J16-S02_creation_limit_is_enforced_without_extra_entity", func(t *testing.T) {
-		_, token, entity := ownedEntity(t, w, a, "limited channel")
-		_, err := a.client(token).PostEntities(t.Context(), []entities.EntityInput{{Kind: "channel", Slug: "extra-" + entity.OwnerUserID, Names: []entities.Name{{Language: "en", Kind: "name", Name: "second must fail"}}}})
+		_, token, entity := ownedChannel(t, w, a, "limited channel")
+		_, err := a.client(token).PostChannels(t.Context(), channels.Input{Slug: "extra-" + entity.OwnerUserID, Names: []entities.Name{{Language: "en", Kind: "name", Name: "second must fail"}}})
 		requireError(t, err, 409, "limit_reached")
-		mine, err := a.client(token).GetMeEntities(t.Context(), ck.GetMeEntitiesQuery{})
+		mine, err := a.client(token).GetMeChannels(t.Context(), ck.GetMeChannelsQuery{})
 		must(t, err)
-		if len(mine.Entities) != 1 || mine.Entities[0].ID != entity.ID {
+		if len(mine.Channels) != 1 || mine.Channels[0].ID != entity.ID {
 			t.Fatalf("failed second creation changed ownership listing: %+v", mine)
 		}
 	})
 	t.Run("CK-J03-S02_entity_writer_does_not_write_another_entity", func(t *testing.T) {
-		_, _, first := ownedEntity(t, w, a, "writer target")
-		_, _, other := ownedEntity(t, w, a, "other target")
+		_, _, first := ownedChannel(t, w, a, "writer target")
+		_, _, other := ownedChannel(t, w, a, "other target")
 		writer, token := w.person(t, 0)
-		group, err := ckauth.EntityScopeID(*a.cfg.Scope, first.AuthScope)
+		group, err := ckauth.ChannelScopeID(*a.cfg.Scope, first.AuthScope)
 		must(t, err)
 		authtest.GrantRole(t, w.tenant[0], iam.GroupByID(group), iam.UserSubject(writer.ID), w.channelWriter)
-		input := catalog.ContentInput{Kind: "article", OwnerEntityID: string(first.ID), Text: map[string]catalog.Text{"en": {Title: "Scoped work"}}}
+		input := catalog.ContentInput{Kind: "article", ChannelID: string(first.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Scoped work"}}}}}
 		created, err := a.client(token).PostContents(t.Context(), input)
 		must(t, err)
-		if created.OwnerEntityID != string(first.ID) {
+		if created.ChannelID != string(first.ID) {
 			t.Fatal("scoped write changed its owner")
 		}
-		input.OwnerEntityID = string(other.ID)
+		input.ChannelID = string(other.ID)
 		_, err = a.client(token).PostContents(t.Context(), input)
 		requireError(t, err, 403, "forbidden")
 		rows, err := a.engine.Client().GetManage(t.Context(), ck.GetManageQuery{Q: "Scoped work"})
 		must(t, err)
-		if len(rows) != 1 || rows[0].ID != created.ID || rows[0].OwnerEntityID != string(first.ID) {
+		if len(rows) != 1 || rows[0].ID != created.ID || rows[0].ChannelID != string(first.ID) {
 			t.Fatalf("refused cross-entity write changed content: %+v", rows)
 		}
 	})
 	t.Run("CK-J16-S04_deletion_retires_scope_and_owned_content", func(t *testing.T) {
 		startPublicationRuntime(t, a)
-		_, token, entity := ownedEntity(t, w, a, "retirement")
-		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", OwnerEntityID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Channel article"}}})
+		_, token, entity := ownedChannel(t, w, a, "retirement")
+		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Channel article"}}}}})
 		must(t, err)
 		_, err = a.client(token).PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
 		awaitEditionPublication(t, a, a.engine.Client(), item.ID, item.Versions[0].ID)
 		_, err = a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		must(t, err) // deletion must hide content that was actually published
-		_, err = a.client(token).DeleteEntity(t.Context(), string(entity.ID))
+		err = a.client(token).DeleteChannel(t.Context(), string(entity.ID))
 		must(t, err)
 		_, err = a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
-		id, err := ckauth.EntityScopeID(*a.cfg.Scope, entity.AuthScope)
+		id, err := ckauth.ChannelScopeID(*a.cfg.Scope, entity.AuthScope)
 		must(t, err)
 		group, err := w.auth.Group(t.Context(), iam.GroupByID(id))
 		must(t, err)
@@ -233,8 +234,8 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		}
 	})
 	t.Run("CK-J16-S05_restore_does_not_widen_scope_or_change_owner", func(t *testing.T) {
-		owner, token, entity := ownedEntity(t, w, a, "restoration authority")
-		id, err := ckauth.EntityScopeID(*a.cfg.Scope, entity.AuthScope)
+		owner, token, entity := ownedChannel(t, w, a, "restoration authority")
+		id, err := ckauth.ChannelScopeID(*a.cfg.Scope, entity.AuthScope)
 		must(t, err)
 		groupRef := iam.GroupByID(id)
 		editor, editorToken := w.person(t, 0)
@@ -250,7 +251,7 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		if !canWrite(editorToken) {
 			t.Fatal("old editor lacks positive-control grant before retirement")
 		}
-		_, err = a.client(token).DeleteEntity(t.Context(), string(entity.ID))
+		err = a.client(token).DeleteChannel(t.Context(), string(entity.ID))
 		must(t, err)
 		retired, err := w.auth.Group(t.Context(), groupRef)
 		must(t, err)
@@ -258,7 +259,7 @@ func TestOwnedEntityAuthority(t *testing.T) {
 			t.Fatal("deletion did not retire channel authority")
 		}
 		active := entities.State("active")
-		_, err = a.client(token).PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{State: &active})
+		_, err = a.client(token).PatchChannel(t.Context(), string(entity.ID), channels.Update{State: &active})
 		requireError(t, err, 403, "forbidden")
 		// owner_user_id is attribution, not a grant to resurrect a retired scope.
 		var state, storedOwner, scope string
@@ -275,12 +276,12 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		}
 		// A still-authorized host explicitly restores the entity and provisions
 		// a fresh owner role; old team grants must not return with it.
-		restored, err := a.engine.Client().PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{State: &active})
+		restored, err := a.engine.Client().PatchChannel(t.Context(), string(entity.ID), channels.Update{State: &active})
 		must(t, err)
 		if restored.OwnerUserID != owner.ID || restored.AuthScope != entity.AuthScope {
 			t.Fatalf("restore changed authority: %+v", restored)
 		}
-		id, err = ckauth.EntityScopeID(*a.cfg.Scope, restored.AuthScope)
+		id, err = ckauth.ChannelScopeID(*a.cfg.Scope, restored.AuthScope)
 		must(t, err)
 		group, err := w.auth.Group(t.Context(), iam.GroupByID(id))
 		must(t, err)
@@ -290,13 +291,13 @@ func TestOwnedEntityAuthority(t *testing.T) {
 		if !canWrite(token) || canWrite(editorToken) {
 			t.Fatal("explicit restore failed to grant the owner or resurrected retired team authority")
 		}
-		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", OwnerEntityID: string(entity.ID), Text: map[string]catalog.Text{"en": {Title: "Restored owner's work"}}})
+		item, err := a.client(token).PostContents(t.Context(), catalog.ContentInput{Kind: "article", ChannelID: string(entity.ID), Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Restored owner's work"}}}}})
 		must(t, err)
-		if item.OwnerEntityID != string(entity.ID) {
+		if item.ChannelID != string(entity.ID) {
 			t.Fatal("restored owner lost authoring capability")
 		}
 		_, outsider := w.person(t, 0)
-		_, err = a.client(outsider).PatchEntity(t.Context(), string(entity.ID), entities.EntityUpdate{Text: []entities.Text{{Language: "en", Description: "unauthorized"}}})
+		_, err = a.client(outsider).PatchChannel(t.Context(), string(entity.ID), channels.Update{Text: []entities.Text{{Language: "en", Description: "unauthorized"}}})
 		requireError(t, err, 403, "forbidden")
 	})
 }

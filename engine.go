@@ -33,6 +33,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
@@ -69,7 +70,6 @@ type Engine struct {
 	log             *slog.Logger
 	auth            auth.Authenticator
 	gate            *access.Gate
-	classifier      bool // free-text answers to reclassify
 
 	hub      *hub.Hub
 	signals  *signalPlane // nil without ClickHouse
@@ -77,7 +77,9 @@ type Engine struct {
 	ownCH    clickhouse.Conn // opened from Config.ClickHouse
 	content  *content.Runtime
 	entities *entities.Store
+	channels *channels.Store
 	catalog  *catalog.Store
+	versions *versions.Service
 	discover *discovery.Service
 	importer *importer.Service
 	media    *engineMedia
@@ -129,7 +131,7 @@ func NewForErasureReplay(ctx context.Context, cfg Config, deps Deps) (*Engine, e
 }
 
 func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *Engine, err error) {
-	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, classifier: deps.Classifier != nil, erasureRecovery: recovery}
+	e := &Engine{cfg: cfg, pool: deps.Postgres, auth: deps.Auth, log: deps.Logger, erasureRecovery: recovery}
 	if e.log == nil {
 		e.log = slog.Default()
 	}
@@ -165,6 +167,9 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		return nil, err
 	}
 	if err := e.newCatalog(ctx, deps, now); err != nil {
+		return nil, err
+	}
+	if err := e.newVersions(deps, now); err != nil {
 		return nil, err
 	}
 	if cfg.Media != nil {
@@ -291,6 +296,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := preflightPublishingJobs(ctx, e.pool, e.riverSchema, retiredTenants); err != nil {
 		return err
 	}
+	if err := e.preflightUnifiedReleases(ctx); err != nil {
+		return err
+	}
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
 	}
@@ -336,13 +344,25 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		return err
 	}
 	if options.SkipQueues {
-		return e.validateCatalogEventHandoff(ctx)
+		return errors.Join(e.validateCatalogEventHandoff(ctx), e.validateUnifiedReleases(ctx))
 	}
 	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
-	if err := e.migratePublicationQueues(ctx); err != nil {
-		return err
+	if options.explicit {
+		if err := e.migratePublicationQueues(ctx); err != nil {
+			return err
+		}
+		if err := e.migrateUnifiedReleases(ctx); err != nil {
+			return err
+		}
+	} else {
+		if err := e.validatePublicationQueues(ctx); err != nil {
+			return err
+		}
+		if err := e.validateUnifiedReleases(ctx); err != nil {
+			return err
+		}
 	}
 	if err := e.migrateCatalogEvents(ctx); err != nil {
 		return err
@@ -402,7 +422,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 // newCatalog builds the stores media is built over: entities and the catalog, which refreshes facets when entities change.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
-	opts := entities.Options{Pool: e.pool, Schema: e.schema, RiverSchema: e.riverSchema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.EntityReferences,
+	opts := entities.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.EntityReferences,
 		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},
@@ -419,12 +439,9 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	if e.entities, err = entities.New(opts); err != nil {
 		return err
 	}
-	playable, err := e.playableKinds()
-	if err != nil {
-		return err
-	}
-	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities,
-		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences, PlayableKinds: playable,
+	e.channels = channels.FromStore(e.entities)
+	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
+		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
 	if e.catalog, err = catalog.New(ctx, co); err != nil {
@@ -433,24 +450,21 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	return nil
 }
 
-// playableKinds are the player kinds media streams (an HLS or audio preset):
-// their versions list once a rendition is out.
-func (e *Engine) playableKinds() ([]string, error) {
-	if e.cfg.Media == nil {
-		return nil, nil
+// newVersions binds the one publication service before optional media storage.
+func (e *Engine) newVersions(deps Deps, now func() time.Time) error {
+	opts := versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool,
+		Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
+		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
+		Policy: deps.Downloads, Logger: e.log, Now: now, MediaConfigured: e.cfg.Media != nil}
+	if mc := e.cfg.Media; mc != nil {
+		opts.Downloads = versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User,
+			Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis}
 	}
-	mc, err := e.cfg.MediaKinds()
-	if err != nil {
-		return nil, err
+	var err error
+	if e.versions, err = versions.New(opts); err != nil {
+		return err
 	}
-	var out []string
-	for _, k := range mc.Kinds {
-		if e.cfg.Content.Kinds[k.Name].Presentation == "player" &&
-			slices.ContainsFunc(k.Private, func(p media.Private) bool { return p.HLS != nil }) {
-			out = append(out, k.Name)
-		}
-	}
-	return out, nil
+	return e.catalog.BindPublication(e.versions)
 }
 
 func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) (*engineMedia, error) {
@@ -459,18 +473,12 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	m := &engineMedia{store: deps.Store}
+	m := &engineMedia{store: deps.Store, versions: e.versions}
 	declared := map[string]bool{}
 	for _, k := range reg.Kinds {
 		declared[k.Name] = true
 	}
 	m.polls = declared[pollFolder]
-	if m.versions, err = versions.New(versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool, Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
-		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
-		Downloads: versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User, Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis},
-		Policy:    deps.Downloads, Logger: e.log, Now: now}); err != nil {
-		return nil, err
-	}
 	reg.Hooks = m.versions.Hooks()
 	if m.reg, err = media.NewRegistry(reg); err != nil {
 		return nil, err
@@ -573,7 +581,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 // kind sets any.
 func (e *Engine) entityLimiter() (*media.PGLimiter, error) {
 	limits := map[string]kinds.UploadLimits{}
-	for name, gk := range e.cfg.Content.EntityKinds {
+	for name, gk := range e.cfg.Content.StorageModel().EntityKinds {
 		if gk.Uploads != (kinds.UploadLimits{}) {
 			limits[name] = gk.Uploads
 		}
@@ -609,7 +617,7 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		NotificationPublisher: deps.Notifications,
 		EraseAccountReceipts:  e.eraseAccountReceipts,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
-		Classifier: deps.Classifier, ProviderDataEraser: deps.ProviderDataEraser,
+		ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
@@ -662,6 +670,11 @@ func (e *Engine) mount(deps Deps) error {
 	if e.modules[httpapi.Entities], err = e.entities.Handler(e.auth); err != nil {
 		return err
 	}
+	if e.cfg.Content.Channels != nil {
+		if e.modules[httpapi.Channels], err = e.channels.Handler(e.auth); err != nil {
+			return err
+		}
+	}
 	e.modules[httpapi.Contents] = e.catalog.Handler()
 	if err := e.mountDiscovery(deps); err != nil {
 		return err
@@ -673,7 +686,7 @@ func (e *Engine) mount(deps Deps) error {
 	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c, e.hub.SignalPlane, avatars); err != nil {
 		return err
 	}
-	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities,
+	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
 	}
@@ -697,7 +710,7 @@ func (e *Engine) mount(deps Deps) error {
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
-		Entities: e.entities, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
+		Entities: e.entities, Channels: e.channels, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
 		MeasuredEngagement: e.cfg.MeasuredEngagement, ActivityCohorts: e.cfg.ActivityCohorts}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if o.Candidates != nil && !e.hub.SignalsConfigured() {
@@ -736,7 +749,7 @@ func WithRiverClient(fleet *river.Client[pgx.Tx]) StartOption {
 }
 
 // Start starts ContentKit's background work: search indexing, preference
-// sync, projection repair, erasure and the media jobs. With no
+// sync, popularity refresh, erasure and the media jobs. With no
 // options it builds and runs ContentKit's own River client in
 // Config.Database.RiverSchema; with WithRiverClient the jobs run on the host's
 // fleet. It runs no DDL; ctx ending stops nothing: Close stops what Start
@@ -893,7 +906,7 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 // recent searches, inboxes, people's avatars (on the avatar primary only:
 // another site's people's avatars are the primary's, which its own
 // EraseSubjects erases; see AvatarsConfig) and data
-// retained by moderation and classifier providers; approved authored content
+// retained by moderation providers; approved authored content
 // stays (content.EraseSubjects). Retry while error != nil or
 // !report.Complete(); Remaining names a plane that could not finish
 // (content_plane, media_plane, signal_plane). Without a signal plane only the

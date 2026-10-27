@@ -141,7 +141,6 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 		}
 		args := pgx.NamedArgs{"ms_staff": rights.write, "ms_account": actor.AccountID(), "ms_groups": editorEntities, "ms_own_app": own.app, "ms_own_channels": own.entities}
 		allowed := `(@ms_staff OR (c.created_by=@ms_account AND @ms_account<>'' AND ((c.owner_entity_id IS NULL AND @ms_own_app::boolean) OR c.owner_entity_id=ANY(@ms_own_channels::text[])))
- OR EXISTS (SELECT 1 FROM ` + s.t.entities + ` og WHERE og.tenant_id=c.tenant_id AND og.id=c.owner_entity_id AND og.state='active' AND og.auth_scope IS NULL AND og.owner_user_id=@ms_account AND @ms_account<>'')
  OR c.owner_entity_id=ANY(@ms_groups::text[]))`
 		eligible := &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.items + ` c
  WHERE c.tenant_id=sd.tenant_id AND c.id=sd.content_id AND c.kind=sd.content_kind AND c.state<>'deleted' AND ` + allowed + `)`, Args: args}
@@ -162,13 +161,11 @@ func (s *Store) ManagementSearch(ctx context.Context, actor access.Actor, q Mana
 				}
 			}
 			args["ms_title_kinds"] = titleKinds
-			rows, err := s.pool.Query(ctx, `SELECT c.id,c.kind,coalesce(vt.title,CASE WHEN c.kind=ANY(@ms_title_kinds::text[]) THEN nullif(c.original_title,'') END,t.title,''),
- coalesce(vt.language,t.language,c.original_language,'') FROM `+s.t.items+` c
- LEFT JOIN LATERAL (SELECT title,language FROM `+s.t.text+` t WHERE t.tenant_id=c.tenant_id AND t.content_id=c.id
- ORDER BY t.language=@ms_language DESC,t.language=@ms_default DESC,t.language LIMIT 1) t ON true
- LEFT JOIN LATERAL (SELECT t.title,t.language FROM `+s.t.versions+` v JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
- WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted' AND c.kind=ANY(@ms_title_kinds::text[]) AND t.title<>''
- ORDER BY t.language=@ms_language DESC,v.position,t.language LIMIT 1) vt ON true
+			rows, err := s.pool.Query(ctx, `SELECT c.id,c.kind,coalesce(vt.title,''),coalesce(vt.language,'') FROM `+s.t.items+` c
+ LEFT JOIN LATERAL (SELECT coalesce(nullif(t.title,''),CASE WHEN c.kind=ANY(@ms_title_kinds::text[]) THEN nullif(v.original_title,'') END,'') title,
+ coalesce(t.language,v.languages[1],'') language FROM `+s.t.versions+` v LEFT JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted'
+ ORDER BY coalesce(@ms_language=ANY(v.languages),false) DESC,v.released DESC,v.position,t.language=@ms_language DESC,t.language LIMIT 1) vt ON true
  WHERE c.tenant_id=@ms_tenant AND c.id=ANY(@ms_ids::text[]) AND c.state<>'deleted' AND `+allowed+`
  ORDER BY array_position(@ms_ids::text[],c.id)`, args)
 			if err != nil {

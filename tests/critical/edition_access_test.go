@@ -28,8 +28,8 @@ func TestEditionEntitlementIsolation(t *testing.T) {
 	create := func(title string) catalog.Content {
 		item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{
 			Kind: "article", Access: &access.Rule{Level: access.PPV},
-			Text:     map[string]catalog.Text{"en": {Title: title, Body: "Protected edition body"}},
-			Versions: []catalog.VersionInput{{Languages: []string{"en"}}, {Languages: []string{"de"}}},
+
+			Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title, Body: "Protected edition body"}}}, {Languages: []string{"de"}, Text: map[string]catalog.VersionText{"en": {Title: title, Body: "Protected edition body"}}}},
 		})
 		must(t, err)
 		item, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})

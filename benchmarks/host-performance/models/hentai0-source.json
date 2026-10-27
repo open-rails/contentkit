@@ -1,0 +1,6 @@
+{
+  "repository": "hentai0",
+  "head": "196ec7cbd1bd8aa6176897897603bc0ccac6fa7a",
+  "model_file": "internal/contentkit/model.yaml",
+  "host_file": "config.example.yaml"
+}

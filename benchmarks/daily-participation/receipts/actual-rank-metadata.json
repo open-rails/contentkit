@@ -1,0 +1,14 @@
+{
+  "bytes_on_disk_before_queries": 193198705,
+  "database": "ck261_actual_20261026_212902",
+  "days": 365,
+  "from": "2025-10-27T00:00:00Z",
+  "items": 100000,
+  "merges": "stopped only owned new table during replacement/FINAL sensitivity and resumed afterward",
+  "method": "actual signal.Store.DailyPopular from d5e6dc73+2a480be9; query unchanged at3772fe78",
+  "parts_before_queries": 54,
+  "physical_rows_before_queries": 36600000,
+  "proof": "all100000 IDs distinct/sorted; repeatIDorder differences recorded separately; seven sampled scores independently match latest today version",
+  "schema": "exact ReplicatedReplacingMergeTree popularity_daily migration0006; String UUID IDs; UInt64 counts/version",
+  "until": "2026-10-27T00:00:00Z"
+}

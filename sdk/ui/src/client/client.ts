@@ -1,4 +1,5 @@
 import { guestReadingHistory, type GuestReadingHistory } from "./guest-reading-history.js";
+import { ChannelsClient } from "./channels.js";
 import { CatalogClient } from "./catalog.js";
 import { CodesClient } from "./codes.js";
 import { ContentsClient } from "./contents.js";
@@ -33,7 +34,7 @@ export interface ContentKitClientOptions extends HttpOptions {
 export interface ContentKitClient {
   /** Uploads, multipart, commits, reads, frames, HLS bases, the HLS loader and inline images. */
   readonly media: MediaClient;
-  /** Content items: reads, and writes for their creators, owner-group editors and staff. */
+  /** Content items: reads, and writes for their creators, channel editors and staff. */
   readonly contents: ContentsClient;
   /** Catalog totals and the staff-readable committed event log. */
   readonly catalog: CatalogClient;
@@ -43,7 +44,7 @@ export interface ContentKitClient {
   readonly reactions: ReactionsClient;
   /** The signed-in caller's favorites. */
   readonly favorites: FavoritesClient;
-  /** Polls: votes, free-text answers and the staff editor. */
+  /** Polls: predefined choices, final votes and the staff editor. */
   readonly polls: PollsClient;
   /** Comment bans, owner and global. */
   readonly bans: BansClient;
@@ -51,6 +52,8 @@ export interface ContentKitClient {
   readonly moderation: ModerationClient;
   /** Entities: listings, pages, staff writes and memberships. */
   readonly entities: EntitiesClient;
+  /** Channel identity, authoring permissions and repost feeds. */
+  readonly channels: ChannelsClient;
   /** Lists, search, typeahead, rails, release dates, content filters, purchase library, history, signals and exposures. */
   readonly discovery: DiscoveryClient;
   /** Content versions: reader plans, reader metadata, forks and downloads. */
@@ -94,6 +97,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     bans: new BansClient(h),
     moderation: new ModerationClient(h),
     entities: new EntitiesClient(h, media),
+    channels: new ChannelsClient(h, media),
     discovery: new DiscoveryClient(h),
     versions: new VersionsClient(h),
     codes: new CodesClient(h),

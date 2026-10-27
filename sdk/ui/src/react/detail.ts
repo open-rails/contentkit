@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { Content, Decision, Version } from "../client/generated/wire.js";
@@ -70,19 +70,29 @@ export function useContentDetail(id: string | null | undefined, o: ContentDetail
   const selected = o.version === undefined ? param : o.version;
   const key = id ? keyOf("content-detail", scope, id, language) : null;
   const r = useResource<Content>(store, key, { type: "content-detail", id: id ?? undefined }, (s) => client.contents.get(id!, language, s));
-  const content = r.data ?? null;
+  const parent = r.data ?? null;
+  const versions = useMemo(() => liveVersions(parent), [parent]);
+  const picked = findVersion(versions, selected) ?? defaultVersion(parent, language);
+  const exact = !!picked && picked.id !== parent?.selected_version_id;
+  const editionKey = exact ? keyOf("version-detail", scope, picked.id, language) : null;
+  const edition = useResource<Content>(store, editionKey, { type: "content-detail", id: id ?? undefined },
+    (signal) => client.contents.getByVersion(picked!.id, language, signal));
+  // The parent supplies the visible edition index. Text and image URLs must
+  // come from the exact selected edition, never a sibling's projection.
+  const content = exact ? edition.data ?? null : parent;
+  const reloadParent = r.reload, reloadEdition = edition.reload;
+  const reload = useCallback(() => { reloadParent(); if (exact) reloadEdition(); }, [reloadParent, reloadEdition, exact]);
   return useMemo(() => {
-    const versions = liveVersions(content);
-    const version = findVersion(versions, selected) ?? defaultVersion(content, language);
+    const version = exact ? content?.versions.find((v) => v.id === picked?.id) ?? null : picked;
     return {
       content,
       versions,
       version,
       decision: version?.decision ?? content?.decision ?? null,
       languages: [...new Set(versions.flatMap((v) => v.languages))],
-      loading: !!key && (r.loading || !r.loaded),
-      error: r.error,
-      reload: r.reload,
+      loading: !!key && (r.loading || !r.loaded || exact && (edition.loading || !edition.loaded)),
+      error: r.error ?? (exact ? edition.error : undefined),
+      reload,
     };
-  }, [content, selected, language, key, r.loading, r.loaded, r.error, r.reload]);
+  }, [content, versions, picked, exact, key, r.loading, r.loaded, r.error, edition.loading, edition.loaded, edition.error, reload]);
 }

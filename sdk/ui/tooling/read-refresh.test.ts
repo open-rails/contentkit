@@ -86,3 +86,38 @@ test("a transient refresh failure keeps the unexpired read and retries; a refusa
   assert.equal(store.snapshot("read").read, null);
   assert.equal(store.snapshot("read").error?.code, "forbidden");
 });
+
+
+test("an active aborted resource settles without leaking a departed account or retrying itself", async () => {
+  const store = new ResourceStore({ subscribe: () => () => {} } as unknown as ContentKitClient);
+  let releaseAlice!: (value: { favorited: boolean }) => void;
+  const leaveAlice = store.subscribe("alice-favorite", { type: "favorite", readScope: "alice" }, () => {});
+  store.bind("alice-favorite", () => new Promise((resolve) => { releaseAlice = resolve; }));
+  store.load("alice-favorite");
+  leaveAlice();
+  await settle();
+
+  let calls = 0;
+  const aborted = new ContentKitError("aborted", "The account changed.");
+  store.subscribe("bob-favorite", { type: "favorite", readScope: "bob" }, () => {});
+  const unbind = store.bind("bob-favorite", async () => { calls++; throw aborted; });
+  store.load("bob-favorite");
+  await settle();
+  assert.equal(store.snapshot("bob-favorite").loading, false);
+  assert.equal(store.snapshot("bob-favorite").loaded, true);
+  assert.equal(store.snapshot("bob-favorite").error, aborted);
+  assert.equal(store.snapshot("bob-favorite").data, undefined);
+  assert.equal(calls, 1, "an abort must not start an automatic retry loop");
+
+  releaseAlice({ favorited: true });
+  await settle();
+  assert.equal(store.snapshot("bob-favorite").data, undefined, "late Alice data cannot fill Bob's slot");
+  unbind();
+  store.bind("bob-favorite", async () => ({ favorited: false }));
+  store.load("bob-favorite", true);
+  assert.equal(store.snapshot("bob-favorite").error, aborted, "explicit retry retains the failure until it settles");
+  await settle();
+  assert.deepEqual(store.snapshot("bob-favorite").data, { favorited: false });
+  assert.equal(store.snapshot("bob-favorite").error, undefined);
+  assert.equal(store.snapshot("bob-favorite").loading, false);
+});

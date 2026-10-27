@@ -288,25 +288,6 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, s
 // needs to merge across partitions.
 const finalSettings = "\nSETTINGS do_not_merge_across_partitions_select_final = 1"
 
-// Popular ranks the works of one kind with qualified readers by
-// event-time eligible-population participation (opts.Normalization) and the
-// policy expression opts.RankExpr.
-func (st *Store) Popular(ctx context.Context, tenant string, contentKind string, opts PopularOptions) ([]PopularHit, error) {
-	if strings.TrimSpace(tenant) == "" {
-		return nil, fmt.Errorf("signal: tenant is required")
-	}
-	if strings.TrimSpace(contentKind) == "" {
-		return nil, fmt.Errorf("signal: contentKind is required")
-	}
-	if err := opts.Window.Validate(); err != nil {
-		return nil, err
-	}
-	if opts.Normalization == nil {
-		return nil, fmt.Errorf("signal: popularity requires normalization")
-	}
-	return st.normalizedPopular(ctx, tenant, contentKind, opts)
-}
-
 // CoEngaged returns works co-engaged with the anchor work: "subjects who
 // engaged with X also engaged with Y". Strength nets subjects whose summed
 // feedback for the candidate is non-negative against those with negative.

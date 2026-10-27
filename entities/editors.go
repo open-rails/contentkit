@@ -48,7 +48,13 @@ func (s *Store) staff(ctx context.Context) (bool, error) {
 	if w == nil {
 		return true, nil
 	}
-	w.once.Do(func() { w.staff, w.err = gate.Can(ctx, w.auth, w.actor, string(access.EntitiesWrite)) })
+	w.once.Do(func() {
+		permission := access.EntitiesWrite
+		if s.channels {
+			permission = access.ChannelsWrite
+		}
+		w.staff, w.err = gate.Can(ctx, w.auth, w.actor, string(permission))
+	})
 	return w.staff, w.err
 }
 
@@ -57,7 +63,7 @@ func (w *writer) edits(ctx context.Context, s *Store, g Entity) (bool, error) {
 	if g.Internal || (s.cfg.EntityKinds[g.Kind].AuthScope && g.AuthScope == "") || (s.cfg.EntityKinds[g.Kind].Owner != "user" && !s.cfg.EntityKinds[g.Kind].AuthScope) {
 		return false, nil
 	}
-	return gate.EntityEditor(ctx, w.auth, w.actor, g.OwnerUserID, g.AuthScope, access.EntitySettingsManage(g.Kind))
+	return gate.ChannelEditor(ctx, w.auth, w.actor, g.AuthScope, access.ChannelSettingsManage)
 }
 
 // mayEdit refuses, with ErrForbidden, an entity the writer does not edit.

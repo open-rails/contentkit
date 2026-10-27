@@ -63,7 +63,13 @@ func TestCopiedPageChapterPlacement(t *testing.T) {
 	}})
 	must(t, err)
 	ready := awaitMediaReady(t, admin, ref)
-	requireMediaPaths(t, ready, "pages/01.png", "pages/20.png", "pages/30.png", "reader/01.webp", "reader/20.webp", "reader/30.webp")
+	requireMediaPaths(t, ready, "cover.png", "pages/01.png", "pages/20.png", "pages/30.png", "reader/01.webp", "reader/20.webp", "reader/30.webp")
+	if len(ready.Public) != 1 || len(ready.Public[0].Renditions) != 2 {
+		t.Fatalf("automatic cover renditions incomplete: %+v", ready.Public)
+	}
+	for _, rendition := range ready.Public[0].Renditions {
+		assertImage(t, rendition.URL, rendition.W, rendition.H)
+	}
 	// The existing page-quality policy excludes duplicate images by default.
 	// Explicitly retain them through the editor API before assigning chapters.
 	notices, err := admin.GetContentVersionPageNotices(t.Context(), ref.ID, ref.Version)
@@ -122,7 +128,7 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 		defer cancel()
 		for _, query := range []string{
 			`SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'state',state,'current',current,'due',scheduled_at,'error',error,'plan_fingerprint',plan->>'fingerprint','result_fingerprint',result->>'fingerprint')),'[]') FROM ` + pgx.Identifier{w.schema, "content_publication_requests"}.Sanitize(),
-			`SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'kind',kind,'state',state,'args',args,'errors',errors,'due',scheduled_at)),'[]') FROM ` + pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize() + ` WHERE kind IN ('contentkit_version_publish','contentkit_version_release') AND state NOT IN ('completed','cancelled')`,
+			`SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'kind',kind,'state',state,'args',args,'errors',errors,'due',scheduled_at)),'[]') FROM ` + pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize() + ` WHERE kind='contentkit_version_release' AND state NOT IN ('completed','cancelled')`,
 		} {
 			var state string
 			err := w.pool.QueryRow(ctx, query).Scan(&state)
@@ -213,7 +219,7 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 	waitForWithin(t, 45*time.Second, func() bool {
 		var pending int
 		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+`
- WHERE kind IN ('contentkit_version_publish','contentkit_version_release')
+ WHERE kind='contentkit_version_release'
  AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&pending))
 		return pending == 0
 	})

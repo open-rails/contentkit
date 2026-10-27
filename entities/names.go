@@ -218,8 +218,8 @@ func (s *Store) namesChanged(ctx context.Context, q Querier, ids []string) error
 func (s *Store) lock(ctx context.Context, q Querier, ids []string) ([]Entity, error) {
 	sorted := append([]string(nil), ids...)
 	sort.Strings(sorted)
-	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) ORDER BY g.id FOR UPDATE`,
-		entityColumns, s.table("content_entities")), s.tenant, sorted)
+	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s g WHERE g.tenant_id = $1 AND g.id = ANY($2::text[]) AND %s ORDER BY g.id FOR UPDATE`,
+		entityColumns, s.table("content_entities"), s.domainPredicate("g")), s.tenant, sorted)
 	if err != nil {
 		return nil, err
 	}

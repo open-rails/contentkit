@@ -129,7 +129,7 @@ type uploads struct{ s *Service }
 
 // CanUpload lets editors of a content (staff, its authenticated author, its owner
 // group's editors) write its items, a group's editors its item, a person
-// their own avatar. A version being forked takes no other writes.
+// their own avatar.
 func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	s := u.s
 	k, err := s.reg.Kind(t.Ref.ContentKind)
@@ -172,15 +172,6 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.Kind
 	if err != nil || !res[target].Editor {
 		return media.UploadGrant{}, err
 	}
-	if target.Version != "" && k.Publish != nil {
-		m, _, err := s.m.Manifests.Get(ctx, t.Ref)
-		if err != nil && !errors.Is(err, media.ErrNotFound) {
-			return media.UploadGrant{}, err
-		}
-		if m != nil && m.Meta[forkMeta] != nil {
-			return media.UploadGrant{}, &media.UploadError{Code: media.CodeConflict, Message: "the version is being forked; edit it once the fork finishes"}
-		}
-	}
 	owner := ""
 	if actor.Member() {
 		owner = actor.AccountID()
@@ -210,7 +201,7 @@ func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.Conte
 	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
 		return err
 	}
-	return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
+	return s.wakePublicationTx(ctx, tx, v)
 
 }
 
@@ -235,7 +226,7 @@ func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.
 	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
 		return err
 	}
-	return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
+	return s.wakePublicationTx(ctx, tx, v)
 }
 
 // beforeRetire serializes snapshot invalidation with publishers. A publisher
@@ -293,7 +284,7 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 				return err
 			}
 		}
-		return s.enqueueTx(ctx, tx, publishArgs{Content: v.Content, Version: v.Version})
+		return s.SchedulePublicationTx(ctx, tx, []Target{v})
 	})
 }
 
