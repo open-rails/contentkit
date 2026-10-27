@@ -486,8 +486,7 @@ func QueueFor(catalog string) string { return jobqueue.For(Queue, catalog) }
 
 type purgeDeletedArgs struct{}
 
-func (purgeDeletedArgs) Kind() string          { return "contentkit_content_purge_deleted" }
-func (purgeDeletedArgs) KindAliases() []string { return []string{"contentkit_catalog_purge_deleted"} }
+func (purgeDeletedArgs) Kind() string { return "contentkit_content_purge_deleted" }
 
 type jobWorker[T river.JobArgs] struct {
 	river.WorkerDefaults[T]

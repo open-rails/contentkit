@@ -283,3 +283,14 @@ WHERE tenant_id=$1 AND operation_id=$2 AND effects->'version_storage'->>'final'=
 		return jr.scheduleCleanupTx(ctx, tx, source.Ref(), source.Prefix(), j.cfg.Now().Add(j.cfg.LateUploadWindow), operations, false)
 	})
 }
+
+const legacyCleanupWhere = `state NOT IN ('completed', 'cancelled', 'discarded') AND (
+kind IN ('contentkit_media_sweep', 'contentkit_media_sweep_pass', 'contentkit_media_orphan_sweep', 'contentkit_media_cleanup_due', 'contentkit_media_recover') OR
+kind = 'contentkit_media_delete_folder')`
+
+func legacyCleanupTable(schema string) string {
+	if schema == "" {
+		return pgx.Identifier{"river_job"}.Sanitize()
+	}
+	return pgx.Identifier{schema, "river_job"}.Sanitize()
+}
