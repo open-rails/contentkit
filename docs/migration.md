@@ -1,28 +1,16 @@
 # Database initialization
 
-Each store has a fresh-install baseline, followed by versioned upgrades:
+Each store has one baseline; later schema changes are numbered migrations after it:
 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
-| PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, offers, the outbox, import ids, codes, interactions, polls, search, preferences, erasure and media state |
-| ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
+| PostgreSQL catalog | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, offers, the event log, import ids, codes, interactions, polls, search, preferences, erasure and media state |
+| PostgreSQL accounts | `migrations.Accounts` | `accounts/0001_baseline.up.sql` | tenant bindings, account media, avatar placement and account erasure records |
+| ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, measured engagement, exposures, popularity and erasure fences |
 
-The PostgreSQL migrator also recognizes the exact baseline shipped before
-version-owned covers (`79d1bcc`, SHA-256 `5f1614f38022…`). Its immutable bytes
-remain embedded under `migrations/compat`; installations that recorded it keep
-that truthful ledger entry and apply the numbered upgrade steps. No checksum
-is silently accepted or rewritten. Other historical baseline hashes require
-an explicitly supported conversion; do not reset a populated store to hide a
-migration error. A version id is NULL for the work itself in PostgreSQL and
-`''` in ClickHouse, whose sorting keys hold it.
-
-The cover upgrade prepares the version column in migration `0003`. Migration
-`0004` refuses to remove content-level metadata while any old cover remains.
-An installation with old covers must first run the explicit media migration:
-inventory and copy the files, verify the destination, move the metadata to its
-declared version owner, then clear the old metadata and rerun migrations.
-Preparation remains applied so the operator can resume; an interrupted copy
-never causes the schema migration to discard the original cover.
+No checksum is silently accepted or rewritten; a database recorded by an
+earlier migration history is recreated, not converted. A version id is NULL for
+the work itself in PostgreSQL and `''` in ClickHouse, whose sorting keys hold it.
 
 ## Content model configuration
 
@@ -152,6 +140,4 @@ are not PostgreSQL foreign keys and have no cross-store FK enforcement.
 Back up authored content, moderation and retained-publication state,
 reactions, favorites and their revision sequence, source erasure fences,
 and the ClickHouse signal plane. Search documents and group counts are
-rebuildable. The baseline contains only current signal tables, including
-`subject_content_state.last_view_at`; it does not install retired signal
-formats or convert historical rows. See [restore.md](restore.md).
+rebuildable. The baseline contains only current signal tables. See [restore.md](restore.md).

@@ -25,8 +25,8 @@ access and content-filter policy before returning its card.
   them as measured engagement. It remains useful after raw counter retirement.
 - `signals` stores explicit clicks and current reactions/favorites. Superseded
   feedback revisions replace old values; clicks alone cannot create readership.
-- `engagement_pairs` is a dormant co-engagement cache: nothing reads it and
-  no job rebuilds it. `CoEngaged` reads the canonical selected window.
+- `CoEngaged` computes co-engagement from the canonical selected window; no
+  pairs cache is stored.
 - `exposures` records served/rendered/visible cards and original rank positions.
   It is attribution data, not a count of readers.
 - `measured_population_observations` and `measured_population_coverage` describe
