@@ -494,15 +494,6 @@ type CoEngagedHit struct {
 	Strength int64
 }
 
-// RefreshCoEngagementOptions controls RefreshCoEngagement.
-type RefreshCoEngagementOptions struct {
-	// Window bounds which events feed the rollup (zero = all time).
-	Window Window
-	// MaxContentPerSubject caps each subject's contribution to pair
-	// generation (defaults to 100), bounding the cross-product.
-	MaxContentPerSubject int
-}
-
 // TopStatesOptions controls TopStates (recommendation seeds).
 type TopStatesOptions struct {
 	ContentKinds []string

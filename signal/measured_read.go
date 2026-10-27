@@ -49,18 +49,6 @@ func (st *Store) feedbackState(scope string) string {
  GROUP BY tenant,subject_kind,subject,content_kind,content_id,content_version_id`, st.db, st.notErased(), scope)
 }
 
-func (st *Store) measuredSubjectWorks(tenant string, window Window) (string, []any) {
-	pred, args := window.predicate("c.1")
-	canonical := "SELECT * FROM (" + st.measuredCanonical("1") + ") WHERE 1" + pred
-	q := fmt.Sprintf(`WITH measured AS (%s SELECT content_kind,content_id,subject_kind,subject,
- max(qualified) AS qualified,max(completed) AS completed,sum(active_ms) AS active_ms,max(attention_quality) AS quality
- FROM scored GROUP BY content_kind,content_id,subject_kind,subject)
- SELECT m.*,coalesce(f.net_value,0.) AS net_value FROM measured m LEFT JOIN (%s) f
- ON f.tenant=? AND f.content_kind=m.content_kind AND f.content_id=m.content_id AND f.content_version_id=''
- AND f.subject_kind=m.subject_kind AND f.subject=m.subject WHERE m.qualified`, measuredVersions(canonical), st.feedbackState("1"))
-	return q, append(append([]any{tenant}, args...), tenant)
-}
-
 // CompletedCount is measured completions only. Retained legacy resume data is
 // useful history, but is never promoted into measured account statistics.
 func (st *Store) CompletedCount(ctx context.Context, tenant string, subject Subject, kind string) (int64, error) {
