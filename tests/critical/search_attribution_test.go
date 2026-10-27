@@ -38,7 +38,7 @@ func TestBrowserSearchEngagementAttribution(t *testing.T) {
 	// Real browser observation and signed activity receipts use the same wall
 	// clock; the media fixture supplies the existing persistent activity signer.
 	a.deps.Clock = nil
-	attachMedia(t, w, a, func(c *ck.Config) { c.MeasuredEngagement = true })
+	attachMedia(t, w, a)
 	user, credential := w.person(t, 0)
 	query := "Nebula258"
 	for n := range 6 {
