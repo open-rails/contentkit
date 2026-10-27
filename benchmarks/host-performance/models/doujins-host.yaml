@@ -1,0 +1,55 @@
+languages:
+  supported:
+  - en
+  - zh
+  - ko
+  - es
+  - de
+  - ja
+  default: en
+content_filters:
+  applies_to:
+  - gallery
+  - blog
+  domains:
+  - name: main
+    hosts:
+    - doujins.com
+    - www.doujins.com
+    filters:
+    - kind: tag
+      slug: yaoi
+      visible: false
+      user_toggle: true
+    - kind: tag
+      slug: furry
+      visible: false
+    - kind: tag
+      slug: futanari
+      visible: true
+  - name: gay
+    hosts:
+    - doujins.gay
+    - www.doujins.gay
+    - gay.localhost
+    require_entities:
+      gallery:
+      - kind: tag
+        slug: yaoi
+    filters:
+    - kind: tag
+      slug: furry
+      visible: true
+  - name: pet
+    hosts:
+    - doujins.pet
+    - www.doujins.pet
+    - pet.localhost
+    require_entities:
+      gallery:
+      - kind: tag
+        slug: furry
+    filters:
+    - kind: tag
+      slug: yaoi
+      visible: true

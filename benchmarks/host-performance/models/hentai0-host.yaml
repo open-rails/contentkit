@@ -1,0 +1,27 @@
+supported_languages:
+- en
+- zh
+- ko
+- es
+- de
+default_language: en
+content_filters:
+  applies_to:
+  - video
+  domains:
+  - name: main
+    hosts:
+    - hentai0.com
+    - www.hentai0.com
+    - localhost
+    filters: []
+  - name: restricted
+    hosts:
+    - hmovie-moe.us
+    - www.hmovie-moe.us
+    - restricted.localhost
+    filters:
+    - kind: tag
+      slug: restricted
+      visible: false
+      user_toggle: false

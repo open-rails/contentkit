@@ -1,0 +1,74 @@
+# Hentai0's content model (ContentKit kinds.Config). Languages, site scopes
+# and content filters come from the app config (Model).
+tiers: [premium]
+token_claims: [premium]
+channels: {creation: staff}
+
+content_kinds:
+  video:
+    # Prepared choices; scope declarations are supplied from the host model below.
+    popularity:
+      - {id: 7d, days: 7}
+      - {id: 30d, days: 30}
+      - {id: 90d, days: 90}
+      - {id: 365d, days: 365}
+      - {id: all, all: true}
+    # Subscription access only; individual content purchases are disabled.
+    access_levels: [public, tier]
+    route: watch
+    # SEO path: /{lang}/watch/{CODE}/{series}/{title}.
+    path_entity: series
+    presentation: player
+    segments: true
+    versions:
+      languages: many
+      traits: [uncensored, dubbed, interpolated]
+    entities: [tag, artist, character, series, season, rail]
+    sort: newest
+    # Locked videos show their cover, title and entities only (owner ruling, #135).
+    locked: {show: [cover, entities]}
+    # A download is the original upload.
+    download: {serve: original}
+  post:
+    # One official staff-managed channel; its posts are always public/free.
+    channel: {fixed: blog}
+    # Official blog posts are always public; paid access is disabled.
+    access_levels: [public]
+    route: blog
+    presentation: post
+    versions: {languages: one, hidden: true}
+    locked: {show: [cover, entities]}
+
+entity_kinds:
+  # Creatable kinds take new names typed in the content editor.
+  tag:
+    route: tag
+    membership_scopes: [content, version]
+    creatable: true
+  # Artists, characters and series show an avatar beside their cover.
+  artist:
+    route: artists
+    creatable: true
+    avatar: true
+    roles: [studio, director, writer, original_author]
+    attributes:
+      type: {type: enum, values: [person, organization], filterable: true}
+  character:
+    route: characters
+    # A character belongs to its franchise, as in Doujins.
+    scoped_by: series
+    creatable: true
+    avatar: true
+    attributes:
+      external_link: {type: string}
+  series:
+    route: series
+    creatable: true
+    avatar: true
+  season:
+    route: seasons
+    parent: series
+    ordered: true
+  rail:
+    ordered: true
+    version_level: true
