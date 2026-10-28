@@ -84,7 +84,9 @@ type Config struct {
 	Logger        *slog.Logger
 	// RiverHooks are added to the worker's River client (observability).
 	RiverHooks []rivertype.Hook
-	Metrics    *Metrics
+	// Metrics records work and encodes; the first worker built with it also
+	// exports its Schema's queue backlog while it leads that schema.
+	Metrics *Metrics
 }
 
 func (c *Config) defaults() error {
@@ -217,6 +219,9 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	var middleware []rivertype.Middleware
 	if c.Metrics != nil {
 		middleware = []rivertype.Middleware{c.Metrics}
+		if leader := c.Metrics.queue.watch(c.Pool, c.Schema); leader != nil {
+			hooks = append(hooks, leader)
+		}
 	}
 	images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
 	if err != nil {

@@ -111,10 +111,11 @@ EXECUTE on `contentkit_content_code()` (PUBLIC by default).
 
 ContentKit enforces its internal foreign keys. Host-owned content and actor
 IDs are opaque because host table names, identifier types and deletion
-lifecycles vary. A host can add its own PostgreSQL foreign keys, including
-cross-schema foreign keys, when those lifecycles align. Include tenant keys
-where the host and ContentKit keys are tenant-scoped. ClickHouse references
-are not PostgreSQL foreign keys and have no cross-store FK enforcement.
+lifecycles vary. Hosts add no foreign keys, grants or queries on ContentKit's
+schema: ContentKit can run on its own database. Host rows keep ContentKit ids
+as plain values and repair them from reads and events
+([host references](../HOST_INTEGRATION.md#host-references)). ClickHouse
+references have no cross-store FK enforcement.
 
 ## Retained state
 

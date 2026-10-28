@@ -64,11 +64,6 @@ func (s *Store) ImportEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 	if len(in) == 0 {
 		return nil
 	}
-	if s.references != nil {
-		if err := checkReferenceTransaction(ctx, q); err != nil {
-			return err
-		}
-	}
 	now := time.Now()
 	ids := make([]string, 0, len(in))
 	rows := make([]importRow, 0, len(in))
@@ -205,28 +200,6 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 			}
 		}
 	}
-	// Check after the upsert: a concurrent creator may have inserted an
-	// initially absent entity and bound host references before ON CONFLICT
-	// acquires its lock. The callback sees those committed links and can roll
-	// this state change back in the caller's transaction.
-	if s.references != nil {
-		persisted, err := s.byIDs(ctx, q, ids)
-		if err != nil {
-			return err
-		}
-		var unavailable []Ref
-		for _, id := range ids {
-			g := persisted[EntityID(id)]
-			if g.State == StateDeleted || g.Internal {
-				unavailable = append(unavailable, Ref{Kind: g.Kind, ID: g.ID})
-			}
-		}
-		if len(unavailable) > 0 {
-			if err := s.references.CheckUnavailable(ctx, q, s.tenant, unavailable); err != nil {
-				return err
-			}
-		}
-	}
 	changed := map[string]bool{}
 	for _, id := range changedIDs {
 		changed[id] = true
@@ -277,15 +250,23 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []ImportEntity,
 		return err
 	}
 	marks := make([]Entity, 0, len(written))
-	for _, g := range written {
+	changes := make([]Change, 0, len(list))
+	for _, id := range list {
+		g, ok := written[EntityID(id)]
+		if !ok {
+			continue
+		}
 		marks = append(marks, g)
+		typ := EventCreated
+		if before, ok := stored[id]; ok {
+			typ = transition(before.State, g.State)
+		}
+		changes = append(changes, Change{Type: typ, Kind: g.Kind, ID: g.ID})
 	}
-
 	if err := s.markDirty(ctx, q, marks); err != nil {
 		return err
 	}
-
-	return nil
+	return s.record(ctx, q, changes)
 }
 
 // checkImport validates one entity's own fields against its kind.

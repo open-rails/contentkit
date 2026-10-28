@@ -10,7 +10,9 @@ API key or vector extension. Semantic search belongs entirely to the separate, d
 library; ContentKit has no semantic search configuration or runtime hook.
 
 Design: [open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/DESIGN.md).
-Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md).
+Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md). Hosts use ContentKit
+only through its client, routes and event log, never SQL on its tables: it can
+run on its own database ([host references](HOST_INTEGRATION.md#host-references)).
 Post/channel policies: [docs/posts-and-channels.md](docs/posts-and-channels.md). Migrations:
 [docs/migration.md](docs/migration.md), [docs/restore.md](docs/restore.md).
 
@@ -304,7 +306,6 @@ gate, _ := access.NewGate(access.GateConfig{
     Tenant: "onlydemo", Kinds: cfg.Kinds, Billing: ckopenrails.Billing(client),
 })
 f, _ := gate.Filter(ctx, actor)
-pred, args, _ := f.SQL("f", access.Hide)
 keep, short, _ := gate.Settle(ctx, actor, f, items)
 decisions, _ := gate.Decide(ctx, actor, items)
 ```
@@ -456,7 +457,9 @@ _ = w.Run(ctx)                 // until SIGTERM; running jobs get MEDIA_WORKER_S
 
 It never exits for a missing dependency: `Run` takes no jobs until the
 bucket answers, and `MEDIA_METRICS_ADDR` serves `/livez`, `/readyz`,
-`/statusz` and `app_dependency_up` with /metrics.
+`/statusz` and `app_dependency_up` with /metrics. With `Config.Metrics`, the
+worker leading its River schema also exports the queue backlog
+(`media_video_jobs`, `media_video_tenant_backlog`, ...); hosts collect none.
 
 **Images** (`media/image`, CGO over libvips): WebP at each `Image` spec
 (inside or cover box, quality, blur), through the upload's edit (crop in
@@ -670,6 +673,10 @@ Writes refresh association facets in the same transaction. Entity counts and
 automatic entity covers read current facets and release timestamps; no periodic
 recount or timed-membership job is needed. Manual entity covers remain explicit.
 Likes and favorites keep their existing atomic counters.
+
+Entity writes record `entity.*` events on the catalog event log. Merging or
+deleting an entity a host links to is allowed; hosts repair their links from
+`GET /v1/manage/entities?ids=`, `GET /v1/manage/entities/match` and the events.
 
 The engine builds separate entity and channel interfaces from `Config.Content`.
 Metadata operations use `/entities`; channel operations use `/channels`. Channels
