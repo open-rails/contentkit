@@ -1239,6 +1239,20 @@
       ]
     },
     {
+      "id": "CK-J11-S10",
+      "journey": "CK-J11",
+      "behavior": "Advisory locks share one session per process, still exclude other processes, and survive a cancelled waiter",
+      "status": "verified",
+      "evidence": [
+        "Sixteen workers contending on one key while nesting three more never overlap, and pg_locks never shows more than one session holding their advisory locks; the per-lock connections before this change showed 18. A second pool cannot take a held key, a cancelled waiter leaves its process's other lock held, and a waiter in another process acquires the key once it is released."
+      ],
+      "cases": [
+        "TestAdvisoryLockSession",
+        "TestAdvisoryLockSession/CK-J11-S10_concurrent_nested_locks_share_one_connection",
+        "TestAdvisoryLockSession/CK-J11-S10_locks_exclude_other_processes_and_survive_a_cancelled_waiter"
+      ]
+    },
+    {
       "id": "CK-J12-S01",
       "journey": "CK-J12",
       "behavior": "Real video produces playable configured AV1 and H264 renditions with its soundtrack",
