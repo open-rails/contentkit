@@ -1460,7 +1460,7 @@ func (q GetMediaQuery) values() url.Values {
 	return v
 }
 
-// GetMedia is GET /v1/media/{kind}/{id} (public). Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder; optional restricted integrations use exact-file tokens. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted.
+// GetMedia is GET /v1/media/{kind}/{id} (public). Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted.
 func (c *Client) GetMedia(ctx context.Context, kind string, id string, q GetMediaQuery) (media.ReadResult, error) {
 	var out media.ReadResult
 	err := c.call(ctx, http.MethodGet, expand("/v1/media/{kind}/{id}", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), q.values(), nil, &out)

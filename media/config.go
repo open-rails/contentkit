@@ -254,7 +254,6 @@ type Image struct {
 	Height  int         `json:"height,omitempty"`
 	Fit     FitMode     `json:"fit,omitempty"`
 	Quality int         `json:"quality,omitempty"` // default 80
-	Blur    float64     `json:"blur,omitempty"`
 	// Aspect and MinWidth bound an upload's edit when this is its public
 	// preset's image: the crop is fitted to Aspect, and an edit narrower
 	// than MinWidth fails.

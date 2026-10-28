@@ -78,9 +78,7 @@ func (s *Store) writeChaptersTx(ctx context.Context, tx pgx.Tx, version string, 
  ON CONFLICT(tenant_id,version_id,id) DO UPDATE SET position=EXCLUDED.position,title=EXCLUDED.title,
 		 start_index=EXCLUDED.start_index,end_index=EXCLUDED.end_index,release_at=EXCLUDED.release_at,start_page=EXCLUDED.start_page,
  released_at=CASE WHEN current.release_at IS DISTINCT FROM EXCLUDED.release_at AND EXCLUDED.release_at>$10
-                 THEN NULL ELSE current.released_at END,
- release_id=CASE WHEN current.release_at IS DISTINCT FROM EXCLUDED.release_at AND EXCLUDED.release_at>$10
-                THEN NULL ELSE current.release_id END`,
+                 THEN NULL ELSE current.released_at END`,
 			s.tenant, version, chapter.ID, chapter.Position, strings.TrimSpace(chapter.Title), start, end, chapter.ReleaseAt, marker, s.now()); err != nil {
 			return false, err
 		}

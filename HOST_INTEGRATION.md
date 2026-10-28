@@ -1028,7 +1028,7 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   Image presets default to WebP. A private preset with
   `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}`
   (the upload's original extension), such as `download-pages/{name}{ext}`.
-  With an inside fit and no edit/blur, a source within its width/height box
+  With an inside fit and no edit, a source within its width/height box
   passes through byte-for-byte. `Width: 6000, Height: 6000` bounds either
   edge proportionally; zero leaves an edge unbounded. Oversized or edited
   JPEG, PNG, WebP and GIF files retain their codec, including animation;

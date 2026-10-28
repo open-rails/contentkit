@@ -268,11 +268,7 @@ func (s *Service) Archive(ctx context.Context, request versions.ArchiveRequest) 
 	if s.m.Reader == nil || name == "" || revision == "" || !ok {
 		return nil, ErrNotFound
 	}
-	scope := archiveScope(s.o.Tenant, request)
-	if request.Pages == 0 && !request.File {
-		scope = legacyArchiveScope(s.o.Tenant, request)
-	}
-	if s.m.Reader.VerifyTicket(request.Ticket, scope) != nil {
+	if s.m.Reader.VerifyTicket(request.Ticket, archiveScope(s.o.Tenant, request)) != nil {
 		return nil, ErrNotFound
 	}
 	v, k, err := s.downloadKind(ctx, t)
@@ -514,17 +510,6 @@ func archiveScope(tenant string, r versions.ArchiveRequest) string {
 	if r.File {
 		return "file-download:" + string(b)
 	}
-	return "archive:" + string(b)
-}
-
-// legacyArchiveScope accepts only already-issued whole-version tickets. It is
-// never used to mint new tickets, and cannot authorize a partial archive.
-func legacyArchiveScope(tenant string, r versions.ArchiveRequest) string {
-	claims := r.Claims
-	if len(claims) == 0 {
-		claims = nil
-	}
-	b, _ := json.Marshal([]any{tenant, r.Content, r.Version, r.Viewer, r.Account, r.AccountSet, r.Kind, r.Editor, r.Mark, r.Name, r.Revision, claims})
 	return "archive:" + string(b)
 }
 

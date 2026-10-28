@@ -37,17 +37,6 @@ func previewPageCount(k *mediastore.RegisteredKind, d decision, total int) int {
 	return max(0, min(total, d.preview.Pages, spec.First))
 }
 
-// shows reports released pages, or all pages to an authorized restricted reader.
-func (d decision) shows(end int) bool {
-	return d.res.Visible
-}
-
-// opens reports pages [start, end) open: the version opens, or they lie in
-// its rule's free segments.
-func (d decision) opens(end int) bool {
-	return d.res.Accessible || d.res.Editor || d.res.ReadRestricted
-}
-
 // whole reports the whole version open: every segment released and the
 // version open, or to an editor. Its audio and downloads need it.
 func (d decision) whole() bool {
@@ -174,7 +163,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Targe
 	item := &media.RefBody{Kind: ref.ContentKind, ID: ref.ContentID, Version: ref.Version()}
 	readable := map[string]bool{}
 	for _, span := range spans(d.segs, len(snap.Pages)) {
-		seg := versions.PlanSegment{Position: span.Segment, Start: span.Start, End: span.End, Released: span.End <= cut, Locked: !d.shows(span.End) || !d.opens(span.End)}
+		seg := versions.PlanSegment{Position: span.Segment, Start: span.Start, End: span.End, Released: span.End <= cut, Locked: !d.res.Visible || !(d.res.Accessible || d.res.Editor || d.res.ReadRestricted)}
 		if span.Segment != nil {
 			g := byPos[*span.Segment]
 			seg.Title, seg.ReleaseAt = g.Title, g.ReleaseAt

@@ -291,17 +291,14 @@ func box(s media.Image) (w, h int, crop vips.Interesting, size vips.Size) {
 }
 
 // transform is every rendering's one pipeline: each frame through edit,
-// into s's box (a zero box keeps its size), then blurred by s.Blur. The
-// result replaces img, which it closes on error.
+// into s's box (a zero box keeps its size). The result replaces img, which
+// it closes on error.
 func transform(img *vips.ImageRef, edit *media.Edit, s media.Image) (*vips.ImageRef, error) {
 	w, h, crop, size := box(s)
 	out, err := eachFrame(img, func(f *vips.ImageRef) error {
 		err := apply(f, edit)
 		if err == nil && (s.Width > 0 || s.Height > 0) {
 			err = f.ThumbnailWithSize(w, h, crop, size)
-		}
-		if err == nil && s.Blur > 0 {
-			err = f.GaussianBlur(s.Blur)
 		}
 		return err
 	})
@@ -317,7 +314,7 @@ func transform(img *vips.ImageRef, edit *media.Edit, s media.Image) (*vips.Image
 // encode renders src through edit per spec (nil edit: the whole source),
 // shrinking an unedited still on load. Source-format no-ops retain its bytes.
 func encode(src []byte, contentType string, s media.Image, edit *media.Edit) ([]byte, media.Dims, error) {
-	if s.Format == media.ImageFormatSource && edit.Normalize() == nil && s.Fit == media.FitInside && s.Aspect.Native() && s.Blur == 0 {
+	if s.Format == media.ImageFormatSource && edit.Normalize() == nil && s.Fit == media.FitInside && s.Aspect.Native() {
 		img, err := decode(src, contentType)
 		if err != nil {
 			return nil, media.Dims{}, permanentError{err}
