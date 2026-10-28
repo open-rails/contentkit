@@ -2035,7 +2035,6 @@ export interface VersionRecord {
   text?: Record<string, VersionText>;
   original_title?: string;
   original_language?: string;
-  segments?: Segment[];
   created_at?: string;
   updated_at?: string;
 }

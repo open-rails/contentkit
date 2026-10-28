@@ -41,10 +41,6 @@ func (e *Engine) configureStorage() error {
 	}
 	e.cfg, e.scope = resolved, scope
 	c := &e.cfg
-	c.Tenant = strings.TrimSpace(c.Tenant)
-	if c.Tenant == "" {
-		return errors.New("contentkit: Config.Tenant or Scope is required")
-	}
 	e.schema = strings.TrimSpace(c.Database.Schema)
 	if e.schema == "" {
 		e.schema = DefaultSchema
@@ -59,8 +55,8 @@ func (e *Engine) configureStorage() error {
 		}
 	}
 	if n := c.Accounts; n != nil {
-		if !schemaRE.MatchString(n.Schema) || len(n.Schema) > 63 || strings.TrimSpace(n.Namespace) == "" {
-			return errors.New("contentkit: accounts require a valid schema and namespace")
+		if !schemaRE.MatchString(n.Schema) || len(n.Schema) > 63 {
+			return errors.New("contentkit: accounts require a valid schema")
 		}
 	}
 	if c.Media != nil {

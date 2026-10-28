@@ -21,7 +21,6 @@ rather than assuming that matching IDs or names establish authority.
 
 Storage prefixes, PostgreSQL schemas and deployment topology are derived
 implementation choices, not additional account-sharing concepts exposed as a
-public "namespace". Existing `Config.Tenant` values currently identify app
-catalogs and must retain their meaning through an explicit compatibility
-mapping. See [the implementation plan](../architecture/tenant-app-accounts.md)
-for the incremental path and verification gates.
+public "namespace". `Config.Scope` is required, and its `AppID` is the catalog
+key. See [the implementation plan](../architecture/tenant-app-accounts.md)
+for the ownership model and verification gates.

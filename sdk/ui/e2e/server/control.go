@@ -113,7 +113,7 @@ func decode(r *http.Request, v any) error {
 // config tells the tests where everything is.
 func (h *harness) config(w http.ResponseWriter, _ *http.Request) {
 	reply(w, http.StatusOK, map[string]any{
-		"origin": h.origin, "media": h.media, "namespace": tenant, "bucket": h.bucket,
+		"origin": h.origin, "media": h.media, "namespace": mediaScope.Partition(), "bucket": h.bucket,
 		"api": apiPrefix, "on_upload_api": onUploadPrefix, "members_api": membersPrefix, "auth_api": authAPIPath + "/v1",
 	})
 }

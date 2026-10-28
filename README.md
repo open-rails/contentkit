@@ -51,8 +51,8 @@ See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
 A language is metadata on a document or version, never part of a reference.
 Each engine serves the app pinned by `Scope`. Apps can share tenant-owned
 account data without sharing their catalogs. `ContentRef.TenantID` retains the
-catalog partition key: it is the app ID by default, or `LegacyCatalogKey` when
-adopting an existing catalog. It is not the business's `Scope.TenantID`.
+catalog partition key: it is `Scope.AppID`, distinct from the business's
+`Scope.TenantID`. `Scope` is required.
 A reference to another catalog is an error, never remapped. See [scope.go](scope.go).
 
 ## Packages
@@ -93,7 +93,6 @@ one `Start`, routes the host mounts.
 ```go
 ck, _ := contentkit.New(ctx, contentkit.Config{
 	Scope:            &contentkit.Scope{TenantID: tenantID, AppID: appID}, // stable provisioned IDs
-	LegacyCatalogKey: "doujins", // adopting an existing catalog; omit for a new app
 	Database:   contentkit.DatabaseConfig{Schema: "doujins_contentkit", SkipMigrations: true}, // River: doujins_contentkit_river
 	Content:    siteKinds, // kinds.Config: languages, tiers, content and entity kinds
 	Media:      &contentkit.MediaConfig{Config: registry, Delivery: contentkit.DeliveryConfig{SigningKey: key}},
@@ -332,8 +331,7 @@ only in the database and has no media folder. Covers, pages and body images
 belong to the version. Domain APIs still use `{kind, content, version}` for
 authorization and relationships; storage addressing does not duplicate that
 parent relationship. Other kinds use their own item ID. Shared account media
-uses `tenant/{tenant}/account/` instead of an app root. Legacy single-namespace
-configurations use the same flat owner rule under `{namespace}/`.
+uses `tenant/{tenant}/account/` instead of an app root.
 
 Private blobs are content-addressed and immutable; public names carry a
 generation. Media URLs add `/v1/` before the storage key. `media/versions`
@@ -800,4 +798,4 @@ Previously observed backend capabilities (not replacement-suite qualification):
 | Ceph 19.2 / 20.2 standalone `dbstore` RGW | no | no | wrong Range bytes; not representative of RADOS-backed RGW |
 | production Ceph RGW (RADOS, 2026-09-24) | no (`If-Match` yes, `If-None-Match: *` ignored) | no | Range, `response-content-disposition`, versioning, lifecycle (incl. `AbortIncompleteMultipartUpload`) and multipart work; hosts wire `PGLocker` |
 
-AuthKit owns user inboxes and their UI. ContentKit publishes or withdraws native comment notices through its injected two-method publisher. See [notifications](docs/notifications.md) for source identities and the explicit legacy adoption procedure.
+AuthKit owns user inboxes and their UI. ContentKit publishes or withdraws native comment notices through its injected two-method publisher. See [notifications](docs/notifications.md) for source identities and publisher configuration.

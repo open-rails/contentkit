@@ -687,7 +687,7 @@ restores the same notice, without adding another.
 ## Polls
 
 Polls accept predefined choices only. `kind` defaults to `multiple_choice`;
-other kinds, including `free_text`, are rejected with `400 invalid_request`.
+other kinds are rejected with `400 invalid_request`.
 Create a poll with two to ten options in one of the site's languages (a
 question of at most 300 characters, options of at most 200), then vote through
 `POST /polls/{id}/vote`. A vote is final: concurrent retries never add another
@@ -700,9 +700,8 @@ close a poll for voting; its results remain readable, on its own link too.
 visible only to staff until their opening time.
 
 Free-text submission, automatic grouping and classifier dependencies are
-removed. Historical free-text questions and answers remain stored but are not
-exposed by current poll routes or modified by imports. Account deletion
-detaches a subject's historical answers from the account. No classification worker is registered.
+removed. The database stores only choice polls; questions have no kind column
+or answer table.
 
 ## Account lifecycle and interaction erasure
 
@@ -764,8 +763,8 @@ Content anonymization commits atomically:
 - a permanent tenant/subject fence in `content_erased_subjects`; later writes by
   that subject fail with `content.ErrSubjectErased`;
 - the subject's reactions, favorites and poll votes move to the anonymous key
-  with counts unchanged; comments (shown as `<Deleted>`), historical free-text
-  answers, authored items, owned entities and reposts lose the account id;
+  with counts unchanged; comments (shown as `<Deleted>`), authored items,
+  owned entities and reposts lose the account id;
 - removal of the subject's comment notifications, creator profile, content
   filter preferences and comment bans of them or in their owner scope (bans
   they set stay, without their id).
@@ -926,10 +925,10 @@ table records what media exists. The app declares everything in one registry
 at startup (`media.Config`); ContentKit hard-codes no kinds, names or
 layouts.
 
-- **Items.** An item is `{namespace}/{kind}/{id}/`, or for a content kind
-  (`Kind.Versions`, derived from the kinds config by `media.ForContent`) a
-  version's `{namespace}/{kind}/{content}/{version}/`; a content has no item
-  of its own. An item holds
+- **Items.** App media uses `tenant/{tenant}/app/{app}/{kind}/{id}/`.
+  For a content kind, `id` is the version ID; a content has no item of its
+  own. Account media uses `tenant/{tenant}/account/{kind}/{id}/`.
+  Both roots derive from `Config.Scope`. An item holds
   `manifest.json` (gzip JSON, never served), `private/` (hash-named blobs:
   uploads, derived files, editor views), `public/` (published renditions
   such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
@@ -954,7 +953,7 @@ layouts.
   exactly when the fingerprint no longer matches. Each upload records its
   public publications: the current generation of each preset and, while
   the worker writes one, its successor.
-- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private|download}/{name}`.
+- **URLs.** `https://media.<site>/v1/tenant/{tenant}/app/{app}/{kind}/{id}/{public|private|download}/{name}`.
   Public names carry a generation that changes on every render, so a URL
   built from a preset's `to` template is never valid: it serves the kind's
   default image, or 404 when the preset declares no `Default`. Build public
@@ -1091,12 +1090,10 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
-- **Shared kinds.** A kind with `Namespace: "accounts"` lives at
-  `accounts/{kind}/{id}/` and is served on every site's media host
-  (account avatars). An app's own namespace is never a shared one. One app
-  holds a shared namespace, in its bucket and journal, processed by its
-  worker; other sites reach it through its API (Avatars below) and serve
-  its files from their media hosts (`MEDIA_GATEWAY_BUCKETS`).
+- **Shared kinds.** Account avatars use `tenant/{tenant}/account/{kind}/{id}/`.
+  One app owns the shared avatar journal and worker; other sites reach it
+  through its API (Avatars below) and serve its files from their media hosts
+  (`MEDIA_GATEWAY_BUCKETS`). The root is derived from `Config.Scope`.
 - The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; hooks
   are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
@@ -1419,10 +1416,10 @@ the host's periodic jobs. The worker migrates its schema itself.
   Either way one item token opens the whole item's `private/`, and viewers
   without access get none.
 - **Media gateway config**: `MEDIA_GATEWAY_HOSTS` maps each media host to the
-  namespaces it serves (`media.<domain>=<tenant>,accounts`) and
-  `MEDIA_GATEWAY_BUCKETS` each namespace's bucket (`accounts` is in the avatar
-  primary's); URLs are
-  `https://media.<domain>/v1/{ns}/{kind}/{id}/{public|private}/{name}`.
+  partitions it serves (`tenant_<tenant-id>_app_<app-id>` and
+  `tenant_<tenant-id>` for account media). `MEDIA_GATEWAY_BUCKETS` maps each
+  partition to its bucket; the account partition uses the avatar primary's
+  bucket. URL paths use the tenant/app or tenant/account roots above.
   `MEDIA_GATEWAY_CORS_ORIGINS` exactly your sites' origins
   (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);
   `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's

@@ -174,7 +174,7 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 		}
 		in.Versions = append(in.Versions, catalog.ImportVersion{ID: vid, Code: v.Code, Languages: v.Languages, Traits: v.Traits, Label: v.Label, State: v.State,
 			PublishAt: v.PublishAt, PublishedAt: v.PublishedAt, DeletedAt: v.DeletedAt, Access: v.Access, Attributes: v.Attributes, Ordinal: v.Ordinal,
-			Cover: v.Cover, Text: v.Text, OriginalTitle: v.OriginalTitle, OriginalLanguage: v.OriginalLanguage, Segments: v.Segments, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
+			Cover: v.Cover, Text: v.Text, OriginalTitle: v.OriginalTitle, OriginalLanguage: v.OriginalLanguage, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
 	}
 	return in, c.ExternalID, nil
 }

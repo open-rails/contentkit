@@ -20,7 +20,7 @@ func (e *Engine) forgetPurgedTx(ctx context.Context, tx pgx.Tx, refs []contentre
 	}
 	contents := make([]signal.ForgottenContent, 0, len(refs))
 	for _, ref := range refs {
-		if ref.TenantID != e.cfg.Tenant {
+		if ref.TenantID != e.cfg.Scope.AppID.String() {
 			return errors.New("contentkit: purge cleanup crossed catalog scope")
 		}
 		contents = append(contents, signal.ForgottenContent{Kind: ref.ContentKind, ContentID: ref.ContentID, VersionID: ref.Version()})
@@ -50,7 +50,7 @@ func (e *Engine) insertForgottenTx(ctx context.Context, tx pgx.Tx, contents []si
 			return errors.New("contentkit: signal erasure needs a kind and content ID")
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO `+table+`
- (tenant_id,content_kind,content_id,content_version_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, e.cfg.Tenant, ref.Kind, ref.ContentID, ref.VersionID); err != nil {
+ (tenant_id,content_kind,content_id,content_version_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, e.cfg.Scope.AppID.String(), ref.Kind, ref.ContentID, ref.VersionID); err != nil {
 			return err
 		}
 	}
@@ -72,7 +72,7 @@ func (e *Engine) purgeSignals(ctx context.Context) error {
 		count := 0
 		err := pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
 			rows, err := tx.Query(ctx, `SELECT content_kind,content_id,content_version_id FROM `+table+`
- WHERE tenant_id=$1 ORDER BY content_kind,content_id,content_version_id LIMIT 200 FOR UPDATE SKIP LOCKED`, e.cfg.Tenant)
+ WHERE tenant_id=$1 ORDER BY content_kind,content_id,content_version_id LIMIT 200 FOR UPDATE SKIP LOCKED`, e.cfg.Scope.AppID.String())
 			if err != nil {
 				return err
 			}
@@ -93,7 +93,7 @@ func (e *Engine) purgeSignals(ctx context.Context) error {
 				kinds[i], contents[i], versions[i] = ref.Kind, ref.ContentID, ref.VersionID
 			}
 			_, err = tx.Exec(ctx, `DELETE FROM `+table+` p USING unnest($2::text[],$3::text[],$4::text[]) refs(kind,content,version)
- WHERE p.tenant_id=$1 AND p.content_kind=refs.kind AND p.content_id=refs.content AND p.content_version_id=refs.version`, e.cfg.Tenant, kinds, contents, versions)
+ WHERE p.tenant_id=$1 AND p.content_kind=refs.kind AND p.content_id=refs.content AND p.content_version_id=refs.version`, e.cfg.Scope.AppID.String(), kinds, contents, versions)
 			return err
 		})
 		if err != nil || count < 200 {

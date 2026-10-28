@@ -19862,12 +19862,6 @@
           "original_language": {
             "type": "string"
           },
-          "segments": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Segment"
-            }
-          },
           "created_at": {
             "type": "string",
             "format": "date-time"

@@ -34,7 +34,7 @@ func (e *Engine) AnonymizeAccount(ctx context.Context, accountID string) error {
 	table := pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()
 	var state, anonymous string
 	err := pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, e.schema+"\x1ferasure\x1f"+e.cfg.Tenant+"\x1f"+accountID); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, e.schema+"\x1ferasure\x1f"+e.cfg.Scope.AppID.String()+"\x1f"+accountID); err != nil {
 			return err
 		}
 		// The intent and the purging row commit together, so an app intent
@@ -46,7 +46,7 @@ func (e *Engine) AnonymizeAccount(ctx context.Context, accountID string) error {
 VALUES ($1,$2,'purging',gen_random_uuid()) ON CONFLICT (tenant_id,actor_id) DO UPDATE
 SET state=CASE WHEN current.state='purged' THEN 'purged' ELSE 'purging' END,
 anonymous_key=CASE WHEN current.state='purged' THEN NULL ELSE coalesce(current.anonymous_key,gen_random_uuid()) END
-RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Tenant, accountID).Scan(&state, &anonymous)
+RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Scope.AppID.String(), accountID).Scan(&state, &anonymous)
 	})
 	if err != nil || state == "purged" {
 		return err
@@ -68,6 +68,6 @@ RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Tenant, accountID).Scan
 	if err := e.completeErasure(ctx, []string{accountID}); err != nil {
 		return err
 	}
-	_, err = e.pool.Exec(ctx, `UPDATE `+table+` SET state='purged',anonymous_key=NULL WHERE tenant_id=$1 AND actor_id=$2 AND state='purging'`, e.cfg.Tenant, accountID)
+	_, err = e.pool.Exec(ctx, `UPDATE `+table+` SET state='purged',anonymous_key=NULL WHERE tenant_id=$1 AND actor_id=$2 AND state='purging'`, e.cfg.Scope.AppID.String(), accountID)
 	return err
 }

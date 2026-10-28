@@ -419,7 +419,7 @@
       "status": "verified",
       "evidence": [
         "Real registered workers establish availability and deduplicate completion; per-app publication queues isolate shared catalog tables. Publication storage copies durably across lost copy responses.",
-        "Superseding a physically copied public attempt with the previous private policy must retire the abandoned public URL before completing; equivalent reader content cannot skip physical reconciliation. Bulk chapter imports refuse unsafe manifest-lock ordering without mutating catalog state.",
+        "Superseding a physically copied public attempt with the previous private policy must retire the abandoned public URL before completing; equivalent reader content cannot skip physical reconciliation.",
         "A forced two-session parent/request contention reproduces 40P01 before the fix; deterministic parent/version-before-request locking allows the durable request and its actual served bytes to complete.",
         "The separate version metadata publisher was removed in#260; its worker-specific exhaustion case is retired. Release lock-order tests remain."
       ],
@@ -427,7 +427,6 @@
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
         "TestPublicationQueuesIsolateSharedCatalogApps",
         "TestSupersededPublicCopyReturnsToPrivate",
-        "TestImportChaptersRequiresManifestLockingWriter",
         "TestPublicationSchedulingLocksParentBeforeRequest",
         "TestPublicationStorage"
       ],
@@ -1659,14 +1658,14 @@
     {
       "id": "CK-J23-S07",
       "journey": "CK-J23",
-      "behavior": "Historical poll answers and measured projection rebuilds remain fenced by account erasure",
+      "behavior": "Measured projection rebuilds remain fenced by account erasure",
       "status": "verified",
       "evidence": [
-        "A real historical free-text answer and live same-app/sibling controls remain stored after feature retirement. Repeated app erasure deletes only the target app answer; direct late measured ingestion remains fenced and a nonempty ClickHouse projection rebuild retains only the live signal control."
+        "Repeated app erasure fences direct late measured ingestion; a nonempty ClickHouse projection rebuild retains only the live signal control."
       ],
       "cases": [
         "TestClickHouseErasureRetry/CK-J23-S07_late_signal_cannot_rebuild_erased_subject",
-        "TestErasedProjectionAndHistoricalAnswers/CK-J23-S07_historical_answers_and_projection_rebuild_remain_erased"
+        "TestClickHouseErasureRetry/CK-J23-S07_projection_rebuild_remains_erased"
       ]
     },
     {
@@ -2427,12 +2426,12 @@
       "behavior": "Only predefined-choice polls accept creation, import and votes; scope, closure, final-vote and erasure counts remain correct",
       "status": "verified",
       "evidence": [
-        "Real public Go/HTTP poll operations exercise rejected free-text creation/import/submission, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls, preserved historical rows and repeated account erasure."
+        "Real public Go/HTTP poll operations exercise unsupported-kind rejection, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls and repeated account erasure."
       ],
       "cases": [
-        "TestChoicePolls/CK-J30-S01_predefined_choices_reject_retired_writes",
+        "TestChoicePolls/CK-J30-S01_predefined_choices_validate_requests",
         "TestChoicePolls/CK-J30-S01_duplicate_votes_scope_and_erasure_keep_counts",
-        "TestChoicePolls/CK-J30-S01_closed_scheduled_and_historical_polls_stay_inert",
+        "TestChoicePolls/CK-J30-S01_closed_and_scheduled_polls_stay_inert",
         "TestAnonymousChoicePolls"
       ]
     },

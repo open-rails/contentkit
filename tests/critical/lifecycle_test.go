@@ -69,10 +69,10 @@ func TestHostLifecycle(t *testing.T) {
 			t.Fatal("zero app scope was accepted")
 		}
 		cfg = a.cfg
-		cfg.Tenant = "injected-legacy-selector"
+		cfg.Scope = nil
 		bad, err = ck.New(t.Context(), cfg, a.deps)
 		if err == nil || bad != nil {
-			t.Fatal("request-style tenant override was accepted beside canonical scope")
+			t.Fatal("missing scope was accepted")
 		}
 		for _, sample := range []struct {
 			name   string

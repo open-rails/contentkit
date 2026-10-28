@@ -63,7 +63,6 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in content.PollI
 	if in.Kind != "" && in.Kind != content.PollMultipleChoice {
 		return content.Poll{}, badRequest("only %s polls are supported", content.PollMultipleChoice)
 	}
-	in.Kind = content.PollMultipleChoice
 	if len(in.Options) < 2 {
 		return content.Poll{}, badRequest("a poll needs at least 2 options")
 	}
@@ -88,10 +87,10 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in content.PollI
 
 	var id string
 	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollQuestions+`
-		(id, tenant_id, kind, question, language, live_at, closes_at)
-		SELECT $7, $1, $2, $3, $4, COALESCE($5::timestamptz, now()), $6::timestamptz
-		WHERE $6::timestamptz IS NULL OR $6::timestamptz > COALESCE($5::timestamptz, now())
-		RETURNING id::text`, p.s.tenant, in.Kind, in.Question, in.Language, in.LiveAt, in.ClosesAt, contentref.NewID()).Scan(&id)
+		(id, tenant_id, question, language, live_at, closes_at)
+		SELECT $6, $1, $2, $3, COALESCE($4::timestamptz, now()), $5::timestamptz
+		WHERE $5::timestamptz IS NULL OR $5::timestamptz > COALESCE($4::timestamptz, now())
+		RETURNING id::text`, p.s.tenant, in.Question, in.Language, in.LiveAt, in.ClosesAt, contentref.NewID()).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return content.Poll{}, badRequest("closes_at must be after live_at")
 	}
@@ -138,7 +137,7 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in co
 	var liveAt time.Time
 	var closesAt *time.Time
 	err = tx.QueryRow(ctx, `SELECT live_at, closes_at FROM `+p.s.t.pollQuestions+`
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice' FOR NO KEY UPDATE`, id, p.s.tenant).Scan(&liveAt, &closesAt)
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR NO KEY UPDATE`, id, p.s.tenant).Scan(&liveAt, &closesAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return content.Poll{}, ErrNotFound
 	}
@@ -157,7 +156,7 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in co
 	_, err = tx.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
 		SET question = COALESCE($2, question), is_active = COALESCE($3, is_active),
 		    live_at = COALESCE($4, live_at), closes_at = CASE WHEN $7 THEN $6 ELSE closes_at END, updated_at = now()
-		WHERE id = $1 AND tenant_id = $5 AND deleted_at IS NULL AND kind = 'multiple_choice'`, id, in.Question, in.IsActive, in.LiveAt, p.s.tenant, in.ClosesAt.Value, in.ClosesAt.Set)
+		WHERE id = $1 AND tenant_id = $5 AND deleted_at IS NULL`, id, in.Question, in.IsActive, in.LiveAt, p.s.tenant, in.ClosesAt.Value, in.ClosesAt.Set)
 	if err != nil {
 		return content.Poll{}, err
 	}
@@ -183,7 +182,7 @@ func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) e
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `UPDATE `+p.s.t.pollQuestions+`
-		SET deleted_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice'
+		SET deleted_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 		RETURNING id::text`, id, p.s.tenant).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
@@ -224,7 +223,7 @@ var pollStates = map[string]string{
 // Voting remains gated on is_active elsewhere (see vote()).
 func (p *polls) list(ctx context.Context, actor access.Actor, f listFilter) ([]content.Poll, error) {
 	from, to, hasWindow := parseWindow(f.month, f.date)
-	sql := `SELECT ` + pollCols + ` FROM ` + p.s.t.pollQuestions + ` WHERE tenant_id = $1 AND deleted_at IS NULL AND kind = 'multiple_choice'`
+	sql := `SELECT ` + pollCols + ` FROM ` + p.s.t.pollQuestions + ` WHERE tenant_id = $1 AND deleted_at IS NULL`
 	if !f.admin {
 		sql += ` AND live_at <= now()`
 		// Only the default (windowless) view is restricted to the active poll;
@@ -297,15 +296,15 @@ func parseWindow(month, date string) (from, to time.Time, ok bool) {
 	return time.Time{}, time.Time{}, false
 }
 
-const pollCols = `id::text, kind, question, language, is_active, coalesce(image_name,''), live_at, closes_at, live_at > now(), closes_at IS NOT NULL AND closes_at <= now()`
+const pollCols = `id::text, question, language, is_active, coalesce(image_name,''), live_at, closes_at, live_at > now(), closes_at IS NOT NULL AND closes_at <= now()`
 
 // scan reads pollCols and derives Closed by the database clock, as open
 // does, and whether live_at is still ahead. ImageURL holds the image name
 // until attach resolves it.
 func (p *polls) scan(row pgx.Row) (content.Poll, bool, error) {
-	v := content.Poll{Options: []content.PollOption{}}
+	v := content.Poll{Kind: content.PollMultipleChoice, Options: []content.PollOption{}}
 	var pastClose, scheduled bool
-	if err := row.Scan(&v.ID, &v.Kind, &v.Question, &v.Language, &v.IsActive, &v.ImageURL, &v.LiveAt, &v.ClosesAt, &scheduled, &pastClose); err != nil {
+	if err := row.Scan(&v.ID, &v.Question, &v.Language, &v.IsActive, &v.ImageURL, &v.LiveAt, &v.ClosesAt, &scheduled, &pastClose); err != nil {
 		return content.Poll{}, false, err
 	}
 	v.Closed = !v.IsActive || pastClose
@@ -324,7 +323,7 @@ func (p *polls) getScheduled(ctx context.Context, actor access.Actor, id string)
 	if !uuidRe.MatchString(id) {
 		return content.Poll{}, false, ErrNotFound
 	}
-	v, scheduled, err := p.scan(p.s.pool.QueryRow(ctx, `SELECT `+pollCols+` FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice'`, id, p.s.tenant))
+	v, scheduled, err := p.scan(p.s.pool.QueryRow(ctx, `SELECT `+pollCols+` FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return content.Poll{}, false, ErrNotFound
 	}
@@ -504,7 +503,7 @@ func (p *polls) open(ctx context.Context, q querier, pollID string) error {
 	}
 	var active, closed bool
 	err := q.QueryRow(ctx, `SELECT is_active, closes_at IS NOT NULL AND closes_at <= now() FROM `+p.s.t.pollQuestions+`
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice' AND live_at <= now() FOR SHARE`, pollID, p.s.tenant).Scan(&active, &closed)
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND live_at <= now() FOR SHARE`, pollID, p.s.tenant).Scan(&active, &closed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -628,7 +627,7 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	err = tx.QueryRow(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE tenant_id = $1 AND id = $2 AND kind = 'multiple_choice' AND deleted_at IS NULL FOR NO KEY UPDATE`,
+	err = tx.QueryRow(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL FOR NO KEY UPDATE`,
 		p.s.tenant, id).Scan(new(int))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, ErrNotFound)
@@ -699,7 +698,7 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	err := p.s.pool.QueryRow(req.Context(), `UPDATE `+p.s.t.pollOptions+`
 		SET label = COALESCE($2, label), position = COALESCE($3, position)
 		WHERE id = $1 AND question_id = $4 AND tenant_id = $5
- AND EXISTS (SELECT 1 FROM `+p.s.t.pollQuestions+` q WHERE q.tenant_id=$5 AND q.id=$4 AND q.kind='multiple_choice' AND q.deleted_at IS NULL)
+ AND EXISTS (SELECT 1 FROM `+p.s.t.pollQuestions+` q WHERE q.tenant_id=$5 AND q.id=$4 AND q.deleted_at IS NULL)
 		RETURNING id::text, question_id::text, label, coalesce(image_name,''), position, vote_count`,
 		oid, in.Label, in.Position, pollID, p.s.tenant).
 		Scan(&o.ID, &pollID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
@@ -751,7 +750,7 @@ func (p *polls) deleteOption(ctx context.Context, pollID, oid string) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	err = tx.QueryRow(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE tenant_id = $1 AND id = $2 AND kind = 'multiple_choice' AND deleted_at IS NULL FOR NO KEY UPDATE`,
+	err = tx.QueryRow(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL FOR NO KEY UPDATE`,
 		p.s.tenant, pollID).Scan(new(int))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
@@ -784,7 +783,7 @@ func (p *polls) deleteOption(ctx context.Context, pollID, oid string) error {
 // inline image of the poll's media folder. root:polls:write-gated.
 func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 	p.setImage(w, req, `UPDATE `+p.s.t.pollQuestions+` SET image_name = NULLIF($3, ''), updated_at = now()
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice'`)
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`)
 }
 
 // handleOptionImage sets (or with "" clears) an option image to an inline
@@ -819,7 +818,7 @@ func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string
 		writeErr(w, err)
 		return
 	}
-	if err := p.s.pool.QueryRow(ctx, `SELECT id::text FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice'`,
+	if err := p.s.pool.QueryRow(ctx, `SELECT id::text FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
 		id, p.s.tenant).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound

@@ -188,11 +188,8 @@ type VersionRecord struct {
 	Text             map[string]catalog.VersionText `json:"text,omitempty"`
 	OriginalTitle    *string                        `json:"original_title,omitempty"`
 	OriginalLanguage *string                        `json:"original_language,omitempty"`
-	// Segments must be omitted. Use the version segments route with virtual
-	// start_page markers after importing content and source media.
-	Segments  []catalog.Segment `json:"segments,omitempty"`
-	CreatedAt *time.Time        `json:"created_at,omitempty"`
-	UpdatedAt *time.Time        `json:"updated_at,omitempty"`
+	CreatedAt        *time.Time                     `json:"created_at,omitempty"`
+	UpdatedAt        *time.Time                     `json:"updated_at,omitempty"`
 }
 
 // MembershipSet replaces a content item's memberships in the listed entity

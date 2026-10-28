@@ -14,7 +14,6 @@ import (
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/importer"
 )
 
 func TestChoicePolls(t *testing.T) {
@@ -50,9 +49,8 @@ func TestChoicePolls(t *testing.T) {
 			t.Fatalf("POST %s returned %d, want %d: %s", path, response.StatusCode, status, data)
 		}
 	}
-	t.Run("CK-J30-S01_predefined_choices_reject_retired_writes", func(t *testing.T) {
-		raw("/polls", `{"kind":"free_text","question":"Unsupported","language":"en"}`, 400)
-		raw("/import", `{"source":"removed-answers","answers":[]}`, 400)
+	t.Run("CK-J30-S01_predefined_choices_validate_requests", func(t *testing.T) {
+		raw("/polls", `{"kind":"unsupported","question":"Unsupported","language":"en"}`, 400)
 		_, err := admin.PostPolls(t.Context(), content.PollInput{Question: "Too few", Language: "en", Options: input.Options[:1]})
 		requireError(t, err, 400, "invalid_request")
 		_, err = voter.PostPolls(t.Context(), input)
@@ -60,12 +58,6 @@ func TestChoicePolls(t *testing.T) {
 		p := create(input)
 		if p.Kind != content.PollMultipleChoice || len(p.Options) != 2 || p.TotalVotes != 0 {
 			t.Fatalf("invalid choice-poll creation: %+v", p)
-		}
-		raw("/polls/"+p.ID+"/answer", `{"text":"No longer supported"}`, 404)
-		result, err := admin.PostImport(t.Context(), importer.Batch{Source: "choice-contract", Polls: []importer.PollRecord{{ExternalID: "unsupported", Kind: "free_text", Question: "Unsupported"}}})
-		must(t, err)
-		if len(result.Failed) != 1 || result.Written[importer.SectionPolls] != 0 {
-			t.Fatalf("free-text import was not refused: %+v", result)
 		}
 	})
 	t.Run("CK-J30-S01_duplicate_votes_scope_and_erasure_keep_counts", func(t *testing.T) {
@@ -112,7 +104,7 @@ func TestChoicePolls(t *testing.T) {
 			t.Fatalf("repeated account deletion lost or duplicated a vote: %+v", got)
 		}
 	})
-	t.Run("CK-J30-S01_closed_scheduled_and_historical_polls_stay_inert", func(t *testing.T) {
+	t.Run("CK-J30-S01_closed_and_scheduled_polls_stay_inert", func(t *testing.T) {
 		future := time.Now().Add(time.Hour)
 		scheduled := input
 		scheduled.LiveAt = &future
@@ -140,25 +132,6 @@ func TestChoicePolls(t *testing.T) {
 		p = create(closed)
 		_, err = other.PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[0].ID})
 		requireError(t, err, 400, "invalid_request")
-		historical := uuid.NewString()
-		_, err = w.pool.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_poll_questions(id,tenant_id,kind,question,language) VALUES($1,$2,'free_text','Preserved history','en')`, historical, a.cfg.Scope.AppID.String())
-		must(t, err)
-		_, err = admin.GetPoll(t.Context(), historical)
-		requireError(t, err, 404, "not_found")
-		_, err = other.PostPollVote(t.Context(), historical, content.PollVote{OptionID: p.Options[0].ID})
-		requireError(t, err, 404, "not_found")
-		polls, err := admin.GetPollsAdmin(t.Context(), ck.GetPollsAdminQuery{})
-		must(t, err)
-		for _, poll := range polls {
-			if poll.Kind != content.PollMultipleChoice || poll.ID == historical {
-				t.Fatalf("historical unsupported poll escaped: %+v", poll)
-			}
-		}
-		var kind string
-		must(t, w.pool.QueryRow(t.Context(), `SELECT kind FROM `+w.schema+`.content_poll_questions WHERE id=$1`, historical).Scan(&kind))
-		if kind != "free_text" {
-			t.Fatal("historical poll was converted")
-		}
 	})
 	t.Run("CK-J30-S01_close_must_follow_resulting_live_time", func(t *testing.T) {
 		live := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
