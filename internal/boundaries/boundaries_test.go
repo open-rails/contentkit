@@ -23,8 +23,9 @@ const module = "github.com/open-rails/contentkit"
 var typePackages = []string{"access", "catalog", "channels", "content", "contentref", "contenturl", "discovery",
 	"entities", "importer", "kinds", "media", "media/versions", "signal"}
 
-// public is every package a host, server/ or adapters/* may import.
-var public = append([]string{"", "media/s3", "media/avatar", "media/gateway"}, typePackages...)
+// public is every package a host, server/ or adapters/* may import. The
+// gateway's Config takes token and layout values.
+var public = append([]string{"", "media/s3", "media/avatar", "media/gateway", "media/token", "media/layout"}, typePackages...)
 
 // leafHelpers are the internal packages a type package may import: pure
 // value helpers with no storage.
