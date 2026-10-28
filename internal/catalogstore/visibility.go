@@ -327,12 +327,11 @@ type itemView struct {
 }
 
 // decide applies the rule to content items for direct reads: an editor (staff,
-// creator, owner-entity editor) sees everything; anyone else sees the live
-// versions of live content in the site's scope, never a deleted one, even
-// one they bought. Optional content filters
-// do not apply to direct reads. With every, each item's owner entity is asked
-// for editorship (a detail page); else only those of items the rule does not
-// show whole or open.
+// creator, owner-entity editor) sees everything; anyone else, a buyer
+// included, sees only the live, undeleted versions of live content in the
+// site's scope. Optional content filters do not apply to direct reads. With
+// every, each item's owner entity is asked for editorship (a detail page);
+// else only those of items the rule does not show whole or open.
 func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[string]*itemView, error) {
 	s := v.s
 	out := map[string]*itemView{}
