@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import {
   createContentKitClient,
@@ -414,16 +413,6 @@ export async function runMediaContracts(group, fixture) {
     const segment = await owner.media.hls.playlist(fixture.segment);
     assert.equal(segment.status, 200);
     assert((await segment.arrayBuffer()).byteLength > 100);
-    const frame = await owner.media.getFrame(ref, "source.mp4", 0.5, 128);
-    assert.equal(frame.type, "image/jpeg");
-    assert(frame.size > 100);
-    await writeFile(fixture.frameFile, Buffer.from(await frame.arrayBuffer()));
-    await refused(
-      () => reader.media.getFrame(ref, "source.mp4", 0.5, 128),
-      403,
-      "forbidden",
-    );
-    proved("MediaClient.getFrame");
     const empty = await owner.contents.create({
       kind: "clip",
       versions: [{ languages: ["en"], text: { en: { title: "Native browser transport upload" } } }],

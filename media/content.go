@@ -64,7 +64,7 @@ func downloads(mk *Kind, k kinds.Kind) error {
 	if p := mk.Publish; p != nil {
 		add(p.Pages)
 		add(p.Import)
-		if z := mk.private(p.Download); z != nil && z.Zip != "" {
+		if z := findPrivate(mk.Private, p.Download); z != nil && z.Zip != "" {
 			zip = z.Name
 			add(z.Name)
 			for _, pr := range mk.Private {
@@ -75,7 +75,7 @@ func downloads(mk *Kind, k kinds.Kind) error {
 		}
 	}
 	for _, pr := range mk.Private {
-		if pr.HLS != nil && !strings.Contains(pr.From, nameVar) && mk.uploadIndex(pr.From) >= 0 {
+		if pr.HLS != nil && !strings.Contains(pr.From, nameVar) && findUpload(mk.Uploads, pr.From) >= 0 {
 			add(pr.From)
 			if original == "" && mk.KeepOriginals {
 				original = pr.From
@@ -95,7 +95,7 @@ func downloads(mk *Kind, k kinds.Kind) error {
 			return errors.New("download serves the original: it needs KeepOriginals and an HLS preset from a literal upload")
 		}
 	default:
-		if pr := mk.private(serve); pr == nil || pr.MP4 == nil {
+		if pr := findPrivate(mk.Private, serve); pr == nil || pr.MP4 == nil {
 			return fmt.Errorf("download serves %q, which is no MP4 preset", serve)
 		}
 		add(serve)

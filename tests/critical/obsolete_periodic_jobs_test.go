@@ -26,13 +26,13 @@ func TestObsoletePeriodicJobsDoNotBlockStartup(t *testing.T) {
 	foreign := []int64{}
 	terminal := []int64{}
 	for _, kind := range []string{"contentkit_reclassify", "contentkit_projection_repair"} {
-		old[insert(kind, ck.QueueContentKit)] = kind
+		old[insert(kind, "contentkit")] = kind
 		foreign = append(foreign, insert(kind, "other_owner"))
-		terminal = append(terminal, insert(kind, ck.QueueContentKit))
+		terminal = append(terminal, insert(kind, "contentkit"))
 	}
 	_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job SET state='completed',finalized_at=clock_timestamp() WHERE id=ANY($1::bigint[])`, terminal)
 	must(t, err)
-	control := insert("contentkit_search_sync", ck.QueueContentKit)
+	control := insert("contentkit_search_sync", "contentkit")
 	t.Run("CK-J30-S02_unknown_jobs_fail_finitely_while_supported_work_continues", func(t *testing.T) {
 		must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
 		a.server.Close()
@@ -58,7 +58,7 @@ func TestObsoletePeriodicJobsDoNotBlockStartup(t *testing.T) {
 				t.Fatalf("startup changed obsolete job %d: state=%s attempt=%d", id, job.State, job.Attempt)
 			}
 		}
-		must(t, a.engine.Start(t.Context()))
+		must(t, a.engine.StartJobs(t.Context()))
 		waitForWithin(t, time.Minute, func() bool {
 			for id := range old {
 				job, err := producer.JobGet(t.Context(), id)

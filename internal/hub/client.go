@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/internal/normalize"
-	"github.com/open-rails/contentkit/search"
+	"github.com/open-rails/contentkit/internal/search"
 )
 
 type LanguageMode string

@@ -2,12 +2,14 @@
 
 ContentKit runs in the host's process as an engine (or standalone, `server/`)
 for one tenant. The host configures it, mounts its routes and passes
-providers; it never reads or writes ContentKit's storage.
+providers; it never reads or writes ContentKit's storage
+([Host references](#host-references)).
 
 ## Contract
 
 One `New`, one `Start`, the routes mounted under one prefix, each route group
-at its sub-path under `/v1` ([docs/api/routes.md](docs/api/routes.md)):
+at its sub-path under `/v1` ([docs/api/routes.md](docs/api/routes.md)), and
+`StartJobs` in the process that works jobs:
 
 ```go
 ck, _ := contentkit.New(ctx, cfg, contentkit.Deps{
@@ -16,12 +18,91 @@ ck, _ := contentkit.New(ctx, cfg, contentkit.Deps{
 	Users: ak.UserInfo(),      // authors' names (authkit/userinfo)
 	Store: bucket, Moderator: moderator, BodyProcessor: sanitizer,
 })
-_ = ck.Start(ctx, contentkit.WithRiverClient(fleet)) // fleet built with ck.RiverJobs()
+_ = ck.Start(ctx) // serve: requests enqueue jobs
 routes, _ := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
 for _, r := range routes {
 	mux.Handle(r.Path, r.Handler)
 }
 ```
+
+### Jobs
+
+ContentKit runs its background work (search indexing, preference sync,
+popularity refresh, publication, retention and release work) on its own River
+client, on `Deps.Postgres` in `Config.Database.RiverSchema` (default
+`{schema}_river`), never in a host's fleet or schema. `Start` builds that
+client so requests enqueue; it works nothing. The process that works jobs
+calls `StartJobs` (it starts the engine first if needed); `Close` stops them:
+
+```go
+// API process
+_ = ck.Start(ctx)
+// worker command (`run-worker`)
+_ = ck.StartJobs(ctx)
+defer ck.Close(ctx)
+```
+
+Which process works jobs is code, never configuration. The standalone
+`server/` calls `StartJobs` itself. Media processing is the stock
+`contentkit-media-worker` image's ([Media worker schema](#media-worker-schema)).
+`Engine.Reconcile` repairs derived catalog state (facets, access snapshots,
+search marks and content paths) after a model change; the server CLI runs it as
+`contentkit reconcile`.
+
+## Host references
+
+ContentKit can run embedded or as a remote service with its own database on
+another machine. Hosts use only its client (`Engine.Client()` or
+`contentkit.NewClient`), its routes and its event log: no SQL on ContentKit
+tables, no shared transactions, no host callbacks inside ContentKit
+transactions and no ContentKit table or schema names in host code.
+
+A host keeps its own links to entities and editions, such as a translation's
+artists and tags or its finished edition. ContentKit neither tracks nor
+protects them: deleting or merging a linked entity and purging an edition are
+allowed, and the host repairs its links.
+
+| Need | Route (Go client) |
+| --- | --- |
+| Entities by id, in every state | `GET /v1/manage/entities?ids=` (`GetManageEntities`), at most 100: each with `state`, a merged one with its final survivor `merged_into`; unknown ids are absent. |
+| Names to entities | `GET /v1/manage/entities/match?kind=&scope=&language=&normalized=&name=` (`GetManageEntitiesMatch`), at most 100 repeated `name`s: one result per name with at most two active, public ids (two is ambiguous). Literal by default; `normalized=true` folds case, accents and whitespace. An empty `scope` matches unscoped entities. |
+| Edition status | `GET /v1/versions?ids=` (`GetVersions`), at most 100: `version_id`, `content_id`, `kind`, `languages`, `deleted`, `live`, `live_from`; a purged edition is absent. |
+| Changes | `GET /v1/events` (`EventReader`): `entity.created`, `entity.updated`, `entity.deleted`, `entity.restored` and `entity.merged` beside the content and version events ([docs/events.md](docs/events.md)). |
+
+The host reads the log with its own cursor and repairs what an event names:
+links to a merged entity move to its `merged_into`, links to a deleted entity
+or a purged edition are the host's to drop or keep. Whether an edition is
+published now is `live_from` compared with the time; no event fires when it
+passes. Queries that joined ContentKit tables read statuses in batches and
+join in the host.
+
+## Public surface
+
+Hosts import the root package (`New`, `Config`/`Deps`, `Start`/`StartJobs`/
+`Close`/`Ready`/`Probes`/`Reconcile`, `Routes`, `Client`/`NewClient`,
+`EventReader`, account lifecycle, `MigratePostgres`/`MigrateClickHouse`),
+`kinds`, `contentref`, `access` (permissions, keys, rules, `Actor`, the
+`Billing` port), the wire and data types in `catalog`, `entities`, `channels`,
+`content`, `contenturl`, `discovery`, `importer`, `signal`, `media` and
+`media/versions`, and the stock `media/s3`, `media/avatar` and
+`media/gateway` (with `media/token` and `media/layout`). Every store,
+constructor, job and SQL helper is under `internal/`, which the compiler
+keeps from hosts; `internal/boundaries` enforces the rest. The same code works
+against an embedded engine (`Engine.Client()`) and a remote one (`NewClient`).
+
+| Before | Now |
+| --- | --- |
+| `catalog.New`, `entities.New`, `channels.New`, `discovery.New`, `importer.New`, `contenturl.New`/`NewRouter`, their `Store`/`Options`/`Querier` | the routes, through the client |
+| the blog group's `channels.New(...).List`/`Get` | `GetManageChannels(ctx, GetManageChannelsQuery{Slug: "blog", Limit: 2})`, then `GetManageChannel`: `auth_scope`, `owner_user_id` |
+| `catalog.NewTotalsClient(base, hc).Totals` | `contentkit.NewClient(base, hc).GetCatalogTotals` |
+| `catalog.RefreshPaths`, `Engine.ReconcileFacets` | `Engine.Reconcile` (`contentkit reconcile`) |
+| `Engine.RiverJobs`, `WithRiverClient` | `Start` in API processes, `StartJobs` in the worker process ([Jobs](#jobs)) |
+| `Engine.SetAccountDeleted`/`AnonymizeAccount` from a remote host | `PutAccountDeleted`, `PostAccountAnonymize` |
+| `media.NewRegistry`, `media.Hooks`, `media/worker`, `media/workqueue`, `media/image`, `media/video` | the stock `contentkit-media-worker` image, `MEDIA_KINDS_FILE` from `Config.MediaRegistry()` |
+| `workqueue.Migrate`, `migrations.Postgres` | `MigratePostgres` |
+| `access.WithMemo`, `access.NewGate` | none: the engine memoizes each request |
+| `catalog.ErrNotFound`, `entities.ErrConflict`, … | `*contentkit.Error` `Code` (`contentkit.CodeNotFound`, …) |
+| `kindsroute.ContentModel` | `contentkit.ContentModel` |
 
 ## Auth
 
@@ -54,6 +135,7 @@ ContentKit names its staff permissions, always the full
 | `access.CommentsBan` | `root:comments:ban` | ban users from commenting anywhere in the tenant |
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
 | `access.EntitiesWrite` | `root:entities:write` | create, edit, merge and delete entities, and set memberships |
+| `access.AccountsLifecycle` | `root:accounts:lifecycle` | deliver AuthKit's account lifecycle over HTTP (a host service) |
 
 Channels have their own AuthKit group in the `channel` persona. Declare
 `access.ChannelPermissions()` and compose host-defined contributor, editor and
@@ -148,13 +230,9 @@ id (`CreateEntities` mints one when omitted).
 
 Media never adopts leftovers:
 
-- `Manifests.Create(ctx, ref)` starts an item: it writes the empty manifest,
-  and fails with `media.ErrFolderNotEmpty` (`*FolderNotEmptyError`)
-  if the folder holds any object. Call it when the host row is created. A new
-  item processes its declared public presets after attachment, independently
-  of publication visibility.
-- A folder's first manifest edit (a commit) is refused the same way over a
-  previous item's blobs.
+- A folder's first manifest edit (a commit) is refused with
+  `media.ErrFolderNotEmpty` (`*FolderNotEmptyError`) over a previous item's
+  blobs.
 - `Jobs.Purge(ctx, media.Deletion{Ref, Owner})` deletes a folder now, the
   explicit reset for deliberate reuse. Content owners commit `RetireItemsTx`; their existing purge executes it.
 - `Jobs.SweepOrphans(ctx, media.OrphanSweep{Tenant, Kind, Exists, Grace, Delete})`
@@ -206,13 +284,11 @@ prefix, the code, resolution and canonicalization.
   version shows the default edition. Hosts drop their own parameters
   (Doujins `?ver=`, Hentai0 `?v=<uuid>`).
 
-```go
-urls, _ := contenturl.New(contenturl.Options{Pool: pool, Schema: "hentai0", Tenant: "hentai0"})
-byRef, _ := urls.Links(ctx, refs) // list pages: code and slugs for each ref
-```
+Cards and content reads carry each item's `code` and language-prefixed `path`.
 
-- **Canonical redirects.** The router maps kinds to routes. Mount its middleware
-  in front of the pages, or in front of the SPA shell. A missing language
+- **Canonical redirects.** `GET /v1/codes/{code}?lang=&v=` (`Client.GetCode`)
+  answers `contenturl.Resolved`; the host parses its own paths
+  (`contenturl.ParsePath`, `AcceptLanguage`) and redirects to `resolved.path`. A missing language
   prefix, a missing or stale slug, a wrong route, a merged code or a trailing
   slash gets a 301 to the canonical path, with the query (`?v=` included)
   kept. An unprefixed request (an old link) goes to the language
@@ -222,21 +298,9 @@ byRef, _ := urls.Links(ctx, refs) // list pages: code and slugs for each ref
   that language's slug. `Visibility` returns `Visible`, `Hidden` or `Gone`.
   `Hidden` behaves like an unknown code and serves the host's 404 without
   leaking the slug. `Gone` answers 410. The engine's codes route group answers
-  content items' visibility itself (`catalog.Store.Visibility`). For entities, map the entity state: a deleted entity
-  is `Gone`, and merged entities already resolve to their survivor.
-  `kinds.Config.Routes()` maps every content and entity kind to its route.
-  A canonical request reaches the page
-  with `FromContext(ctx)`, and gets a `Link: <…>; rel="canonical"` header when
-  `BaseURL` is set.
-
-```go
-router, _ := contenturl.NewRouter(urls, contenturl.RouterOptions{
-	Routes: cfg.Routes(), Languages: []string{"en", "es"}, BaseURL: "https://hentai0.com",
-	Visibility: func(r *http.Request, links []contenturl.Link) ([]contenturl.Visibility, error) { /* drafts, removals, per link */ },
-})
-mux.Handle("/", router.Middleware(spa))
-// the engine's codes route group serves GET /v1/codes/{code}[?lang=&v=] (v: the live version's id) and POST /v1/codes/aliases, routed by Config.Content's kinds
-```
+  content items' and entities' visibility itself: a deleted entity is `Gone`,
+  and merged entities resolve to their survivor. `kinds.Config.Routes()` maps
+  every content and entity kind to its route.
 
 - **Legacy aliases.** The bulk import (`POST /v1/import`, `aliases`; see
   [docs/import.md](docs/import.md)) records the old site's identifiers. Each
@@ -262,10 +326,6 @@ mux.Handle("/", router.Middleware(spa))
   It never computes slugs; those come from the server. `useContentDetail`,
   `VersionPicker` and `useVersionMenuItems` read and write `?v=` themselves
   (through the provider's `navigate`, else the browser history).
-- **Tables.** `content_codes(tenant_id, code, content_kind, content_id, slug,
-  slugs, merged_into)` and `content_code_aliases`. Host SQL may join
-  `content_codes` on `(tenant_id, content_kind, content_id)`, for example for
-  sitemaps.
 
 ## Locked content (`kinds.Kind.Locked`)
 
@@ -387,7 +447,7 @@ Ports (in `content` unless qualified):
 | `Auth` | yes | `auth.Authenticator` (Auth above); the engine fills it from `Deps.Auth` |
 | `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); the engine fills it from `Deps.Users` |
 | `Media` | no | poll images and avatars in ContentKit media (see below); absent = image routes answer 501 |
-| `ContentProcessor` | no | rich-text sanitizer for comment bodies (default strips tags) |
+| `ContentProcessor` | no | plain-text processor for comment bodies (default only trims whitespace; render as text) |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment publishes; absent = publish (see Moderation) |
 
 **Authors.** Comments, replies, the latest-comments feed, held items and
@@ -488,7 +548,7 @@ and `revision`); `POST /v1/moderation/{kind}/{id}/resolve
 final state: `approve` publishes (counts and the keyword index follow),
 `reject` keeps the comment author-visible as `rejected` with the reason. Both
 need `root:moderation:review`.
-`GET /comments/admin` shows every state with real bodies and authors, by content kind or `author`.
+`GET /comments/admin` shows every state with real bodies and authors, by content kind or `author`, including `author_hidden` for accounts hidden during a ban. The review queue also keeps hidden authors’ held comments.
 
 Screening is revision-fenced. A decision must echo the held `revision`, so it
 cannot publish an intervening edit. Edits are screened outside SQL
@@ -501,7 +561,7 @@ Banned words and IP bans are data staff edit (`root:comments:moderate`):
 the default, replaces each word containing it with asterisks; `reject`
 refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
 (`{"network", "reason", "until"}`: an address or CIDR network). They apply to
-every comment before the moderator; an IP-banned write
+every comment body and anonymous name before the moderator; an IP-banned write
 answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
 
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
@@ -529,7 +589,9 @@ again). Favorites always need a signed-in actor. A refused anonymous attempt is 
 `anonymous`, so a client shows a sign-in prompt or an anonymous form from the
 server's answer. `content.Options.CommentMaxLength` (default 2,200 characters)
 bounds comments and edits: longer is `422 comment_too_long` with
-`details.max`; the standing carries it as `max_length`.
+`details.max`; the standing carries it as `max_length`. An anonymous name is trimmed
+and limited to 60 Unicode characters (`400 invalid_request` beyond that).
+Banned-word rules mask the stored name or reject it with `422 moderation_rejected`.
 
 ## Interaction limits
 
@@ -542,7 +604,7 @@ in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
-| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
+| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies), `PATCH /comments/{cid}` | 5 per 5 minutes and 20 per hour |
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
 | `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
 | `favorite` | `POST` and `DELETE /{contents\|entities}/{id}/favorite` | 20 per minute |
@@ -557,6 +619,19 @@ back to the per-process count for a second and adds to the expvar
 `contentkit_content_ratelimit_redis_errors`. A refusal is `429 rate_limited`
 with `Retry-After` and `{"action", "retry_after"}` in the body
 (`*content.RateLimitError`, `errors.Is(err, content.ErrRateLimited)`).
+
+`content.Options.DuplicateWindow` defaults to zero (off). When enabled, a
+signed-in author cannot save the same processed body on the same target,
+reply parent (or top level), and language within that duration. Non-deleted
+comments in every moderation/visibility state participate. Refusals return
+`422 duplicate_comment`; anonymous comments are exempt. The check runs inside
+the insert transaction after parent validation, under the account's existing
+transaction advisory lock, so concurrent creates cannot both pass and failed
+saves leave no duplicate record.
+
+Thread lists, replies, latest comments and the admin list reject offsets above
+10,000 with `400 invalid_request` and `offset is at most 10000`. Other lists
+keep their existing pagination behavior.
 
 ## Comment bans
 
@@ -589,6 +664,26 @@ when both scopes apply it reports the one lasting longer
 commenters have no identity to ban. `AnonymizeAccount` removes the bans of a
 deleted user and of their owner scope, and blanks them as `banned_by`.
 
+For account bans, call `Engine.SetAccountHidden(ctx, accountID, true)` and
+pass `false` when the ban ends. This is separate from scoped comment bans and
+account deletion. It hides that author's comments from other readers, latest
+comments, published counts and account comment statistics. Authors can still
+see their own hidden comments in threads/replies and their standing count,
+just as they see their held comments; the latest feed remains public-only.
+Staff lists keep them. New comments by a hidden author are stored hidden.
+The account's likes and dislikes on comments, content and entities also stop
+counting and notifying until unhidden; favorites and poll votes are unaffected.
+Reactions remain stored, and those hidden at permanent anonymization stay uncounted.
+
+Only approved, undeleted comments with `author_hidden=false` contribute to
+`comment_count` or `reply_count` or publish notices. Hiding withdraws reply
+and like notices; unhiding restores eligible notices with their existing
+identities. Holds, rejections and deletions survive hide/unhide. Approving,
+editing or restoring a hidden comment cannot publish it until unhidden.
+Repeated hide/unhide calls do not change counts again. A like notice uses
+`comment.liked:<comment id>:<liker id>`: unlike withdraws it and re-like
+restores the same notice, without adding another.
+
 ## Polls
 
 Polls accept predefined choices only. `kind` defaults to `multiple_choice`;
@@ -612,11 +707,19 @@ detaches a subject's historical answers from the account. No classification work
 ## Account lifecycle and interaction erasure
 
 Applications consume AuthKit's retained lifecycle events. On `user.deleted`,
-call `ck.SetAccountDeleted(ctx, id, true)`; on restoration pass `false`.
+call `ck.SetAccountDeleted(ctx, id, true)`; on restoration pass `false`. A host
+of a remote ContentKit calls the routes instead, as a service holding
+`access.AccountsLifecycle` (`root:accounts:lifecycle`):
+`PUT /v1/accounts/{id}/deleted` with `{"deleted": true|false}`
+(`Client.PutAccountDeleted`) and `POST /v1/accounts/{id}/anonymize`
+(`Client.PostAccountAnonymize`), both 204 and idempotent.
 This changes author display to `<Deleted>` without deleting interactions.
 Comment responses use the existing `anon_name` shape without a profile or
 account id, so older UI clients display the same label. Ownership remains in
-storage until purge and is restored with the account.
+storage until purge and is restored with the account. A deleted account can
+also be hidden; clearing either state does not clear the other. Permanent
+anonymization preserves comment visibility and counts, including hidden
+comments, while removing the hidden-author account marker.
 Check current account state before replaying an old deletion/restoration event.
 
 Pass no `OnPurge` callback: AuthKit purges first and records `user.purged`.
@@ -890,10 +993,10 @@ var Video = media.Kind{Name: "video", KeepOriginals: true,
 	Public: []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{640, 1280, 1920}, Default: "poster.png"}},
 }
 
-reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
+cfg.Media = &contentkit.MediaConfig{Config: media.Config{BaseURL: "https://media.doujins.ai",
 	Kinds:   []media.Kind{Gallery, avatar.User()},
-	Avatars: media.Avatars{Kind: "user", Preset: "avatar"}, // people's avatars (Authors)
-	Hooks:   media.Hooks{Resolver: resolver, CanUpload: authorizer, ItemReady: ready}})
+	Avatars: media.Avatars{Kind: "user", Preset: "avatar"}}} // people's avatars (Authors)
+worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
 ```
 
 - **Site images.** A kind no content or entity kind owns (nor `Avatars`, nor
@@ -905,7 +1008,7 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   `avatar.User()` (`github.com/open-rails/contentkit/media/avatar`) is the
   standard kind: JPEG, PNG and WebP up to 10 MiB, square WebP at 64, 128,
   256 and 512 pixels, a default silhouette (publish it with the other
-  defaults through `media/image.PublishDefaults`). Its preset is `Stable`:
+  defaults: `media-worker publish-defaults`). Its preset is `Stable`:
   besides its generations, the current image is kept at the logical names
   (`avatar-128.webp`), so its URL is built from the person's id and the
   gateway serves the default there until one is uploaded.
@@ -918,7 +1021,7 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   replaces it. `Max` caps an Upload's files, `Frames` lets the `frame` op
   grab the upload from a video upload, `Named` lets the server name it (`i-{uuid}`, inline images;
   it needs a `Max`).
-- **Private presets** have one producer: `Image` (per-file `Choose` in Go),
+- **Private presets** have one producer: `Image` (with `Shapes`, below),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
   track's segment table is its own private blob), `MP4` (one rung, H.264),
   `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
@@ -936,6 +1039,20 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   packs the resulting original-format pages in reading order. Upgrade the
   worker/gateway cohort before declaring this registry, then regenerate
   existing items to replace an old download rendition.
+  `Shapes` give an image preset another `Image` for uploads of another
+  aspect (width:height), wider than `WiderThan` and no wider than
+  `NoWiderThan` (unset is open). They are data, so the stock worker runs
+  them; they never overlap and keep the preset's format and animation; an
+  upload in none renders `Image`. Tall pages keep more height, wide pages
+  more width:
+
+  ```json
+  {"name": "low", "from": "originals/{name}", "to": "low-res/{name}.webp",
+   "image": {"width": 1206, "height": 2096, "quality": 90},
+   "shapes": [
+     {"no_wider_than": "1:2", "image": {"width": 1206, "height": 5065, "quality": 90}},
+     {"wider_than": "1:1", "image": {"width": 2412, "height": 2096, "quality": 90}}]}
+  ```
 - **Public presets** render an upload through its edit at fixed names,
   `{w}` for each width (a width past the edited image renders at its width,
   so every name exists). The object carries its `from` and `fp` as metadata.
@@ -970,7 +1087,7 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   the zip and the presets it packs, videos' HLS sources, the served MP4.
   Workers read them with storage credentials as before.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
-  images its public presets name in `Public.Default`; `NewRegistry` checks
+  images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
 - **Shared kinds.** A kind with `Namespace: "accounts"` lives at
   `accounts/{kind}/{id}/` and is served on every site's media host
@@ -978,8 +1095,8 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   holds a shared namespace, in its bucket and journal, processed by its
   worker; other sites reach it through its API (Avatars below) and serve
   its files from their media hosts (`MEDIA_GATEWAY_BUCKETS`).
-- The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; `Choose`
-  and hooks are not included): an engine's is `Config.MediaKinds()`, printed
+- The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; hooks
+  are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
 
 ### Avatars
@@ -1029,7 +1146,6 @@ The upload route group serves the upload API at `/v1/media/upload`:
 | `POST /presign {ref, path, type, size, sha256}` | Checks the path's Upload and `CanUpload`; answers `exists`, one `put`, or a `multipart` ticket, and the `path` to commit (cleaned, with an extension, server-named for `Named`). |
 | `POST /parts`, `/parts/list`, `/complete`, `/abort` | Multipart parts bound to their SHA-256; resume; assemble. |
 | `POST /commit {ref, ops}` | Applies ops in one conditional write, then enqueues placement and processing. Each uploader's commits are rate limited (`UploadOptions.Commits`, default 1/s, burst 30; 429 `rate_limited`), except for exempt grants. |
-| `GET /frame?kind&id&path&t&w` | A JPEG still of a video upload for the frame picker (`UploadOptions.Frames`). |
 
 Uploads land at a staged name, `temp/u-{uuid}`, which presign answers as
 `blob` (or the folder's identical blob, with `exists`); the put op commits
@@ -1040,8 +1156,7 @@ blob name. The upload routes admit a signed-in person or application;
 `CanUpload` decides. Importers upload with `Client.IngestMedia` (presign,
 PUT or parts, commit; [docs/import.md](docs/import.md)); a file whose `From`
 names a key of the item's bucket outside ContentKit's namespaces is copied
-server-side instead, so no byte passes through the importer. Server-side
-code calls `Uploads.Ingest`, from a stream (`Body`) or the same copy (`From`).
+server-side instead, so no byte passes through the importer.
 
 | Op | Does |
 | --- | --- |
@@ -1052,13 +1167,13 @@ code calls `Uploads.Ingest`, from a stream (`Body`) or the same copy (`From`).
 | `remove {path, takedown?}` | Removes an upload and its outputs (cancelling its processing). With `takedown` it also removes the frames grabbed from the upload and the zips that bundled it, then deletes at once the blobs the commit dropped, the removed uploads' editor views and staged objects, and the item's unused public files. With an exempt grant (`UploadGrant.Exempt`, staff) it instead deletes every private blob the item no longer references, earlier versions and all editor views included, which costs re-rendering them; sent again on the path already gone, it runs that sweep again. If a takedown's deletes fail it says so: staff complete it with the exempt takedown, otherwise the leftovers go at the grace sweep. For anyone else a takedown of a path already gone is `not_found`. |
 | `attach {path, index?, meta?}` | Makes an unattached upload part of the item. |
 | `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. Blobs copied from another item are reserved like uploads (rate limits, pending quota) before they move. |
-| `frame {path, t \| auto}` | Fills an upload from a frame of its `Frames` video; a new video grabs again. |
+| `frame {path, t \| auto, edit?, from?}` | Fills an upload from a frame of its `Frames` video, the one a player shows `t` seconds in; a new video grabs again. With `from: {kind?, id, version?, path}` the frame is of another item's video upload (`kind` defaults to this item's, in its namespace), which the editor must also be able to write; the upload must allow `image/png`, and the worker grabs it once, a still that later changes to that video leave alone. |
 | `meta {meta}` | Sets the template values (`{title}` in download names). |
 | `regenerate {preset?, force?}` | Asks the worker to redo stale outputs and retry uploads that failed for their current blob and edit, which any writer of the item may do; `force` redoes every output and needs an exempt grant. |
 
 `CanUpload` is asked for `UploadTarget{Ref, Path}` per op (the upload's stem;
-"" for item-wide ops), and for a copy's source too. A new item starts hidden
-unless anonymous viewers may see it (`Hooks.Resolver`). `ProcessOnUpload`
+"" for item-wide ops), and for a copy's or frame's source too. A new item starts hidden
+unless anonymous viewers may see it (the engine's access rules). `ProcessOnUpload`
 tells the SDK to commit uploads unattached as they land; readers leave them
 out until `attach`.
 
@@ -1110,17 +1225,12 @@ Every item's current publications are projected into Postgres
 them current, so server-side rendering resolves a whole page with one
 indexed query and no bucket read. `*media.Manifests` (`jobs.Manifests()`):
 
-- `PresetImages(ctx, "cover", refs...)` returns one `PublicImage` per ref, in
-  order: its first current image of the preset, else the preset's default
-  (`From` is empty), else one without renditions. Use it for cards and
-  avatars: `image.URL(width)` picks a rendition, `image.SrcSet()` gives
-  `srcset` with the encoded widths.
 - `Images(ctx, media.ImageQuery{Ref, Preset, Name}...)` answers many queries in
   one read: an item's images, one preset's, or one upload's by its `{name}`
   (an inline image's `i-{uuid}`). Store names, not URLs, and resolve them
   when rendering; post bodies store references (Interactions).
-- `PublicImages(ctx, ref)` is one item's images; `Registry.DefaultImage`
-  is a preset's default.
+  `image.URL(width)` picks a rendition, `image.SrcSet()` gives `srcset`.
+- `Registry.DefaultImage` is a preset's default.
 
 A republish keeps the current files published until their successor is
 ready, and cleanup retires a generation only after the projection names the
@@ -1131,27 +1241,25 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
 - Declared public presets remain public before release and after unpublishing.
   Publication and billing changes only change database access policy and private
   token issuance. There is no exposure method or worker.
-- Render the defaults from the deploy step:
-  `image.PublishDefaults(ctx, store, reg)` (it needs libvips) writes each
-  `Public.Default` from its kind's `Defaults` to
-  `{ns}/{kind}/_default/public/sha256-{digest}.webp` and returns the
-  mappings. `media.GatewayConfig(reg, publication.Defaults)` gives the
-  gateway's namespaces and `MEDIA_GATEWAY_DEFAULTS` (`layout.FormatDefaults`).
+- Render the defaults from the deploy step with the worker image:
+  `media-worker publish-defaults` (`MEDIA_KINDS_FILE`, `MEDIA_S3_*`, no
+  database) writes each `Public.Default` to
+  `{ns}/{kind}/_default/public/sha256-{digest}.webp` and prints the
+  gateway's `MEDIA_GATEWAY_DEFAULTS`. The images come from
+  `MEDIA_DEFAULTS_DIR`, over ContentKit's own (the avatar silhouette).
 
 ### Processing and readiness
 
 - A commit marks an upload `pending` with the presets it feeds; the worker
   clears each as it records the outputs. The worker also finds stale outputs
-  itself (a changed spec or recipe after a deploy): `Jobs.Regenerate(ctx,
-  kind, preset)` visits every item of a kind, and the `regenerate` op one
-  item. A `meta` change rewrites download names only.
+  itself (a changed spec or recipe after a deploy) and visits every item of
+  the kind; the `regenerate` op does one item. A `meta` change rewrites download names only.
 - An item is ready when no attached upload is pending (including declared
   public presets) and every zip packs its inputs; failed once
   nothing is pending and an upload failed for its current blob and edit.
   Processor completion appends a retained processing fact and queues real
-  version metadata work in one transaction. Optional `Hooks.ItemReady` and
-  `Hooks.ItemProgressed` execute synchronously in that transaction and must be
-  idempotent. `Hooks.Failed` runs where the producer runs.
+  version metadata work in one transaction; hosts follow it through the event
+  log, never inside the transaction.
 - Manifests stop at `media.MaxManifestBytes` (8 MiB of JSON). A commit is
   refused (413 `too_large`) when the item, processed, would pass that. If
   outputs still overrun it, the worker marks the item `full` instead of
@@ -1284,9 +1392,8 @@ gates (Auth). No compatibility: the old ports are gone.
 
 Each host names its own media worker River schema, e.g. `doujins_media_worker`
 and `hentai0_media_worker`, and passes it everywhere:
-- `workqueue.Migrate(ctx, pool, schema)` and `workqueue.New(pool, registry, schema)`;
-- `workqueue.NewProgressSource(pool, schema)`;
-- `worker.Config.Schema` (`MEDIA_WORKER_SCHEMA`).
+- `Config.Media.WorkerSchema`, which `MigratePostgres` migrates;
+- the worker's `MEDIA_WORKER_SCHEMA`.
 
 It is required. Hosts sharing a database must never share one: a worker
 drains every job in its schema, so it would take another host's jobs (same
@@ -1378,7 +1485,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   once per outage and increments expvar
   `contentkit_media_ratelimit_redis_errors`: the limit is abuse protection,
   tokens and visibility checks still gate every file.
-- **Access**: wire `Hooks.Resolver` for metadata and private-file reads. Public
+- **Access**: the engine's access rules gate metadata and private-file reads. Public
   object URLs are always free. Ordinary removal and permanent purge still erase
   obsolete objects.
 
@@ -1436,18 +1543,6 @@ reactions and comment threads never do.
   before writers resume: `POST /v1/import` with `preference_floor` (only ever
   advancing).
 
-## Attribution export (paged evaluation data)
-
-`hub.Attribution(ctx, signal.AttributionOptions{Stage, Window, Surface, Limit, ClickLimit, After})`
-exports one deterministic sequence per (stage, window, surface): renders at
-the stage in `RenderID` order with their canonical clicks, then the
-`Unattributed` clicks. Every page holds at most `Limit` renders and
-`ClickLimit` click rows; `Next` resumes exactly after the last row (a render
-whose clicks did not fit continues with `Continued: true`). Concatenating all
-pages at any bounds yields the single-page result. Clicks are signals of type
-`signal.TypeClick` carrying `render_id`/`position` (`Signal.WithAttribution`).
-Erased subjects are excluded through the erasure ledger at read time.
-
 ## Signal-plane account deletion
 
 `AnonymizeAccount` completes its signal step only when:
@@ -1461,10 +1556,8 @@ Erased subjects are excluded through the erasure ledger at read time.
    and export evaluates the ledger inside its own statement.
 
 The subject key is dead in that tenant forever. Residue (rows that landed
-after the fence or came back with a restore) is unreadable. Cleanup is
-explicit: the host can call `hub.EnforceErasures`; ContentKit does not schedule
-an erasure sweep. After a restore, run `ReplayErasureFences` for the
-accounts deleted since the backup. A shared account exists in every tenant:
+after the fence or came back with a restore) is unreadable. After a restore,
+run `ReplayErasureFences` for the accounts deleted since the backup. A shared account exists in every tenant:
 each host erases its own tenant.
 
 ## Discovery candidates
@@ -1505,11 +1598,12 @@ rating behavior.
 - Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
 - Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
 - Wire `Options.Moderator` when comments require screening and grant `root:moderation:review` to reviewers. Polls use predefined choices.
-- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.AnonymizeAccount` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
+- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.AnonymizeAccount` into deletion and move favorite and reaction readers onto the routes.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
-- Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
+- Rename `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
+- Replace host SQL on ContentKit tables with the reads and events in [Host references](#host-references).
 
 Channel create/delete/restore calls the existing AuthKit client synchronously.
 The same channel/group identity makes caller retries safe, including a lost

@@ -82,6 +82,26 @@ jobs:
     uses: ./.github/workflows/go.yaml
     with:
       suite: ${{ needs.source.outputs.suite }}
+  codec-free:
+    name: Hosts link no media codecs
+    needs: source
+    if: needs.source.outputs.critical == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache-dependency-path: |
+          go.sum
+          server/go.sum
+          adapters/authkit/go.sum
+          adapters/openrails/go.sum
+    - run: python3 .github/scripts/check-codec-free.py
   image-definitions:
     needs: source
     if: needs.source.outputs.images == 'true'
@@ -93,7 +113,7 @@ jobs:
       verify_only: true
   gate:
     name: ${{ (github.event.pull_request.draft || github.event.action == 'closed') && 'Inactive PR (CI not requested)' || 'CI Gate' }}
-    needs: [source, scan, critical, image-definitions]
+    needs: [source, scan, critical, codec-free, image-definitions]
     if: always() && github.event.pull_request.draft != true && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     steps:
@@ -107,7 +127,7 @@ jobs:
         if jobs['source']['result'] != 'success':
             raise SystemExit('source verification did not pass')
         plan = jobs['source']['outputs']
-        for name, area in [('scan', 'scan'), ('critical', 'critical'), ('image-definitions', 'images')]:
+        for name, area in [('scan', 'scan'), ('critical', 'critical'), ('codec-free', 'critical'), ('image-definitions', 'images')]:
             selected = plan.get(area)
             if selected not in ('true', 'false'):
                 raise SystemExit(f'missing selection for {area}')

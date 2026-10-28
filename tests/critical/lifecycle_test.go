@@ -26,7 +26,7 @@ func TestHostLifecycle(t *testing.T) {
 		if err := a.engine.Ready(t.Context()); err == nil {
 			t.Fatal("unstarted engine reported ready")
 		}
-		must(t, a.engine.Start(appLifetime))
+		must(t, a.engine.StartJobs(appLifetime))
 		must(t, a.engine.Ready(t.Context()))
 		if err := a.engine.Start(t.Context()); err == nil {
 			t.Fatal("second Start created another worker owner")

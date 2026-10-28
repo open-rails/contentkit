@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -26,12 +28,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/layout"
 	medias3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
-	"github.com/open-rails/contentkit/media/worker"
 	_ "golang.org/x/image/webp"
 )
 
@@ -152,7 +154,7 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	a.server = httptest.NewServer(mux)
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := media.NewRegistry(config)
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 	must(t, err)
 	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second}
 	if accountPrimary {
@@ -164,7 +166,7 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	m.cancel = cancel
 	m.workerDone = make(chan error, 1)
 	go func() { m.workerDone <- m.worker.Run(run) }()
-	must(t, a.engine.Start(run))
+	must(t, a.engine.StartJobs(run))
 	t.Cleanup(func() {
 		a.server.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

@@ -4,6 +4,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import type { ContentKitClient } from "../client/client.js";
+import { ContentKitError } from "../client/errors.js";
 import { useMessages } from "../i18n/context.js";
 import { decodeImage, type CropSource } from "../client/image.js";
 import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../react/context.js";
@@ -33,8 +34,8 @@ export interface VideoPickerProps {
   image?: PublicPreset | null;
   /**
    * Frames from another item's video (its upload at path, default
-   * "source"): a chosen frame is uploaded to the poster path as an image.
-   * Default the item's own video.
+   * "source"), which the editor must also be able to edit: the worker grabs
+   * the chosen frame once. Default the item's own video.
    */
   frames?: { item: RefBody; path?: string } | null;
   /** The cover's "W:H"; default the video's shape. */
@@ -65,10 +66,12 @@ export function formatTime(s: number): string {
 }
 
 /**
- * Sets a video's cover (its poster upload): scrub to an exact frame (a coarse
- * strip, a slider and frame steps over GET /frame) and use it whole or
- * cropped (a frame op), or upload an image and crop it at the video's aspect
- * (a put), or let the worker choose the frame. Covers keep the video's aspect.
+ * Sets a video's cover (its poster upload): scrub to an exact frame (the
+ * seek sprite's strip, a slider and frame steps, decoded in the browser from
+ * the encoded video) and use it whole or cropped (a frame op the worker
+ * renders from the source), or upload an image and crop it at the video's
+ * aspect (a put), or let the worker choose the frame. Covers keep the
+ * video's aspect. Frames need the video's HLS ladder.
  */
 export function VideoPosterPicker(p: VideoPosterPickerProps) {
   const { t } = useMessages();
@@ -99,19 +102,21 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   useEffect(() => void (sourceError && report(sourceError, "poster.load")), [sourceError, report]);
   const { poster: current } = loaded;
   const video = source.video;
-  // A frame of the item's own video is a frame op; one of another video is an uploaded image.
-  const selection = other ? undefined : current?.frame;
+  // The poster's frame when it is one of the video shown.
+  const from = current?.frame?.from;
+  const ofShown = other ? from?.id === other.item.id && (from.version ?? "") === (other.item.version ?? "") : !from;
+  const selection = ofShown ? current?.frame : undefined;
   const [mode, setMode] = useState<"frame" | "upload">(!other && current && !selection ? "upload" : "frame");
   const [time, setTime] = useState<number>();
   const [crop, setCrop] = useState<CropSource | null>(null);
   const [cropFor, setCropFor] = useState<"frame" | "upload">("frame");
   const [decodeError, setDecodeError] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
-  const duration = video && !video.staged ? (video.dur ?? 0) : 0;
+  // Frames come from the encoded video: its ladder, its sprite and its duration.
+  const dir = video && !video.staged && video.dur ? source.dir : undefined;
+  const duration = dir ? video!.dur! : 0;
   const aspect = p.aspect ?? (video?.w && video.h ? aspectOf(video.w, video.h) : "16:9");
   const shown = time ?? selection?.t ?? duration * 0.25;
-  // Frames come from the placed video (GET /frame answers conflict while it is staged).
-  const path = duration > 0 ? video!.path : undefined;
   const poster = useVideoPoster({
     client,
     ref: p.item,
@@ -127,10 +132,10 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   const onSaving = useRef(p.onSaving);
   onSaving.current = p.onSaving;
   useEffect(() => onSaving.current(busy), [busy]);
-  const onFrameError = (e: unknown) => report(e, "poster.frame");
-  const frame = useVideoFrame({ client, ref: sourceRef, path, time: duration > 0 ? shown : undefined, width: 960, onError: onFrameError });
-  const strip = useFrameStrip({ client, ref: sourceRef, path, duration, count: 8, width: 160, onError: onFrameError });
-  const saveFrame = (t: number, edit?: Edit | null) => (other ? poster.saveFrameFrom(sourceRef, path!, t, edit) : poster.saveFrame(t, edit));
+  const frame = useVideoFrame({ client, ref: sourceRef, dir: mode === "frame" ? dir : undefined, time: duration > 0 ? shown : undefined,
+    onError: (e) => report(new ContentKitError(e.kind === "network" ? "network" : "decode", `video frame: ${e.code}`, { status: e.status ?? 0 }), "poster.frame") });
+  const strip = useFrameStrip({ client, ref: sourceRef, dir, duration, count: 8 });
+  const saveFrame = (t: number, edit?: Edit | null) => (other ? poster.saveFrameFrom(sourceRef, video!.path, t, edit) : poster.saveFrame(t, edit));
   useEffect(() => () => crop?.revoke?.(), [crop]);
 
   const openCrop = async (source: "frame" | "upload", f?: File) => {
@@ -138,9 +143,9 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
     try {
       if (source === "upload") setCrop(await (p.decode ?? decodeImage)(f!));
       else {
-        const blob = await client.media.getFrame(sourceRef, path!, shown, 1280);
+        const blob = await frame.capture();
         const url = URL.createObjectURL(blob);
-        // Frame edits are in the frame's pixels (the video's w×h), whatever the preview's size.
+        // Frame edits are in the source's pixels (the video's w×h), whatever the rendition's size.
         setCrop({ url, width: video!.w!, height: video!.h!, revoke: () => URL.revokeObjectURL(url) });
       }
       setCropFor(source);
@@ -164,8 +169,8 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
       pickFile(e.dataTransfer.files[0]);
     },
   };
-  const failed = poster.state.status === "error" ? poster.state.error : (loaded.error ?? sourceError ?? (frame.error && !frame.url ? frame.error : undefined));
-  const error = decodeError ?? (failed ? errorText(failed) : undefined);
+  const failed = poster.state.status === "error" ? poster.state.error : (loaded.error ?? sourceError);
+  const error = decodeError ?? (failed ? errorText(failed) : frame.error ? t(`player.errors.${frame.error.kind}`) : undefined);
 
   return (
     <>
@@ -199,7 +204,9 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
             </p>
           ) : (
             <>
-              <Stage url={frame.url} loading={frame.loading || (!frame.url && !frame.error)} aspect={aspect} />
+              <Stage loading={frame.loading} aspect={aspect}>
+                <video ref={frame.ref} muted playsInline preload="auto" className="absolute inset-0 size-full object-contain" data-ckui="frame-video" />
+              </Stage>
               <div className="grid gap-2">
                 <div className="flex items-center gap-1.5">
                   <Button variant="ghost" size="icon-sm" aria-label={t("poster.previousFrame")} disabled={busy || shown <= 0} onClick={() => setTime(Math.max(0, shown - FRAME_STEP))}>
@@ -244,7 +251,11 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
                           near && "ring-2 ring-primary",
                         )}
                       >
-                        {f.url && <img src={f.url} alt="" className="absolute inset-0 size-full object-contain" />}
+                        {f.tile && (
+                          <svg aria-hidden className="absolute inset-0 size-full" viewBox={`${f.tile.x} ${f.tile.y} ${f.tile.w} ${f.tile.h}`} preserveAspectRatio="xMidYMid meet">
+                            <image href={f.tile.url} width={f.tile.sheetWidth} height={f.tile.sheetHeight} />
+                          </svg>
+                        )}
                       </button>
                     );
                   })}
@@ -304,7 +315,7 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
           </Button>
           {mode === "frame" && duration > 0 && (
             <>
-              <Button variant="outline" disabled={busy} onClick={() => void openCrop("frame")}>
+              <Button variant="outline" disabled={busy || frame.time === undefined} onClick={() => void openCrop("frame")}>
                 {t("poster.crop")}
               </Button>
               <Button disabled={busy} onClick={() => void saveFrame(shown)}>
@@ -336,11 +347,11 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   );
 }
 
-function Stage({ url, loading, aspect: shape }: { url?: string; loading?: boolean; aspect: AspectRatio }) {
+function Stage({ children, loading, aspect: shape }: { children?: ReactNode; loading?: boolean; aspect: AspectRatio }) {
   const aspect = ratio(shape) ?? 16 / 9;
   return (
-    <div className="relative mx-auto max-h-[50svh] max-w-full overflow-hidden rounded-lg bg-zinc-950" style={{ aspectRatio: String(aspect), width: `min(100%, calc(50svh * ${aspect}))` }} data-ckui="frame-stage">
-      {url && <img src={url} alt="" className="absolute inset-0 size-full object-contain" />}
+    <div className="relative mx-auto max-h-[50svh] max-w-full overflow-hidden rounded-lg bg-zinc-950" style={{ aspectRatio: String(aspect), width: `min(100%, calc(50svh * ${aspect}))` }} data-ckui="frame-stage" data-loading={loading ? "" : undefined}>
+      {children}
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center text-white/70">
           <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-6 animate-spin" />

@@ -1,7 +1,7 @@
 # Public media and processing events
 
 Each gallery edition owns one media folder and one audience access decision.
-Original uploads remain in `originals`; prepared reader outputs wait in `future`.
+Original uploads remain in `originals`; prepared reader outputs wait in `internal`.
 The durable publication worker moves released files into `public` or `private`,
 verifies them and retires obsolete locations in that same job. Public presets
 of an unpublished edition are prepared without exposing reader URLs. A private
@@ -41,13 +41,15 @@ survive log expiry.
 Custom embedded `Hooks.ItemReady` and `Hooks.ItemProgressed` run synchronously in
 the processor's completion transaction. They must be idempotent transactional
 extensions. Stock external workers need no host callbacks: completion directly
-joins the durable `contentkit_version_release` request. If an earlier release is
+joins the durable `contentkit_publication` request. If an earlier release is
 running, its normal follow-up preserves the wakeup. Queues are scoped to the exact
 catalog key, including when several apps share one River schema.
 
 Removed interfaces: `media.Jobs.Expose`, `ExposeTx` on media/version/entity
 folders, `media.HostQueue`, `worker.Config.HostQueue` and `MEDIA_HOST_QUEUE`.
-Keep `HostSchema` / `MEDIA_HOST_RIVER_SCHEMA` for the release queue.
+Keep `HostSchema` / `MEDIA_HOST_RIVER_SCHEMA` for the publication queue. The stock
+worker inserts these jobs itself, so its image must use the host's job kind and
+queue: deploy it from the same release when either changes.
 
 ## Live editor status
 

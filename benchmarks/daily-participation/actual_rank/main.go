@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -67,7 +69,7 @@ func main() {
 		must(os.WriteFile(filepath.Join(out, label+".sql"), []byte(query+"\n"), 0600))
 	}
 	exec("database", "CREATE DATABASE "+db)
-	b, e := os.ReadFile("migrations/clickhouse/0006_daily_popularity.up.sql")
+	b, e := os.ReadFile("migrations/clickhouse/0001_baseline.up.sql")
 	must(e)
 	s := string(b)
 	start := strings.Index(s, "CREATE TABLE IF NOT EXISTS popularity_daily ")
@@ -119,7 +121,7 @@ func main() {
 	if physical <= uint64(days*100000) {
 		panic("measurement has no physical replacement overlap")
 	}
-	store, e := signal.NewStore(ch, db)
+	store, e := signalstore.NewStore(ch, db)
 	must(e)
 	scope := signal.ActivityScope{Domain: "main", Language: "en"}
 	type win struct {
@@ -130,9 +132,9 @@ func main() {
 	idsByWindow := map[string][]string{}
 	for rep := 1; rep <= 3; rep++ {
 		for _, w := range windows {
-			window := signal.Between(until.AddDate(0, 0, -w.days), until)
+			window := signalstore.Between(until.AddDate(0, 0, -w.days), until)
 			if w.name == "all" {
-				window = signal.AllTime()
+				window = signalstore.AllTime()
 			}
 			label := fmt.Sprintf("%s_run%d", w.name, rep)
 			timed(label, func(ctx context.Context) (int, error) {

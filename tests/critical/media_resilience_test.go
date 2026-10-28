@@ -22,16 +22,18 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/internal/media/worker"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
 	medias3 "github.com/open-rails/contentkit/media/s3"
-	"github.com/open-rails/contentkit/media/worker"
-	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -171,7 +173,7 @@ func TestMediaFailureRecovery(t *testing.T) {
 				m.app.engine, err = ck.New(t.Context(), m.app.cfg, m.app.deps)
 				must(t, err)
 				m.app.server = mountEngine(t, m.app.engine)
-				must(t, m.app.engine.Start(t.Context()))
+				must(t, m.app.engine.StartJobs(t.Context()))
 				client = m.app.engine.Client()
 				_, err = client.PostMediaUploadCommit(t.Context(), batch)
 				must(t, err)
@@ -296,9 +298,9 @@ func newResilientMedia(t *testing.T, configure ...func(*ck.Config)) *resilientMe
 	a.server = mountEngine(t, a.engine)
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := media.NewRegistry(config)
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 	must(t, err)
-	must(t, a.engine.Start(t.Context()))
+	must(t, a.engine.StartJobs(t.Context()))
 	t.Cleanup(func() {
 		a.server.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -574,7 +576,7 @@ func TestMediaWorkerProcess(t *testing.T) {
 	defer pool.Close()
 	store, err := medias3.New(medias3.Config{Bucket: c.Bucket, Endpoint: c.Endpoint, AccessKeyID: os.Getenv("CONTENTKIT_CRITICAL_S3_USER"), SecretAccessKey: os.Getenv("CONTENTKIT_CRITICAL_S3_PASSWORD"), UsePathStyle: true})
 	must(t, err)
-	registry, err := media.NewRegistry(c.Kinds)
+	registry, err := mediastore.NewRegistry(c.Kinds, mediastore.Hooks{})
 	must(t, err)
 	config := worker.Config{Pool: pool, Schema: c.Schema, ContentSchema: c.ContentSchema, HostSchema: c.HostSchema, Store: store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, MaxPixels: c.MaxPixels}
 	if c.AfterImage != "" {
@@ -701,9 +703,9 @@ func settledPreparedOutputs(t *testing.T, m *resilientMedia, client *ck.Client, 
 	must(t, err)
 	item, err := m.config.Kinds.Item(logical)
 	must(t, err)
-	journal, err := media.NewPGJournal(m.pool, m.schema, nil)
+	journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
 	must(t, err)
-	manifests, err := media.NewManifests(m.storage.store, m.config.Kinds, media.ManifestOptions{Locker: media.PGLocker(m.pool), Journal: journal})
+	manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
 	must(t, err)
 	snapshot, _, err := manifests.Get(t.Context(), logical)
 	must(t, err)
@@ -765,9 +767,9 @@ func TestMediaWorkerRecovery(t *testing.T) {
 		}
 		logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
 		must(t, err)
-		journal, err := media.NewPGJournal(m.pool, m.schema, nil)
+		journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
 		must(t, err)
-		manifests, err := media.NewManifests(m.storage.store, m.config.Kinds, media.ManifestOptions{Locker: media.PGLocker(m.pool), Journal: journal})
+		manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
 		must(t, err)
 		snapshot, _, err := manifests.Get(t.Context(), logical)
 		must(t, err)
@@ -815,7 +817,7 @@ func TestMediaWorkerRecovery(t *testing.T) {
 		m.app.engine, err = ck.New(t.Context(), m.app.cfg, m.app.deps)
 		must(t, err)
 		m.app.server = mountEngine(t, m.app.engine)
-		must(t, m.app.engine.Start(t.Context()))
+		must(t, m.app.engine.StartJobs(t.Context()))
 		client = m.app.engine.Client()
 		persisted, err := queue.JobGet(t.Context(), jobs.Jobs[0].ID)
 		must(t, err)

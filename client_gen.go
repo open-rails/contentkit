@@ -16,14 +16,13 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
-	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 )
 
 // GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.
-func (c *Client) GetKinds(ctx context.Context) (kindsroute.ContentModel, error) {
-	var out kindsroute.ContentModel
+func (c *Client) GetKinds(ctx context.Context) (ContentModel, error) {
+	var out ContentModel
 	err := c.call(ctx, http.MethodGet, "/v1/kinds", nil, nil, &out)
 	return out, err
 }
@@ -1020,6 +1019,16 @@ func (c *Client) DeleteModerationIpBans(ctx context.Context, body []string) erro
 	return c.call(ctx, http.MethodDelete, "/v1/moderation/ip-bans", nil, body, nil)
 }
 
+// PutAccountDeleted is PUT /v1/accounts/{id}/deleted (staff). Marks an account deleted during AuthKit's recovery period, hiding its attribution, or restored. Idempotent.
+func (c *Client) PutAccountDeleted(ctx context.Context, id string, body content.AccountDeleted) error {
+	return c.call(ctx, http.MethodPut, expand("/v1/accounts/{id}/deleted", "{id}", url.PathEscape(id)), nil, body, nil)
+}
+
+// PostAccountAnonymize is POST /v1/accounts/{id}/anonymize (staff). Anonymizes a purged account: keeps its comments and contributions, unlinks it and removes its private data. Idempotent; retry on failure.
+func (c *Client) PostAccountAnonymize(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodPost, expand("/v1/accounts/{id}/anonymize", "{id}", url.PathEscape(id)), nil, nil, nil)
+}
+
 // GetEventsQuery is the query of GetEvents.
 type GetEventsQuery struct {
 	// opaque continuation from the previous page
@@ -1100,6 +1109,27 @@ func (q GetContentQuery) values() url.Values {
 func (c *Client) GetContent(ctx context.Context, id string, q GetContentQuery) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetVersionsQuery is the query of GetVersions.
+type GetVersionsQuery struct {
+	// required: 1-100 version ids
+	Ids []string
+}
+
+func (q GetVersionsQuery) values() url.Values {
+	v := url.Values{}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
+	}
+	return v
+}
+
+// GetVersions is GET /v1/versions (staff). Editions' catalog status by version id, for hosts that keep references to them: content, kind, languages, deletion, live and live_from, in ids' order. A purged edition is absent. No event fires when live_from passes; compare it with the time.
+func (c *Client) GetVersions(ctx context.Context, q GetVersionsQuery) ([]catalog.VersionStatus, error) {
+	var out []catalog.VersionStatus
+	err := c.call(ctx, http.MethodGet, "/v1/versions", q.values(), nil, &out)
 	return out, err
 }
 
@@ -1459,50 +1489,6 @@ func (c *Client) PostMediaUploadCommit(ctx context.Context, body media.CommitBod
 	return out, err
 }
 
-// GetMediaUploadFrameQuery is the query of GetMediaUploadFrame.
-type GetMediaUploadFrameQuery struct {
-	// the item's kind
-	Kind string
-	// the item's id
-	Id string
-	// a content kind's version id; absent for any other kind's item
-	Version string
-	// the video upload's path
-	Path string
-	// seconds into the video
-	T float64
-	// the still's width in pixels
-	W int
-}
-
-func (q GetMediaUploadFrameQuery) values() url.Values {
-	v := url.Values{}
-	if q.Kind != "" {
-		v.Set("kind", q.Kind)
-	}
-	if q.Id != "" {
-		v.Set("id", q.Id)
-	}
-	if q.Version != "" {
-		v.Set("version", q.Version)
-	}
-	if q.Path != "" {
-		v.Set("path", q.Path)
-	}
-	if q.T != 0 {
-		v.Set("t", fmt.Sprint(q.T))
-	}
-	if q.W != 0 {
-		v.Set("w", fmt.Sprint(q.W))
-	}
-	return v
-}
-
-// GetMediaUploadFrame is GET /v1/media/upload/frame (editor). A JPEG still of a video upload, for the frame picker (UploadOptions.Frames).
-func (c *Client) GetMediaUploadFrame(ctx context.Context, q GetMediaUploadFrameQuery) (*Reply, error) {
-	return c.raw(ctx, http.MethodGet, "/v1/media/upload/frame", q.values(), nil)
-}
-
 // GetMediaPresets is GET /v1/media/presets (open). Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public.
 func (c *Client) GetMediaPresets(ctx context.Context) ([]media.PresetRule, error) {
 	var out []media.PresetRule
@@ -1821,6 +1807,8 @@ func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (en
 
 // GetManageEntitiesQuery is the query of GetManageEntities.
 type GetManageEntitiesQuery struct {
+	// only these entity ids (at most 100), in every state; one page, without state, cursor or page
+	Ids []string
 	// active (the default) or deleted, the restorable ones
 	State string
 	// only entities of this kind
@@ -1849,6 +1837,9 @@ type GetManageEntitiesQuery struct {
 
 func (q GetManageEntitiesQuery) values() url.Values {
 	v := url.Values{}
+	if len(q.Ids) > 0 {
+		v.Set("ids", strings.Join(q.Ids, ","))
+	}
 	if q.State != "" {
 		v.Set("state", q.State)
 	}
@@ -1888,10 +1879,51 @@ func (q GetManageEntitiesQuery) values() url.Values {
 	return v
 }
 
-// GetManageEntities is GET /v1/manage/entities (staff). Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads.
+// GetManageEntities is GET /v1/manage/entities (staff). Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads. With ids it resolves those entities in every state, deleted and merged ones included, each with its state and a merged one's final survivor (merged_into); unknown ids are absent.
 func (c *Client) GetManageEntities(ctx context.Context, q GetManageEntitiesQuery) (entities.EntityPage, error) {
 	var out entities.EntityPage
 	err := c.call(ctx, http.MethodGet, "/v1/manage/entities", q.values(), nil, &out)
+	return out, err
+}
+
+// GetManageEntitiesMatchQuery is the query of GetManageEntitiesMatch.
+type GetManageEntitiesMatchQuery struct {
+	// required: the entity kind
+	Kind string
+	// the entity the names are unique within; unscoped entities by default
+	Scope string
+	// match names in this language only; every language by default
+	Language string
+	// compare ContentKit's normalized forms, folding case, accents and whitespace; exact text by default
+	Normalized *bool
+	// required: 1-100 whole names; repeat for each
+	Name []string
+}
+
+func (q GetManageEntitiesMatchQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Scope != "" {
+		v.Set("scope", q.Scope)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.Normalized != nil {
+		v.Set("normalized", fmt.Sprint(*q.Normalized))
+	}
+	for _, s := range q.Name {
+		v.Add("name", s)
+	}
+	return v
+}
+
+// GetManageEntitiesMatch is GET /v1/manage/entities/match (staff). Resolves names to active, public entities of one kind within one scope whose canonical name or alias equals each name, literally or normalized: one result per name in order, each with at most two ids, two meaning ambiguous. Merged and deleted entities never match; nothing is created or reserved.
+func (c *Client) GetManageEntitiesMatch(ctx context.Context, q GetManageEntitiesMatchQuery) ([]entities.NameMatch, error) {
+	var out []entities.NameMatch
+	err := c.call(ctx, http.MethodGet, "/v1/manage/entities/match", q.values(), nil, &out)
 	return out, err
 }
 

@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 )
 
@@ -29,9 +30,8 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	admin, reader := a.engine.Client(), a.client("")
-	fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
+	fleet, err := jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}})
 	must(t, err)
-	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 	t.Cleanup(func() { must(t, fleet.Stop(context.Background())) })
 	base := w.clock.now()
 	newDraft := func(t *testing.T, rule *access.Rule) catalog.Content {
@@ -151,9 +151,8 @@ func TestPublicationWithoutWorkers(t *testing.T) {
 		engine, err := ck.New(t.Context(), cfg, deps)
 		must(t, err)
 		defer func() { must(t, engine.Close(context.Background())) }()
-		liveFleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, engine.RiverJobs())
+		liveFleet, err := jobhook.Fleet(t.Context(), engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}})
 		must(t, err)
-		must(t, engine.Start(t.Context(), ck.WithRiverClient(liveFleet)))
 		defer func() { must(t, liveFleet.Stop(context.Background())) }()
 		routes, err := engine.Routes(ck.Routes{Groups: ck.ContentRoutes})
 		must(t, err)

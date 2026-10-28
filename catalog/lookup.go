@@ -1,34 +1,24 @@
 package catalog
 
 import (
-	"context"
-	"errors"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/contentkit/contentref"
+	"time"
 )
 
-// LookupVersion returns its parent detail with only the requested edition.
-// The parent relationship is database-owned; no media path participates in
-// resolving it. Normal visibility and access rules still apply.
-func (s *Store) LookupVersion(ctx context.Context, viewer *Viewer, versionID string) (*Content, error) {
-	if contentref.ValidateID(versionID) != nil {
-		return nil, ErrNotFound
-	}
-	var parent string
-	err := s.pool.QueryRow(ctx, "SELECT content_id FROM "+s.t.versions+" WHERE tenant_id=$1 AND id=$2", s.tenant, versionID).Scan(&parent)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	contents, err := s.contents(ctx, viewer, []string{parent}, versionID)
-	if err != nil {
-		return nil, err
-	}
-	if len(contents) != 1 || contents[0] == nil || len(contents[0].Versions) != 1 || contents[0].Versions[0].ID != versionID {
-		return nil, ErrNotFound
-	}
-	return contents[0], nil
+// VersionStatus is an edition's catalog state, for hosts that keep references
+// to editions. A purged edition has none.
+type VersionStatus struct {
+	VersionID string   `json:"version_id"`
+	ContentID string   `json:"content_id"`
+	Kind      string   `json:"kind"`
+	Languages []string `json:"languages"`
+	// Deleted is the edition's or its content's deletion.
+	Deleted bool `json:"deleted"`
+	// Live is released and not deleted at the time of the read.
+	Live bool `json:"live"`
+	// LiveFrom is when its release completed, kept through deletion; absent
+	// before release.
+	LiveFrom *time.Time `json:"live_from,omitempty"`
 }
+
+// MaxVersionStatuses bounds VersionStatuses.
+const MaxVersionStatuses = 100

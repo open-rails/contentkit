@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -138,7 +140,7 @@ func (s *Store) Capabilities(ctx context.Context) (media.Capabilities, error) {
 	if c := s.caps.Load(); c != nil {
 		return *c, nil
 	}
-	caps, err := media.Probe(ctx, s, s.probe)
+	caps, err := mediastore.Probe(ctx, s, s.probe)
 	if err != nil {
 		return media.Capabilities{}, fmt.Errorf("%w: capabilities unknown until a probe succeeds: %w", media.ErrUnavailable, err)
 	}
@@ -235,7 +237,7 @@ func (s *Store) Copy(ctx context.Context, src, dst string, o media.CopyOptions) 
 		return media.Object{}, err
 	}
 	if o.IfMatch != "" && head.ETag != o.IfMatch {
-		return media.Object{}, fmt.Errorf("%w: s3 copy %s: source changed", media.ErrPreconditionFailed, src)
+		return media.Object{}, fmt.Errorf("%w: s3 copy %s: source changed", mediastore.ErrPreconditionFailed, src)
 	}
 	source := s.bucket + "/" + src
 	return s.copy(ctx, source, dst, head, o.ContentType, o.Metadata)
@@ -547,25 +549,25 @@ func mapErr(op, key string, err error) error {
 	}
 	switch {
 	case code == "NoSuchKey" || code == "NotFound" || code == "NoSuchUpload":
-		sentinel = media.ErrNotFound
+		sentinel = mediastore.ErrNotFound
 	case code == "PreconditionFailed" || code == "ConditionalRequestConflict":
-		sentinel = media.ErrPreconditionFailed
+		sentinel = mediastore.ErrPreconditionFailed
 	case code == "XAmzContentChecksumMismatch" || code == "BadDigest" || code == "InvalidDigest":
-		sentinel = media.ErrChecksumMismatch
+		sentinel = mediastore.ErrChecksumMismatch
 	case code == "NotImplemented":
-		sentinel = media.ErrNotImplemented
+		sentinel = mediastore.ErrNotImplemented
 	case errors.As(err, &re):
 		switch re.HTTPStatusCode() {
 		case http.StatusNotFound:
 			if code == "" || code == "NoSuchKey" || code == "NotFound" {
-				sentinel = media.ErrNotFound
+				sentinel = mediastore.ErrNotFound
 			}
 		case http.StatusPreconditionFailed:
-			sentinel = media.ErrPreconditionFailed
+			sentinel = mediastore.ErrPreconditionFailed
 		case http.StatusNotModified:
-			sentinel = media.ErrNotModified
+			sentinel = mediastore.ErrNotModified
 		case http.StatusNotImplemented:
-			sentinel = media.ErrNotImplemented
+			sentinel = mediastore.ErrNotImplemented
 		default:
 			if re.HTTPStatusCode() >= 500 {
 				sentinel = media.ErrUnavailable

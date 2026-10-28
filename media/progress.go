@@ -1,22 +1,35 @@
 package media
 
-import (
-	"context"
-
-	"github.com/open-rails/contentkit/contentref"
+const (
+	PhaseQueued = "queued"
 )
 
-// Encode phases, in order. Queued covers a job waiting for a worker and a
-// file waiting behind another file of the same job.
 const (
-	PhaseQueued      = "queued"
 	PhaseDownloading = "downloading" // fetching the original
-	PhaseProbing     = "probing"
-	PhaseEncoding    = "encoding" // the single ffmpeg pass: ladder, audio, subtitles, sprite
-	PhaseMuxing      = "muxing"   // per-quality MP4 downloads
-	PhaseUploading   = "uploading"
-	PhasePublishing  = "publishing" // the manifest edit
-	PhaseImages      = "images"     // item-wide, after every file: poster frame from the renditions
+)
+
+const (
+	PhaseProbing = "probing"
+)
+
+const (
+	PhaseEncoding = "encoding" // the single ffmpeg pass: ladder, audio, subtitles, sprite
+)
+
+const (
+	PhaseMuxing = "muxing" // per-quality MP4 downloads
+)
+
+const (
+	PhaseUploading = "uploading"
+)
+
+const (
+	PhasePublishing = "publishing" // the manifest edit
+)
+
+const (
+	PhaseImages = "images" // item-wide, after every file: poster frame from the renditions
 )
 
 // EncodePhases lists every phase in order.
@@ -70,10 +83,4 @@ func (s EncodeStatus) Current() *EncodeProgress {
 		return s.Queued
 	}
 	return best
-}
-
-// ProgressSource reads encode progress (workqueue.NewProgressSource). The read
-// API asks only when a visible video file is pending.
-type ProgressSource interface {
-	EncodeProgress(ctx context.Context, ref contentref.ContentRef) (EncodeStatus, error)
 }

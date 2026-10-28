@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/media/versions"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -19,16 +20,16 @@ func TestEnginePublicationLifetime(t *testing.T) {
 	a := w.apps[0]
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := a.engine.Start(cancelled); !errors.Is(err, context.Canceled) {
+	if err := a.engine.StartJobs(cancelled); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled startup accepted workers: %v", err)
 	}
 	expired, cancelExpired := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
 	defer cancelExpired()
-	if err := a.engine.Start(expired); !errors.Is(err, context.DeadlineExceeded) {
+	if err := a.engine.StartJobs(expired); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expired startup lost its deadline error: %v", err)
 	}
 	startup, cancelStartup := context.WithCancel(t.Context())
-	must(t, a.engine.Start(startup))
+	must(t, a.engine.StartJobs(startup))
 	cancelStartup()
 	// Start's caller can return or lose its request. Publication admitted
 	// afterward must still be executed by the engine-owned background runtime.
@@ -52,10 +53,10 @@ func TestEnginePublicationLifetime(t *testing.T) {
 	}
 	// Replaying this completed exact request probes the queue after Close.
 	// If the old engine still fetched jobs, its idempotent replay would finish.
-	request := currentReleaseJob(t, a, item.Versions[0].ID)
+	request := currentPublicationJob(t, a, item.Versions[0].ID)
 	queue, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 	must(t, err)
-	job, err := queue.Insert(t.Context(), request, &river.InsertOpts{Queue: versions.QueueFor(publicationTenant(a))})
+	job, err := queue.Insert(t.Context(), request, &river.InsertOpts{Queue: versionstore.QueueFor(publicationTenant(a))})
 	must(t, err)
 	deadline := time.NewTimer(500 * time.Millisecond)
 	defer deadline.Stop()
@@ -82,7 +83,7 @@ func TestEnginePublicationLifetime(t *testing.T) {
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
 	a.server = mountEngine(t, a.engine)
-	must(t, a.engine.Start(t.Context()))
+	must(t, a.engine.StartJobs(t.Context()))
 	waitForWithin(t, 30*time.Second, func() bool {
 		row, err := queue.JobGet(t.Context(), job.Job.ID)
 		must(t, err)

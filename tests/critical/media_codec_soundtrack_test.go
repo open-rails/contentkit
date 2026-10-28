@@ -18,9 +18,9 @@ import (
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/worker"
 )
 
 // Exercise the actual codecs and soundtrack, rather than treating a playlist

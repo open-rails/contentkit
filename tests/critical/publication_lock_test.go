@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
@@ -42,7 +44,7 @@ func TestPublicationSchedulingLocksParentBeforeRequest(t *testing.T) {
 	awaitEditionPublication(t, a, admin, ref.ID, ref.Version)
 	awaitPublicationJobsIdle(t, w, a)
 	tenant := a.cfg.Scope.AppID.String()
-	service, err := versions.New(versions.Options{Tenant: tenant, Schema: w.schema, Pool: w.pool, Kinds: a.cfg.Content,
+	service, err := versionstore.New(versionstore.Options{Tenant: tenant, Schema: w.schema, Pool: w.pool, Kinds: a.cfg.Content,
 		Auth: a.deps.Auth, Resolver: &completedReaderAuthority{}, Facets: schedulingOnlyFacets{}, Now: w.clock.now})
 	must(t, err)
 	// Bind its normal River producer without starting a second worker fleet.

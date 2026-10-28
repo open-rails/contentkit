@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
@@ -69,7 +71,7 @@ func TestClickHouseErasureRetry(t *testing.T) {
 		}
 		must(t, direct.Close())
 	})
-	store, err := signal.NewStore(direct, database)
+	store, err := signalstore.NewStore(direct, database)
 	must(t, err)
 	wire := newTCPCut(t, addr)
 	borrowed, err := clickhouse.Open(&clickhouse.Options{Addr: []string{wire.listener.Addr().String()}, Auth: clickhouse.Auth{Database: database, Username: user, Password: password}, DialTimeout: time.Second, ReadTimeout: 2 * time.Second})

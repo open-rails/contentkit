@@ -26,25 +26,25 @@ type PublicUser struct {
 	AvatarSrcSet string `json:"avatar_srcset,omitempty"`
 }
 
-// --- optional ports (nil -> documented default) ---
-
-// ContentProcessor sanitizes rich text on write. Default: strip tags.
+// ContentProcessor processes plain text on write. The default only trims whitespace;
+// callers render the result as text.
 type ContentProcessor interface {
 	Sanitize(ctx context.Context, raw string) (string, error)
 }
-
-// permissions are the staff permissions content checks (access.Permission).
-var permissions = []access.Permission{access.PollsWrite, access.CommentsModerate, access.CommentsBan, access.ModerationReview}
-
-// --- moderation and classification ports (nil -> publish / refuse) ---
 
 // Decision is a ContentModerator's outcome for one text write.
 type Decision string
 
 const (
 	DecisionApprove Decision = "approve" // publish
-	DecisionReject  Decision = "reject"  // refuse the write: 422 with the reason, nothing stored
-	DecisionReview  Decision = "review"  // store held: author-only until a reviewer resolves it
+)
+
+const (
+	DecisionReject Decision = "reject" // refuse the write: 422 with the reason, nothing stored
+)
+
+const (
+	DecisionReview Decision = "review" // store held: author-only until a reviewer resolves it
 )
 
 // ModerationInput is one comment, or a catalog item's text, about to publish.

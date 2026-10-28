@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	contentstore "github.com/open-rails/contentkit/internal/contentstore"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/authtest"
@@ -98,7 +100,7 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		old := postComment(t, client, mine.ID, "Existing contribution stays")
 		ban, err := a.client(ownerToken).PutCommentBan(t.Context(), writer.ID, content.BanInput{Reason: "Owner boundary"})
 		must(t, err)
-		if ban.Scope != content.OwnerScope(owner.ID) || ban.BannedBy != owner.ID {
+		if ban.Scope != contentstore.OwnerScope(owner.ID) || ban.BannedBy != owner.ID {
 			t.Fatalf("wrong owner ban: %+v", ban)
 		}
 		for _, write := range []struct {
@@ -169,7 +171,7 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		requireError(t, err, 403, "forbidden")
 		ban, err := client.PutChannelCommentBan(t.Context(), string(one.ID), writer.ID, content.BanInput{Reason: "Entity boundary"})
 		must(t, err)
-		if ban.Scope != content.ChannelScope(string(one.ID)) {
+		if ban.Scope != contentstore.ChannelScope(string(one.ID)) {
 			t.Fatalf("wrong entity ban: %+v", ban)
 		}
 		standing, err := viewer.GetChannelCanComment(t.Context(), string(one.ID), ck.GetChannelCanCommentQuery{})
@@ -476,5 +478,132 @@ func useModerationDatabaseClock(t *testing.T, w *world, a *application) func(tim
 		if !observed.Equal(at) {
 			t.Fatalf("database clock control failed: got %s want %s", observed, at)
 		}
+	}
+}
+
+func TestCommentInputLimits(t *testing.T) {
+	t.Run("offset_and_anonymous_names", func(t *testing.T) {
+		w := newWorld(t, func(cfg *ck.Config) {
+			cfg.Interactions.Limits.Disabled = true
+			cfg.Interactions.Anonymous.Comments = true
+		})
+		a := w.apps[0]
+		item := publishedArticle(t, a, "Anonymous names")
+		public, admin := a.client(""), a.engine.Client()
+		_, err := public.GetCommentsLatest(t.Context(), ck.GetCommentsLatestQuery{Offset: 10001})
+		requireError(t, err, 400, "invalid_request")
+		_, err = public.GetContentComments(t.Context(), item.ID, ck.GetContentCommentsQuery{Offset: 10001})
+		requireError(t, err, 400, "invalid_request")
+		_, err = admin.GetCommentsAdmin(t.Context(), ck.GetCommentsAdminQuery{Offset: 10001})
+		requireError(t, err, 400, "invalid_request")
+		_, err = public.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "Text", AnonName: strings.Repeat("界", 61)}, ck.PostContentCommentsQuery{})
+		requireError(t, err, 400, "invalid_request")
+		name := strings.Repeat("界", 60)
+		cm, err := public.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "  <b>Plain text</b>  ", AnonName: "  " + name + "  "}, ck.PostContentCommentsQuery{})
+		must(t, err)
+		if cm.AnonName != name || cm.Body != "<b>Plain text</b>" {
+			t.Fatalf("plain text or trimmed rune boundary changed: %+v", cm)
+		}
+		_, err = public.GetCommentReplies(t.Context(), cm.ID, ck.GetCommentRepliesQuery{Offset: 10001})
+		requireError(t, err, 400, "invalid_request")
+		_, err = admin.PostModerationBannedWords(t.Context(), []content.BannedWordInput{{Word: "masked", Action: "mask"}, {Word: "forbidden", Action: "reject"}})
+		must(t, err)
+		cm, err = public.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "Text", AnonName: " A MASKED name "}, ck.PostContentCommentsQuery{})
+		must(t, err)
+		if cm.AnonName != "A ****** name" || ownComment(t, public, item.ID, cm.ID).AnonName != cm.AnonName {
+			t.Fatalf("anonymous name mask was not stored: %+v", cm)
+		}
+		_, err = public.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "Text", AnonName: "forbidden"}, ck.PostContentCommentsQuery{})
+		requireError(t, err, 422, "moderation_rejected")
+	})
+	t.Run("edits_share_create_allowance", func(t *testing.T) {
+		w := newWorld(t, func(cfg *ck.Config) {
+			cfg.Interactions.Limits.Disabled = false
+			cfg.Interactions.Limits.Comment = []ck.Rate{{Count: 2, Per: time.Hour}}
+		})
+		a := w.apps[0]
+		_, token := w.person(t, 0)
+		client := a.client(token)
+		item := publishedArticle(t, a, "Edit rate limit")
+		cm := postComment(t, client, item.ID, "First allowance")
+		_, err := client.PatchComment(t.Context(), cm.ID, content.CommentEdit{Body: "Second allowance"})
+		must(t, err)
+		_, err = client.PatchComment(t.Context(), cm.ID, content.CommentEdit{Body: "No third allowance"})
+		requireError(t, err, 429, "rate_limited")
+		_, err = client.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "No create allowance either"}, ck.PostContentCommentsQuery{})
+		requireError(t, err, 429, "rate_limited")
+	})
+}
+
+func TestDuplicateComments(t *testing.T) {
+	for _, window := range []time.Duration{0, time.Hour} {
+		t.Run(window.String(), func(t *testing.T) {
+			w := newWorld(t, func(cfg *ck.Config) {
+				cfg.Interactions.Limits.Disabled = true
+				cfg.Interactions.DuplicateWindow = window
+				cfg.Interactions.Anonymous.Comments = true
+			})
+			a := w.apps[0]
+			_, token := w.person(t, 0)
+			client := a.client(token)
+			first := publishedArticle(t, a, "Duplicate target")
+			parent := postComment(t, client, first.ID, "Same text")
+			_, err := client.PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "  Same text  "}, ck.PostContentCommentsQuery{})
+			if window == 0 {
+				must(t, err)
+				return
+			}
+			requireError(t, err, 422, "duplicate_comment")
+			_, err = w.pool.Exec(t.Context(), `UPDATE `+pgx.Identifier{w.schema, "content_comments"}.Sanitize()+` SET created_at=now()-interval '2 hours' WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), parent.ID)
+			must(t, err)
+			postComment(t, client, first.ID, "Same text")
+			second := publishedArticle(t, a, "Another target")
+			postComment(t, client, second.ID, "Same text")
+			for _, language := range []string{"en", "de"} {
+				_, err = client.PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "Same text", Language: language}, ck.PostContentCommentsQuery{})
+				must(t, err)
+			}
+			_, err = client.PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "Same text", ReplyToID: parent.ID}, ck.PostContentCommentsQuery{})
+			must(t, err)
+			_, err = client.PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "Same text", ReplyToID: parent.ID}, ck.PostContentCommentsQuery{})
+			requireError(t, err, 422, "duplicate_comment")
+			deleted := postComment(t, client, first.ID, "Delete parent")
+			must(t, client.DeleteComment(t.Context(), deleted.ID))
+			_, err = client.PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "Retry after failed save", ReplyToID: deleted.ID}, ck.PostContentCommentsQuery{})
+			requireError(t, err, 400, "invalid_request")
+			_, err = a.engine.Client().PostCommentRestore(t.Context(), deleted.ID)
+			must(t, err)
+			_, err = client.PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "Retry after failed save", ReplyToID: deleted.ID}, ck.PostContentCommentsQuery{})
+			must(t, err)
+			must(t, client.DeleteComment(t.Context(), deleted.ID))
+			postComment(t, client, first.ID, "Delete parent")
+			for range 2 {
+				_, err = a.client("").PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "Anonymous repeat", AnonName: "Visitor"}, ck.PostContentCommentsQuery{})
+				must(t, err)
+			}
+			results := make(chan error, 2)
+			for range 2 {
+				go func() {
+					_, err := client.PostContentComments(t.Context(), first.ID, content.CommentInput{Body: "Concurrent duplicate"}, ck.PostContentCommentsQuery{})
+					results <- err
+				}()
+			}
+			accepted := 0
+			for range 2 {
+				if err := <-results; err == nil {
+					accepted++
+				} else {
+					requireError(t, err, 422, "duplicate_comment")
+				}
+			}
+			if accepted != 1 {
+				t.Fatalf("concurrent duplicate accepted %d times", accepted)
+			}
+			var count int
+			must(t, w.pool.QueryRow(t.Context(), `SELECT comment_count FROM `+pgx.Identifier{w.schema, "content_interaction_counts"}.Sanitize()+` WHERE tenant_id=$1 AND content_kind='article' AND content_id=$2 AND content_version_id IS NULL`, a.cfg.Scope.AppID.String(), first.ID).Scan(&count))
+			if count != 8 {
+				t.Fatalf("failed creates changed comment_count: %d; want 8", count)
+			}
+		})
 	}
 }

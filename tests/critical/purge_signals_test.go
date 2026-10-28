@@ -5,6 +5,11 @@ import (
 	"testing"
 	"time"
 
+	catalogstore "github.com/open-rails/contentkit/internal/catalogstore"
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,7 +17,6 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/signal"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -38,14 +42,13 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	a.server = mountEngine(t, a.engine)
 	// Compose the single-worker host queue before publication fixtures start
 	// any runtime. It is stopped again before advancing the purge clock.
-	queue := catalog.QueueFor(a.cfg.Scope.AppID.String())
+	queue := catalogstore.QueueFor(a.cfg.Scope.AppID.String())
 	var fleet *river.Client[pgx.Tx]
 	start := func() {
 		t.Helper()
 		if fleet == nil {
-			fleet, err = riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{queue: {MaxWorkers: 1}}}, a.engine.RiverJobs())
+			fleet, err = jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{queue: {MaxWorkers: 1}}})
 			must(t, err)
-			must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 		}
 		must(t, fleet.Start(t.Context()))
 	}
@@ -62,10 +65,10 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	start()
 	user, _ := w.person(t, 0)
 	deleted, untouched := publishedArticle(t, a, "Delete signal source"), publishedArticle(t, a, "Retain signal source")
-	store, err := signal.NewStore(direct, a.cfg.ClickHouse.Database)
+	store, err := signalstore.NewStore(direct, a.cfg.ClickHouse.Database)
 	must(t, err)
 	for _, item := range []catalog.Content{deleted, untouched} {
-		measurement, err := signal.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10_000}}, ActiveMS: 1_000}}, 1, 1_000)
+		measurement, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10_000}}, ActiveMS: 1_000}}, 1, 1_000)
 		must(t, err)
 		measurement.VersionID = item.Versions[0].ID
 		measurement.VisitID, measurement.SegmentID = uuid.NewString(), uuid.NewString()
@@ -96,7 +99,7 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	must(t, err)
 	purge := func(want rivertype.JobState) {
 		t.Helper()
-		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
+		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalogstore.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)
 		waitForWithin(t, 55*time.Second, func() bool {
 			got, err := producer.JobGet(t.Context(), job.Job.ID)

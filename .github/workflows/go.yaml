@@ -94,6 +94,8 @@ jobs:
         for module in . adapters/authkit adapters/openrails; do
           (cd "$module" && go build -p 1 ./... && go vet -p 1 ./...)
         done
+        # Hosts, server/ and adapters/* reach only the public surface.
+        go test -count=1 -p 1 ./internal/boundaries
         # The published server module has no local replacements. Qualify this
         # checkout before its paired root/adapter tags exist, just as Docker does.
         server_mod="$RUNNER_TEMP/contentkit-server.mod"

@@ -10,7 +10,9 @@ API key or vector extension. Semantic search belongs entirely to the separate, d
 library; ContentKit has no semantic search configuration or runtime hook.
 
 Design: [open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/DESIGN.md).
-Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md).
+Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md). Hosts use ContentKit
+only through its client, routes and event log, never SQL on its tables: it can
+run on its own database ([host references](HOST_INTEGRATION.md#host-references)).
 Post/channel policies: [docs/posts-and-channels.md](docs/posts-and-channels.md). Migrations:
 [docs/migration.md](docs/migration.md), [docs/restore.md](docs/restore.md).
 
@@ -55,33 +57,33 @@ A reference to another catalog is an error, never remapped. See [scope.go](scope
 
 ## Packages
 
+Hosts import only the public packages. Each domain package holds its route
+bodies' wire and data types and its ports; its implementation is the
+`internal/<domain>store` twin, which the compiler keeps from hosts
+([Public surface](HOST_INTEGRATION.md#public-surface)).
+
 | Package | Owns |
 |---|---|
+| root | `Engine`: `New` (validates or migrates storage according to `Database.SkipMigrations`), `Start` (serve; requests enqueue jobs), `StartJobs` (work its jobs on its own River), `Routes` (route groups under `/v1`), `Client`/`NewClient` (the typed client of every route), `EventReader`, account lifecycle, `Reconcile`, `Ready`, `Probes`, `Close`; `Config`, `Deps`, `MigratePostgres`, `MigrateClickHouse`, error codes |
+| `kinds` | the content model: content and entity kinds, languages, tiers, channels |
 | `contentref` | `ContentRef`, `ContentKey`, `EntityID` |
-| `contenturl` | uniform content URLs `/{lang}/{route}/{CODE}[/{slug}][?v={version}]`: permanent 9-character codes per tenant, 4-character version codes, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
-| `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`); the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access](#access-access)) |
-| `adapters/openrails` | `access.Billing` over the OpenRails client (its own module) |
-| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and durable processing/deletion records; ingest, image and video are the three processing jobs, while the content purge sweep owns due deletion |
-| `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
-| `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
-| `media/token` | media access tokens, shared by hosts and the media gateway |
-| `media/layout` | object keys and the media gateway's host and default rules, dependency-free |
-| `media/gateway` | the media gateway's handler (`cmd/media-gateway`) |
-| `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, subtitles, frame grabs; `Frames` for the frame picker |
-| `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
-| `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
-| `catalog` | content items of the configured kinds (a blog is kind `blog`): shared identity and creators; versions own localized text, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
-| `content` | comments (in language threads), reactions, favorites, polls with predefined choices and their counts on content items, versions and entities; banned words and IP bans; authors' names from `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, poll images through `Media`, the optional `ContentModerator` (held/review queue, shared with the catalog) port, per-user interaction limits, owner and global comment bans, and the HTTP routes |
-| `search` | Indexed keyword search (exact/alias/substring/prefix/typo, EN/ZH/JA/KO) with eligibility, documents and dirty queue, RRF |
-| `entities` | storage for content entities by kind (`kinds.Config.EntityKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles and positions; effective entities for facets, per-language counts, typeahead documents, `/v1` routes |
-| `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
-| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, entity popularity through the `Catalog` port (`*entities.Store`) |
-| `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; popular and standing orders; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
-| `migrations` | PostgreSQL migration chain and ClickHouse baseline |
-| `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |
-| `e2e` | its own module: every route end to end over PostgreSQL, MinIO and a real AuthKit |
-| root | `Engine`: `New` (validates or migrates storage according to `Database.SkipMigrations`), `Start` (its River jobs), `Routes` (route groups under `/v1`), `Client` (typed in-process client), `Ready`, `Probes`, `RiverJobs`, `Close` |
+| `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`), the key grammar, rules and the `Billing` port ([Access](#access-access)) |
+| `catalog`, `entities`, `channels`, `content`, `contenturl`, `discovery`, `importer`, `signal`, `media`, `media/versions` | the routes' request and response types, events, the media registry's config types and the bucket port (`media.Store`), and the host ports (`content.ContentModerator`, `discovery.Candidates`, `entities.Scopes`, …) |
+| `media/s3` | `media.Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
+| `media/avatar` | the standard account avatar kind |
+| `media/gateway`, `media/token`, `media/layout` | the media gateway's handler (`cmd/media-gateway`), its access tokens and object keys |
+| `adapters/authkit`, `adapters/openrails` | their own modules: AuthKit auth and scopes, `access.Billing` over OpenRails |
 | `server` | its own module: the standalone `contentkit` binary (`server/cmd/contentkit`) |
+| `internal/catalogstore` | content items, versions, `content_facets`, the one visibility rule, the `content_events` log ([cursor reads](docs/events.md)), search documents, totals, retention jobs |
+| `internal/entitystore`, `internal/channelstore` | entities by kind and channels: names, text, covers, scopes, edges, merges, memberships |
+| `internal/contentstore` | comments, reactions, favorites, polls, bans, moderation, interaction limits |
+| `internal/discoverystore`, `internal/search`, `internal/popularity` | public reads: lists, search, typeahead, similar and recommended, release dates, history; keyword search; ranking policy |
+| `internal/signalstore` | the ClickHouse signal plane |
+| `internal/mediastore`, `internal/versionstore` | media manifests, uploads, reads, processing records; version reader plans, publication and downloads |
+| `internal/entitlement` | the access `Gate`, its listing `Filter` and the request memo |
+| `internal/urlstore`, `internal/importstore` | content codes, slugs, aliases; the bulk import |
+| `internal/media/{worker,workqueue,image,video}` | the media worker (`cmd/media-worker`), its queue, libvips and ffmpeg producers |
+| `internal/migrations` | PostgreSQL migration chains and ClickHouse baseline |
 
 ## Engine
 
@@ -92,14 +94,14 @@ one `Start`, routes the host mounts.
 ck, _ := contentkit.New(ctx, contentkit.Config{
 	Scope:            &contentkit.Scope{TenantID: tenantID, AppID: appID}, // stable provisioned IDs
 	LegacyCatalogKey: "doujins", // adopting an existing catalog; omit for a new app
-	Database:   contentkit.DatabaseConfig{Schema: "doujins_contentkit", RiverSchema: "doujins_river", SkipMigrations: true},
+	Database:   contentkit.DatabaseConfig{Schema: "doujins_contentkit", SkipMigrations: true}, // River: doujins_contentkit_river
 	Content:    siteKinds, // kinds.Config: languages, tiers, content and entity kinds
 	Media:      &contentkit.MediaConfig{Config: registry, Delivery: contentkit.DeliveryConfig{SigningKey: key}},
 	ClickHouse: contentkit.ClickHouseConfig{Database: "analytics", Addr: chAddr},
 }, contentkit.Deps{Postgres: pool, Auth: ak.Authenticator(), Users: ak.UserInfo(),
 	Billing: ckopenrails.Billing(merchant), Store: bucket})
-fleet, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "doujins_river"}, ak.RiverJobs(), ck.RiverJobs())
-_ = ck.Start(ctx, contentkit.WithRiverClient(fleet)) // or ck.Start(ctx): its own River
+_ = ck.Start(ctx)     // API process: serve; requests enqueue jobs
+_ = ck.StartJobs(ctx) // worker process: work ContentKit's jobs on its own River
 routes, _ := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
 for _, r := range routes {
 	mux.Handle(r.Path, r.Handler)
@@ -198,8 +200,7 @@ Entity identity, aliases and slug normalization are unchanged.
 A full-search score is a match tier: exact title 1, alias 0.9, name prefix
 0.84–0.85, name substring 0.81–0.82, contextual/token matches 0.75–0.77,
 and typo 0.5–0.52. Queries are capped at 256 characters, 16 tokens and two
-seconds. Each search document stores its normalized terms (migration
-`0043_stored_search_terms`), so a bounded candidate window keeps the strongest
+seconds. Each search document stores its normalized terms, so a bounded candidate window keeps the strongest
 name matches. A search sorted by newest, title or popularity orders every
 literal match; typo matches come from the nearest-distance window.
 
@@ -210,8 +211,8 @@ and is capped at 20. Current draft/held names and internal entities are matched
 only within the caller's management authority. `display_language` chooses
 labels while matching current names in every language. This API does not use
 body/associated-entity keywords, public reader filters or a results-page fallback.
-Migration `0012_management_names` adds separate current-name views and indexes;
-approved/published search documents and old writers remain unchanged.
+Separate current-name views and indexes serve it; approved/published search
+documents are unchanged.
 
 ## Errors
 
@@ -300,17 +301,8 @@ through `access.Billing.Held`; optional `access.TenureReader` supplies account
 statistics. Access decisions expose `Sell` entitlement keys and `Requires` as
 hints for the host's OpenRails checkout integration, never copied prices.
 
-```go
-gate, _ := access.NewGate(access.GateConfig{
-    Tenant: "onlydemo", Kinds: cfg.Kinds, Billing: ckopenrails.Billing(client),
-})
-f, _ := gate.Filter(ctx, actor)
-pred, args, _ := f.SQL("f", access.Hide)
-keep, short, _ := gate.Settle(ctx, actor, f, items)
-decisions, _ := gate.Decide(ctx, actor, items)
-```
-
-`access.WithMemo(ctx)` reuses entitlement reads during a request. Verified token
+The host passes `Deps.Billing` (`ckopenrails.Billing(client)`); the gate is
+the engine's own. Each request reads entitlements once. Verified token
 claims can supply configured tiers; revocation then has the token's lifetime.
 Billing read failures fail closed for protected content, while public content
 remains readable. Truncated keyspace reads are settled with exact-key checks.
@@ -363,7 +355,7 @@ The user-avatar kind comes from `github.com/open-rails/contentkit/media/avatar`;
 `avatar.User()` includes its upload rules, embedded default silhouette and
 a `Stable` preset (its current image also at fixed names, so its URL is
 built from the person's id). Publish defaults with
-`media/image.PublishDefaults` as part of deployment.
+`media-worker publish-defaults` as part of deployment.
 
 **Manifests.** Every edit runs under the `Locker` (required: `PGLocker`, a
 Postgres advisory lock shared by every process on the bucket) and writes with
@@ -431,30 +423,28 @@ reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
 `MEDIA_GATEWAY_BUCKETS`, each namespace's bucket, one per app
 (`doujins=prod-doujins; hentai0=prod-hentai0; accounts=prod-doujins`),
 `MEDIA_GATEWAY_CORS_ORIGINS` and `MEDIA_GATEWAY_DEFAULTS`
-(`layout.FormatDefaults(media.GatewayConfig(reg).Defaults)`).
+(`contentkit-media-worker publish-defaults` prints it).
 
-**The media worker** (`media/worker`) runs every producer from the host's
-worker River schema (`media/workqueue`, `MEDIA_WORKER_SCHEMA`, per host:
+**The media worker** (`internal/media/worker`) runs every producer from the host's
+worker River schema (`MEDIA_WORKER_SCHEMA`, per host:
 hosts sharing a database never share one): images, zips, public presets and
-editor views (`media/image`, libvips) and HLS, MP4, subtitles and
-frames (`media/video`, ffmpeg). The host presigns, commits and reads,
-and links only `media/workqueue`. The processor appends a retained event and
+editor views (libvips) and HLS, MP4, subtitles and
+frames (ffmpeg). The host presigns, commits and reads through the engine:
+hosts link no codecs and need no ffmpeg,
+so they build with `CGO_ENABLED=0` (CI checks every package but
+`internal/media/{image,video,worker}` and `cmd/media-worker`). The
+editor's poster picker decodes the encoded video in the browser. The processor appends a retained event and
 directly enqueues version metadata work in `MEDIA_HOST_RIVER_SCHEMA`, so the stock build
 (`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`)
 needs only the registry as JSON (`MEDIA_KINDS_FILE`): an engine's is
-`Config.MediaKinds()`, which `contentkit media-config -config contentkit.yaml`
-prints. Hosts with a `Private.Choose` build their own:
-
-```go
-cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_WORKER_SCHEMA, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_*
-cfg.Kinds = reg                // the host's registry
-w, _ := worker.New(ctx, cfg)   // no DDL: the host's migrate step runs workqueue.Migrate
-_ = w.Run(ctx)                 // until SIGTERM; running jobs get MEDIA_WORKER_SHUTDOWN_GRACE
-```
+`Config.MediaRegistry()`, which `contentkit media-config -config contentkit.yaml`
+prints. Every host runs this image; `MigratePostgres` migrates its queue.
 
 It never exits for a missing dependency: `Run` takes no jobs until the
 bucket answers, and `MEDIA_METRICS_ADDR` serves `/livez`, `/readyz`,
-`/statusz` and `app_dependency_up` with /metrics.
+`/statusz` and `app_dependency_up` with /metrics. With `Config.Metrics`, the
+worker leading its River schema also exports the queue backlog
+(`media_video_jobs`, `media_video_tenant_backlog`, ...); hosts collect none.
 
 **Images** (`media/image`, CGO over libvips): WebP at each `Image` spec
 (inside or cover box, quality, blur), through the upload's edit (crop in
@@ -576,8 +566,7 @@ published rung by rung (the upload stays pending until the last), a
 compliant top rung is stream-copied, and sources outside the aspect bounds
 fail with `video_aspect_unsupported`. An `MP4` preset muxes H.264 at one rung with the default audio;
 `Subtitles` converts SRT and SSA/ASS to clean WebVTT. Playlists are built per
-request by the read API. Encode progress comes from
-`workqueue.NewProgressSource` (`ReaderOptions.Progress`).
+request by the read API, with the worker queue's encode progress.
 
 Audio attachments are played as uploaded after verified placement, with no
 conversion job. A reader kind's `Publish.Playback` names its audio upload
@@ -618,7 +607,7 @@ do not implement multipart-abort lifecycle rules need equivalent server settings
 Media has two processing jobs: ingest and derivatives. Ingest validates an
 entire ZIP before attaching pages in bounded, replayable batches. The derivative
 job handles image presets and resumable video outputs for the same version,
-recording progress as work completes. Generated outputs wait in `future/`;
+recording progress as work completes. Generated outputs wait in `internal/`;
 publication waits for every required output before delivery and activation.
 The gateway's `public/` area stays public and `private/` stays token-protected.
 See [media jobs](docs/media-jobs.md).
@@ -629,7 +618,12 @@ registered as a recurring orphan-discovery job.
 A version's files live in its own folder, named by the version ID. The parent
 content item keeps its database identity and has no storage folder.
 
-**Paywalls**: media gates each item through `Hooks.Resolver`. Reader grants
+Version areas are named for who may read them: `public/` everyone, `private/`
+signed readers, `internal/` and `originals/` editors only. The gateway serves
+only `public/` and `private/`; editors read `internal/` and `originals/` through
+short-lived exact-key storage capabilities.
+
+**Paywalls**: media gates each item through the engine's access rules. Reader grants
 cover permitted immutable files, limited by chapter release and access rules;
 source originals remain editor-only outside an authorized download. Existing signed URLs
 retain their normal expiry and revocation-window semantics.
@@ -664,6 +658,10 @@ automatic entity covers read current facets and release timestamps; no periodic
 recount or timed-membership job is needed. Manual entity covers remain explicit.
 Likes and favorites keep their existing atomic counters.
 
+Entity writes record `entity.*` events on the catalog event log. Merging or
+deleting an entity a host links to is allowed; hosts repair their links from
+`GET /v1/manage/entities?ids=`, `GET /v1/manage/entities/match` and the events.
+
 The engine builds separate entity and channel interfaces from `Config.Content`.
 Metadata operations use `/entities`; channel operations use `/channels`. Channels
 retain their editor teams and optional billing entitlements. Their lifecycle
@@ -696,7 +694,7 @@ that convenience does not put content back onto the parent or borrow a sibling's
 text/files. See [import](docs/import.md) and [migration](docs/migration.md).
 
 
-`catalog.Store` owns content items of the kinds in `Config.Content.Kinds`.
+The catalog (`internal/catalogstore`) owns content items of the kinds in `Config.Content.Kinds`.
 Writes are batches; each transaction keeps `content_facets` current (rules
 through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
 documents dirty, queues `content_events` and calls media (republish,
@@ -720,7 +718,7 @@ under it; media and interactions resolve through it. Held text goes to the
 shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
 (`kinds`, `languages`) counts what anyone and each tier opens, per kind and
 language; a sibling deployment reads it with
-`catalog.NewTotalsClient(baseURL, nil).Totals(ctx, catalog.TotalsQuery{Kinds, Languages})`.
+`contentkit.NewClient(baseURL, nil).GetCatalogTotals(ctx, contentkit.GetCatalogTotalsQuery{Kinds, Languages})`.
 
 Content jobs use `contentkit_content_*` River kinds. Their previous
 `contentkit_catalog_*` kinds remain dispatch aliases, and the queue route stays

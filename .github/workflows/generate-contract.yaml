@@ -33,6 +33,7 @@ jobs:
           contract-head.txt
           api/openapi.json
           client_gen.go
+          error_codes_gen.go
           docs/api/routes.md
           sdk/ui/src/client/generated/
         if-no-files-found: error

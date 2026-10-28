@@ -68,12 +68,13 @@ go:Client.ListEvents	go	Go Client member	Client.ListEvents	client_events.go	incl
 go:Client.EventReader	go	Go Client member	Client.EventReader	client_events.go	included-critical
 go:Client.IngestMedia	go	Go Client member	Client.IngestMedia	client_media.go	included-critical
 go:Engine.Start	go	Go Engine member	Engine.Start	engine.go	included-critical
+go:Engine.StartJobs	go	Go Engine member	Engine.StartJobs	engine.go	included-critical
 go:Engine.Close	go	Go Engine member	Engine.Close	engine.go	included-critical
 go:Engine.Ready	go	Go Engine member	Engine.Ready	engine.go	included-critical
 go:Engine.Probes	go	Go Engine member	Engine.Probes	engine.go	included-critical
+go:Engine.Reconcile	go	Go Engine member	Engine.Reconcile	maintenance.go	included-critical
 go:Engine.ReplayErasureFences	go	Go Engine member	Engine.ReplayErasureFences	erasure.go	included-critical
 go:Engine.ReplayAccountErasures	go	Go Engine member	Engine.ReplayAccountErasures	erasure.go	included-critical
-go:Engine.RiverJobs	go	Go Engine member	Engine.RiverJobs	jobs.go	included-critical
 go:Engine.Routes	go	Go Engine member	Engine.Routes	routes.go	included-critical
 go:Engine.RouteGroups	go	Go Engine member	Engine.RouteGroups	routes.go	included-critical
 go:Engine.Scope	go	Go Engine member	Engine.Scope	scope.go	included-critical
@@ -88,7 +89,6 @@ go:MigratePostgres	go	Go root factory/config/value	MigratePostgres	database.go	i
 go:MigrateClickHouse	go	Go root factory/config/value	MigrateClickHouse	database.go	included critical host/value specification; use public literal values
 go:New	go	Go root factory/config/value	New	engine.go	included critical host/value specification; use public literal values
 go:NewForErasureReplay	go	Go root factory/config/value	NewForErasureReplay	engine.go	included critical host/value specification; use public literal values
-go:WithRiverClient	go	Go root factory/config/value	WithRiverClient	engine.go	included critical host/value specification; use public literal values
 go:ParseRouteGroups	go	Go root factory/config/value	ParseRouteGroups	routes.go	included critical host/value specification; use public literal values
 go:NewTenantID	go	Go root factory/config/value	NewTenantID	scope.go	included critical host/value specification; use public literal values
 go:NewAppID	go	Go root factory/config/value	NewAppID	scope.go	included critical host/value specification; use public literal values
@@ -156,7 +156,6 @@ ts:MediaClient.read	ts	TS class member	MediaClient.read	sdk/ui/src/client/media/
 ts:MediaClient.waitFor	ts	TS class member	MediaClient.waitFor	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.editorView	ts	TS class member	MediaClient.editorView	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.presets	ts	TS class member	MediaClient.presets	sdk/ui/src/client/media/client.ts	included-critical
-ts:MediaClient.getFrame	ts	TS class member	MediaClient.getFrame	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.hlsBase	ts	TS class member	MediaClient.hlsBase	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.hls	ts	TS class member	MediaClient.hls	sdk/ui/src/client/media/client.ts	included-critical
 ts:MediaClient.uploadNamed	ts	TS class member	MediaClient.uploadNamed	sdk/ui/src/client/media/client.ts	included-critical
@@ -243,6 +242,10 @@ go:Client.GetManageChannel	go	Go generated Client route	Client.GetManageChannel	
 go:Client.GetChannelEntities	go	Go generated Client route	Client.GetChannelEntities	client_gen.go	included-critical channel253 contract
 go:Client.PutChannelEntities	go	Go generated Client route	Client.PutChannelEntities	client_gen.go	included-critical channel253 contract
 go:Client.GetChannelContents	go	Go generated Client route	Client.GetChannelContents	client_gen.go	included-critical channel253 contract
+go:Client.GetVersions	go	Go generated Client route	Client.GetVersions	client_gen.go	included-critical
+go:Client.GetManageEntitiesMatch	go	Go generated Client route	Client.GetManageEntitiesMatch	client_gen.go	included-critical
+go:Client.PutAccountDeleted	go	Go generated Client route	Client.PutAccountDeleted	client_gen.go	included-critical
+go:Client.PostAccountAnonymize	go	Go generated Client route	Client.PostAccountAnonymize	client_gen.go	included-critical
 ts:ChannelsClient.mine	ts	TS channel client method	ChannelsClient.mine	sdk/ui/src/client/channels.ts	included-critical channel253 contract
 ts:ChannelsClient.create	ts	TS channel client method	ChannelsClient.create	sdk/ui/src/client/channels.ts	included-critical channel253 contract
 ts:ChannelsClient.get	ts	TS channel client method	ChannelsClient.get	sdk/ui/src/client/channels.ts	included-critical channel253 contract

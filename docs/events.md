@@ -30,6 +30,18 @@ strings; `version` describes the payload format. Current facts identify the
 content kind, parent ID and optional version ID without joining a subject that
 may already have been deleted.
 
+## Entity events
+
+Entity writes record `entity.created`, `entity.updated` (names, text,
+attributes, cover, parent or scope), `entity.deleted`, `entity.restored` and
+`entity.merged` in the mutation's transaction. `kind` is the entity kind,
+`entity_id` the entity (the shared envelope's subject) and `content_id` is
+empty. A merge records `entity.merged` with the final survivor in
+`merged_into`, re-records earlier merges into the merged entity with the same
+survivor, and records `entity.updated` for the survivor and for entities whose
+parent or scope moved to it. Hosts repair their links from these facts
+([host references](../HOST_INTEGRATION.md#host-references)).
+
 The reader processes a page and saves `next_cursor` in its own storage after its
 side effects succeed. Retrying the same cursor returns the same retained facts.
 An empty page also supplies a continuation. Optional `types` filters must stay
@@ -57,12 +69,7 @@ River delivery jobs or automatic polling loop.
 
 ## Shared PostgreSQL storage
 
-SQL33 moves retained facts into the shared Helpers log without changing their
-numeric IDs, UUID boundaries, positions, epochs, timestamps or purge handoff.
-Stop all application writers using the previous event storage before applying
-it. The migration is atomic; legacy event tables become read-only compatibility
-views, and old writers are refused. Rolling back storage requires an explicit
-coordinated forward migration.
+Retained facts live in the shared Helpers event log in the catalog schema.
 
 New facts enter the shared pending queue in the domain transaction. At commit,
 the shared flush locks the touched scopes in sorted order and assigns positions.

@@ -57,14 +57,6 @@ export class MediaApi {
   commit(b: CommitBody, signal?: AbortSignal) {
     return this.post<CommitReply>(b.ref, "/commit", b, signal);
   }
-  /** A JPEG still of the video upload at path, t seconds in, w pixels wide (0: the frame's). */
-  async frame(ref: RefBody, path: string, t: number, w?: number, signal?: AbortSignal) {
-    checkRef(ref);
-    const q = new URLSearchParams({ kind: ref.kind, id: ref.id, path, t: String(t) });
-    if (ref.version) q.set("version", ref.version);
-    if (w) q.set("w", String(w));
-    return this.http.request<Blob>(`${this.http.mount("upload", ref)}/frame?${q}`, { signal, blob: true });
-  }
 
   async read(ref: RefBody, o: ReadOptions = {}, signal?: AbortSignal) {
     const q = new URLSearchParams();

@@ -2,12 +2,15 @@ package contentkit
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
 	"time"
+
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
@@ -16,7 +19,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
@@ -80,8 +82,8 @@ type DatabaseConfig struct {
 	// Schema holds ContentKit's tables. Empty is "contentkit".
 	Schema string `yaml:"schema" json:"schema"`
 	// RiverSchema holds the River tables ContentKit's jobs run in; empty is
-	// Schema plus "_river". Start runs ContentKit's own River client there; a
-	// host fleet passed with WithRiverClient must use the same schema.
+	// Schema plus "_river". ContentKit's own River client uses it; no host
+	// job runs there.
 	RiverSchema string `yaml:"river_schema" json:"river_schema"`
 }
 
@@ -91,6 +93,8 @@ type InteractionsConfig struct {
 	Anonymous content.Anonymous `yaml:"anonymous" json:"anonymous"`
 	// CommentMaxLength is the longest comment in characters; 0 is the default.
 	CommentMaxLength int `yaml:"comment_max_length" json:"comment_max_length"`
+	// DuplicateWindow refuses identical comments within this duration; zero disables it.
+	DuplicateWindow time.Duration `yaml:"duplicate_window" json:"duplicate_window"`
 	// Limits are the per-actor rate limits, shared through Deps.Redis.
 	Limits LimitsConfig `yaml:"limits" json:"limits"`
 	// ModeratorTimeout bounds one moderation call (default 5s);
@@ -165,10 +169,8 @@ type AvatarsConfig struct {
 // MediaKinds is the media registry Config.Media serves, in the tenant's
 // namespace: content kinds' media are their versions', each entity kind
 // gains cover media (media.ForContent), and the avatar primary holds the
-// avatar kind (Config.Accounts.Avatars or Config.Avatars). The media worker runs it:
-// cmd/media-worker reads it as JSON (`contentkit media-config` prints it),
-// and a host building its own worker gives it, with its hooks, to
-// media.NewRegistry.
+// avatar kind (Config.Accounts.Avatars or Config.Avatars). The media worker
+// runs it from MediaRegistry's JSON.
 func (c Config) MediaKinds() (media.Config, error) {
 	c.Content = c.Content.StorageModel()
 	var err error
@@ -270,7 +272,7 @@ type ClickHouseConfig struct {
 	Cluster string `yaml:"cluster" json:"cluster"`
 }
 
-// JobsConfig sizes the engine's River queue (QueueContentKit).
+// JobsConfig sizes the engine's own River queue.
 type JobsConfig struct {
 	// MaxWorkers is the queue's concurrency; 0 is 2.
 	MaxWorkers int `yaml:"max_workers" json:"max_workers"`
@@ -317,11 +319,6 @@ type Deps struct {
 	// kinds (adapters/authkit.Scopes over an AuthKit client); nil leaves
 	// auth_scope to staff.
 	Scopes entities.Scopes
-	// EntityReferences maintains host-owned catalog links during entity changes.
-	// Nil preserves the standalone catalog behavior.
-	EntityReferences entities.References
-	// VersionReferences clears host-owned edition links during permanent purge.
-	VersionReferences catalog.VersionReferenceOwner
 
 	// Store is the media bucket; required with Config.Media.
 	Store media.Store
@@ -347,4 +344,18 @@ type Deps struct {
 	Clock func() time.Time
 	// Logger; nil is slog.Default().
 	Logger *slog.Logger
+}
+
+// MediaRegistry is MediaKinds validated and normalized as JSON: the
+// media worker's MEDIA_KINDS_FILE (`contentkit media-config` prints it).
+func (c Config) MediaRegistry() ([]byte, error) {
+	mc, err := c.MediaKinds()
+	if err != nil {
+		return nil, err
+	}
+	reg, err := mediastore.NewRegistry(mc, mediastore.Hooks{})
+	if err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(reg, "", "  ")
 }

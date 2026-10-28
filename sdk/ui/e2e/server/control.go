@@ -12,6 +12,8 @@ import (
 	"path"
 	"strings"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -327,7 +329,7 @@ func (h *harness) publication(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, out)
 }
 
-func (h *harness) fileKey(ctx context.Context, it media.Item, p string) (string, error) {
+func (h *harness) fileKey(ctx context.Context, it mediastore.Item, p string) (string, error) {
 	m, _, err := h.manifests.Get(ctx, it.Ref())
 	if err != nil {
 		return "", err

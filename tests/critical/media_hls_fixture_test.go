@@ -16,9 +16,9 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/worker"
 )
 
 // tinyHLSFixture is shared by public Go authorization and shipped TS return
@@ -98,8 +98,8 @@ func newTinyHLSConfiguredFixture(t *testing.T, private bool, configure func(*ck.
 		t.Fatalf("actual HLS child has no byte-range segments: %s", child.Body)
 	}
 	f.SegmentURL = playlistURIForTest(t, child.Body)
-	if !strings.HasPrefix(f.SegmentURL, m.storage.gateway.URL+"/") {
-		t.Fatalf("child playlist bypasses the gateway: %s", f.SegmentURL)
+	if !strings.HasPrefix(f.SegmentURL, m.app.cfg.Media.BaseURL+"/") {
+		t.Fatalf("child playlist bypasses the media host: %s", f.SegmentURL)
 	}
 	return f
 }

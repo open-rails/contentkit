@@ -77,7 +77,7 @@ operation. This does not change the operation's result or its authentication.
   entities and the content model at its root, `/media` (reads, HLS),
   `/media/upload`, `/codes`. A mount is a module's full base URL.
 - **`client.media`**: `upload`, `put` (upload, commit, wait), `commit`, `read`,
-  `waitFor`, `editorView`, `getFrame`, `hlsBase(ref, dir)`, `discard`, and
+  `waitFor`, `editorView`, `hlsBase(ref, dir)`, `discard`, and
   `hls` for players (`<VideoPlayer loader={contentkit.media.hls} />`): playlists
   load through the client's fetch, so they carry what its calls carry (an
   `authFetch` adds DPoP proofs); segments carry only cookies.
@@ -502,11 +502,18 @@ lock is uncounted; its public teaser carries `renderLocked`, so the unlock is
 on the first slide;
 the stage is never taller than `maxHeight` (default `80svh`).
 
-### VideoPosterPicker frames from another video
+### VideoPosterPicker frames
 
-`frames={{ item: otherVideo, path: "source" }}` browses another item's video;
-the chosen frame (cropped or whole) is uploaded to the poster path as an
-image. Which video to offer is the host's choice.
+Frames come from the encoded video, never a server decode: the strip is the
+ladder's seek sprite, and the preview and crop source are the browser's own
+decode of its largest rendition up to 1080p (hls.js, so the media gateway
+must allow the page's origin). Crops stay in the source's pixels; saving is
+a `frame` op the worker renders from the source. Until the video has an HLS
+ladder the picker says it is still processing.
+
+`frames={{ item: otherVideo, path: "source" }}` browses another item's video
+the editor may also edit; saving is a `frame` op with `from`, which the
+worker grabs once. Which video to offer is the host's choice.
 
 ### HoverPreview
 
@@ -1090,9 +1097,7 @@ Inazuma created it. Full `GET /v1/search` retains broader keyword and typo
 matching. Visibility, tenant, language and version eligibility still apply.
 The host owns search-page navigation and suggestion links.
 
-Search documents store their normalized terms (core migration
-`0043_stored_search_terms`); apply normal migrations before serving the new
-core. Native query-plan tests verify the indexed Latin/CJK paths against a
+Search documents store their normalized terms. Native query-plan tests verify the indexed Latin/CJK paths against a
 50,000-document catalog.
 `ReaderSettings` combines language selection and content filters in one dialog:
 
@@ -1285,7 +1290,7 @@ and schedules follow the marker. Missing or duplicate markers require correction
 instead of silently selecting another file.
 
 Every chapter shares its version's access policy. Publication moves the selected
-files from that version's `future` area into `public` or `private`; one item
+files from that version's `internal` area into `public` or `private`; one item
 token opens its private folder and never a sibling version. Reader plans expose
 completed chapters and an optional `next_release_at` observation hint, without
 revealing future file paths. A due hint triggers another read, not local access.

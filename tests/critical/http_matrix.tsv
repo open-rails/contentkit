@@ -91,7 +91,6 @@ CK-API-092	POST	/v1/media/upload/parts/list	editor	root:content:write	included-c
 CK-API-093	POST	/v1/media/upload/complete	editor	root:content:write	included-critical functionality and security
 CK-API-094	POST	/v1/media/upload/abort	editor	root:content:write	included-critical functionality and security
 CK-API-095	POST	/v1/media/upload/commit	editor	root:content:write	included-critical functionality and security
-CK-API-096	GET	/v1/media/upload/frame	editor	root:content:write	partial-security-only; positive/full functionality deferred P1
 CK-API-097	GET	/v1/media/presets	open		included-critical functionality and security
 CK-API-098	GET	/v1/media/{kind}/{id}	public		included-critical functionality and security
 CK-API-099	GET	/v1/media/{kind}/{id}/hls/{path}	public		included-critical functionality and security
@@ -177,3 +176,7 @@ CK-API-186	GET	/v1/manage/channels/{id}	staff	root:channels:write	included-criti
 CK-API-187	GET	/v1/channels/{id}/entities	public		included-critical functionality and security
 CK-API-188	PUT	/v1/channels/{id}/entities	editor	root:channels:write	included-critical functionality and security
 CK-API-189	GET	/v1/channels/{id}/contents	public		included-critical functionality and security
+CK-API-190	GET	/v1/versions	staff	root:content:view-restricted	included-critical functionality and security
+CK-API-191	GET	/v1/manage/entities/match	staff	root:entities:write	included-critical functionality and security
+CK-API-192	PUT	/v1/accounts/{id}/deleted	staff	root:accounts:lifecycle	included-critical functionality and security
+CK-API-193	POST	/v1/accounts/{id}/anonymize	staff	root:accounts:lifecycle	included-critical functionality and security

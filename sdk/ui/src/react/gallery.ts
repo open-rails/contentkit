@@ -401,6 +401,12 @@ function playlistLoader(load: (url: string, signal: AbortSignal) => Promise<Resp
   };
 }
 
+/** hls.js loading through the loader: playlists with the app's credentials, segments with cookies only. */
+export const hlsLoading = (loader: () => HlsLoader | undefined) => ({
+  pLoader: playlistLoader((url, signal) => fetchPlaylist(loader(), url, signal)),
+  xhrSetup: (xhr: XMLHttpRequest, url: string) => loader()?.segment(xhr, url),
+});
+
 function storedQuality(key: string | null): number | "auto" | null {
   if (!key) return null;
   try {
@@ -604,8 +610,7 @@ export function useHlsPlayer({
             ...abrHlsConfig(policy, estimate),
             capLevelController: capController(Hls.DefaultConfig.capLevelController, policy),
             autoStartLoad: false,
-            pLoader: playlistLoader((url, signal) => fetchPlaylist(opts.current.loader, url, signal)),
-            xhrSetup: (xhr, url) => opts.current.loader?.segment(xhr, url),
+            ...hlsLoading(() => opts.current.loader),
           });
           destroy = () => hls.destroy();
           // The player draws the cues of the chosen track ("hidden"), above its controls.

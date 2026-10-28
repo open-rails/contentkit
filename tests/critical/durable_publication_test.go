@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 )
 
@@ -16,14 +17,13 @@ func TestDurableTextPublication(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	admin, reader := a.engine.Client(), a.client("")
-	fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
+	fleet, err := jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}})
 	must(t, err)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		must(t, fleet.Stop(ctx))
 	})
-	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{
 		"en": {Title: "Durable release", Body: "Publication follows completed work"},
 	}}}})
@@ -37,11 +37,11 @@ func TestDurableTextPublication(t *testing.T) {
 	var jobs int
 	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job j
  JOIN `+w.schema+`.content_publication_requests r ON r.id::text=j.args->>'id'
- WHERE j.kind='contentkit_version_release' AND r.content_id=$1 AND j.scheduled_at=$2`, item.ID, due).Scan(&jobs))
+ WHERE j.kind='contentkit_publication' AND r.content_id=$1 AND j.scheduled_at=$2`, item.ID, due).Scan(&jobs))
 	if jobs != 1 {
 		t.Fatalf("accepted publication has %d durable scheduled jobs, want one", jobs)
 	}
-	request := currentReleaseJob(t, a, item.Versions[0].ID)
+	request := currentPublicationJob(t, a, item.Versions[0].ID)
 	if !request.Due.Equal(due) {
 		t.Fatalf("accepted request due=%v, want %v", request.Due, due)
 	}

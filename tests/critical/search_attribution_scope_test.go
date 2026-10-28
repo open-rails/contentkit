@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/signal"
@@ -14,7 +16,7 @@ func TestSearchAttributionUsesExactOriginScope(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	configureDiscoverySignals(t, w, a)
-	store, err := signal.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
+	store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
 	must(t, err)
 	tenant, otherTenant := a.cfg.Scope.AppID.String(), w.apps[1].cfg.Scope.AppID.String()
 	v7 := func() string { id, err := uuid.NewV7(); must(t, err); return id.String() }
@@ -37,7 +39,7 @@ func TestSearchAttributionUsesExactOriginScope(t *testing.T) {
 	must(t, store.RecordSignals(t.Context(), tenant, []signal.Signal{clicked, clicked}))
 	measured := func(ref contentref.ContentRef, subject signal.Subject, origin, visit string, active uint32) signal.Signal {
 		t.Helper()
-		m, err := signal.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10000}}, ActiveMS: active}}, 1, active)
+		m, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10000}}, ActiveMS: active}}, 1, active)
 		must(t, err)
 		m.VersionID, m.VisitID, m.SegmentID, m.OriginClickID = ref.Version(), visit, uuid.NewString(), origin
 		return signal.Signal{ContentRef: ref, Subject: subject, Type: signal.TypeEngagement, EventID: uuid.NewString(), Revision: 1,

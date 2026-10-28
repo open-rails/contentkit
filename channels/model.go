@@ -3,8 +3,9 @@
 package channels
 
 import (
-	"github.com/open-rails/contentkit/entities"
 	"time"
+
+	"github.com/open-rails/contentkit/entities"
 )
 
 // Card is a channel's public identity and optional paid membership standing.
@@ -76,10 +77,6 @@ type Update struct {
 	Cover       *entities.Cover  `json:"cover,omitempty"`
 	Avatar      *entities.Avatar `json:"avatar,omitempty"`
 	State       *entities.State  `json:"state,omitempty"`
-}
-
-func card(e entities.EntityCard) Card {
-	return Card{ID: string(e.ID), Slug: e.Slug, Name: e.Name, NameLanguage: e.NameLanguage, Code: e.Code, Path: e.Path, Cover: e.Cover, Avatar: e.Avatar, Count: e.Count, Access: e.Access, CreatedAt: e.CreatedAt}
 }
 
 // Repost identifies the destination reference without copying original content.

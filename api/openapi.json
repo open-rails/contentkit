@@ -244,6 +244,7 @@
           "comments_locked",
           "forbidden",
           "moderation_rejected",
+          "duplicate_comment",
           "not_found",
           "rate_limited",
           "unauthorized"
@@ -413,6 +414,7 @@
           "comments_locked",
           "forbidden",
           "moderation_rejected",
+          "duplicate_comment",
           "not_found",
           "rate_limited",
           "unauthorized"
@@ -582,6 +584,7 @@
           "comments_locked",
           "forbidden",
           "moderation_rejected",
+          "duplicate_comment",
           "not_found",
           "rate_limited",
           "unauthorized"
@@ -938,7 +941,8 @@
           "conflict",
           "forbidden",
           "moderation_rejected",
-          "not_found"
+          "not_found",
+          "rate_limited"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -4379,6 +4383,96 @@
         ]
       }
     },
+    "/v1/accounts/{id}/deleted": {
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Marks an account deleted during AuthKit's recovery period, hiding its attribution, or restored. Idempotent.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeleted"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:accounts:lifecycle",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/accounts/{id}/anonymize": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Anonymizes a purged account: keeps its comments and contributions, unlinks it and removes its private data. Idempotent; retry on failure.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:accounts:lifecycle",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/events": {
       "get": {
         "tags": [
@@ -4645,6 +4739,61 @@
           "not_found",
           "not_configured"
         ],
+        "x-contentkit-error-sets": [
+          "module:contents",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/versions": {
+      "get": {
+        "tags": [
+          "contents"
+        ],
+        "summary": "Editions' catalog status by version id, for hosts that keep references to them: content, kind, languages, deletion, live and live_from, in ids' order. A purged edition is absent. No event fires when live_from passes; compare it with the time.",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "required: 1-100 version ids",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VersionStatus"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "contents",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:content:view-restricted",
+        "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:contents",
           "auth",
@@ -6584,96 +6733,6 @@
         ]
       }
     },
-    "/v1/media/upload/frame": {
-      "get": {
-        "tags": [
-          "uploads"
-        ],
-        "summary": "A JPEG still of a video upload, for the frame picker (UploadOptions.Frames).",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "query",
-            "description": "the item's kind",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "id",
-            "in": "query",
-            "description": "the item's id",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "version",
-            "in": "query",
-            "description": "a content kind's version id; absent for any other kind's item",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "path",
-            "in": "query",
-            "description": "the video upload's path",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "t",
-            "in": "query",
-            "description": "seconds into the video",
-            "schema": {
-              "type": "number"
-            }
-          },
-          {
-            "name": "w",
-            "in": "query",
-            "description": "the still's width in pixels",
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "image/jpeg": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "upload",
-        "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:content:write",
-        "x-contentkit-errors": [
-          "forbidden",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:upload",
-          "auth",
-          "request"
-        ]
-      }
-    },
     "/v1/media/presets": {
       "get": {
         "tags": [
@@ -7728,8 +7787,21 @@
         "tags": [
           "entities"
         ],
-        "summary": "Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads.",
+        "summary": "Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads. With ids it resolves those entities in every state, deleted and merged ones included, each with its state and a merged one's final survivor (merged_into); unknown ids are absent.",
         "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "description": "only these entity ids (at most 100), in every state; one page, without state, cursor or page",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
           {
             "name": "state",
             "in": "query",
@@ -7834,6 +7906,93 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EntityPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "entities",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:entities:write",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:entities",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/manage/entities/match": {
+      "get": {
+        "tags": [
+          "entities"
+        ],
+        "summary": "Resolves names to active, public entities of one kind within one scope whose canonical name or alias equals each name, literally or normalized: one result per name in order, each with at most two ids, two meaning ambiguous. Merged and deleted entities never match; nothing is created or reserved.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "required: the entity kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "the entity the names are unique within; unscoped entities by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "match names in this language only; every language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "normalized",
+            "in": "query",
+            "description": "compare ContentKit's normalized forms, folding case, accents and whitespace; exact text by default",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "required: 1-100 whole names; repeat for each",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NameMatch"
+                  }
                 }
               }
             }
@@ -12939,6 +13098,14 @@
   },
   "components": {
     "schemas": {
+      "AccountDeleted": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          }
+        }
+      },
       "Activity": {
         "type": "object",
         "properties": {
@@ -13123,6 +13290,9 @@
           "deleted_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "author_hidden": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -13137,7 +13307,8 @@
           "updated_at",
           "tenant_id",
           "content_kind",
-          "content_id"
+          "content_id",
+          "author_hidden"
         ]
       },
       "AliasKey": {
@@ -14922,6 +15093,9 @@
       "CopyFrom": {
         "type": "object",
         "properties": {
+          "kind": {
+            "type": "string"
+          },
           "id": {
             "type": "string"
           },
@@ -14931,7 +15105,11 @@
           "path": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "id",
+          "path"
+        ]
       },
       "CopyReply": {
         "type": "object",
@@ -15457,6 +15635,17 @@
           "parent_id": {
             "type": "string"
           },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "merged_into": {
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -15495,6 +15684,7 @@
           "kind",
           "slug",
           "internal",
+          "state",
           "name",
           "count",
           "attributes",
@@ -16031,6 +16221,12 @@
           "version_id": {
             "type": "string"
           },
+          "entity_id": {
+            "type": "string"
+          },
+          "merged_into": {
+            "type": "string"
+          },
           "occurred_at": {
             "type": "string",
             "format": "date-time"
@@ -16456,6 +16652,9 @@
           },
           "of": {
             "type": "string"
+          },
+          "from": {
+            "$ref": "#/components/schemas/CopyFrom"
           }
         }
       },
@@ -17278,6 +17477,24 @@
           "language",
           "kind",
           "name"
+        ]
+      },
+      "NameMatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "ids"
         ]
       },
       "NewEntity": {
@@ -19691,6 +19908,44 @@
           "languages"
         ]
       },
+      "VersionStatus": {
+        "type": "object",
+        "properties": {
+          "version_id": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "live_from": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "version_id",
+          "content_id",
+          "kind",
+          "languages",
+          "deleted",
+          "live"
+        ]
+      },
       "VersionText": {
         "type": "object",
         "properties": {
@@ -19838,6 +20093,7 @@
           "comments_locked",
           "conflict",
           "download_unavailable",
+          "duplicate_comment",
           "event_cursor_expired",
           "forbidden",
           "gone",
@@ -20081,6 +20337,10 @@
     "download_unavailable": {
       "status": 403,
       "meaning": "The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged."
+    },
+    "duplicate_comment": {
+      "status": 422,
+      "meaning": "An identical comment was already saved in the configured duplicate window."
     },
     "event_cursor_expired": {
       "status": 410,

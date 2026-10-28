@@ -273,6 +273,10 @@ func newModel(fsys fs.FS, list []httpapi.Spec) (*model, error) {
 			if !token.IsExported(t.Name()) {
 				return fmt.Errorf("contract: %s on the wire: bodies are exported named types", t)
 			}
+			// Hosts name every body type: none may live under internal/.
+			if strings.Contains(t.PkgPath()+"/", "/internal/") && t != reflect.TypeFor[ErrorReply]() {
+				return fmt.Errorf("contract: %s on the wire is internal (%s)", t, t.PkgPath())
+			}
 			reached[t] = true
 			for _, f := range fieldsOf(t) {
 				if err := find(f.t); err != nil {

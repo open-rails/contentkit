@@ -1,0 +1,1099 @@
+package catalogstore
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/access"
+	catalog "github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/codes"
+	entitystore "github.com/open-rails/contentkit/internal/entitystore"
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/versions"
+)
+
+// effects is what a write changed, applied before it commits.
+type effects struct {
+	events []catalog.Event
+	codes  bool // slugs may have changed
+	// publish records durable release/withdrawal work after intent changes.
+	publish []versions.Target
+	// republish are versions whose effective rule or segments changed.
+	republish []versions.Target
+}
+
+// mutate runs fn over the authorized, locked items in one transaction, then
+// bumps their revisions, refreshes facets and documents, re-codes, emits
+// events and queues media exposure before committing.
+func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error)) error {
+	g, err := s.grantsFor(ctx, actor, ids)
+	if err != nil {
+		return err
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	got, err := s.authorize(ctx, tx, actor, ids, g)
+	if err != nil {
+		return err
+	}
+	fx, err := fn(ctx, tx, got)
+	if err != nil {
+		return err
+	}
+	if err := s.apply(ctx, tx, ids, fx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) error {
+	// Lifecycle paths share this transaction boundary, including moderation,
+	// owner deletion/restoration and imported tombstones. A visibility change
+	// must not leave served objects behind without a durable reconciliation.
+	for _, event := range fx.events {
+		switch event.Type {
+		case catalog.EventContentDeleted, catalog.EventContentRestored, catalog.EventContentUnpublished:
+			fx.publish = append(fx.publish, versions.Target{Content: event.ContentID})
+		case catalog.EventVersionDeleted:
+			fx.publish = append(fx.publish, versions.Target{Content: event.ContentID, Version: event.VersionID})
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET revision = revision + 1, updated_at = clock_timestamp() WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids); err != nil {
+		return err
+	}
+	if fx.codes {
+		if err := s.putCodes(ctx, tx, ids); err != nil {
+			return err
+		}
+	}
+	if err := s.emit(ctx, tx, fx.events...); err != nil {
+		return err
+	}
+	if err := s.RefreshFacets(ctx, tx, ids); err != nil {
+		return err
+	}
+	fx.publish = append(fx.publish, fx.republish...)
+	if len(fx.publish) > 0 {
+		if err := s.schedulePublicationTx(ctx, tx, fx.publish); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Create creates content items as drafts and returns their ids in order.
+// actor needs root:content:write, or to edit each item's owner entity.
+func (s *Store) Create(ctx context.Context, actor access.Actor, in []catalog.ContentInput) ([]string, error) {
+	prepared, err := s.PrepareCreate(ctx, actor, in)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	ids, err := prepared.CreateTx(ctx, tx, in)
+	if err != nil {
+		return nil, err
+	}
+	return ids, tx.Commit(ctx)
+}
+
+type preparedCreateContent struct {
+	catalog.ContentInput
+	id       string
+	kind     kinds.Kind
+	creators []catalog.Creator
+	versions []catalog.VersionInput
+}
+
+// CreateAuthorization is one fully validated, in-process creation plan.
+// PrepareCreate performs permission queries and body processing before a
+// transaction reserves a pool connection. The plan is not serializable and
+// must be used immediately with exactly the inputs that were prepared.
+type CreateAuthorization struct {
+	store *Store
+	actor access.Actor
+	input []byte
+	preps []preparedCreateContent
+}
+
+func (s *Store) PrepareCreate(ctx context.Context, actor access.Actor, in []catalog.ContentInput) (*CreateAuthorization, error) {
+	input, err := json.Marshal(in)
+	if err != nil {
+		return nil, ErrInvalid
+	}
+	preps := make([]preparedCreateContent, len(in))
+	var owners []string
+	for i, c := range in {
+		p := preparedCreateContent{ContentInput: c, id: contentref.NewID()}
+		var err error
+		if p.kind, err = s.kind(c.Kind); err != nil {
+			return nil, err
+		}
+		if p.ChannelID, err = s.fixedOwner(ctx, s.pool, c.Kind, c.ChannelID); err != nil {
+			return nil, err
+		}
+		if p.Comments == "" {
+			p.Comments = s.defaultComments(c.Kind)
+		}
+		if err := checkComments(p.Comments); err != nil {
+			return nil, err
+		}
+		if err := s.checkKindComments(c.Kind, p.Comments); err != nil {
+			return nil, err
+		}
+		rule := s.defaultRule(c.Kind)
+		if c.Access != nil {
+			rule = *c.Access
+		}
+		if rule, err = s.checkRule(rule); err != nil {
+			return nil, err
+		}
+		if err := s.checkKindRule(c.Kind, rule); err != nil {
+			return nil, err
+		}
+		p.Access = &rule
+		if p.Restrictions, err = s.checkRestrictions(c.Restrictions); err != nil {
+			return nil, err
+		}
+		if p.Attributes, err = checkAttributes(p.kind.Attributes, c.Attributes); err != nil {
+			return nil, err
+		}
+		if c.Attributes != nil {
+			if err := kinds.ValidateRequiredAttributes(p.kind.Attributes, p.Attributes); err != nil {
+				return nil, invalid("%v", err)
+			}
+		}
+		switch {
+		case c.Creators != nil:
+			p.creators, err = s.checkCreators(*c.Creators)
+		case actor.Member():
+			p.creators = []catalog.Creator{{UserID: actor.AccountID(), Role: "author"}}
+		}
+		if err != nil {
+			return nil, err
+		}
+		if p.kind.Versions.Hidden && len(c.Versions) > 1 {
+			return nil, invalid("kind %s has one hidden version", c.Kind)
+		}
+		p.versions = slices.Clone(c.Versions)
+		if len(p.versions) == 0 {
+			p.versions = []catalog.VersionInput{{Languages: []string{s.defaultLanguage()}}}
+		}
+		for j, v := range p.versions {
+			if p.versions[j], err = s.prepareVersionText(ctx, v); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.checkChannelRule(p.ChannelID, p.Access); err != nil {
+			return nil, err
+		}
+		owners = append(owners, p.ChannelID)
+		preps[i] = p
+	}
+	if err := s.authorizeCreate(ctx, s.pool, actor, owners); err != nil {
+		return nil, err
+	}
+	return &CreateAuthorization{store: s, actor: actor, input: input, preps: preps}, nil
+}
+
+// CreateTx writes this prepared creation in the caller-owned transaction.
+// It never invokes a body processor or the authorization provider.
+func (a *CreateAuthorization) CreateTx(ctx context.Context, tx pgx.Tx, in []catalog.ContentInput) ([]string, error) {
+	if a == nil || a.store == nil || tx == nil {
+		return nil, ErrForbidden
+	}
+	input, err := json.Marshal(in)
+	if err != nil || !bytes.Equal(input, a.input) {
+		return nil, ErrForbidden
+	}
+	return a.store.createPreparedTx(ctx, tx, a.actor, a.preps)
+}
+
+func (s *Store) createPreparedTx(ctx context.Context, tx pgx.Tx, actor access.Actor, preps []preparedCreateContent) ([]string, error) {
+	ids := make([]string, len(preps))
+	var events []catalog.Event
+	for i, p := range preps {
+		// Revalidate under the write transaction: the configured channel may
+		// have been renamed or retired after PrepareCreate authorized it.
+		if _, err := s.fixedOwner(ctx, tx, p.Kind, p.ChannelID); err != nil {
+			return nil, err
+		}
+		if err := s.checkRuleEntities(ctx, tx, p.Access); err != nil {
+			return nil, err
+		}
+		if p.ChannelID != "" {
+			var ok bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = $2 AND state = 'active' AND kind='channel' AND auth_scope IS NOT NULL)`, s.tenant, p.ChannelID).Scan(&ok); err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, invalid("owner group %s does not exist", p.ChannelID)
+			}
+		}
+		rule, _ := json.Marshal(p.Access)
+		attrs, _ := json.Marshal(p.Attributes)
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.items+` (tenant_id, id, kind, access, restrictions, attributes, owner_entity_id, created_by, comments)
+ VALUES ($1, $2, $3, $4, $5, $6, nullif($7, ''), nullif($8, ''), $9)`,
+			s.tenant, p.id, p.Kind, rule, p.Restrictions, attrs, p.ChannelID, viewerID(actor), p.Comments); err != nil {
+			return nil, err
+		}
+		if err := s.writeCreators(ctx, tx, p.id, p.creators); err != nil {
+			return nil, err
+		}
+		for _, v := range p.versions {
+			vid, err := s.insertVersion(ctx, tx, p.id, p.Kind, p.kind, v)
+			if err != nil {
+				return nil, err
+			}
+			events = append(events, catalog.Event{Type: catalog.EventVersionCreated, Kind: p.Kind, ContentID: p.id, VersionID: vid})
+		}
+		ids[i] = p.id
+		events = append([]catalog.Event{{Type: catalog.EventContentCreated, Kind: p.Kind, ContentID: p.id}}, events...)
+	}
+	if err := s.apply(ctx, tx, ids, effects{events: events, codes: true}); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// Update edits content items.
+func (s *Store) Update(ctx context.Context, actor access.Actor, in []catalog.Update) error {
+	ids := make([]string, len(in))
+	for i, u := range in {
+		ids[i] = u.ID
+		if u.Comments != nil {
+			if err := checkComments(*u.Comments); err != nil {
+				return err
+			}
+		}
+		if u.Access != nil {
+			r, err := s.checkRule(*u.Access)
+			if err != nil {
+				return err
+			}
+			in[i].Access = &r
+		}
+		if u.Restrictions != nil {
+			rs, err := s.checkRestrictions(*u.Restrictions)
+			if err != nil {
+				return err
+			}
+			in[i].Restrictions = &rs
+		}
+	}
+	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+		fx := effects{}
+		for _, u := range in {
+			o := got[u.ID]
+			if u.Comments != nil {
+				if err := s.checkKindComments(o.kind, *u.Comments); err != nil {
+					return fx, err
+				}
+			}
+			if u.Access != nil {
+				if err := s.checkKindRule(o.kind, *u.Access); err != nil {
+					return fx, err
+				}
+			}
+			if o.state == catalog.StateDeleted {
+				return fx, ErrNotFound
+			}
+			if u.Revision != nil {
+				var rev int64
+				if err := tx.QueryRow(ctx, `SELECT revision FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.tenant, u.ID).Scan(&rev); err != nil {
+					return fx, err
+				}
+				if rev != *u.Revision {
+					return fx, errStale
+				}
+			}
+			if err := s.checkChannelRule(o.ownerEntity, u.Access); err != nil {
+				return fx, err
+			}
+			if err := s.checkRuleEntities(ctx, tx, u.Access); err != nil {
+				return fx, err
+			}
+			var access, attrs []byte
+			if u.Access != nil {
+				access, _ = json.Marshal(u.Access)
+			}
+			if u.Attributes != nil {
+				a, err := checkAttributes(s.cfg.Kinds[o.kind].Attributes, u.Attributes)
+				if err != nil {
+					return fx, err
+				}
+				if err := kinds.ValidateRequiredAttributes(s.cfg.Kinds[o.kind].Attributes, a); err != nil {
+					return fx, invalid("%v", err)
+				}
+				attrs, _ = json.Marshal(a)
+			}
+			var restrictions []string
+			if u.Restrictions != nil {
+				restrictions = *u.Restrictions
+			}
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET access = coalesce($3, access),
+ restrictions = coalesce($4, restrictions), attributes = coalesce($5, attributes), comments = coalesce($6, comments) WHERE tenant_id = $1 AND id = $2`,
+				s.tenant, u.ID, access, restrictions, attrs, u.Comments); err != nil {
+				return fx, err
+			}
+			if u.Creators != nil {
+				cs, err := s.checkCreators(*u.Creators)
+				if err != nil {
+					return fx, err
+				}
+				if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.creators+` WHERE tenant_id = $1 AND content_id = $2`, s.tenant, u.ID); err != nil {
+					return fx, err
+				}
+				if err := s.writeCreators(ctx, tx, u.ID, cs); err != nil {
+					return fx, err
+				}
+			}
+			if u.Access != nil {
+				inheriting, err := s.inheritingVersions(ctx, tx, u.ID, o.ownerEntity != "")
+				if err != nil {
+					return fx, err
+				}
+				fx.republish = append(fx.republish, inheriting...)
+			}
+			fx.events = append(fx.events, catalog.Event{Type: catalog.EventContentUpdated, Kind: o.kind, ContentID: u.ID})
+		}
+		return fx, nil
+	})
+}
+
+// inheritingVersions are the versions of content id that follow its rule.
+func (s *Store) inheritingVersions(ctx context.Context, tx pgx.Tx, id string, channel bool) ([]versions.Target, error) {
+	if channel {
+		if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` v SET access=c.access,revision=v.revision+1,updated_at=clock_timestamp() FROM `+s.t.items+` c WHERE v.tenant_id=$1 AND v.content_id=$2 AND c.tenant_id=v.tenant_id AND c.id=v.content_id AND v.state<>'deleted' AND v.access IS DISTINCT FROM c.access`, s.tenant, id); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND ($3 OR access IS NULL) AND state <> 'deleted' ORDER BY id`, s.tenant, id, channel)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	out := make([]versions.Target, len(ids))
+	for i, v := range ids {
+		out[i] = versions.Target{Content: id, Version: v}
+	}
+	return out, nil
+}
+
+var errStale = errors.Join(ErrConflict, errors.New("the content changed since it was read"))
+
+func (s *Store) writeCreators(ctx context.Context, tx pgx.Tx, id string, cs []catalog.Creator) error {
+	for _, c := range cs {
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.creators+` (tenant_id, content_id, user_id, role, position) VALUES ($1, $2, $3, $4, $5)`,
+			s.tenant, id, c.UserID, c.Role, c.Position); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
+// putCodes gives each item its content code and decorative path per language:
+// its kind's path entity slug, if any, then its title slug (the site's first
+// language with text is the default).
+func (s *Store) putCodes(ctx context.Context, q entitystore.Querier, ids []string) error {
+	rows, err := q.Query(ctx, `SELECT c.id,c.kind,t.language,t.slug FROM `+s.t.items+` c
+ LEFT JOIN LATERAL (SELECT DISTINCT ON (x.language) x.language,x.slug FROM `+s.t.versions+` v
+ JOIN `+s.t.versionText+` x ON x.tenant_id=v.tenant_id AND x.version_id=v.id
+ WHERE v.tenant_id=c.tenant_id AND v.content_id=c.id AND v.state<>'deleted'
+ ORDER BY x.language,v.released DESC,v.position,v.id) t ON true WHERE c.tenant_id=$1 AND c.id=ANY($2)`, s.tenant, ids)
+	if err != nil {
+		return err
+	}
+	entries := map[string]*codes.Entry{}
+	var order []string
+	for rows.Next() {
+		var id, kind string
+		var language, slug *string
+		if err := rows.Scan(&id, &kind, &language, &slug); err != nil {
+			rows.Close()
+			return err
+		}
+		e, ok := entries[id]
+		if !ok {
+			e = &codes.Entry{Key: codes.Key{Kind: kind, ID: id}, Slugs: map[string]string{}}
+			entries[id] = e
+			order = append(order, id)
+		}
+		if language != nil {
+			e.Slugs[*language] = *slug
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	paths, err := s.pathEntities(ctx, q, order)
+	if err != nil {
+		return err
+	}
+	out := make([]codes.Entry, 0, len(order))
+	for _, id := range order {
+		e := entries[id]
+		entity := paths[id]
+		def := ""
+		for _, l := range s.cfg.Languages {
+			if _, ok := e.Slugs[l]; ok {
+				def = l
+				break
+			}
+		}
+		e.Slug = decorativePath(entity.slugFor(def), e.Slugs[def])
+		for l, title := range e.Slugs {
+			e.Slugs[l] = decorativePath(entity.slugFor(l), title)
+		}
+		out = append(out, *e)
+	}
+	_, err = codes.Put(ctx, codes.Pgx(q), s.qs, s.tenant, out)
+	return err
+}
+
+// Publish accepts durable publication now, or schedules it for a future At.
+// Already released files stay available while any new publication is pending.
+func (s *Store) Publish(ctx context.Context, actor access.Actor, in []catalog.Publish) error {
+	ids := make([]string, len(in))
+	for i, p := range in {
+		ids[i] = p.ContentID
+	}
+	now := s.now()
+	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+		fx := effects{}
+		if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
+			return fx, err
+		}
+		// Publication acceptance is durable even while media is processing.
+		// The scheduled worker, not this write or the clock, makes it live.
+		for _, p := range in {
+			o := got[p.ContentID]
+			switch {
+			case o.state == catalog.StateDeleted:
+				return fx, ErrNotFound
+			}
+			var titled, versioned bool
+			originalAndVersion := s.cfg.Kinds[o.kind].TitlePolicy == kinds.TitleOriginalAndVersion
+			if err := tx.QueryRow(ctx, `SELECT
+ EXISTS (SELECT 1 FROM `+s.t.versions+` v LEFT JOIN `+s.t.versionText+` t ON t.tenant_id=v.tenant_id AND t.version_id=v.id AND t.language=ANY(v.languages)
+ WHERE v.tenant_id=$1 AND v.content_id=$2 AND v.state<>'deleted' AND (coalesce(t.title,'')<>'' OR ($3 AND coalesce(v.original_title,'')<>''))),
+ EXISTS (SELECT 1 FROM `+s.t.versions+` WHERE tenant_id=$1 AND content_id=$2 AND state<>'deleted')`, s.tenant, p.ContentID, originalAndVersion).Scan(&titled, &versioned); err != nil {
+				return fx, err
+			}
+			if !titled || !versioned {
+				return fx, invalid("content %s needs a title and a version to publish", p.ContentID)
+			}
+			at := now
+			if p.At != nil && p.At.After(now) {
+				at = *p.At
+			}
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'published', publish_at = $3::timestamptz
+ WHERE tenant_id = $1 AND id = $2`, s.tenant, p.ContentID, at); err != nil {
+				return fx, err
+			}
+			fx.events = append(fx.events, catalog.Event{Type: catalog.EventContentScheduled, Kind: o.kind, ContentID: p.ContentID})
+			fx.publish = append(fx.publish, versions.Target{Content: p.ContentID})
+		}
+		return fx, nil
+	})
+}
+
+// Unpublish returns published or scheduled content items to drafts.
+func (s *Store) Unpublish(ctx context.Context, actor access.Actor, ids []string) error {
+	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+		fx := effects{}
+		for _, id := range ids {
+			o := got[id]
+			if o.state != catalog.StatePublished {
+				return fx, errors.Join(ErrConflict, errors.New("only a published item can be unpublished"))
+			}
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'draft', publish_at = NULL WHERE tenant_id = $1 AND id = $2`, s.tenant, id); err != nil {
+				return fx, err
+			}
+			fx.events = append(fx.events, catalog.Event{Type: catalog.EventContentUnpublished, Kind: o.kind, ContentID: id})
+			fx.publish = append(fx.publish, versions.Target{Content: id})
+		}
+		return fx, nil
+	})
+}
+
+// Restore brings deleted content items back as they were: published (or
+// scheduled) when they had been, else drafts.
+func (s *Store) Restore(ctx context.Context, actor access.Actor, ids []string) error {
+	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+		fx := effects{}
+		for _, id := range ids {
+			o := got[id]
+			if o.state != catalog.StateDeleted {
+				return fx, ErrNotFound
+			}
+			var emptyCause bool
+			if err := tx.QueryRow(ctx, `SELECT deleted_without_versions FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, id).Scan(&emptyCause); err != nil {
+				return fx, err
+			}
+			if emptyCause {
+				return fx, errors.Join(ErrConflict, errors.New("restore a version to restore this content"))
+			}
+			if err := s.restoreRows(ctx, tx, []string{id}); err != nil {
+				return fx, err
+			}
+			fx.events = append(fx.events, catalog.Event{Type: catalog.EventContentRestored, Kind: o.kind, ContentID: id})
+		}
+		return fx, nil
+	})
+}
+
+// restoreRows brings deleted items back as they were: published (or
+// scheduled) when they had been, else drafts.
+func (s *Store) restoreRows(ctx context.Context, tx pgx.Tx, ids []string) error {
+	// Restoring a parent exposes its non-deleted versions; deleted siblings
+	// stay deleted and must not prevent a different version's restoration.
+	rows, err := tx.Query(ctx, `SELECT content_id,id FROM `+s.t.versions+`
+ WHERE tenant_id=$1 AND content_id=ANY($2) AND state<>'deleted' ORDER BY id`, s.tenant, ids)
+	if err != nil {
+		return err
+	}
+	targets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (versions.Target, error) {
+		var target versions.Target
+		err := row.Scan(&target.Content, &target.Version)
+		return target, err
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.checkRestorableTx(ctx, tx, targets); err != nil {
+		return err
+	}
+	// A fixed comment policy is applied only when explicitly restoring a
+	// deleted item. Retained tombstones are not rewritten on configuration load.
+	for kind, spec := range s.cfg.Kinds {
+		if len(spec.CommentModes) == 1 {
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET comments = $3 WHERE tenant_id = $1 AND id = ANY($2) AND kind = $4`, s.tenant, ids, spec.CommentModes[0], kind); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.checkStoredPolicies(ctx, tx, ids); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE `+s.t.items+` SET deleted_at = NULL, deleted_with_entity = NULL,deleted_without_versions=false,
+ state = CASE WHEN published_at IS NOT NULL OR publish_at IS NOT NULL THEN 'published' ELSE 'draft' END WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, ids)
+	return err
+}
+
+// ownedBatch bounds the content one owned-content transaction locks.
+const ownedBatch = 100
+
+// DeleteOwned deletes the live content of the deleted user-owned entities
+// among entities (every one with nil), recording each entity as its content's
+// cause (entities.OwnedContent). The same transaction schedules withdrawal;
+// retained originals remain restorable until permanent purge.
+func (s *Store) DeleteOwned(ctx context.Context, entities []string) error {
+	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_entity_id
+ WHERE c.tenant_id = $1 AND g.state = 'deleted' AND g.kind = ANY($2) AND ($3::text[] IS NULL OR g.id = ANY($3)) AND c.state <> 'deleted'
+ ORDER BY c.id LIMIT `+strconv.Itoa(ownedBatch)+` FOR UPDATE OF c FOR SHARE OF g`, entities, catalog.EventContentDeleted,
+		func(ctx context.Context, tx pgx.Tx, ids, causes []string) error {
+			_, err := tx.Exec(ctx, `UPDATE `+s.t.items+` c SET state = 'deleted', deleted_at = clock_timestamp(), deleted_with_entity = r.cause,deleted_without_versions=false
+ FROM unnest($2::text[], $3::text[]) AS r(id, cause) WHERE c.tenant_id = $1 AND c.id = r.id`, s.tenant, ids, causes)
+			return err
+		})
+}
+
+// RestoreOwned restores the content the active entities among entities (every
+// one with nil) deleted when they were deleted (entities.OwnedContent), as
+// Restore does; content deleted for another reason stays deleted, and
+// content purged since is gone.
+func (s *Store) RestoreOwned(ctx context.Context, entities []string) error {
+	return s.followOwned(ctx, `SELECT c.id, c.kind, g.id FROM `+s.t.items+` c JOIN `+s.t.entities+` g ON g.tenant_id = c.tenant_id AND g.id = c.deleted_with_entity
+ WHERE c.tenant_id = $1 AND g.state = 'active' AND g.kind = ANY($2) AND ($3::text[] IS NULL OR g.id = ANY($3)) AND c.state = 'deleted'
+ ORDER BY c.id LIMIT `+strconv.Itoa(ownedBatch)+` FOR UPDATE OF c FOR SHARE OF g`, entities, catalog.EventContentRestored,
+		func(ctx context.Context, tx pgx.Tx, ids, _ []string) error { return s.restoreRows(ctx, tx, ids) })
+}
+
+// followOwned writes, a batch at a time, the content items query selects
+// (id, kind, entity) with write, each batch in one transaction with the
+// write's effects.
+func (s *Store) followOwned(ctx context.Context, query string, entities []string, typ string,
+	write func(ctx context.Context, tx pgx.Tx, ids, causes []string) error) error {
+	var userKinds []string
+	if s.cfg.Channels != nil {
+		userKinds = []string{"channel"}
+	}
+	if len(userKinds) == 0 {
+		return nil
+	}
+	for {
+		tx, err := s.begin(ctx)
+		if err != nil {
+			return err
+		}
+		ids, causes, events, err := func() ([]string, []string, []catalog.Event, error) {
+			rows, err := tx.Query(ctx, query, s.tenant, userKinds, entities)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			defer rows.Close()
+			var ids, causes []string
+			var events []catalog.Event
+			for rows.Next() {
+				var id, kind, entity string
+				if err := rows.Scan(&id, &kind, &entity); err != nil {
+					return nil, nil, nil, err
+				}
+				ids, causes = append(ids, id), append(causes, entity)
+				events = append(events, catalog.Event{Type: typ, Kind: kind, ContentID: id})
+			}
+			return ids, causes, events, rows.Err()
+		}()
+		if err == nil && len(ids) > 0 {
+			if err = write(ctx, tx, ids, causes); err == nil {
+				if err = s.apply(ctx, tx, ids, effects{events: events}); err == nil {
+					err = tx.Commit(ctx)
+				}
+			}
+		}
+		_ = tx.Rollback(ctx)
+		if err != nil || len(ids) == 0 {
+			return err
+		}
+	}
+}
+
+// PutVersions creates (VersionID "") or edits versions and returns their ids
+// in order.
+func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []catalog.VersionPut) ([]string, error) {
+	for i := range in {
+		v, err := s.prepareVersionText(ctx, in[i].VersionInput)
+		if err != nil {
+			return nil, err
+		}
+		in[i].VersionInput = v
+	}
+
+	var segmentVersions []string
+	var chapterTargets []versions.Target
+	for _, p := range in {
+		if p.VersionID != "" && p.Segments != nil {
+			segmentVersions = append(segmentVersions, p.VersionID)
+			chapterTargets = append(chapterTargets, versions.Target{Content: p.ContentID, Version: p.VersionID})
+		}
+	}
+	unlock, err := versionstore.LockSources(ctx, s.pool, s.tenant, segmentVersions)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	var ids []string
+	for _, p := range in {
+		if !slices.Contains(ids, p.ContentID) {
+			ids = append(ids, p.ContentID)
+		}
+	}
+	out := make([]string, len(in))
+	err = s.withChapterLocks(ctx, chapterTargets, func() error {
+		return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+			fx := effects{codes: true}
+			for i, p := range in {
+				o := got[p.ContentID]
+				k := s.cfg.Kinds[o.kind]
+				if o.state == catalog.StateDeleted {
+					var automatic bool
+					if err := tx.QueryRow(ctx, `SELECT c.deleted_without_versions AND (c.owner_entity_id IS NULL OR EXISTS
+ (SELECT 1 FROM `+s.t.entities+` g WHERE g.tenant_id=c.tenant_id AND g.id=c.owner_entity_id AND g.state='active'))
+ FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND c.id=$2`, s.tenant, p.ContentID).Scan(&automatic); err != nil {
+						return fx, err
+					}
+					if !automatic {
+						return fx, ErrNotFound
+					}
+				}
+				if k.Versions.Hidden && p.VersionID == "" {
+					return fx, invalid("kind %s already has its single hidden version", o.kind)
+				}
+				if p.VersionID == "" {
+					// An added version stays a draft until its editors publish it.
+					in := p.VersionInput
+					if in.State == "" {
+						in.State = catalog.StateDraft
+					}
+					vid, err := s.insertVersion(ctx, tx, p.ContentID, o.kind, k, in)
+					if err != nil {
+						return fx, err
+					}
+					out[i] = vid
+					fx.events = append(fx.events, catalog.Event{Type: catalog.EventVersionCreated, Kind: o.kind, ContentID: p.ContentID, VersionID: vid})
+					if in.State == catalog.StatePublished {
+						fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: vid})
+					}
+					continue
+				}
+				if err := s.updateVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionID, p.VersionInput); err != nil {
+					return fx, err
+				}
+				if p.Access != nil || p.ClearAccess || p.Segments != nil {
+					fx.republish = append(fx.republish, versions.Target{Content: p.ContentID, Version: p.VersionID})
+				}
+				if p.State != "" || p.PublishAt != nil || p.Access != nil || p.ClearAccess || p.Segments != nil {
+					fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: p.VersionID})
+				}
+				out[i] = p.VersionID
+				fx.events = append(fx.events, catalog.Event{Type: catalog.EventVersionUpdated, Kind: o.kind, ContentID: p.ContentID, VersionID: p.VersionID})
+			}
+			restored, err := s.restoreVersionParents(ctx, tx, ids)
+			if err != nil {
+				return fx, err
+			}
+			fx.events = append(fx.events, restored...)
+			return fx, nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type versionRow struct {
+	languages, traits               []string
+	label, state                    string
+	publishAt                       *time.Time
+	access                          []byte
+	attributes                      []byte
+	ordinal                         *int
+	cover                           []byte
+	originalTitle, originalLanguage string
+}
+
+func (s *Store) versionRow(k kinds.Kind, kind string, v catalog.VersionInput, cur *versionRow) (versionRow, error) {
+	var r versionRow
+	if cur != nil {
+		r = *cur
+	} else {
+		r = versionRow{traits: []string{}, state: catalog.StatePublished, attributes: []byte(`{}`)}
+	}
+	var err error
+	if v.OriginalTitle != nil {
+		r.originalTitle = *v.OriginalTitle
+	}
+	if v.OriginalLanguage != nil {
+		r.originalLanguage = *v.OriginalLanguage
+	}
+	if cur == nil && len(v.Languages) == 0 {
+		for _, language := range s.cfg.Languages {
+			if _, ok := v.Text[language]; ok {
+				v.Languages = append(v.Languages, language)
+			}
+		}
+		if len(v.Languages) == 0 {
+			v.Languages = []string{s.defaultLanguage()}
+		}
+		if k.Versions.Languages == "one" {
+			v.Languages = v.Languages[:1]
+		}
+	}
+	if v.Languages != nil || cur == nil {
+		if r.languages, err = s.checkVersionLanguages(k, v.Languages); err != nil {
+			return r, err
+		}
+	}
+	if v.Traits != nil {
+		if r.traits, err = s.checkTraits(k, kind, *v.Traits); err != nil {
+			return r, err
+		}
+	}
+	if v.Label != nil {
+		if r.label = strings.TrimSpace(*v.Label); len([]rune(r.label)) > maxLabel {
+			return r, invalid("label too long")
+		}
+	}
+	switch v.State {
+	case "":
+	case catalog.StateDraft, catalog.StatePublished:
+		r.state = v.State
+	default:
+		return r, invalid("version state %q must be draft or published", v.State)
+	}
+	if v.PublishAt != nil {
+		r.publishAt = v.PublishAt
+	}
+	switch {
+	case v.ClearAccess:
+		r.access = nil
+	case v.Access != nil:
+		rule, err := s.checkRule(*v.Access)
+		if err != nil {
+			return r, err
+		}
+		if err := s.checkKindRule(kind, rule); err != nil {
+			return r, err
+		}
+		r.access, _ = json.Marshal(rule)
+	}
+	if r.access != nil {
+		var rule access.Rule
+		if err := json.Unmarshal(r.access, &rule); err != nil {
+			return r, err
+		}
+		if err := s.checkKindRule(kind, rule); err != nil {
+			return r, err
+		}
+	}
+	if v.Attributes != nil {
+		a, err := checkAttributes(k.Attributes, v.Attributes)
+		if err != nil {
+			return r, err
+		}
+		r.attributes, _ = json.Marshal(a)
+	}
+	if v.Ordinal != nil {
+		r.ordinal = v.Ordinal
+	}
+	switch {
+	case v.Cover == nil:
+	case *v.Cover == "":
+		r.cover = nil
+	case !media.ValidNamed(*v.Cover):
+		return r, invalid("cover must be an image name (i-{uuid})")
+	default:
+		r.cover, _ = json.Marshal(catalog.Cover{Image: *v.Cover})
+	}
+	if v.Segments != nil && !k.Segments {
+		return r, invalid("kind %s has no segments", kind)
+	}
+	return r, nil
+}
+
+func (s *Store) insertVersion(ctx context.Context, tx pgx.Tx, contentID, kind string, k kinds.Kind, v catalog.VersionInput) (string, error) {
+	if err := s.checkVersionChannel(ctx, tx, contentID, v.Access); err != nil {
+		return "", err
+	}
+	r, err := s.versionRow(k, kind, v, nil)
+	if err != nil {
+		return "", err
+	}
+	if r.access == nil {
+		if err := tx.QueryRow(ctx, `SELECT access FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, contentID).Scan(&r.access); err != nil {
+			return "", err
+		}
+	}
+	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
+		return "", err
+	}
+	id := contentref.NewID()
+	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versions+` (tenant_id, id, content_id, position, languages, traits, label, state, publish_at, published_at, access, attributes,
+ ordinal, cover,original_title,original_language)
+ SELECT $1, $2, $3, coalesce((SELECT max(position) + 1 FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $3), 0), $4, $5, $6, $7, $8,
+  NULL, $9, $10, $11, $12,nullif($13,''),nullif($14,'')`,
+		s.tenant, id, contentID, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, r.cover,
+		r.originalTitle, r.originalLanguage); err != nil {
+		return "", err
+	}
+	if err := s.writeVersionExtras(ctx, tx, id, v); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// checkVersionRule checks a version's override (stored JSON, nil for none).
+func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, raw []byte) error {
+	if raw == nil {
+		return nil
+	}
+	var r access.Rule
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return err
+	}
+	return s.checkRuleEntities(ctx, tx, &r)
+}
+
+func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind string, k kinds.Kind, id string, v catalog.VersionInput) error {
+	if err := s.checkVersionChannel(ctx, tx, contentID, v.Access); err != nil {
+		return err
+	}
+	var cur versionRow
+	err := tx.QueryRow(ctx, `SELECT languages, traits, label, state, publish_at, access, attributes, ordinal, cover,coalesce(original_title,''),coalesce(original_language,'') FROM `+s.t.versions+`
+ WHERE tenant_id = $1 AND content_id = $2 AND id = $3 FOR UPDATE`, s.tenant, contentID, id).
+		Scan(&cur.languages, &cur.traits, &cur.label, &cur.state, &cur.publishAt, &cur.access, &cur.attributes, &cur.ordinal, &cur.cover, &cur.originalTitle, &cur.originalLanguage)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && cur.state == catalog.StateDeleted && v.State == "") {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	was := cur.state
+	if was == catalog.StateDeleted && v.State != "" && v.State != catalog.StateDeleted {
+		if err := s.checkRestorableTx(ctx, tx, []versions.Target{{Content: contentID, Version: id}}); err != nil {
+			return err
+		}
+	}
+	r, err := s.versionRow(k, kind, v, &cur)
+	if err != nil {
+		return err
+	}
+	var channelAccess []byte
+	if err := tx.QueryRow(ctx, `SELECT CASE WHEN owner_entity_id IS NOT NULL THEN access END FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, contentID).Scan(&channelAccess); err != nil {
+		return err
+	}
+	if len(channelAccess) > 0 {
+		r.access = channelAccess
+	}
+	// ClearAccess copies the current creation default once. An edition never
+	// inherits later gallery-parent policy edits dynamically.
+	if r.access == nil {
+		if err := tx.QueryRow(ctx, `SELECT access FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, contentID).Scan(&r.access); err != nil {
+			return err
+		}
+	}
+	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
+		return err
+	}
+	// Scheduling changes intent only. A prior completed release remains
+	// available until the publisher commits its replacement or withdrawal.
+	if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET languages = $4, traits = $5, label = $6, state = $7, publish_at = $8,
+ deleted_at = CASE WHEN $7 = 'deleted' THEN deleted_at END, access = $9, attributes = $10, ordinal = $11, cover = $12, updated_at = clock_timestamp(),
+ revision = revision + 1, original_title=nullif($13,''),original_language=nullif($14,'')
+ WHERE tenant_id = $1 AND content_id = $2 AND id = $3`,
+		s.tenant, contentID, id, r.languages, r.traits, r.label, r.state, r.publishAt, r.access, r.attributes, r.ordinal, r.cover, r.originalTitle, r.originalLanguage); err != nil {
+		return err
+	}
+	return s.writeVersionExtras(ctx, tx, id, v)
+}
+
+// writeVersionExtras replaces the version's text and segments when given.
+func (s *Store) writeVersionExtras(ctx context.Context, tx pgx.Tx, id string, v catalog.VersionInput) error {
+	if v.Text != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.versionText+` WHERE tenant_id = $1 AND version_id = $2`, s.tenant, id); err != nil {
+			return err
+		}
+		for l, t := range v.Text {
+			if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.versionText+` (tenant_id,version_id,language,title,description,slug,body,sort_key,aliases)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, s.tenant, id, l, t.Title, t.Description, t.Slug, t.Body, t.SortKey, orEmpty(t.Aliases)); err != nil {
+				return err
+			}
+		}
+	}
+	if v.Segments != nil {
+		segs, err := checkSegmentInputs(*v.Segments)
+		if err != nil {
+			return err
+		}
+		if len(segs) > 0 && segs[0].StartPage != "" {
+			if err := s.validateChapterStarts(ctx, tx, id, segs); err != nil {
+				return err
+			}
+		}
+		if _, err := s.writeChaptersTx(ctx, tx, id, segs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeleteVersions soft-deletes editions. Removing the final undeleted edition
+// also soft-deletes its parent in the same transaction.
+func (s *Store) DeleteVersions(ctx context.Context, actor access.Actor, keys []catalog.VersionKey) error {
+	var ids []string
+	for _, k := range keys {
+		if !slices.Contains(ids, k.ContentID) {
+			ids = append(ids, k.ContentID)
+		}
+	}
+	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+		fx := effects{}
+		for _, k := range keys {
+			o := got[k.ContentID]
+			tag, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET state = 'deleted', deleted_at = clock_timestamp(), updated_at = clock_timestamp(), revision = revision + 1
+ WHERE tenant_id = $1 AND content_id = $2 AND id = $3 AND state <> 'deleted'`, s.tenant, k.ContentID, k.VersionID)
+			if err != nil {
+				return fx, err
+			}
+			if tag.RowsAffected() == 0 {
+				return fx, ErrNotFound
+			}
+			fx.events = append(fx.events, catalog.Event{Type: catalog.EventVersionDeleted, Kind: o.kind, ContentID: k.ContentID, VersionID: k.VersionID})
+			fx.publish = append(fx.publish, versions.Target{Content: k.ContentID, Version: k.VersionID})
+		}
+		deleted, err := s.deleteEmptyParents(ctx, tx, ids)
+		if err != nil {
+			return fx, err
+		}
+		fx.events = append(fx.events, deleted...)
+		return fx, nil
+	})
+}
+
+// OrderVersions sets the order of a content item's versions: ids lists every
+// version not deleted, first first; deleted ones follow.
+func (s *Store) OrderVersions(ctx context.Context, actor access.Actor, contentID string, ids []string) error {
+	return s.mutate(ctx, actor, []string{contentID}, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+		fx := effects{}
+		var live []string
+		rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 AND state <> 'deleted' ORDER BY id`, s.tenant, contentID)
+		if err != nil {
+			return fx, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return fx, err
+			}
+			live = append(live, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fx, err
+		}
+		if !slices.Equal(live, slices.Sorted(slices.Values(ids))) {
+			return fx, invalid("the order must list each version that is not deleted once")
+		}
+		if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` v SET position = CASE WHEN o.n IS NULL THEN $4 + v.position ELSE o.n - 1 END, updated_at = clock_timestamp()
+ FROM `+s.t.versions+` w LEFT JOIN unnest($3::text[]) WITH ORDINALITY AS o(id, n) ON o.id = w.id
+ WHERE v.tenant_id = $1 AND v.content_id = $2 AND w.tenant_id = v.tenant_id AND w.id = v.id`, s.tenant, contentID, ids, len(ids)); err != nil {
+			return fx, err
+		}
+		fx.events = append(fx.events, catalog.Event{Type: catalog.EventContentUpdated, Kind: got[contentID].kind, ContentID: contentID})
+		return fx, nil
+	})
+}
+
+func (s *Store) checkVersionChannel(ctx context.Context, q Querier, contentID string, rule *access.Rule) error {
+	if rule == nil {
+		return nil
+	}
+	var owner string
+	if err := q.QueryRow(ctx, `SELECT coalesce(owner_entity_id,'') FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, contentID).Scan(&owner); err != nil {
+		return err
+	}
+	if owner != "" {
+		return invalid("channel versions use the parent access rule")
+	}
+	return s.checkChannelRule("", rule)
+}

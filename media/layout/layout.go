@@ -1,5 +1,7 @@
 // Package layout defines media object keys, dependency-free so the media
-// gateway can classify paths without importing the media runtime:
+// gateway can classify paths without importing the media runtime. Areas are
+// named for who may read them: public/ everyone, private/ signed readers,
+// internal/ and originals/ editors only (never served by the gateway).
 //
 //	{namespace}/{kind}/{id}/manifest.json         gzip JSON; never served
 //	                       /private/sha256-{hex}-{uuid}  uploads, derived files, editor views
@@ -7,12 +9,14 @@
 //	                       /download/sha256-{hex}-{uuid} originals, full-resolution files and archives: never served by the gateway
 //	                       /public/{name}         app-declared names, e.g. cover-460.webp
 //	                       /temp/{name}           in-flight writes and staged uploads (u-{uuid}); never served
-//	{namespace}/{kind}/{id}/{version}/...         a content version's item, laid out alike
+//	{namespace}/{kind}/{version}/...              a versioned kind's item, owned by its version:
+//	                       /originals/sha256-{hex}-{uuid} retained uploads
+//	                       /internal/sha256-{hex}-{uuid}  every derived file, editor view and track index
+//	                       /private/, /public/    released copies, written only by publication
+//	                       /tmp/{name}            staged uploads
 //	{namespace}/{kind}/_default/public/{name}     a public preset's default image
 //
-// A content kind's media lives in its versions' folders, within its {id}
-// folder, which holds no item of its own. The URL of an object is its key
-// under /v1/ on the site's media host.
+// The URL of a served object is its key under /v1/ on the site's media host.
 package layout
 
 import (
@@ -29,7 +33,7 @@ const (
 	AreaTemp      = "temp" // historical/non-version staging
 	AreaTmp       = "tmp"
 	AreaOriginals = "originals"
-	AreaFuture    = "future"
+	AreaInternal  = "internal"
 )
 
 const (
@@ -101,7 +105,7 @@ func Parse(key string) (Key, bool) {
 		len(rest) == 2 && rest[0] == AreaPublic && ValidPublicName(rest[1]),
 		len(rest) == 2 && (rest[0] == AreaTemp || rest[0] == AreaTmp) && ValidSegment(rest[1]),
 		len(rest) == 2 && rest[0] == AreaOriginals && ValidBlobName(rest[1]),
-		len(rest) == 2 && rest[0] == AreaFuture && ValidPublicName(rest[1]):
+		len(rest) == 2 && rest[0] == AreaInternal && ValidPublicName(rest[1]):
 		k.Area, k.Name = rest[0], rest[1]
 	default:
 		return Key{}, false
@@ -129,7 +133,7 @@ func ParseFolder(prefix string) (Key, bool) {
 // no area, manifest or reserved "_" name.
 func ValidVersion(s string) bool {
 	switch s {
-	case ManifestName, AreaPrivate, AreaDownload, AreaPublic, AreaTemp, AreaTmp, AreaOriginals, AreaFuture:
+	case ManifestName, AreaPrivate, AreaDownload, AreaPublic, AreaTemp, AreaTmp, AreaOriginals, AreaInternal:
 		return false
 	}
 	return ValidSegment(s) && s[0] != '_'
@@ -203,7 +207,7 @@ func SplitBlobRef(ref string) (area, name string, ok bool) {
 	area, name = AreaPrivate, ref
 	if prefix, n, qualified := strings.Cut(ref, "/"); qualified {
 		switch prefix {
-		case AreaOriginals, AreaFuture, AreaPublic, AreaDownload:
+		case AreaOriginals, AreaInternal, AreaPublic, AreaDownload:
 			area, name = prefix, n
 		default:
 			return "", "", false
@@ -212,7 +216,7 @@ func SplitBlobRef(ref string) (area, name string, ok bool) {
 			return "", "", false // download/ holds no pre-v0.68 blobs
 		}
 	}
-	if area == AreaFuture || area == AreaPublic {
+	if area == AreaInternal || area == AreaPublic {
 		return area, name, ValidPublicName(name)
 	}
 	return area, name, ValidBlobName(name)

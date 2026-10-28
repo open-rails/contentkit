@@ -377,7 +377,8 @@
       "status": "verified",
       "evidence": [
         "Start markers derive half-open spans from source-file order. Independently released chapters can skip an unreleased middle; copied and inserted files follow their current chapter.",
-        "Valid item tokens grant all served private outputs of exactly that edition, never future/original bytes or unreleased metadata.",
+        "Valid item tokens grant all served private outputs of exactly that edition, never internal/original bytes or unreleased metadata.",
+        "An editor reads an unreleased internal/ output through its exact presigned capability with identical bytes; reader item, private-file and absent tokens get 404 from the real gateway for that key.",
         "When processing hides a page a released edition already serves, its completion re-plans the edition at once; a later chapter keeps its own date."
       ],
       "cases": [
@@ -390,6 +391,7 @@
         "TestBlankAndLastChapterStarts",
         "TestIndependentChaptersSkipUnreleasedMiddle",
         "TestCompletedPublicationReader",
+        "TestInternalArea/CK-J05-S04_editors_read_internal_and_readers_cannot",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange",
         "TestProcessingWithdrawsHiddenCopyBeforeChapterDate"
       ],
@@ -755,11 +757,13 @@
       "behavior": "Daily popularity counts each qualified person once per work and available UTC day",
       "status": "verified",
       "evidence": [
-        "A 25,000-reader work and a ten-reader work share exactly 50,000 eligible readers; six available zero-reader days remain in the seven-day mean. Canonical receipt revisions, edition deduplication, public/tier daily unions, finalization, explicit rebuild, erasure and purge boundaries are covered with real ClickHouse."
+        "A 25,000-reader work and a ten-reader work share exactly 50,000 eligible readers; six available zero-reader days remain in the seven-day mean. Canonical receipt revisions, edition deduplication, public/tier daily unions, finalization, explicit rebuild, erasure and purge boundaries are covered with real ClickHouse.",
+        "Each day is swapped in whole: repeated refreshes, explicit rebuilds and an interrupted staged build leave exact plain sums without FINAL, and sixty one-part days of a 20,000-work scope rank under the read memory cap."
       ],
       "cases": [
         "TestDailyPopularityCountsReadersExactly",
-        "TestDailyParticipationPreparation"
+        "TestDailyParticipationPreparation",
+        "TestDailyPopularityDaysAreWriteOnce"
       ]
     },
     {
@@ -785,7 +789,9 @@
       "evidence": [
         "The real built shared UI selects two host-defined bucket IDs, renders their actual HTTP/PG ranking order, switches to a prepared-only ClickHouse date range, displays its inclusive last day, and receives the structured earliest-date refusal. No ranking cache is created by browser reads."
       ],
-      "cases": ["TestPreparedPopularityBrowser"]
+      "cases": [
+        "TestPreparedPopularityBrowser"
+      ]
     },
     {
       "id": "CK-J07-S19",
@@ -893,11 +899,14 @@
       "status": "verified",
       "evidence": [
         "A real Go upload produces public16/32 pixel covers and a48x32 private reader rendition with actual decoded image bytes. A built browser client also uploads and reads the concrete output.",
-        "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
+        "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution.",
+        "A real versioned upload prepares its reader output and both cover renditions in internal/ and its originals in originals/; release copies the outputs to served public/ or private/ keys readable through the gateway and retires the internal/ source."
       ],
       "cases": [
         "TestRealMediaIngest/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
-        "TestShippedBrowserClient/CK-J09-S01"
+        "TestShippedBrowserClient/CK-J09-S01",
+        "TestInternalArea/CK-J09-S01_versioned_derivatives_are_prepared_in_internal",
+        "TestInternalArea/CK-J09-S01_release_copies_internal_outputs_to_served_areas"
       ]
     },
     {
@@ -1201,6 +1210,44 @@
       ],
       "cases": [
         "TestMediaModernFallbackAndSoundtrack"
+      ]
+    },
+    {
+      "id": "CK-J12-S02",
+      "journey": "CK-J12",
+      "behavior": "Frame ops make posters the worker grabs from the encoded video: the item's own, or another editable item's of any kind in the namespace; hosts decode nothing",
+      "status": "verified",
+      "evidence": [
+        "A real two-second H264 clip is encoded by the actual worker; frame ops at a time inside a frame, from another clip with a crop in source pixels, and into a site kind each produce the source's frame a player shows at that time (compared with ffmpeg's decode of the source against the neighbouring frame).",
+        "The API refuses a contributor's frame of a clip it cannot edit (403), a missing or non-video source (404), a time past the end and an unknown kind (400), a destination that takes no PNG (415) and from.kind on copy (400), and writes nothing."
+      ],
+      "cases": [
+        "TestMediaFramePosters"
+      ]
+    },
+    {
+      "id": "CK-J12-S03",
+      "journey": "CK-J12",
+      "behavior": "The poster picker browses the seek sprite, previews and crops the browser's own decode of the HLS rendition, and saves frame ops the worker grabs exactly",
+      "status": "verified",
+      "evidence": [
+        "The shipped VideoPosterPicker in Chromium against a worker-encoded clip: eight sprite tiles, an untainted non-blank preview at the chosen time, a crop from the captured rendition frame and a frame op; then another clip's video saved as a frame op with from. No request reaches a frame endpoint.",
+        "The browser's shown frames are compared with the worker's grabs: each grab is clearly nearer the shown frame than the source's neighbouring frames."
+      ],
+      "cases": [
+        "TestVideoPosterPickerBrowser"
+      ]
+    },
+    {
+      "id": "CK-J12-S04",
+      "journey": "CK-J12",
+      "behavior": "The stock worker binary publishes default renditions from the registry JSON without a database; hosts link no libvips",
+      "status": "verified",
+      "evidence": [
+        "The built cmd/media-worker publish-defaults renders ContentKit's avatar silhouette and a host default from MEDIA_DEFAULTS_DIR to create-only objects, prints MEDIA_GATEWAY_DEFAULTS naming exactly what it wrote, refuses a default no source holds, and writes nothing on repeat."
+      ],
+      "cases": [
+        "TestWorkerPublishesDefaults"
       ]
     },
     {
@@ -2349,6 +2396,123 @@
       ],
       "evidence": [
         "Reviewed actual PNG/FFmpeg audiovisual source and S3 write barrier test: image completion alone does not activate release, completed mixed outputs do, and pending replacement retains the prior reader snapshot. Final runtime execution remains required."
+      ]
+    },
+    {
+      "id": "CK-J09-S31",
+      "journey": "CK-J09",
+      "behavior": "Image preset shapes are registry data: the stock worker renders tall, wide and square pages at their shape's size",
+      "status": "verified",
+      "cases": [
+        "TestImageShapePresets/CK-J09-S31_registry_validates_shapes_and_unmeasured_uploads_use_the_preset_image",
+        "TestImageShapePresets/CK-J09-S31_stock_worker_renders_tall_wide_and_square_pages_by_shape_from_registry_json"
+      ],
+      "evidence": [
+        "A worker whose registry is the media-config JSON parsed back (ParseConfig, NewRegistry) renders real PNG pages through libvips and S3: exactly 1:2 renders the tall image, a portrait and a square page the preset image, a wide page the wide image, each with one WebP write. NewRegistry refuses overlapping, unbounded, empty, unreduced, other-format, other-animation and non-image shapes. Focused local run passed; mutations (shape from recorded size only; inclusive wide bound) failed it."
+      ]
+    },
+    {
+      "id": "CK-J31-S01",
+      "journey": "CK-J31",
+      "behavior": "Host resolves entity ids in every state, merged ones to their final survivor",
+      "status": "verified",
+      "evidence": [
+        "Remote staff client resolves active, deleted, internal and twice-merged entities by id with state and final merged_into; unknown ids are absent; ids with state or past the bound are refused.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostAPIContract/CK-J31-S01_resolve_answers_deleted_internal_and_merged_entities"
+      ]
+    },
+    {
+      "id": "CK-J31-S02",
+      "journey": "CK-J31",
+      "behavior": "Host matches whole names to entities literally or normalized, at most two ids per name",
+      "status": "verified",
+      "evidence": [
+        "Literal and normalized canonical-name and alias matches keep request order, never match deleted, merged or internal entities, honor language and scope, and cap ambiguity at two ids.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostAPIContract/CK-J31-S02_exact_name_match_is_literal_or_normalized_and_bounded"
+      ]
+    },
+    {
+      "id": "CK-J31-S03",
+      "journey": "CK-J31",
+      "behavior": "Host reads edition status across draft, live, scheduled, deleted and purged",
+      "status": "verified",
+      "evidence": [
+        "Batch status reports content, kind, languages, deletion, live and live_from in request order; a real retention purge removes the edition from the answer.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostAPIContract/CK-J31-S03_version_status_follows_draft_live_scheduled_deleted_and_purged"
+      ]
+    },
+    {
+      "id": "CK-J31-S04",
+      "journey": "CK-J31",
+      "behavior": "Entity create, update, delete, restore and merge are committed events",
+      "status": "verified",
+      "evidence": [
+        "The remote event reader returns exact entity facts in commit order; merges carry the final survivor and re-record earlier merges into the merged entity.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostAPIContract/CK-J31-S04_entity_events_tell_hosts_to_repair_links"
+      ]
+    },
+    {
+      "id": "CK-J01-S09",
+      "journey": "CK-J01",
+      "behavior": "Serving processes enqueue; the host's worker process works ContentKit's jobs",
+      "status": "verified",
+      "evidence": [
+        "A Start-only engine enqueues a release on ContentKit's own River and works nothing; a second engine's StartJobs publishes it and refuses a second start.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestServingAndWorkingProcesses/CK-J01-S09_api_process_enqueues_and_worker_process_works_jobs"
+      ]
+    },
+    {
+      "id": "CK-J31-S05",
+      "journey": "CK-J31",
+      "behavior": "A remote host delivers account deletion, restore and purge over HTTP",
+      "status": "verified",
+      "evidence": [
+        "The remote host service hides, restores and anonymizes attribution through the lifecycle routes; anonymization is idempotent and keeps aggregates; a member is refused.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostServiceSurface/CK-J31-S05_account_lifecycle_over_http"
+      ]
+    },
+    {
+      "id": "CK-J31-S06",
+      "journey": "CK-J31",
+      "behavior": "The channel management read names a channel's AuthKit scope and owner",
+      "status": "verified",
+      "evidence": [
+        "A remote host service finds the fixed blog by slug and reads its AuthKit scope with no owner; anonymous readers are refused.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostServiceSurface/CK-J31-S06_channel_management_read_names_scope_and_owner"
+      ]
+    },
+    {
+      "id": "CK-J31-S07",
+      "journey": "CK-J31",
+      "behavior": "Engine.Reconcile re-derives facets and content paths after a model change",
+      "status": "verified",
+      "evidence": [
+        "Enabling path_entity changes no stored path until Reconcile, which prefixes the path entity's slug and is idempotent.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestEngineReconcile/CK-J31-S07_reconcile_rederives_paths_after_a_model_change"
       ]
     }
   ],
@@ -5095,37 +5259,6 @@
       ]
     },
     {
-      "id": "CK-API-096",
-      "method": "GET",
-      "path": "/v1/media/upload/frame",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/inherited_HEAD_credential_gate"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-096_GET_/v1/media/upload/frame/inherited_HEAD_credential_gate"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
       "id": "CK-API-097",
       "method": "GET",
       "path": "/v1/media/presets",
@@ -5472,7 +5605,8 @@
         "TestHTTPAuthenticationMatrix/CK-API-109_GET_/v1/manage/entities/member_without_named_permission",
         "TestHTTPAuthenticationMatrix/CK-API-109_GET_/v1/manage/entities/revoked_session",
         "TestHTTPAuthenticationMatrix/CK-API-109_GET_/v1/manage/entities/wrong_issuer",
-        "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app"
+        "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app",
+        "TestHostAPIContract/CK-J31-S01_resolve_answers_deleted_internal_and_merged_entities"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-109_GET_/v1/manage/entities/malformed_credential",
@@ -5487,7 +5621,8 @@
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
         "Management list returns exact real entity; ordinary owner403 and sibling-app empty list control scope.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
+        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification.",
+        "With ids, the management listing resolves deleted, internal and merged entities with state and final merged_into."
       ]
     },
     {
@@ -7591,6 +7726,134 @@
         "The real public-client repost journey asserts idempotency, original identity, destination removal and refusal to edit original versions; pending and withdrawn originals are excluded.",
         "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
       ]
+    },
+    {
+      "id": "CK-API-190",
+      "method": "GET",
+      "path": "/v1/versions",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/wrong_issuer",
+        "TestHostAPIContract/CK-J31-S03_version_status_follows_draft_live_scheduled_deleted_and_purged"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/wrong_issuer"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped host contract case",
+      "evidence": [
+        "Edition status by version id across draft, live, scheduled, deleted and purged editions.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "CK-API-191",
+      "method": "GET",
+      "path": "/v1/manage/entities/match",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/wrong_issuer",
+        "TestHostAPIContract/CK-J31-S02_exact_name_match_is_literal_or_normalized_and_bounded"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/wrong_issuer"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped host contract case",
+      "evidence": [
+        "Literal and normalized whole-name matching, bounded ambiguity, scope and language.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "CK-API-192",
+      "method": "PUT",
+      "path": "/v1/accounts/{id}/deleted",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/wrong_issuer",
+        "TestHostServiceSurface/CK-J31-S05_account_lifecycle_over_http"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-192_PUT_/v1/accounts/{id}/deleted/wrong_issuer"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped host contract case",
+      "evidence": [
+        "A remote host marks an account deleted and restored; attribution hides and returns.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "CK-API-193",
+      "method": "POST",
+      "path": "/v1/accounts/{id}/anonymize",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/wrong_issuer",
+        "TestHostServiceSurface/CK-J31-S05_account_lifecycle_over_http"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-193_POST_/v1/accounts/{id}/anonymize/wrong_issuer"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped host contract case",
+      "evidence": [
+        "A remote host anonymizes a purged account idempotently, keeping its contributions.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ]
     }
   ],
   "binding_contracts": [
@@ -8207,11 +8470,13 @@
       "name": "Client.GetManageEntities",
       "status": "verified",
       "cases": [
-        "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app"
+        "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app",
+        "TestHostAPIContract/CK-J31-S01_resolve_answers_deleted_internal_and_merged_entities"
       ],
       "evidence": [
         "Management list returns exact real entity; ordinary owner403 and sibling-app empty list control scope.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
+        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification.",
+        "Remote client resolves entity ids in every state."
       ]
     },
     {
@@ -8453,11 +8718,13 @@
         "TestRetainedLog/CK-J26-S03_filtered_pagination_has_no_gaps_or_duplicates",
         "TestRetainedLog/CK-J26-S04_new_reader_resumes_its_own_cursor",
         "TestRetainedLog/CK-J26-S05_reads_do_not_ack_or_delete_source_facts",
-        "TestRetainedLog/CK-J26-S06_foreign_malformed_and_expired_cursors_are_explicit"
+        "TestRetainedLog/CK-J26-S06_foreign_malformed_and_expired_cursors_are_explicit",
+        "TestHostAPIContract/CK-J31-S04_entity_events_tell_hosts_to_repair_links"
       ],
       "evidence": [
         "ListEvents delegates directly to GetEvents; exact domain facts, filtered pagination, restart, immutable reads and invalid/expired cursor errors are asserted.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
+        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification.",
+        "Catalog records carry entity_id and merged_into for entity events."
       ]
     },
     {
@@ -8466,11 +8733,13 @@
       "status": "verified",
       "cases": [
         "TestRetainedLog/CK-J26-S04_new_reader_resumes_its_own_cursor",
-        "TestRetainedLog/CK-J26-S06_foreign_malformed_and_expired_cursors_are_explicit"
+        "TestRetainedLog/CK-J26-S06_foreign_malformed_and_expired_cursors_are_explicit",
+        "TestHostAPIContract/CK-J31-S04_entity_events_tell_hosts_to_repair_links"
       ],
       "evidence": [
         "Remote shared reader returns the new real subject and preserves errors.Is invalid/expired cursor classifications.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
+        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification.",
+        "Remote shared reader returns entity events with the entity as subject."
       ]
     },
     {
@@ -8493,7 +8762,8 @@
         "TestHostLifecycle/CK-J01-S03_prepared_schema_can_start_read_only",
         "TestHostLifecycle/CK-J01-S04_invalid_scope_refuses_before_serving",
         "TestHostLifecycle/CK-J01-S05_route_selection_is_enforced",
-        "TestHostLifecycle/CK-J01-S08_reopen_preserves_data_and_borrowed_pool"
+        "TestHostLifecycle/CK-J01-S08_reopen_preserves_data_and_borrowed_pool",
+        "TestServingAndWorkingProcesses/CK-J01-S09_api_process_enqueues_and_worker_process_works_jobs"
       ],
       "evidence": [
         "Real migration/start/readiness/repeated-start/closed-engine refusal and borrowed PostgreSQL preservation; read-only ClickHouse profile adds borrowed-store coverage. Pending-job durability remains separate J01S08 obligation.",
@@ -8567,18 +8837,6 @@
       ],
       "evidence": [
         "A pending AuthKit purge does not block sibling startup; replay finishes it, repeats idempotently, erases the shared inbox and keeps contributions anonymously.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "go:Engine.RiverJobs",
-      "name": "Engine.RiverJobs",
-      "status": "verified",
-      "cases": [
-        "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once"
-      ],
-      "evidence": [
-        "RiverJobs marks the exact external binding required by Start; actual supplied fleet produces three due facts once and repeated jobs add none. A no-op WithRiverClient fails the existing Start guard.",
         "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
       ]
     },
@@ -8761,18 +9019,6 @@
       ],
       "evidence": [
         "Recovery cannot serve/start/issue host data; restored pre-erasure rows block normal startup until real cleanup; repeat replay remains complete.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "go:WithRiverClient",
-      "name": "WithRiverClient",
-      "status": "verified",
-      "cases": [
-        "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once"
-      ],
-      "evidence": [
-        "RiverJobs marks the exact external binding required by Start; actual supplied fleet produces three due facts once and repeated jobs add none. A no-op WithRiverClient fails the existing Start guard.",
         "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
       ]
     },
@@ -9552,17 +9798,6 @@
       "status": "verified",
       "cases": [
         "TestTypeScriptMediaContracts/media_image_io"
-      ],
-      "evidence": [
-        "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
-      ]
-    },
-    {
-      "id": "ts:MediaClient.getFrame",
-      "name": "MediaClient.getFrame",
-      "status": "verified",
-      "cases": [
-        "TestTypeScriptVideoContracts/media_hls_transport"
       ],
       "evidence": [
         "Actual selected public binding asserted by signed child typescript952c2395; see its frozen receipt and source assertions."
@@ -10448,7 +10683,8 @@
       "name": "Client.GetManageChannel",
       "status": "verified",
       "cases": [
-        "TestChannelInteractionBindings"
+        "TestChannelInteractionBindings",
+        "TestHostServiceSurface/CK-J31-S06_channel_management_read_names_scope_and_owner"
       ],
       "evidence": [
         "Generated Go client performs real channel directory/detail/management/metadata calls and asserts stable identity, exact selected records and metadata replacement.",
@@ -10460,7 +10696,8 @@
       "name": "Client.GetManageChannels",
       "status": "verified",
       "cases": [
-        "TestChannelInteractionBindings"
+        "TestChannelInteractionBindings",
+        "TestHostServiceSurface/CK-J31-S06_channel_management_read_names_scope_and_owner"
       ],
       "evidence": [
         "Generated Go client performs real channel directory/detail/management/metadata calls and asserts stable identity, exact selected records and metadata replacement.",
@@ -10732,6 +10969,79 @@
         "Shipped helper resolves only the selected edition image map in HTML/Quill, omits unsafe or missing reference URLs, and supports Node rendering without DOMParser. CK-J29-S09 verifies separate English/Chinese images alongside independent editor saves.",
         "Reviewed contract; exact combined execution remains required."
       ]
+    },
+    {
+      "id": "go:Client.GetVersions",
+      "name": "Client.GetVersions",
+      "status": "verified",
+      "cases": [
+        "TestHostAPIContract/CK-J31-S03_version_status_follows_draft_live_scheduled_deleted_and_purged"
+      ],
+      "evidence": [
+        "Remote client decodes edition status in request order and omits purged editions.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "go:Client.GetManageEntitiesMatch",
+      "name": "Client.GetManageEntitiesMatch",
+      "status": "verified",
+      "cases": [
+        "TestHostAPIContract/CK-J31-S02_exact_name_match_is_literal_or_normalized_and_bounded"
+      ],
+      "evidence": [
+        "Remote client sends repeated whole names and decodes one match per name.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "go:Engine.StartJobs",
+      "name": "Engine.StartJobs",
+      "status": "verified",
+      "cases": [
+        "TestServingAndWorkingProcesses/CK-J01-S09_api_process_enqueues_and_worker_process_works_jobs",
+        "TestEnginePublicationLifetime"
+      ],
+      "evidence": [
+        "StartJobs works the release a serving engine enqueued, survives its startup caller's cancellation and refuses a second start.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "go:Engine.Reconcile",
+      "name": "Engine.Reconcile",
+      "status": "verified",
+      "cases": [
+        "TestEngineReconcile/CK-J31-S07_reconcile_rederives_paths_after_a_model_change"
+      ],
+      "evidence": [
+        "Reconcile re-derives stored content paths after path_entity is enabled and reports the items visited.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "go:Client.PutAccountDeleted",
+      "name": "Client.PutAccountDeleted",
+      "status": "verified",
+      "cases": [
+        "TestHostServiceSurface/CK-J31-S05_account_lifecycle_over_http"
+      ],
+      "evidence": [
+        "Remote client marks an account deleted and restored.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "go:Client.PostAccountAnonymize",
+      "name": "Client.PostAccountAnonymize",
+      "status": "verified",
+      "cases": [
+        "TestHostServiceSurface/CK-J31-S05_account_lifecycle_over_http"
+      ],
+      "evidence": [
+        "Remote client anonymizes an account, twice, idempotently.",
+        "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ]
     }
   ],
   "retired_contracts": [
@@ -10770,6 +11080,52 @@
       "issue": "contentkit#260",
       "case": "TestMetadataManifestReadsUseTransactions/sibling_metadata_three_connections",
       "reason": "The separate version_publish worker and its transaction loop are deleted; preserve PendingTx one-connection behavior and existing unified release locking proofs."
+    },
+    {
+      "issue": "contentkit#262",
+      "reason": "Hosts run no media codecs: the poster picker decodes the encoded video in the browser and saves frame ops; a frame of another item's video is a frame op with from, grabbed by the worker.",
+      "operations": [
+        {
+          "id": "CK-API-096",
+          "method": "GET",
+          "path": "/v1/media/upload/frame",
+          "auth": "editor",
+          "permission": "root:content:write",
+          "day1_status": "partial-security-only; positive/full functionality deferred P1"
+        }
+      ],
+      "bindings": [
+        {
+          "id": "ts:MediaClient.getFrame",
+          "language": "ts",
+          "surface": "TS class member",
+          "name": "MediaClient.getFrame",
+          "source": "sdk/ui/src/client/media/client.ts",
+          "selection": "included-critical"
+        }
+      ]
+    },
+    {
+      "issue": "contentkit#267",
+      "reason": "ContentKit runs its jobs on its own River: Start serves and enqueues, StartJobs works them in the host's worker process. Host fleets (WithRiverClient, RiverJobs) are removed.",
+      "bindings": [
+        {
+          "id": "go:Engine.RiverJobs",
+          "language": "go",
+          "surface": "Go Engine member",
+          "name": "Engine.RiverJobs",
+          "source": "jobs.go",
+          "selection": "included-critical"
+        },
+        {
+          "id": "go:WithRiverClient",
+          "language": "go",
+          "surface": "Go root factory/config/value",
+          "name": "WithRiverClient",
+          "source": "engine.go",
+          "selection": "included critical host/value specification; use public literal values"
+        }
+      ]
     }
   ]
 }
