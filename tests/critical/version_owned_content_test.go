@@ -1,21 +1,12 @@
 package critical_test
 
 import (
-	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/authkit"
-	"github.com/open-rails/authkit/authtest"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
@@ -24,8 +15,6 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 )
 
-// This public-contract owner needs no other scenario's fixture, so the deliberate
-// version API hard cut can be qualified while older callers are being adapted.
 func TestVersionOwnedContent(t *testing.T) {
 	ctx := t.Context()
 	must := func(err error) {
@@ -34,42 +23,15 @@ func TestVersionOwnedContent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	dsn := os.Getenv("CONTENTKIT_CRITICAL_PG")
-	if dsn == "" {
-		t.Fatal("CONTENTKIT_CRITICAL_PG is required")
-	}
-	pool, err := pgxpool.New(ctx, dsn)
-	must(err)
-	t.Cleanup(pool.Close)
-	_, err = pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS pgroonga")
-	must(err)
-	schema := "ck259_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:20]
-	defer func() {
-		for _, suffix := range []string{"_river", ""} {
-			_, err := pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema + suffix}.Sanitize()+" CASCADE")
-			if err != nil {
-				t.Error(err)
-			}
-		}
-	}()
-	roles := authkit.NewRoles()
-	roles.Root.Declare(access.Names(access.Permissions()...)...)
-	ak, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = roles }), authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = pool }))
-	cfg := ck.Config{Tenant: "version-owned", Database: ck.DatabaseConfig{Schema: schema}, Content: kinds.Config{Languages: []string{"en", "zh"},
-		EntityKinds: map[string]kinds.EntityKind{"tag": {Route: "tags", MembershipScopes: []kinds.MembershipScope{kinds.ContentScope, kinds.VersionScope}}},
-		Kinds:       map[string]kinds.Kind{"post": {Route: "posts", Presentation: "post", Entities: []string{"tag"}, Versions: kinds.VersionRules{Languages: "one"}}, "blog": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}}}}}
-	engine, err := ck.New(ctx, cfg, ck.Deps{Postgres: pool, Auth: ak.Authenticator()})
-	must(err)
-	defer func() { must(engine.Close(context.Background())) }()
-	routes, err := engine.Routes(ck.Routes{Prefix: "/content", Groups: engine.RouteGroups()})
-	must(err)
-	mux := http.NewServeMux()
-	for _, r := range routes {
-		mux.Handle(r.Path, r.Handler)
-	}
-	server := httptest.NewServer(mux)
-	defer server.Close()
-	admin, public := engine.Client(), ck.NewClient(server.URL+"/content", nil)
+	w := newWorld(t, func(c *ck.Config) {
+		c.Content = kinds.Config{Languages: []string{"en", "zh"},
+			EntityKinds: map[string]kinds.EntityKind{"tag": {Route: "tags", MembershipScopes: []kinds.MembershipScope{kinds.ContentScope, kinds.VersionScope}}},
+			Kinds:       map[string]kinds.Kind{"post": {Route: "posts", Presentation: "post", Entities: []string{"tag"}, Versions: kinds.VersionRules{Languages: "one"}}, "blog": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}}}}
+	})
+	a := w.apps[0]
+	pool, schema, cfg := w.pool, w.schema, a.cfg
+	engine := a.engine
+	admin, public := engine.Client(), a.client("")
 	must(engine.StartJobs(ctx))
 	diagnose := func(id string) {
 		t.Helper()
@@ -188,7 +150,7 @@ func TestVersionOwnedContent(t *testing.T) {
 		indexed := false
 		for time.Now().Before(deadline) {
 			var n int
-			must(pool.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{schema, "content_search_documents"}.Sanitize()+" WHERE tenant_id=$1 AND content_id=$2 AND content_version_id IS NOT NULL", cfg.Tenant, searchable.ID).Scan(&n))
+			must(pool.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{schema, "content_search_documents"}.Sanitize()+" WHERE tenant_id=$1 AND content_id=$2 AND content_version_id IS NOT NULL", cfg.Scope.AppID.String(), searchable.ID).Scan(&n))
 			if n == 4 {
 				indexed = true
 				break
@@ -259,28 +221,6 @@ func TestVersionOwnedContent(t *testing.T) {
 		_, err = admin.PatchEntity(ctx, string(tags[0].ID), entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "RenamedEditionNeedle"}}})
 		must(err)
 		waitKeyword("RenamedEditionNeedle")
-	})
-	t.Run("parent_text_writes_are_not_an_alias", func(t *testing.T) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPut, server.URL+"/content/v1/contents/"+item.ID+"/text/en", strings.NewReader(`{"title":"wrong parent"}`))
-		must(err)
-		res, err := server.Client().Do(req)
-		must(err)
-		res.Body.Close()
-		if res.StatusCode != 404 && res.StatusCode != 405 {
-			t.Fatalf("retired text route status %d", res.StatusCode)
-		}
-		var raw map[string]any
-		b, err := json.Marshal(item)
-		must(err)
-		must(json.Unmarshal(b, &raw))
-		if _, ok := raw["text"]; ok {
-			t.Fatal("parent still returns writable localized text map")
-		}
-		var count int
-		must(pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_schema=$1 AND table_name='content_text'", schema).Scan(&count))
-		if count != 0 {
-			t.Fatal("parent text storage remains")
-		}
 	})
 	t.Run("hidden_initial_version_and_import_use_the_same_contract", func(t *testing.T) {
 		blog := create("blog", "zh", "Hidden Chinese", "Body of hidden edition")

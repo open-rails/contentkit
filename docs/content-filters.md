@@ -118,7 +118,7 @@ internal records retain the evidence used by fail-closed resolution.
 `GET /v1/content-filters` returns one flat inventory:
 
 ```json
-{"applies_to":["gallery","blog"],"filters":[{"entity":{"id":"<id>","slug":"spoilers","name":"Spoilers"},"default_visible":false,"visible":false,"overridden":false}],"include_deleted":false}
+{"applies_to":["gallery","blog"],"filters":[{"entity":{"id":"<id>","slug":"spoilers","name":"Spoilers"},"default_visible":false,"visible":false,"overridden":false}]}
 ```
 
 Only public controls offered on the current domain appear. Fixed rules,
@@ -130,12 +130,12 @@ requirements and internal references are not exposed through `/v1/kinds`.
 {"filters":[{"entity_id":"<id>","visible":true}]}
 ```
 
-Omitted entities and `include_deleted` remain unchanged. The JSON merge is
+Omitted entities remain unchanged. The JSON merge is
 atomic, so independent edits from two tabs do not replace each other's choices.
 A reset is explicit and follows the current domain default:
 
 ```json
-{"filters":[{"entity_id":"<id>","default":true}],"include_deleted":false}
+{"filters":[{"entity_id":"<id>","default":true}]}
 ```
 
 Exactly one of `visible` or `default: true` is required for each choice.

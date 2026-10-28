@@ -185,12 +185,8 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return nil, err
 		}
 	}
-	// A stock worker can replace published renditions too. Install the same
-	// synchronous catalog barrier as embedded writers before any DELETE.
 	mediaHooks := c.Kinds.Hooks()
 	mediaHooks.CanUpload = preparationUploads{}
-
-	mediaHooks.BeforeRetire = versionstore.RetirementBarrier(c.Pool, c.ContentSchema, c.Kinds)
 	paths := versionstore.ChapterPathHooks(c.Pool, c.ContentSchema, c.Kinds, publish)
 	mediaHooks.ValidatePathsChanged = paths.ValidatePathsChanged
 	mediaHooks.PathsChanged = paths.PathsChanged

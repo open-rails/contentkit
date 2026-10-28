@@ -113,16 +113,6 @@ func (run *batchRun) entity(r *resolver, i int) (any, string, error) {
 		}
 		in.Cover = &entities.Cover{ContentID: id}
 	}
-	if g.Edges != nil {
-		in.Edges = []entities.Edge{}
-		for _, e := range g.Edges {
-			to, err := r.ref(importer.RecordEntity, e.To)
-			if err != nil {
-				return nil, g.ExternalID, err
-			}
-			in.Edges = append(in.Edges, entities.Edge{Relation: e.Relation, To: entities.EntityID(to)})
-		}
-	}
 	return in, g.ExternalID, nil
 }
 
@@ -174,7 +164,7 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 		}
 		in.Versions = append(in.Versions, catalog.ImportVersion{ID: vid, Code: v.Code, Languages: v.Languages, Traits: v.Traits, Label: v.Label, State: v.State,
 			PublishAt: v.PublishAt, PublishedAt: v.PublishedAt, DeletedAt: v.DeletedAt, Access: v.Access, Attributes: v.Attributes, Ordinal: v.Ordinal,
-			Cover: v.Cover, Text: v.Text, OriginalTitle: v.OriginalTitle, OriginalLanguage: v.OriginalLanguage, Segments: v.Segments, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
+			Cover: v.Cover, Text: v.Text, OriginalTitle: v.OriginalTitle, OriginalLanguage: v.OriginalLanguage, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
 	}
 	return in, c.ExternalID, nil
 }

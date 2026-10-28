@@ -40,6 +40,9 @@ func commentsOpen(res resolve.Resolution) error {
 // TargetTypes are the route families interactions are served under.
 var TargetTypes = []content.TargetType{content.TargetContent, content.TargetEntity, content.TargetChannel}
 
+// commentFavoriteTargets take comments and favorites; entities take reactions only.
+var commentFavoriteTargets = []content.TargetType{content.TargetContent, content.TargetChannel}
+
 // versionParam names one version of a content target.
 var versionParam = httpapi.Text("version", "one version of the content item; the item itself by default")
 

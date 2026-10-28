@@ -56,8 +56,7 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, run encodeRun, ch encodeC
 	codecs := e.codecs(w.p)
 	ps := pass{rung: w.stages[r], codecs: slices.Clone(codecs), noTracks: true,
 		start: float64(ch.StartMS) / 1000, duration: float64(ch.EndMS-ch.StartMS) / 1000,
-		enc: encoding{encoders: maps.Clone(e.encoders), threads: e.c.Threads, preset: e.c.Preset, topPreset: e.c.TopPreset,
-			animation: profile(w.p) == media.VideoAnimation}, observe: e.c.ObserveEncode}
+		enc: encoding{encoders: maps.Clone(e.encoders), threads: e.c.Threads, preset: e.c.Preset, topPreset: e.c.TopPreset}, observe: e.c.ObserveEncode}
 	// The top rung copies a compliant source, on the segments of the rung below.
 	if run.Passthrough != "" && r > 0 && r == len(w.stages)-1 {
 		lower, err := w.rendition(ctx, e, w.stages[r-1].n, run.Passthrough)
@@ -67,7 +66,7 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, run encodeRun, ch encodeC
 		if lower != nil {
 			name := renditionName(run.Rung, run.Passthrough)
 			path := filepath.Join(dir, name+".mp4")
-			copyErr := copyRungRemote(ctx, url.URL, dir, w.pl, name, run.Passthrough)
+			copyErr := copyRungRemote(ctx, url.URL, dir, w.pl, name)
 			valid := false
 			if copyErr == nil && sameSegments(dir, name, lower.Segments) {
 				if copied, err := probe(ctx, path); err == nil {

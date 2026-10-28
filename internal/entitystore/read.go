@@ -417,7 +417,7 @@ func (s *Store) Cards(ctx context.Context, ids []entities.EntityID, o CardOption
 const maxMergeHops = 8
 
 // Detail returns an active entity with its names, text, parent, scope,
-// children, edges, counts and membership standing, resolved for language as List does. A merged
+// children, counts and membership standing, resolved for language as List does. A merged
 // entity answers with its survivor; a deleted one is ErrNotFound.
 func (s *Store) Detail(ctx context.Context, id entities.EntityID, language string) (entities.EntityDetail, error) {
 	return s.detail(ctx, id, language, false)
@@ -520,26 +520,6 @@ func (s *Store) detail(ctx context.Context, id entities.EntityID, language strin
 			return err
 		}
 		d.Children = children.Entities
-		if d.Edges, err = s.edges(ctx, q, []string{string(id)}); err != nil {
-			return err
-		}
-		if !includeInternal {
-			links := make([]string, 0, len(d.Edges)*2)
-			for _, edge := range d.Edges {
-				links = append(links, string(edge.From), string(edge.To))
-			}
-			ents, err := s.byIDs(ctx, q, links)
-			if err != nil {
-				return err
-			}
-			edges := d.Edges[:0]
-			for _, edge := range d.Edges {
-				if !ents[edge.From].Internal && !ents[edge.To].Internal {
-					edges = append(edges, edge)
-				}
-			}
-			d.Edges = edges
-		}
 		counts, err := s.counts(ctx, q, []string{string(id)})
 		if d.Counts = counts[id]; d.Counts == nil {
 			d.Counts = []entities.Count{}

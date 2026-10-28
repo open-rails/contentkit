@@ -38,10 +38,8 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 		return nil, nil
 	}
 	kind, preset := a.kind()
-	if e.scope != nil {
-		kind.Namespace = ""
-		kind.Account = true
-	}
+	kind.Namespace = ""
+	kind.Account = true
 	out := &engineAvatars{urls: e.media.reg}
 	if a.Primary != "" {
 		// Its media host serves the primary's files: URLs are built at it.

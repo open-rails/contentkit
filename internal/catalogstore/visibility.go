@@ -43,7 +43,6 @@ type Viewer struct {
 	filter         *entitlement.Filter
 	policies       domainpolicy.Policies
 	hidden         map[string][]string
-	includeDeleted bool
 	editorEntities []string
 	// asked are owner entities whose editorship this request already checked.
 	asked map[string]bool
@@ -103,7 +102,7 @@ func (s *Store) Viewer(ctx context.Context, o catalog.ViewerOptions) (*Viewer, e
 	values := map[string]string{}
 	if o.Actor.Member() {
 		var raw []byte
-		err := s.pool.QueryRow(ctx, `SELECT overrides,include_deleted FROM `+s.t.prefs+` WHERE tenant_id=$1 AND user_id=$2`, s.tenant, o.Actor.AccountID()).Scan(&raw, &v.includeDeleted)
+		err := s.pool.QueryRow(ctx, `SELECT overrides FROM `+s.t.prefs+` WHERE tenant_id=$1 AND user_id=$2`, s.tenant, o.Actor.AccountID()).Scan(&raw)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
@@ -244,15 +243,8 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 		// alias is the caller's constant; a bad one lists nothing.
 		opens, accessArgs = "false", nil
 	}
-	versions := slices.Sorted(maps.Keys(v.filter.Versions()))
-	contents := make([]string, len(versions))
-	for i, version := range versions {
-		contents[i] = v.filter.Versions()[version]
-	}
-	args := pgx.NamedArgs{"cv_now": v.now,
-		"cv_language": v.language, "cv_owned_contents": contents, "cv_owned_versions": versions,
-		"cv_owned_candidates": !v.filter.Complete() && !v.filter.Unknown(), "cv_user": viewerID(v.actor), "cv_editors": v.editorEntities,
-		"cv_include_deleted": v.includeDeleted, "cv_own_app": v.ownRead.app, "cv_own_channels": v.ownRead.entities}
+	args := pgx.NamedArgs{"cv_now": v.now, "cv_language": v.language, "cv_user": viewerID(v.actor), "cv_editors": v.editorEntities,
+		"cv_own_app": v.ownRead.app, "cv_own_channels": v.ownRead.entities}
 	for k, a := range accessArgs {
 		args[k] = a
 	}
@@ -279,16 +271,13 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	if language {
 		public = "(" + public + " AND (@cv_language = '' OR @cv_language = ANY(" + f("languages") + ")))"
 	}
-	held := "(" + f("deleted") + " AND @cv_include_deleted::boolean AND " + live + " AND (EXISTS (" +
-		"SELECT 1 FROM unnest(@cv_owned_contents::text[], @cv_owned_versions::text[]) AS owned(content_id,version_id) WHERE owned.content_id=" +
-		f("content_id") + " AND owned.version_id=" + f("version_id") + ") OR @cv_owned_candidates::boolean))"
-	return "(" + scope + " AND " + v.channelReady(alias) + " AND (" + public + " OR " + held + " OR " + v.privileged(alias) + "))", args
+	return "(" + scope + " AND " + v.channelReady(alias) + " AND (" + public + " OR " + v.privileged(alias) + "))", args
 }
 
 // channelReady keeps incomplete or withdrawn authoring homes out of public
-// readers and discovery. Deleted rows may still reach the existing exact-version
-// purchase retention check; this predicate alone never grants access. Explicit
-// staff management still inspects pending records.
+// readers and discovery. A deleted channel's deleted rows still reach their
+// editors; this predicate alone never grants access. Explicit staff management
+// still inspects pending records.
 func (v *Viewer) channelReady(alias string) string {
 	return "(" + alias + ".owner_entity_id IS NULL OR EXISTS(SELECT 1 FROM " + v.s.t.entities + " source_channel WHERE source_channel.tenant_id=" + alias + ".tenant_id AND source_channel.id=" + alias + ".owner_entity_id AND source_channel.kind='channel' AND ((source_channel.state='active' AND source_channel.auth_scope IS NOT NULL) OR (source_channel.state='deleted' AND " + alias + ".deleted))))"
 }
@@ -338,12 +327,11 @@ type itemView struct {
 }
 
 // decide applies the rule to content items for direct reads: an editor (staff,
-// creator, owner-entity editor) sees everything; anyone else sees the live
-// versions of live content in the site's scope, and a deleted one that was
-// live if they hold its exact version key. Optional content filters
-// do not apply to direct reads. With every, each item's owner entity is asked
-// for editorship (a detail page); else only those of items the rule does not
-// show whole or open.
+// creator, owner-entity editor) sees everything; anyone else, a buyer
+// included, sees only the live, undeleted versions of live content in the
+// site's scope. Optional content filters do not apply to direct reads. With
+// every, each item's owner entity is asked for editorship (a detail page);
+// else only those of items the rule does not show whole or open.
 func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[string]*itemView, error) {
 	s := v.s
 	out := map[string]*itemView{}
@@ -383,8 +371,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Live versions are decided by their rule; deleted ones that were live
-	// open only to holders of their own exact version key.
+	// Live versions are decided by their rule.
 	personal := func(id string, write bool) bool {
 		if !creator[id] {
 			return false
@@ -395,27 +382,20 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		return v.ownRead.allows(byID[id][0].ownerEntity)
 	}
 	known := func(id string) bool { return v.staff || personal(id, false) || v.editable(byID[id][0].ownerEntity) }
-	var live, held []facetRow
+	var live []facetRow
 	for id, rs := range byID {
 		if known(id) {
 			continue
 		}
 		for _, r := range rs {
-			switch {
-			case !v.live(r) || !v.inScope(r):
-			case r.deleted || r.contentDeleted:
-				held = append(held, r)
-			default:
+			if v.live(r) && v.inScope(r) && !r.deleted && !r.contentDeleted {
 				live = append(live, r)
 			}
 		}
 	}
-	items := make([]access.Item, 0, len(live)+len(held))
+	items := make([]access.Item, 0, len(live))
 	for _, r := range live {
 		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: r.rule})
-	}
-	for _, r := range held {
-		items = append(items, access.Item{Content: r.contentID, Version: r.versionID, Rule: access.Rule{Level: access.PPV}})
 	}
 	ds, err := v.gateDecide(ctx, items)
 	if err != nil {
@@ -424,12 +404,9 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 	shown := map[string][]facetRow{}
 	decisions := map[string]catalog.Decision{}
 	locked := map[string]bool{}
-	for i, r := range slices.Concat(live, held) {
+	for i, r := range live {
 		if !ds[i].Allowed {
 			locked[r.contentID] = true
-		}
-		if i >= len(live) && !ds[i].Allowed {
-			continue
 		}
 		shown[r.contentID] = append(shown[r.contentID], r)
 		decisions[r.versionID] = decision(ds[i])
@@ -521,8 +498,8 @@ func (s *Store) directViews(ctx context.Context, actor access.Actor, ids []strin
 
 // Resolver is the resolve.Resolver of content items for media
 // (media/versions) and interactions: a content reference (kind, content) or
-// one of its versions is visible by the rule for direct reads (live, deleted
-// and held by its own keys, or edited by the viewer), accessible when the
+// one of its versions is visible by the rule for direct reads (live and not
+// deleted, or edited by the viewer), accessible when the
 // viewer opens it (a content reference: any of its visible versions), with
 // staff, authenticated authors and owner-entity editors as Editor and the author as
 // Owner. A reference it omits is unseen.

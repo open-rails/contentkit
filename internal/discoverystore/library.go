@@ -14,8 +14,8 @@ import (
 
 // Library lists the editions actor holds an exact version key of: the
 // keys under the tenant's content prefix, from the request's one billing
-// read. Deleted content is listed too, within the current domain's hard
-// visibility boundary.
+// read. Deleted content is listed too, as purchase history, within the
+// current domain's hard visibility boundary; it is not readable.
 func (s *Service) Library(ctx context.Context, actor access.Actor, q discovery.LibraryQuery) (discovery.LibraryPage, error) {
 	if q.Limit <= 0 {
 		q.Limit = 20

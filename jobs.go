@@ -181,7 +181,7 @@ func (e *Engine) searchSync(ctx context.Context) (bool, error) {
 	e.jobs.mu.Lock()
 	batch, pages := e.jobs.expandBatch, e.jobs.expandPages
 	e.jobs.mu.Unlock()
-	return worker.SyncOnce(ctx, worker.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
+	return worker.SyncOnce(ctx, worker.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(),
 		SupportedLanguages: e.cfg.Content.Languages, Sources: []worker.Source{e.catalog, e.entities},
 		ExpandBatchSize: batch, ExpandMaxPages: pages})
 }

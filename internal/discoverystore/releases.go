@@ -74,9 +74,6 @@ func (s *Service) Releases(ctx context.Context, o DailyReleasesOptions) (discove
 	filter := o.Filter
 	filter.ReleasedOn = ""
 	filter.TimeZone = loc.String()
-	if filter.PublishedWithin != "" {
-		filter.publishedAsOf = now
-	}
 	q, err := s.compile(ctx, o.Reader, filter)
 	if err != nil {
 		return out, err

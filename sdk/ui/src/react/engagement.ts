@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import { toContentKitError } from "../client/errors.js";
-import type { Reaction, Target } from "../client/content/types.js";
+import type { CommentTarget, Reaction, Target } from "../client/content/types.js";
 import type { FavoriteState, ReactionCounts } from "../client/generated/wire.js";
 import { withReaction } from "./comments.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
@@ -67,7 +67,7 @@ export interface UseFavorite {
  * An item's favorite count and whether the signed-in caller favorited it
  * (initial: what the host already has). Signed out, favorited stays false.
  */
-export function useFavorite(target: Target, o: { initial?: FavoriteState; client?: ContentKitClient } = {}): UseFavorite {
+export function useFavorite(target: CommentTarget, o: { initial?: FavoriteState; client?: ContentKitClient } = {}): UseFavorite {
   const { client, store, scope } = useContentScope(o.client);
   const { type, id, version } = target;
   const key = keyOf("favorite", scope, type, id, version);

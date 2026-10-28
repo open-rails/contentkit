@@ -1,7 +1,7 @@
 import type { AdminComment, Comment, CommentInput, CommentStanding, FeedItem, ReactionCounts } from "../generated/wire.js";
 import type { Http } from "../http.js";
 import { call, type PageQuery } from "../route.js";
-import { reactionVerb, type Reaction, type Sort, type Target } from "./types.js";
+import { reactionVerb, type Reaction, type Sort, type CommentTarget } from "./types.js";
 
 export interface CommentQuery extends PageQuery {
   sort?: Sort;
@@ -21,7 +21,7 @@ export class CommentsClient {
   constructor(private readonly http: Http) {}
 
   /** The target's top-level comments with reply counts; the caller also gets its own held and rejected ones. */
-  list(t: Target, q: CommentQuery = {}, signal?: AbortSignal): Promise<Comment[]> {
+  list(t: CommentTarget, q: CommentQuery = {}, signal?: AbortSignal): Promise<Comment[]> {
     const o = { params: { id: t.id }, signal };
     return call(this.http, "GET", `/${t.type}/{id}/comments`, { ...o, query: { ...q, ...(t.type === "contents" ? { version: t.version } : {}) } });
   }
@@ -30,7 +30,7 @@ export class CommentsClient {
     return call(this.http, "GET", "/comments/{cid}/replies", { params: { cid: id }, query: q, signal });
   }
   /** Comments on the target in a language's thread, or replies to a top-level comment (reply_to_id); anonymous callers give anon_name. */
-  async create(t: Target, input: CommentInput): Promise<Comment> {
+  async create(t: CommentTarget, input: CommentInput): Promise<Comment> {
     const emit = this.http.captureChanges();
     const o = { params: { id: t.id }, body: input };
     const comment: Comment =
@@ -61,7 +61,7 @@ export class CommentsClient {
     return counts;
   }
   /** Commenting permissions and the authoritative visible top-level count in query.language (all languages by default); hidden/locked threads withhold the count. */
-  standing(t: Target, signal?: AbortSignal, query: { language?: string } = {}): Promise<CommentStanding> {
+  standing(t: CommentTarget, signal?: AbortSignal, query: { language?: string } = {}): Promise<CommentStanding> {
     const o = { params: { id: t.id }, signal, query };
     return call(this.http, "GET", `/${t.type}/{id}/can-comment`, { ...o, query: { ...query, ...(t.type === "contents" ? { version: t.version } : {}) } });
   }

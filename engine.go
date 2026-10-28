@@ -152,9 +152,6 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		}
 	}()
 	if e.cfg.Database.SkipMigrations {
-		if err := e.resolveAccountKey(ctx); err != nil {
-			return nil, migrationValidationError(err)
-		}
 		if err := e.validateDatabase(ctx); err != nil {
 			return nil, err
 		}
@@ -162,11 +159,11 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		return nil, err
 	}
 	e.signals = e.newSignals(deps)
-	if e.hub, err = hub.New(hub.Config{PG: e.pool, PGSchema: e.schema, Tenant: cfg.Tenant, DefaultLanguage: cfg.Content.Languages[0],
+	if e.hub, err = hub.New(hub.Config{PG: e.pool, PGSchema: e.schema, Tenant: cfg.Scope.AppID.String(), DefaultLanguage: cfg.Content.Languages[0],
 		SignalPlane: e.signals != nil}); err != nil {
 		return nil, err
 	}
-	if e.gate, err = entitlement.NewGate(entitlement.GateConfig{Tenant: cfg.Tenant, Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log, Now: now}); err != nil {
+	if e.gate, err = entitlement.NewGate(entitlement.GateConfig{Tenant: cfg.Scope.AppID.String(), Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log, Now: now}); err != nil {
 		return nil, err
 	}
 	if err := e.newCatalog(ctx, deps, now); err != nil {
@@ -289,16 +286,13 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if err := migrations.ApplyAccounts(ctx, db, accountSchema); err != nil {
 		return err
 	}
-	if err := e.resolveAccountKey(ctx); err != nil {
-		return err
-	}
 	if err := e.bindScope(ctx); err != nil {
 		return err
 	}
 	if options.explicit {
 		// A retry after a lost provider reply must converge here, not enqueue
 		// redundant background provisioning for the reserved entity.
-		if err := catalogstore.InitializeFixedOwners(ctx, e.pool, e.schema, e.cfg.Tenant, e.cfg.Content, options.Scopes); err != nil {
+		if err := catalogstore.InitializeFixedOwners(ctx, e.pool, e.schema, e.cfg.Scope.AppID.String(), e.cfg.Content, options.Scopes); err != nil {
 			return err
 		}
 	}
@@ -330,7 +324,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 // newCatalog builds the stores media is built over: entities and the catalog, which refreshes facets when entities change.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
-	opts := entitystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log,
+	opts := entitystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: c, Scopes: deps.Scopes, Logger: e.log,
 		ContentChanged: func(ctx context.Context, q entitystore.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},
@@ -351,7 +345,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		return err
 	}
 	e.channels = channelstore.FromStore(e.entities)
-	co := catalogstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
+	co := catalogstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
 		Body: deps.BodyProcessor, Now: now, Logger: e.log,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalogstore.Querier) error { return e.syncDocuments(ctx, q) }}
@@ -363,7 +357,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 
 // newVersions binds the one publication service before optional media storage.
 func (e *Engine) newVersions(deps Deps, now func() time.Time) error {
-	opts := versionstore.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool,
+	opts := versionstore.Options{Tenant: e.cfg.Scope.AppID.String(), Schema: e.schema, Pool: e.pool,
 		Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
 		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
 		Policy: deps.Downloads, Logger: e.log, Now: now, MediaConfigured: e.cfg.Media != nil}
@@ -509,7 +503,7 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 	}
 	l := in.Limits
 	o := contentstore.Options{
-		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
+		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
 		Processor:             deps.Processor,
 		NotificationPublisher: deps.Notifications,
 		EraseAccountReceipts:  e.eraseAccountReceipts,
@@ -533,9 +527,6 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 // accountExists uses only the host's target-tenant directory. Source actor
 // identity is not proof of target membership, including for global staff.
 func (e *Engine) accountExists(deps Deps) func(context.Context, string) (bool, error) {
-	if e.scope == nil {
-		return nil
-	}
 	return func(ctx context.Context, id string) (bool, error) {
 		if deps.Users == nil {
 			return false, auth.ErrUnavailable
@@ -582,14 +573,14 @@ func (e *Engine) mount(deps Deps) error {
 		avatars = e.avatars.rule
 	}
 	e.modules[httpapi.Kinds] = kindsHandler(c, e.hub.SignalPlane, avatars)
-	if e.importer, err = importstore.New(importstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
+	if e.importer, err = importstore.New(importstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
 	}
 	if e.modules[httpapi.Import], err = e.importer.Handler(e.auth); err != nil {
 		return err
 	}
-	urls, err := urlstore.New(urlstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant})
+	urls, err := urlstore.New(urlstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String()})
 	if err != nil {
 		return err
 	}
@@ -605,7 +596,7 @@ func (e *Engine) mount(deps Deps) error {
 
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
-	o := discoverystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
+	o := discoverystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
 		Entities: e.entities, Channels: e.channels, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
 		ActivityCohorts: e.cfg.ActivityCohorts}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
@@ -769,9 +760,7 @@ func (e *Engine) Probes() []Probe { return slices.Clone(e.probes) }
 
 func (e *Engine) newProbes(deps Deps) []Probe {
 	var out []Probe
-	if e.scope != nil {
-		out = append(out, Probe{Name: "contentkit_account_anonymization", Check: e.checkAccountAnonymization})
-	}
+	out = append(out, Probe{Name: "contentkit_account_anonymization", Check: e.checkAccountAnonymization})
 	if e.signals != nil {
 		out = append(out, Probe{Name: "contentkit_clickhouse", Check: e.signals.check})
 	}
@@ -794,7 +783,7 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 // eraseAvatars permanently fences and verifies each tenant account avatar.
 // Completion means the first storage cleanup finished, not just job acceptance.
 func (e *Engine) eraseAvatars(ctx context.Context, users []string) error {
-	if e.scope != nil && len(users) > 0 {
+	if len(users) > 0 {
 		schema, _ := e.accountStorage()
 		var primary string
 		err := e.pool.QueryRow(ctx, `SELECT primary_app_id::text FROM `+pgx.Identifier{schema, "content_account_avatar_placement"}.Sanitize()+` WHERE tenant_id=$1`, e.scope.TenantID.String()).Scan(&primary)

@@ -102,12 +102,24 @@ func TestCopiedPageChapterPlacement(t *testing.T) {
 		})
 	}
 	awaitPaths("reader/01.webp")
+	pagesAdded := func() *time.Time {
+		t.Helper()
+		var at *time.Time
+		must(t, w.pool.QueryRow(t.Context(), `SELECT pages_added_at FROM `+pgx.Identifier{w.schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), ref.Version).Scan(&at))
+		return at
+	}
+	if at := pagesAdded(); at != nil {
+		t.Fatalf("first release marked pages added at %v", at)
+	}
 	// Identical bytes in three source entries must follow their own chapter.
 	// Moving the same-item copy publishes it without exposing the other copy.
 	index := 1
 	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpMove, Path: "pages/30.png", Index: &index}}})
 	must(t, err)
 	awaitPaths("reader/01.webp", "reader/30.webp")
+	if pagesAdded() == nil {
+		t.Fatal("republication with more pages did not mark pages added")
+	}
 }
 
 func TestChapterPlacementReconciliation(t *testing.T) {
@@ -151,9 +163,8 @@ func TestChapterPlacementReconciliation(t *testing.T) {
 	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
 	readPaths := func() (media.ReadResult, []string, error) {
-		// Exercise the real read limiter instead of overwhelming it with the
-		// generic 50ms async-condition poll interval.
-		time.Sleep(550 * time.Millisecond)
+		// This media fixture disables the HTTP read limiter.
+		time.Sleep(50 * time.Millisecond)
 		read, err := viewer.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 		var paths []string
 		for _, f := range read.Files {
@@ -250,16 +261,8 @@ type hiddenStartGallery struct {
 	premium       bool
 }
 
-func newHiddenStartGallery(t *testing.T, premium bool, pages []string, chapters func(start time.Time) []catalog.SegmentInput) *hiddenStartGallery {
-	w := newWorld(t)
+func newHiddenStartGallery(t *testing.T, w *world, premium bool, pages []string, chapters func(start time.Time) []catalog.SegmentInput) *hiddenStartGallery {
 	a := w.apps[0]
-	attachMedia(t, w, a, func(c *ck.Config) {
-		k := &c.Media.Kinds[0]
-		k.Uploads[0].Max = 20
-		k.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Download: "released-archive"}
-		k.Private = append(k.Private, media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}},
-			media.Private{Name: "released-archive", To: "released.zip", Zip: "download-pages/", HostOnly: true})
-	})
 	g := &hiddenStartGallery{w: w, a: a, admin: a.engine.Client(), viewer: a.client(""), images: map[string][]byte{}, start: w.clock.now(), premium: premium}
 	g.ref = galleryRef(t, g.admin, "Hidden chapter start")
 	if premium {
@@ -324,7 +327,7 @@ func (g *hiddenStartGallery) readable(t *testing.T, want ...string) {
 	var read media.ReadResult
 	waitForWithin(t, 45*time.Second, func() bool {
 		wakeDuePublicationJobs(t, g.a)
-		time.Sleep(550 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		before := got
 		got, read = g.paths(t, reader)
 		if !slices.Equal(before, got) {
@@ -415,7 +418,7 @@ func (g *hiddenStartGallery) advance(t *testing.T, to time.Time) {
 	waitForWithin(t, 45*time.Second, func() bool {
 		var pending int
 		must(t, g.w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{g.w.schema + "_river", "river_job"}.Sanitize()+`
- WHERE kind IN ('contentkit_version_publish','contentkit_version_release')
+ WHERE kind='contentkit_publication'
  AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&pending))
 		return pending == 0
 	})
@@ -436,8 +439,8 @@ func laterChapters(dates ...time.Duration) func(time.Time) []catalog.SegmentInpu
 // A chapter whose start page is hidden as a duplicate starts at its next
 // readable page. The kept copy is that chapter's first page, so it waits for
 // the chapter's date although it sits in an earlier, released chapter.
-func TestHiddenChapterStartKeepsPublishing(t *testing.T) {
-	g := newHiddenStartGallery(t, false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png", "pages/12.png"}, func(start time.Time) []catalog.SegmentInput {
+func hiddenChapterStartKeepsPublishing(t *testing.T, w *world) {
+	g := newHiddenStartGallery(t, w, false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png", "pages/12.png"}, func(start time.Time) []catalog.SegmentInput {
 		two, three := start.Add(time.Hour), start.Add(2*time.Hour)
 		return []catalog.SegmentInput{
 			{Position: 0, Title: "One", StartPage: "pages/01.png"},
@@ -496,8 +499,8 @@ func TestHiddenChapterStartKeepsPublishing(t *testing.T) {
 
 // Two overlapping spreads placed before a premium chapter both contain its
 // hidden start page. Both wait for the chapter's date.
-func TestHiddenChapterStartSpreadWaits(t *testing.T) {
-	g := newHiddenStartGallery(t, true, []string{"pages/01.png", "pages/02.png", "pages/09.png", "pages/10.png", "pages/11.png", "pages/12.png"}, laterChapters(time.Hour))
+func hiddenChapterStartSpreadWaits(t *testing.T, w *world) {
+	g := newHiddenStartGallery(t, w, true, []string{"pages/01.png", "pages/02.png", "pages/09.png", "pages/10.png", "pages/11.png", "pages/12.png"}, laterChapters(time.Hour))
 	g.readable(t, "reader/01.webp", "reader/02.webp", "reader/09.webp")
 	g.insert(t, 2, map[string][]byte{"pages/03.png": chapterImage(t, 202), "pages/09-10.png": chapterImage(t, 203), "pages/10-11.png": chapterImage(t, 205)},
 		"pages/03.png", "pages/09-10.png", "pages/10-11.png")
@@ -509,8 +512,8 @@ func TestHiddenChapterStartSpreadWaits(t *testing.T) {
 // Copies of later chapters' middle pages, one byte-identical and one with the
 // same pixels in different bytes, wait for their chapters even when chapter
 // three opens before chapter two.
-func TestHiddenPageCopiesWaitForTheirChapter(t *testing.T) {
-	g := newHiddenStartGallery(t, false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png", "pages/20.png", "pages/21.png"}, laterChapters(2*time.Hour, time.Hour))
+func hiddenPageCopiesWaitForTheirChapter(t *testing.T, w *world) {
+	g := newHiddenStartGallery(t, w, false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png", "pages/20.png", "pages/21.png"}, laterChapters(2*time.Hour, time.Hour))
 	g.readable(t, "reader/01.webp", "reader/02.webp")
 	decoded, err := png.Decode(bytes.NewReader(g.images["pages/21.png"]))
 	must(t, err)
@@ -543,8 +546,8 @@ func blankPage(t *testing.T) []byte {
 // A blank start page has no copy to hold: its chapter starts at the next
 // page. A start that is the gallery's last page leaves its chapter empty,
 // and the copy of it in chapter one still waits for that chapter's date.
-func TestBlankAndLastChapterStarts(t *testing.T) {
-	g := newHiddenStartGallery(t, false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png", "pages/20.png"}, laterChapters(time.Hour, 2*time.Hour))
+func blankAndLastChapterStarts(t *testing.T, w *world) {
+	g := newHiddenStartGallery(t, w, false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png", "pages/20.png"}, laterChapters(time.Hour, 2*time.Hour))
 	g.readable(t, "reader/01.webp", "reader/02.webp")
 	blank := blankPage(t)
 	op := stageFile(t, g.admin, g.ref, "pages/10.png", blank)
@@ -558,4 +561,27 @@ func TestBlankAndLastChapterStarts(t *testing.T) {
 	g.readable(t, "reader/01.webp", "reader/02.webp", "reader/05.webp", "reader/11.webp")
 	g.advance(t, g.start.Add(2*time.Hour))
 	g.readable(t, "reader/01.webp", "reader/02.webp", "reader/03.webp", "reader/05.webp", "reader/11.webp")
+}
+
+// newChapterArchiveWorld attaches gallery media whose readers get page
+// renditions and a ZIP of the released pages.
+func newChapterArchiveWorld(t *testing.T) *world {
+	w := newWorld(t)
+	attachMedia(t, w, w.apps[0], func(c *ck.Config) {
+		k := &c.Media.Kinds[0]
+		k.Uploads[0].Max = 20
+		k.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Download: "released-archive"}
+		k.Private = append(k.Private, media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}},
+			media.Private{Name: "released-archive", To: "released.zip", Zip: "download-pages/", HostOnly: true})
+	})
+	return w
+}
+
+func TestHiddenChapterPublication(t *testing.T) {
+	w := newChapterArchiveWorld(t)
+
+	t.Run("TestHiddenChapterStartKeepsPublishing", func(t *testing.T) { hiddenChapterStartKeepsPublishing(t, w) })
+	t.Run("TestHiddenChapterStartSpreadWaits", func(t *testing.T) { hiddenChapterStartSpreadWaits(t, w) })
+	t.Run("TestHiddenPageCopiesWaitForTheirChapter", func(t *testing.T) { hiddenPageCopiesWaitForTheirChapter(t, w) })
+	t.Run("TestBlankAndLastChapterStarts", func(t *testing.T) { blankAndLastChapterStarts(t, w) })
 }

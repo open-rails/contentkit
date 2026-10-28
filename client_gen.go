@@ -96,49 +96,6 @@ func (c *Client) PostContentComments(ctx context.Context, id string, body conten
 	return out, err
 }
 
-// GetEntityCommentsQuery is the query of GetEntityComments.
-type GetEntityCommentsQuery struct {
-	// only this language's comments; every language by default
-	Language string
-	// likes (most liked), best (Wilson lower bound) or newest (the default)
-	Sort string
-	// page size: 20 by default, at most 100
-	Limit int
-	// items to skip
-	Offset int
-}
-
-func (q GetEntityCommentsQuery) values() url.Values {
-	v := url.Values{}
-	if q.Language != "" {
-		v.Set("language", q.Language)
-	}
-	if q.Sort != "" {
-		v.Set("sort", q.Sort)
-	}
-	if q.Limit != 0 {
-		v.Set("limit", fmt.Sprint(q.Limit))
-	}
-	if q.Offset != 0 {
-		v.Set("offset", fmt.Sprint(q.Offset))
-	}
-	return v
-}
-
-// GetEntityComments is GET /v1/entities/{id}/comments (public). The top-level comments on an entity with reply counts; the caller also sees its own held and rejected ones.
-func (c *Client) GetEntityComments(ctx context.Context, id string, q GetEntityCommentsQuery) ([]content.Comment, error) {
-	var out []content.Comment
-	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
-	return out, err
-}
-
-// PostEntityComments is POST /v1/entities/{id}/comments (public). Comments on an entity in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
-func (c *Client) PostEntityComments(ctx context.Context, id string, body content.CommentInput) (content.Comment, error) {
-	var out content.Comment
-	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/comments", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
 // GetChannelCommentsQuery is the query of GetChannelComments.
 type GetChannelCommentsQuery struct {
 	// only this language's comments; every language by default
@@ -528,27 +485,6 @@ func (c *Client) GetContentFavorite(ctx context.Context, id string, q GetContent
 	return out, err
 }
 
-// PostEntityFavorite is POST /v1/entities/{id}/favorite (user). Favorites an entity the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
-func (c *Client) PostEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
-	var out content.FavoriteState
-	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// DeleteEntityFavorite is DELETE /v1/entities/{id}/favorite (user). Unfavorites an entity, also one no longer visible. Answers the state with its favorite count.
-func (c *Client) DeleteEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
-	var out content.FavoriteState
-	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// GetEntityFavorite is GET /v1/entities/{id}/favorite (public). The favorite count of an entity and whether the caller favorited it (never, signed out: then it must be visible).
-func (c *Client) GetEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
-	var out content.FavoriteState
-	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
 // PostChannelFavorite is POST /v1/channels/{id}/favorite (user). Favorites a channel the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
 func (c *Client) PostChannelFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
 	var out content.FavoriteState
@@ -898,27 +834,6 @@ func (q GetContentCanCommentQuery) values() url.Values {
 func (c *Client) GetContentCanComment(ctx context.Context, id string, q GetContentCanCommentQuery) (content.CommentStanding, error) {
 	var out content.CommentStanding
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
-	return out, err
-}
-
-// GetEntityCanCommentQuery is the query of GetEntityCanComment.
-type GetEntityCanCommentQuery struct {
-	// only this language's thread; all languages by default
-	Language string
-}
-
-func (q GetEntityCanCommentQuery) values() url.Values {
-	v := url.Values{}
-	if q.Language != "" {
-		v.Set("language", q.Language)
-	}
-	return v
-}
-
-// GetEntityCanComment is GET /v1/entities/{id}/can-comment (public). Whether the caller may comment on an entity, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.
-func (c *Client) GetEntityCanComment(ctx context.Context, id string, q GetEntityCanCommentQuery) (content.CommentStanding, error) {
-	var out content.CommentStanding
-	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
@@ -1418,7 +1333,7 @@ func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string,
 	return out, err
 }
 
-// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
+// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Deleted content and its media are unavailable to everyone, buyers included, until restored; restoring reopens it to the same purchases. Purge erases its media after the deletion retention. Billing products and purchase history remain. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) DeleteContentVersion(ctx context.Context, id string, vid string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, nil)
 }
@@ -1798,7 +1713,7 @@ func (q GetEntityQuery) values() url.Values {
 	return v
 }
 
-// GetEntity is GET /v1/entities/{id} (public). An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and membership standing; a merged entity answers with its survivor.
+// GetEntity is GET /v1/entities/{id} (public). An active entity with its names, text, attributes, parent, scope, children, cover, avatar, counts and membership standing; a merged entity answers with its survivor.
 func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (entities.EntityDetail, error) {
 	var out entities.EntityDetail
 	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
@@ -1990,21 +1905,7 @@ func (c *Client) DeleteEntityNames(ctx context.Context, id string, body []entiti
 	return out, err
 }
 
-// PostEntityEdges is POST /v1/entities/{id}/edges (staff). Adds edges from a entity.
-func (c *Client) PostEntityEdges(ctx context.Context, id string, body []entities.EdgeInput) ([]entities.Edge, error) {
-	var out []entities.Edge
-	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// DeleteEntityEdges is DELETE /v1/entities/{id}/edges (staff). Removes edges from a entity.
-func (c *Client) DeleteEntityEdges(ctx context.Context, id string, body []entities.EdgeInput) ([]entities.Edge, error) {
-	var out []entities.Edge
-	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// PostEntityMerge is POST /v1/entities/{id}/merge (staff). Merges a entity into another of its kind: memberships, names, edges and children move, and its code redirects.
+// PostEntityMerge is POST /v1/entities/{id}/merge (staff). Merges a entity into another of its kind: memberships, names and children move, and its code redirects.
 func (c *Client) PostEntityMerge(ctx context.Context, id string, body entities.MergeInput) (entities.MergeReport, error) {
 	var out entities.MergeReport
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/merge", "{id}", url.PathEscape(id)), nil, body, &out)
@@ -2572,8 +2473,6 @@ type GetReleasesQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -2586,8 +2485,6 @@ type GetReleasesQuery struct {
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
 	Attribute []string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the signed-in reader's unseen, in_progress or completed contents
 	ViewStatus string
 	// only content with a live version in this language
@@ -2617,9 +2514,6 @@ func (q GetReleasesQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -2637,9 +2531,6 @@ func (q GetReleasesQuery) values() url.Values {
 	}
 	for _, s := range q.Attribute {
 		v.Add("attribute", s)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.ViewStatus != "" {
 		v.Set("view_status", q.ViewStatus)
@@ -2734,8 +2625,6 @@ type GetContentsQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -2750,8 +2639,6 @@ type GetContentsQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2762,7 +2649,7 @@ type GetContentsQuery struct {
 	DisplayLanguage string
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
-	// newest, oldest, title, popular[:bucket], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
+	// newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
@@ -2791,9 +2678,6 @@ func (q GetContentsQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -2814,9 +2698,6 @@ func (q GetContentsQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -2877,8 +2758,6 @@ type GetSearchQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -2893,8 +2772,6 @@ type GetSearchQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2937,9 +2814,6 @@ func (q GetSearchQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -2960,9 +2834,6 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -3072,8 +2943,6 @@ type GetContentSimilarQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -3088,8 +2957,6 @@ type GetContentSimilarQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -3119,9 +2986,6 @@ func (q GetContentSimilarQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -3142,9 +3006,6 @@ func (q GetContentSimilarQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -3188,8 +3049,6 @@ type GetRecommendationsQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -3204,8 +3063,6 @@ type GetRecommendationsQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -3235,9 +3092,6 @@ func (q GetRecommendationsQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -3258,9 +3112,6 @@ func (q GetRecommendationsQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -3306,8 +3157,6 @@ type GetReleaseDatesQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -3322,8 +3171,6 @@ type GetReleaseDatesQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -3354,9 +3201,6 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -3377,9 +3221,6 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -3447,7 +3288,7 @@ func (q PatchMeContentFiltersQuery) values() url.Values {
 	return v
 }
 
-// PatchMeContentFilters is PATCH /v1/me/content-filters (user). Atomically changes only submitted shared entity choices and optional include_deleted. Omitted choices remain unchanged. Each choice sets visible or default:true.
+// PatchMeContentFilters is PATCH /v1/me/content-filters (user). Atomically changes only submitted shared entity choices. Omitted choices remain unchanged. Each choice sets visible or default:true.
 func (c *Client) PatchMeContentFilters(ctx context.Context, body discovery.ContentFiltersUpdate, q PatchMeContentFiltersQuery) (discovery.ContentFilters, error) {
 	var out discovery.ContentFilters
 	err := c.call(ctx, http.MethodPatch, "/v1/me/content-filters", q.values(), body, &out)
@@ -3572,9 +3413,9 @@ func (c *Client) PostExposures(ctx context.Context, body discovery.Exposures) er
 
 // GetMeFavoritesQuery is the query of GetMeFavorites.
 type GetMeFavoritesQuery struct {
-	// contents (the default), entities or channels
+	// contents (the default) or channels
 	Target string
-	// only this content kind or group kind
+	// only this content kind
 	Kind string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
@@ -3624,7 +3465,7 @@ func (q GetMeFavoritesQuery) values() url.Values {
 	return v
 }
 
-// GetMeFavorites is GET /v1/me/favorites (user). The content items (as their listing shows them) entities or channels the reader favorited, most recent first.
+// GetMeFavorites is GET /v1/me/favorites (user). The content items (as their listing shows them) or channels the reader favorited, most recent first.
 func (c *Client) GetMeFavorites(ctx context.Context, q GetMeFavoritesQuery) (discovery.InteractionPage, error) {
 	var out discovery.InteractionPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/favorites", q.values(), nil, &out)

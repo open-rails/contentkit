@@ -267,14 +267,14 @@ export function useRecentSearches(o: { limit?: number; enabled?: boolean; client
     : { searches: r.data ?? NO_SEARCHES, loading: !!key && (r.loading || !r.loaded), error: r.error, clear };
 }
 
-/** A favorite or reaction with its content's or group's id. */
+/** A favorite or reaction with its content's or channel's id. */
 export type MyInteraction = Interaction & { id: string };
 
-const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.entity?.id ?? x.channel?.id ?? "" })), next: p.next_cursor ?? null, metadata: p.summary });
+const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.channel?.id ?? "" })), next: p.next_cursor ?? null, metadata: p.summary });
 
 export interface UseInteractions extends UseList<MyInteraction, InteractionPage["summary"]> { summary?: InteractionPage["summary"] }
 
-/** The signed-in reader's favorites, most recent first: content cards or groups. */
+/** The signed-in reader's favorites, most recent first: content cards or channels. */
 export function useMyFavorites(q: MineQuery = {}, o: { client?: ContentKitClient } = {}): UseInteractions {
   const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q)!;
@@ -292,7 +292,6 @@ export interface UseContentFilters {
   /** Atomically changes submitted entity choices; other choices are preserved. */
   save: (update: ContentFiltersUpdate) => Promise<ContentFilters>;
   setVisible: (entityId: string, visible: boolean) => Promise<ContentFilters>;
-  setIncludeDeleted: (include: boolean) => Promise<ContentFilters>;
 }
 
 /** One current-domain control per entity, shared by all applies_to kinds. */
@@ -326,7 +325,6 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
       const values = new Map(choices.filters.map((row) => [row.entity_id, row]));
       return {
         ...source,
-        include_deleted: false,
         filters: source.filters.map((row) => {
           const choice = values.get(row.entity.id);
           return { ...row, visible: choice?.visible ?? row.default_visible, overridden: choice?.visible !== undefined };
@@ -367,7 +365,6 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
         return applyGuest(source, browser.snapshot());
       }
       const submitted = new Set((update.filters ?? []).map((row) => row.entity_id));
-      const changesDeleted = typeof update.include_deleted === "boolean";
       setInflight((n) => n + 1);
       try {
         const out = await guarded(() => {
@@ -385,7 +382,6 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
               const next = rows.get(row.entity.id);
               return next ? [next] : [];
             }),
-            include_deleted: changesDeleted ? out.include_deleted : previous.include_deleted,
           } : out);
         }
         return out;
@@ -399,7 +395,6 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
     (entityId: string, visible: boolean) => save({ filters: [{ entity_id: entityId, visible }] }),
     [save],
   );
-  const setIncludeDeleted = useCallback((include: boolean) => save({ include_deleted: include }), [save]);
   return {
     filters: displayed ?? null,
     loading: r.loading || !r.loaded,
@@ -407,7 +402,6 @@ export function useContentFilters(o: { language?: string; client?: ContentKitCli
     saving: inflight > 0,
     save,
     setVisible,
-    setIncludeDeleted,
   };
 }
 

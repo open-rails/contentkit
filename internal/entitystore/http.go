@@ -74,7 +74,7 @@ var routes = []httpapi.Route[handler]{
 			httpapi.Int("limit", "page size: 50 by default, at most 200")},
 		Responses: []httpapi.Reply{httpapi.OK(entities.EntityPage{})}}, Serve: httpapi.H(handler.list)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/entities/{id}", Resource: "entities", Auth: httpapi.Public,
-		Doc:   "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and membership standing; a merged entity answers with its survivor.",
+		Doc:   "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, counts and membership standing; a merged entity answers with its survivor.",
 		Query: []httpapi.Param{language}, Responses: []httpapi.Reply{httpapi.OK(entities.EntityDetail{})}, Errors: notFound}, Serve: httpapi.H(handler.detail)},
 	staff(httpapi.GET, "/manage/entities", "Lists active (or deleted) entities for administration, including internal classifications that are never exposed by public reads. With ids it resolves those entities in every state, deleted and merged ones included, each with its state and a merged one's final survivor (merged_into); unknown ids are absent.", nil, httpapi.OK(entities.EntityPage{}), httpapi.H(handler.manageList), nil,
 		httpapi.List("ids", "only these entity ids (at most 100), in every state; one page, without state, cursor or page"),
@@ -99,11 +99,7 @@ var routes = []httpapi.Route[handler]{
 		func(h handler) http.HandlerFunc { return h.names(h.s.AddNames) }, writes),
 	staff(httpapi.DELETE, "/entities/{id}/names", "Removes names and aliases from a entity.", []entities.Name{}, httpapi.OK([]entities.Name{}),
 		func(h handler) http.HandlerFunc { return h.names(h.s.RemoveNames) }, writes),
-	staff(httpapi.POST, "/entities/{id}/edges", "Adds edges from a entity.", []entities.EdgeInput{}, httpapi.OK([]entities.Edge{}),
-		func(h handler) http.HandlerFunc { return h.edges(h.s.AddEdges) }, writes),
-	staff(httpapi.DELETE, "/entities/{id}/edges", "Removes edges from a entity.", []entities.EdgeInput{}, httpapi.OK([]entities.Edge{}),
-		func(h handler) http.HandlerFunc { return h.edges(h.s.RemoveEdges) }, nil),
-	staff(httpapi.POST, "/entities/{id}/merge", "Merges a entity into another of its kind: memberships, names, edges and children move, and its code redirects.",
+	staff(httpapi.POST, "/entities/{id}/merge", "Merges a entity into another of its kind: memberships, names and children move, and its code redirects.",
 		entities.MergeInput{}, httpapi.OK(entities.MergeReport{}), httpapi.H(handler.merge), writes),
 	staff(httpapi.GET, "/entities/{id}/members", "A entity's memberships in member order, paged.", nil, httpapi.OK(entities.MemberPage{}), httpapi.H(handler.members), notFound,
 		httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 50 by default, at most 500")),
@@ -378,35 +374,6 @@ func (h handler) names(op func(context.Context, []entities.EntityNames) error) h
 		if out == nil {
 			out = []entities.Name{}
 		}
-		reply(w, http.StatusOK, out, err)
-	}
-}
-
-func (h handler) edges(op func(context.Context, []entities.Edge) error) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var in []entities.EdgeInput
-		if err := decode(r, &in); err != nil {
-			fail(w, err)
-			return
-		}
-		id := pathID(r)
-		if err := validateID(id); err != nil {
-			fail(w, err)
-			return
-		}
-		edges := make([]entities.Edge, len(in))
-		for i, e := range in {
-			edges[i] = entities.Edge{From: id, Relation: e.Relation, To: e.To}
-		}
-		if err := op(r.Context(), edges); err != nil {
-			fail(w, err)
-			return
-		}
-		var out []entities.Edge
-		err := h.s.read(r.Context(), func(q Querier) (err error) {
-			out, err = h.s.edges(r.Context(), q, []string{string(id)})
-			return err
-		})
 		reply(w, http.StatusOK, out, err)
 	}
 }

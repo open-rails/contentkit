@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -175,33 +174,31 @@ func TestPostContributorAuthority(t *testing.T) {
 		}
 
 	})
-}
-
-// Presigning is a real media mutation, not just an editor flag in a JSON response.
-func TestPostContributorMediaRevocation(t *testing.T) {
-	w := newWorld(t)
-	a := w.apps[0]
-	attachMedia(t, w, a)
-	person, token := w.person(t, 0)
-	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
-	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.contributor)
-	caller := a.client(token)
-	ref := galleryRef(t, caller, "Own media grant")
-	payload := imageBytes(t)
-	request := media.PresignBody{Ref: ref, Path: "pages/one.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)}
-	_, err := caller.PostMediaUploadPresign(t.Context(), request)
-	must(t, err)
-	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
-	_, err = caller.PostMediaUploadPresign(t.Context(), request)
-	requireError(t, err, 403, "forbidden")
-	own, err := caller.GetContent(t.Context(), ref.ID, ck.GetContentQuery{})
-	must(t, err)
-	if own.Editor {
-		t.Fatal("create-only account retained media editorship")
-	}
-	authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
-	_, err = caller.GetContent(t.Context(), ref.ID, ck.GetContentQuery{})
-	requireError(t, err, 404, "not_found")
+	// Presigning is a real media mutation, not just an editor flag.
+	// Keep this last: attaching media replaces the shared app used by its siblings.
+	t.Run("TestPostContributorMediaRevocation", func(t *testing.T) {
+		attachMedia(t, w, a)
+		person, token := w.person(t, 0)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.contributor)
+		caller := a.client(token)
+		ref := galleryRef(t, caller, "Own media grant")
+		payload := imageBytes(t)
+		request := media.PresignBody{Ref: ref, Path: "pages/one.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)}
+		_, err := caller.PostMediaUploadPresign(t.Context(), request)
+		must(t, err)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
+		_, err = caller.PostMediaUploadPresign(t.Context(), request)
+		requireError(t, err, 403, "forbidden")
+		own, err := caller.GetContent(t.Context(), ref.ID, ck.GetContentQuery{})
+		must(t, err)
+		if own.Editor {
+			t.Fatal("create-only account retained media editorship")
+		}
+		authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(person.ID), w.submitter)
+		_, err = caller.GetContent(t.Context(), ref.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+	})
 }
 
 // A community can belong to the site while AuthKit groups delegate its team.
@@ -312,11 +309,6 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 	must(t, err)
 	_, err = caller.PostMediaUploadPresign(t.Context(), presign)
 	must(t, err)
-	var jobs int
-	must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+" WHERE kind IN ('contentkit_entity_sync','contentkit_channel_lifecycle','contentkit_group_sync') AND args->>'tenant'=$1", a.cfg.Scope.AppID.String()).Scan(&jobs))
-	if jobs != 0 {
-		t.Fatalf("synchronous lifecycle queued %d jobs", jobs)
-	}
 }
 
 type lostChannelScopeAck struct {

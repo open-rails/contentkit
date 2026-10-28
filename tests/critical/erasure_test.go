@@ -161,4 +161,43 @@ func TestClickHouseErasureRetry(t *testing.T) {
 		click(t, a.client(bobToken))
 		assertSignal(t, bob.ID, true)
 	})
+	t.Run("CK-J23-S07_projection_rebuild_remains_erased", func(t *testing.T) {
+		target, _ := w.person(t, 0)
+		live, _ := w.person(t, 0)
+		item := publishedArticle(t, a, "Projection source")
+		ref := contentref.NewVersion(a.cfg.Scope.AppID.String(), "article", item.ID, item.Versions[0].ID)
+		measurement, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10_000}}, ActiveMS: 1_000}}, 1, 1_000)
+		must(t, err)
+		measurement.VersionID = item.Versions[0].ID
+		measurement.VisitID, measurement.SegmentID = uuid.NewString(), uuid.NewString()
+		at := time.Now().UTC().Truncate(time.Microsecond)
+		event := signal.Signal{ContentRef: ref, Subject: signal.Subject{UserID: target.ID}, Type: signal.TypeEngagement, EventID: uuid.NewString(), Revision: 1, OccurredAt: at, Measurement: &measurement, Access: &signal.AccessContext{ObservedAt: at, ContentAccess: "public", ViewerAccess: "full", PolicyRevision: "critical-v1", Audience: "public", EligibilityKnown: true}}
+		other := event
+		other.Subject = signal.Subject{UserID: live.ID}
+		other.EventID = uuid.NewString()
+		must(t, store.RecordSignals(t.Context(), a.cfg.Scope.AppID.String(), []signal.Signal{event, other}))
+		assertState := func(t *testing.T, user string, present bool) {
+			t.Helper()
+			state, err := store.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: user}, []signal.ContentRef{ref})
+			must(t, err)
+			value, exists := state[ref.Key()]
+			if exists != present || present && value.ActiveMS != 1_000 {
+				t.Fatalf("measured projection presence=%v active=%d for%s, expected presence=%v", exists, value.ActiveMS, user, present)
+			}
+		}
+		assertState(t, target.ID, true)
+		assertState(t, live.ID, true)
+		for range 2 {
+			must(t, a.engine.AnonymizeAccount(t.Context(), target.ID))
+		}
+		event.Revision = 2
+		must(t, store.RecordSignals(t.Context(), a.cfg.Scope.AppID.String(), []signal.Signal{event}))
+		repaired, err := store.RepairProjections(t.Context(), a.cfg.Scope.AppID.String(), signal.RepairOptions{Rebuild: true})
+		must(t, err)
+		if repaired.Examined == 0 || repaired.Repaired == 0 {
+			t.Fatal("repair did not rebuild the live positive-control projection")
+		}
+		assertState(t, target.ID, false)
+		assertState(t, live.ID, true)
+	})
 }

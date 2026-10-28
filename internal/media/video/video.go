@@ -40,7 +40,7 @@ type Config struct {
 	// them; every rung is encoded in each. Default DefaultCodecs. MP4
 	// presets are always H.264.
 	Codecs []media.Codec
-	// Preset is the libx264/libx265 preset of rungs up to 1080, TopPreset of
+	// Preset is the libx264 preset of rungs up to 1080, TopPreset of
 	// the rungs above; both default "fast".
 	Preset, TopPreset string
 	// Encoder is EncoderAuto (default), EncoderCPU or EncoderNVENC. Each

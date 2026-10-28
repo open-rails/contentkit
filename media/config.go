@@ -73,17 +73,8 @@ type Kind struct {
 	// always kept, so unhiding can render them again, as are body images,
 	// which new versions copy.
 	KeepOriginals bool `json:"keep_originals,omitempty"`
-	// ServeOriginals lists and serves uploads to viewers with access, like
-	// any private file. Otherwise viewer URLs are scoped to served files,
-	// not the whole private folder, and reads omit upload paths and blobs.
-	ServeOriginals bool `json:"serve_originals,omitempty"`
-	// Downloads are the upload paths and private presets (Image, MP4 or Zip)
-	// whose files live in download/: only a download token opens them and
-	// reads never list them. ForContent adds a content kind's originals, its
-	// zip and what the zip packs.
-	Downloads []string `json:"downloads,omitempty"`
-	// Download is what a version's download serves, one of Downloads: a
-	// literal upload (the original) or an MP4 or Zip preset. ForContent sets
+	// Download is what a version's download serves: a literal upload (the
+	// original) or an MP4 or Zip preset. ForContent sets
 	// it from the content kind's download; "" serves none.
 	Download string    `json:"download,omitempty"`
 	Private  []Private `json:"private,omitempty"`
@@ -113,9 +104,6 @@ func findPrivate(ps []Private, name string) *Private {
 // same stem replaces it.
 type Upload struct {
 	Path string `json:"path"`
-	// ArchiveTo expands a ZIP into this image upload pattern during ingestion.
-	// It is media-level policy and may target gallery pages or body images.
-	ArchiveTo string `json:"archive_to,omitempty" yaml:"archive_to"`
 	// Body marks a content kind's body images (Named, with a private image
 	// preset and no public one): each version keeps its copy in private/,
 	// which only the version's openers read.
@@ -324,26 +312,16 @@ type HLS struct {
 	// is DefaultMinAspect and DefaultMaxAspect. A source outside fails.
 	MinAspect float64 `json:"min_aspect,omitempty"`
 	MaxAspect float64 `json:"max_aspect,omitempty"`
-	Profile   string  `json:"profile,omitempty"` // VideoLive or VideoAnimation
 }
 
 // MP4 is a muxed H.264 MP4 at one rung (short side), with the default audio.
 type MP4 struct {
-	Rung    int    `json:"rung"`
-	Profile string `json:"profile,omitempty"`
+	Rung int `json:"rung"`
 }
 
 // Subtitles converts SRT, SSA/ASS and WebVTT to clean UTF-8 WebVTT. A video
 // lists the item's converted subtitles as tracks after its own.
 type Subtitles struct{}
-
-const (
-	VideoLive = ""
-)
-
-const (
-	VideoAnimation = "animation"
-)
 
 // DefaultLadder is the HLS ladder by short side.
 var DefaultLadder = []int{2160, 1080, 480}

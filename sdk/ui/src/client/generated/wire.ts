@@ -505,18 +505,15 @@ export interface ContentFilterState {
 export interface ContentFilters {
   applies_to: string[];
   filters: ContentFilterState[];
-  include_deleted: boolean;
 }
 
 export interface ContentFiltersInitialization {
   account_id: string;
   filters: GuestFilterSetting[];
-  include_deleted: boolean;
 }
 
 export interface ContentFiltersUpdate {
   filters?: GuestFilterSetting[];
-  include_deleted?: boolean;
 }
 
 export interface ContentInput {
@@ -678,22 +675,6 @@ export interface Download {
   serve?: string;
 }
 
-export interface Edge {
-  from: string;
-  relation: string;
-  to: string;
-}
-
-export interface EdgeInput {
-  relation: string;
-  to: string;
-}
-
-export interface EdgeRecord {
-  relation: string;
-  to: Ref;
-}
-
 export interface Edit {
   crop?: Crop;
   rotate?: number;
@@ -814,7 +795,6 @@ export interface EntityDetail {
   parent?: EntityCard;
   scope?: EntityCard;
   children: EntityCard[];
-  edges: Edge[];
   counts: Count[];
   access?: EntityAccess;
 }
@@ -867,7 +847,6 @@ export interface EntityRecord {
   cover_image?: string;
   cover_content?: Ref;
   avatar?: string;
-  edges?: EdgeRecord[];
   code?: string;
   created_at?: string;
   updated_at?: string;
@@ -1136,7 +1115,6 @@ export interface InlineImage {
 export interface Interaction {
   channel?: ChannelCard;
   content?: Card;
-  entity?: EntityCard;
   value: number;
   at: string;
 }
@@ -1270,7 +1248,6 @@ export interface MergeReport {
   into: string;
   memberships_moved: number;
   names_moved: number;
-  edges_moved: number;
   groups_moved: number;
 }
 
@@ -2038,7 +2015,6 @@ export interface VersionRecord {
   text?: Record<string, VersionText>;
   original_title?: string;
   original_language?: string;
-  segments?: Segment[];
   created_at?: string;
   updated_at?: string;
 }

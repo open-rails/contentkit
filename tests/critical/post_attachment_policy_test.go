@@ -1,11 +1,9 @@
 package critical_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,7 +26,7 @@ func TestPostAttachmentPolicies(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	attachMedia(t, w, a, func(cfg *ck.Config) {
-		cfg.Media.Kinds = []media.Kind{{Name: "article", KeepOriginals: true, ServeOriginals: true,
+		cfg.Media.Kinds = []media.Kind{{Name: "article", KeepOriginals: true,
 			Uploads: []media.Upload{
 				{Path: "images/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Max: 5},
 				{Path: "videos/{name}", Types: []string{"video/mp4"}, MaxBytes: 2 << 20, Max: 1},
@@ -196,43 +194,5 @@ func TestPostAttachmentPolicies(t *testing.T) {
 	must(t, err)
 	if !published.Live || !published.Decision.Allowed || published.Body != "A mixed-media post" {
 		t.Fatalf("published attachment post is not readable: %+v", published)
-	}
-	publicMedia, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
-	must(t, err)
-	images, videos = 0, 0
-	for _, file := range publicMedia.Files {
-		// Upload is editor-only metadata. Public readers identify these
-		// explicitly served originals by their configured attachment paths.
-		if !strings.HasPrefix(file.Path, "images/") && !strings.HasPrefix(file.Path, "videos/") {
-			continue
-		}
-		if file.URL == "" {
-			t.Fatalf("published original attachment has no URL: %s", file.Path)
-		}
-		response, err := http.Get(file.URL)
-		must(t, err)
-		data, err := io.ReadAll(response.Body)
-		response.Body.Close()
-		must(t, err)
-		if response.StatusCode != http.StatusOK {
-			t.Fatalf("published attachment %s returned HTTP %d", file.Path, response.StatusCode)
-		}
-		switch {
-		case strings.HasPrefix(file.Path, "images/"):
-			if !bytes.Equal(data, payload) {
-				t.Fatalf("published image changed: %s", file.Path)
-			}
-			images++
-		case file.Path == video1.Path:
-			if !bytes.Equal(data, video) || !bytes.Contains(data, []byte("ftyp")) || file.Type != "video/mp4" {
-				t.Fatal("published video did not retain its real playable MP4 bytes")
-			}
-			videos++
-		default:
-			t.Fatalf("unaccepted attachment became readable: %s", file.Path)
-		}
-	}
-	if images != 5 || videos != 1 {
-		t.Fatalf("published attachment access: images=%d videos=%d", images, videos)
 	}
 }

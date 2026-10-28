@@ -2,9 +2,9 @@ import { cn } from "cn";
 import { useCallback, useContext, useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { humanize } from "../../client/entity-fields.js";
-import type { Avatar, EntityCard, EntityDetail, EntitiesCover } from "../../client/generated/wire.js";
+import type { Avatar, EntityCard, EntitiesCover } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
-import { ContentKitContext, useContentKitClient } from "../../react/context.js";
+import { ContentKitContext } from "../../react/context.js";
 import { useTypeahead } from "../../react/discovery.js";
 import { Input } from "#ckui/ui/input";
 import { ProfileImage } from "../profile-image.js";
@@ -148,22 +148,4 @@ export function EntityPicker({ kind, language, exclude, label, onPick, client, a
       <ErrorLine error={found.error} />
     </div>
   );
-}
-
-/** Entities read by id, for names where only ids are at hand (edges); a missing or deleted one is left out. */
-export function useEntityNames(ids: readonly string[], o: { language?: string; client?: ContentKitClient; management?: boolean } = {}): ReadonlyMap<string, EntityDetail> {
-  const client = useContentKitClient(o.client);
-  const [found, setFound] = useState<ReadonlyMap<string, EntityDetail>>(new Map());
-  const key = [...new Set(ids)].sort().join(",");
-  useEffect(() => {
-    if (!key) return;
-    const ctl = new AbortController();
-    const list = key.split(",");
-    // A merged entity answers as its survivor: keep it under the id asked for.
-    Promise.all(list.map((id) => (o.management ? client.entities.getForManagement(id, o.language, ctl.signal) : client.entities.get(id, o.language, ctl.signal)).catch(() => null))).then((all) => {
-      if (!ctl.signal.aborted) setFound(new Map(all.flatMap((g, i) => (g ? [[list[i]!, g] as const] : []))));
-    });
-    return () => ctl.abort();
-  }, [key, client, o.language, o.management]);
-  return found;
 }

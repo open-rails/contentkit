@@ -66,7 +66,6 @@ export const discovery: typeof en = {
     hidden: "숨김",
     useDefault: "기본값 사용",
     noFilters: "이 사이트에는 콘텐츠 필터가 없습니다.",
-    includeDeleted: "구매한 삭제된 콘텐츠 표시",
     noDates: "공개일이 없습니다.",
     items_one: "{count}개",
     items_other: "{count}개",

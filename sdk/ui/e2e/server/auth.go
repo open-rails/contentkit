@@ -19,34 +19,34 @@ import (
 	"github.com/open-rails/authkit/keys"
 
 	"github.com/open-rails/contentkit/access"
+	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 )
 
 // AuthKit's JSON API is served at {authAPIPath}/v1.
 const authAPIPath = "/api/auth"
 
-// This legacy, unscoped ContentKit fixture uses one explicit AuthKit directory.
-// Keep its owner stable across harness restarts; scoped app policy is tested elsewhere.
 const accountTenantID = "00000000-0000-4000-8000-000000000201"
 
 var (
-	rbac = authkit.NewRoles()
+	rbac       = authkit.NewRoles()
+	appPersona = rbac.Persona("app")
 	// perm is ContentKit's staff permissions as AuthKit's: the host declares
 	// them from access.Permissions() and builds its roles from the constants.
 	perm = func() map[access.Permission]iam.Perm {
 		out := map[access.Permission]iam.Perm{}
 		for _, p := range access.Permissions() {
-			out[p] = rbac.Root.Declare(p.String())[0]
+			out[p] = appPersona.Declare(ckauth.AppPermission(p))[0]
 		}
 		return out
 	}()
 	// Every fixture member can create/edit their own posts. Other roles add staff powers.
-	contributor = rbac.Root.Role("contributor", perm[access.ContentCreate], perm[access.ContentEditOwn])
+	contributor = appPersona.Role("contributor", perm[access.ContentCreate], perm[access.ContentEditOwn])
 	// roles are what /__test/users additionally hands out.
 	roles = map[string]iam.Role{
-		"staff": rbac.Root.Role("staff", perm[access.ContentWrite], perm[access.ContentViewRestricted], perm[access.PollsWrite], perm[access.CommentsModerate],
+		"staff": appPersona.Role("staff", perm[access.ContentWrite], perm[access.ContentViewRestricted], perm[access.PollsWrite], perm[access.CommentsModerate],
 			perm[access.ModerationReview], perm[access.CommentsBan], perm[access.EntitiesWrite]),
-		"moderator": rbac.Root.Role("moderator", perm[access.CommentsModerate], perm[access.ModerationReview], perm[access.CommentsBan]),
-		"editor":    rbac.Root.Role("editor", perm[access.ContentWrite], perm[access.PollsWrite]),
+		"moderator": appPersona.Role("moderator", perm[access.CommentsModerate], perm[access.ModerationReview], perm[access.CommentsBan]),
+		"editor":    appPersona.Role("editor", perm[access.ContentWrite], perm[access.PollsWrite]),
 	}
 )
 
@@ -92,7 +92,17 @@ func newAuthInDatabase(ctx context.Context, origin string, pool *pgxpool.Pool, d
 		Email:     outbox.Email(),
 		SMS:       outbox.SMS(),
 	})
-	return auth, outbox, err
+	if err != nil {
+		return nil, nil, err
+	}
+	persona, err := auth.Persona("app")
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := auth.CreateGroup(ctx, iam.NewGroup{ID: appID, TenantID: tenantID, Persona: persona}); err != nil {
+		return nil, nil, err
+	}
+	return auth, outbox, nil
 }
 
 // behindProxy is the host's trusted-proxy step in front of ContentKit: the
@@ -117,8 +127,8 @@ type testUser struct {
 	AccessToken string `json:"access_token"`
 }
 
-// newUser creates a verified account with authtest, holding contributor and the optional role in the root
-// group ("" no extra role), and signs it in through AuthKit's HTTP surface.
+// newUser creates a verified account with contributor and optional app roles,
+// and signs it in through AuthKit's HTTP surface.
 func (h *harness) newUser(role string) (u testUser, err error) {
 	r, ok := roles[role]
 	if !ok && role != "" {
@@ -127,9 +137,9 @@ func (h *harness) newUser(role string) (u testUser, err error) {
 	defer recoverFailure(&err)
 	t := requestTB{}
 	au := authtest.NewUser(t, h.auth)
-	authtest.GrantRole(t, h.auth, iam.RootGroup(), iam.UserSubject(au.ID), contributor)
+	authtest.GrantRole(t, h.auth, iam.GroupByID(appID), iam.UserSubject(au.ID), contributor)
 	if ok {
-		authtest.GrantRole(t, h.auth, iam.RootGroup(), iam.UserSubject(au.ID), r)
+		authtest.GrantRole(t, h.auth, iam.GroupByID(appID), iam.UserSubject(au.ID), r)
 	}
 	tokens := authtest.SignIn(t, h.auth, au)
 	u = testUser{ID: au.ID, Username: au.Username, Email: au.Email, Password: au.Password, Role: role, AccessToken: tokens.AccessToken}

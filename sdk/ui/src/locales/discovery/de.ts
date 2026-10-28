@@ -66,7 +66,6 @@ export const discovery: typeof en = {
     hidden: "Ausgeblendet",
     useDefault: "Standard verwenden",
     noFilters: "Diese Website hat keine Inhaltsfilter.",
-    includeDeleted: "Entfernte Inhalte zeigen, die ich gekauft habe",
     noDates: "Keine Erscheinungsdaten.",
     items_one: "{count} Eintrag",
     items_other: "{count} Einträge",

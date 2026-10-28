@@ -113,7 +113,7 @@ func decode(r *http.Request, v any) error {
 // config tells the tests where everything is.
 func (h *harness) config(w http.ResponseWriter, _ *http.Request) {
 	reply(w, http.StatusOK, map[string]any{
-		"origin": h.origin, "media": h.media, "namespace": tenant, "bucket": h.bucket,
+		"origin": h.origin, "media": h.media, "namespace": mediaScope.Partition(), "bucket": h.bucket,
 		"api": apiPrefix, "on_upload_api": onUploadPrefix, "members_api": membersPrefix, "auth_api": authAPIPath + "/v1",
 	})
 }
@@ -319,8 +319,6 @@ func (h *harness) publication(w http.ResponseWriter, r *http.Request) {
 	}
 	collect("jobs", `SELECT kind, queue, state, attempt, errors, scheduled_at FROM `+riverSchema+`.river_job
  WHERE args->>'version' = $1 OR args->>'Version' = $1 ORDER BY id`, q.Get("version"))
-	collect("publications", `SELECT id, kind, state, created_at, ready_at FROM `+schema+`.content_version_publications
- WHERE version_id = $1 ORDER BY created_at`, q.Get("version"))
 	if m, _, err := h.manifests.Get(r.Context(), ref); err != nil {
 		out["files"] = err.Error()
 	} else {

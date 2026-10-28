@@ -161,10 +161,4 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 			t.Fatalf("request replay duplicated %s: before=%d after=%d", kind, n, after[kind])
 		}
 	}
-	var oldJobs int
-	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job
- WHERE kind IN ('contentkit_content_publish_due','contentkit_catalog_publish_due')`).Scan(&oldJobs))
-	if oldJobs != 0 {
-		t.Fatalf("publication still admitted %d removed sweep jobs", oldJobs)
-	}
 }

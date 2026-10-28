@@ -37,13 +37,12 @@ type accountNoticeWorld struct {
 	server       *httptest.Server
 	sink         notify.Publisher
 	store        *notifypg.Store
-	legacy       *notifypg.Store
 	schema       string
 	scope        string
 	manager      *ck.Client
 }
 
-func newAccountNoticeWorld(t *testing.T, adoptLegacy ...bool) *accountNoticeWorld {
+func newAccountNoticeWorld(t *testing.T) *accountNoticeWorld {
 	t.Helper()
 	w := newWorld(t, func(c *ck.Config) {
 		c.Accounts = &ck.AccountsConfig{Schema: c.Database.Schema}
@@ -52,14 +51,10 @@ func newAccountNoticeWorld(t *testing.T, adoptLegacy ...bool) *accountNoticeWorl
 	})
 	a := w.apps[0]
 	inboxSchema := w.schema + "_inbox"
-	if len(adoptLegacy) > 0 && adoptLegacy[0] {
-		inboxSchema = w.schema
-	} else {
-		t.Cleanup(func() {
-			_, err := w.pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+pgx.Identifier{inboxSchema}.Sanitize()+" CASCADE")
-			must(t, err)
-		})
-	}
+	t.Cleanup(func() {
+		_, err := w.pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+pgx.Identifier{inboxSchema}.Sanitize()+" CASCADE")
+		must(t, err)
+	})
 	scopes := map[string]string{}
 	producers := []authkit.NotificationProducer{}
 	for index, app := range w.apps {
@@ -86,9 +81,7 @@ func newAccountNoticeWorld(t *testing.T, adoptLegacy ...bool) *accountNoticeWorl
 	must(t, err)
 	store, err := notifypg.New(w.pool, notifypg.Config{Schema: inboxSchema, Scope: scope})
 	must(t, err)
-	legacy, err := notifypg.New(w.pool, notifypg.Config{Schema: w.schema, Scope: scope})
-	must(t, err)
-	n := &accountNoticeWorld{w: w, a: a, accounts: accounts, accountOwner: inbox, sink: sink, store: store, legacy: legacy, schema: inboxSchema, scope: scope, server: httptest.NewServer(inbox.Handler())}
+	n := &accountNoticeWorld{w: w, a: a, accounts: accounts, accountOwner: inbox, sink: sink, store: store, schema: inboxSchema, scope: scope, server: httptest.NewServer(inbox.Handler())}
 	t.Cleanup(n.server.Close)
 	a.deps.Notifications = sink
 	n.reopen(t)
@@ -156,16 +149,7 @@ func TestAccountNotificationChannel(t *testing.T) {
 			t.Fatalf("wrong injected reply receipt: %+v", before)
 		}
 		n.requireHTTPInbox(t, ownerToken, 1)
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, n.a.server.URL+"/content/v1/notifications/inbox", nil)
-		must(t, err)
-		authtest.Authorize(t, n.w.tenant[0], request, ownerToken)
-		response, err := n.a.server.Client().Do(request)
-		must(t, err)
-		response.Body.Close()
-		if response.StatusCode != http.StatusNotFound {
-			t.Fatalf("ContentKit still mounts the old inbox: HTTP%d", response.StatusCode)
-		}
-		_, err = n.accounts.SetNotificationRead(t.Context(), owner.ID, before[0].ID, true)
+		_, err := n.accounts.SetNotificationRead(t.Context(), owner.ID, before[0].ID, true)
 		must(t, err)
 		_, err = n.a.client(writerToken).PatchComment(t.Context(), reply.ID, content.CommentEdit{Body: "Edited public reply"})
 		must(t, err)
@@ -231,11 +215,6 @@ func TestAccountNotificationChannel(t *testing.T) {
 		must(t, n.w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{n.w.schema, "content_comment_notifications"}.Sanitize()+` WHERE tenant_id=$1 AND source_id=$2`, n.a.cfg.Scope.AppID.String(), likeID).Scan(&identities))
 		if identities != 1 {
 			t.Fatalf("like identities=%d; want 1", identities)
-		}
-		legacy, err := n.legacy.List(t.Context(), notify.Recipient{Audience: notify.AudienceUser, ID: owner.ID}, notify.ListOptions{})
-		must(t, err)
-		if n.schema == n.w.schema || len(legacy.Items) != 0 {
-			t.Fatalf("injected publication wrote to ContentKit's fallback inbox: %+v", legacy)
 		}
 	})
 	t.Run("CK-J25-S11_exact_delete_hold_restore_and_stale_delivery", func(t *testing.T) {
@@ -355,7 +334,7 @@ func TestAccountNotificationChannel(t *testing.T) {
 			t.Fatal("delayed publication crossed account erasure fence")
 		}
 		if _, err := n.store.Publish(t.Context(), before[0].Input); !errors.Is(err, notify.ErrRecipientErased) {
-			t.Fatalf("legacy replay crossed AuthKit's account fence: %v", err)
+			t.Fatalf("direct replay crossed AuthKit's account fence: %v", err)
 		}
 	})
 	t.Run("CK-J25-S13_reply_waits_for_concurrent_parent_deletion", func(t *testing.T) {
@@ -405,8 +384,7 @@ func TestAccountNotificationChannel(t *testing.T) {
 	})
 }
 
-func TestHiddenCommentAuthors(t *testing.T) {
-	n := newAccountNoticeWorld(t)
+func hiddenCommentAuthors(t *testing.T, n *accountNoticeWorld) {
 	a := n.a
 	owner, ownerToken := n.w.person(t, 0)
 	writer, writerToken := n.w.person(t, 0)
@@ -472,6 +450,7 @@ func TestHiddenCommentAuthors(t *testing.T) {
 			t.Fatalf("admin omitted hidden state: %+v", cm)
 		}
 	}
+	// This tenant-wide count assumes sibling subtests have created no held comments.
 	queue, err := n.manager.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: content.KindComment})
 	must(t, err)
 	if len(queue.Items) != 2 {
@@ -533,8 +512,7 @@ func TestHiddenCommentAuthors(t *testing.T) {
 	}
 }
 
-func TestHiddenCommentAuthorReactions(t *testing.T) {
-	n := newAccountNoticeWorld(t)
+func hiddenCommentAuthorReactions(t *testing.T, n *accountNoticeWorld) {
 	a := n.a
 	owner, ownerToken := n.w.person(t, 0)
 	writer, writerToken := n.w.person(t, 0)
@@ -698,6 +676,7 @@ func TestHiddenCommentAuthorReactions(t *testing.T) {
 	checkCounts("article", item.ID, 1, 0)
 	checkCounts("article", second.ID, 0, 0)
 	checkNotices()
+	// This tenant-wide count assumes siblings create no hidden anonymized reaction rows.
 	var retained int
 	must(t, n.w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{n.w.schema, "content_reactions"}.Sanitize()+` WHERE tenant_id=$1 AND anonymous_actor_id IS NOT NULL AND user_id IS NULL AND author_hidden AND value<>0`, a.cfg.Scope.AppID.String()).Scan(&retained))
 	if retained != 6 {
@@ -705,8 +684,7 @@ func TestHiddenCommentAuthorReactions(t *testing.T) {
 	}
 }
 
-func TestHiddenReactorNoticeVisibility(t *testing.T) {
-	n := newAccountNoticeWorld(t)
+func hiddenReactorNoticeVisibility(t *testing.T, n *accountNoticeWorld) {
 	a := n.a
 	owner, ownerToken := n.w.person(t, 0)
 	writer, writerToken := n.w.person(t, 0)
@@ -741,4 +719,11 @@ func TestHiddenReactorNoticeVisibility(t *testing.T) {
 	if got := n.items(t, owner.ID); len(got) != 3 {
 		t.Fatalf("restoring comments lost likes made while hidden: %+v", got)
 	}
+}
+
+func TestHiddenAuthorNotices(t *testing.T) {
+	n := newAccountNoticeWorld(t)
+	t.Run("TestHiddenCommentAuthors", func(t *testing.T) { hiddenCommentAuthors(t, n) })
+	t.Run("TestHiddenCommentAuthorReactions", func(t *testing.T) { hiddenCommentAuthorReactions(t, n) })
+	t.Run("TestHiddenReactorNoticeVisibility", func(t *testing.T) { hiddenReactorNoticeVisibility(t, n) })
 }

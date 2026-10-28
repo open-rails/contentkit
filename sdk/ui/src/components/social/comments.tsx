@@ -5,7 +5,7 @@ import { createContext, useContext, useId, useMemo, useRef, useState, type Keybo
 import type { ContentKitClient } from "../../client/client.js";
 import type { BanScope, Reaction, Sort } from "../../client/content/types.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
-import type { Target } from "../../client/content/types.js";
+import type { CommentTarget } from "../../client/content/types.js";
 import type { BanNotice as BanNoticeData, Comment, CommentBan, CommentStanding, PublicUser } from "../../client/generated/wire.js";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import { useMessages } from "../../i18n/context.js";
@@ -25,8 +25,8 @@ import { BanNotice, CommentBanDialog } from "./bans.js";
 import { ConfirmDialog, contentError, ErrorLine, RelativeTime, UserAvatar, UserName } from "./parts.js";
 
 export interface CommentsProps {
-  /** The commented content item, version or group. */
-  item: Target;
+  /** The commented content item, version or channel. */
+  item: CommentTarget;
   /** One language's thread: shown, and joined by new comments. */
   language?: string;
   /** The item's total comment count. Otherwise inferred when the whole thread is loaded. */
@@ -56,7 +56,7 @@ export interface CommentsProps {
 }
 
 interface Thread {
-  item: Target;
+  item: CommentTarget;
   comments: UseComments;
   standing: CommentStanding | null;
   /** undefined: not known yet. */

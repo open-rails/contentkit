@@ -18,9 +18,6 @@ func (e *Engine) checkErasureReplay(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if e.scope == nil {
-		return nil
-	}
 	anonymizations, err := e.accountAnonymizationQuery(ctx)
 	if err != nil {
 		return err
@@ -74,9 +71,6 @@ func (e *Engine) ReplayErasureFences(ctx context.Context) (signal.ErasureReport,
 // a privileged recovery command, never an automatic catalog restore.
 func (e *Engine) ReplayAccountErasures(ctx context.Context) (signal.ErasureReport, error) {
 	report := signal.ErasureReport{Remaining: map[string]uint64{}}
-	if e.scope == nil {
-		return report, errors.New("contentkit: account erasure replay requires Scope")
-	}
 	if e.erasureRecovery && e.signals != nil {
 		if conn, _ := e.signals.state(); conn == nil {
 			e.signals.attempt(ctx)
@@ -127,15 +121,13 @@ func (e *Engine) completeErasure(ctx context.Context, actors []string) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `UPDATE `+pgx.Identifier{e.schema, "content_erased_subjects"}.Sanitize()+` SET engine_cleanup_complete=true WHERE tenant_id=$1 AND actor_id=ANY($2)`, e.cfg.Tenant, actors); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE `+pgx.Identifier{e.schema, "content_erased_subjects"}.Sanitize()+` SET engine_cleanup_complete=true WHERE tenant_id=$1 AND actor_id=ANY($2)`, e.cfg.Scope.AppID.String(), actors); err != nil {
 		return err
 	}
-	if e.scope != nil {
-		schema, _ := e.accountStorage()
-		if _, err = tx.Exec(ctx, `INSERT INTO `+pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize()+` (tenant_id,app_id,actor_id)
+	schema, _ := e.accountStorage()
+	if _, err = tx.Exec(ctx, `INSERT INTO `+pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize()+` (tenant_id,app_id,actor_id)
 SELECT $1,$2,unnest($3::text[]) ON CONFLICT (tenant_id,app_id,actor_id) DO NOTHING`, e.scope.TenantID.String(), e.scope.AppID.String(), actors); err != nil {
-			return err
-		}
+		return err
 	}
 	return tx.Commit(ctx)
 }

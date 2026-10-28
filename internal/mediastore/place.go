@@ -19,8 +19,8 @@ import (
 const placeConcurrency = 4
 
 // Place moves ref's staged uploads (temp/u-{uuid}) to their content
-// allocations, {private|download}/sha256-{hex}-{uuid} of the bytes the server
-// read (download/ for Kind.Downloads), and returns
+// allocations, {area}/sha256-{hex}-{uuid} (Kind.Area) of the bytes the server
+// read, and returns
 // how many files it placed. The media worker runs it before processing:
 //
 //  1. read each staged upload, hashing it. A single PUT (at most
@@ -53,7 +53,7 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 	sizes, areas := map[string]int64{}, map[string]string{}
 	for _, f := range man.Files {
 		if f.Staged != "" && f.Fail() == nil {
-			sizes[f.Staged], areas[f.Staged] = f.Size, item.Kind().Area(f.Path, "")
+			sizes[f.Staged], areas[f.Staged] = f.Size, item.Kind().Area("")
 		}
 	}
 	if len(sizes) == 0 {

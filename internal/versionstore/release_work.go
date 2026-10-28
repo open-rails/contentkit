@@ -24,6 +24,7 @@ import (
 // A releasePlan is a frozen publication attempt with optional storage work.
 // Chapter membership comes from ordered paths when a new plan is prepared.
 type releasePlan struct {
+	ID              string      `json:"-"`
 	EffectiveAccess access.Rule `json:"effective_access"`
 	versions.Target
 	Kind        string                 `json:"kind"`
@@ -118,10 +119,6 @@ func downloadOnly(k *mediastore.RegisteredKind, f media.File) bool {
 	return z != nil && z.HostOnly && z.Zip != "" && strings.HasPrefix(f.Path, z.Zip)
 }
 
-func (s *Service) publicationRequestsTable() string {
-	return pgxIdent(s.o.Schema, "content_publication_requests")
-}
-
 // releaseDueTx schedules the first publication at its requested time, while
 // edits of an already released item reconcile immediately (including withdrawal).
 func (s *Service) releaseDueTx(ctx context.Context, tx pgx.Tx, t versions.Target) (time.Time, error) {
@@ -134,7 +131,7 @@ func (s *Service) releaseDueTx(ctx context.Context, tx pgx.Tx, t versions.Target
 	if err != nil {
 		return time.Time{}, err
 	}
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+s.publicationRequestsTable()+`
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+s.releaseRequestsTable()+`
  WHERE tenant_id=$1 AND version_id=$2 AND plan IS NOT NULL AND state<>'cancelled')`, s.o.Tenant, t.Version).Scan(&storageStarted); err != nil {
 		return time.Time{}, err
 	}
@@ -154,10 +151,11 @@ func (s *Service) releaseDueTx(ctx context.Context, tx pgx.Tx, t versions.Target
 }
 
 func (s *Service) activeRelease(ctx context.Context, q querier, t versions.Target) (*releasePlan, error) {
+	var id string
 	var raw []byte
-	err := q.QueryRow(ctx, `SELECT r.result FROM `+s.t.versions+` v
- JOIN `+s.publicationRequestsTable()+` r ON r.tenant_id=v.tenant_id AND r.id=v.release_id
- WHERE v.tenant_id=$1 AND v.id=$2 AND v.content_id=$3 AND r.state IN ('retiring','completed')`, s.o.Tenant, t.Version, t.Content).Scan(&raw)
+	err := q.QueryRow(ctx, `SELECT r.id::text,r.result FROM `+s.t.versions+` v
+ JOIN `+s.releaseRequestsTable()+` r ON r.tenant_id=v.tenant_id AND r.id=v.release_id
+ WHERE v.tenant_id=$1 AND v.id=$2 AND v.content_id=$3 AND r.state IN ('retiring','completed')`, s.o.Tenant, t.Version, t.Content).Scan(&id, &raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -168,6 +166,7 @@ func (s *Service) activeRelease(ctx context.Context, q querier, t versions.Targe
 	if err := json.Unmarshal(raw, &plan); err != nil {
 		return nil, err
 	}
+	plan.ID = id
 	return &plan, nil
 }
 
@@ -279,19 +278,20 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 	if prior != nil && prior.Released && (m == nil || !m.Deleted) && (state == "deleted" || parentState == "deleted") &&
 		(state == "published" || state == "deleted") && (parentState == "published" || parentState == "deleted") {
 		// Retention freezes exactly the completed snapshot, including chapter
-		// membership and source revisions. Authoring edits and future deadlines
-		// cannot add files while either this edition or its parent is deleted.
+		// membership and source revisions, for a restore. Authoring edits and
+		// future deadlines cannot add files while either this edition or its
+		// parent is deleted. Its served files stay where they are; the gateway
+		// fence (SyncFences) keeps them from everyone until the restore.
 		prior.Copies, prior.Previous = nil, plan.Previous
 		prior.Waiting, prior.NextAt, prior.Retained = false, nil, true
-		prior.EffectiveAccess = access.Rule{Level: access.PPV}
 		prior.Fingerprint = "retained:" + strings.TrimPrefix(prior.Fingerprint, "retained:")
 		if prior.View != nil {
-			pin := func(blob, area string) error {
+			pin := func(blob string) error {
 				if blob == "" {
 					return nil
 				}
-				sourceArea, _, valid := layout.SplitBlobRef(blob)
-				if !valid || sourceArea != layout.AreaPublic && sourceArea != layout.AreaPrivate {
+				area, _, valid := layout.SplitBlobRef(blob)
+				if !valid || area != layout.AreaPublic && area != layout.AreaPrivate {
 					return fmt.Errorf("%w: retained publication contains unserved media", ErrInvalid)
 				}
 				copy := mediastore.Promotion{Source: blob, Area: area}
@@ -301,21 +301,19 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 				return nil
 			}
 			for _, f := range prior.View.Files {
-				if !f.IsUpload() || k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
-					if err := pin(f.Blob, layout.AreaPrivate); err != nil {
+				if !f.IsUpload() || k.AudioUpload(f) {
+					if err := pin(f.Blob); err != nil {
 						return nil, err
 					}
 				}
 				if f.Track != nil {
-					if err := pin(f.Track.Index, layout.AreaPrivate); err != nil {
+					if err := pin(f.Track.Index); err != nil {
 						return nil, err
 					}
 				}
-				// Configured public previews remain public, just as for a paid
-				// edition. Ordinary reader files move to private before completion.
 				for _, pub := range f.Public {
 					for _, blob := range pub.Blobs {
-						if err := pin(blob, layout.AreaPublic); err != nil {
+						if err := pin(blob); err != nil {
 							return nil, err
 						}
 					}
@@ -506,7 +504,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 				if served[f.Path] {
 					// Uploaded originals stay internal; only declared audio is
 					// copied for direct reader playback.
-					if k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
+					if k.AudioUpload(f) {
 						if previous, ok := m.Delivered(f.Blob, area); ok {
 							f.Blob = previous
 						} else if prior != nil && prior.View != nil {
@@ -635,7 +633,7 @@ func (p *releasePlan) applyDelivery(delivery *mediastore.PublicationDelivery) {
 			f.Track.Index = replace(f.Track.Index)
 		}
 		for j := range f.Public {
-			// ServeOriginals can remap the upload itself to identical served
+			// A served upload can remap itself to identical served
 			// bytes; its verified rendition ownership follows that reference.
 			if f.Public[j].Source == priorSource {
 				f.Public[j].Source = f.Key()
@@ -679,7 +677,7 @@ func (p *releasePlan) applyDelivery(delivery *mediastore.PublicationDelivery) {
 
 func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	var t versions.Target
-	err := s.o.Pool.QueryRow(ctx, `SELECT content_id,version_id FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id).Scan(&t.Content, &t.Version)
+	err := s.o.Pool.QueryRow(ctx, `SELECT content_id,version_id FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id).Scan(&t.Content, &t.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -694,7 +692,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	// A newer intent cannot declare the item settled while an older active
 	// swap still has served objects awaiting retirement. Continue those exact
 	// obligations under the same item owner before preparing another move.
-	rows, err := s.o.Pool.Query(ctx, `SELECT id::text,result FROM `+s.publicationRequestsTable()+`
+	rows, err := s.o.Pool.Query(ctx, `SELECT id::text,result FROM `+s.releaseRequestsTable()+`
  WHERE tenant_id=$1 AND version_id=$2 AND state='retiring' AND id<>$3::uuid ORDER BY created_at,id`, s.o.Tenant, t.Version, id)
 	if err != nil {
 		return err
@@ -752,7 +750,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				if err := s.lockTarget(ctx, tx, t); err != nil {
 					return err
 				}
-				_, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state=CASE WHEN state='retiring' THEN state ELSE 'failed' END,error=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid AND (current OR state='retiring') AND state<>'completed'`, s.o.Tenant, id, resultErr.Error())
+				_, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state=CASE WHEN state='retiring' THEN state ELSE 'failed' END,error=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid AND (current OR state='retiring') AND state<>'completed'`, s.o.Tenant, id, resultErr.Error())
 				return err
 			})
 		}
@@ -767,7 +765,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			var raw []byte
 			var due time.Time
 			var state string
-			err := tx.QueryRow(ctx, `SELECT current,state,scheduled_at,CASE WHEN state='retiring' THEN result ELSE plan END FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state, &due, &raw)
+			err := tx.QueryRow(ctx, `SELECT current,state,scheduled_at,CASE WHEN state='retiring' THEN result ELSE plan END FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state, &due, &raw)
 			if errors.Is(err, pgx.ErrNoRows) {
 				// A newer release pruned this superseded request while it waited.
 				current = false
@@ -795,7 +793,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				return err
 			}
 			if plan.Waiting {
-				_, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='waiting',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id)
+				_, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='waiting',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id)
 				current = false
 				return err
 			}
@@ -805,7 +803,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			}
 			if active != nil && active.Fingerprint == plan.Fingerprint && plan.storageSettled(active) {
 				// The live release already serves this plan; it stays the only copy.
-				if _, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='completed',completed_at=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, s.o.Now()); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',completed_at=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, s.o.Now()); err != nil {
 					return err
 				}
 				current = false
@@ -818,7 +816,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err != nil {
 				return err
 			}
-			_, err = tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET plan=$3,state='running',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, raw)
+			_, err = tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET plan=$3,state='running',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, raw)
 			return err
 		})
 	})
@@ -849,7 +847,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err := s.lockTarget(ctx, tx, t); err != nil {
 				return err
 			}
-			if err := tx.QueryRow(ctx, `SELECT current FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT current FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current); err != nil {
 				return err
 			}
 			if !current {
@@ -863,20 +861,15 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				current = false
 				return s.scheduleReleaseAtTx(ctx, tx, t, s.o.Now())
 			}
-			if plan.View != nil {
-				for _, snapshot := range []struct {
-					kind  string
-					value any
-				}{{kindPages, plan.Pages}, {kindPlayback, plan.Playback}} {
-					pubID, same, err := s.prepareTx(ctx, tx, k, t, snapshot.kind, snapshot.value)
-					if err != nil {
-						return err
-					}
-					if !same {
-						if _, err := s.promoteTx(ctx, tx, k, t, snapshot.kind, pubID); err != nil {
-							return err
-						}
-					}
+			prior, err := s.activeRelease(ctx, tx, t)
+			if err != nil {
+				return err
+			}
+			// A republication with more pages than the one it replaces added pages
+			// (new chapters in the same edition): cards mark the work updated.
+			if plan.View != nil && prior != nil && prior.View != nil && len(plan.Pages.Pages) > len(prior.Pages.Pages) {
+				if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET pages_added_at = now() WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, t.Version); err != nil {
+					return err
 				}
 			}
 			at := s.o.Now()
@@ -889,7 +882,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET result=$3,state='retiring',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, body); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET result=$3,state='retiring',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, body); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET release_id=$3::uuid,released_access=$4 WHERE tenant_id=$1 AND id=$2`, s.o.Tenant, t.Version, id, plan.EffectiveAccess); err != nil {
@@ -957,7 +950,7 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 		}
 		var current bool
 		var state string
-		if err := tx.QueryRow(ctx, `SELECT current,state FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT current,state FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state); err != nil {
 			return err
 		}
 		if state == "completed" {
@@ -968,7 +961,7 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 		}
 		at := s.o.Now()
 		// The result holds the frozen plan with its delivered references.
-		if _, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='completed',completed_at=$3,plan=NULL,error=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, at); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',completed_at=$3,plan=NULL,error=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, at); err != nil {
 			return err
 		}
 		completion, ok := s.o.Facets.(publicationCompletion)

@@ -55,24 +55,23 @@ func (s *Service) filterEntitiesForDomains(ctx context.Context, domains []kinds.
 	return out, nil
 }
 
-func (s *Service) prefs(ctx context.Context, userID string) (map[string]string, bool, error) {
+func (s *Service) prefs(ctx context.Context, userID string) (map[string]string, error) {
 	var raw []byte
-	var includeDeleted bool
-	err := s.o.Pool.QueryRow(ctx, `SELECT overrides, include_deleted FROM `+s.t.prefs+` WHERE tenant_id = $1 AND user_id = $2`,
-		s.o.Tenant, userID).Scan(&raw, &includeDeleted)
+	err := s.o.Pool.QueryRow(ctx, `SELECT overrides FROM `+s.t.prefs+` WHERE tenant_id = $1 AND user_id = $2`,
+		s.o.Tenant, userID).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return map[string]string{}, false, nil
+		return map[string]string{}, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	overrides := map[string]string{}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &overrides); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
-	return overrides, includeDeleted, nil
+	return overrides, nil
 }
 
 // ContentFilters resolves names from the entity service; policy itself is never
@@ -90,7 +89,7 @@ func (s *Service) ContentFilters(ctx context.Context, actor access.Actor, langua
 	}
 	values := map[string]string{}
 	if actor.Member() {
-		values, out.IncludeDeleted, err = s.prefs(ctx, actor.AccountID())
+		values, err = s.prefs(ctx, actor.AccountID())
 		if err != nil {
 			return out, err
 		}
@@ -144,7 +143,7 @@ func (i filterInventory) allowed() map[string]bool {
 }
 
 func (s *Service) SetContentFilters(ctx context.Context, actor access.Actor, u discovery.ContentFiltersUpdate) error {
-	return s.setContentFilters(ctx, actor, u.Filters, u.IncludeDeleted, false)
+	return s.setContentFilters(ctx, actor, u.Filters, false)
 }
 
 func (s *Service) InitializeContentFilters(ctx context.Context, actor access.Actor, u discovery.ContentFiltersInitialization) error {
@@ -154,10 +153,10 @@ func (s *Service) InitializeContentFilters(ctx context.Context, actor access.Act
 	if !actor.Member() || actor.AccountID() != u.AccountID {
 		return auth.ErrForbidden
 	}
-	return s.setContentFilters(ctx, actor, u.Filters, &u.IncludeDeleted, true)
+	return s.setContentFilters(ctx, actor, u.Filters, true)
 }
 
-func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, choices []discovery.GuestFilterSetting, includeDeleted *bool, initialize bool) error {
+func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, choices []discovery.GuestFilterSetting, initialize bool) error {
 	if !actor.Member() {
 		return fmt.Errorf("%w: content filters belong to a signed-in reader", ErrInvalid)
 	}
@@ -195,10 +194,10 @@ func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, cho
 	if err != nil {
 		return err
 	}
-	conflict := `DO UPDATE SET overrides=saved.overrides || EXCLUDED.overrides,include_deleted=COALESCE($4::boolean,saved.include_deleted),updated_at=now()`
+	conflict := `DO UPDATE SET overrides=saved.overrides || EXCLUDED.overrides,updated_at=now()`
 	if initialize {
 		conflict = `DO NOTHING`
 	}
-	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.prefs+` AS saved(tenant_id,user_id,overrides,include_deleted,updated_at) VALUES($1,$2,$3,COALESCE($4::boolean,false),now()) ON CONFLICT(tenant_id,user_id) `+conflict, s.o.Tenant, actor.AccountID(), raw, includeDeleted)
+	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.prefs+` AS saved(tenant_id,user_id,overrides,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(tenant_id,user_id) `+conflict, s.o.Tenant, actor.AccountID(), raw)
 	return err
 }

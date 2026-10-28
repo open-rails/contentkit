@@ -256,176 +256,6 @@
         ]
       }
     },
-    "/v1/entities/{id}/comments": {
-      "get": {
-        "tags": [
-          "comments"
-        ],
-        "summary": "The top-level comments on an entity with reply counts; the caller also sees its own held and rejected ones.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "language",
-            "in": "query",
-            "description": "only this language's comments; every language by default",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "sort",
-            "in": "query",
-            "description": "likes (most liked), best (Wilson lower bound) or newest (the default)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "page size: 20 by default, at most 100",
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "description": "items to skip",
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "ContentKit-Reader-Preferences",
-            "in": "header",
-            "required": false,
-            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
-            "schema": {
-              "type": "string",
-              "maxLength": 8192
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Comment"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "content",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:content",
-          "auth",
-          "request"
-        ]
-      },
-      "post": {
-        "tags": [
-          "comments"
-        ],
-        "summary": "Comments on an entity in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CommentInput"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Comment"
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Comment"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "content",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "comment_banned",
-          "comment_too_long",
-          "comments_closed",
-          "comments_locked",
-          "forbidden",
-          "moderation_rejected",
-          "duplicate_comment",
-          "not_found",
-          "rate_limited",
-          "unauthorized"
-        ],
-        "x-contentkit-error-sets": [
-          "module:content",
-          "auth",
-          "request"
-        ]
-      }
-    },
     "/v1/channels/{id}/comments": {
       "get": {
         "tags": [
@@ -2100,163 +1930,6 @@
         ]
       }
     },
-    "/v1/entities/{id}/favorite": {
-      "post": {
-        "tags": [
-          "favorites"
-        ],
-        "summary": "Favorites an entity the caller sees; favoriting again is a no-op. Answers the state with its favorite count.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FavoriteState"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "content",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "forbidden",
-          "not_found",
-          "rate_limited"
-        ],
-        "x-contentkit-error-sets": [
-          "module:content",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "favorites"
-        ],
-        "summary": "Unfavorites an entity, also one no longer visible. Answers the state with its favorite count.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FavoriteState"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "content",
-        "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "forbidden",
-          "invalid_request",
-          "not_found",
-          "rate_limited"
-        ],
-        "x-contentkit-error-sets": [
-          "module:content",
-          "auth",
-          "request"
-        ]
-      },
-      "get": {
-        "tags": [
-          "favorites"
-        ],
-        "summary": "The favorite count of an entity and whether the caller favorited it (never, signed out: then it must be visible).",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "ContentKit-Reader-Preferences",
-            "in": "header",
-            "required": false,
-            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
-            "schema": {
-              "type": "string",
-              "maxLength": 8192
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FavoriteState"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "content",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "invalid_request",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:content",
-          "auth",
-          "request"
-        ]
-      }
-    },
     "/v1/channels/{id}/favorite": {
       "post": {
         "tags": [
@@ -3856,73 +3529,6 @@
         ]
       }
     },
-    "/v1/entities/{id}/can-comment": {
-      "get": {
-        "tags": [
-          "bans"
-        ],
-        "summary": "Whether the caller may comment on an entity, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "language",
-            "in": "query",
-            "description": "only this language's thread; all languages by default",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "ContentKit-Reader-Preferences",
-            "in": "header",
-            "required": false,
-            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
-            "schema": {
-              "type": "string",
-              "maxLength": 8192
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommentStanding"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "content",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:content",
-          "auth",
-          "request"
-        ]
-      }
-    },
     "/v1/channels/{id}/can-comment": {
       "get": {
         "tags": [
@@ -5012,7 +4618,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
+        "summary": "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Deleted content and its media are unavailable to everyone, buyers included, until restored; restoring reopens it to the same purchases. Purge erases its media after the deletion retention. Billing products and purchase history remain. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -5531,19 +5137,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -5630,14 +5223,6 @@
             }
           },
           {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
             "name": "tz",
             "in": "query",
             "description": "the IANA time zone of released_on and release dates; UTC by default",
@@ -5680,7 +5265,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "newest, oldest, title, popular[:bucket], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
+            "description": "newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest",
             "schema": {
               "type": "string"
             }
@@ -7614,7 +7199,7 @@
         "tags": [
           "entities"
         ],
-        "summary": "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and membership standing; a merged entity answers with its survivor.",
+        "summary": "An active entity with its names, text, attributes, parent, scope, children, cover, avatar, counts and membership standing; a merged entity answers with its survivor.",
         "parameters": [
           {
             "name": "id",
@@ -8268,139 +7853,12 @@
         ]
       }
     },
-    "/v1/entities/{id}/edges": {
-      "post": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Adds edges from a entity.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/EdgeInput"
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Edge"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "entities",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:entities:write",
-        "x-contentkit-errors": [
-          "conflict",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:entities",
-          "auth",
-          "request"
-        ]
-      },
-      "delete": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Removes edges from a entity.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/EdgeInput"
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Edge"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "entities",
-        "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "root:entities:write",
-        "x-contentkit-errors": [],
-        "x-contentkit-error-sets": [
-          "module:entities",
-          "auth",
-          "request"
-        ]
-      }
-    },
     "/v1/entities/{id}/merge": {
       "post": {
         "tags": [
           "entities"
         ],
-        "summary": "Merges a entity into another of its kind: memberships, names, edges and children move, and its code redirects.",
+        "summary": "Merges a entity into another of its kind: memberships, names and children move, and its code redirects.",
         "parameters": [
           {
             "name": "id",
@@ -10505,19 +9963,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -10593,14 +10038,6 @@
               "items": {
                 "type": "string"
               }
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
-            "schema": {
-              "type": "string"
             }
           },
           {
@@ -10879,19 +10316,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -10973,14 +10397,6 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }
@@ -11298,19 +10714,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -11392,14 +10795,6 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }
@@ -11560,19 +10955,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -11654,14 +11036,6 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }
@@ -11818,19 +11192,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -11912,14 +11273,6 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }
@@ -12086,7 +11439,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Atomically changes only submitted shared entity choices and optional include_deleted. Omitted choices remain unchanged. Each choice sets visible or default:true.",
+        "summary": "Atomically changes only submitted shared entity choices. Omitted choices remain unchanged. Each choice sets visible or default:true.",
         "parameters": [
           {
             "name": "language",
@@ -12451,12 +11804,12 @@
         "tags": [
           "discovery"
         ],
-        "summary": "The content items (as their listing shows them) entities or channels the reader favorited, most recent first.",
+        "summary": "The content items (as their listing shows them) or channels the reader favorited, most recent first.",
         "parameters": [
           {
             "name": "target",
             "in": "query",
-            "description": "contents (the default), entities or channels",
+            "description": "contents (the default) or channels",
             "schema": {
               "type": "string"
             }
@@ -12464,7 +11817,7 @@
           {
             "name": "kind",
             "in": "query",
-            "description": "only this content kind or group kind",
+            "description": "only this content kind",
             "schema": {
               "type": "string"
             }
@@ -14779,15 +14132,11 @@
             "items": {
               "$ref": "#/components/schemas/ContentFilterState"
             }
-          },
-          "include_deleted": {
-            "type": "boolean"
           }
         },
         "required": [
           "applies_to",
-          "filters",
-          "include_deleted"
+          "filters"
         ]
       },
       "ContentFiltersInitialization": {
@@ -14801,9 +14150,6 @@
             "items": {
               "$ref": "#/components/schemas/GuestFilterSetting"
             }
-          },
-          "include_deleted": {
-            "type": "boolean"
           }
         }
       },
@@ -14815,9 +14161,6 @@
             "items": {
               "$ref": "#/components/schemas/GuestFilterSetting"
             }
-          },
-          "include_deleted": {
-            "type": "boolean"
           }
         }
       },
@@ -15337,47 +14680,6 @@
           }
         }
       },
-      "Edge": {
-        "type": "object",
-        "properties": {
-          "from": {
-            "type": "string"
-          },
-          "relation": {
-            "type": "string"
-          },
-          "to": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "from",
-          "relation",
-          "to"
-        ]
-      },
-      "EdgeInput": {
-        "type": "object",
-        "properties": {
-          "relation": {
-            "type": "string"
-          },
-          "to": {
-            "type": "string"
-          }
-        }
-      },
-      "EdgeRecord": {
-        "type": "object",
-        "properties": {
-          "relation": {
-            "type": "string"
-          },
-          "to": {
-            "$ref": "#/components/schemas/Ref"
-          }
-        }
-      },
       "Edit": {
         "type": "object",
         "properties": {
@@ -15780,12 +15082,6 @@
               "$ref": "#/components/schemas/EntityCard"
             }
           },
-          "edges": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Edge"
-            }
-          },
           "counts": {
             "type": "array",
             "items": {
@@ -15810,7 +15106,6 @@
           "names",
           "text",
           "children",
-          "edges",
           "counts"
         ]
       },
@@ -15978,12 +15273,6 @@
           },
           "avatar": {
             "type": "string"
-          },
-          "edges": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EdgeRecord"
-            }
           },
           "code": {
             "type": "string"
@@ -16846,9 +16135,6 @@
           "content": {
             "$ref": "#/components/schemas/Card"
           },
-          "entity": {
-            "$ref": "#/components/schemas/EntityCard"
-          },
           "value": {
             "type": "integer"
           },
@@ -17294,9 +16580,6 @@
           "names_moved": {
             "type": "integer"
           },
-          "edges_moved": {
-            "type": "integer"
-          },
           "groups_moved": {
             "type": "integer"
           }
@@ -17306,7 +16589,6 @@
           "into",
           "memberships_moved",
           "names_moved",
-          "edges_moved",
           "groups_moved"
         ]
       },
@@ -19871,12 +19153,6 @@
           },
           "original_language": {
             "type": "string"
-          },
-          "segments": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Segment"
-            }
           },
           "created_at": {
             "type": "string",

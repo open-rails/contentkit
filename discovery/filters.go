@@ -15,22 +15,19 @@ type ContentFilterState struct {
 
 // ContentFilters offers one control per entity across the selected content kinds.
 type ContentFilters struct {
-	AppliesTo      []string             `json:"applies_to"`
-	Filters        []ContentFilterState `json:"filters"`
-	IncludeDeleted bool                 `json:"include_deleted"`
+	AppliesTo []string             `json:"applies_to"`
+	Filters   []ContentFilterState `json:"filters"`
 }
 
 // ContentFiltersUpdate atomically changes only submitted choices. Omitted
-// entities and include_deleted retain their values, including across tabs.
+// entities retain their values, including across tabs.
 type ContentFiltersUpdate struct {
-	Filters        []GuestFilterSetting `json:"filters,omitempty"`
-	IncludeDeleted *bool                `json:"include_deleted,omitempty"`
+	Filters []GuestFilterSetting `json:"filters,omitempty"`
 }
 
 type ContentFiltersInitialization struct {
-	AccountID      string               `json:"account_id"`
-	Filters        []GuestFilterSetting `json:"filters"`
-	IncludeDeleted bool                 `json:"include_deleted"`
+	AccountID string               `json:"account_id"`
+	Filters   []GuestFilterSetting `json:"filters"`
 }
 
 // GuestFilterSetting is a shared entity choice or reset without pinning a domain's

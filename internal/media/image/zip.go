@@ -84,7 +84,7 @@ func (p *Processor) buildZip(ctx context.Context, item mediastore.Item, m *media
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return media.File{}, false, err
 	}
-	blob, err := p.putBlob(ctx, item, item.Kind().Area("", z.Name), f, size, h.Sum(nil), "application/zip")
+	blob, err := p.putBlob(ctx, item, item.Kind().Area(z.Name), f, size, h.Sum(nil), "application/zip")
 	if err != nil {
 		return media.File{}, false, err
 	}

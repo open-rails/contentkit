@@ -49,13 +49,10 @@ func (e *Engine) eraseAccountReceipts(ctx context.Context, ids []string) error {
 	if err != nil || store == nil {
 		return err
 	}
-	appID := ""
-	if e.scope != nil {
-		appID = e.scope.AppID.String()
-	}
+	appID := e.scope.AppID.String()
 	for _, id := range ids {
 		recipient := notify.Recipient{Audience: notify.AudienceUser, ID: id}
-		if err := store.EraseAppRecipient(ctx, recipient, appID, notify.OriginScope{System: "contentkit", Scope: e.cfg.Tenant}); err != nil {
+		if err := store.EraseAppRecipient(ctx, recipient, appID, notify.OriginScope{}); err != nil {
 			return err
 		}
 	}
@@ -67,7 +64,7 @@ func (e *Engine) eraseAccountReceipts(ctx context.Context, ids []string) error {
 func (e *Engine) recordAccountErasureIntent(ctx context.Context, db interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }, ids []string) error {
-	if e.scope == nil || len(ids) == 0 {
+	if len(ids) == 0 {
 		return nil
 	}
 	schema, _ := e.accountStorage()
@@ -78,28 +75,22 @@ SELECT $1,$2,unnest($3::text[]) ON CONFLICT (tenant_id,app_id,actor_id) DO NOTHI
 
 // accountErasureSubjectsQuery combines ContentKit's durable intents with any
 // existing AuthKit fences. An absent inbox is optional; partial lineage is not.
-// The typed scope also keeps the same query parameters for legacy runtimes.
 func (e *Engine) accountErasureSubjectsQuery(ctx context.Context) (string, []any, error) {
 	available, err := e.accountErasureAvailable(ctx)
 	if err != nil {
 		return "", nil, err
 	}
 	schema, namespace := e.accountStorage()
-	var tenantID any
-	appID := ""
-	query := `SELECT NULL::text AS actor_id WHERE false`
-	if e.scope != nil {
-		tenantID, appID = e.scope.TenantID.String(), e.scope.AppID.String()
-		query = `SELECT DISTINCT i.actor_id FROM ` + pgx.Identifier{schema, "content_account_erasure_intents"}.Sanitize() + ` i CROSS JOIN erasure_scope s
+	tenantID, appID := e.scope.TenantID.String(), e.scope.AppID.String()
+	query := `SELECT DISTINCT i.actor_id FROM ` + pgx.Identifier{schema, "content_account_erasure_intents"}.Sanitize() + ` i CROSS JOIN erasure_scope s
 WHERE i.tenant_id=s.tenant_id AND i.app_id=s.app_id`
-	}
 	if available {
 		query += ` UNION SELECT r.recipient AS actor_id FROM ` + pgx.Identifier{schema, "notify_recipients"}.Sanitize() + ` r CROSS JOIN erasure_scope s
 WHERE r.scope=s.notify_scope AND r.audience='user' AND (r.erased_at IS NOT NULL OR EXISTS(SELECT 1 FROM ` + pgx.Identifier{schema, "notify_app_erasures"}.Sanitize() + ` x
-WHERE x.scope=r.scope AND x.audience=r.audience AND x.recipient=r.recipient AND ((x.app_id<>'' AND x.app_id=s.app_id) OR (x.source='contentkit' AND x.source_scope=s.catalog_key))))`
+WHERE x.scope=r.scope AND x.audience=r.audience AND x.recipient=r.recipient AND x.app_id=s.app_id))`
 	}
 	return `WITH erasure_scope AS (SELECT $1::uuid AS tenant_id, $2::text AS app_id, $3::text AS notify_scope, $4::text AS catalog_key) ` + query,
-		[]any{tenantID, appID, "contentkit:" + namespace, e.cfg.Tenant}, nil
+		[]any{tenantID, appID, "contentkit:" + namespace, e.cfg.Scope.AppID.String()}, nil
 }
 
 // Without an inbox, a local receipt or an interrupted anonymization still
@@ -110,11 +101,8 @@ func (e *Engine) accountAnonymizationQuery(ctx context.Context) (string, error) 
 		return "", err
 	}
 	schema, _ := e.accountStorage()
-	query := `SELECT NULL::text AS actor_id WHERE false`
-	if e.scope != nil {
-		query = `SELECT actor_id FROM ` + pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize() + ` WHERE tenant_id=$1 AND app_id=$2::uuid
+	query := `SELECT actor_id FROM ` + pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize() + ` WHERE tenant_id=$1 AND app_id=$2::uuid
 UNION SELECT actor_id FROM ` + pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize() + ` WHERE tenant_id=$4 AND state='purging'`
-	}
 	if available {
 		query += ` UNION SELECT recipient AS actor_id FROM ` + pgx.Identifier{schema, "notify_recipients"}.Sanitize() + ` WHERE scope=$3 AND audience='user' AND erased_at IS NOT NULL`
 	}
@@ -137,7 +125,7 @@ AND EXISTS(SELECT 1 FROM ` + pgx.Identifier{e.schema, "content_account_lifecycle
 	err = e.pool.QueryRow(ctx, `WITH erasure_scope AS (SELECT $1::uuid, $2::text, $3::text, $4::text)
 SELECT EXISTS(SELECT 1 FROM (`+query+`) r
 WHERE NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize()+` c WHERE c.tenant_id=$1 AND c.app_id=$2::uuid AND c.actor_id=r.actor_id) LIMIT 1)`,
-		e.scope.TenantID.String(), e.scope.AppID.String(), "contentkit:"+namespace, e.cfg.Tenant).Scan(&pending)
+		e.scope.TenantID.String(), e.scope.AppID.String(), "contentkit:"+namespace, e.cfg.Scope.AppID.String()).Scan(&pending)
 	if err != nil {
 		return fmt.Errorf("contentkit: check account anonymization: %w", err)
 	}

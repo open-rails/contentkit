@@ -436,7 +436,7 @@ func (m *Manifests) unreferenced(ctx context.Context, item Item, cur *Manifest, 
 			return nil, err
 		}
 		for _, key := range allocated {
-			if (strings.HasPrefix(key, item.PrivatePrefix()) || strings.HasPrefix(key, item.DownloadPrefix()) || strings.HasPrefix(key, item.OriginalsPrefix()) || strings.HasPrefix(key, item.InternalPrefix())) && !keep[key] && !slices.Contains(keys, key) {
+			if (strings.HasPrefix(key, item.PrivatePrefix()) || strings.HasPrefix(key, item.OriginalsPrefix()) || strings.HasPrefix(key, item.InternalPrefix())) && !keep[key] && !slices.Contains(keys, key) {
 				keys = append(keys, key)
 			}
 		}
@@ -805,21 +805,6 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifestCommit, applied bool, current *Manifest) error {
 	proj := projectionOf(item, current)
 	if applied {
-		if hook := m.reg.hooks.BeforeRetire; hook != nil && (len(commit.Effects.Public) > 0 || len(commit.Effects.Private) > 0) {
-			if current == nil {
-				var err error
-				current, _, err = m.get(ctx, item.ManifestKey())
-				if err != nil && !errors.Is(err, ErrNotFound) {
-					return err
-				}
-				if current == nil {
-					current = &Manifest{}
-				}
-			}
-			if err := beforeRetire(ctx, hook, item.Ref(), current); err != nil {
-				return err
-			}
-		}
 		if len(commit.Effects.Public) > 0 {
 			// Readers leave the retired files before they are deleted.
 			if err := m.journal.project(ctx, proj); err != nil {
@@ -838,16 +823,6 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 
 	}
 	return m.journal.finish(ctx, commit, applied, proj, m.reg.hooks.PathsChanged)
-}
-
-// A failed integration leaves the journal pending and every source intact.
-func beforeRetire(ctx context.Context, hook func(context.Context, contentref.ContentRef, *Manifest) error, ref contentref.ContentRef, current *Manifest) (err error) {
-	defer func() {
-		if value := recover(); value != nil {
-			err = fmt.Errorf("media: before retirement panic: %v", value)
-		}
-	}()
-	return hook(ctx, ref, current)
 }
 
 // CompleteCommit finishes the exact mutation admitted with an ingest job.

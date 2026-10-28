@@ -95,7 +95,7 @@ function ReaderFilters(p: Pick<ReaderSettingsProps, "language" | "client" | "onE
   return (
     <section aria-labelledby={id} className="grid gap-3">
       <h3 id={id} className="font-medium">{t("readerSettings.filters")}</h3>
-      <ContentFilterSettings {...p} includeDeleted={false} />
+      <ContentFilterSettings {...p} />
     </section>
   );
 }

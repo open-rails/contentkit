@@ -203,13 +203,22 @@ func (w *publicationWorker) Work(ctx context.Context, job *river.Job[publication
 	var due time.Time
 	var current bool
 	var state string
-	err := w.s.o.Pool.QueryRow(ctx, `SELECT scheduled_at,current,state FROM `+w.s.releaseRequestsTable()+`
- WHERE tenant_id=$1 AND id=$2`, w.s.o.Tenant, job.Args.ID).Scan(&due, &current, &state)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && ((!current && state != "retiring") || state == "cancelled") {
+	var target versions.Target
+	err := w.s.o.Pool.QueryRow(ctx, `SELECT scheduled_at,current,state,content_id,version_id FROM `+w.s.releaseRequestsTable()+`
+ WHERE tenant_id=$1 AND id=$2`, w.s.o.Tenant, job.Args.ID).Scan(&due, &current, &state, &target.Content, &target.Version)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return river.JobCancel(errRetired)
 	}
 	if err != nil {
 		return err
+	}
+	// Deletion and restore commit with this job: repeat their fence sync
+	// even when newer intent has superseded the request.
+	if err := w.s.SyncFences(ctx, []versions.Target{target}); err != nil {
+		return err
+	}
+	if (!current && state != "retiring") || state == "cancelled" {
+		return river.JobCancel(errRetired)
 	}
 	if state == "completed" {
 		return nil

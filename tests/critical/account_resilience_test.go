@@ -175,7 +175,7 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 		count := 0
 		for _, object := range objects.Contents {
 			name := aws.ToString(object.Key)
-			if !strings.HasSuffix(name, "/"+layout.ManifestName) && !strings.HasSuffix(name, "/"+layout.ErasureFenceName) {
+			if !strings.HasSuffix(name, "/"+layout.ManifestName) && !strings.HasSuffix(name, "/"+layout.FenceName) {
 				count++
 			}
 		}

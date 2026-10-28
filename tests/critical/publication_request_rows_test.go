@@ -19,7 +19,7 @@ import (
 // A run that changes nothing must not add a request row or copy the live
 // release; a real release removes the finished requests it supersedes.
 func TestUnchangedReleaseLeavesNoRequestCopies(t *testing.T) {
-	g := newHiddenStartGallery(t, false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png"}, laterChapters(time.Hour))
+	g := newHiddenStartGallery(t, newChapterArchiveWorld(t), false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png"}, laterChapters(time.Hour))
 	chapterTwo := g.start.Add(time.Hour)
 	tenant := publicationTenant(g.a)
 	requests := pgx.Identifier{g.w.schema, "content_publication_requests"}.Sanitize()

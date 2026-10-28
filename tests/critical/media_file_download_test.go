@@ -33,7 +33,7 @@ func (*transferDownloadPolicy) Mark(_ context.Context, _ access.Actor, _ version
 }
 
 func TestPublishedSingleFileDownload(t *testing.T) {
-	for _, profile := range []string{"served-original", "internal-original", "host-only-mp4"} {
+	for _, profile := range []string{"internal-original", "host-only-mp4"} {
 		t.Run(profile, func(t *testing.T) {
 			f := newTinyHLSConfiguredFixture(t, false, func(c *ck.Config) {
 				for i := range c.Media.Kinds {
@@ -41,7 +41,6 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 					if k.Name != "clip" {
 						continue
 					}
-					k.ServeOriginals = profile == "served-original"
 					if profile == "host-only-mp4" {
 						kind := c.Content.Kinds["clip"]
 						kind.Download = &kinds.Download{Serve: "export"}
@@ -72,16 +71,10 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 				return grant.URL != ""
 			})
 			address := grant.URL
-			if profile == "served-original" {
-				if !strings.Contains(address, "/public/") {
-					t.Fatalf("served original did not use its public item route: %s", address)
-				}
-			} else {
-				if !strings.HasPrefix(address, "archive?") {
-					t.Fatalf("internal download bypassed authorized host transfer: %s", address)
-				}
-				address = a.server.URL + "/content/v1/contents/" + f.Ref.ID + "/versions/" + f.Ref.Version + "/" + address
+			if !strings.HasPrefix(address, "archive?") {
+				t.Fatalf("internal download bypassed authorized host transfer: %s", address)
 			}
+			address = a.server.URL + "/content/v1/contents/" + f.Ref.ID + "/versions/" + f.Ref.Version + "/" + address
 			response, err := http.Get(address)
 			must(t, err)
 			body, err := io.ReadAll(response.Body)
@@ -92,18 +85,11 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 			}
 			disposition, params, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
 			must(t, err)
-			expectedType := "application/octet-stream"
-			if profile == "served-original" {
-				expectedType = "video/mp4"
-			}
-			if response.StatusCode != 200 || response.Header.Get("Content-Type") != expectedType || grant.Type != "video/mp4" || disposition != "attachment" || params["filename"] != grant.Name || int64(len(body)) != grant.Size || !bytes.Contains(body, []byte("ftyp")) {
+			if response.StatusCode != 200 || response.Header.Get("Content-Type") != "application/octet-stream" || grant.Type != "video/mp4" || disposition != "attachment" || params["filename"] != grant.Name || int64(len(body)) != grant.Size || !bytes.Contains(body, []byte("ftyp")) {
 				t.Fatalf("configured download changed type/attachment/bytes: %d %v length%d grant%+v", response.StatusCode, response.Header, len(body), grant)
 			}
 			if profile != "host-only-mp4" && !bytes.Equal(body, f.Source) {
 				t.Fatal("original download changed uploaded bytes")
-			}
-			if profile == "served-original" {
-				return
 			}
 			if response.Header.Get("Cache-Control") != "private, no-store" {
 				t.Fatal("internal authorized transfer was cacheable")

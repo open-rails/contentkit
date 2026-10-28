@@ -163,7 +163,7 @@ func (j *Jobs) expireStaged(ctx context.Context, item Item) error {
 // staged uploads and, unless hidden, the public names its uploads' presets
 // render.
 func (j *Jobs) keeps(item Item, m *Manifest) map[string]bool {
-	keep := map[string]bool{layout.AreaPublic + "/" + layout.ErasureFenceName: true}
+	keep := map[string]bool{layout.AreaPublic + "/" + layout.FenceName: true}
 	for _, b := range m.Blobs() {
 		if area, name, ok := layout.SplitBlobRef(b); ok {
 			keep[area+"/"+name] = true
@@ -219,7 +219,7 @@ func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	}
 	var first, rest []string
 	for _, o := range objs {
-		if o.Key == prefix+layout.AreaPublic+"/"+layout.ErasureFenceName {
+		if o.Key == prefix+layout.AreaPublic+"/"+layout.FenceName {
 			continue
 		}
 		k, ok := layout.Parse(o.Key)

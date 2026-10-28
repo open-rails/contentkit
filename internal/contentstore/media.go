@@ -82,7 +82,7 @@ func (rt *Runtime) CanUpload(ctx context.Context, actor access.Actor, t media.Up
 		return media.UploadGrant{}, nil
 	}
 	var id string
-	err := rt.store.pool.QueryRow(ctx, `SELECT id::text FROM `+rt.store.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind='multiple_choice'`,
+	err := rt.store.pool.QueryRow(ctx, `SELECT id::text FROM `+rt.store.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
 		ref.ContentID, rt.tenant).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return media.UploadGrant{}, nil
@@ -127,7 +127,7 @@ func (m mediaResolver) Resolve(ctx context.Context, refs []contentref.ContentRef
 	if len(polls) > 0 {
 		pollWrite := can(access.PollsWrite)
 		rows, err := rt.store.pool.Query(ctx, `SELECT id::text FROM `+rt.store.t.pollQuestions+`
-			WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL AND kind='multiple_choice'`, rt.tenant, polls)
+			WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL`, rt.tenant, polls)
 		if err != nil {
 			return nil, err
 		}

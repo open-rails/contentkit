@@ -42,26 +42,23 @@ func (e *Encoder) hlsFP(src media.File, h *media.HLS) string {
 		codecs[i] = string(c)
 	}
 	lo, hi := h.Aspects()
-	return mediastore.SpecFP(src, h, fmt.Sprintf(hlsRecipe, strings.Join(codecs, ","), svtAV1Preset, rateTable(h.Profile, e.c.Codecs),
+	return mediastore.SpecFP(src, h, fmt.Sprintf(hlsRecipe, strings.Join(codecs, ","), svtAV1Preset, rateTable(e.c.Codecs),
 		strings.Join(ladder, ","), nativeBelow, lo, hi))
 }
 
 // mp4FP is the fingerprint of an MP4 preset's file from upload src.
 func mp4FP(src media.File, m *media.MP4) string {
-	return mediastore.SpecFP(src, m, fmt.Sprintf(mp4Recipe, rateTable(m.Profile, []media.Codec{media.CodecH264})))
+	return mediastore.SpecFP(src, m, fmt.Sprintf(mp4Recipe, rateTable([]media.Codec{media.CodecH264})))
 }
 
-// rateTable lists each codec's capped CRF per rung class under profile.
-func rateTable(profile string, codecs []media.Codec) string {
+// rateTable lists each codec's capped CRF per rung class.
+func rateTable(codecs []media.Codec) string {
 	var rs []string
 	for _, c := range codecs {
 		for _, n := range []int{2160, 1440, 1080, 720, 480} {
-			r := rung{n: n, profile: profile}.rate(c)
+			r := rung{n: n}.rate(c)
 			rs = append(rs, fmt.Sprintf("%d/%d", r.crf, r.maxrate))
 		}
-	}
-	if profile != "" {
-		rs = append(rs, "tune-"+profile)
 	}
 	return strings.Join(rs, ",")
 }
@@ -153,7 +150,7 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 		args = append(args, "-filter_complex_threads", t, "-filter_complex", fc.String())
 	}
 	// One muxer per rendition: a muxer shifts all its streams by the most
-	// negative DTS (x264's and x265's B-frame delay), which would move an AV1
+	// negative DTS (x264's B-frame delay), which would move an AV1
 	// rendition sharing it and misalign it with its rungs from other passes.
 	for i, c := range ps.codecs {
 		v := filepath.Join(dir, renditionName(ps.rung.n, c))

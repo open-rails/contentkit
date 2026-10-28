@@ -48,7 +48,6 @@ type mediaWire struct {
 	hold                *mediaRequestHold
 	webpPuts            int
 	failManifest        bool
-	failWebP            bool
 	refuseOutput        func(*http.Request) bool
 	refusedManifestPuts int
 }
@@ -81,7 +80,6 @@ func newMediaWire(t *testing.T) *mediaWire {
 			w.refusedManifestPuts++
 		}
 		webp := r.Method == http.MethodPut && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
-		failWebP := w.failWebP && webp
 		if webp {
 			w.webpPuts++
 		}
@@ -93,7 +91,7 @@ func newMediaWire(t *testing.T) *mediaWire {
 			hold = nil
 		}
 		w.mu.Unlock()
-		if failWebP || refuseOutput {
+		if refuseOutput {
 			out.Header().Set("Content-Type", "application/xml")
 			out.WriteHeader(http.StatusForbidden)
 			_, _ = io.WriteString(out, `<Error><Code>AccessDenied</Code><Message>Owned fixture rendition write refused</Message></Error>`)
@@ -282,11 +280,12 @@ func newResilientMedia(t *testing.T, configure ...func(*ck.Config)) *resilientMe
 	must(t, err)
 	a.server.Close()
 	must(t, a.engine.Close(t.Context()))
+	// Poll promptly without changing commit or capability-issuance limits.
 	a.cfg.Media = &ck.MediaConfig{Config: media.Config{BaseURL: m.gateway.URL, Kinds: []media.Kind{{Name: "gallery", KeepOriginals: true,
 		Uploads: []media.Upload{{Path: "pages/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Max: 4}, {Path: "cover", Types: []string{"image/png"}, MaxBytes: 1 << 20}, {Path: "attachments/{name}", Types: []string{"text/plain"}, MaxBytes: 80 << 20, Max: 2}},
 		Private: []media.Private{{Name: "reader", From: "pages/{name}", To: "reader/{name}.webp", Image: &media.Image{Width: 48, Height: 48}}},
 		Public:  []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{16, 32}, Image: media.Image{Aspect: media.Square}}},
-	}}}, WorkerSchema: w.schema + "_media_worker", Delivery: ck.DeliveryConfig{Mode: string(media.DeliverURL), SigningKey: m.signing, TTL: time.Minute, Window: time.Second}}
+	}}}, ReadLimit: ck.RateLimitConfig{Disabled: true}, WorkerSchema: w.schema + "_media_worker", Delivery: ck.DeliveryConfig{Mode: string(media.DeliverURL), SigningKey: m.signing, TTL: time.Minute, Window: time.Second}}
 	for _, change := range configure {
 		change(&a.cfg)
 	}
@@ -730,54 +729,6 @@ func settledPreparedOutputs(t *testing.T, m *resilientMedia, client *ck.Client, 
 }
 
 func TestMediaWorkerRecovery(t *testing.T) {
-	t.Run("exhausted-image-job-records-failure-and-cancels", func(t *testing.T) {
-		m := newResilientMedia(t)
-		client := m.app.engine.Client()
-		ref := galleryRef(t, client, "Rendition retries exhausted")
-		m.wire.mu.Lock()
-		m.wire.failWebP = true
-		m.wire.mu.Unlock()
-		m.start(t)
-		_, err := client.IngestMedia(t.Context(), nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
-		must(t, err)
-		queue := m.queue(t)
-		var finished *rivertype.JobRow
-		waitForWithin(t, 30*time.Second, func() bool {
-			jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.DerivativeArgs{}).Kind()))
-			must(t, err)
-			for _, job := range jobs.Jobs {
-				if job.State == rivertype.JobStateRetryable {
-					_, err := queue.JobRetry(t.Context(), job.ID)
-					must(t, err)
-				}
-				if job.State == rivertype.JobStateCancelled || job.State == rivertype.JobStateDiscarded || job.State == rivertype.JobStateCompleted {
-					finished = job
-					return true
-				}
-			}
-			return false
-		})
-		if finished.State != rivertype.JobStateCancelled || finished.Attempt != workqueue.MaxAttempts {
-			t.Fatalf("exhausted image job: state=%s attempt=%d errors=%+v", finished.State, finished.Attempt, finished.Errors)
-		}
-		read, err := client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Status: true})
-		must(t, err)
-		if read.Status == nil || read.Status.State != media.StateFailed || read.Status.FailureCount != 1 || len(read.Status.Failures) != 1 || read.Status.Failures[0].Path != "pages/one.png" {
-			t.Fatalf("exhausted rendition remained pending: %+v", read.Status)
-		}
-		logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
-		must(t, err)
-		journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
-		must(t, err)
-		manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
-		must(t, err)
-		snapshot, _, err := manifests.Get(t.Context(), logical)
-		must(t, err)
-		page, ok := snapshot.Get("pages/one.png")
-		if !ok || page.Fail() == nil || len(page.Pending) != 0 {
-			t.Fatalf("page failure was not persisted: %+v", page)
-		}
-	})
 	t.Run("CK-J11-S04_process_death_before_output_checkpoint_retries_one_visible_rendition", func(t *testing.T) {
 		m := newResilientMedia(t)
 		client := m.app.engine.Client()

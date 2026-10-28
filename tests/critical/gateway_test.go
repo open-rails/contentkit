@@ -157,7 +157,7 @@ func TestGatewayCapabilities(t *testing.T) {
 	})
 	t.Run("CK-J13-S05_reserved_and_erasure_fenced_objects_refuse", func(t *testing.T) {
 		control(t, first, grant(first))
-		for _, key := range []string{folder + layout.ManifestName, folder + "temp/u-" + uuid.NewString(), folder + "tmp/u-" + uuid.NewString(), folder + "internal/" + layout.BlobName(sum[:], uuid.NewString()), folder + "originals/" + layout.BlobName(sum[:], uuid.NewString()), folder + "public/" + layout.ErasureFenceName} {
+		for _, key := range []string{folder + layout.ManifestName, folder + "temp/u-" + uuid.NewString(), folder + "tmp/u-" + uuid.NewString(), folder + "internal/" + layout.BlobName(sum[:], uuid.NewString()), folder + "originals/" + layout.BlobName(sum[:], uuid.NewString()), folder + "public/" + layout.FenceName} {
 			seed(t, key)
 			deny(t, key, ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute)), "")
 		}
@@ -165,7 +165,7 @@ func TestGatewayCapabilities(t *testing.T) {
 		// URLs and public renditions must now fail even while bytes remain.
 		deny(t, first, grant(first), "")
 		deny(t, public, "", "")
-		_, err := m.management.DeleteObject(t.Context(), &awss3.DeleteObjectInput{Bucket: &m.bucket, Key: aws.String(folder + "public/" + layout.ErasureFenceName)})
+		_, err := m.management.DeleteObject(t.Context(), &awss3.DeleteObjectInput{Bucket: &m.bucket, Key: aws.String(folder + "public/" + layout.FenceName)})
 		must(t, err)
 		control(t, first, grant(first))
 	})

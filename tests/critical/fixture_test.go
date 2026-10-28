@@ -140,7 +140,7 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 	})
 	for i := range w.tenant {
 		tid := iam.NewTenantID()
-		must(t, w.auth.CreateTenant(ctx, iam.Tenant{ID: tid}))
+		must(t, w.auth.CreateTenant(ctx, iam.Tenant{ID: tid, Slug: "ck-" + tid.String()}))
 		w.tenant[i], err = w.auth.ForTenant(ctx, tid)
 		must(t, err)
 		for n := 0; n < 2; n++ {
@@ -187,7 +187,7 @@ func (w *world) newApplication(t *testing.T, tenant *authkit.Client, tid iam.Ten
 	inboxOwner := authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) {
 		c.Notifications = &authkit.NotificationsConfig{Schema: inboxSchema,
 			Scopes: map[string]string{tid.String(): "contentkit:" + (layout.Scope{TenantID: tid.String()}).Partition()},
-			AppID:  aid.String(), LegacyOrigins: []notify.OriginScope{{System: "contentkit", Scope: aid.String()}, {System: "critical-shared", Scope: tid.String()}},
+			AppID:  aid.String(),
 			Producers: []authkit.NotificationProducer{
 				{Name: "contentkit", TenantID: tid, Origin: notify.OriginScope{System: "contentkit", Scope: aid.String()}, Visibility: notify.VisibilityApp, AppID: aid.String()},
 				{Name: "application", TenantID: tid, Origin: notify.OriginScope{System: "critical", Scope: aid.String()}, Visibility: notify.VisibilityApp, AppID: aid.String()},

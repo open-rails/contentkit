@@ -19,7 +19,7 @@ import (
 // rung in one of the ladder's codecs is stream-copied instead of encoded in
 // that codec. Every check is strict; any doubt encodes. The copy keeps the
 // source's frames and timestamps, so the source must be constant-rate H.264
-// High/Main or HEVC Main tagged hvc1 (8-bit 4:2:0, progressive, level ≤ 5.2,
+// High/Main (8-bit 4:2:0, progressive, level ≤ 5.2,
 // square pixels, unrotated) at exactly the rung's frame, within the rung's
 // bitrate cap in its codec, in MP4/MOV, and IDR-coded (closed GOP) on the
 // frame that starts each segment, where the encoded rungs put theirs.
@@ -70,7 +70,7 @@ func passthroughable(ctx context.Context, src string, p plan, top rung) (c media
 			if !pk.key {
 				return c, false, fmt.Sprintf("no keyframe at %.3f s", pk.t)
 			}
-			if idr, err := isIDR(f, pk, c); err != nil || !idr {
+			if idr, err := isIDR(f, pk); err != nil || !idr {
 				return c, false, fmt.Sprintf("keyframe at %.3f s is not an IDR (%v)", pk.t, err)
 			}
 			next += segmentSeconds
@@ -93,20 +93,15 @@ func passthroughable(ctx context.Context, src string, p plan, top rung) (c media
 // to the encode worker, where a complete local output is available.
 func passthroughCandidate(p plan, top rung) (c media.Codec, ok bool, why string) {
 	s := p.stream
-	c, maxLevel := media.CodecH264, 52
-	if s.CodecName == "hevc" {
-		c, maxLevel = media.CodecHEVC, 156 // general_level_idc: 30 × level
-	}
+	c = media.CodecH264
 	switch {
 	case !strings.HasPrefix(p.formatName, "mov,"):
 		return c, false, "container " + p.formatName
-	case s.CodecName == "h264" && s.Profile != "High" && s.Profile != "Main",
-		s.CodecName == "hevc" && (s.Profile != "Main" || s.CodecTag != "hvc1"),
-		s.CodecName != "h264" && s.CodecName != "hevc":
+	case s.CodecName != "h264" || s.Profile != "High" && s.Profile != "Main":
 		return c, false, "codec " + s.CodecName + " " + s.Profile + " " + s.CodecTag
 	case s.PixFmt != "yuv420p" || s.FieldOrder != "progressive":
 		return c, false, "format " + s.PixFmt + " " + s.FieldOrder
-	case s.Level <= 0 || s.Level > maxLevel:
+	case s.Level <= 0 || s.Level > 52:
 		return c, false, "level " + strconv.Itoa(s.Level)
 	case rotated(s) || p.limitFPS:
 		return c, false, "rotated or above the frame-rate cap"
@@ -153,10 +148,9 @@ func sourcePackets(ctx context.Context, src string, p plan) ([]sourcePacket, err
 	return pkts, nil
 }
 
-// isIDR reports whether a length-prefixed (MP4) H.264 or HEVC packet's
-// first slice is an IDR slice (HEVC: IDR_W_RADL or IDR_N_LP; a CRA opens a
-// GOP).
-func isIDR(f *os.File, pk sourcePacket, c media.Codec) (bool, error) {
+// isIDR reports whether a length-prefixed (MP4) H.264 packet's first slice
+// is an IDR slice.
+func isIDR(f *os.File, pk sourcePacket) (bool, error) {
 	b := make([]byte, pk.size)
 	if _, err := f.ReadAt(b, pk.pos); err != nil {
 		return false, err
@@ -166,17 +160,11 @@ func isIDR(f *os.File, pk sourcePacket, c media.Codec) (bool, error) {
 		if n <= 0 || n > len(b)-4 {
 			return false, fmt.Errorf("NAL length %d", n)
 		}
-		if c == media.CodecHEVC {
-			if t := b[4] >> 1 & 0x3f; t < 32 {
-				return t == 19 || t == 20, nil
-			}
-		} else {
-			switch b[4] & 0x1f {
-			case 5:
-				return true, nil
-			case 1, 2, 3, 4:
-				return false, nil
-			}
+		switch b[4] & 0x1f {
+		case 5:
+			return true, nil
+		case 1, 2, 3, 4:
+			return false, nil
 		}
 		b = b[4+n:]
 	}
@@ -184,13 +172,10 @@ func isIDR(f *os.File, pk sourcePacket, c media.Codec) (bool, error) {
 }
 
 // copyRungRemote stream-copies a short source into its single queued chunk.
-func copyRungRemote(ctx context.Context, src, dir string, p plan, v string, c media.Codec) error {
+func copyRungRemote(ctx context.Context, src, dir string, p plan, v string) error {
 	args := append([]string{"-v", "error", "-nostdin"}, remoteInputOptions(sourceDemuxers)...)
 	args = append(args, "-i", src, "-map", fmt.Sprintf("0:%d", p.video),
 		"-c", "copy", "-map_metadata", "-1")
-	if c == media.CodecHEVC {
-		args = append(args, "-tag:v", "hvc1")
-	}
 	args = append(args, hlsArgs(filepath.Join(dir, v+".mp4"), filepath.Join(dir, v+".m3u8"))...)
 	_, err := command(ctx, "ffmpeg", args...)
 	return err

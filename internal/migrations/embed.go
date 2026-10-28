@@ -24,7 +24,7 @@ var Postgres fs.FS = mustSubFS("postgres")
 // ClickHouse installs the signal-plane tables in the selected database.
 var ClickHouse fs.FS = mustSubFS("clickhouse")
 
-// Accounts records ownership claims in the effective shared account schema.
+// Accounts installs ContentKit metadata in the shared tenant account schema.
 // It is a separate lineage because apps can use different catalog schemas.
 var Accounts fs.FS = mustSubFS("accounts")
 
@@ -59,8 +59,7 @@ func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 	return nil
 }
 
-// ApplyAccounts installs account ownership metadata without moving inbox rows
-// or media objects. The identity claim itself joins the app binding transaction.
+// ApplyAccounts installs account metadata without moving inbox rows or media objects.
 func ApplyAccounts(ctx context.Context, db *sql.DB, schema string) error {
 	if db == nil {
 		return fmt.Errorf("contentkit: DB is required")

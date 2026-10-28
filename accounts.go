@@ -1,21 +1,14 @@
 package contentkit
 
-import (
-	"fmt"
-	"strings"
-
-	"github.com/open-rails/contentkit/media/layout"
-)
+import "fmt"
 
 // AccountsConfig selects the shared tenant account storage and avatar service.
 // Catalogs remain app-owned. Schema holds account metadata and the
-// tenant avatar journal, allocations and publication metadata. A scoped engine
-// derives the account key or loads its immutable adopted key from the binding.
+// tenant avatar journal, allocations and publication metadata. The engine
+// derives the account key from Scope.TenantID.
 type AccountsConfig struct {
-	// Namespace is for unscoped engines; scoped engines derive it.
-	Namespace string         `json:"namespace" yaml:"namespace"`
-	Schema    string         `json:"schema" yaml:"schema"`
-	Avatars   *AvatarsConfig `json:"avatars,omitempty" yaml:"avatars,omitempty"`
+	Schema  string         `json:"schema" yaml:"schema"`
+	Avatars *AvatarsConfig `json:"avatars,omitempty" yaml:"avatars,omitempty"`
 }
 
 // withAccounts adapts the shared account declaration to the established account
@@ -24,9 +17,6 @@ func (c Config) withAccounts() (Config, error) {
 	a := c.Accounts
 	if a == nil {
 		return c, nil
-	}
-	if !layout.ValidSegment(a.Namespace) || a.Namespace == strings.TrimSpace(c.Tenant) {
-		return c, fmt.Errorf("contentkit: Accounts.Namespace must be a valid shared namespace distinct from Tenant")
 	}
 	if !schemaRE.MatchString(a.Schema) || len(a.Schema) > 63 {
 		return c, fmt.Errorf("contentkit: Accounts.Schema must be a lower-case PostgreSQL identifier")
@@ -46,15 +36,8 @@ func (c Config) withAccounts() (Config, error) {
 	if c.Avatars != nil {
 		avatars := *c.Avatars
 		kind, _ := avatars.kind()
-		if (c.Media == nil || c.Media.Scope.IsZero()) && avatars.Kind != nil && kind.Namespace != "" && kind.Namespace != a.Namespace {
-			return c, fmt.Errorf("contentkit: avatar kind namespace must match Accounts.Namespace")
-		}
-		if c.Media != nil && !c.Media.Scope.IsZero() {
-			kind.Namespace = ""
-			kind.Account = true
-		} else {
-			kind.Namespace = a.Namespace
-		}
+		kind.Namespace = ""
+		kind.Account = true
 		avatars.Kind = &kind
 		c.Avatars = &avatars
 	}

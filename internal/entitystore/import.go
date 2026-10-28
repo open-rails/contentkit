@@ -43,7 +43,6 @@ func (s *Store) ImportEntities(ctx context.Context, q pgx.Tx, in []entities.Impo
 	rows := make([]importRow, 0, len(in))
 	names := map[string][]nameRow{}
 	texts := map[string][]textRow{}
-	edges := map[string][]edgeRow{}
 	keep := map[codes.Key]string{}
 	for i, g := range in {
 		row, err := s.checkImport(&g)
@@ -66,14 +65,6 @@ func (s *Store) ImportEntities(ctx context.Context, q pgx.Tx, in []entities.Impo
 				return err
 			}
 		}
-		if g.Edges != nil {
-			for j := range g.Edges {
-				g.Edges[j].From = g.ID
-			}
-			if edges[row.ID], err = validateEdges(g.Edges); err != nil {
-				return err
-			}
-		}
 		if g.Code != "" {
 			if !codes.ValidCode(g.Code) {
 				return fmt.Errorf("%w: code %q is not a content code", entities.ErrInvalid, g.Code)
@@ -90,11 +81,11 @@ func (s *Store) ImportEntities(ctx context.Context, q pgx.Tx, in []entities.Impo
 			rows[i].UpdatedAt = *g.CreatedAt
 		}
 	}
-	return mapPGError(s.importEntities(ctx, q, in, ids, rows, names, texts, edges, keep, provision))
+	return mapPGError(s.importEntities(ctx, q, in, ids, rows, names, texts, keep, provision))
 }
 
 func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []entities.ImportEntity, ids []string, rows []importRow, names map[string][]nameRow,
-	texts map[string][]textRow, edges map[string][]edgeRow, keep map[codes.Key]string, provision bool) error {
+	texts map[string][]textRow, keep map[codes.Key]string, provision bool) error {
 	if err := s.lockHierarchy(ctx, q); err != nil {
 		return err
 	}
@@ -186,9 +177,6 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []entities.Impo
 		return err
 	}
 	if err := s.checkLinks(ctx, q, ids); err != nil {
-		return err
-	}
-	if err := s.replaceEdges(ctx, q, edges); err != nil {
 		return err
 	}
 	if err := codes.Reserve(ctx, codes.Pgx(q), s.qs, s.tenant, keep); err != nil {
@@ -402,36 +390,6 @@ func (s *Store) replaceText(ctx context.Context, q Querier, given map[string][]t
 		return err
 	}
 	return s.insertText(ctx, q, rows)
-}
-
-// replaceEdges sets each entity's edges to others to the given ones.
-func (s *Store) replaceEdges(ctx context.Context, q pgx.Tx, given map[string][]edgeRow) error {
-	if len(given) == 0 {
-		return nil
-	}
-	var from []string
-	all := []edgeRow{}
-	for id, rows := range given {
-		from = append(from, id)
-		all = append(all, rows...)
-	}
-	data, err := json.Marshal(all)
-	if err != nil {
-		return err
-	}
-	if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s e WHERE e.tenant_id = $1 AND e.from_id = ANY($2::text[]) AND NOT EXISTS (
- SELECT 1 FROM jsonb_to_recordset($3::jsonb) AS r("from" text, relation text, "to" text) WHERE r."from" = e.from_id AND r.relation = e.relation AND r."to" = e.to_id)`,
-		s.table("content_entity_edges")), s.tenant, from, string(data)); err != nil {
-		return err
-	}
-	if len(all) == 0 {
-		return nil
-	}
-	edges := make([]entities.Edge, len(all))
-	for i, r := range all {
-		edges[i] = entities.Edge{From: entities.EntityID(r.From), Relation: r.Relation, To: entities.EntityID(r.To)}
-	}
-	return s.bound(q).AddEdges(ctx, edges)
 }
 
 // ImportMemberships replaces, in q, each content's memberships in the entity

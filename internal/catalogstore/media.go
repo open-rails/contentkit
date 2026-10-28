@@ -45,6 +45,9 @@ type VersionMedia interface {
 	ResumeDeletes(ctx context.Context, limit int) (int, error)
 	// CheckRestorableTx refuses restoration once irreversible erasure started.
 	CheckRestorableTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error
+	// SyncFences makes committed deletions and restores of targets'
+	// versions stop or resume serving their media.
+	SyncFences(ctx context.Context, targets []versions.Target) error
 }
 
 var errMediaNotConfigured = errors.New("catalog: media is not bound")

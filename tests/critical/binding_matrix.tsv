@@ -15,7 +15,6 @@ go:Client.GetChannelCommentBans	go	Go generated Client route	Client.GetChannelCo
 go:Client.PutChannelCommentBan	go	Go generated Client route	Client.PutChannelCommentBan	client_gen.go	included-critical
 go:Client.DeleteChannelCommentBan	go	Go generated Client route	Client.DeleteChannelCommentBan	client_gen.go	included-critical
 go:Client.GetContentCanComment	go	Go generated Client route	Client.GetContentCanComment	client_gen.go	included-critical
-go:Client.GetEntityCanComment	go	Go generated Client route	Client.GetEntityCanComment	client_gen.go	included-critical
 go:Client.GetModerationHeld	go	Go generated Client route	Client.GetModerationHeld	client_gen.go	included-critical
 go:Client.PostModerationResolve	go	Go generated Client route	Client.PostModerationResolve	client_gen.go	included-critical
 go:Client.GetModerationBannedWords	go	Go generated Client route	Client.GetModerationBannedWords	client_gen.go	included-critical
