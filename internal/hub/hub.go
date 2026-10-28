@@ -9,10 +9,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/search"
+	"github.com/open-rails/contentkit/internal/search"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -47,7 +49,7 @@ type Config struct {
 // surface the discovery routes build on.
 type Hub struct {
 	client     *Client
-	store      atomic.Pointer[signal.Store]
+	store      atomic.Pointer[signalstore.Store]
 	configured bool
 	tenant     string
 }
@@ -74,7 +76,7 @@ func (h *Hub) Content(contentKind, contentID string) ContentRef {
 	return contentref.New(h.tenant, contentKind, contentID)
 }
 
-func (h *Hub) requireStore() (*signal.Store, error) {
+func (h *Hub) requireStore() (*signalstore.Store, error) {
 	if s := h.store.Load(); s != nil {
 		return s, nil
 	}
@@ -283,11 +285,11 @@ func (h *Hub) Typeahead(ctx context.Context, userText string, opts TypeaheadOpti
 }
 
 // Signals is the signal plane's store; nil while there is none up.
-func (h *Hub) Signals() *signal.Store { return h.store.Load() }
+func (h *Hub) Signals() *signalstore.Store { return h.store.Load() }
 
 // SetSignals opens the configured signal plane over s, or takes it down
 // (nil) while ClickHouse is unreachable.
-func (h *Hub) SetSignals(s *signal.Store) { h.store.Store(s) }
+func (h *Hub) SetSignals(s *signalstore.Store) { h.store.Store(s) }
 
 // SignalsConfigured reports whether the hub has a signal plane, up or down.
 func (h *Hub) SignalsConfigured() bool { return h.configured }

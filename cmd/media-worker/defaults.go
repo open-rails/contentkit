@@ -8,11 +8,12 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/open-rails/contentkit/media"
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
+	"github.com/open-rails/contentkit/internal/media/image"
+	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/media/avatar"
-	"github.com/open-rails/contentkit/media/image"
 	"github.com/open-rails/contentkit/media/layout"
-	"github.com/open-rails/contentkit/media/worker"
 )
 
 // publishDefaults renders the images the kinds' public presets name
@@ -31,7 +32,7 @@ func publishDefaults(ctx context.Context, out io.Writer) error {
 	for i := range kinds.Kinds {
 		kinds.Kinds[i].Defaults = images
 	}
-	reg, err := media.NewRegistry(kinds, media.Hooks{})
+	reg, err := mediastore.NewRegistry(kinds, mediastore.Hooks{})
 	if err != nil {
 		return fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}

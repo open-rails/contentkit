@@ -12,13 +12,15 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/media/worker"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/worker"
-	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
@@ -234,13 +236,13 @@ func startVideoFailureWorker(t *testing.T, m *resilientMedia) func() {
 	return stop
 }
 
-func failureManifests(t *testing.T, m *resilientMedia, ref media.RefBody) (*media.Manifests, contentref.ContentRef) {
+func failureManifests(t *testing.T, m *resilientMedia, ref media.RefBody) (*mediastore.Manifests, contentref.ContentRef) {
 	t.Helper()
 	logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
 	must(t, err)
-	journal, err := media.NewPGJournal(m.pool, m.schema, nil)
+	journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
 	must(t, err)
-	manifests, err := media.NewManifests(m.storage.store, m.config.Kinds, media.ManifestOptions{Locker: media.PGLocker(m.pool), Journal: journal})
+	manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
 	must(t, err)
 	return manifests, logical
 }

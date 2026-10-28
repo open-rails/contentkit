@@ -7,7 +7,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/open-rails/contentkit/access"
+	entitlement "github.com/open-rails/contentkit/internal/entitlement"
+
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
@@ -168,6 +169,6 @@ func (e *Engine) dispatch(prefix string, modules map[httpapi.Module]http.Handler
 			return
 		}
 		// One billing read per request, whatever the module.
-		h.ServeHTTP(w, r.WithContext(access.WithMemo(r.Context())))
+		h.ServeHTTP(w, r.WithContext(entitlement.WithMemo(r.Context())))
 	})
 }

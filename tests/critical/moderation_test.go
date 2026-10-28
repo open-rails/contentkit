@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	contentstore "github.com/open-rails/contentkit/internal/contentstore"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/authtest"
@@ -98,7 +100,7 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		old := postComment(t, client, mine.ID, "Existing contribution stays")
 		ban, err := a.client(ownerToken).PutCommentBan(t.Context(), writer.ID, content.BanInput{Reason: "Owner boundary"})
 		must(t, err)
-		if ban.Scope != content.OwnerScope(owner.ID) || ban.BannedBy != owner.ID {
+		if ban.Scope != contentstore.OwnerScope(owner.ID) || ban.BannedBy != owner.ID {
 			t.Fatalf("wrong owner ban: %+v", ban)
 		}
 		for _, write := range []struct {
@@ -169,7 +171,7 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		requireError(t, err, 403, "forbidden")
 		ban, err := client.PutChannelCommentBan(t.Context(), string(one.ID), writer.ID, content.BanInput{Reason: "Entity boundary"})
 		must(t, err)
-		if ban.Scope != content.ChannelScope(string(one.ID)) {
+		if ban.Scope != contentstore.ChannelScope(string(one.ID)) {
 			t.Fatalf("wrong entity ban: %+v", ban)
 		}
 		standing, err := viewer.GetChannelCanComment(t.Context(), string(one.ID), ck.GetChannelCanCommentQuery{})

@@ -15,7 +15,10 @@ const maxAspectTerm = 10000
 
 var (
 	AspectNative = Aspect{}
-	Square       = Aspect{1, 1}
+)
+
+var (
+	Square = Aspect{1, 1}
 )
 
 // Ratio parses "W:H" and panics on an invalid one (for constants in code).
@@ -84,15 +87,6 @@ func (a Aspect) scale(v, num, den int) int {
 
 // Rotated is a turned a quarter (90 or 270 degrees).
 func (a Aspect) Rotated() Aspect { return Aspect{a.H, a.W} }
-
-// AspectOf is the ratio of a w×h size, reduced (native for an empty size).
-func AspectOf(w, h int) Aspect {
-	if w <= 0 || h <= 0 {
-		return AspectNative
-	}
-	g := gcd(w, h)
-	return Aspect{W: w / g, H: h / g}
-}
 
 // MarshalText writes "W:H" (native: empty), so JSON and config carry the string.
 func (a Aspect) MarshalText() ([]byte, error) {

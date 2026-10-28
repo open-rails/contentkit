@@ -18,6 +18,9 @@ import (
 	"testing"
 	"time"
 
+	catalogstore "github.com/open-rails/contentkit/internal/catalogstore"
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
@@ -126,7 +129,7 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 	must(t, err)
 	purge := func(t *testing.T, want rivertype.JobState) {
 		t.Helper()
-		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
+		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalogstore.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)
 		waitForWithin(t, 45*time.Second, func() bool {
 			current, err := producer.JobGet(t.Context(), job.Job.ID)
@@ -224,7 +227,7 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 				compressed.Close()
 				must(t, err)
 			}
-			var tombstone media.Manifest
+			var tombstone mediastore.Manifest
 			must(t, json.Unmarshal(encoded, &tombstone))
 			if !tombstone.Deleted || len(tombstone.Files) != 0 {
 				t.Fatal("retained manifest still references erased media")
@@ -312,7 +315,7 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 		claimed := makeDeleted("Purge claim wins")
 		fencePath := "/" + m.bucket + "/" + root + claimed.Kind + "/" + claimed.Version + "/public/" + layout.ErasureFenceName
 		pauseErasure.Store(&fencePath)
-		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
+		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalogstore.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)
 		select {
 		case <-erasureEntered:

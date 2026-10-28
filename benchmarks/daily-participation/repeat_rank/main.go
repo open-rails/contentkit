@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/open-rails/contentkit/signal"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+	"github.com/open-rails/contentkit/signal"
 )
 
 func must(e error) {
@@ -39,7 +41,7 @@ func main() {
 	c, e := clickhouse.Open(&clickhouse.Options{Addr: []string{os.Getenv("CONTENTKIT_CRITICAL_CH_ADDR")}, Auth: clickhouse.Auth{Username: os.Getenv("CONTENTKIT_CRITICAL_CH_USER"), Password: os.Getenv("CONTENTKIT_CRITICAL_CH_PASSWORD")}, Settings: clickhouse.Settings{"max_threads": 2, "max_memory_usage": 1073741824, "use_query_cache": 0, "log_queries": 1}, ReadTimeout: 180 * time.Second})
 	must(e)
 	defer c.Close()
-	st, e := signal.NewStore(c, db)
+	st, e := signalstore.NewStore(c, db)
 	must(e)
 	var baseline []signal.PopularHit
 	var logs []map[string]any
@@ -48,7 +50,7 @@ func main() {
 		qid := fmt.Sprintf("%s_actual_repeat_%d_%d", db, time.Now().Unix(), run)
 		ids = append(ids, qid)
 		start := time.Now()
-		hits, e := st.DailyPopular(clickhouse.Context(ctx, clickhouse.WithQueryID(qid)), "bench261", "gallery", signal.AllTime(), signal.ActivityScope{Domain: "main", Language: "en"}, 100000)
+		hits, e := st.DailyPopular(clickhouse.Context(ctx, clickhouse.WithQueryID(qid)), "bench261", "gallery", signalstore.AllTime(), signal.ActivityScope{Domain: "main", Language: "en"}, 100000)
 		must(e)
 		methodSeconds := time.Since(start).Seconds()
 		if len(hits) != 100000 {

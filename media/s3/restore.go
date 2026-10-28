@@ -9,6 +9,8 @@ import (
 	"slices"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -26,8 +28,8 @@ type version struct {
 // Snapshot reads an item's manifest and exact referenced object versions at at.
 // It changes no objects or delete markers. Apply it with media.Jobs.Restore after
 // restoring the host's records and reapplying any subsequent privacy erasures.
-func (s *Store) Snapshot(ctx context.Context, item media.Item, at time.Time) (media.Snapshot, error) {
-	var snap media.Snapshot
+func (s *Store) Snapshot(ctx context.Context, item mediastore.Item, at time.Time) (mediastore.Snapshot, error) {
+	var snap mediastore.Snapshot
 	if at.IsZero() {
 		return snap, errors.New("s3: snapshot needs a historical time")
 	}
@@ -74,7 +76,7 @@ func (s *Store) Snapshot(ctx context.Context, item media.Item, at time.Time) (me
 			}
 			return v.id, nil
 		}
-		return "", fmt.Errorf("s3: snapshot %s: %w", key, media.ErrNotFound)
+		return "", fmt.Errorf("s3: snapshot %s: %w", key, mediastore.ErrNotFound)
 	}
 	var err error
 	snap.Ref = item.Ref()
@@ -91,12 +93,12 @@ func (s *Store) Snapshot(ctx context.Context, item media.Item, at time.Time) (me
 	if err != nil {
 		return snap, err
 	}
-	snap.Manifest, err = media.DecodeManifest(body)
+	snap.Manifest, err = mediastore.DecodeManifest(body)
 	if err != nil {
 		return snap, err
 	}
 	if snap.Manifest.Deleted {
-		return snap, media.ErrNotFound
+		return snap, mediastore.ErrNotFound
 	}
 	var keys []string
 	for _, name := range snap.Manifest.Blobs() {

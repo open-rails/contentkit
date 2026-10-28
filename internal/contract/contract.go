@@ -16,14 +16,14 @@ import (
 
 	// The modules register their routes.
 	_ "github.com/open-rails/contentkit"
-	_ "github.com/open-rails/contentkit/catalog"
-	_ "github.com/open-rails/contentkit/content"
-	_ "github.com/open-rails/contentkit/contenturl"
-	_ "github.com/open-rails/contentkit/discovery"
-	_ "github.com/open-rails/contentkit/entities"
-	_ "github.com/open-rails/contentkit/importer"
-	_ "github.com/open-rails/contentkit/media"
-	_ "github.com/open-rails/contentkit/media/versions"
+	_ "github.com/open-rails/contentkit/internal/catalogstore"
+	_ "github.com/open-rails/contentkit/internal/contentstore"
+	_ "github.com/open-rails/contentkit/internal/discoverystore"
+	_ "github.com/open-rails/contentkit/internal/entitystore"
+	_ "github.com/open-rails/contentkit/internal/importstore"
+	_ "github.com/open-rails/contentkit/internal/mediastore"
+	_ "github.com/open-rails/contentkit/internal/urlstore"
+	_ "github.com/open-rails/contentkit/internal/versionstore"
 )
 
 // Where each generated file lives, relative to the repository.

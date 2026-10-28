@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	"github.com/open-rails/contentkit/internal/jobhook"
 
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/media/versions"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
@@ -30,7 +31,7 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 		defer cancel()
 		must(t, fleet.Stop(ctx))
 	})
-	queue := versions.QueueFor(publicationTenant(a))
+	queue := versionstore.QueueFor(publicationTenant(a))
 	base := w.clock.now()
 	versionAt, parentAt, audienceAt := base.Add(30*time.Minute), base.Add(time.Hour), base.Add(2*time.Hour)
 	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery",

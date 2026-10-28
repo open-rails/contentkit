@@ -23,6 +23,17 @@ import (
 	"sync"
 	"time"
 
+	catalogstore "github.com/open-rails/contentkit/internal/catalogstore"
+	channelstore "github.com/open-rails/contentkit/internal/channelstore"
+	contentstore "github.com/open-rails/contentkit/internal/contentstore"
+	discoverystore "github.com/open-rails/contentkit/internal/discoverystore"
+	entitlement "github.com/open-rails/contentkit/internal/entitlement"
+	entitystore "github.com/open-rails/contentkit/internal/entitystore"
+	importstore "github.com/open-rails/contentkit/internal/importstore"
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	urlstore "github.com/open-rails/contentkit/internal/urlstore"
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,22 +44,17 @@ import (
 	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/channels"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
-	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
-	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
+	"github.com/open-rails/contentkit/internal/migrations"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
-	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/media/workqueue"
-	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -67,19 +73,19 @@ type Engine struct {
 	pool            *pgxpool.Pool
 	log             *slog.Logger
 	auth            auth.Authenticator
-	gate            *access.Gate
+	gate            *entitlement.Gate
 
 	hub      *hub.Hub
 	signals  *signalPlane // nil without ClickHouse
 	chMu     sync.Mutex
 	ownCH    clickhouse.Conn // opened from Config.ClickHouse
-	content  *content.Runtime
-	entities *entities.Store
-	channels *channels.Store
-	catalog  *catalog.Store
-	versions *versions.Service
-	discover *discovery.Service
-	importer *importer.Service
+	content  *contentstore.Runtime
+	entities *entitystore.Store
+	channels *channelstore.Store
+	catalog  *catalogstore.Store
+	versions *versionstore.Service
+	discover *discoverystore.Service
+	importer *importstore.Service
 	media    *engineMedia
 	avatars  *engineAvatars
 	modules  map[httpapi.Module]http.Handler
@@ -97,15 +103,15 @@ type Engine struct {
 
 type engineMedia struct {
 	polls    bool // the registry declares the poll kind
-	versions *versions.Service
-	reg      *media.Registry
+	versions *versionstore.Service
+	reg      *mediastore.Registry
 	store    media.Store
-	jobs     *media.Jobs
-	uploads  *media.Uploads
-	reader   *media.Reader
-	limit    media.RateLimit
+	jobs     *mediastore.Jobs
+	uploads  *mediastore.Uploads
+	reader   *mediastore.Reader
+	limit    mediastore.RateLimit
 	queue    *workqueue.Queue
-	progress media.ProgressSource
+	progress mediastore.ProgressSource
 }
 
 // New runs ContentKit in this process. With Database.SkipMigrations it checks
@@ -160,7 +166,7 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		SignalPlane: e.signals != nil}); err != nil {
 		return nil, err
 	}
-	if e.gate, err = access.NewGate(access.GateConfig{Tenant: cfg.Tenant, Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log, Now: now}); err != nil {
+	if e.gate, err = entitlement.NewGate(entitlement.GateConfig{Tenant: cfg.Tenant, Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log, Now: now}); err != nil {
 		return nil, err
 	}
 	if err := e.newCatalog(ctx, deps, now); err != nil {
@@ -176,11 +182,11 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		if e.avatars, err = e.newAvatars(deps); err != nil {
 			return nil, err
 		}
-		if err := e.catalog.BindMedia(catalog.Media{Registry: e.media.reg, Reader: e.media.reader, Versions: catalogMedia{Service: e.media.versions, engine: e}}); err != nil {
+		if err := e.catalog.BindMedia(catalogstore.Media{Registry: e.media.reg, Reader: e.media.reader, Versions: catalogMedia{Service: e.media.versions, engine: e}}); err != nil {
 			return nil, err
 		}
 	}
-	if e.content, err = content.New(ctx, e.contentOptions(deps)); err != nil {
+	if e.content, err = contentstore.New(ctx, e.contentOptions(deps)); err != nil {
 		return nil, err
 	}
 	if err := e.mount(deps); err != nil {
@@ -292,7 +298,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if options.explicit {
 		// A retry after a lost provider reply must converge here, not enqueue
 		// redundant background provisioning for the reserved entity.
-		if err := catalog.InitializeFixedOwners(ctx, e.pool, e.schema, e.cfg.Tenant, e.cfg.Content, options.Scopes); err != nil {
+		if err := catalogstore.InitializeFixedOwners(ctx, e.pool, e.schema, e.cfg.Tenant, e.cfg.Content, options.Scopes); err != nil {
 			return err
 		}
 	}
@@ -324,15 +330,15 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 // newCatalog builds the stores media is built over: entities and the catalog, which refreshes facets when entities change.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
-	opts := entities.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log,
-		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
+	opts := entitystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log,
+		ContentChanged: func(ctx context.Context, q entitystore.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},
-		NamesChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
+		NamesChanged: func(ctx context.Context, q entitystore.Querier, ids []string) error {
 			return e.catalog.EntitiesRenamed(ctx, q, ids)
 		},
-		DocumentsChanged: func(ctx context.Context, q entities.Querier) error { return e.syncDocuments(ctx, q) },
-		EntitiesChanged: func(ctx context.Context, q entities.Querier, changes []entities.Change) error {
+		DocumentsChanged: func(ctx context.Context, q entitystore.Querier) error { return e.syncDocuments(ctx, q) },
+		EntitiesChanged: func(ctx context.Context, q entitystore.Querier, changes []entities.Change) error {
 			return e.catalog.EntitiesChanged(ctx, q, changes)
 		},
 		Owned: ownedContent{e}}
@@ -341,15 +347,15 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	}
 	var err error
 	opts.Gate = e.gate
-	if e.entities, err = entities.New(opts); err != nil {
+	if e.entities, err = entitystore.New(opts); err != nil {
 		return err
 	}
-	e.channels = channels.FromStore(e.entities)
-	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
+	e.channels = channelstore.FromStore(e.entities)
+	co := catalogstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
 		Body: deps.BodyProcessor, Now: now, Logger: e.log,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
-		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
-	if e.catalog, err = catalog.New(ctx, co); err != nil {
+		DocumentsChanged: func(ctx context.Context, q catalogstore.Querier) error { return e.syncDocuments(ctx, q) }}
+	if e.catalog, err = catalogstore.New(ctx, co); err != nil {
 		return err
 	}
 	return nil
@@ -357,7 +363,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 
 // newVersions binds the one publication service before optional media storage.
 func (e *Engine) newVersions(deps Deps, now func() time.Time) error {
-	opts := versions.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool,
+	opts := versionstore.Options{Tenant: e.cfg.Tenant, Schema: e.schema, Pool: e.pool,
 		Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
 		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
 		Policy: deps.Downloads, Logger: e.log, Now: now, MediaConfigured: e.cfg.Media != nil}
@@ -365,7 +371,7 @@ func (e *Engine) newVersions(deps Deps, now func() time.Time) error {
 		opts.Downloads, opts.Redis = mc.Downloads, deps.Redis
 	}
 	var err error
-	if e.versions, err = versions.New(opts); err != nil {
+	if e.versions, err = versionstore.New(opts); err != nil {
 		return err
 	}
 	return e.catalog.BindPublication(e.versions)
@@ -383,7 +389,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		declared[k.Name] = true
 	}
 	m.polls = declared[pollFolder]
-	if m.reg, err = media.NewRegistry(reg, m.versions.Hooks()); err != nil {
+	if m.reg, err = mediastore.NewRegistry(reg, m.versions.Hooks()); err != nil {
 		return nil, err
 	}
 	accountStorage, sharedAccounts := e.accountMediaStorage()
@@ -394,16 +400,16 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if m.queue, err = workqueue.NewWithAccounts(e.pool, m.reg, mc.WorkerSchema, accountQueue); err != nil {
 		return nil, err
 	}
-	journal, err := media.NewPGJournal(e.pool, e.schema, m.queue)
+	journal, err := mediastore.NewPGJournal(e.pool, e.schema, m.queue)
 	if err != nil {
 		return nil, err
 	}
 	if sharedAccounts {
-		accountJournal, err := media.NewPGJournal(e.pool, accountStorage.Schema, m.queue)
+		accountJournal, err := mediastore.NewPGJournal(e.pool, accountStorage.Schema, m.queue)
 		if err != nil {
 			return nil, err
 		}
-		journal, err = media.RouteJournal(journal, accountJournal, e.accountMediaPartition())
+		journal, err = mediastore.RouteJournal(journal, accountJournal, e.accountMediaPartition())
 		if err != nil {
 			return nil, err
 		}
@@ -413,13 +419,13 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		return nil, err
 	}
 	if sharedAccounts && limiter != nil {
-		accountLimiter, err := media.NewPGLimiter(e.pool, accountStorage.Schema, media.PGLimits{})
+		accountLimiter, err := mediastore.NewPGLimiter(e.pool, accountStorage.Schema, mediastore.PGLimits{})
 		if err != nil {
 			return nil, err
 		}
-		limiter = media.RouteLimiter(limiter, accountLimiter, e.accountMediaPartition())
+		limiter = mediastore.RouteLimiter(limiter, accountLimiter, e.accountMediaPartition())
 	}
-	if m.jobs, err = media.NewJobs(media.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: media.PGLocker(e.pool), Journal: journal,
+	if m.jobs, err = mediastore.NewJobs(mediastore.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: mediastore.PGLocker(e.pool), Journal: journal,
 		Processes: m.queue, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
 		return nil, err
 	}
@@ -440,10 +446,10 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	rate := func(r RateLimitConfig) media.RateLimit {
-		return media.RateLimit{PerSecond: r.PerSecond, Burst: r.Burst, Disabled: r.Disabled, Redis: deps.Redis}
+	rate := func(r RateLimitConfig) mediastore.RateLimit {
+		return mediastore.RateLimit{PerSecond: r.PerSecond, Burst: r.Burst, Disabled: r.Disabled, Redis: deps.Redis}
 	}
-	if m.uploads, err = media.NewUploads(media.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Tickets: &ring,
+	if m.uploads, err = mediastore.NewUploads(mediastore.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Tickets: &ring,
 		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit), Limiter: limiter}); err != nil {
 		return nil, err
 	}
@@ -454,14 +460,14 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if d.Mode != "" {
 		mode = media.DeliveryMode(d.Mode)
 	}
-	if m.reader, err = media.NewReader(media.ReaderOptions{Manifests: m.jobs.Manifests(), Queue: m.queue, Progress: m.progress,
+	if m.reader, err = mediastore.NewReader(mediastore.ReaderOptions{Manifests: m.jobs.Manifests(), Queue: m.queue, Progress: m.progress,
 		Delivery: media.Delivery{Mode: mode, CookieDomain: d.CookieDomain, SigningKey: signing, TTL: d.TTL, Window: d.Window},
-		Issuance: media.Issuance{PerHour: mc.Issuance.PerHour, AnonymousPerHour: mc.Issuance.AnonymousPerHour, Disabled: mc.Issuance.Disabled, Redis: deps.Redis},
+		Issuance: mediastore.Issuance{PerHour: mc.Issuance.PerHour, AnonymousPerHour: mc.Issuance.AnonymousPerHour, Disabled: mc.Issuance.Disabled, Redis: deps.Redis},
 		Now:      now}); err != nil {
 		return nil, err
 	}
 	m.limit = rate(mc.ReadLimit)
-	if err := m.versions.Bind(versions.Media{Manifests: m.jobs.Manifests(), Uploads: m.uploads, Jobs: m.jobs, Reader: m.reader}); err != nil {
+	if err := m.versions.Bind(versionstore.Media{Manifests: m.jobs.Manifests(), Uploads: m.uploads, Jobs: m.jobs, Reader: m.reader}); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -470,7 +476,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 // groupLimiter limits uploads to user-owned entities by their kind's
 // kinds.UploadLimits, keyed by the entity (versions.EntityOwner); nil when no
 // kind sets any.
-func (e *Engine) entityLimiter() (*media.PGLimiter, error) {
+func (e *Engine) entityLimiter() (*mediastore.PGLimiter, error) {
 	limits := map[string]kinds.UploadLimits{}
 	for name, gk := range e.cfg.Content.StorageModel().EntityKinds {
 		if gk.Uploads != (kinds.UploadLimits{}) {
@@ -481,10 +487,10 @@ func (e *Engine) entityLimiter() (*media.PGLimiter, error) {
 		return nil, nil
 	}
 	of := func(owner string) kinds.UploadLimits {
-		kind, _, _ := versions.ParseEntityOwner(owner)
+		kind, _, _ := versionstore.ParseEntityOwner(owner)
 		return limits[kind]
 	}
-	return media.NewPGLimiter(e.pool, e.schema, media.PGLimits{
+	return mediastore.NewPGLimiter(e.pool, e.schema, mediastore.PGLimits{
 		Quota: func(_ context.Context, _, owner string) (int64, error) { return of(owner).QuotaBytes, nil },
 		Rates: func(_ context.Context, _, owner string) (int, int64, error) {
 			l := of(owner)
@@ -492,7 +498,7 @@ func (e *Engine) entityLimiter() (*media.PGLimiter, error) {
 		}})
 }
 
-func (e *Engine) contentOptions(deps Deps) content.Options {
+func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 	in := e.cfg.Interactions
 	rates := func(rs []Rate) []content.Rate {
 		var out []content.Rate
@@ -502,7 +508,7 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		return out
 	}
 	l := in.Limits
-	o := content.Options{
+	o := contentstore.Options{
 		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
 		Processor:             deps.Processor,
 		NotificationPublisher: deps.Notifications,
@@ -510,13 +516,13 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		Accounts:              e,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		ProviderDataEraser: deps.ProviderDataEraser,
-		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
+		Limits: contentstore.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength, DuplicateWindow: in.DuplicateWindow,
 		Logger: e.log,
 	}
 	if e.media != nil {
-		o.Media = &content.Media{Namespace: e.media.reg.Namespace(), Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
+		o.Media = &contentstore.Media{Namespace: e.media.reg.Namespace(), Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
 	}
 	if e.avatars != nil {
 		o.Avatars = e.avatars.urls
@@ -548,8 +554,8 @@ func (e *Engine) mount(deps Deps) error {
 	var err error
 	e.modules = map[httpapi.Module]http.Handler{httpapi.Content: e.content.Handler()}
 	if m := e.media; m != nil {
-		e.modules[httpapi.Upload] = media.UploadHandler(m.uploads, media.UploadHandlerOptions{Auth: e.auth, Logger: e.log})
-		e.modules[httpapi.Media] = m.reader.Handler(media.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit, Events: e.mediaEvents})
+		e.modules[httpapi.Upload] = mediastore.UploadHandler(m.uploads, mediastore.UploadHandlerOptions{Auth: e.auth, Logger: e.log})
+		e.modules[httpapi.Media] = m.reader.Handler(mediastore.HandlerOptions{Auth: e.auth, Logger: e.log, Limit: m.limit, Events: e.mediaEvents})
 		if a := e.avatars; a != nil && a.forward != nil {
 			e.modules[httpapi.Upload] = a.forward.wrap(httpapi.Upload, e.modules[httpapi.Upload])
 			e.modules[httpapi.Media] = a.forward.wrap(httpapi.Media, e.modules[httpapi.Media])
@@ -576,18 +582,18 @@ func (e *Engine) mount(deps Deps) error {
 		avatars = e.avatars.rule
 	}
 	e.modules[httpapi.Kinds] = kindsHandler(c, e.hub.SignalPlane, avatars)
-	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
+	if e.importer, err = importstore.New(importstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
 	}
 	if e.modules[httpapi.Import], err = e.importer.Handler(e.auth); err != nil {
 		return err
 	}
-	urls, err := contenturl.New(contenturl.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant})
+	urls, err := urlstore.New(urlstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant})
 	if err != nil {
 		return err
 	}
-	router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{Routes: c.Routes(), Languages: c.Languages, Logger: e.log,
+	router, err := urlstore.NewRouter(urls, contenturl.RouterOptions{Routes: c.Routes(), Languages: c.Languages, Logger: e.log,
 		Visibility: e.codeVisibility})
 	if err != nil {
 		return err
@@ -599,7 +605,7 @@ func (e *Engine) mount(deps Deps) error {
 
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
-	o := discovery.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
+	o := discoverystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
 		Entities: e.entities, Channels: e.channels, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
 		ActivityCohorts: e.cfg.ActivityCohorts}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
@@ -614,7 +620,7 @@ func (e *Engine) mountDiscovery(deps Deps) error {
 		}
 	}
 	var err error
-	if e.discover, err = discovery.New(o); err != nil {
+	if e.discover, err = discoverystore.New(o); err != nil {
 		return err
 	}
 	e.catalog.BindStanding(e.discover)

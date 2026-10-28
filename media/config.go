@@ -14,11 +14,8 @@ import (
 	"io/fs"
 	"slices"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
@@ -228,9 +225,6 @@ func (s Shape) contains(d Dims) bool {
 	return (s.WiderThan.Native() || wider(a, s.WiderThan)) && (s.NoWiderThan.Native() || !wider(a, s.NoWiderThan))
 }
 
-// spans reports aspects wider than lo and no wider than hi; unset is open.
-func spans(lo, hi Aspect) bool { return lo.Native() || hi.Native() || wider(hi, lo) }
-
 func wider(a, b Aspect) bool { return a.W*b.H > b.W*a.H }
 
 // Public is a fixed public image: {To} with {w} at each of Widths (or one
@@ -288,6 +282,9 @@ const (
 	// ImageFormatWebP is the default for all images and the only format for
 	// public presets and editor previews.
 	ImageFormatWebP ImageFormat = ""
+)
+
+const (
 	// ImageFormatSource preserves the upload's codec in a private preset.
 	ImageFormatSource ImageFormat = "source"
 )
@@ -297,7 +294,10 @@ type FitMode string
 
 const (
 	FitInside FitMode = "" // within the box, keeping the aspect
-	FitCover  FitMode = "cover"
+)
+
+const (
+	FitCover FitMode = "cover"
 )
 
 // Animation is a policy for animated images (GIF, WebP; AVIF/HEIF sequences
@@ -307,6 +307,9 @@ type Animation string
 const (
 	// AnimationAllow keeps every frame, delay and the loop count.
 	AnimationAllow Animation = ""
+)
+
+const (
 	// AnimationReject refuses an animated upload with animation_not_allowed.
 	AnimationReject Animation = "reject"
 )
@@ -334,18 +337,22 @@ type MP4 struct {
 // lists the item's converted subtitles as tracks after its own.
 type Subtitles struct{}
 
-// Video profiles (HLS.Profile, MP4.Profile).
 const (
-	VideoLive      = ""
+	VideoLive = ""
+)
+
+const (
 	VideoAnimation = "animation"
 )
 
 // DefaultLadder is the HLS ladder by short side.
 var DefaultLadder = []int{2160, 1080, 480}
 
-// Default aspect bounds: 1:2.4 vertical to 2.4:1 wide.
 const (
 	DefaultMinAspect = 1 / 2.4
+)
+
+const (
 	DefaultMaxAspect = 2.4
 )
 
@@ -354,46 +361,6 @@ func Fit(n int) *Image { return &Image{Width: n, Height: n} }
 
 // Rung is an MP4 at short side n.
 func Rung(n int) *MP4 { return &MP4{Rung: n} }
-
-// Hooks are the app's callbacks, given to NewRegistry beside its Config.
-type Hooks struct {
-	// Resolver authorizes media reads. Declared public presets do not depend
-	// on publication visibility.
-	Resolver resolve.Resolver
-	// ReaderManifest supplies the catalog's completed reader snapshot. It is a
-	// metadata projection only: the gateway still authorizes one item's folder.
-	// Editors use the current authoring manifest without this projection.
-	ReaderManifest func(ctx context.Context, ref contentref.ContentRef, actor access.Actor, current *Manifest) (*Manifest, error)
-	// ValidatePathsChanged validates virtual-name mutations before the manifest
-	// write while its lock is held. It must perform reads only.
-	ValidatePathsChanged func(ctx context.Context, ref contentref.ContentRef, renames map[string]string, removed []string) error
-	// PathsChanged applies accepted virtual-name changes in the journal's
-	// settlement transaction. Failure retries the same recorded mapping.
-	PathsChanged func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, renames map[string]string, removed []string) error
-	// CanUpload says who may write which upload path.
-	CanUpload UploadAuthorizer
-	// ItemReady reports an item whose processing settled (ready, or failed
-	// with nothing processing) in a host transaction, after the worker's
-	// job, synchronously in its completion transaction. It must be idempotent; an error
-	// retries.
-	ItemReady func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r Readiness) error
-	// ItemProgressed reports changed preparation while other outputs are
-	// pending. It never means a partial reader release is available. It runs in a
-	// processor completion transaction alongside ItemReady, which
-	// reports final completion. Optional; idempotent; an error retries.
-	ItemProgressed func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error
-	// BeforeRetire is the catalog integration barrier. It runs after the
-	// manifest commits and before its removed objects are deleted, including
-	// recovery. It must invalidate references to those objects idempotently.
-	// The manifest lease is held: this callback must not mutate media.
-	BeforeRetire func(ctx context.Context, ref contentref.ContentRef, current *Manifest) error
-	// ItemCommitted reports an item a commit changed, before its processing
-	// runs; ItemReady reports the far end. Idempotent; an error fails the
-	// commit.
-	ItemCommitted func(ctx context.Context, ref contentref.ContentRef) error
-	// Failed reports an upload a producer cannot process, where it runs.
-	Failed func(ctx context.Context, ref contentref.ContentRef, path string, err error)
-}
 
 // UploadAuthorizer is the app's upload permission check, run at presign and
 // commit against what is written.

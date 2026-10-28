@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	"github.com/open-rails/contentkit/internal/jobhook"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/contentkit/media/versions"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 )
@@ -18,7 +19,7 @@ import (
 // queue explicitly only after proving that unprovisioned scopes grant nothing.
 func publicationOnlyFleet(t *testing.T, app *application) *river.Client[pgx.Tx] {
 	t.Helper()
-	queue := versions.QueueFor(publicationTenant(app))
+	queue := versionstore.QueueFor(publicationTenant(app))
 	var dormant []string
 	only := riverhelpers.NewContribution("critical-publication-only", func(_ context.Context, cfg *river.Config) error {
 		for name := range cfg.Queues {

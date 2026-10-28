@@ -4,6 +4,8 @@ import (
 	"slices"
 	"testing"
 
+	entitlement "github.com/open-rails/contentkit/internal/entitlement"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
@@ -76,10 +78,10 @@ func TestEditionEntitlementIsolation(t *testing.T) {
 				IdempotencyKey: uuid.NewString(), Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}},
 			})
 			must(t, err)
-			g, err := access.NewGate(access.GateConfig{Tenant: a.cfg.Scope.AppID.String(), Kinds: a.cfg.Content, Billing: ckbilling.Billing(b.merchant), Now: w.clock.now})
+			g, err := entitlement.NewGate(entitlement.GateConfig{Tenant: a.cfg.Scope.AppID.String(), Kinds: a.cfg.Content, Billing: ckbilling.Billing(b.merchant), Now: w.clock.now})
 			must(t, err)
 			actor := access.Actor{ID: user.ID}
-			ctx := access.WithMemo(t.Context())
+			ctx := entitlement.WithMemo(t.Context())
 			f, err := g.Filter(ctx, actor)
 			must(t, err)
 			for _, useFilter := range []bool{false, true} {

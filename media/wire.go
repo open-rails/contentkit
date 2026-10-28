@@ -5,10 +5,6 @@ import (
 	"time"
 )
 
-// The HTTP wire types of the upload API (UploadHandler) and the read API
-// (Reader.Handler). The browser SDK's types are generated from them
-// (internal/contract). SHA-256 values are lowercase hex.
-
 // RefBody names an item of the handler's registry: of a content kind, one
 // version's; of any other kind, Version "".
 type RefBody struct {
@@ -127,11 +123,16 @@ type ErrorReply struct {
 	Details    *ErrorDetails `json:"details,omitempty"`     // image refusals
 }
 
-// Access levels in ReadResult. Restricted grants expose only authorized files.
 const (
-	AccessFull    = "full"    // whole-item private access
+	AccessFull = "full" // whole-item private access
+)
+
+const (
 	AccessPartial = "partial" // exact authorized private files only
-	AccessNone    = "none"    // public files only (previews)
+)
+
+const (
+	AccessNone = "none" // public files only (previews)
 )
 
 // ReadResult is the read API's answer: the files under the requested prefix

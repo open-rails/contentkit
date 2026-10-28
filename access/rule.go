@@ -17,11 +17,23 @@ import (
 type Level string
 
 const (
-	Public       Level = "public"    // anyone
-	TierLevel    Level = "tier"      // holders of any of Rule.Tiers
-	ChannelLevel Level = "group"     // holders of Rule.ChannelID's key: members-only content
-	PPV          Level = "ppv"       // buyers of this version
-	ChannelPPV   Level = "group_ppv" // buyers; buying needs Rule.ChannelID's key first
+	Public Level = "public" // anyone
+)
+
+const (
+	TierLevel Level = "tier" // holders of any of Rule.Tiers
+)
+
+const (
+	ChannelLevel Level = "group" // holders of Rule.ChannelID's key: members-only content
+)
+
+const (
+	PPV Level = "ppv" // buyers of this version
+)
+
+const (
+	ChannelPPV Level = "group_ppv" // buyers; buying needs Rule.ChannelID's key first
 )
 
 // ErrRule is a rule outside the grammar or naming an undeclared tier.
@@ -106,14 +118,6 @@ func (r Rule) Free(now time.Time) bool {
 		}
 	}
 	return false
-}
-
-// Effective is a version's rule: its override, else its content's.
-func Effective(content Rule, override *Rule) Rule {
-	if override != nil {
-		return *override
-	}
-	return content
 }
 
 // Previewed is r with its content kind's locked preview when r locks and

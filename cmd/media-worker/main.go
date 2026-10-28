@@ -33,13 +33,15 @@ import (
 	"syscall"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/open-rails/helpers/deps"
 
+	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/worker"
 )
 
 func main() {
@@ -68,7 +70,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	kinds, err := media.NewRegistry(declared, media.Hooks{})
+	kinds, err := mediastore.NewRegistry(declared, mediastore.Hooks{})
 	if err != nil {
 		return fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}

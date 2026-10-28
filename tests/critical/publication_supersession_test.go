@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
@@ -96,15 +98,15 @@ func TestSupersededPublicCopyReturnsToPrivate(t *testing.T) {
 	})
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := media.NewRegistry(config, media.Hooks{})
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 	must(t, err)
 	logical, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 	must(t, err)
 	item, err := registry.Item(logical)
 	must(t, err)
-	journal, err := media.NewPGJournal(w.pool, w.schema, nil)
+	journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
 	must(t, err)
-	manifests, err := media.NewManifests(storage.store, registry, media.ManifestOptions{Locker: media.PGLocker(w.pool), Journal: journal})
+	manifests, err := mediastore.NewManifests(storage.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
 	must(t, err)
 	before, _, err := manifests.Get(t.Context(), logical)
 	must(t, err)

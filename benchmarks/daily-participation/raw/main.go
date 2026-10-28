@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/open-rails/contentkit/signal"
@@ -183,7 +185,7 @@ func main() {
 		}
 		availability.Intervals = append(availability.Intervals, a)
 	}
-	store, err := signal.NewStore(c, db)
+	store, err := signalstore.NewStore(c, db)
 	must(err)
 	scope := signal.ActivityScope{Domain: "main", Language: "en"}
 	var phases []phase
@@ -238,7 +240,7 @@ func main() {
 	}
 	c.label = "rank"
 	start := time.Now()
-	hits, err := store.DailyPopular(ctx, tenant, kind, signal.Between(day, day.AddDate(0, 0, 1)), scope, items)
+	hits, err := store.DailyPopular(ctx, tenant, kind, signalstore.Between(day, day.AddDate(0, 0, 1)), scope, items)
 	must(err)
 	phases = append(phases, phase{"rank", time.Since(start).Seconds(), map[string]int{"results": len(hits)}})
 	want := []int{}

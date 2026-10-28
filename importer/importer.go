@@ -337,32 +337,84 @@ type DeleteRecord struct {
 	ExternalID string `json:"external_id"`
 }
 
-// Sections, in the order a batch writes them.
 const (
-	SectionChannels      = "channels"
-	SectionEntities      = "entities"
-	SectionContents      = "contents"
-	SectionMemberships   = "memberships"
-	SectionAliases       = "aliases"
-	SectionComments      = "comments"
-	SectionReactions     = "reactions"
-	SectionFavorites     = "favorites"
-	SectionPolls         = "polls"
-	SectionVotes         = "votes"
-	SectionLegacyReading = "legacy_reading"
-	SectionSignals       = "signals"
-	SectionDeletes       = "deletes"
+	SectionChannels = "channels"
 )
 
-// Entities of external ids.
+const (
+	SectionEntities = "entities"
+)
+
+const (
+	SectionContents = "contents"
+)
+
+const (
+	SectionMemberships = "memberships"
+)
+
+const (
+	SectionAliases = "aliases"
+)
+
+const (
+	SectionComments = "comments"
+)
+
+const (
+	SectionReactions = "reactions"
+)
+
+const (
+	SectionFavorites = "favorites"
+)
+
+const (
+	SectionPolls = "polls"
+)
+
+const (
+	SectionVotes = "votes"
+)
+
+const (
+	SectionLegacyReading = "legacy_reading"
+)
+
+const (
+	SectionSignals = "signals"
+)
+
+const (
+	SectionDeletes = "deletes"
+)
+
 const (
 	RecordChannel = "channel"
+)
+
+const (
 	RecordContent = "content"
+)
+
+const (
 	RecordVersion = "version"
-	RecordEntity  = "group"
+)
+
+const (
+	RecordEntity = "group"
+)
+
+const (
 	RecordComment = "comment"
-	RecordPoll    = "poll"
-	RecordOption  = "poll_option"
+)
+
+const (
+	RecordPoll = "poll"
+)
+
+const (
+	RecordOption = "poll_option"
 )
 
 // Result reports a batch: what each section wrote, the records that failed
@@ -388,11 +440,22 @@ type RecordFailure struct {
 	Error string `json:"error"`
 }
 
-// Failure codes.
 const (
-	CodeInvalid  = "invalid"
+	CodeInvalid = "invalid"
+)
+
+const (
 	CodeNotFound = "not_found"
+)
+
+const (
 	CodeConflict = "conflict"
-	CodeErased   = "erased"
+)
+
+const (
+	CodeErased = "erased"
+)
+
+const (
 	CodeInternal = "internal"
 )

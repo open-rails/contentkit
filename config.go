@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/authkit/notify"
@@ -351,7 +353,7 @@ func (c Config) MediaRegistry() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	reg, err := media.NewRegistry(mc, media.Hooks{})
+	reg, err := mediastore.NewRegistry(mc, mediastore.Hooks{})
 	if err != nil {
 		return nil, err
 	}

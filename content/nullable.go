@@ -1,6 +1,8 @@
 package content
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 // Nullable is a PATCH member that tells absent (leave it) from null (clear
 // it): Set reports the member was present, Value is nil for null. Tag it

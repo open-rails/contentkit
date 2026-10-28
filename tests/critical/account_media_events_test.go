@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
@@ -44,7 +46,7 @@ func TestAccountMediaEventReader(t *testing.T) {
 		// finish its manifest. Readiness and event visibility are separate commits.
 		mediaConfig, err := a.cfg.MediaKinds()
 		must(t, err)
-		registry, err := media.NewRegistry(mediaConfig, media.Hooks{})
+		registry, err := mediastore.NewRegistry(mediaConfig, mediastore.Hooks{})
 		must(t, err)
 		accountRef, err := registry.Ref("user", user.ID)
 		must(t, err)

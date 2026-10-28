@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/signal"
@@ -40,7 +42,7 @@ func measuredRef(t *testing.T, a *application) contentref.ContentRef {
 
 func measuredReceipt(t *testing.T, ref contentref.ContentRef, subject signal.Subject, at time.Time, page, active uint32) signal.Signal {
 	t.Helper()
-	m, err := signal.MeasurePages([]signal.PageEngagement{{Index: page, Ranges: []signal.CoverageRange{{From: 0, To: 10_000}}, ActiveMS: active}}, 2, active)
+	m, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: page, Ranges: []signal.CoverageRange{{From: 0, To: 10_000}}, ActiveMS: active}}, 2, active)
 	must(t, err)
 	m.VersionID, m.VisitID, m.SegmentID = ref.Version(), uuid.NewString(), uuid.NewString()
 	return signal.Signal{ContentRef: ref, Subject: subject, Type: signal.TypeEngagement, EventID: uuid.NewString(), Revision: 1,
@@ -88,7 +90,7 @@ func TestEngagementSummaryFailuresAreBestEffort(t *testing.T) {
 			w := newWorld(t)
 			a := w.apps[0]
 			configureDiscoverySignals(t, w, a)
-			store, err := signal.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
+			store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
 			must(t, err)
 			ref := measuredRef(t, a)
 			subject := signal.Subject{UserID: uuid.NewString()}
@@ -107,7 +109,7 @@ func TestEngagementSummaryFailuresAreBestEffort(t *testing.T) {
 			}
 			activity := func() uint64 {
 				t.Helper()
-				days, err := store.Activity(t.Context(), ref.TenantID, ref.ContentKind, signal.LastDays(1, at))
+				days, err := store.Activity(t.Context(), ref.TenantID, ref.ContentKind, signalstore.LastDays(1, at))
 				must(t, err)
 				if len(days) != 1 || days[0].Readers != 1 {
 					t.Fatalf("activity positive control changed: %+v", days)
@@ -187,7 +189,7 @@ func TestEngagementCanonicalFailuresRemainErrors(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	configureDiscoverySignals(t, w, a)
-	store, err := signal.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
+	store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
 	must(t, err)
 	ref := measuredRef(t, a)
 	subject := signal.Subject{UserID: uuid.NewString()}

@@ -37,9 +37,11 @@ type Subject struct {
 	AnonKey string
 }
 
-// SubjectKind values stored in the subject_kind column.
 const (
 	SubjectKindUser = "user"
+)
+
+const (
 	SubjectKindAnon = "anon"
 )
 
@@ -114,50 +116,23 @@ type Signal struct {
 	Measurement *Measurement
 }
 
-func validateSignal(s Signal, tenant string) error {
-	if err := checkRef(tenant, s.ContentRef); err != nil {
-		return err
-	}
-	if err := s.Subject.Validate(); err != nil {
-		return err
-	}
-	if strings.TrimSpace(s.Type) == "" {
-		return fmt.Errorf("signal: Type is required")
-	}
-	if strings.TrimSpace(s.EventID) == "" {
-		return fmt.Errorf("signal: EventID is required (stable source identity reused by retries)")
-	}
-	if s.OccurredAt.IsZero() {
-		return fmt.Errorf("signal: OccurredAt is required (immutable source time)")
-	}
-	if err := checkIdentifiers("Subject", s.Subject.Key(), "Type", s.Type, "EventID", s.EventID); err != nil {
-		return err
-	}
-	if err := validateAccessContext(s.Access); err != nil {
-		return err
-	}
-	return checkLen("Resume", s.Resume, MaxResumeBytes)
-}
-
-// checkRef validates a reference and pins it to the store call's tenant: a
-// reference of another tenant is an error, never silently rewritten.
-func checkRef(tenant string, ref ContentRef) error {
-	if err := ref.Validate(); err != nil {
-		return fmt.Errorf("signal: %w", err)
-	}
-	if ref.TenantID != tenant {
-		return fmt.Errorf("signal: %s belongs to tenant %q, not %q", ref, ref.TenantID, tenant)
-	}
-	return checkIdentifiers("ContentKind", ref.ContentKind, "ContentID", ref.ContentID, "ContentVersionID", ref.Version())
-}
-
-// Render surfaces. Hosts may use other values; these are the common ones
-// evaluation distinguishes.
 const (
-	SurfaceSearch  = "search"
-	SurfaceForYou  = "foryou"
+	SurfaceSearch = "search"
+)
+
+const (
+	SurfaceForYou = "foryou"
+)
+
+const (
 	SurfaceSimilar = "similar"
+)
+
+const (
 	SurfacePopular = "popular"
+)
+
+const (
 	SurfaceOrganic = "organic"
 )
 
@@ -168,18 +143,16 @@ const (
 type ExposureStage string
 
 const (
-	StageServed   ExposureStage = "served"
-	StageRendered ExposureStage = "rendered"
-	StageVisible  ExposureStage = "visible"
+	StageServed ExposureStage = "served"
 )
 
-func validateStage(s ExposureStage) error {
-	switch s {
-	case StageServed, StageRendered, StageVisible:
-		return nil
-	}
-	return fmt.Errorf("exposure: invalid stage %q", s)
-}
+const (
+	StageRendered ExposureStage = "rendered"
+)
+
+const (
+	StageVisible ExposureStage = "visible"
+)
 
 // Placement is one shown content reference and its absolute 1-based position
 // in the render.
@@ -209,52 +182,15 @@ type Exposure struct {
 	OccurredAt  time.Time // required
 }
 
-func validateExposure(e Exposure, tenant string) error {
-	if strings.TrimSpace(e.RenderID) == "" {
-		return fmt.Errorf("exposure: RenderID is required")
-	}
-	if err := validateStage(e.Stage); err != nil {
-		return err
-	}
-	if e.OccurredAt.IsZero() {
-		return fmt.Errorf("exposure: OccurredAt is required")
-	}
-	if len(e.Shown) == 0 && !(e.Stage == StageRendered && e.Surface == SurfaceSearch && strings.TrimSpace(e.QueryID) != "" && strings.TrimSpace(e.SearchQuery) != "") {
-		return fmt.Errorf("exposure: at least one placement is required")
-	}
-	if len(e.Shown) > MaxShownPerExposure {
-		return &LimitError{Field: "Shown", Limit: MaxShownPerExposure, Got: len(e.Shown)}
-	}
-	seen := map[uint32]struct{}{}
-	for i, p := range e.Shown {
-		if err := checkRef(tenant, p.ContentRef); err != nil {
-			return fmt.Errorf("exposure: placement %d: %w", i, err)
-		}
-		if err := validateAccessContext(p.Access); err != nil {
-			return err
-		}
-		if p.Position == 0 {
-			return fmt.Errorf("exposure: placement %d: Position is required (1-based)", i)
-		}
-		if _, dup := seen[p.Position]; dup {
-			return fmt.Errorf("exposure: duplicate position %d", p.Position)
-		}
-		seen[p.Position] = struct{}{}
-	}
-	if e.Subject != (Subject{}) {
-		if err := e.Subject.Validate(); err != nil {
-			return err
-		}
-	}
-	return checkIdentifiers("RenderID", e.RenderID, "QueryID", e.QueryID, "Surface", e.Surface,
-		"Ranker", e.Ranker, "Language", e.Language, "Subject", e.Subject.Key())
-}
-
-// Standardized click-attribution payload keys, set via WithAttribution so
-// evaluation can join clicks to exposures on the render id.
 const (
 	PayloadKeyRenderID = "render_id"
-	PayloadKeySurface  = "surface"
+)
+
+const (
+	PayloadKeySurface = "surface"
+)
+
+const (
 	PayloadKeyPosition = "position"
 )
 
@@ -353,10 +289,19 @@ type HistoryStatus string
 const (
 	// HistoryAny returns every content item the subject has any signal for.
 	HistoryAny HistoryStatus = ""
+)
+
+const (
 	// HistorySeen returns items with MaxProgress > 0.
 	HistorySeen HistoryStatus = "seen"
+)
+
+const (
 	// HistoryInProgress returns seen-but-not-completed items.
 	HistoryInProgress HistoryStatus = "in_progress"
+)
+
+const (
 	// HistoryCompleted returns completed items.
 	HistoryCompleted HistoryStatus = "completed"
 )
@@ -385,21 +330,6 @@ type Window struct {
 	To   time.Time // exclusive UTC midnight
 }
 
-// LastDays returns the n most recent UTC calendar days including the day that
-// contains now: [midnight(now) - (n-1) days, midnight(now) + 1 day). The window
-// moves only at UTC midnight, so String is a stable cache key within a day.
-// n must be positive (Validate reports otherwise).
-func LastDays(n int, now time.Time) Window {
-	today := utcDay(now)
-	return Window{From: today.AddDate(0, 0, 1-n), To: today.AddDate(0, 0, 1)}
-}
-
-// Between returns the whole UTC days [from, to); both must be UTC midnights.
-func Between(from, to time.Time) Window { return Window{From: from, To: to} }
-
-// AllTime returns the unbounded window.
-func AllTime() Window { return Window{} }
-
 // Validate reports a window that is not a non-empty range of whole UTC days.
 func (w Window) Validate() error {
 	for _, t := range []time.Time{w.From, w.To} {
@@ -422,40 +352,6 @@ func (w Window) String() string {
 		return t.UTC().Format(time.DateOnly)
 	}
 	return "[" + day(w.From) + "," + day(w.To) + ")"
-}
-
-// predicate renders " AND column >= ? AND column < ?" for the bounded sides.
-func windowPredicate(w Window, column string) (string, []any) {
-	var (
-		sb   strings.Builder
-		args []any
-	)
-	if !w.From.IsZero() {
-		sb.WriteString(" AND " + column + " >= ?")
-		args = append(args, w.From.UTC())
-	}
-	if !w.To.IsZero() {
-		sb.WriteString(" AND " + column + " < ?")
-		args = append(args, w.To.UTC())
-	}
-	return sb.String(), args
-}
-
-// dayPredicate renders the window over a Date column.
-func windowDayPredicate(w Window, column string) (string, []any) {
-	var (
-		sb   strings.Builder
-		args []any
-	)
-	if !w.From.IsZero() {
-		sb.WriteString(" AND " + column + " >= toDate(?)")
-		args = append(args, w.From.UTC().Format(time.DateOnly))
-	}
-	if !w.To.IsZero() {
-		sb.WriteString(" AND " + column + " < toDate(?)")
-		args = append(args, w.To.UTC().Format(time.DateOnly))
-	}
-	return sb.String(), args
 }
 
 func utcDay(t time.Time) time.Time {

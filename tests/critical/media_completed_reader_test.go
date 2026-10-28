@@ -13,14 +13,16 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
-	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // This resolver is the trusted authorization seam of the standalone media
@@ -54,8 +56,8 @@ func TestCompletedPublicationReader(t *testing.T) {
 			Private: []media.Private{{Name: "stream", From: "source", To: "streams/", HLS: &media.HLS{Ladder: []int{144}}}},
 		}},
 	}
-	hooks := media.Hooks{Resolver: authority}
-	hooks.ReaderManifest = func(_ context.Context, _ contentref.ContentRef, _ access.Actor, current *media.Manifest) (*media.Manifest, error) {
+	hooks := mediastore.Hooks{Resolver: authority}
+	hooks.ReaderManifest = func(_ context.Context, _ contentref.ContentRef, _ access.Actor, current *mediastore.Manifest) (*mediastore.Manifest, error) {
 		out := current.Clone()
 		out.Deliveries = nil
 		if leakPreparation {
@@ -72,7 +74,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 				mapping[f.Blob] = f.Blob // canonical files may already adopt storage completion
 			}
 			if omitIndex {
-				var kept []media.DeliveryFile
+				var kept []mediastore.DeliveryFile
 				for _, f := range delivery.Files {
 					if f.Source != indexSource {
 						kept = append(kept, f)
@@ -98,7 +100,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 		}
 		return out, nil
 	}
-	registry, err := media.NewRegistry(cfg, hooks)
+	registry, err := mediastore.NewRegistry(cfg, hooks)
 	must(t, err)
 	parent, err := uuid.NewV7()
 	must(t, err)
@@ -112,9 +114,9 @@ func TestCompletedPublicationReader(t *testing.T) {
 	must(t, workqueue.Migrate(t.Context(), w.pool, workerSchema))
 	queue, err := workqueue.New(w.pool, registry, workerSchema)
 	must(t, err)
-	journal, err := media.NewPGJournal(w.pool, w.schema, queue)
+	journal, err := mediastore.NewPGJournal(w.pool, w.schema, queue)
 	must(t, err)
-	manifests, err := media.NewManifests(storage.store, registry, media.ManifestOptions{Locker: media.PGLocker(w.pool), Journal: journal})
+	manifests, err := mediastore.NewManifests(storage.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
 	must(t, err)
 	put := func(area, kind string, body []byte) string {
 		sum := sha256.Sum256(body)
@@ -134,7 +136,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 	must(t, err)
 	indexSource = put(layout.AreaInternal, "application/json", index)
 	publicSource = put(layout.AreaInternal, "video/mp4", []byte("released public preview"))
-	_, err = manifests.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+	_, err = manifests.EditExisting(t.Context(), ref, func(m *mediastore.Manifest) error {
 		m.Files = []media.File{
 			{Path: "source.mp4", Blob: original, Type: "video/mp4", Size: 24},
 			{Path: "archive.zip", Blob: archive, Type: "application/zip", Size: 25},
@@ -144,8 +146,8 @@ func TestCompletedPublicationReader(t *testing.T) {
 		return nil
 	})
 	must(t, err)
-	options := media.ReaderOptions{Manifests: manifests, Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: storage.key, TTL: time.Hour}}
-	reader, err := media.NewReader(options)
+	options := mediastore.ReaderOptions{Manifests: manifests, Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: storage.key, TTL: time.Hour}}
+	reader, err := mediastore.NewReader(options)
 	must(t, err)
 	read := func(actor access.Actor, editor bool) *media.ReadResult {
 		out, err := reader.Read(t.Context(), ref, actor, media.ReadOptions{Editor: editor})
@@ -189,7 +191,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 	}
 	leakPreparation = false
 	operation := uuid.NewString()
-	_, err = manifests.PreparePromotion(t.Context(), ref, operation, []media.Promotion{{Source: trackSource, Area: layout.AreaPrivate}, {Source: indexSource, Area: layout.AreaPrivate}, {Source: publicSource, Area: layout.AreaPublic}})
+	_, err = manifests.PreparePromotion(t.Context(), ref, operation, []mediastore.Promotion{{Source: trackSource, Area: layout.AreaPrivate}, {Source: indexSource, Area: layout.AreaPrivate}, {Source: publicSource, Area: layout.AreaPublic}})
 	must(t, err)
 	_, err = manifests.Promote(t.Context(), ref, operation)
 	must(t, err)
@@ -223,7 +225,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 	}
 	for _, blob := range []string{original, archive, trackSource} {
 		_, _, err := reader.DownloadURL(item, media.File{Path: "forbidden", Blob: blob}, "file.mp4", time.Minute)
-		if !errors.Is(err, media.ErrNotAllowed) {
+		if !errors.Is(err, mediastore.ErrNotAllowed) {
 			t.Fatalf("download exposed an unserved file: %s: %v", blob, err)
 		}
 	}
@@ -245,14 +247,14 @@ func TestCompletedPublicationReader(t *testing.T) {
 	grant, err = reader.Grant(t.Context(), ref, viewer)
 	must(t, err)
 	_, err = grant.MediaPlaylist(t.Context(), "streams/h264.mp4")
-	if !errors.Is(err, media.ErrNotAllowed) {
+	if !errors.Is(err, mediastore.ErrNotAllowed) {
 		t.Fatalf("unmapped index was read through application storage: %v", err)
 	}
 	directIndex = true
 	grant, err = reader.Grant(t.Context(), ref, viewer)
 	must(t, err)
 	_, err = grant.MediaPlaylist(t.Context(), "streams/h264.mp4")
-	if !errors.Is(err, media.ErrNotAllowed) {
+	if !errors.Is(err, mediastore.ErrNotAllowed) {
 		t.Fatalf("served but uncommitted index bypassed the publication projection: %v", err)
 	}
 	omitIndex = false
@@ -260,13 +262,13 @@ func TestCompletedPublicationReader(t *testing.T) {
 	must(t, err)
 	_, err = grant.MediaPlaylist(t.Context(), "streams/h264.mp4")
 	must(t, err) // already-remapped indexes remain valid when the delivery owns them
-	withoutEditor, err := media.NewManifests(noEditorReadStore{storage.store}, registry, media.ManifestOptions{Locker: media.PGLocker(w.pool), Journal: journal})
+	withoutEditor, err := mediastore.NewManifests(noEditorReadStore{storage.store}, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
 	must(t, err)
 	options.Manifests = withoutEditor
-	unsupported, err := media.NewReader(options)
+	unsupported, err := mediastore.NewReader(options)
 	must(t, err)
 	_, err = unsupported.Read(t.Context(), ref, editor, media.ReadOptions{Editor: true})
-	if !errors.Is(err, media.ErrEditorReadUnsupported) {
+	if !errors.Is(err, mediastore.ErrEditorReadUnsupported) {
 		t.Fatalf("custom store returned a broken editor gateway URL: %v", err)
 	}
 }

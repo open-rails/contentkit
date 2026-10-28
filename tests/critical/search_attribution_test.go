@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -112,7 +114,7 @@ func TestBrowserSearchEngagementAttribution(t *testing.T) {
 	if report.Status != "passed" || len(report.Results) != 7 {
 		t.Fatalf("browser did not complete every navigation case: %s", output)
 	}
-	store, err := signal.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
+	store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
 	must(t, err)
 	tenant := a.cfg.Scope.AppID.String()
 	// Source columns are checked separately from the export so a broken join
@@ -150,7 +152,7 @@ func TestBrowserSearchEngagementAttribution(t *testing.T) {
 		t.Fatalf("observed short and long visits not distinguishable: short=%d long=%d", short, long)
 	}
 	for _, stage := range []signal.ExposureStage{signal.StageRendered, signal.StageVisible} {
-		exported, err := store.Attribution(t.Context(), tenant, signal.AttributionOptions{Stage: stage, Window: signal.LastDays(1, time.Now())})
+		exported, err := store.Attribution(t.Context(), tenant, signal.AttributionOptions{Stage: stage, Window: signalstore.LastDays(1, time.Now())})
 		must(t, err)
 		emptySearches := 0
 		for _, render := range exported.Renders {

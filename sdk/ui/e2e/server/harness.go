@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,11 +22,11 @@ import (
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
-	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // The deployment's names; compose.yaml gives the worker the same ones.
@@ -56,8 +58,8 @@ type harness struct {
 	faults         *faults
 	// Fixture views of ContentKit's storage, standing in for the media
 	// worker: the registry, manifests and token ring.
-	reg        *media.Registry
-	manifests  *media.Manifests
+	reg        *mediastore.Registry
+	manifests  *mediastore.Manifests
 	ring       token.Ring
 	users      sync.Map // fixture account ID -> authenticated test user
 	s3Endpoint *url.URL
@@ -177,18 +179,18 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, err
 	}
 	fixture.Namespace = tenant
-	if h.reg, err = media.NewRegistry(fixture, media.Hooks{}); err != nil {
+	if h.reg, err = mediastore.NewRegistry(fixture, mediastore.Hooks{}); err != nil {
 		return nil, err
 	}
 	queue, err := workqueue.New(h.pool, h.reg, workerSchema)
 	if err != nil {
 		return nil, err
 	}
-	journal, err := media.NewPGJournal(h.pool, schema, queue)
+	journal, err := mediastore.NewPGJournal(h.pool, schema, queue)
 	if err != nil {
 		return nil, err
 	}
-	if h.manifests, err = media.NewManifests(h.store, h.reg, media.ManifestOptions{Locker: media.PGLocker(h.pool), Journal: journal}); err != nil {
+	if h.manifests, err = mediastore.NewManifests(h.store, h.reg, mediastore.ManifestOptions{Locker: mediastore.PGLocker(h.pool), Journal: journal}); err != nil {
 		return nil, err
 	}
 	signing, err := token.ParseKey(c.tokenKey)

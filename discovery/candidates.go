@@ -46,8 +46,6 @@ type Fallback struct {
 	OnError            func(error)
 }
 
-var _ Candidates = Fallback{}
-
 func (f Fallback) Similar(ctx context.Context, anchor contentref.ContentRef, q Query) ([]Candidate, error) {
 	return f.run(q.Limit, func(c Candidates) ([]Candidate, error) { return c.Similar(ctx, anchor, q) })
 }

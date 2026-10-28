@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/versions"
 )
 
 func TestMediaApplicationPublishesTextKinds(t *testing.T) {
@@ -116,7 +117,7 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 		var pending int
 		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job
  WHERE queue=$1 AND state IN ('available','pending','running','retryable','scheduled')
- AND scheduled_at<=clock_timestamp()`, versions.QueueFor(publicationTenant(a))).Scan(&pending))
+ AND scheduled_at<=clock_timestamp()`, versionstore.QueueFor(publicationTenant(a))).Scan(&pending))
 		return pending == 0
 	})
 	w.clock.set(due.Add(time.Second))

@@ -18,11 +18,11 @@ import (
 	"github.com/open-rails/contentkit/internal/codes"
 )
 
-// Errors; match with errors.Is.
 var (
-	ErrInvalid     = codes.ErrInvalid
-	ErrNotFound    = codes.ErrNotFound
-	ErrConflict    = codes.ErrConflict
+	ErrInvalid = codes.ErrInvalid
+)
+
+var (
 	ErrInvalidCode = fmt.Errorf("%w: not a content code", codes.ErrInvalid)
 )
 
@@ -92,9 +92,6 @@ const VersionParam = "v"
 // VersionCodeLength is the length of a version code.
 const VersionCodeLength = 4
 
-// ErrInvalidVersionCode refuses what is not a version code.
-var ErrInvalidVersionCode = fmt.Errorf("%w: not a version code", codes.ErrInvalid)
-
 // VersionCode is a version's code in canonical form: four characters of
 // Alphabet, at least one a letter, unique within its content and fixed for
 // the version's life.
@@ -102,31 +99,7 @@ type VersionCode string
 
 func (c VersionCode) String() string { return string(c) }
 
-// ParseVersionCode reads a version code with ParseCode's rules.
-func ParseVersionCode(s string) (VersionCode, error) {
-	c, ok := parseCrockford(s, VersionCodeLength)
-	if !ok {
-		return "", fmt.Errorf("%w: %q", ErrInvalidVersionCode, s)
-	}
-	return VersionCode(c), nil
-}
-
-// Versioned is path with ?v=code selecting a version; "" leaves path as is.
-func Versioned(path string, code VersionCode) string {
-	if code == "" {
-		return path
-	}
-	sep := "?"
-	if strings.Contains(path, "?") {
-		sep = "&"
-	}
-	return path + sep + VersionParam + "=" + string(code)
-}
-
 // Slugify turns a title into a URL slug: ASCII [a-z0-9] words joined by
 // hyphens, diacritics dropped, at most 80 bytes cut at a word boundary. Text
 // without Latin letters or digits gives "" (the URL then has no slug).
 func Slugify(title string) string { return codes.Slugify(title) }
-
-// ValidSlug reports whether s is a slug Slugify can produce ("" included).
-func ValidSlug(s string) bool { return codes.ValidSlug(s) }

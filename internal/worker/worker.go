@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/search"
+	"github.com/open-rails/contentkit/internal/search"
 )
 
 // Source builds one family of the tenant's documents.

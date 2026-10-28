@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
@@ -24,9 +26,9 @@ import (
 // engineAvatars is how the engine shows people's avatars (Config.Avatars),
 // and on a site that is not the primary, forwards their writes to it.
 type engineAvatars struct {
-	urls    *media.Registry   // builds avatar URLs: the primary's registry, else one of the avatar kind alone
-	rule    *media.PresetRule // the content model's
-	forward *avatarForward    // nil on the primary
+	urls    *mediastore.Registry // builds avatar URLs: the primary's registry, else one of the avatar kind alone
+	rule    *media.PresetRule    // the content model's
+	forward *avatarForward       // nil on the primary
 }
 
 // newAvatars builds Config.Avatars over the engine's media.
@@ -44,8 +46,8 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 	if a.Primary != "" {
 		// Its media host serves the primary's files: URLs are built at it.
 		var err error
-		if out.urls, err = media.NewRegistry(media.Config{Namespace: e.media.reg.Config().Namespace, Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
-			Kinds: []media.Kind{kind}, Avatars: media.Avatars{Kind: kind.Name, Preset: preset}}, media.Hooks{}); err != nil {
+		if out.urls, err = mediastore.NewRegistry(media.Config{Namespace: e.media.reg.Config().Namespace, Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
+			Kinds: []media.Kind{kind}, Avatars: media.Avatars{Kind: kind.Name, Preset: preset}}, mediastore.Hooks{}); err != nil {
 			return nil, fmt.Errorf("contentkit: Config.Avatars: %w", err)
 		}
 		if out.forward, err = newAvatarForward(e, deps, kind, a); err != nil {
@@ -72,7 +74,7 @@ type avatarForward struct {
 	key     string
 	media   *url.URL // this site's media host, where read URLs are rehosted
 	gate    *gate.Gate
-	commits media.CommitLimiter
+	commits mediastore.CommitLimiter
 	client  *http.Client
 	log     *slog.Logger
 }
@@ -88,7 +90,7 @@ func newAvatarForward(e *Engine, deps Deps, kind media.Kind, a *AvatarsConfig) (
 	c := e.cfg.Media.CommitLimit
 	return &avatarForward{kind: kind.Name, primary: strings.TrimRight(a.Primary, "/"), key: a.Key, media: base,
 		gate: &gate.Gate{Auth: e.auth, Log: e.log}, client: &http.Client{Timeout: forwardTimeout}, log: e.log,
-		commits: media.NewCommitLimiter(media.RateLimit{PerSecond: c.PerSecond, Burst: c.Burst, Disabled: c.Disabled, Redis: deps.Redis})}, nil
+		commits: mediastore.NewCommitLimiter(mediastore.RateLimit{PerSecond: c.PerSecond, Burst: c.Burst, Disabled: c.Disabled, Redis: deps.Redis})}, nil
 }
 
 type forwardKey struct{}

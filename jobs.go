@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/jackc/pgx/v5"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
@@ -14,7 +16,6 @@ import (
 
 	"github.com/open-rails/contentkit/internal/jobhook"
 	"github.com/open-rails/contentkit/internal/worker"
-	"github.com/open-rails/contentkit/media"
 )
 
 // queueContentKit is the queue of the engine's own jobs.
@@ -84,7 +85,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			// A refresh can outlast its period; it never runs twice at once.
 			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, popularRefreshEvery,
 				func() (river.JobArgs, *river.InsertOpts) {
-					return popularRefreshArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
+					return popularRefreshArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
 				}, &river.PeriodicJobOpts{ID: "contentkit_popular_refresh", RunOnStart: true}))
 		}
 		return nil
@@ -114,7 +115,7 @@ func (e *Engine) rebuild(ctx context.Context) error {
 		return nil
 	}
 	opts := func(queue string) *river.InsertOpts {
-		return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
+		return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
 	}
 	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(queueContentKit)}}
 	_, err := c.InsertMany(ctx, params)
@@ -136,7 +137,7 @@ func (e *Engine) syncDocuments(ctx context.Context, q any) error {
 			return c.InsertTx(ctx, tx, args, o)
 		}
 	}
-	return media.InsertOnce(ctx, insert, searchSyncArgs{}, river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3})
+	return mediastore.InsertOnce(ctx, insert, searchSyncArgs{}, river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3})
 }
 
 type searchSyncArgs struct {
@@ -156,7 +157,7 @@ type searchSyncWorker struct {
 func (w *searchSyncWorker) Timeout(*river.Job[searchSyncArgs]) time.Duration { return 10 * time.Minute }
 
 func (w *searchSyncWorker) Work(ctx context.Context, job *river.Job[searchSyncArgs]) error {
-	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
+	if err := mediastore.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
 		return err
 	}
 	e := w.e

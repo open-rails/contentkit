@@ -82,5 +82,3 @@ func (a Actor) Can(ctx context.Context, scope auth.Scope, permission string) (bo
 type Entitled interface {
 	Entitlements() []string
 }
-
-// claims is the actor's token entitlement claims.

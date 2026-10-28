@@ -8,10 +8,12 @@ import (
 	"sync"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/riverqueue/river"
 
-	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -161,7 +163,7 @@ func (e *Engine) newSignals(deps Deps) *signalPlane {
 	}
 	p := newSignalPlane(e.log, func(ctx context.Context) (signal.Conn, error) { return e.connectSignals(ctx, deps.ClickHouse) },
 		func(conn signal.Conn) error {
-			store, err := signal.NewStore(conn, c.Database, signal.StoreOptions{Cluster: c.Cluster})
+			store, err := signalstore.NewStore(conn, c.Database, signal.StoreOptions{Cluster: c.Cluster})
 			if err != nil {
 				return err
 			}
@@ -198,7 +200,7 @@ func (e *Engine) connectSignals(ctx context.Context, host signal.Conn) (signal.C
 		conn = e.ownCH
 		e.chMu.Unlock()
 	}
-	if err := signal.CheckSchema(ctx, conn, c.Database); err != nil {
+	if err := signalstore.CheckSchema(ctx, conn, c.Database); err != nil {
 		return nil, fmt.Errorf("contentkit: signal schema unavailable (run contentkit.MigrateClickHouse if migrations are missing): %w", err)
 	}
 	return conn, nil
@@ -211,7 +213,7 @@ func (e *Engine) signalsBack() {
 	if c == nil {
 		return
 	}
-	opts := &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
+	opts := &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
 	ctx, cancel := context.WithTimeout(context.Background(), signalCheckWait)
 	defer cancel()
 	if _, err := c.Insert(ctx, preferenceSyncArgs{}, opts); err != nil {

@@ -1,45 +1,106 @@
 package media
 
 import (
-	"errors"
-	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/open-rails/contentkit/contentref"
 )
 
-// Stable upload error codes: clients (the browser SDK) branch on Code.
 const (
-	CodeInvalid      = "invalid_request"   // 400
-	CodeForbidden    = "forbidden"         // 403
-	CodeNotFound     = "not_found"         // 404: unknown kind, file or upload
-	CodeConflict     = "conflict"          // 409: a path taken, or a new item's folder not empty
-	CodeIncomplete   = "incomplete"        // 409: multipart parts missing
-	CodeNotUploaded  = "not_uploaded"      // 409: commit before the object landed
-	CodeTooManyFiles = "too_many_files"    // 409: the commit would exceed an Upload's Max
-	CodeTooLarge     = "too_large"         // 413: over the Upload's MaxBytes
-	CodeQuota        = "quota_exceeded"    // 413: owner quota
-	CodeType         = "type_not_allowed"  // 415
-	CodeChecksum     = "checksum_mismatch" // 422: stored bytes differ from the declared hash
-	CodeRate         = "rate_limited"      // 429
-	CodeUnavailable  = "unavailable"       // 503: the bucket cannot be reached; retry
-	CodeUpgrade      = "upgrade_required"  // 503: the item's publication is being restored
+	CodeInvalid = "invalid_request" // 400
+)
 
+const (
+	CodeForbidden = "forbidden" // 403
+)
+
+const (
+	CodeNotFound = "not_found" // 404: unknown kind, file or upload
+)
+
+const (
+	CodeConflict = "conflict" // 409: a path taken, or a new item's folder not empty
+)
+
+const (
+	CodeIncomplete = "incomplete" // 409: multipart parts missing
+)
+
+const (
+	CodeNotUploaded = "not_uploaded" // 409: commit before the object landed
+)
+
+const (
+	CodeTooManyFiles = "too_many_files" // 409: the commit would exceed an Upload's Max
+)
+
+const (
+	CodeTooLarge = "too_large" // 413: over the Upload's MaxBytes
+)
+
+const (
+	CodeQuota = "quota_exceeded" // 413: owner quota
+)
+
+const (
+	CodeType = "type_not_allowed" // 415
+)
+
+const (
+	CodeChecksum = "checksum_mismatch" // 422: stored bytes differ from the declared hash
+)
+
+const (
+	CodeRate = "rate_limited" // 429
+)
+
+const (
+	CodeUnavailable = "unavailable" // 503: the bucket cannot be reached; retry
+)
+
+const (
+	CodeUpgrade = "upgrade_required" // 503: the item's publication is being restored
+)
+
+const (
 	// Image refusals (ImageError): the rules refuse the image; never a server fault.
-	CodeImageTooSmall   = "image_too_small"  // 422: edited narrower than the public preset's MinWidth
-	CodeImageTooLarge   = "image_too_large"  // 413: more pixels than the processor decodes
+	CodeImageTooSmall = "image_too_small" // 422: edited narrower than the public preset's MinWidth
+)
+
+const (
+	CodeImageTooLarge = "image_too_large" // 413: more pixels than the processor decodes
+)
+
+const (
 	CodeImageUnreadable = "image_unreadable" // 422: not a decodable image of its declared type
+)
 
-	CodeAnimationNotAllowed  = "animation_not_allowed" // 422: an animated image where the policy is AnimationReject
-	CodeAnimationTooLong     = "animation_too_long"    // 422: more frames or seconds than the processor allows
+const (
+	CodeAnimationNotAllowed = "animation_not_allowed" // 422: an animated image where the policy is AnimationReject
+)
+
+const (
+	CodeAnimationTooLong = "animation_too_long" // 422: more frames or seconds than the processor allows
+)
+
+const (
 	CodeAnimationUnsupported = "animation_unsupported" // 415: an AVIF/HEIF image sequence (decoded as one frame)
+)
 
+const (
 	// Video refusals (ImageError, recorded as the upload's Failure): its
 	// Upload.Video limits refuse what the real stream would cost.
-	CodeVideoTooLong    = "video_too_long"    // 422: runs longer than MaxSeconds (audio too)
-	CodeVideoTooLarge   = "video_too_large"   // 422: frames larger than MaxPixels
+	CodeVideoTooLong = "video_too_long" // 422: runs longer than MaxSeconds (audio too)
+)
+
+const (
+	CodeVideoTooLarge = "video_too_large" // 422: frames larger than MaxPixels
+)
+
+const (
 	CodeVideoOverBudget = "video_over_budget" // 422: the planned encode is over MaxWork, or the source averages under a frame a second
+)
+
+const (
 	// CodeVideoAspectUnsupported: the display aspect is outside its HLS
 	// presets' MinAspect and MaxAspect.
 	CodeVideoAspectUnsupported = "video_aspect_unsupported" // 422
@@ -105,23 +166,6 @@ type ImageError struct {
 
 func (e *ImageError) Error() string { return e.Message }
 
-// AsImageError returns the refusal in err's chain, or nil.
-func AsImageError(err error) *ImageError {
-	var ie *ImageError
-	if errors.As(err, &ie) {
-		return ie
-	}
-	return nil
-}
-
-// editErr is an edit refused against known dims: its ImageError, else invalid_request.
-func editErr(err error, format string, a ...any) error {
-	if ie := AsImageError(err); ie != nil {
-		return ie
-	}
-	return uploadErr(CodeInvalid, format, append(a, err)...)
-}
-
 // UploadError is a refused upload request. UploadLimiter implementations
 // refuse with CodeRate or CodeQuota.
 type UploadError struct {
@@ -140,39 +184,4 @@ func (e *UploadError) Status() int {
 		return s
 	}
 	return http.StatusInternalServerError
-}
-
-func uploadErr(code, format string, a ...any) *UploadError {
-	return &UploadError{Code: code, Message: fmt.Sprintf(format, a...)}
-}
-
-// tooManyFiles refuses a commit past max files, which details carry.
-func tooManyFiles(max int, format string, a ...any) *UploadError {
-	e := uploadErr(CodeTooManyFiles, format, a...)
-	e.Details = &ErrorDetails{Max: max}
-	return e
-}
-
-// AsUploadError classifies err: an *UploadError, or the kind and registry
-// sentinels. ok is false for internal failures.
-func AsUploadError(err error) (*UploadError, bool) {
-	var ue *UploadError
-	switch {
-	case errors.As(err, &ue):
-		return ue, true
-	case AsImageError(err) != nil:
-		ie := AsImageError(err)
-		return &UploadError{Code: ie.Code, Message: ie.Message, Details: &ie.Details}, true
-	case errors.Is(err, ErrUnknownKind):
-		return &UploadError{Code: CodeNotFound, Message: "no such media kind"}, true
-	case errors.Is(err, contentref.ErrInvalidID):
-		return &UploadError{Code: CodeInvalid, Message: "the id must be a canonical lowercase UUIDv7"}, true
-	case errors.Is(err, ErrFolderNotEmpty):
-		return &UploadError{Code: CodeConflict, Message: "the item's folder already holds files"}, true
-	case errors.Is(err, ErrAllocationRetired):
-		return &UploadError{Code: CodeConflict, Message: "the file allocation changed or expired; upload or copy again"}, true
-	case errors.Is(err, ErrCommitIdentity):
-		return &UploadError{Code: CodeConflict, Message: "operation_id already identifies another commit"}, true
-	}
-	return nil, false
 }

@@ -1,11 +1,6 @@
 package catalog
 
 import (
-	"context"
-	"errors"
-	"regexp"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/open-rails/contentkit/access"
@@ -13,19 +8,16 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// Errors; match with errors.Is.
-var (
-	ErrInvalid   = errors.New("catalog: invalid request")
-	ErrNotFound  = errors.New("catalog: not found")
-	ErrForbidden = errors.New("catalog: forbidden")
-	ErrConflict  = errors.New("catalog: conflict")
+const (
+	StateDraft = "draft"
 )
 
-// Content states.
 const (
-	StateDraft     = "draft"
 	StatePublished = "published"
-	StateDeleted   = "deleted"
+)
+
+const (
+	StateDeleted = "deleted"
 )
 
 // VersionText is one edition's authored text in one language. Inline images
@@ -256,66 +248,5 @@ type Content struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
-// DefaultVersion is the version a reader of language opens by default, the
-// one rule cards and contentkit-ui's defaultVersion follow (internal/edition):
-// the first live version serving language, else the first live one, else
-// the first; vs in position order. Nil when vs is empty.
-func DefaultVersion(vs []Version, language string) *Version {
-	rank := func(v *Version) int {
-		r := 0
-		if v.Live {
-			r += 2
-		}
-		if language != "" && slices.Contains(v.Languages, language) {
-			r++
-		}
-		return r
-	}
-	var best *Version
-	for i := range vs {
-		if best == nil || rank(&vs[i]) > rank(best) {
-			best = &vs[i]
-		}
-	}
-	return best
-}
-
 // ImageScheme is the URL scheme of an inline image reference in a body.
 const ImageScheme = "contentkit:"
-
-var imageRefRe = regexp.MustCompile(ImageScheme + `(i-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
-
-// ImageRef is the body reference to an inline image name ("i-{uuid}").
-func ImageRef(name string) string { return ImageScheme + name }
-
-func imageNames(body string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, m := range imageRefRe.FindAllStringSubmatch(body, -1) {
-		if !seen[m[1]] {
-			seen[m[1]] = true
-			out = append(out, m[1])
-		}
-	}
-	return out
-}
-
-func resolveBody(body string, urls map[string]string) string {
-	if len(urls) == 0 {
-		return body
-	}
-	return imageRefRe.ReplaceAllStringFunc(body, func(ref string) string {
-		if u, ok := urls[ref[len(ImageScheme):]]; ok {
-			return u
-		}
-		return ref
-	})
-}
-
-type stripTags struct{}
-
-var tagRe = regexp.MustCompile(`<[^>]*>`)
-
-func (stripTags) Sanitize(_ context.Context, raw string) (string, error) {
-	return strings.TrimSpace(tagRe.ReplaceAllString(raw, "")), nil
-}
