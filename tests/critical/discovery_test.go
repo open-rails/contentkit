@@ -12,15 +12,19 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/signal"
 )
 
 type domainTransport struct{ host, token string }
@@ -567,8 +571,27 @@ func TestDiscoveryVisibility(t *testing.T) {
 			cursor = page.NextCursor
 		}
 		assertCards(t, discovery.ContentPage{Contents: cards}, one.ID, two.ID)
-		similar, err := public.GetContentSimilar(t.Context(), one.ID, ck.GetContentSimilarQuery{Kind: "article", Mode: "hide"})
+		// One person co-read every fixture, so only the reader's policy keeps
+		// the excluded candidates out of the similar list.
+		store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
 		must(t, err)
+		tenant, person, at := a.cfg.Scope.AppID.String(), signal.Subject{UserID: uuid.NewString()}, time.Now().UTC().Add(-time.Minute)
+		reads := []signal.Signal{}
+		for _, item := range []catalog.Content{one, two, excluded, draft, future, deleted, locked} {
+			m, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10000}}, ActiveMS: 2000}}, 1, 2000)
+			must(t, err)
+			m.VersionID, m.VisitID, m.SegmentID = item.Versions[0].ID, uuid.NewString(), uuid.NewString()
+			reads = append(reads, signal.Signal{ContentRef: contentref.NewVersion(tenant, "article", item.ID, item.Versions[0].ID), Subject: person,
+				Type: signal.TypeEngagement, EventID: uuid.NewString(), Revision: 1, OccurredAt: at, Measurement: &m,
+				Access: &signal.AccessContext{ObservedAt: at, ContentAccess: "restricted", ViewerAccess: "full", PolicyRevision: "similar", Audience: "unknown", Domain: "main", Language: "en"}})
+		}
+		must(t, store.RecordSignals(t.Context(), tenant, reads))
+		var similar discovery.ContentPage
+		waitForWithin(t, 30*time.Second, func() bool {
+			similar, err = public.GetContentSimilar(t.Context(), one.ID, ck.GetContentSimilarQuery{Kind: "article", Mode: "hide"})
+			must(t, err)
+			return len(similar.Contents) > 0
+		})
 		assertCards(t, similar, two.ID)
 		recommended, err := viewer.GetRecommendations(t.Context(), ck.GetRecommendationsQuery{Kind: "article", Mode: "hide"})
 		must(t, err)

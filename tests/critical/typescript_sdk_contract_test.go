@@ -1,6 +1,7 @@
 package critical_test
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -17,8 +18,23 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/openrails/billing"
 )
+
+// activitySigner signs activity receipts the way a host without media must.
+type activitySigner struct {
+	ring token.Ring
+	now  func() time.Time
+}
+
+func (s activitySigner) SignTicket(scope string, exp time.Time) string {
+	return s.ring.Sign(scope, exp)
+}
+
+func (s activitySigner) VerifyTicket(ticket, scope string) error {
+	return s.ring.VerifyScope(ticket, scope, s.now())
+}
 
 func runTypeScriptContract(t *testing.T, group string, fixture map[string]any, want []string) {
 	t.Helper()
@@ -92,9 +108,16 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		a := w.apps[0]
 		commerce := attachBilling(t, w, a)
 		configureDiscoverySignals(t, w, a)
+		// An app without media supplies its own activity signer, so the SDK can
+		// record the co-reading that similar lists come from.
+		secret := make([]byte, 32)
+		_, err := rand.Read(secret)
+		must(t, err)
+		ring, err := token.NewRing(token.Key{ID: "activity", Secret: secret}, nil)
+		must(t, err)
+		a.deps.ActivitySigner = activitySigner{ring: ring, now: w.clock.now}
 		a.server.Close()
 		must(t, a.engine.Close(t.Context()))
-		var err error
 		a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 		must(t, err)
 		a.server = mountEngine(t, a.engine)
