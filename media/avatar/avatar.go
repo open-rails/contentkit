@@ -3,12 +3,18 @@ package avatar
 
 import (
 	"embed"
+	"io/fs"
 
 	"github.com/open-rails/contentkit/media"
 )
 
 //go:embed avatar.png
 var defaults embed.FS
+
+// Defaults are ContentKit's default images (avatar.png): what a registry
+// read from JSON publishes for presets naming them (media-worker
+// publish-defaults).
+func Defaults() fs.FS { return defaults }
 
 // User returns an avatar kind keyed by the auth subject. Its shared accounts
 // namespace lets every site's media host serve the same user's avatar, at

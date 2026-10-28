@@ -1,16 +1,11 @@
 package critical_test
 
 import (
-	"bytes"
 	"encoding/base64"
-	"image"
-	_ "image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -65,17 +60,9 @@ func TestTypeScriptVideoContracts(t *testing.T) {
 		source, err := url.Parse(freshSegment)
 		must(t, err)
 		segmentURL := segment.URL + source.RequestURI()
-		frameFile := filepath.Join(t.TempDir(), "frame.jpg")
-		runTypeScriptContract(t, "media_hls_transport", map[string]any{"base": f.app.server.URL + "/content", "owner": token, "reader": reader, "ref": f.Ref, "master": f.MasterPath, "child": f.ChildPath, "segment": segmentURL, "source": base64.StdEncoding.EncodeToString(f.Source), "sourceSHA": digestBytes(f.Source), "frameFile": frameFile}, []string{"MediaClient.getFrame", "MediaClient.hlsBase", "MediaClient.hls", "xhrTransport"})
+		runTypeScriptContract(t, "media_hls_transport", map[string]any{"base": f.app.server.URL + "/content", "owner": token, "reader": reader, "ref": f.Ref, "master": f.MasterPath, "child": f.ChildPath, "segment": segmentURL, "source": base64.StdEncoding.EncodeToString(f.Source), "sourceSHA": digestBytes(f.Source)}, []string{"MediaClient.hlsBase", "MediaClient.hls", "xhrTransport"})
 		if leaked.Load() {
 			t.Fatal("API bearer leaked to off-origin media transport")
-		}
-		frame, err := os.ReadFile(frameFile)
-		must(t, err)
-		dimensions, codec, err := image.DecodeConfig(bytes.NewReader(frame))
-		must(t, err)
-		if codec != "jpeg" || dimensions.Width != 128 || dimensions.Height != 72 {
-			t.Fatalf("actual video frame is %s %dx%d, want JPEG128x72", codec, dimensions.Width, dimensions.Height)
 		}
 	})
 }

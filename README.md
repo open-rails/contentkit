@@ -67,7 +67,7 @@ A reference to another catalog is an error, never remapped. See [scope.go](scope
 | `media/token` | media access tokens, shared by hosts and the media gateway |
 | `media/layout` | object keys and the media gateway's host and default rules, dependency-free |
 | `media/gateway` | the media gateway's handler (`cmd/media-gateway`) |
-| `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, subtitles, frame grabs; `Frames` for the frame picker |
+| `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, subtitles, frame grabs |
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `catalog` | content items of the configured kinds (a blog is kind `blog`): shared identity and creators; versions own localized text, segments, draft/published/deleted with scheduling, listing, access rules, restrictions, attributes, covers and inline images; `content_facets`, the one visibility rule (`Viewer`) and ContentKit's own content resolver, the retained `content_events` log ([cursor reads](docs/events.md)), search documents, `Totals`, its jobs and `/v1/contents` routes |
@@ -362,7 +362,7 @@ The user-avatar kind comes from `github.com/open-rails/contentkit/media/avatar`;
 `avatar.User()` includes its upload rules, embedded default silhouette and
 a `Stable` preset (its current image also at fixed names, so its URL is
 built from the person's id). Publish defaults with
-`media/image.PublishDefaults` as part of deployment.
+`media-worker publish-defaults` as part of deployment.
 
 **Manifests.** Every edit runs under the `Locker` (required: `PGLocker`, a
 Postgres advisory lock shared by every process on the bucket) and writes with
@@ -437,7 +437,10 @@ worker River schema (`media/workqueue`, `MEDIA_WORKER_SCHEMA`, per host:
 hosts sharing a database never share one): images, zips, public presets and
 editor views (`media/image`, libvips) and HLS, MP4, subtitles and
 frames (`media/video`, ffmpeg). The host presigns, commits and reads,
-and links only `media/workqueue`. The processor appends a retained event and
+and links only `media/workqueue`: hosts link no codecs and need no ffmpeg,
+so they build with `CGO_ENABLED=0` (CI checks every package but
+`media/image`, `media/video`, `media/worker` and `cmd/media-worker`). The
+editor's poster picker decodes the encoded video in the browser. The processor appends a retained event and
 directly enqueues version metadata work in `MEDIA_HOST_RIVER_SCHEMA`, so the stock build
 (`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`)
 needs only the registry as JSON (`MEDIA_KINDS_FILE`): an engine's is

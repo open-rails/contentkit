@@ -164,7 +164,7 @@ export const stem = (path: string) => {
   return i > path.lastIndexOf("/") + 1 ? path.slice(0, i) : path;
 };
 
-/** The media module: uploads, commits, reads, frames and HLS. */
+/** The media module: uploads, commits, reads and HLS. */
 export class MediaClient {
   readonly api: MediaApi;
   private readonly transport: Transport;
@@ -386,11 +386,6 @@ export class MediaClient {
       throw e;
     });
     return this.presetList;
-  }
-
-  /** A JPEG still of the video upload at path, t seconds in, w pixels wide (default the frame's). */
-  getFrame(ref: RefBody, path: string, t: number, w?: number, signal?: AbortSignal): Promise<Blob> {
-    return this.retry(() => this.api.frame(ref, path, t, w, signal), signal);
   }
 
   /** The folder of an HLS ladder from a read's `hls`: `{media}/{kind}/{id}/hls/{dir}`; master.m3u8 and sprite.vtt resolve under it. */
