@@ -6,7 +6,7 @@ import { isPending } from "../client/versions.js";
 import { sleep } from "../client/media/client.js";
 import { useMessages } from "../i18n/context.js";
 import type { Translator } from "../i18n/messages.js";
-import { useMediaGrantExpired, useMediaRead, type ReadWindow } from "./read.js";
+import { useMediaRead, type ReadWindow } from "./read.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 
 export interface UseReaderPlan {
@@ -35,7 +35,7 @@ export function nextRelease(plan: ReaderPlan | null, now = Date.now(), overdue =
   return at.length ? Math.min(...at) : null;
 }
 
-/** Refresh signed previews before expiry and observe durable chapter completion. */
+/** Refresh an inspection grant before expiry and observe durable chapter completion. */
 export function nextReaderRefresh(plan: ReaderPlan | null, now = Date.now(), overdue = 2000): number | null {
   const release = nextRelease(plan, now, overdue);
   if (!plan?.expires) return release;
@@ -62,7 +62,7 @@ export function overdueAttempts(answer: ReaderPlan | Pending | null | undefined,
  * A version's reader plan for this viewer: its segments (released or not,
  * open or locked), previews, playback item and reader metadata. It asks again
  * while the version is being published, when its next segment is released,
- * and before signed preview URLs expire. While a release is overdue it asks
+ * and before an inspection grant expires. While a release is overdue it asks
  * again after 2.5 s, doubling to once a minute.
  */
 export function useReaderPlan(content: string | null | undefined, version: string | null | undefined, o: { poll?: number; client?: ContentKitClient } = {}): UseReaderPlan {
@@ -77,9 +77,7 @@ export function useReaderPlan(content: string | null | undefined, version: strin
   if (terminal && deniedKey !== key) setDeniedKey(key);
   if (deniedKey === key && r.loaded && !r.loading && !r.error) setDeniedKey(null);
   const denied = terminal || deniedKey === key && (r.loading || !!r.error);
-  const candidate = !denied && r.data && !pending ? (r.data as ReaderPlan) : null;
-  const expired = useMediaGrantExpired(candidate?.expires);
-  const plan = useMemo(() => expired && candidate ? { ...candidate, previews: [] } : candidate, [candidate, expired]);
+  const plan = !denied && r.data && !pending ? (r.data as ReaderPlan) : null;
   const { data, reload } = r;
   const backoff = useRef<{ answer?: unknown; mark: string | null; attempt: number }>({ mark: null, attempt: 0 });
   // Every answer schedules the next look: a pending one polls, a plan waits for its next release.

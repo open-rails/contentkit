@@ -237,9 +237,6 @@ func (f *avatarForward) rehost(body []byte) []byte {
 			at(&r.Public[i].Renditions[j].URL)
 		}
 	}
-	for i := range r.Previews {
-		at(&r.Previews[i])
-	}
 	out, err := json.Marshal(r)
 	if err != nil {
 		return body

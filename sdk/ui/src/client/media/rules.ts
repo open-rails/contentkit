@@ -211,7 +211,7 @@ export function presetFor(presets: readonly PresetRule[], kind: string, path: st
  * current file). null when the preset has no default (`rule.default`).
  */
 export function defaultImage(rule: PresetRule, id: string, version?: string): PublicPreset | null {
-  if (!rule.default || rule.first || rule.to.includes(NAME)) return null;
+  if (!rule.default || rule.to.includes(NAME)) return null;
   return logicalImage(rule, id, version);
 }
 

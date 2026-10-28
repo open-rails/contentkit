@@ -40,6 +40,9 @@ type releasePlan struct {
 	Retained    bool                   `json:"retained,omitempty"`
 	Waiting     bool                   `json:"waiting"`
 	NextAt      *time.Time             `json:"next_at,omitempty"`
+	// Preview is how many leading Pages are delivered publicly as a locked
+	// version's free preview.
+	Preview int `json:"preview,omitempty"`
 }
 
 type publicationCompletion interface {
@@ -448,6 +451,23 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 		if rule.Free(now) {
 			area = layout.AreaPublic
 		}
+		// A locked version's free pages are the same for every non-payer, so
+		// their renditions are public like a free version's.
+		previewed := map[string]bool{}
+		if p := rule.Previewed(s.o.Kinds.Kinds[kind]).Preview; live && area == layout.AreaPrivate && p != nil {
+			plan.Preview = min(p.Pages, len(plan.Pages.Pages))
+			for _, pg := range plan.Pages.Pages[:plan.Preview] {
+				for _, r := range pg.Files {
+					previewed[r.Blob] = true
+				}
+			}
+		}
+		placed := func(blob string) string {
+			if previewed[blob] {
+				return layout.AreaPublic
+			}
+			return area
+		}
 		// Fingerprinting ignores allocation moves but includes ordered source
 		// revisions, chapter boundaries and desired areas. A move's own callback
 		// therefore cannot schedule an endless sequence of identical copies.
@@ -544,7 +564,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 				if spec := private(k, f.Preset); spec != nil && spec.HostOnly {
 					continue
 				}
-				destination = area
+				destination = placed(f.Blob)
 			}
 			if err := add(f.Blob, destination); err != nil {
 				return nil, err
@@ -565,7 +585,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 				}
 				plan.View.Files = append(plan.View.Files, f)
 				if !f.IsUpload() || k.AudioUpload(f) {
-					if err := add(f.Blob, area); err != nil {
+					if err := add(f.Blob, placed(f.Blob)); err != nil {
 						return nil, err
 					}
 				}
@@ -602,7 +622,7 @@ func finishReleasePlanFingerprint(plan *releasePlan, identity []any, state, pare
 	}
 	// A scheduled policy can change eligibility while all objects remain in
 	// private/. Its completed policy must still advance the active revision.
-	encoded, err := json.Marshal([]any{identity, boundaries, plan.Chapters, state, parentState, rule, plan.EffectiveAccess, plan.Released})
+	encoded, err := json.Marshal([]any{identity, boundaries, plan.Chapters, state, parentState, rule, plan.EffectiveAccess, plan.Released, plan.Preview})
 	if err != nil {
 		return err
 	}

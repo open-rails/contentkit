@@ -13,11 +13,10 @@ export interface GalleryMediaItem {
   aspect: number;
 }
 
-/** What a viewer without access is missing, uncounted; `backdrop` is the public preview drawn behind it. */
+/** What a viewer without access is missing, uncounted. */
 export interface GalleryLockedItem {
   kind: "locked";
   key: string;
-  backdrop?: string;
   aspect: number;
 }
 
@@ -41,9 +40,9 @@ function aspectOf(f: FileInfo | undefined, fallback: number) {
 /**
  * The read result as gallery items in manifest order. With access: each
  * image, each playable HLS ladder (a folder in `hls`: a video, or an
- * audio-only one) and each other audio file. Without: the item's public
- * previews (the read's `previews`), then one locked item when the read says
- * it holds locked files; a locked read lists none, so nothing counts them.
+ * audio-only one) and each other audio file. Without: one locked item when
+ * the read says it holds locked files. A locked read lists only a version's
+ * public free preview pages, so nothing counts the locked ones.
  * Other files (plain videos, subtitles, zips) are not items; scope the read
  * with a prefix to choose.
  */
@@ -52,8 +51,7 @@ export function galleryItems(read: ReadResult | null | undefined): GalleryItem[]
   const full = read.access === "full";
   const dirs = read.hls ?? [];
   const dirOf = (f: FileInfo) => dirs.find((d) => f.path.startsWith(d));
-  const previews = full || read.access === "partial" ? [] : (read.previews ?? []);
-  const items: GalleryItem[] = previews.map((url, i) => ({ kind: "image", key: `preview/${i + 1}`, file: { path: `preview/${i + 1}`, type: "image/webp", url }, aspect: 1 }));
+  const items: GalleryItem[] = [];
   const seen = new Set<string>();
   for (const f of read.files) {
     const dir = dirOf(f);
@@ -74,7 +72,7 @@ export function galleryItems(read: ReadResult | null | undefined): GalleryItem[]
     if (isImageType(f.type)) items.push({ kind: "image", key: f.path, file: f, aspect: aspectOf(f, 1) });
     else if (isAudioType(f.type)) items.push({ kind: "audio", key: f.path, file: f, aspect: AUDIO_ASPECT });
   }
-  if (!full && read.locked) items.push({ kind: "locked", key: "locked", backdrop: previews.at(-1), aspect: 1 });
+  if (!full && read.locked) items.push({ kind: "locked", key: "locked", aspect: 1 });
   return items;
 }
 
