@@ -543,6 +543,22 @@
       ]
     },
     {
+      "id": "CK-J06-S08",
+      "journey": "CK-J06",
+      "behavior": "A locked version's free preview pages are public, exact and retired when its rule shrinks",
+      "status": "verified",
+      "evidence": [
+        "A real PPV gallery with preview.pages=2 releases exactly its first two released pages' renditions to public/: the stored public prefix equals the manifest's public objects, the non-payer plan lists unsigned URLs that the gateway serves, and page three stays private and is refused without a token.",
+        "A real OpenRails edition grant reads all pages with no previews. Editing the rule to one page and then none re-releases and retires the dropped public copies (404); a scheduled second chapter contributes no preview pages before release."
+      ],
+      "cases": [
+        "TestLockedPreviewPages/CK-J06-S08_non_payers_read_exactly_the_free_pages_publicly",
+        "TestLockedPreviewPages/CK-J06-S08_entitled_reader_reads_every_page_and_no_previews",
+        "TestLockedPreviewPages/CK-J06-S08_shrinking_the_preview_retires_its_public_copies",
+        "TestLockedPreviewPages/CK-J06-S08_scheduled_chapter_never_contributes_previews"
+      ]
+    },
+    {
       "id": "CK-J07-S01",
       "journey": "CK-J07",
       "behavior": "Locked detail hides body/media and restricted counts",

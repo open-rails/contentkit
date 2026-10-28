@@ -356,8 +356,11 @@ preview, counts or comments. With it, exactly what it names.
 | `views` | view counts (cards, detail) |
 | `comments` | comments, as below |
 
-Hidden counts are absent, never zero. `preview` is the free pages or
-segments when the access rule names none; a rule's own `preview` wins.
+Hidden counts are absent, never zero. `preview` is the free leading pages
+when the access rule names none; a rule's own `preview` wins. Release copies
+those released pages' reading renditions to the version's public area, and the
+reader plan lists them as unsigned public URLs to every reader who does not
+open the version.
 Detail, cards (lists, search, typeahead, rails, similar, recommendations,
 entity pages, `me` favorites and history), the reader plan and interactions
 apply it; the media read API lists a locked item's public files alone (its

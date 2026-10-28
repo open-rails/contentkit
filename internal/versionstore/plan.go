@@ -3,38 +3,25 @@ package versionstore
 import (
 	"context"
 	"errors"
-	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
-	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	versions "github.com/open-rails/contentkit/media/versions"
 )
 
 // decision is one viewer's verdict on a span of a version's pages: the
-// resolver's on the version, its segments' release and its rule's preview.
+// resolver's on the version and its segments' release.
 type decision struct {
 	res      resolve.Resolution
-	preview  access.Preview
 	segs     []segment
 	pages    int
 	anchored bool
 	now      time.Time
-}
-
-func previewPageCount(k *mediastore.RegisteredKind, d decision, total int) int {
-	if k.Publish.Previews == "" {
-		return 0
-	}
-	spec := public(k, k.Publish.Previews)
-	if spec == nil {
-		return 0
-	}
-	return max(0, min(total, d.preview.Pages, spec.First))
 }
 
 // shows reports released pages, or all pages to an authorized restricted reader.
@@ -199,43 +186,19 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Targe
 		}
 		plan.Segments = append(plan.Segments, seg)
 	}
-	if k.Publish.Previews != "" {
-		count := previewPageCount(k, d, len(snap.Pages))
-		requested := make([]string, 0, count)
-		for _, pg := range snap.Pages[:count] {
-			if len(pg.Files) > 0 {
-				requested = append(requested, pg.Files[0].Path)
-			}
-		}
-		urls := map[string]string{}
-		for batch := range slices.Chunk(requested, 64) {
-			read, err := s.m.Reader.Read(ctx, ref, actor, media.ReadOptions{Paths: batch})
-			if err != nil {
-				return nil, err
-			}
-			if plan.Expires == 0 || read.Expires < plan.Expires {
-				plan.Expires = read.Expires
-			}
-			for _, f := range read.Files {
-				if f.URL != "" {
-					urls[f.Path] = f.URL
-				}
-			}
-		}
-		for i, pg := range snap.Pages[:count] {
-			if len(pg.Files) == 0 {
-				continue
-			}
+	if !d.opens(cut) {
+		// Release delivered these renditions publicly: no grant is needed.
+		for i, pg := range snap.Pages[:active.Preview] {
 			r := pg.Files[0]
-			url := urls[r.Path]
-			if url == "" {
-				continue
+			area, blob, valid := layout.SplitBlobRef(r.Blob)
+			if !valid || area != layout.AreaPublic {
+				return nil, ErrNotReady
 			}
 			name := pg.Name
 			if name == "" {
 				name = k.NameOf(pg.Path)
 			}
-			plan.Previews = append(plan.Previews, versions.PlanPreview{ID: sourcePageHash(pg), Index: i, Name: name, URL: url, W: r.W, H: r.H})
+			plan.Previews = append(plan.Previews, versions.PlanPreview{ID: sourcePageHash(pg), Index: i, Name: name, URL: s.reg.PublicURL(ref, blob), W: r.W, H: r.H})
 			readable[sourcePageHash(pg)] = true
 		}
 	}

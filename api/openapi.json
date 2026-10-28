@@ -9282,7 +9282,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "A version's reader plan: its segments with their release state, the canonical version item for released spans, signed previews of a locked version, playback and reader metadata. 202 while it has no current publication.",
+        "summary": "A version's reader plan: its segments with their release state, the canonical version item for released spans, the public preview pages of a locked version, playback and reader metadata. 202 while it has no current publication.",
         "parameters": [
           {
             "name": "id",
