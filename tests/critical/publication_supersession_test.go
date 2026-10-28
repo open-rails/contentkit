@@ -72,7 +72,7 @@ func TestSupersededPublicCopyReturnsToPrivate(t *testing.T) {
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
 	a.server = mountEngine(t, a.engine)
-	must(t, a.engine.Start(t.Context()))
+	must(t, a.engine.StartJobs(t.Context()))
 	admin := a.engine.Client()
 	ref := galleryRef(t, admin, "Superseded public storage copy")
 	_, err = admin.PatchContentVersion(t.Context(), ref.ID, ref.Version, catalog.VersionInput{Access: &access.Rule{Level: access.PPV}})

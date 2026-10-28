@@ -82,7 +82,7 @@ A reference to another catalog is an error, never remapped. See [scope.go](scope
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
 | `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |
 | `e2e` | its own module: every route end to end over PostgreSQL, MinIO and a real AuthKit |
-| root | `Engine`: `New` (validates or migrates storage according to `Database.SkipMigrations`), `Start` (its River jobs), `Routes` (route groups under `/v1`), `Client` (typed in-process client), `Ready`, `Probes`, `RiverJobs`, `Close` |
+| root | `Engine`: `New` (validates or migrates storage according to `Database.SkipMigrations`), `Start` (serve; requests enqueue jobs), `StartJobs` (work its jobs on its own River), `Routes` (route groups under `/v1`), `Client` (typed in-process client), `Reconcile`, `Ready`, `Probes`, `Close` |
 | `server` | its own module: the standalone `contentkit` binary (`server/cmd/contentkit`) |
 
 ## Engine
@@ -94,14 +94,14 @@ one `Start`, routes the host mounts.
 ck, _ := contentkit.New(ctx, contentkit.Config{
 	Scope:            &contentkit.Scope{TenantID: tenantID, AppID: appID}, // stable provisioned IDs
 	LegacyCatalogKey: "doujins", // adopting an existing catalog; omit for a new app
-	Database:   contentkit.DatabaseConfig{Schema: "doujins_contentkit", RiverSchema: "doujins_river", SkipMigrations: true},
+	Database:   contentkit.DatabaseConfig{Schema: "doujins_contentkit", SkipMigrations: true}, // River: doujins_contentkit_river
 	Content:    siteKinds, // kinds.Config: languages, tiers, content and entity kinds
 	Media:      &contentkit.MediaConfig{Config: registry, Delivery: contentkit.DeliveryConfig{SigningKey: key}},
 	ClickHouse: contentkit.ClickHouseConfig{Database: "analytics", Addr: chAddr},
 }, contentkit.Deps{Postgres: pool, Auth: ak.Authenticator(), Users: ak.UserInfo(),
 	Billing: ckopenrails.Billing(merchant), Store: bucket})
-fleet, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "doujins_river"}, ak.RiverJobs(), ck.RiverJobs())
-_ = ck.Start(ctx, contentkit.WithRiverClient(fleet)) // or ck.Start(ctx): its own River
+_ = ck.Start(ctx)     // API process: serve; requests enqueue jobs
+_ = ck.StartJobs(ctx) // worker process: work ContentKit's jobs on its own River
 routes, _ := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
 for _, r := range routes {
 	mux.Handle(r.Path, r.Handler)

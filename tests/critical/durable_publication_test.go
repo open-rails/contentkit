@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 )
 
@@ -16,14 +17,13 @@ func TestDurableTextPublication(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	admin, reader := a.engine.Client(), a.client("")
-	fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
+	fleet, err := jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}})
 	must(t, err)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		must(t, fleet.Stop(ctx))
 	})
-	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 	item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{
 		"en": {Title: "Durable release", Body: "Publication follows completed work"},
 	}}}})

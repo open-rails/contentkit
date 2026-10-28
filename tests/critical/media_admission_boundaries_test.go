@@ -148,7 +148,7 @@ func TestMediaAdmissionBoundaries(t *testing.T) {
 		b.engine, err = ck.New(t.Context(), b.cfg, b.deps)
 		must(t, err)
 		b.server = mountEngine(t, b.engine)
-		must(t, b.engine.Start(t.Context()))
+		must(t, b.engine.StartJobs(t.Context()))
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()

@@ -17,6 +17,7 @@ func init() {
 	httpapi.Register(httpapi.Content, banRoutes())
 	httpapi.Register(httpapi.Content, moderationRoutes)
 	httpapi.Register(httpapi.Content, ruleRoutes)
+	httpapi.Register(httpapi.Content, accountRoutes)
 }
 
 var sortParam = httpapi.Text("sort", "likes (most liked), best (Wilson lower bound) or newest (the default)")
@@ -36,5 +37,6 @@ func (rt *Runtime) Handler() http.Handler {
 	httpapi.Mount(mux, g, rt, banRoutes())
 	httpapi.Mount(mux, g, rt, moderationRoutes)
 	httpapi.Mount(mux, g, rt, ruleRoutes)
+	httpapi.Mount(mux, g, rt, accountRoutes)
 	return rt.accessLog(memoized(mux))
 }

@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media/versions"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
@@ -24,9 +25,8 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 	bind := func() {
 		t.Helper()
 		var err error
-		fleet, err = riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: publicationRiverSchema(a), Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
+		fleet, err = jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: publicationRiverSchema(a), Queues: map[string]river.QueueConfig{}})
 		must(t, err)
-		must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 	}
 	bind()
 	t.Cleanup(func() { must(t, fleet.Stop(context.Background())) })

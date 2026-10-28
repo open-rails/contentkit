@@ -20,6 +20,10 @@ export type ContentState = "draft" | "published" | "deleted";
 export type VersionState = "draft" | "published";
 export type AliasStatus = "found" | "not_found" | "gone";
 
+export interface AccountDeleted {
+  deleted: boolean;
+}
+
 export interface Activity {
   days: ActivityDay[];
   cohorts: string[];

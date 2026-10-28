@@ -164,7 +164,7 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	m.cancel = cancel
 	m.workerDone = make(chan error, 1)
 	go func() { m.workerDone <- m.worker.Run(run) }()
-	must(t, a.engine.Start(run))
+	must(t, a.engine.StartJobs(run))
 	t.Cleanup(func() {
 		a.server.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

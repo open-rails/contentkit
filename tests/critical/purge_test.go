@@ -120,7 +120,7 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 	must(t, err)
 	a.server = mountEngine(t, a.engine)
-	must(t, a.engine.Start(t.Context()))
+	must(t, a.engine.StartJobs(t.Context()))
 	admin = a.engine.Client()
 	producer, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 	must(t, err)

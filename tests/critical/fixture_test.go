@@ -283,6 +283,6 @@ func startPublicationRuntime(t *testing.T, a *application) {
 		if err.Error() != "contentkit: not started" {
 			t.Fatal(err)
 		}
-		must(t, a.engine.Start(t.Context()))
+		must(t, a.engine.StartJobs(t.Context()))
 	}
 }

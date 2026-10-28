@@ -5,11 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media/versions"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
@@ -19,9 +20,8 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
 	a, b := w.apps[0], w.apps[1]
 	makeFleet := func(app *application) *river.Client[pgx.Tx] {
 		t.Helper()
-		fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, app.engine.RiverJobs())
+		fleet, err := jobhook.Fleet(t.Context(), app.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}})
 		must(t, err)
-		must(t, app.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()

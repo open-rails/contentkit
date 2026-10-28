@@ -12,10 +12,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverkit "github.com/open-rails/helpers/river"
-	"github.com/riverqueue/river"
 
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
@@ -34,7 +32,8 @@ const (
 	tenant       = "e2e" // the ContentKit tenant and media namespace
 	schema       = "e2e" // ContentKit's tables
 	authSchema   = "auth"
-	riverSchema  = "e2e_river"        // the host's River: AuthKit's and ContentKit's jobs
+	riverSchema  = "e2e_river"        // ContentKit's own River
+	authRiver    = "auth_river"       // AuthKit's own River
 	workerSchema = "e2e_media_worker" // the media worker's River
 	apiPrefix    = "/api/contentkit"
 	// onUploadPrefix serves a second ContentKit whose uploads process as they
@@ -53,7 +52,6 @@ type harness struct {
 	ck             *contentkit.Engine
 	members        *contentkit.Engine // takes nothing anonymous
 	onUpload       *contentkit.Engine // processes uploads as they land
-	river          *river.Client[pgx.Tx]
 	items          *items
 	faults         *faults
 	// Fixture views of ContentKit's storage, standing in for the media
@@ -200,25 +198,12 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.ring, err = token.NewRing(signing, nil); err != nil {
 		return nil, err
 	}
-	// The host's River runs AuthKit's jobs and the main mount's ContentKit
-	// jobs; the other mounts run theirs on their own River in its schema,
-	// as replicas would.
-	if h.river, err = riverkit.New(ctx, h.pool, &river.Config{Schema: riverSchema, Queues: map[string]river.QueueConfig{},
-		FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond},
-		h.auth.RiverJobs(), h.ck.RiverJobs()); err != nil {
+	// Each library works its jobs on its own River, as one worker process would.
+	if err := h.auth.Start(ctx); err != nil {
 		return nil, err
 	}
-	if err := h.river.Start(ctx); err != nil {
-		return nil, err
-	}
-	if err := h.auth.Start(ctx, authkit.WithRiverClient(h.river)); err != nil {
-		return nil, err
-	}
-	if err := h.ck.Start(ctx, contentkit.WithRiverClient(h.river)); err != nil {
-		return nil, err
-	}
-	for _, e := range []*contentkit.Engine{h.members, h.onUpload} {
-		if err := e.Start(ctx); err != nil {
+	for _, e := range []*contentkit.Engine{h.ck, h.members, h.onUpload} {
+		if err := e.StartJobs(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -246,13 +231,6 @@ func (h *harness) close() {
 	for _, e := range []*contentkit.Engine{h.ck, h.members, h.onUpload} {
 		if err := e.Close(ctx); err != nil {
 			log.Printf("close contentkit: %v", err)
-		}
-	}
-	if h.river != nil {
-		if err := h.river.Stop(ctx); err != nil {
-			hard, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = h.river.StopAndCancel(hard)
-			cancel()
 		}
 	}
 	if h.auth != nil {

@@ -2,7 +2,8 @@
 // library a host configures and mounts, as it does OpenRails and AuthKit.
 //
 //	ck, err := contentkit.New(ctx, cfg, deps)  // validates or migrates its schema
-//	err = ck.Start(ctx)                        // its jobs, on its own River
+//	err = ck.Start(ctx)                        // serve: enqueue jobs on its own River
+//	err = ck.StartJobs(ctx)                    // in the process that works jobs
 //	routes, err := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Entities: contentkit.AllRoutes})
 //
 // The routes, the Go client (Client) and Ready, Probes and Close are the
@@ -42,7 +43,6 @@ import (
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
-	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
@@ -86,14 +86,13 @@ type Engine struct {
 	inproc   http.Handler
 	probes   []Probe
 
-	mu        sync.Mutex
-	jobs      *jobs
-	requested bool // RiverJobs was handed to a host fleet
-	fleet     *river.Client[pgx.Tx]
-	own       *river.Client[pgx.Tx]
-	ownCancel context.CancelFunc
-	started   bool
-	closed    bool
+	mu      sync.Mutex
+	jobs    *jobs
+	river   *river.Client[pgx.Tx] // ContentKit's own, built by Start
+	working bool                  // StartJobs started river
+	stopRun context.CancelFunc
+	started bool
+	closed  bool
 }
 
 type engineMedia struct {
@@ -514,6 +513,7 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 		Processor:             deps.Processor,
 		NotificationPublisher: deps.Notifications,
 		EraseAccountReceipts:  e.eraseAccountReceipts,
+		Accounts:              e,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
@@ -581,9 +581,7 @@ func (e *Engine) mount(deps Deps) error {
 	if e.avatars != nil {
 		avatars = e.avatars.rule
 	}
-	if e.modules[httpapi.Kinds], err = kindsroute.Handler(c, e.hub.SignalPlane, avatars); err != nil {
-		return err
-	}
+	e.modules[httpapi.Kinds] = kindsHandler(c, e.hub.SignalPlane, avatars)
 	if e.importer, err = importer.New(importer.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
@@ -630,70 +628,65 @@ func (e *Engine) mountDiscovery(deps Deps) error {
 	return err
 }
 
-// StartOption adjusts Start.
-type StartOption func(*startOptions)
-
-type startOptions struct {
-	fleet    *river.Client[pgx.Tx]
-	fleetSet bool
+// Start makes the engine ready to serve. It builds ContentKit's own River
+// client on Deps.Postgres in Config.Database.RiverSchema, through which
+// requests enqueue background work, and works none of it: StartJobs does,
+// in the process the host runs jobs in. It runs no DDL; ctx ending stops
+// nothing. Call it once, before serving.
+func (e *Engine) Start(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.start(ctx)
 }
 
-// WithRiverClient runs ContentKit's jobs on the host's River fleet, which
-// riverhelpers.New built with RiverJobs in Config.Database.RiverSchema
-// (beside the host's, AuthKit's and OpenRails' jobs). ContentKit enqueues
-// through it and never starts or stops it.
-func WithRiverClient(fleet *river.Client[pgx.Tx]) StartOption {
-	return func(o *startOptions) { o.fleet, o.fleetSet = fleet, true }
-}
-
-// Start starts ContentKit's background work: search indexing, preference
-// sync, popularity refresh, erasure and the media jobs. With no
-// options it builds and runs ContentKit's own River client in
-// Config.Database.RiverSchema; with WithRiverClient the jobs run on the host's
-// fleet. It runs no DDL; ctx ending stops nothing: Close stops what Start
-// started. Call it once, before serving.
-func (e *Engine) Start(ctx context.Context, opts ...StartOption) error {
+func (e *Engine) start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if e.erasureRecovery {
-		return ErrErasureReplayRequired
-	}
-	var o startOptions
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&o)
-		}
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
 	switch {
+	case e.erasureRecovery:
+		return ErrErasureReplayRequired
 	case e.closed:
 		return errors.New("contentkit: engine closed")
 	case e.started:
 		return errors.New("contentkit: Start called twice")
-	case o.fleetSet && o.fleet == nil:
-		return errors.New("contentkit: WithRiverClient requires a River client")
-	case o.fleetSet:
-		if !e.requested || e.jobs.bound() != o.fleet {
-			return errors.New("contentkit: the fleet was not built with this engine's RiverJobs")
-		}
-		e.fleet, e.started = o.fleet, true
-		return nil
-	case e.requested:
-		return errors.New("contentkit: RiverJobs went to a host fleet: pass it with WithRiverClient")
 	}
-	own, err := riverhelpers.New(ctx, e.pool, &river.Config{Schema: e.riverSchema, Queues: map[string]river.QueueConfig{}, Logger: e.log},
+	client, err := riverhelpers.New(ctx, e.pool, &river.Config{Schema: e.riverSchema, Queues: map[string]river.QueueConfig{}, Logger: e.log},
 		e.jobs.contribution())
 	if err != nil {
 		return err
+	}
+	e.river, e.started = client, true
+	return nil
+}
+
+// StartJobs works ContentKit's background jobs in this process: search
+// indexing, preference sync, popularity refresh, publication, retention and
+// media release work, and their schedules. A host calls it from the process
+// that runs jobs (its worker command); processes that only serve call Start.
+// It starts the engine first when Start has not run. Close stops the jobs.
+func (e *Engine) StartJobs(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.started {
+		if err := e.start(ctx); err != nil {
+			return err
+		}
+	} else if err := ctx.Err(); err != nil {
+		return err
+	}
+	switch {
+	case e.closed:
+		return errors.New("contentkit: engine closed")
+	case e.working:
+		return errors.New("contentkit: StartJobs called twice")
 	}
 	// The caller bounds startup, not the lifetime of the successfully started
 	// workers. Keep cancellation connected only until startup returns; Close
 	// owns the detached runtime and still allows graceful job completion.
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	stopStartupCancellation := context.AfterFunc(ctx, cancel)
-	err = own.Start(runCtx)
+	err := e.river.Start(runCtx)
 	if !stopStartupCancellation() {
 		err = errors.Join(err, ctx.Err())
 	}
@@ -701,15 +694,14 @@ func (e *Engine) Start(ctx context.Context, opts ...StartOption) error {
 		cancel()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cleanupCancel()
-		return errors.Join(fmt.Errorf("contentkit: start River: %w", err), own.StopAndCancel(cleanupCtx))
+		return errors.Join(fmt.Errorf("contentkit: start River: %w", err), e.river.StopAndCancel(cleanupCtx))
 	}
-	e.own, e.ownCancel, e.started = own, cancel, true
+	e.working, e.stopRun = true, cancel
 	return nil
 }
 
-// Close stops what Start started (ContentKit's own River, never the host's
-// fleet) and closes what New opened, leaving the host's pool, Redis and
-// ClickHouse connections open.
+// Close stops the jobs StartJobs started and closes what New opened, leaving
+// the host's pool, Redis and ClickHouse connections open.
 func (e *Engine) Close(ctx context.Context) error {
 	if e == nil {
 		return nil
@@ -724,15 +716,15 @@ func (e *Engine) Close(ctx context.Context) error {
 		e.signals.close()
 	}
 	var errs []error
-	if e.own != nil {
-		if err := e.own.Stop(ctx); err != nil {
+	if e.working {
+		if err := e.river.Stop(ctx); err != nil {
 			hard, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			errs = append(errs, err, e.own.StopAndCancel(hard))
+			errs = append(errs, err, e.river.StopAndCancel(hard))
 			cancel()
 		}
 	}
-	if e.ownCancel != nil {
-		e.ownCancel()
+	if e.stopRun != nil {
+		e.stopRun()
 	}
 	e.chMu.Lock()
 	if e.ownCH != nil {
@@ -742,9 +734,8 @@ func (e *Engine) Close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Ready reports whether the engine can serve: Postgres answers and its jobs
-// run (the host's fleet bound to RiverJobs, or ContentKit's own River since
-// Start). Optional dependencies never fail it (see Probes).
+// Ready reports whether the engine can serve: Postgres answers and Start
+// ran. Optional dependencies never fail it (see Probes).
 func (e *Engine) Ready(ctx context.Context) error {
 	if err := e.pool.Ping(ctx); err != nil {
 		return fmt.Errorf("contentkit: postgres: %w", err)

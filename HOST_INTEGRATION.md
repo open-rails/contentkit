@@ -8,7 +8,8 @@ providers; it never reads or writes ContentKit's storage
 ## Contract
 
 One `New`, one `Start`, the routes mounted under one prefix, each route group
-at its sub-path under `/v1` ([docs/api/routes.md](docs/api/routes.md)):
+at its sub-path under `/v1` ([docs/api/routes.md](docs/api/routes.md)), and
+`StartJobs` in the process that works jobs:
 
 ```go
 ck, _ := contentkit.New(ctx, cfg, contentkit.Deps{
@@ -17,12 +18,36 @@ ck, _ := contentkit.New(ctx, cfg, contentkit.Deps{
 	Users: ak.UserInfo(),      // authors' names (authkit/userinfo)
 	Store: bucket, Moderator: moderator, BodyProcessor: sanitizer,
 })
-_ = ck.Start(ctx, contentkit.WithRiverClient(fleet)) // fleet built with ck.RiverJobs()
+_ = ck.Start(ctx) // serve: requests enqueue jobs
 routes, _ := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
 for _, r := range routes {
 	mux.Handle(r.Path, r.Handler)
 }
 ```
+
+### Jobs
+
+ContentKit runs its background work (search indexing, preference sync,
+popularity refresh, publication, retention and release work) on its own River
+client, on `Deps.Postgres` in `Config.Database.RiverSchema` (default
+`{schema}_river`), never in a host's fleet or schema. `Start` builds that
+client so requests enqueue; it works nothing. The process that works jobs
+calls `StartJobs` (it starts the engine first if needed); `Close` stops them:
+
+```go
+// API process
+_ = ck.Start(ctx)
+// worker command (`run-worker`)
+_ = ck.StartJobs(ctx)
+defer ck.Close(ctx)
+```
+
+Which process works jobs is code, never configuration. The standalone
+`server/` calls `StartJobs` itself. Media processing is the stock
+`contentkit-media-worker` image's ([Media worker schema](#media-worker-schema)).
+`Engine.Reconcile` repairs derived catalog state (facets, access snapshots,
+search marks and content paths) after a model change; the server CLI runs it as
+`contentkit reconcile`.
 
 ## Host references
 
@@ -82,6 +107,7 @@ ContentKit names its staff permissions, always the full
 | `access.CommentsBan` | `root:comments:ban` | ban users from commenting anywhere in the tenant |
 | `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and content |
 | `access.EntitiesWrite` | `root:entities:write` | create, edit, merge and delete entities, and set memberships |
+| `access.AccountsLifecycle` | `root:accounts:lifecycle` | deliver AuthKit's account lifecycle over HTTP (a host service) |
 
 Channels have their own AuthKit group in the `channel` persona. Declare
 `access.ChannelPermissions()` and compose host-defined contributor, editor and
@@ -667,7 +693,12 @@ detaches a subject's historical answers from the account. No classification work
 ## Account lifecycle and interaction erasure
 
 Applications consume AuthKit's retained lifecycle events. On `user.deleted`,
-call `ck.SetAccountDeleted(ctx, id, true)`; on restoration pass `false`.
+call `ck.SetAccountDeleted(ctx, id, true)`; on restoration pass `false`. A host
+of a remote ContentKit calls the routes instead, as a service holding
+`access.AccountsLifecycle` (`root:accounts:lifecycle`):
+`PUT /v1/accounts/{id}/deleted` with `{"deleted": true|false}`
+(`Client.PutAccountDeleted`) and `POST /v1/accounts/{id}/anonymize`
+(`Client.PostAccountAnonymize`), both 204 and idempotent.
 This changes author display to `<Deleted>` without deleting interactions.
 Comment responses use the existing `anon_name` shape without a profile or
 account id, so older UI clients display the same label. Ownership remains in

@@ -1,7 +1,8 @@
-// Package kindsroute serves the site's public content model: the part of
-// kinds.Config clients render content and entity kinds with.
-// Domain policy, restrictions and token claims stay on the server.
-package kindsroute
+package contentkit
+
+// GET /v1/kinds serves the site's public content model: the part of
+// kinds.Config clients render content and entity kinds with. Domain policy,
+// restrictions and token claims stay on the server.
 
 import (
 	"encoding/json"
@@ -12,7 +13,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// ContentModel is the public part of kinds.Config.
+// ContentModel is the public part of kinds.Config: Client.GetKinds.
 type ContentModel struct {
 	Channels    *kinds.Channels             `json:"channels,omitempty"`
 	Languages   []string                    `json:"languages"`
@@ -30,9 +31,9 @@ type ContentModel struct {
 	Avatars *media.PresetRule `json:"avatars,omitempty"`
 }
 
-// Public is c's public part, with empty lists and maps rather than null and
-// each kind's locked view spelled out.
-func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentModel {
+// publicModel is c's public part, with empty lists and maps rather than null
+// and each kind's locked view spelled out.
+func publicModel(c kinds.Config, signals bool, avatars *media.PresetRule) ContentModel {
 	m := ContentModel{Channels: c.Channels, Languages: c.Languages, Tiers: c.Tiers, Kinds: map[string]kinds.Kind{}, EntityKinds: c.EntityKinds,
 		Signals: signals, Avatars: avatars}
 	for name, k := range c.Kinds {
@@ -55,30 +56,30 @@ func Public(c kinds.Config, signals bool, avatars *media.PresetRule) ContentMode
 	return m
 }
 
-type server struct {
+type kindsServer struct {
 	content kinds.Config
 	avatars *media.PresetRule
 	signals func() bool
 }
 
-// Handler serves the content model and the current domain’s configured buckets.
-func Handler(c kinds.Config, signals func() bool, avatars *media.PresetRule) (http.Handler, error) {
-	srv := &server{content: c, signals: signals, avatars: avatars}
+// kindsHandler serves the content model and the current domain’s configured buckets.
+func kindsHandler(c kinds.Config, signals func() bool, avatars *media.PresetRule) http.Handler {
+	srv := &kindsServer{content: c, signals: signals, avatars: avatars}
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, nil, srv, routes)
-	return mux, nil
+	httpapi.Mount(mux, nil, srv, kindsRoutes)
+	return mux
 }
 
-func init() { httpapi.Register(httpapi.Kinds, routes) }
+func init() { httpapi.Register(httpapi.Kinds, kindsRoutes) }
 
-var routes = []httpapi.Route[*server]{
+var kindsRoutes = []httpapi.Route[*kindsServer]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/kinds", Resource: "kinds", Auth: httpapi.Open,
 		Doc:       "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.",
-		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}}, Serve: httpapi.H((*server).handle)},
+		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}}, Serve: httpapi.H((*kindsServer).handle)},
 }
 
-func (s *server) handle(w http.ResponseWriter, r *http.Request) {
-	model := Public(s.content, s.signals(), s.avatars)
+func (s *kindsServer) handle(w http.ResponseWriter, r *http.Request) {
+	model := publicModel(s.content, s.signals(), s.avatars)
 	domain, _ := s.content.DomainFor(r.Host)
 	for name, kind := range model.Kinds {
 		buckets := make([]kinds.PopularityBucket, 0, len(kind.Popularity))

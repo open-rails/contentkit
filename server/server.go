@@ -15,16 +15,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/userinfo"
 	"github.com/open-rails/helpers/deps"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/open-rails/openrails"
 	"github.com/redis/go-redis/v9"
-	"github.com/riverqueue/river"
 
 	contentkit "github.com/open-rails/contentkit"
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
@@ -104,19 +101,17 @@ type Deps struct {
 
 // Server is a standalone ContentKit.
 type Server struct {
-	started bool
 	cfg     Config
 	log     *slog.Logger
 	engine  *contentkit.Engine
 	auth    *authkit.Client
-	fleet   *river.Client[pgx.Tx]
 	sup     *deps.Supervisor
 	handler http.Handler
 }
 
-// New builds the server: AuthKit (which creates or upgrades its tables),
-// then the engine (its own), one River fleet in the engine's River schema
-// running both, and the HTTP surface. ctx bounds the wait for the database.
+// New builds the server: AuthKit (which creates or upgrades its tables and
+// its River schema), then the engine (its own, River's included), and the
+// HTTP surface. ctx bounds the wait for the database.
 func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	if d.Postgres == nil {
 		return nil, errors.New("server: Deps.Postgres is required")
@@ -136,16 +131,6 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 			return nil, err
 		}
 	}
-	riverSchema := cfg.Engine.Database.RiverSchema
-	if riverSchema == "" {
-		schema := cfg.Engine.Database.Schema
-		if schema == "" {
-			schema = contentkit.DefaultSchema
-		}
-		riverSchema = schema + "_river"
-	}
-	cfg.Engine.Database.RiverSchema = riverSchema
-
 	ak := cfg.Auth
 	if cfg.Engine.Scope != nil && ak.DefaultTenantID.IsZero() {
 		ak.DefaultTenantID, err = iam.ParseTenantID(cfg.Engine.Scope.TenantID.String())
@@ -156,7 +141,9 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	if ak.Database.Schema == "" {
 		ak.Database.Schema = "contentkit_auth"
 	}
-	ak.Database.RiverSchema = riverSchema
+	if ak.Database.RiverSchema == "" {
+		ak.Database.RiverSchema = ak.Database.Schema + "_river" // AuthKit's own, never ContentKit's
+	}
 	if !ak.Keys.AllowEphemeralDevKeys && ak.Keys.Path == "" {
 		ak.Keys.VerifyOnly = true // a resource server verifies; it mints nothing
 	}
@@ -196,10 +183,6 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 		return nil, err
 	}
 
-	if s.fleet, err = riverhelpers.New(ctx, d.Postgres, &river.Config{Schema: riverSchema, Queues: map[string]river.QueueConfig{}, Logger: s.log},
-		s.auth.RiverJobs(), s.engine.RiverJobs()); err != nil {
-		return nil, err
-	}
 	if groups == 0 {
 		groups = s.engine.RouteGroups()
 	}
@@ -238,21 +221,22 @@ func (s *Server) users(ak authkit.Config) (userinfo.Lookup, error) {
 	return s.auth.RemoteUserInfo(iam.RootGroup(), issuer), nil
 }
 
+// Reconcile repairs the engine's derived catalog state (Engine.Reconcile).
+func (s *Server) Reconcile(ctx context.Context) (contentkit.Reconciled, error) {
+	return s.engine.Reconcile(ctx)
+}
+
 // Handler is the public surface: ContentKit's routes and /livez, /readyz,
 // /statusz.
 func (s *Server) Handler() http.Handler { return s.handler }
 
-// Start runs the jobs (AuthKit's and ContentKit's on one fleet) and marks
-// the server ready once the engine is.
+// Start runs the jobs (AuthKit's and ContentKit's, each on its own River) and
+// marks the server ready once the engine is.
 func (s *Server) Start(ctx context.Context) error {
-	if err := s.fleet.Start(ctx); err != nil {
+	if err := s.auth.Start(ctx); err != nil {
 		return err
 	}
-	s.started = true
-	if err := s.auth.Start(ctx, authkit.WithRiverClient(s.fleet)); err != nil {
-		return err
-	}
-	if err := s.engine.Start(ctx, contentkit.WithRiverClient(s.fleet)); err != nil {
+	if err := s.engine.StartJobs(ctx); err != nil {
 		return err
 	}
 	s.sup.Start(ctx)
@@ -315,11 +299,6 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 // and Redis open.
 func (s *Server) Close(ctx context.Context) error {
 	var errs []error
-	if s.started {
-		if err := s.fleet.Stop(ctx); err != nil {
-			errs = append(errs, err, s.fleet.StopAndCancel(context.WithoutCancel(ctx)))
-		}
-	}
 	if s.engine != nil {
 		errs = append(errs, s.engine.Close(ctx))
 	}

@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	"github.com/jackc/pgx/v5"
-	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/media/versions"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
@@ -27,14 +28,13 @@ func publicationOnlyFleet(t *testing.T, app *application) *river.Client[pgx.Tx] 
 		}
 		return nil
 	}, nil, nil)
-	fleet, err := riverhelpers.New(t.Context(), app.deps.Postgres, &river.Config{Schema: app.cfg.Database.Schema + "_river", Queues: map[string]river.QueueConfig{queue: {MaxWorkers: 1}}}, app.engine.RiverJobs(), only)
+	fleet, err := jobhook.Fleet(t.Context(), app.engine, &river.Config{Schema: app.cfg.Database.Schema + "_river", Queues: map[string]river.QueueConfig{queue: {MaxWorkers: 1}}}, only)
 	must(t, err)
 	// Contributions cannot overwrite another module's queue configuration.
 	// Use River's public queue lifecycle before any consumer is started.
 	for _, name := range dormant {
 		must(t, fleet.Queues().Remove(t.Context(), name))
 	}
-	must(t, app.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 	must(t, fleet.Start(t.Context()))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

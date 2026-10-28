@@ -70,7 +70,7 @@ func TestVersionOwnedContent(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	admin, public := engine.Client(), ck.NewClient(server.URL+"/content", nil)
-	must(engine.Start(ctx))
+	must(engine.StartJobs(ctx))
 	diagnose := func(id string) {
 		t.Helper()
 		for _, table := range []string{"content_versions", "content_publication_requests", "content_search_documents", "content_search_dirty", "content_search_invalid"} {

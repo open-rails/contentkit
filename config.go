@@ -2,6 +2,7 @@ package contentkit
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -79,8 +80,8 @@ type DatabaseConfig struct {
 	// Schema holds ContentKit's tables. Empty is "contentkit".
 	Schema string `yaml:"schema" json:"schema"`
 	// RiverSchema holds the River tables ContentKit's jobs run in; empty is
-	// Schema plus "_river". Start runs ContentKit's own River client there; a
-	// host fleet passed with WithRiverClient must use the same schema.
+	// Schema plus "_river". ContentKit's own River client uses it; no host
+	// job runs there.
 	RiverSchema string `yaml:"river_schema" json:"river_schema"`
 }
 
@@ -166,10 +167,8 @@ type AvatarsConfig struct {
 // MediaKinds is the media registry Config.Media serves, in the tenant's
 // namespace: content kinds' media are their versions', each entity kind
 // gains cover media (media.ForContent), and the avatar primary holds the
-// avatar kind (Config.Accounts.Avatars or Config.Avatars). The media worker runs it:
-// cmd/media-worker reads it as JSON (`contentkit media-config` prints it),
-// and a host building its own worker gives it, with its hooks, to
-// media.NewRegistry.
+// avatar kind (Config.Accounts.Avatars or Config.Avatars). The media worker
+// runs it from MediaRegistry's JSON.
 func (c Config) MediaKinds() (media.Config, error) {
 	c.Content = c.Content.StorageModel()
 	var err error
@@ -271,7 +270,7 @@ type ClickHouseConfig struct {
 	Cluster string `yaml:"cluster" json:"cluster"`
 }
 
-// JobsConfig sizes the engine's River queue (QueueContentKit).
+// JobsConfig sizes the engine's own River queue.
 type JobsConfig struct {
 	// MaxWorkers is the queue's concurrency; 0 is 2.
 	MaxWorkers int `yaml:"max_workers" json:"max_workers"`
@@ -343,4 +342,18 @@ type Deps struct {
 	Clock func() time.Time
 	// Logger; nil is slog.Default().
 	Logger *slog.Logger
+}
+
+// MediaRegistry is MediaKinds validated and normalized as JSON: the
+// media worker's MEDIA_KINDS_FILE (`contentkit media-config` prints it).
+func (c Config) MediaRegistry() ([]byte, error) {
+	mc, err := c.MediaKinds()
+	if err != nil {
+		return nil, err
+	}
+	reg, err := media.NewRegistry(mc)
+	if err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(reg, "", "  ")
 }

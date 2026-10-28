@@ -52,7 +52,7 @@ func TestPreparedPopularityBuckets(t *testing.T) {
 	if rows != 0 {
 		t.Fatalf("public read created %d ranking rows", rows)
 	}
-	must(t, a.engine.Start(t.Context()))
+	must(t, a.engine.StartJobs(t.Context()))
 	// Neither bucket is requested from a worker API: RunOnStart prepares all
 	// configured choices, including the fixed bucket nobody has read yet.
 	waitForWithin(t, time.Minute, func() bool {

@@ -9,7 +9,6 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 
-	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -18,7 +17,7 @@ func refreshPopularRankings(t *testing.T, w *world) {
 	t.Helper()
 	queue, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 	must(t, err)
-	job, err := queue.Insert(t.Context(), scheduledContentJob{kind: "contentkit_popular_refresh"}, &river.InsertOpts{Queue: ck.QueueContentKit})
+	job, err := queue.Insert(t.Context(), scheduledContentJob{kind: "contentkit_popular_refresh"}, &river.InsertOpts{Queue: "contentkit"})
 	must(t, err)
 	waitForWithin(t, time.Minute, func() bool {
 		row, err := queue.JobGet(t.Context(), job.Job.ID)

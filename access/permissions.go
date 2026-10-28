@@ -44,11 +44,14 @@ const (
 	// primary, exempt from limits: staff, and another site forwarding its
 	// people's (AvatarsConfig.Key).
 	AvatarsWrite Permission = "root:avatars:write"
+	// AccountsLifecycle: deliver AuthKit's account lifecycle (deleted,
+	// restored, purged) to ContentKit over HTTP (a host service).
+	AccountsLifecycle Permission = "root:accounts:lifecycle"
 )
 
 // Permissions is every application permission; hosts choose which roles hold them.
 func Permissions() []Permission {
-	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, ChannelsWrite, NotificationsPublish, ImportWrite, AvatarsWrite}
+	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, ChannelsWrite, NotificationsPublish, ImportWrite, AvatarsWrite, AccountsLifecycle}
 }
 
 func (p Permission) String() string { return string(p) }

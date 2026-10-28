@@ -99,6 +99,8 @@ type Options struct {
 	// NotificationPublisher is AuthKit's scoped account channel. Nil disables
 	// user notifications; ContentKit never constructs its own inbox.
 	NotificationPublisher notify.Publisher
+	// Accounts serves the account lifecycle routes; nil answers them 500.
+	Accounts AccountLifecycle
 	// EraseAccountReceipts connects the existing account cleanup lifecycle.
 	// Nil is used by standalone content runtimes without shared account storage.
 	EraseAccountReceipts func(context.Context, []string) error
@@ -111,6 +113,7 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
+	accounts             AccountLifecycle
 	notifier             notify.Publisher
 	eraseAccountReceipts func(context.Context, []string) error
 	store                *store
@@ -204,6 +207,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	rt.notifier = opts.NotificationPublisher
 	rt.eraseAccountReceipts = opts.EraseAccountReceipts
+	rt.accounts = opts.Accounts
 	rt.guard = &gate.Gate{Auth: opts.Auth, Log: log}
 	rt.rules = newRules(rt)
 	if err := rt.checkSchema(ctx); err != nil {

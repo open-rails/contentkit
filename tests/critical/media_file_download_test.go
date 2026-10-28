@@ -57,7 +57,7 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 			a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 			must(t, err)
 			a.server = mountEngine(t, a.engine)
-			must(t, a.engine.Start(t.Context()))
+			must(t, a.engine.StartJobs(t.Context()))
 			reader := a.client("")
 			var grant versions.FileDownload
 			waitForWithin(t, 45*time.Second, func() bool {

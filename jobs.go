@@ -12,24 +12,13 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/media"
 )
 
-// QueueContentKit is the queue RiverJobs contributes. Hosts may set its
-// concurrency in the shared River config; it needs at least one worker.
-const QueueContentKit = "contentkit"
-
-// RiverJobs is ContentKit's contribution to the host's River fleet (its
-// workers, periodic jobs and queues, media's included), for riverhelpers.New
-// in Config.Database.RiverSchema; then pass the fleet to Start with
-// WithRiverClient. Requesting it rules out ContentKit's own River.
-func (e *Engine) RiverJobs() riverhelpers.Contribution {
-	e.mu.Lock()
-	e.requested = true
-	e.mu.Unlock()
-	return e.jobs.contribution()
-}
+// queueContentKit is the queue of the engine's own jobs.
+const queueContentKit = "contentkit"
 
 // jobs is the engine's River composition: one per engine.
 type jobs struct {
@@ -53,6 +42,8 @@ const (
 	popularRefreshEvery = 5 * time.Minute
 )
 
+// contribution is the engine's River composition: its own workers, queues and
+// schedules, the catalog's and the publication service's.
 func (j *jobs) contribution() riverhelpers.Contribution {
 	e := j.e
 	own := riverhelpers.NewContribution("contentkit", func(_ context.Context, cfg *river.Config) error {
@@ -63,10 +54,10 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		if workers <= 0 {
 			workers = 2
 		}
-		if q, ok := cfg.Queues[QueueContentKit]; ok && q.MaxWorkers < 1 {
-			return fmt.Errorf("contentkit: queue %q needs workers", QueueContentKit)
+		if q, ok := cfg.Queues[queueContentKit]; ok && q.MaxWorkers < 1 {
+			return fmt.Errorf("contentkit: queue %q needs workers", queueContentKit)
 		} else if !ok {
-			cfg.Queues[QueueContentKit] = river.QueueConfig{MaxWorkers: workers}
+			cfg.Queues[queueContentKit] = river.QueueConfig{MaxWorkers: workers}
 		}
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
@@ -82,7 +73,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		periodic := func(id string, every time.Duration, args river.JobArgs) {
 			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, every,
 				func() (river.JobArgs, *river.InsertOpts) {
-					return args, &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3, UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: every}}
+					return args, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: every}}
 				}, &river.PeriodicJobOpts{ID: id, RunOnStart: true}))
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{})
@@ -93,13 +84,13 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			// A refresh can outlast its period; it never runs twice at once.
 			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, popularRefreshEvery,
 				func() (river.JobArgs, *river.InsertOpts) {
-					return popularRefreshArgs{}, &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
+					return popularRefreshArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
 				}, &river.PeriodicJobOpts{ID: "contentkit_popular_refresh", RunOnStart: true}))
 		}
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
 		if b.Pool != e.pool {
-			return errors.New("contentkit: the River fleet must use Deps.Postgres")
+			return errors.New("contentkit: River must use Deps.Postgres")
 		}
 		j.mu.Lock()
 		j.client = b.Client
@@ -125,7 +116,7 @@ func (e *Engine) rebuild(ctx context.Context) error {
 	opts := func(queue string) *river.InsertOpts {
 		return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
 	}
-	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}}
+	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(queueContentKit)}}
 	_, err := c.InsertMany(ctx, params)
 	return err
 }
@@ -145,7 +136,7 @@ func (e *Engine) syncDocuments(ctx context.Context, q any) error {
 			return c.InsertTx(ctx, tx, args, o)
 		}
 	}
-	return media.InsertOnce(ctx, insert, searchSyncArgs{}, river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3})
+	return media.InsertOnce(ctx, insert, searchSyncArgs{}, river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3})
 }
 
 type searchSyncArgs struct {
@@ -234,4 +225,21 @@ func (w *popularRefreshWorker) Timeout(*river.Job[popularRefreshArgs]) time.Dura
 
 func (w *popularRefreshWorker) Work(ctx context.Context, _ *river.Job[popularRefreshArgs]) error {
 	return w.e.discover.RefreshPopularRankings(ctx)
+}
+
+func init() {
+	jobhook.Fleet = func(ctx context.Context, engine any, cfg *river.Config, extra ...riverhelpers.Contribution) (*river.Client[pgx.Tx], error) {
+		e := engine.(*Engine)
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		if e.started || e.closed || e.erasureRecovery {
+			return nil, errors.New("contentkit: the engine cannot start")
+		}
+		fleet, err := riverhelpers.New(ctx, e.pool, cfg, append([]riverhelpers.Contribution{e.jobs.contribution()}, extra...)...)
+		if err != nil {
+			return nil, err
+		}
+		e.river, e.started = fleet, true
+		return fleet, nil
+	}
 }

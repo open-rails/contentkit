@@ -211,7 +211,7 @@ func (e *Engine) signalsBack() {
 	if c == nil {
 		return
 	}
-	opts := &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
+	opts := &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
 	ctx, cancel := context.WithTimeout(context.Background(), signalCheckWait)
 	defer cancel()
 	if _, err := c.Insert(ctx, preferenceSyncArgs{}, opts); err != nil {

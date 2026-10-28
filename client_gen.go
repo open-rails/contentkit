@@ -16,14 +16,13 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
-	"github.com/open-rails/contentkit/internal/kindsroute"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
 )
 
 // GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.
-func (c *Client) GetKinds(ctx context.Context) (kindsroute.ContentModel, error) {
-	var out kindsroute.ContentModel
+func (c *Client) GetKinds(ctx context.Context) (ContentModel, error) {
+	var out ContentModel
 	err := c.call(ctx, http.MethodGet, "/v1/kinds", nil, nil, &out)
 	return out, err
 }
@@ -1018,6 +1017,16 @@ func (c *Client) PostModerationIpBans(ctx context.Context, body []content.IPBanI
 // DeleteModerationIpBans is DELETE /v1/moderation/ip-bans (staff). Lifts the bans of addresses or networks.
 func (c *Client) DeleteModerationIpBans(ctx context.Context, body []string) error {
 	return c.call(ctx, http.MethodDelete, "/v1/moderation/ip-bans", nil, body, nil)
+}
+
+// PutAccountDeleted is PUT /v1/accounts/{id}/deleted (staff). Marks an account deleted during AuthKit's recovery period, hiding its attribution, or restored. Idempotent.
+func (c *Client) PutAccountDeleted(ctx context.Context, id string, body content.AccountDeleted) error {
+	return c.call(ctx, http.MethodPut, expand("/v1/accounts/{id}/deleted", "{id}", url.PathEscape(id)), nil, body, nil)
+}
+
+// PostAccountAnonymize is POST /v1/accounts/{id}/anonymize (staff). Anonymizes a purged account: keeps its comments and contributions, unlinks it and removes its private data. Idempotent; retry on failure.
+func (c *Client) PostAccountAnonymize(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodPost, expand("/v1/accounts/{id}/anonymize", "{id}", url.PathEscape(id)), nil, nil, nil)
 }
 
 // GetEventsQuery is the query of GetEvents.

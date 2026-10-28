@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,7 +14,6 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/signal"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -43,9 +44,8 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	start := func() {
 		t.Helper()
 		if fleet == nil {
-			fleet, err = riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{queue: {MaxWorkers: 1}}}, a.engine.RiverJobs())
+			fleet, err = jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{queue: {MaxWorkers: 1}}})
 			must(t, err)
-			must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 		}
 		must(t, fleet.Start(t.Context()))
 	}

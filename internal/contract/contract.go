@@ -15,13 +15,13 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 
 	// The modules register their routes.
+	_ "github.com/open-rails/contentkit"
 	_ "github.com/open-rails/contentkit/catalog"
 	_ "github.com/open-rails/contentkit/content"
 	_ "github.com/open-rails/contentkit/contenturl"
 	_ "github.com/open-rails/contentkit/discovery"
 	_ "github.com/open-rails/contentkit/entities"
 	_ "github.com/open-rails/contentkit/importer"
-	_ "github.com/open-rails/contentkit/internal/kindsroute"
 	_ "github.com/open-rails/contentkit/media"
 	_ "github.com/open-rails/contentkit/media/versions"
 )
@@ -51,6 +51,7 @@ func Files(fsys fs.FS) (map[string][]byte, error) {
 	return map[string][]byte{
 		OpenAPIFile:               openapi,
 		GoClientFile:              client,
+		GoErrorCodesFile:          goErrorCodes(),
 		RoutesDoc:                 m.routesMD(),
 		SDKDir + "routes.ts":      m.routesTS(),
 		SDKDir + "wire.ts":        m.wireTS(),
