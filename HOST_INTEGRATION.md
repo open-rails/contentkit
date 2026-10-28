@@ -888,9 +888,9 @@ that fits the reader (`display_language` first, then position).
   reader's finished contents per kind, comments and the reactions they got.
 - `GET|DELETE /me/searches` (signed out, `session`): the reader's recent
   searches, one per query, newest first, which `GET /search` keeps (its
-  `session` names a signed-out browser). A clear hides what came before it
-  (`?query=` removes one); an hourly job deletes hidden ones, erased
-  people's and those unused for 180 days. Erasure deletes them.
+  `session` names a signed-out browser). A clear deletes them (`?query=`
+  only that one); erasure deletes them too, and an hourly job deletes those
+  unused for 180 days and any recorded while an erasure ran.
 
 A card carries title and path in the display language, cover renditions, the
 version (languages, traits, pages, duration), the version's entities with pages
@@ -911,11 +911,13 @@ model again a minute after it last found them off.
 
 ## Search job
 
-The engine's search job (every 30 s, and at start) drains the dirty queue and
-runs a bounded backfill. It holds no connection or transaction across
-builders; each write is a short transaction fenced by the dirty revision, so
-overlapping runs only repeat work and a stale build never overwrites a newer
-one.
+A write that changes documents queues the engine's search job in its
+transaction; the job also runs at start and every 5 minutes as a backstop. A
+run expands renamed entities to their items in batches, drains the dirty queue
+and runs a bounded backfill; while work remains, the next run follows at once.
+It holds no connection or transaction across builders; each write is a short
+transaction fenced by the dirty revision, so overlapping runs only repeat work
+and a stale build never overwrites a newer one.
 
 ## Media
 

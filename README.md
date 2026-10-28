@@ -187,7 +187,8 @@ route or a wire type, run `go generate ./internal/contract`;
 ## Search
 
 Documents are one per content item or entity and language. The engine's
-search job keeps them current from the dirty queue and a bounded backfill; rejected documents are
+search job keeps them current from the dirty queue, renamed entities (expanded
+to their items in batches) and a bounded backfill; rejected documents are
 recorded in `content_search_invalid` until their source changes. Search,
 autocomplete and discovery apply eligibility before every bounded retrieval.
 Autocomplete matches literal substrings of an item's own title/name/aliases,

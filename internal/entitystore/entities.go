@@ -59,9 +59,10 @@ type Options struct {
 	// transactions. Optional.
 	ContentChanged func(ctx context.Context, q Querier, contentIDs []string) error
 	// NamesChanged runs in the writing transaction after the names or slugs
-	// of entities changed, so the engine can requeue the documents of content
-	// that shows them, such as search documents keyed by entity names. Their
-	// facets are unchanged; it must not lock content. Optional.
+	// of entities changed, so the engine can queue the reindexing of content
+	// that shows them (search documents carry entity names). Their facets are
+	// unchanged; it must not lock content, and should write per entity, not
+	// per item. Optional.
 	NamesChanged func(ctx context.Context, q Querier, entityIDs []string) error
 	// DocumentsChanged runs in the writing transaction after a write queued
 	// search documents, so the engine can sync them at once. Optional.

@@ -42,17 +42,15 @@ func (s *Service) RecordSearch(ctx context.Context, actor access.Actor, session,
 	return err
 }
 
-// RecentSearches lists the reader's recent searches since their last clear.
+// RecentSearches lists the reader's recent searches, newest first.
 func (s *Service) RecentSearches(ctx context.Context, actor access.Actor, session string, limit int) (discovery.RecentSearches, error) {
 	out := discovery.RecentSearches{Searches: []discovery.RecentSearch{}}
 	subject, err := s.subject(actor, session)
 	if err != nil {
 		return out, err
 	}
-	rows, err := s.o.Pool.Query(ctx, `SELECT x.query, x.results, x.searched_at FROM `+s.t.searches+` x
- LEFT JOIN `+s.t.searchMarks+` m ON m.tenant_id = x.tenant_id AND m.subject = x.subject
- WHERE x.tenant_id = $1 AND x.subject = $2 AND (m.hidden_before IS NULL OR x.searched_at >= m.hidden_before)
- ORDER BY x.searched_at DESC, x.normalized LIMIT $3`, s.o.Tenant, subject.Key(), pageLimit(limit, 10))
+	rows, err := s.o.Pool.Query(ctx, `SELECT query, results, searched_at FROM `+s.t.searches+`
+ WHERE tenant_id = $1 AND subject = $2 ORDER BY searched_at DESC, normalized LIMIT $3`, s.o.Tenant, subject.Key(), pageLimit(limit, 10))
 	if err != nil {
 		return out, err
 	}
@@ -68,63 +66,49 @@ func (s *Service) RecentSearches(ctx context.Context, actor access.Actor, sessio
 	return out, nil
 }
 
-// ClearSearches hides the reader's recent searches: one query, or all of
-// them until now.
+// ClearSearches deletes the reader's recent searches: one query, or all of
+// them.
 func (s *Service) ClearSearches(ctx context.Context, actor access.Actor, session, query string) error {
 	subject, err := s.subject(actor, session)
 	if err != nil {
 		return err
 	}
-	if query != "" {
-		key, _ := searchKey(query)
-		_, err := s.o.Pool.Exec(ctx, `DELETE FROM `+s.t.searches+` WHERE tenant_id = $1 AND subject = $2 AND normalized = $3`, s.o.Tenant, subject.Key(), key)
+	if query == "" {
+		_, err = s.o.Pool.Exec(ctx, `DELETE FROM `+s.t.searches+` WHERE tenant_id = $1 AND subject = $2`, s.o.Tenant, subject.Key())
 		return err
 	}
-	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.searchMarks+` (tenant_id, subject, hidden_before) VALUES ($1, $2, now())
- ON CONFLICT (tenant_id, subject) DO UPDATE SET hidden_before = greatest(`+s.t.searchMarks+`.hidden_before, EXCLUDED.hidden_before)`, s.o.Tenant, subject.Key())
+	key, _ := searchKey(query)
+	_, err = s.o.Pool.Exec(ctx, `DELETE FROM `+s.t.searches+` WHERE tenant_id = $1 AND subject = $2 AND normalized = $3`, s.o.Tenant, subject.Key(), key)
 	return err
 }
 
-// EraseSearches deletes subjects' recent searches and markers.
+// EraseSearches deletes subjects' recent searches.
 func (s *Service) EraseSearches(ctx context.Context, subjects []signal.Subject) error {
 	keys := make([]string, 0, len(subjects))
 	for _, sub := range subjects {
 		keys = append(keys, sub.Key())
 	}
-	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-		for _, t := range []string{s.t.searches, s.t.searchMarks} {
-			if _, err := tx.Exec(ctx, `DELETE FROM `+t+` WHERE tenant_id = $1 AND subject = ANY($2)`, s.o.Tenant, keys); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	_, err := s.o.Pool.Exec(ctx, `DELETE FROM `+s.t.searches+` WHERE tenant_id = $1 AND subject = ANY($2)`, s.o.Tenant, keys)
+	return err
 }
 
-// PruneSearches deletes recent searches hidden by a clear, of erased
-// people, or unused for SearchRetention, then the markers they no longer
-// need. It returns how many searches it deleted.
+// PruneSearches deletes recent searches unused for SearchRetention, and any
+// of an erased person (one recorded while the erasure ran). It returns how
+// many it deleted.
 func (s *Service) PruneSearches(ctx context.Context) (int, error) {
 	var n int64
-	err := pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-		for _, q := range []string{
-			`DELETE FROM ` + s.t.searches + ` x USING ` + s.t.searchMarks + ` m
- WHERE x.tenant_id = $1 AND m.tenant_id = x.tenant_id AND m.subject = x.subject AND x.searched_at < m.hidden_before`,
-			`DELETE FROM ` + s.t.searches + ` x USING ` + s.t.erased + ` e WHERE x.tenant_id = $1 AND e.tenant_id = x.tenant_id AND e.actor_id = x.subject`,
-			`DELETE FROM ` + s.t.searches + ` WHERE tenant_id = $1 AND searched_at < now() - make_interval(secs => ` +
-				strconv.Itoa(int(discovery.SearchRetention.Seconds())) + `)`,
-		} {
-			tag, err := tx.Exec(ctx, q, s.o.Tenant)
-			if err != nil {
-				return err
-			}
-			n += tag.RowsAffected()
+	for _, q := range []string{
+		`DELETE FROM ` + s.t.searches + ` x USING ` + s.t.erased + ` e WHERE x.tenant_id = $1 AND e.tenant_id = x.tenant_id AND e.actor_id = x.subject`,
+		`DELETE FROM ` + s.t.searches + ` WHERE tenant_id = $1 AND searched_at < now() - make_interval(secs => ` +
+			strconv.Itoa(int(discovery.SearchRetention.Seconds())) + `)`,
+	} {
+		tag, err := s.o.Pool.Exec(ctx, q, s.o.Tenant)
+		if err != nil {
+			return int(n), err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM `+s.t.searchMarks+` m WHERE m.tenant_id = $1 AND NOT EXISTS (SELECT 1 FROM `+s.t.searches+` x
- WHERE x.tenant_id = m.tenant_id AND x.subject = m.subject AND x.searched_at < m.hidden_before)`, s.o.Tenant)
-		return err
-	})
-	return int(n), err
+		n += tag.RowsAffected()
+	}
+	return int(n), nil
 }
 
 var sessionParam = httpapi.Text("session", "a signed-out reader's session, which keeps its recent searches")
