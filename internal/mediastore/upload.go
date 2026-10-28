@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/ratelimit"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
@@ -49,7 +50,7 @@ type UploadOptions struct {
 type Uploads struct {
 	o       UploadOptions
 	reg     *Registry
-	commits rateLimiter
+	commits *ratelimit.Limiter
 }
 
 func NewUploads(o UploadOptions) (*Uploads, error) {
@@ -397,7 +398,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			return nil, uploadErr(media.CodeForbidden, "forced regeneration needs an exempt grant")
 		}
 		if u.commits != nil {
-			if ok, wait := u.commits.allow(ctx, uploaderID(actor)); !ok {
+			if ok, wait := u.commits.Allow(ctx, uploaderID(actor)); !ok {
 				return nil, &media.UploadError{Code: media.CodeRate, Message: "commit rate limit", RetryAfter: wait}
 			}
 		}
