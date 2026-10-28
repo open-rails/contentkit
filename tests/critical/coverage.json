@@ -393,7 +393,7 @@
         "TestCompletedPublicationReader",
         "TestInternalArea/CK-J05-S04_editors_read_internal_and_readers_cannot",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange",
-        "TestProcessingWithdrawsHiddenCopyBeforeChapterDate"
+        "TestReleaseDuringPageSelectionKeepsCopyPrivate"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
