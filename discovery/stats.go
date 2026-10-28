@@ -129,7 +129,7 @@ func (s *Service) MyStats(ctx context.Context, actor access.Actor) (MyStats, err
 		}
 	}
 	if err := s.o.Pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(likes), 0), coalesce(sum(dislikes), 0) FROM `+s.t.comments+`
- WHERE tenant_id = $1 AND user_id = $2 AND deleted_at IS NULL AND moderation = 'approved'`, s.o.Tenant, actor.AccountID()).Scan(
+ WHERE tenant_id = $1 AND user_id = $2 AND deleted_at IS NULL AND moderation = 'approved' AND NOT author_hidden`, s.o.Tenant, actor.AccountID()).Scan(
 		&out.Comments, &out.CommentLikes, &out.CommentDislikes); err != nil {
 		return out, err
 	}

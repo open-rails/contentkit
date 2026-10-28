@@ -43,6 +43,7 @@ var codes = []ErrorCode{
 	{"comments_closed", http.StatusForbidden, "The target's comments are closed or hidden: existing ones may show, new ones and edits are refused.", "Comments are closed here."},
 	{"comments_locked", http.StatusForbidden, "The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them.", "Open the content to see and write its comments."},
 	{"comment_moderated", http.StatusForbidden, "The comment is held for review or was rejected, so its author can't edit it; a reviewer's approval makes a held one editable again.", "A held or rejected comment can't be edited."},
+	{"duplicate_comment", http.StatusUnprocessableEntity, "An identical comment was already saved in the configured duplicate window.", "Duplicate comment."},
 	{"comment_too_long", http.StatusUnprocessableEntity, "The comment is longer than the site allows; `details.max` is the limit in characters.", "The comment is too long."},
 	{CodeNotFound, http.StatusNotFound, "Nothing by that name, or nothing the actor may see.", "Not found."},
 	{CodeConflict, http.StatusConflict, "A concurrent change, a path or slug already taken, or an operation id already used for another commit.", "This changed meanwhile or is already taken; reload and try again."},
