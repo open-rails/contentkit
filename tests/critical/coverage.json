@@ -385,11 +385,15 @@
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
         "TestPublicationWithoutWorkers/CK-J05-S04_public_audience_release_opens_without_a_grant",
         "TestCopiedPageChapterPlacement",
+        "TestHiddenChapterStartKeepsPublishing",
+        "TestHiddenChapterStartSpreadWaits",
+        "TestHiddenPageCopiesWaitForTheirChapter",
+        "TestBlankAndLastChapterStarts",
         "TestIndependentChaptersSkipUnreleasedMiddle",
         "TestCompletedPublicationReader",
         "TestInternalArea/CK-J05-S04_editors_read_internal_and_readers_cannot",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange",
-        "TestProcessingWithdrawsHiddenCopyBeforeChapterDate"
+        "TestReleaseDuringPageSelectionKeepsCopyPrivate"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },

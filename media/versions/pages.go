@@ -29,6 +29,7 @@ type NoticePage struct {
 	Reason     string `json:"reason,omitempty"`
 	From       int    `json:"from,omitempty"`
 	To         int    `json:"to,omitempty"`
+	Chapter    int    `json:"chapter,omitempty"` // a removed page still named as this chapter's start
 	PreviewURL string `json:"preview_url,omitempty"`
 }
 

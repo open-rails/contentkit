@@ -351,18 +351,25 @@ func (s *Service) pageEditorAccess(ctx context.Context, actor access.Actor, t ve
 var noticePageReason = map[string]string{"blank": "blank", "duplicate": "duplicate", "covered_by_joined_page": "spread"}
 
 // noticesOf derives the version's notices from its current selection; a
-// changed selection is a new notice, so a dismissal never hides it.
-func noticesOf(k *mediastore.RegisteredKind, m *mediastore.Manifest) []versions.PageNotice {
+// changed selection is a new notice, so a dismissal never hides it. starts
+// labels a removed page still named as a chapter's start, by file path.
+func noticesOf(k *mediastore.RegisteredKind, m *mediastore.Manifest, starts map[string]int) []versions.PageNotice {
 	sel := selectionOf(k, m)
 	var out []versions.PageNotice
 	var removed []versions.NoticePage
+	var paths []string
 	for _, p := range sel.Pages {
 		if reason := noticePageReason[p.Decision.Reason]; reason != "" && !p.Included && p.Mode == "auto" {
 			removed = append(removed, versions.NoticePage{ID: p.ID, SourceName: p.SourceName, Reason: reason})
+			paths = append(paths, p.Path)
 		}
 	}
 	if len(removed) > 0 {
-		out = append(out, versions.PageNotice{ID: "removed-" + revisionOfInput(removed)[:16], Kind: "removed", Pages: removed})
+		id := "removed-" + revisionOfInput(removed)[:16]
+		for i := range removed {
+			removed[i].Chapter = starts[paths[i]]
+		}
+		out = append(out, versions.PageNotice{ID: id, Kind: "removed", Pages: removed})
 	}
 	archives := map[string][]versions.NoticePage{}
 	var order []string
@@ -400,8 +407,16 @@ func (s *Service) PageNotices(ctx context.Context, actor access.Actor, t version
 	if err != nil {
 		return versions.PageNotices{}, err
 	}
+	segments, err := s.segments(ctx, s.o.Pool, []string{t.Version})
+	if err != nil {
+		return versions.PageNotices{}, err
+	}
+	starts := map[string]int{}
+	for _, g := range segments[t.Version] {
+		starts[g.StartPage] = g.Position + 1
+	}
 	out := versions.PageNotices{Notices: []versions.PageNotice{}}
-	for _, n := range noticesOf(k, m) {
+	for _, n := range noticesOf(k, m, starts) {
 		if !dismissed[n.ID] {
 			out.Notices = append(out.Notices, n)
 		}
@@ -450,7 +465,7 @@ func (s *Service) DismissPageNotice(ctx context.Context, actor access.Actor, t v
 	if err != nil {
 		return err
 	}
-	if !slices.ContainsFunc(noticesOf(k, m), func(n versions.PageNotice) bool { return n.ID == id }) {
+	if !slices.ContainsFunc(noticesOf(k, m, nil), func(n versions.PageNotice) bool { return n.ID == id }) {
 		return ErrNotFound
 	}
 	return s.dismissNotice(ctx, t, id)
@@ -463,7 +478,7 @@ func (s *Service) RestorePageNotice(ctx context.Context, actor access.Actor, t v
 	if err != nil {
 		return versions.PageNotices{}, err
 	}
-	notices := noticesOf(k, current)
+	notices := noticesOf(k, current, nil)
 	i := slices.IndexFunc(notices, func(n versions.PageNotice) bool { return n.ID == id })
 	if i < 0 {
 		return versions.PageNotices{}, ErrNotFound

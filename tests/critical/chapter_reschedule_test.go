@@ -224,9 +224,10 @@ func TestIndependentChaptersSkipUnreleasedMiddle(t *testing.T) {
 	}
 }
 
-// A release held at the source lock serves a pixel copy of chapter two before processing
-// hides it. Processing completion must withdraw it at once; chapter two keeps its date.
-func TestProcessingWithdrawsHiddenCopyBeforeChapterDate(t *testing.T) {
+// A release held at the source lock runs after processing saved the page
+// analysis but before it saved the page selection. It must still keep a pixel
+// copy of chapter two private, and chapter two keeps its date.
+func TestReleaseDuringPageSelectionKeepsCopyPrivate(t *testing.T) {
 	m := newResilientMedia(t, func(c *ck.Config) {
 		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
 	})
@@ -299,6 +300,12 @@ func TestProcessingWithdrawsHiddenCopyBeforeChapterDate(t *testing.T) {
 			return n == want
 		})
 	}
+	completed := func() (n int, leaked bool) {
+		must(t, m.pool.QueryRow(t.Context(), `SELECT count(*), coalesce(bool_or(result->'pages'->'pages' @> '[{"path":"pages/30.png"}]'), false) FROM `+pgx.Identifier{m.schema, "content_publication_requests"}.Sanitize()+`
+ WHERE tenant_id=$1 AND version_id=$2 AND state='completed'`, tenant, ref.Version).Scan(&n, &leaked))
+		return n, leaked
+	}
+	before, _ := completed()
 	// Publishing again queues a release ahead of the derivative job's page selection.
 	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
@@ -307,21 +314,19 @@ func TestProcessingWithdrawsHiddenCopyBeforeChapterDate(t *testing.T) {
 	queued(2)
 	unlock()
 	waitForWithin(t, 45*time.Second, func() bool {
-		var leaked bool
-		must(t, m.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{m.schema, "content_publication_requests"}.Sanitize()+`
- WHERE tenant_id=$1 AND version_id=$2 AND state='completed' AND result->'pages'->'pages' @> '[{"path":"pages/30.png"}]')`, tenant, ref.Version).Scan(&leaked))
-		return leaked
+		n, leaked := completed()
+		if leaked {
+			t.Fatal("a release planned before the page selection was saved published the copy of chapter two")
+		}
+		return n > before
 	})
-	deadline := time.Now().Add(45 * time.Second)
-	for paths := served(); !slices.Equal(paths, []string{"reader/01.webp"}); paths = served() {
-		if time.Now().After(deadline) {
-			t.Fatalf("copy of chapter two hidden by processing stayed public until the chapter date: %v", paths)
+	for range 4 {
+		if paths := served(); !slices.Equal(paths, []string{"reader/01.webp"}) {
+			t.Fatalf("copy of chapter two became readable before its date: %v", paths)
 		}
 		time.Sleep(550 * time.Millisecond)
 	}
-	// The corrected view is served while its release is still retiring, before
-	// that release parks the next request.
-	deadline = time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for due := currentPublicationJob(t, m.app, ref.Version).Due; !due.Equal(future); due = currentPublicationJob(t, m.app, ref.Version).Due {
 		if time.Now().After(deadline) {
 			t.Fatalf("chapter two moved from its date after the correction: %s, want %s", due, future)
