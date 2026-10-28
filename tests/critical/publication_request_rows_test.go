@@ -1,6 +1,7 @@
 package critical_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -10,19 +11,40 @@ import (
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/jobhook"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	versionstore "github.com/open-rails/contentkit/internal/versionstore"
 	versions "github.com/open-rails/contentkit/media/versions"
+	"github.com/riverqueue/river"
 )
 
 // Processing wake-ups and repeated publishes of a released edition re-plan it.
 // A run that changes nothing must not add a request row or copy the live
 // release; a real release removes the finished requests it supersedes.
 func TestUnchangedReleaseLeavesNoRequestCopies(t *testing.T) {
-	g := newHiddenStartGallery(t, newChapterArchiveWorld(t), false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png"}, laterChapters(time.Hour))
+	w := newChapterArchiveWorld(t)
+	requests := pgx.Identifier{w.schema, "content_publication_requests"}.Sanitize()
+	// The pruning deletes a no-op row soon after it completes, so record every
+	// request that ever had a release written into its result.
+	writes, record := pgx.Identifier{w.schema, "critical_release_writes"}.Sanitize(), pgx.Identifier{w.schema, "critical_record_release"}.Sanitize()
+	_, err := w.pool.Exec(t.Context(), `CREATE TABLE `+writes+` (id uuid NOT NULL);
+CREATE FUNCTION `+record+`() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.result IS NOT NULL THEN INSERT INTO `+writes+` VALUES (NEW.id); END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER critical_record_release AFTER INSERT OR UPDATE OF result ON `+requests+`
+ FOR EACH ROW EXECUTE FUNCTION `+record+`()`)
+	must(t, err)
+	written := func() []string {
+		t.Helper()
+		var ids []string
+		must(t, w.pool.QueryRow(t.Context(), `SELECT coalesce(array_agg(DISTINCT id::text ORDER BY id::text),'{}') FROM `+writes).Scan(&ids))
+		return ids
+	}
+	g := newHiddenStartGallery(t, w, false, []string{"pages/01.png", "pages/02.png", "pages/10.png", "pages/11.png"}, laterChapters(time.Hour))
 	chapterTwo := g.start.Add(time.Hour)
 	tenant := publicationTenant(g.a)
-	requests := pgx.Identifier{g.w.schema, "content_publication_requests"}.Sanitize()
 
 	config, err := g.a.cfg.MediaKinds()
 	must(t, err)
@@ -117,8 +139,13 @@ func TestUnchangedReleaseLeavesNoRequestCopies(t *testing.T) {
 		}
 	}
 	// Only the live release keeps a copy of the release, and only in result.
-	bounded := func(label string, r rowState, live string) {
+	// releases lists every request ever given a result, live or since pruned.
+	bounded := func(label string, r rowState, live string, releases ...string) {
 		t.Helper()
+		slices.Sort(releases)
+		if got := written(); !slices.Equal(got, releases) {
+			t.Fatalf("%s: releases were written into requests %v, want only %v", label, got, releases)
+		}
 		if r.live != live || r.copies != 1 || r.plans != 0 || r.total > 2 {
 			var described string
 			must(t, g.w.pool.QueryRow(t.Context(), `SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'state',state,'current',current,
@@ -131,19 +158,24 @@ func TestUnchangedReleaseLeavesNoRequestCopies(t *testing.T) {
 
 	g.readable(t, "reader/01.webp", "reader/02.webp")
 	first := settle(chapterTwo)
-	bounded("first release", first, first.live)
+	// Setup may complete more than one real release; none may come later.
+	base := written()
+	if !slices.Contains(base, first.live) {
+		t.Fatalf("live release %s was never written into its request: %v", first.live, base)
+	}
+	bounded("first release", first, first.live, base...)
 	before := view()
 	for i := range 3 {
 		wake()
 		r := settle(chapterTwo)
-		bounded("processing wake-up", r, first.live)
+		bounded("processing wake-up", r, first.live, base...)
 		if i == 0 {
 			same("an unchanged re-plan", view(), before)
 		}
 	}
 	_, err = g.admin.PostContentPublish(t.Context(), g.ref.ID, catalog.PublishInput{})
 	must(t, err)
-	bounded("repeated publish", settle(chapterTwo), first.live)
+	bounded("repeated publish", settle(chapterTwo), first.live, base...)
 	same("unchanged wake-ups and publishes", view(), before)
 
 	// The chapter date makes a real release. It supersedes the first release,
@@ -154,11 +186,46 @@ func TestUnchangedReleaseLeavesNoRequestCopies(t *testing.T) {
 	if second.live == first.live || second.total != 1 {
 		t.Fatalf("second release kept superseded rows: %+v, first live %s", second, first.live)
 	}
-	bounded("second release", second, second.live)
+	bounded("second release", second, second.live, append(slices.Clone(base), second.live)...)
 	after := view()
 	for range 2 {
 		wake()
-		bounded("wake-up after the last chapter", settle(time.Time{}), second.live)
+		bounded("wake-up after the last chapter", settle(time.Time{}), second.live, append(slices.Clone(base), second.live)...)
 	}
 	same("wake-ups after the last chapter", view(), after)
+}
+
+// A withdrawn edition keeps its release id but no longer keeps a release plan.
+// Publishing it again for a later date still reconciles at once, as it did
+// when completed releases kept their plans.
+func TestWithdrawnEditionRepublishesAtOnce(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	fleet, err := jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: publicationRiverSchema(a), Queues: map[string]river.QueueConfig{}})
+	must(t, err)
+	t.Cleanup(func() { must(t, fleet.Stop(context.Background())) })
+	item, err := a.engine.Client().PostContents(t.Context(), catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"},
+		Text: map[string]catalog.VersionText{"en": {Title: "Withdrawn and published again", Body: "No storage service is configured."}}}}})
+	must(t, err)
+	version := item.Versions[0].ID
+	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+	must(t, err)
+	runPublicationWorker(t, fleet, a)
+	_, err = a.engine.Client().PostContentUnpublish(t.Context(), item.ID)
+	must(t, err)
+	runPublicationWorker(t, fleet, a)
+	var released bool
+	var plans int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT v.released,(SELECT count(*) FROM `+w.schema+`.content_publication_requests r
+ WHERE r.tenant_id=v.tenant_id AND r.version_id=v.id AND r.plan IS NOT NULL)
+ FROM `+w.schema+`.content_versions v WHERE v.tenant_id=$1 AND v.id=$2 AND v.release_id IS NOT NULL`, publicationTenant(a), version).Scan(&released, &plans))
+	if released || plans != 0 {
+		t.Fatalf("withdrawal left released=%v and %d release plans", released, plans)
+	}
+	later := w.clock.now().Add(time.Hour)
+	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: &later})
+	must(t, err)
+	if due := currentPublicationJob(t, a, version).Due; !due.Equal(w.clock.now()) {
+		t.Fatalf("republishing a withdrawn edition is due %v, want at once (%v)", due, w.clock.now())
+	}
 }

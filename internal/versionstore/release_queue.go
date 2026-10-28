@@ -3,6 +3,7 @@ package versionstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -157,6 +158,9 @@ func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target ver
 		return client.InsertTx(ctx, tx, args, options)
 	}, publicationArgs{ID: id, Due: at}, river.InsertOpts{Queue: QueueFor(s.o.Tenant), ScheduledAt: at})
 }
+
+// errRequestGone cancels a job whose request a newer release pruned.
+var errRequestGone = fmt.Errorf("%w: publication request is gone", ErrNotFound)
 
 // pruneRequestsTx deletes an edition's requests that nothing reads: not
 // current, not its live release and not retiring. Readers use the live

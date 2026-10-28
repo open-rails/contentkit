@@ -679,7 +679,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	var t versions.Target
 	err := s.o.Pool.QueryRow(ctx, `SELECT content_id,version_id FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id).Scan(&t.Content, &t.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return errRequestGone
 	}
 	if err != nil {
 		return err
@@ -768,8 +768,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			err := tx.QueryRow(ctx, `SELECT current,state,scheduled_at,CASE WHEN state='retiring' THEN result ELSE plan END FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state, &due, &raw)
 			if errors.Is(err, pgx.ErrNoRows) {
 				// A newer release pruned this superseded request while it waited.
-				current = false
-				return nil
+				return errRequestGone
 			}
 			if err != nil {
 				return err

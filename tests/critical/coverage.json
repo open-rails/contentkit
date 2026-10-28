@@ -330,13 +330,15 @@
       "evidence": [
         "Publication accepts durable work; real workers establish visibility and emit one content/version release fact. Historical case IDs remain stable.",
         "The #250 focused source checks are partial; the strict runner must execute these cases on the final candidate.",
-        "An application with gallery media storage still publishes plain text kinds through its durable text worker, including future schedules, audience updates and withdrawal, without fabricating media storage requests."
+        "An application with gallery media storage still publishes plain text kinds through its durable text worker, including future schedules, audience updates and withdrawal, without fabricating media storage requests.",
+        "A withdrawn edition keeps no release plan, yet publishing it again for a later date still reconciles at once."
       ],
       "cases": [
         "TestPublicationWithoutWorkers/CK-J05-S01_immediate_publication_is_visible",
         "TestDurableTextPublication",
         "TestMediaApplicationPublishesTextKinds",
-        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines"
+        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines",
+        "TestWithdrawnEditionRepublishesAtOnce"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
