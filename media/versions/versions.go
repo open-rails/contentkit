@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
+	"github.com/redis/go-redis/v9"
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
@@ -75,8 +76,10 @@ type Options struct {
 	Others    Others         // nil refuses every other kind
 	Policy    DownloadPolicy // the host's download policy; nil allows every download and marks none
 	Downloads Downloads
-	Logger    *slog.Logger
-	Now       func() time.Time
+	// Redis shares download counts across replicas; nil keeps them per process.
+	Redis  redis.UniversalClient
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 // Media is the media runtime built over Service.Hooks.
@@ -124,7 +127,7 @@ func New(o Options) (*Service, error) {
 	s := &Service{o: o, t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"),
 		publications: q("content_version_publications"), entities: q("content_entities"), facets: q("content_facets")}}
 	var err error
-	if s.dl, err = newQuotas(o.Downloads, o.Kinds.Tiers, o.Logger, o.Now); err != nil {
+	if s.dl, err = newQuotas(o.Downloads, o.Redis, o.Kinds.Tiers, o.Logger, o.Now); err != nil {
 		return nil, err
 	}
 	return s, nil

@@ -104,8 +104,6 @@ type Downloads struct {
 	Tiers     []TierQuota `json:"tiers,omitempty" yaml:"tiers"`
 	// TTL is how long a file download's URL opens its file; 0 is DefaultDownloadTTL.
 	TTL time.Duration `json:"ttl,omitempty" yaml:"ttl"`
-	// Redis shares the counts across replicas; nil keeps them per process.
-	Redis redis.UniversalClient `json:"-" yaml:"-"`
 }
 
 // DefaultDownloadTTL is how long a file download's URL opens its file: long
@@ -130,7 +128,9 @@ type quotas struct {
 	byTier          map[string]*ratelimit.Limiter
 }
 
-func newQuotas(d Downloads, tiers []string, log *slog.Logger, now func() time.Time) (*quotas, error) {
+// newQuotas builds d's limiters; rdb shares the counts across replicas, nil
+// keeps them per process.
+func newQuotas(d Downloads, rdb redis.UniversalClient, tiers []string, log *slog.Logger, now func() time.Time) (*quotas, error) {
 	build := func(name string, qs []Quota) (*ratelimit.Limiter, error) {
 		if len(qs) == 0 {
 			return nil, nil
@@ -139,7 +139,7 @@ func newQuotas(d Downloads, tiers []string, log *slog.Logger, now func() time.Ti
 		for i, q := range qs {
 			ws[i] = ratelimit.Window{Limit: q.Limit, Per: q.Per}
 		}
-		l, err := ratelimit.New(ratelimit.Options{Windows: ws, Redis: d.Redis, Prefix: "contentkit:downloads:" + name + ":", Logger: log, Now: now})
+		l, err := ratelimit.New(ratelimit.Options{Windows: ws, Redis: rdb, Prefix: "contentkit:downloads:" + name + ":", Logger: log, Now: now})
 		if err != nil {
 			return nil, fmt.Errorf("versions: downloads %s: %w", name, err)
 		}

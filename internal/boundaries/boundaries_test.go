@@ -33,7 +33,7 @@ var leafHelpers = []string{"internal/codes", "internal/normalize", "internal/edi
 
 // Exported functions of type packages named New*, allowed: they build values,
 // not stores.
-var valueConstructors = map[string]bool{"contentref.NewID": true}
+var valueConstructors = map[string]bool{"contentref.New": true, "contentref.NewVersion": true, "contentref.NewID": true}
 
 func root(t *testing.T) string {
 	t.Helper()

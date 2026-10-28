@@ -362,8 +362,7 @@ func (e *Engine) newVersions(deps Deps, now func() time.Time) error {
 		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
 		Policy: deps.Downloads, Logger: e.log, Now: now, MediaConfigured: e.cfg.Media != nil}
 	if mc := e.cfg.Media; mc != nil {
-		opts.Downloads = versions.Downloads{Anonymous: mc.Downloads.Anonymous, User: mc.Downloads.User,
-			Tiers: mc.Downloads.Tiers, TTL: mc.Downloads.TTL, Redis: deps.Redis}
+		opts.Downloads, opts.Redis = mc.Downloads, deps.Redis
 	}
 	var err error
 	if e.versions, err = versions.New(opts); err != nil {
