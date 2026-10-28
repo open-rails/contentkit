@@ -18,9 +18,6 @@ var ErrUnknownKind = errors.New("media: unknown kind")
 // maxWidth bounds a public width.
 const maxWidth = 8192
 
-// maxFirst bounds a preview's uploads.
-const maxFirst = 100
-
 // Registry is a validated Config with the app's Hooks.
 type Registry struct {
 	cfg      media.Config
@@ -290,7 +287,7 @@ func (r *Registry) PresetRules() []media.PresetRule {
 	for _, k := range r.all {
 		for _, p := range k.Public {
 			out = append(out, media.PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
-				Namespace: k.ns, Root: k.root(), To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First,
+				Namespace: k.ns, Root: k.root(), To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth,
 				Default: hasDefault(&p), Stable: p.Stable})
 		}
 	}

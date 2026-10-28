@@ -8,7 +8,8 @@ import (
 
 // ReaderPlan is a ready version snapshot with live chapter metadata. Released
 // spans select existing files in the same canonical version; their URLs are
-// signed on demand. Locked previews sign only their permitted renditions.
+// signed on demand. A locked version's previews are its leading pages' public
+// renditions.
 type ReaderPlan struct {
 	NextReleaseAt *time.Time    `json:"next_release_at,omitempty"`
 	Content       string        `json:"content_id"`
@@ -19,7 +20,7 @@ type ReaderPlan struct {
 	Previews      []PlanPreview `json:"previews"`
 	Playback      *PlanPlayback `json:"playback,omitempty"`
 	Reader        *ReaderMeta   `json:"reader,omitempty"`
-	Expires       int64         `json:"expires,omitempty"` // signed preview URL expiry, Unix seconds
+	Expires       int64         `json:"expires,omitempty"` // an inspection grant's expiry, Unix seconds
 }
 
 // PlanSegment is one span of pages: a segment's (Position set) or pages

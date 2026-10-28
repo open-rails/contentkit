@@ -38,7 +38,7 @@ var routes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/versions/{version}/page-notices/{notice}/restore", Resource: "reader", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
 		Doc: "Editors: puts a removed-pages notice's pages back in their original positions and clears the notice.", Responses: []httpapi.Reply{httpapi.OK(versions.PageNotices{})}, Errors: []string{httpapi.CodeInvalidRequest, httpapi.CodeNotFound, httpapi.CodeForbidden}}, Serve: httpapi.H(handler.restoreNotice)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/reader", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "A version's reader plan: its segments with their release state, the canonical version item for released spans, signed previews of a locked version, playback and reader metadata. 202 while it has no current publication.",
+		Doc:       "A version's reader plan: its segments with their release state, the canonical version item for released spans, the public preview pages of a locked version, playback and reader metadata. 202 while it has no current publication.",
 		Responses: []httpapi.Reply{httpapi.OK(versions.ReaderPlan{}), httpapi.Accepted(versions.Pending{})}},
 		Serve: httpapi.H(handler.plan)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/versions/{version}/reader", Resource: "reader", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
