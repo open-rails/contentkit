@@ -41,13 +41,15 @@ survive log expiry.
 Custom embedded `Hooks.ItemReady` and `Hooks.ItemProgressed` run synchronously in
 the processor's completion transaction. They must be idempotent transactional
 extensions. Stock external workers need no host callbacks: completion directly
-joins the durable `contentkit_version_release` request. If an earlier release is
+joins the durable `contentkit_publication` request. If an earlier release is
 running, its normal follow-up preserves the wakeup. Queues are scoped to the exact
 catalog key, including when several apps share one River schema.
 
 Removed interfaces: `media.Jobs.Expose`, `ExposeTx` on media/version/entity
 folders, `media.HostQueue`, `worker.Config.HostQueue` and `MEDIA_HOST_QUEUE`.
-Keep `HostSchema` / `MEDIA_HOST_RIVER_SCHEMA` for the release queue.
+Keep `HostSchema` / `MEDIA_HOST_RIVER_SCHEMA` for the publication queue. The stock
+worker inserts these jobs itself, so its image must use the host's job kind and
+queue: deploy it from the same release when either changes.
 
 ## Live editor status
 

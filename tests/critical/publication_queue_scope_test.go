@@ -46,7 +46,7 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
 	for id, queue := range map[string]*string{ia.ID: &qa, ib.ID: &qb} {
 		must(t, w.pool.QueryRow(t.Context(), `SELECT j.queue FROM `+w.schema+`_river.river_job j
  JOIN `+w.schema+`.content_publication_requests r ON r.id::text=j.args->>'id'
- WHERE j.kind='contentkit_version_release' AND r.content_id=$1 ORDER BY j.id LIMIT 1`, id).Scan(queue))
+ WHERE j.kind='contentkit_publication' AND r.content_id=$1 ORDER BY j.id LIMIT 1`, id).Scan(queue))
 	}
 	if qa != versionstore.QueueFor(publicationTenant(a)) || qb != versionstore.QueueFor(publicationTenant(b)) || qa == qb {
 		t.Fatalf("publication queues do not preserve app ownership: A=%s B=%s", qa, qb)
@@ -61,7 +61,7 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
 	var state rivertype.JobState
 	must(t, w.pool.QueryRow(t.Context(), `SELECT j.state FROM `+w.schema+`_river.river_job j
  JOIN `+w.schema+`.content_publication_requests r ON r.id::text=j.args->>'id'
- WHERE j.kind='contentkit_version_release' AND r.content_id=$1 ORDER BY j.id LIMIT 1`, ib.ID).Scan(&state))
+ WHERE j.kind='contentkit_publication' AND r.content_id=$1 ORDER BY j.id LIMIT 1`, ib.ID).Scan(&state))
 	if state != rivertype.JobStateAvailable && state != rivertype.JobStateScheduled {
 		t.Fatalf("app A consumed app B's durable publication: %s", state)
 	}

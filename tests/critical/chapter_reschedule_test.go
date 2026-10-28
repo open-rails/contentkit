@@ -115,7 +115,7 @@ func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 	waitFor(t, func() bool {
 		return w.pool.QueryRow(t.Context(), `SELECT j.id,r.id::text
  FROM `+w.schema+`_river.river_job j JOIN `+w.schema+`.content_publication_requests r ON j.args->>'id'=r.id::text
- WHERE j.kind='contentkit_version_release' AND r.tenant_id=$1 AND r.version_id=$2 AND r.current
+ WHERE j.kind='contentkit_publication' AND r.tenant_id=$1 AND r.version_id=$2 AND r.current
  AND r.scheduled_at=$3 AND j.state='scheduled' ORDER BY j.id DESC LIMIT 1`, a.cfg.Scope.AppID.String(), ref.Version, future).Scan(&jobID, &requestID) == nil
 	})
 	wake := func() {
@@ -261,7 +261,7 @@ func TestProcessingWithdrawsHiddenCopyBeforeChapterDate(t *testing.T) {
 		return paths
 	}
 	waitForChapterPublication(t, func() bool { return slices.Equal(served(), []string{"reader/01.webp"}) })
-	waitFor(t, func() bool { return currentReleaseJob(t, m.app, ref.Version).Due.Equal(future) })
+	waitFor(t, func() bool { return currentPublicationJob(t, m.app, ref.Version).Due.Equal(future) })
 
 	// Different bytes with the same pixels: only page analysis finds the copy.
 	decoded, err := png.Decode(bytes.NewReader(chapterImage(t, 97)))
@@ -284,7 +284,7 @@ func TestProcessingWithdrawsHiddenCopyBeforeChapterDate(t *testing.T) {
 	waitForWithin(t, 45*time.Second, func() bool {
 		var busy int
 		must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.schema + "_river", "river_job"}.Sanitize()+`
- WHERE kind='contentkit_version_release' AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&busy))
+ WHERE kind='contentkit_publication' AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&busy))
 		return busy == 0
 	})
 	unlock, err := versionstore.LockSource(t.Context(), m.pool, tenant, ref.Version)
@@ -322,7 +322,7 @@ func TestProcessingWithdrawsHiddenCopyBeforeChapterDate(t *testing.T) {
 	// The corrected view is served while its release is still retiring, before
 	// that release parks the next request.
 	deadline = time.Now().Add(15 * time.Second)
-	for due := currentReleaseJob(t, m.app, ref.Version).Due; !due.Equal(future); due = currentReleaseJob(t, m.app, ref.Version).Due {
+	for due := currentPublicationJob(t, m.app, ref.Version).Due; !due.Equal(future); due = currentPublicationJob(t, m.app, ref.Version).Due {
 		if time.Now().After(deadline) {
 			t.Fatalf("chapter two moved from its date after the correction: %s, want %s", due, future)
 		}

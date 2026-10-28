@@ -1,12 +1,12 @@
 # Media jobs
 
-ContentKit uses two media processing job types and one release job:
+ContentKit uses two media processing job types and one publication job:
 
 | Operation | River kind | Queue |
 |---|---|---|
 | Validate/unpack/attach uploads | `contentkit_media_ingest` | `media_ingest` |
 | Generate required image/video outputs | `contentkit_media_derivatives` | `media_derivatives` |
-| Deliver and activate a complete edition | `contentkit_version_release` | catalog-scoped versions queue |
+| Deliver and activate a complete edition | `contentkit_publication` | `contentkit_publication_<catalog hash>` |
 
 A version can contain images and video. Its derivative job uses the configured
 image presets and video codecs/renditions, including soundtracks. Original audio

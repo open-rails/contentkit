@@ -183,7 +183,7 @@ func TestPostAttachmentPolicies(t *testing.T) {
 		var complete bool
 		must(t, w.pool.QueryRow(t.Context(), `SELECT coalesce(v.release_id::text,''),
  coalesce(v.released AND r.state='completed' AND EXISTS(SELECT 1 FROM `+w.schema+`_river.river_job j
- WHERE j.kind='contentkit_version_release' AND j.args->>'id'=r.id::text AND j.state='completed'),false)
+ WHERE j.kind='contentkit_publication' AND j.args->>'id'=r.id::text AND j.state='completed'),false)
  FROM `+w.schema+`.content_versions v LEFT JOIN `+w.schema+`.content_publication_requests r
  ON r.tenant_id=v.tenant_id AND r.id=v.release_id WHERE v.tenant_id=$1 AND v.id=$2`,
 			publicationTenant(a), ref.Version).Scan(&releaseID, &complete))

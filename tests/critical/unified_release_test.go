@@ -41,20 +41,20 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
 	version := item.Versions[0].ID
-	initial := currentReleaseJob(t, a, version)
+	initial := currentPublicationJob(t, a, version)
 	runPublicationWorker(t, fleet, a)
 
 	var firstPublished time.Time
 	must(t, w.pool.QueryRow(t.Context(), `SELECT published_at FROM `+w.schema+`.content_versions WHERE tenant_id=$1 AND id=$2`, publicationTenant(a), version).Scan(&firstPublished))
-	assertNext := func(completed releaseJob, at time.Time) releaseJob {
+	assertNext := func(completed publicationJob, at time.Time) publicationJob {
 		t.Helper()
-		next := currentReleaseJob(t, a, version)
+		next := currentPublicationJob(t, a, version)
 		if next.ID == completed.ID || !next.Due.Equal(at) {
 			t.Fatalf("completed request did not preserve its next deadline: previous=%+v next=%+v want=%v", completed, next, at)
 		}
 		var linked bool
 		must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM `+w.schema+`_river.river_job j
- WHERE j.kind='contentkit_version_release' AND j.queue=$1 AND j.args->>'id'=$2 AND j.scheduled_at=$3
+ WHERE j.kind='contentkit_publication' AND j.queue=$1 AND j.args->>'id'=$2 AND j.scheduled_at=$3
  AND j.state IN ('available','pending','running','retryable','scheduled'))`, versionstore.QueueFor(publicationTenant(a)), next.ID, at).Scan(&linked))
 		if !linked {
 			t.Fatal("next release has no durable exact-deadline job")
@@ -71,7 +71,7 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 	// Completing an equivalent plan must retain the reader and rearm the date.
 	_, err = a.engine.Client().PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
-	noop := currentReleaseJob(t, a, version)
+	noop := currentPublicationJob(t, a, version)
 	if noop.Due.After(w.clock.now()) {
 		t.Fatal("unchanged publication did not accept immediate reconciliation")
 	}
@@ -99,7 +99,7 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 		// Startup can reconstruct bindings, but no publication polling exists.
 		// The original exact request must survive an engine/fleet restart.
 		restart()
-		if retained := currentReleaseJob(t, a, version); retained != next {
+		if retained := currentPublicationJob(t, a, version); retained != next {
 			t.Fatalf("restart replaced admitted request: got=%+v want=%+v", retained, next)
 		}
 		w.clock.set(due.Add(time.Second))

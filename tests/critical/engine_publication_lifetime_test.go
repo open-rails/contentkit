@@ -53,7 +53,7 @@ func TestEnginePublicationLifetime(t *testing.T) {
 	}
 	// Replaying this completed exact request probes the queue after Close.
 	// If the old engine still fetched jobs, its idempotent replay would finish.
-	request := currentReleaseJob(t, a, item.Versions[0].ID)
+	request := currentPublicationJob(t, a, item.Versions[0].ID)
 	queue, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 	must(t, err)
 	job, err := queue.Insert(t.Context(), request, &river.InsertOpts{Queue: versionstore.QueueFor(publicationTenant(a))})

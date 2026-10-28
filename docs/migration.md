@@ -20,6 +20,21 @@ reject it rather than silently ignoring it or accepting a legacy alias. The Go
 member remains `kinds.Config.Kinds`. This does not rename the `kinds` field in the
 public `GET /kinds` discovery response or any HTTP query parameters.
 
+## Publication job
+
+The publication job is `contentkit_publication` in the queue
+`contentkit_publication_<catalog hash>`, formerly `contentkit_version_release`
+in `contentkit_versions_<catalog hash>`. The stock media worker inserts these
+jobs, so deploy it from the same release as the host. A database from the
+earlier migration history is recreated and re-imported; the import schedules
+every publication again, and old jobs name requests that no longer exist. If the
+host's River schema is kept, delete them after the old workers stop:
+
+```sql
+DELETE FROM <river_schema>.river_job
+WHERE kind = 'contentkit_version_release' AND finalized_at IS NULL;
+```
+
 ## Channels
 
 Channels are configured under `channels`. A content kind declares
