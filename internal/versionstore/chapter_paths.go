@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/contentref"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	versions "github.com/open-rails/contentkit/media/versions"
 )
@@ -71,7 +72,7 @@ func validateChapterPaths(ctx context.Context, q querier, table, tenant, version
 			marker = next
 		}
 		if slices.Contains(removed, marker) {
-			return fmt.Errorf("%w: choose a new chapter start before removing %q", ErrInvalid, marker)
+			return fmt.Errorf("%w: %w", ErrInvalid, &media.UploadError{Code: media.CodeInvalid, Message: fmt.Sprintf("choose a new chapter start before removing %q", marker)})
 		}
 	}
 	return rows.Err()

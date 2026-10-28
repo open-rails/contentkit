@@ -1335,6 +1335,7 @@ export interface NoticePage {
   reason?: string;
   from?: number;
   to?: number;
+  chapter?: number;
   preview_url?: string;
 }
 

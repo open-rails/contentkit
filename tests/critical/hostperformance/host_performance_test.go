@@ -224,7 +224,7 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	}
 	ak, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = roles; c.DefaultTenantID = iam.TenantID{} }), authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = f.pool }))
 	tid := iam.NewTenantID()
-	must(t, ak.CreateTenant(t.Context(), iam.Tenant{ID: tid}))
+	must(t, ak.CreateTenant(t.Context(), iam.Tenant{ID: tid, Slug: "ck-" + tid.String()}))
 	ta, e := ak.ForTenant(t.Context(), tid)
 	must(t, e)
 	aid := ck.NewAppID()

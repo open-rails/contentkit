@@ -71,6 +71,7 @@ export function PageNotices({ content, version, client, onError, className }: Pa
                       {preview ? <img src={preview} alt="" loading="lazy" decoding="async" className="aspect-[3/4] w-24 rounded-md bg-muted object-cover opacity-80" /> : <span className="aspect-[3/4] w-24 rounded-md bg-muted" />}
                       <span className="truncate">{p.source_name}</span>
                       <span className="truncate">{t(REASON[p.reason as keyof typeof REASON] ?? REASON.blank)}</span>
+                      {p.chapter ? <span className="truncate text-destructive">{t("pageNotices.chapterStart", { chapter: p.chapter })}</span> : null}
                     </li>
                   );
                 })}

@@ -17519,6 +17519,9 @@
           "to": {
             "type": "integer"
           },
+          "chapter": {
+            "type": "integer"
+          },
           "preview_url": {
             "type": "string"
           }

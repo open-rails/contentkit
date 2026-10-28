@@ -8,8 +8,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.41.0
-	github.com/open-rails/contentkit v0.131.1
+	github.com/open-rails/authkit v1.43.0
+	github.com/open-rails/contentkit v0.135.0
 	github.com/open-rails/contentkit/adapters/authkit v0.14.0
 	golang.org/x/image v0.46.0
 )
@@ -90,7 +90,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.6 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
@@ -109,8 +109,8 @@ require (
 	github.com/mr-tron/base58 v1.3.0 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
-	github.com/open-rails/contentkit/adapters/openrails v0.10.0
-	github.com/open-rails/contentkit/server v0.9.0
+	github.com/open-rails/contentkit/adapters/openrails v0.11.0
+	github.com/open-rails/contentkit/server v0.11.0
 	github.com/open-rails/helpers v1.18.0
 	github.com/open-rails/migratekit v1.11.2 // indirect
 	github.com/open-rails/openrails v0.266.0

@@ -140,7 +140,7 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 	})
 	for i := range w.tenant {
 		tid := iam.NewTenantID()
-		must(t, w.auth.CreateTenant(ctx, iam.Tenant{ID: tid}))
+		must(t, w.auth.CreateTenant(ctx, iam.Tenant{ID: tid, Slug: "ck-" + tid.String()}))
 		w.tenant[i], err = w.auth.ForTenant(ctx, tid)
 		must(t, err)
 		for n := 0; n < 2; n++ {

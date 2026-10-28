@@ -315,6 +315,7 @@ export const admin: typeof en = {
     reason_blank: "空白",
     reason_duplicate: "重複",
     reason_spread: "見開きに含まれる",
+    chapterStart: "第{chapter}章の最初のページ",
     restore: "元に戻す",
     dismiss: "閉じる",
     more: "ほか {count} 件",

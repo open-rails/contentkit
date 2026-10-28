@@ -332,19 +332,37 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 		served := map[string]bool{}
 		retained := map[string]bool{}
 		var ordering []page
+		current := m
 		if k.Publish != nil {
-			for _, f := range sourcePages(k, m) {
-				if media.PageIncluded(f) {
-					ordering = append(ordering, page{Path: f.Path, Source: f.Key(), SourceHash: k.PageID(f)})
-				}
-			}
 			groups, err := s.segments(ctx, tx, []string{t.Version})
 			if err != nil {
 				return nil, err
 			}
-			chapters, err := resolveChapterStarts(groups[t.Version], ordering)
+			// Page analysis is saved before the derivative job re-saves the
+			// selection, so plan against the selection it is about to save.
+			current = m.Clone()
+			guardSegmentedPages(k, current, legacyPageRanges(groups[t.Version]))
+			persistPageSelection(k, current)
+			for _, f := range sourcePages(k, current) {
+				if media.PageIncluded(f) {
+					ordering = append(ordering, page{Path: f.Path, Source: f.Key(), SourceHash: k.PageID(f)})
+				}
+			}
+			holds := standIns(groups[t.Version], sourcePages(k, current))
+			chapters, err := resolveChapterStarts(readableStarts(groups[t.Version], sourcePages(k, current)), ordering)
 			if err != nil {
 				return nil, err
+			}
+			dueOf := func(chapter *segment) time.Time {
+				if chapter != nil && chapter.ReleasedAt == nil && chapter.ReleaseAt != nil && chapter.ReleaseAt.After(itemDue) {
+					return *chapter.ReleaseAt
+				}
+				return itemDue
+			}
+			wake := func(due time.Time) {
+				if state == "published" && parentState == "published" && due.After(now) && (plan.NextAt == nil || due.Before(*plan.NextAt)) {
+					plan.NextAt = &due
+				}
 			}
 			for _, span := range spans(chapters, len(ordering)) {
 				var chapter *segment
@@ -356,21 +374,22 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 						}
 					}
 				}
-				due := itemDue
-				if chapter != nil && chapter.ReleasedAt == nil && chapter.ReleaseAt != nil && chapter.ReleaseAt.After(due) {
-					due = *chapter.ReleaseAt
-				}
+				due := dueOf(chapter)
 				if !live || due.After(now) {
-					if state == "published" && parentState == "published" && due.After(now) && (plan.NextAt == nil || due.Before(*plan.NextAt)) {
-						plan.NextAt = &due
-					}
+					wake(due)
 					continue
 				}
 				selected := map[string]bool{}
 				for _, p := range ordering[span.Start:span.End] {
 					selected[p.Path] = true
+					for _, held := range holds[p.Path] {
+						if at := dueOf(&held); at.After(now) {
+							delete(selected, p.Path)
+							wake(at)
+						}
+					}
 				}
-				part := m.Clone()
+				part := current.Clone()
 				part.Files = slices.DeleteFunc(part.Files, func(f media.File) bool {
 					return f.IsUpload() && !selected[f.Path] || !f.IsUpload() && !selected[f.From]
 				})
@@ -458,7 +477,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 			identity = append(identity, []string{hex.EncodeToString(digest), destination})
 			return nil
 		}
-		for _, file := range m.Files {
+		for _, file := range current.Files {
 			f := file
 			if f.Unattached || f.Gone {
 				continue

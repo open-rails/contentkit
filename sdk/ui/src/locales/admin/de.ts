@@ -315,6 +315,7 @@ export const admin: typeof en = {
     reason_blank: "leer",
     reason_duplicate: "doppelt",
     reason_spread: "in einer Doppelseite",
+    chapterStart: "Beginn von Kapitel {chapter}",
     restore: "Wiederherstellen",
     dismiss: "Ausblenden",
     more: "+{count} weitere",
