@@ -278,7 +278,7 @@ func (pl plan) ladder(h *media.HLS) ([]rung, error) {
 	if err := checkAspect(pl.width, pl.height, lo, hi); err != nil {
 		return nil, err
 	}
-	rs := rungs(h.Rungs(), pl.width, pl.height, pl.fps, h.Profile)
+	rs := rungs(h.Rungs(), pl.width, pl.height, pl.fps)
 	if len(rs) == 0 {
 		return nil, errors.New("video has no applicable rendition rung")
 	}
@@ -291,7 +291,7 @@ func (pl plan) rung(m *media.MP4) (rung, bool) {
 		return rung{}, false
 	}
 	w, h := frame(pl.width, pl.height, m.Rung)
-	return rung{n: m.Rung, w: w, h: h, level: level(w, h, pl.fps), profile: m.Profile}, true
+	return rung{n: m.Rung, w: w, h: h, level: level(w, h, pl.fps)}, true
 }
 
 // defaultAudio is the source's default audio track, if any.

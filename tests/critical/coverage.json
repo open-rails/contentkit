@@ -379,7 +379,8 @@
         "Start markers derive half-open spans from source-file order. Independently released chapters can skip an unreleased middle; copied and inserted files follow their current chapter.",
         "Valid item tokens grant all served private outputs of exactly that edition, never internal/original bytes or unreleased metadata.",
         "An editor reads an unreleased internal/ output through its exact presigned capability with identical bytes; reader item, private-file and absent tokens get 404 from the real gateway for that key.",
-        "When processing hides a page a released edition already serves, its completion re-plans the edition at once; a later chapter keeps its own date."
+        "When processing hides a page a released edition already serves, its completion re-plans the edition at once; a later chapter keeps its own date.",
+        "A first release leaves pages_added_at unset; a later release with more pages than the active release sets it."
       ],
       "cases": [
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
@@ -2737,62 +2738,6 @@
       "qualified_scope": "phase1 security-only; not full route functionality"
     },
     {
-      "id": "CK-API-005",
-      "method": "GET",
-      "path": "/v1/entities/{id}/comments",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/inherited_HEAD_credential_gate"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-005_GET_/v1/entities/{id}/comments/inherited_HEAD_credential_gate"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-006",
-      "method": "POST",
-      "path": "/v1/entities/{id}/comments",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/foreign_app_key"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-006_POST_/v1/entities/{id}/comments/foreign_app_key"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
       "id": "CK-API-007",
       "method": "GET",
       "path": "/v1/comments/latest",
@@ -3408,93 +3353,6 @@
         "TestHTTPAuthenticationMatrix/CK-API-028_GET_/v1/contents/{id}/favorite/wrong_issuer",
         "TestHTTPAuthenticationMatrix/CK-API-028_GET_/v1/contents/{id}/favorite/foreign_app_key",
         "TestHTTPAuthenticationMatrix/CK-API-028_GET_/v1/contents/{id}/favorite/inherited_HEAD_credential_gate"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-029",
-      "method": "POST",
-      "path": "/v1/entities/{id}/favorite",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/anonymous_protected_operation"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-029_POST_/v1/entities/{id}/favorite/anonymous_protected_operation"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-030",
-      "method": "DELETE",
-      "path": "/v1/entities/{id}/favorite",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/anonymous_protected_operation"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-030_DELETE_/v1/entities/{id}/favorite/anonymous_protected_operation"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-031",
-      "method": "GET",
-      "path": "/v1/entities/{id}/favorite",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/inherited_HEAD_credential_gate"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-031_GET_/v1/entities/{id}/favorite/inherited_HEAD_credential_gate"
       ],
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
@@ -4241,35 +4099,6 @@
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
         "App-scoped global ban versus sibling; positive list/get; PostgreSQL exact expiry; double lift and real subsequent post prove durable result.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
-      ]
-    },
-    {
-      "id": "CK-API-057",
-      "method": "GET",
-      "path": "/v1/entities/{id}/can-comment",
-      "selection": "included-critical functionality and security",
-      "status": "verified",
-      "cases": [
-        "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/inherited_HEAD_credential_gate",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/wrong_issuer"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-057_GET_/v1/entities/{id}/can-comment/inherited_HEAD_credential_gate"
-      ],
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Actual entity ban denies standing; lift restores standing and actual writes.",
         "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
       ]
     },
@@ -5866,68 +5695,6 @@
         "TestHTTPAuthenticationMatrix/CK-API-114_DELETE_/v1/entities/{id}/names/foreign_app_key",
         "TestHTTPAuthenticationMatrix/CK-API-114_DELETE_/v1/entities/{id}/names/anonymous_protected_operation",
         "TestHTTPAuthenticationMatrix/CK-API-114_DELETE_/v1/entities/{id}/names/member_without_named_permission"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-115",
-      "method": "POST",
-      "path": "/v1/entities/{id}/edges",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/member_without_named_permission"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-115_POST_/v1/entities/{id}/edges/member_without_named_permission"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-116",
-      "method": "DELETE",
-      "path": "/v1/entities/{id}/edges",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/member_without_named_permission"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-116_DELETE_/v1/entities/{id}/edges/member_without_named_permission"
       ],
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
@@ -8149,18 +7916,6 @@
       "evidence": [
         "App-scoped global ban versus sibling; positive list/get; PostgreSQL exact expiry; double lift and real subsequent post prove durable result.",
         "Independent semantic review frozen at f0522d2; exact cases passed in the integrated 293.407-second race aggregate."
-      ]
-    },
-    {
-      "id": "go:Client.GetEntityCanComment",
-      "name": "Client.GetEntityCanComment",
-      "status": "verified",
-      "cases": [
-        "TestCommentModerationBoundaries/CK-J03-S03_CK-J20-S02_scoped_moderator_cannot_author_or_cross_entity"
-      ],
-      "evidence": [
-        "Actual entity ban denies standing; lift restores standing and actual writes.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
       ]
     },
     {

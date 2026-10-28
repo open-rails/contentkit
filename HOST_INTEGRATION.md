@@ -420,8 +420,8 @@ ContentKit's `content_*` interaction tables. They target ContentKit's own
 content items (optionally one version, `?version=`) and entities, stored under
 the target's kind from `kinds.Config` and its id: `(tenant_id, content_kind,
 content_id, content_version_id)`. Routes are
-`/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment` and
-the same under `/v1/entities/{id}/`, then `/comments/{cid}/...`,
+`/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment`,
+`/v1/entities/{id}/like|dislike|reaction` (entities take reactions only), then `/comments/{cid}/...`,
 `/comments/latest`, `/comments/admin?content_kind=&author=`, `/polls...`,
 `/moderation/...`, `/comment-bans...` and `/global-comment-bans...`. A merged
 entity answers as its survivor; a deleted one, or content the request's site
@@ -604,10 +604,10 @@ in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
-| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies), `PATCH /comments/{cid}` | 5 per 5 minutes and 20 per hour |
+| `comment` | `POST /{contents\|channels}/{id}/comments` (top-level and replies), `PATCH /comments/{cid}` | 5 per 5 minutes and 20 per hour |
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
 | `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
-| `favorite` | `POST` and `DELETE /{contents\|entities}/{id}/favorite` | 20 per minute |
+| `favorite` | `POST` and `DELETE /{contents\|channels}/{id}/favorite` | 20 per minute |
 | `poll_vote` | `POST /polls/{id}/vote` | 30 per minute |
 
 Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
@@ -817,7 +817,7 @@ visibility rule (access, site scope, content filters, listing and language)
 over `content_facets`, and answers one card per content item with the version
 that fits the reader (`display_language` first, then position).
 
-- `GET /contents`: `kind`, `groups` (all of), `exclude_groups`, `owner_group`,
+- `GET /contents`: `kind`, `groups` (all of), `owner_group`,
   `creators` (credited user ids), `access` (`public`: what anyone opens now;
   `tier`, `group`, `ppv`, `group_ppv`: what stays locked at that level),
   `tiers` (locked behind one of them: a subscribe page's premium), `traits`,
@@ -826,7 +826,7 @@ that fits the reader (`display_language` first, then position).
   (`unseen|in_progress|completed`, signed in), `language` (only content
   serving it), `display_language`, `mode` (`lock` marks locked cards,
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
-  `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
+  `title`, `popular[:period]`, `top_rated`, `most_favorited`,
   `position` in the first of `groups`, which must be of an ordered entity
   kind, `random`), `cursor`, `limit`. A reader's content filters never hide
   an entity's content from a list requiring that entity: a hidden tag's page
@@ -852,11 +852,8 @@ that fits the reader (`display_language` first, then position).
   days, defaults to 10 and UTC, and has no item count cap or cursor. Reveal
   cards from that response in the browser; mount thumbnails only as needed.
   Future, unlisted and deleted publications are excluded.
-- Lists/search accept `published_within=7d|30d|90d|365d|all` independently of
-  the sort's score period. To rank this week's releases, pair
-  `sort=popular:7d` with `published_within=7d`; old releases with recent views
-  then stay out. The cursor pins the publication cutoff while paging. Popular
-  ordering uses the shared ContentKit quality score, not personal affinity.
+- Popular ordering uses the shared ContentKit quality score, not personal
+  affinity.
 - `GET /content-filters` (public): the configured `content_filters`, their
   entrypoint defaults and the current reader's effective settings.
   `PATCH /me/content-filters` atomically merges submitted shared entity choices,
@@ -876,7 +873,7 @@ that fits the reader (`display_language` first, then position).
 - `GET|DELETE /me/history`, `POST /signals` (explicit clicks; signed out,
   `session` names the browser), `POST /exposures`.
 - `GET /me/favorites`: what the reader favorited, contents as cards or
-  entities, most recent first.
+  channels, most recent first.
 - `GET /sitemap/contents?kind=`, `GET /sitemap/entities?kind=` (open): the
   request site's live, listed pages by id (`cursor`, up to 10000 a page),
   each with `lastmod` and its path per language it serves. Content filters
@@ -1071,22 +1068,14 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   of an item: there is no partial access to `private/`.
 - **Originals.** `KeepOriginals` keeps uploads once their private outputs
   exist (otherwise the blob is dropped and the file marked `gone`; public
-  presets' sources are always kept). `ServeOriginals` lists uploads in reads
-  for viewers with access; otherwise the read API never returns an upload's
-  path or URL.
+  presets' sources are always kept). Except a version's declared audio
+  (`Publish.Playback`), the read API never returns an upload's path or URL
+  to viewers.
 - **Host-only presets.** `Private.HostOnly` keeps an output out of generic
   reads, downloads and playlists.
 - **`private/` is all or nothing.** One token per item opens every private
-  file of it. `ServeOriginals` and `HostOnly` decide what reads list, not
-  what the token reaches: a viewer with access who learns a blob's hash can
-  fetch it.
-- **`download/`.** `Kind.Downloads` names the uploads and presets (Image,
-  MP4, Zip) whose files live in `download/`: no item token or cookie opens
-  them, reads never list them, and only the version download route's token
-  opens one, that one key, for minutes (`media.downloads.ttl`, default 5m).
-  `media.ForContent` fills it for content kinds: page uploads and imports,
-  the zip and the presets it packs, videos' HLS sources, the served MP4.
-  Workers read them with storage credentials as before.
+  file of it. `HostOnly` decides what reads list, not what the token
+  reaches: a viewer with access who learns a blob's hash can fetch it.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
@@ -1504,7 +1493,7 @@ Keyword documents enrich content with active associations and their ancestors.
 Collection associations remain active until explicitly changed; subscription
 and rental expiry belong to the entitlement provider.
 
-Stable descriptive membership fields (`groups`, `exclude_groups`) and channel
+Stable descriptive membership fields (`groups`) and channel
 access-rule fields (`group_id`),
 access values (`group`, `group_ppv`), billing key namespaces (`:group:`) and
 AuthKit permission strings and deterministic scope identities retain their

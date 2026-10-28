@@ -47,7 +47,7 @@ func TestMediaSSEUpload(t *testing.T) {
 		c.Media.Delivery.TTL = 5 * time.Minute
 		gallery := &c.Media.Config.Kinds[0]
 		gallery.Uploads[0].Max = 40
-		gallery.Uploads = append(gallery.Uploads, media.Upload{Path: "import/{name}", Types: []string{"application/zip"}, MaxBytes: 8 << 20, Max: 2, ArchiveTo: "pages/{name}"})
+		gallery.Uploads = append(gallery.Uploads, media.Upload{Path: "import/{name}", Types: []string{"application/zip"}, MaxBytes: 8 << 20, Max: 2})
 		gallery.Private = append(gallery.Private, media.Private{Name: "thumb", From: "pages/{name}", To: "thumbs/{name}.webp", Image: &media.Image{Width: 32, Height: 48}})
 		gallery.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader", "thumb"}, Import: "import/{name}"}
 	})

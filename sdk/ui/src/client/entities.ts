@@ -1,8 +1,6 @@
 import type {
   ContentEntities,
   ContentMemberships,
-  Edge,
-  EdgeInput,
   Entity,
   EntityDetail,
   EntityInput,
@@ -65,10 +63,6 @@ export class EntitiesClient {
   names(id: string, op: "set" | "add" | "remove", names: Name[]): Promise<Name[]> {
     const method = op === "set" ? "PUT" : op === "add" ? "POST" : "DELETE";
     return this.write(call(this.http, method, "/entities/{id}/names", { params: { id }, body: names }));
-  }
-  /** Adds or removes edges from the entity; resolves with every edge touching it. */
-  edges(id: string, op: "add" | "remove", edges: EdgeInput[]): Promise<Edge[]> {
-    return this.write(call(this.http, op === "add" ? "POST" : "DELETE", "/entities/{id}/edges", { params: { id }, body: edges }));
   }
   /** The entity's media folder: the media kind named after its entity kind. */
   folder(entity: { kind: string; id: string }): RefBody {

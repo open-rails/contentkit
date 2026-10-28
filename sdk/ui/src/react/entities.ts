@@ -4,8 +4,6 @@ import type { ContentKitError } from "../client/errors.js";
 import type {
   ContentMemberships,
   ContentModel,
-  Edge,
-  EdgeInput,
   Entity,
   EntityCard,
   EntityDetail,
@@ -122,7 +120,6 @@ export interface UseEntity {
   restore: () => Promise<Entity>;
   /** Replaces ("set"), adds or removes names and aliases; a new canonical name demotes the old one to an alias. */
   names: (op: "set" | "add" | "remove", names: Name[]) => Promise<Name[]>;
-  edges: (op: "add" | "remove", edges: EdgeInput[]) => Promise<Edge[]>;
   /** Merges the entity into another of its kind; the hook then shows the survivor. */
   merge: (into: string) => Promise<MergeReport>;
   /** Uploads an image (cropped by edit) and selects it as the cover or avatar. */
@@ -131,7 +128,7 @@ export interface UseEntity {
   previews: Partial<Record<EntityImageSlot, string>>;
 }
 
-/** One entity: its page for anyone; create, edit, names, edges, cover, merge, delete and restore for staff (app:entities:write). null creates. */
+/** One entity: its page for anyone; create, edit, names, cover, merge, delete and restore for staff (app:entities:write). null creates. */
 export function useEntity(id: string | null | undefined, o: { language?: string; initial?: EntityDetail; client?: ContentKitClient; management?: boolean } = {}): UseEntity {
   const { client, store, scope, language: provided } = useContentScope(o.client);
   const language = o.language ?? provided;
@@ -207,7 +204,6 @@ export function useEntity(id: string | null | undefined, o: { language?: string;
       [client, run, need],
     ),
     names: useCallback((op: "set" | "add" | "remove", names: Name[]) => run(() => client.entities.names(need(), op, names)), [client, run, need]),
-    edges: useCallback((op: "add" | "remove", edges: EdgeInput[]) => run(() => client.entities.edges(need(), op, edges)), [client, run, need]),
     merge: useCallback(
       (into: string) =>
         run(async () => {

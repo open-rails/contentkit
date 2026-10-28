@@ -100,7 +100,7 @@ func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key con
 
 func favoriteRoutes() []httpapi.Route[*favorites] {
 	var out []httpapi.Route[*favorites]
-	for _, typ := range TargetTypes {
+	for _, typ := range commentFavoriteTargets {
 		noun := targetNoun(typ)
 		out = append(out,
 			httpapi.Route[*favorites]{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/" + string(typ) + "/{id}/favorite", Resource: "favorites", Auth: httpapi.User,

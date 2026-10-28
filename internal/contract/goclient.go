@@ -294,8 +294,6 @@ func queryGoName(name string) string {
 	switch name {
 	case "groups":
 		return "Entities"
-	case "exclude_groups":
-		return "ExcludeEntities"
 	case "owner_group":
 		return "OwnerEntity"
 	default:

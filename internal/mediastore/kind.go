@@ -33,7 +33,7 @@ func (k *RegisteredKind) levels() error {
 		}
 		return nil
 	}
-	if err := k.validateDownloads(); err != nil {
+	if err := k.validateDownload(); err != nil {
 		return err
 	}
 	for _, u := range k.Uploads {
@@ -68,8 +68,8 @@ func (k *RegisteredKind) validatePublish() error {
 	}
 	for _, name := range p.Renditions {
 		r := k.private(name)
-		if r == nil || r.Image == nil || r.From != p.Pages || !strings.HasSuffix(r.To, nameVar+".webp") || slices.Contains(k.Downloads, name) {
-			return fmt.Errorf("rendition %q is no image preset from Pages to {dir}{name}.webp outside Downloads", name)
+		if r == nil || r.Image == nil || r.From != p.Pages || !strings.HasSuffix(r.To, nameVar+".webp") {
+			return fmt.Errorf("rendition %q is no image preset from Pages to {dir}{name}.webp", name)
 		}
 	}
 	if p.Previews != "" {
@@ -80,8 +80,8 @@ func (k *RegisteredKind) validatePublish() error {
 	}
 	if p.Playback != "" {
 		i := k.uploadIndex(p.Playback)
-		if i < 0 || k.patterns[i].literal != "" || slices.ContainsFunc(k.Uploads[i].Types, func(t string) bool { return !isAudioType(t) }) || slices.Contains(k.Downloads, p.Playback) {
-			return fmt.Errorf("Playback %q is no audio upload outside Downloads", p.Playback)
+		if i < 0 || k.patterns[i].literal != "" || slices.ContainsFunc(k.Uploads[i].Types, func(t string) bool { return !isAudioType(t) }) {
+			return fmt.Errorf("Playback %q is no audio upload", p.Playback)
 		}
 	}
 	if p.Import != "" {
@@ -475,9 +475,6 @@ func (k *RegisteredKind) validate() error {
 		k.patterns[i] = p
 	}
 	for _, u := range k.Uploads {
-		if err := validateArchiveDestination(k, u); err != nil {
-			return err
-		}
 		if err := validateVideo(u.Video, u.Types); err != nil {
 			return fmt.Errorf("upload %q: %w", u.Path, err)
 		}
@@ -502,7 +499,7 @@ func (k *RegisteredKind) validate() error {
 			return fmt.Errorf("private %q: %w", p.Name, err)
 		}
 	}
-	if err := k.validateDownloads(); err != nil {
+	if err := k.validateDownload(); err != nil {
 		return err
 	}
 	for i := range k.Public {
@@ -513,46 +510,26 @@ func (k *RegisteredKind) validate() error {
 	return nil
 }
 
-// validateDownloads checks Downloads and Download.
-func (k *RegisteredKind) validateDownloads() error {
-	for i, d := range k.Downloads {
-		p := k.private(d)
-		switch {
-		case slices.Contains(k.Downloads[:i], d):
-			return fmt.Errorf("downloads repeat %q", d)
-		case p != nil && p.Image == nil && p.MP4 == nil && p.Zip == "":
-			return fmt.Errorf("downloads: %q is no Image, MP4 or Zip preset", d)
-		case p == nil && k.uploadIndex(d) < 0:
-			return fmt.Errorf("downloads: %q is no upload path or private preset", d)
-		}
-	}
+// validateDownload checks Download.
+func (k *RegisteredKind) validateDownload() error {
 	if d := k.Download; d != "" {
 		p := k.private(d)
-		if i := k.uploadIndex(d); !slices.Contains(k.Downloads, d) || p == nil && (i < 0 || strings.Contains(d, nameVar)) ||
+		if i := k.uploadIndex(d); p == nil && (i < 0 || strings.Contains(d, nameVar)) ||
 			p != nil && p.MP4 == nil && (p.Zip == "" || k.Publish == nil || k.Publish.Download != d) {
-			return fmt.Errorf("download %q is no literal upload, MP4 preset or Publish's Zip of Downloads", d)
+			return fmt.Errorf("download %q is no literal upload, MP4 preset or Publish's Zip", d)
 		}
 	}
 	return nil
 }
 
-// Area is the area of the allocation of a file at path (an upload's) or of
-// preset (a derived file's): download/ for Downloads, else private/.
-func (k *RegisteredKind) Area(path, preset string) string {
+// Area is the area of an upload's allocation (preset "") or of a derived
+// file's: a version's originals/ or internal/, else private/.
+func (k *RegisteredKind) Area(preset string) string {
 	if k.Versions {
 		if preset == "" {
 			return layout.AreaOriginals
 		}
 		return layout.AreaInternal
-	}
-	d := preset
-	if preset == "" {
-		if i, _, _, _, ok := k.upload(path); ok {
-			d = k.Uploads[i].Path
-		}
-	}
-	if d != "" && slices.Contains(k.Downloads, d) {
-		return layout.AreaDownload
 	}
 	return layout.AreaPrivate
 }
@@ -630,8 +607,8 @@ func (k *RegisteredKind) validatePrivate(p media.Private, names map[string]bool)
 	case p.HLS != nil:
 		return validateHLS(p.HLS)
 	case p.MP4 != nil:
-		if p.MP4.Rung < 2 || p.MP4.Rung > 4320 || p.MP4.Rung%2 != 0 || !validProfile(p.MP4.Profile) {
-			return fmt.Errorf("invalid MP4 rung %d or profile", p.MP4.Rung)
+		if p.MP4.Rung < 2 || p.MP4.Rung > 4320 || p.MP4.Rung%2 != 0 {
+			return fmt.Errorf("invalid MP4 rung %d", p.MP4.Rung)
 		}
 
 	}
@@ -740,13 +717,8 @@ func validateHLS(h *media.HLS) error {
 	if lo, hi := h.Aspects(); h.MinAspect < 0 || h.MaxAspect < 0 || lo > 1 || hi < 1 {
 		return fmt.Errorf("invalid aspect bounds %g-%g", lo, hi)
 	}
-	if !validProfile(h.Profile) {
-		return fmt.Errorf("unknown profile %q", h.Profile)
-	}
 	return nil
 }
-
-func validProfile(p string) bool { return p == media.VideoLive || p == media.VideoAnimation }
 
 func isVideoType(t string) bool { return strings.HasPrefix(t, "video/") }
 

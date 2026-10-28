@@ -308,8 +308,8 @@ func (o *opRun) put(op media.Op) error {
 	f := media.File{Path: stem + "." + ext, Type: obj.ContentType, Size: obj.Size, Meta: op.Meta, Unattached: op.Unattached, CreateID: op.CreateID}
 	if layout.ValidStagedName(op.Blob) {
 		f.Staged = op.Blob
-	} else if area, _, _ := layout.SplitBlobRef(op.Blob); area != k.Area(op.Path, "") {
-		return uploadErr(media.CodeInvalid, "upload %q: the blob is in %s/, the path's files in %s/", op.Path, area, k.Area(op.Path, ""))
+	} else if area, _, _ := layout.SplitBlobRef(op.Blob); area != k.Area("") {
+		return uploadErr(media.CodeInvalid, "upload %q: the blob is in %s/, the path's files in %s/", op.Path, area, k.Area(""))
 	} else {
 		f.Blob = op.Blob
 	}

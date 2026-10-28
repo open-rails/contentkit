@@ -123,9 +123,8 @@ The first applicable configured bucket is the default. Public
 range uses `sort=popular&activity_from=YYYY-MM-DD&activity_until=YYYY-MM-DD` and
 combines prepared daily rows. Neither path creates custom cache entries or
 queues raw computation. Shared preset choices come from the host's content
-model. Publication age remains independent:
-`published_within` filters releases without changing the selected activity bucket.
-Staff statistics and `top_rated` retain their separate time-window semantics.
+model. Staff statistics retain their separate time-window semantics; `top_rated`
+ranks all-time ratings.
 
 The earliest supported date is the first complete UTC day with trustworthy
 catalog and population history. If instrumentation began at noon, this is the

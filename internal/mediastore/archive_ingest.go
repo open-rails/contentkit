@@ -327,7 +327,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 			if pages[i].retainedPath != "" {
 				continue
 			}
-			blob, err := m.NewBlobs(ctx, item.Ref(), k.Area(destination, ""), [][]byte{pages[i].sum})
+			blob, err := m.NewBlobs(ctx, item.Ref(), k.Area(""), [][]byte{pages[i].sum})
 			if err != nil {
 				return err
 			}

@@ -11,15 +11,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/channels"
 	discovery "github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/entities"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
-	entitystore "github.com/open-rails/contentkit/internal/entitystore"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // Favorites pages what the signed-in reader favorited, most recent first: the
 // content items their listing shows (one card per item, whichever version
-// they favorited) or the active entities.
+// they favorited) or the channels.
 func (s *Service) Favorites(ctx context.Context, o discovery.MineOptions) (discovery.InteractionPage, error) {
 	return s.mine(ctx, o, s.t.favorites, "x.value = 1", "x.created_at")
 }
@@ -48,15 +46,8 @@ func (s *Service) mine(ctx context.Context, o discovery.MineOptions, table, valu
 			return out, fmt.Errorf("%w: channel favorites have no metadata kind", ErrInvalid)
 		}
 		kinds = []string{"channel"}
-	case discovery.TargetEntities:
-		for k := range s.o.Kinds.EntityKinds {
-			kinds = append(kinds, k)
-		}
-		if _, ok := s.o.Kinds.EntityKinds[o.Kind]; o.Kind != "" && !ok {
-			return out, fmt.Errorf("%w: group kind %q is not configured", ErrInvalid, o.Kind)
-		}
 	default:
-		return out, fmt.Errorf("%w: target %q is contents, entities or channels", ErrInvalid, o.Target)
+		return out, fmt.Errorf("%w: target %q is contents or channels", ErrInvalid, o.Target)
 	}
 	if o.Kind != "" {
 		kinds = []string{o.Kind}
@@ -143,26 +134,6 @@ WHERE @d_after_id = '' OR (at, id) < (@d_after_at, @d_after_id) ORDER BY at DESC
 		}
 		return out, nil
 	}
-	if o.Target == discovery.TargetEntities {
-		gids := make([]entities.EntityID, len(ids))
-		for i, id := range ids {
-			gids[i] = entities.EntityID(id)
-		}
-		cards, err := s.o.Entities.Cards(ctx, gids, entitystore.CardOptions{Language: cmpOr(o.DisplayLanguage, o.Language)})
-		if err != nil {
-			return out, err
-		}
-		byID := make(map[string]entities.EntityCard, len(cards))
-		for _, c := range cards {
-			byID[string(c.ID)] = c
-		}
-		for _, x := range got {
-			if c, ok := byID[x.id]; ok {
-				out.Items = append(out.Items, discovery.Interaction{Entity: &c, Value: x.value, At: x.at})
-			}
-		}
-		return out, nil
-	}
 	picks, err := s.pickAmong(ctx, q, ids)
 	if err != nil {
 		return out, err
@@ -200,8 +171,8 @@ func decodeMineCursor(raw string) (time.Time, string, error) {
 }
 
 var mineParams = []httpapi.Param{
-	httpapi.Text("target", "contents (the default), entities or channels"),
-	httpapi.Text("kind", "only this content kind or group kind"),
+	httpapi.Text("target", "contents (the default) or channels"),
+	httpapi.Text("kind", "only this content kind"),
 	cardEntities,
 	httpapi.Text("cursor", "the previous page's next_cursor"),
 	httpapi.Int("limit", "page size: 24 by default, at most 100"),
@@ -210,7 +181,7 @@ var mineParams = []httpapi.Param{
 
 var mineRoutes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/favorites", Resource: "discovery", Auth: httpapi.User,
-		Doc:   "The content items (as their listing shows them) entities or channels the reader favorited, most recent first.",
+		Doc:   "The content items (as their listing shows them) or channels the reader favorited, most recent first.",
 		Query: params(mineParams, readerParams), Responses: []httpapi.Reply{httpapi.OK(discovery.InteractionPage{})}},
 		Serve: httpapi.H(handler.favorites)},
 }

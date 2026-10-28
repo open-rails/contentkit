@@ -32,8 +32,9 @@ func TestOriginalZIPCannotBypassChapterRelease(t *testing.T) {
 	a := w.apps[0]
 	storage := attachMedia(t, w, a, func(c *ck.Config) {
 		kind := &c.Media.Kinds[0]
-		kind.Uploads = append(kind.Uploads, media.Upload{Path: "archive", Types: []string{"application/zip"}, ArchiveTo: "pages/{name}", MaxBytes: 1 << 20})
-		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Download: "released-archive"}
+		kind.Uploads = append(kind.Uploads, media.Upload{Path: "import/{name}", Types: []string{"application/zip"}, MaxBytes: 1 << 20},
+			media.Upload{Path: "archive", Types: []string{"application/zip"}, MaxBytes: 1 << 20})
+		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Import: "import/{name}", Download: "released-archive"}
 		kind.Private = append(kind.Private, media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}}, media.Private{Name: "released-archive", To: "released.zip", Zip: "download-pages/", HostOnly: true})
 	})
 	admin := a.engine.Client()
@@ -49,7 +50,9 @@ func TestOriginalZIPCannotBypassChapterRelease(t *testing.T) {
 		must(t, err)
 	}
 	must(t, archive.Close())
-	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "archive.zip", Type: "application/zip", Body: bytes.NewReader(uploaded.Bytes())}})
+	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{
+		{Path: "import/original.zip", Type: "application/zip", Body: bytes.NewReader(uploaded.Bytes())},
+		{Path: "archive.zip", Type: "application/zip", Body: bytes.NewReader(uploaded.Bytes())}})
 	must(t, err)
 	prepared := awaitMediaReady(t, admin, ref)
 	var paths []string
@@ -113,7 +116,6 @@ func TestOriginalZIPCannotBypassChapterRelease(t *testing.T) {
 	for i := range model.Kinds {
 		if model.Kinds[i].Name == ref.Kind {
 			model.Kinds[i].Download = "archive"
-			model.Kinds[i].Downloads = append(model.Kinds[i].Downloads, "archive")
 		}
 	}
 	owner := a.cfg.Scope.AppID.String()

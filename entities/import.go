@@ -7,7 +7,7 @@ import (
 )
 
 // ImportEntity is an entity as the bulk import writes it: its id kept. Nil
-// Names, Text and Edges keep what is stored; given ones replace it.
+// Names and Text keep what is stored; given ones replace it.
 type ImportEntity struct {
 	ID   EntityID
 	Kind string
@@ -25,8 +25,6 @@ type ImportEntity struct {
 	AuthScope string
 	Names     []Name
 	Text      []Text
-	// Edges are the entity's edges to others (From is the entity).
-	Edges     []Edge
 	Code      string
 	CreatedAt *time.Time
 	UpdatedAt *time.Time
