@@ -16,7 +16,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
@@ -319,11 +318,6 @@ type Deps struct {
 	// kinds (adapters/authkit.Scopes over an AuthKit client); nil leaves
 	// auth_scope to staff.
 	Scopes entities.Scopes
-	// EntityReferences maintains host-owned catalog links during entity changes.
-	// Nil preserves the standalone catalog behavior.
-	EntityReferences entities.References
-	// VersionReferences clears host-owned edition links during permanent purge.
-	VersionReferences catalog.VersionReferenceOwner
 
 	// Store is the media bucket; required with Config.Media.
 	Store media.Store

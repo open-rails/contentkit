@@ -38,14 +38,20 @@ func (c *Client) EventReader() eventlog.Reader {
 		result := eventlog.Page{Events: []eventlog.Event{}, NextCursor: page.NextCursor, HasMore: page.HasMore, RetentionSeconds: page.RetentionSeconds}
 		for _, e := range page.Events {
 			data, _ := json.Marshal(struct {
-				Kind      string `json:"kind"`
-				ContentID string `json:"content_id"`
-				VersionID string `json:"version_id,omitempty"`
-			}{e.Kind, e.ContentID, e.VersionID})
+				Kind       string `json:"kind"`
+				ContentID  string `json:"content_id,omitempty"`
+				VersionID  string `json:"version_id,omitempty"`
+				EntityID   string `json:"entity_id,omitempty"`
+				MergedInto string `json:"merged_into,omitempty"`
+			}{e.Kind, e.ContentID, e.VersionID, e.EntityID, e.MergedInto})
 			if len(e.Data) != 0 {
 				data = e.Data
 			}
-			result.Events = append(result.Events, eventlog.Event{ID: e.ID, Source: e.Source, Scope: e.Scope, Type: e.Type, Version: e.Version, OccurredAt: e.OccurredAt, RecordedAt: e.RecordedAt, Subject: eventlog.Subject{Type: e.Kind, ID: e.ContentID}, Data: data})
+			subject := eventlog.Subject{Type: e.Kind, ID: e.ContentID}
+			if e.EntityID != "" {
+				subject.ID = e.EntityID
+			}
+			result.Events = append(result.Events, eventlog.Event{ID: e.ID, Source: e.Source, Scope: e.Scope, Type: e.Type, Version: e.Version, OccurredAt: e.OccurredAt, RecordedAt: e.RecordedAt, Subject: subject, Data: data})
 		}
 		return result, nil
 	})

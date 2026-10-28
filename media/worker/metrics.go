@@ -12,10 +12,12 @@ import (
 	"github.com/open-rails/contentkit/media/video"
 )
 
-// Metrics records work attempts and video encode passes. Register it once per
-// worker process; queue backlog metrics belong on an always-on host process.
+// Metrics records work attempts, video encode passes and the worker schema's
+// queue backlog. Register it once per worker process. The backlog gauges come
+// only from the worker holding River leadership of its schema.
 type Metrics struct {
 	river.MiddlewareDefaults
+	queue    *queueCollector
 	attempts *prometheus.HistogramVec
 	duration *prometheus.HistogramVec
 	encode   *prometheus.HistogramVec
@@ -27,6 +29,7 @@ type Metrics struct {
 // NewMetrics registers one worker process's metrics with registerer.
 func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 	m := &Metrics{
+		queue: &queueCollector{},
 		attempts: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "media_video_attempt", Help: "Attempt number of executed media jobs.",
 			Buckets: []float64{1, 2, 3, 4, 5},
@@ -50,7 +53,7 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 			Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500},
 		}, []string{"class"}),
 	}
-	for _, collector := range []prometheus.Collector{m.attempts, m.duration, m.encode, m.cpu, m.output, m.coreRate} {
+	for _, collector := range []prometheus.Collector{m.attempts, m.duration, m.encode, m.cpu, m.output, m.coreRate, m.queue} {
 		if err := registerer.Register(collector); err != nil {
 			return nil, err
 		}

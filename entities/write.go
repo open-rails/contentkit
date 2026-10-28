@@ -407,7 +407,7 @@ func (s *Store) CreateEntities(ctx context.Context, inputs []EntityInput) ([]Ent
 		if err := s.markDirty(ctx, q, out); err != nil {
 			return err
 		}
-		return nil
+		return s.record(ctx, q, changesOf(EventCreated, out))
 	})
 	if err != nil {
 		return nil, err
@@ -563,7 +563,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		var restored []entityRow
 		var relabeled []string
 		given := map[string][]nameRow{}
-		var unavailable []Ref
 		for i, u := range updates {
 			g := current[u.ID]
 			if g.State == StateMerged {
@@ -575,9 +574,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 			}
 			if err := s.checkPolicyBinding(g, Entity{ID: g.ID, Kind: row.Kind, Slug: row.Slug, ScopeID: EntityID(row.ScopeID), State: State(row.State), Internal: row.Internal}); err != nil {
 				return err
-			}
-			if row.State == string(StateDeleted) || !g.Internal && row.Internal {
-				unavailable = append(unavailable, Ref{Kind: g.Kind, ID: g.ID})
 			}
 			row.Ordinal = i
 			rows = append(rows, row)
@@ -618,14 +614,6 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 				}
 				texts = append(texts, t...)
 				textIDs = append(textIDs, string(g.ID))
-			}
-		}
-		if s.references != nil && len(unavailable) > 0 {
-			if err := checkReferenceTransaction(ctx, q); err != nil {
-				return err
-			}
-			if err := s.references.CheckUnavailable(ctx, q, s.tenant, unavailable); err != nil {
-				return err
 			}
 		}
 		data, err := json.Marshal(rows)
@@ -686,13 +674,15 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 		if err != nil {
 			return err
 		}
+		changes := make([]Change, len(updates))
 		for i, u := range updates {
 			out[i] = updated[u.ID]
+			changes[i] = Change{Type: transition(current[u.ID].State, out[i].State), Kind: out[i].Kind, ID: u.ID}
 		}
 		if err := s.markDirty(ctx, q, out); err != nil {
 			return err
 		}
-		return nil
+		return s.record(ctx, q, changes)
 	})
 	if err != nil {
 		return nil, err

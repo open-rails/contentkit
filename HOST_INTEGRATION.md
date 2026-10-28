@@ -2,7 +2,8 @@
 
 ContentKit runs in the host's process as an engine (or standalone, `server/`)
 for one tenant. The host configures it, mounts its routes and passes
-providers; it never reads or writes ContentKit's storage.
+providers; it never reads or writes ContentKit's storage
+([Host references](#host-references)).
 
 ## Contract
 
@@ -22,6 +23,33 @@ for _, r := range routes {
 	mux.Handle(r.Path, r.Handler)
 }
 ```
+
+## Host references
+
+ContentKit can run embedded or as a remote service with its own database on
+another machine. Hosts use only its client (`Engine.Client()` or
+`contentkit.NewClient`), its routes and its event log: no SQL on ContentKit
+tables, no shared transactions, no host callbacks inside ContentKit
+transactions and no ContentKit table or schema names in host code.
+
+A host keeps its own links to entities and editions, such as a translation's
+artists and tags or its finished edition. ContentKit neither tracks nor
+protects them: deleting or merging a linked entity and purging an edition are
+allowed, and the host repairs its links.
+
+| Need | Route (Go client) |
+| --- | --- |
+| Entities by id, in every state | `GET /v1/manage/entities?ids=` (`GetManageEntities`), at most 100: each with `state`, a merged one with its final survivor `merged_into`; unknown ids are absent. |
+| Names to entities | `GET /v1/manage/entities/match?kind=&scope=&language=&normalized=&name=` (`GetManageEntitiesMatch`), at most 100 repeated `name`s: one result per name with at most two active, public ids (two is ambiguous). Literal by default; `normalized=true` folds case, accents and whitespace. An empty `scope` matches unscoped entities. |
+| Edition status | `GET /v1/versions?ids=` (`GetVersions`), at most 100: `version_id`, `content_id`, `kind`, `languages`, `deleted`, `live`, `live_from`; a purged edition is absent. |
+| Changes | `GET /v1/events` (`EventReader`): `entity.created`, `entity.updated`, `entity.deleted`, `entity.restored` and `entity.merged` beside the content and version events ([docs/events.md](docs/events.md)). |
+
+The host reads the log with its own cursor and repairs what an event names:
+links to a merged entity move to its `merged_into`, links to a deleted entity
+or a purged edition are the host's to drop or keep. Whether an edition is
+published now is `live_from` compared with the time; no event fires when it
+passes. Queries that joined ContentKit tables read statuses in batches and
+join in the host.
 
 ## Auth
 
@@ -148,13 +176,9 @@ id (`CreateEntities` mints one when omitted).
 
 Media never adopts leftovers:
 
-- `Manifests.Create(ctx, ref)` starts an item: it writes the empty manifest,
-  and fails with `media.ErrFolderNotEmpty` (`*FolderNotEmptyError`)
-  if the folder holds any object. Call it when the host row is created. A new
-  item processes its declared public presets after attachment, independently
-  of publication visibility.
-- A folder's first manifest edit (a commit) is refused the same way over a
-  previous item's blobs.
+- A folder's first manifest edit (a commit) is refused with
+  `media.ErrFolderNotEmpty` (`*FolderNotEmptyError`) over a previous item's
+  blobs.
 - `Jobs.Purge(ctx, media.Deletion{Ref, Owner})` deletes a folder now, the
   explicit reset for deliberate reuse. Content owners commit `RetireItemsTx`; their existing purge executes it.
 - `Jobs.SweepOrphans(ctx, media.OrphanSweep{Tenant, Kind, Exists, Grace, Delete})`
@@ -262,10 +286,6 @@ mux.Handle("/", router.Middleware(spa))
   It never computes slugs; those come from the server. `useContentDetail`,
   `VersionPicker` and `useVersionMenuItems` read and write `?v=` themselves
   (through the provider's `navigate`, else the browser history).
-- **Tables.** `content_codes(tenant_id, code, content_kind, content_id, slug,
-  slugs, merged_into)` and `content_code_aliases`. Host SQL may join
-  `content_codes` on `(tenant_id, content_kind, content_id)`, for example for
-  sitemaps.
 
 ## Locked content (`kinds.Kind.Locked`)
 
@@ -1091,8 +1111,7 @@ blob name. The upload routes admit a signed-in person or application;
 `CanUpload` decides. Importers upload with `Client.IngestMedia` (presign,
 PUT or parts, commit; [docs/import.md](docs/import.md)); a file whose `From`
 names a key of the item's bucket outside ContentKit's namespaces is copied
-server-side instead, so no byte passes through the importer. Server-side
-code calls `Uploads.Ingest`, from a stream (`Body`) or the same copy (`From`).
+server-side instead, so no byte passes through the importer.
 
 | Op | Does |
 | --- | --- |
@@ -1161,17 +1180,12 @@ Every item's current publications are projected into Postgres
 them current, so server-side rendering resolves a whole page with one
 indexed query and no bucket read. `*media.Manifests` (`jobs.Manifests()`):
 
-- `PresetImages(ctx, "cover", refs...)` returns one `PublicImage` per ref, in
-  order: its first current image of the preset, else the preset's default
-  (`From` is empty), else one without renditions. Use it for cards and
-  avatars: `image.URL(width)` picks a rendition, `image.SrcSet()` gives
-  `srcset` with the encoded widths.
 - `Images(ctx, media.ImageQuery{Ref, Preset, Name}...)` answers many queries in
   one read: an item's images, one preset's, or one upload's by its `{name}`
   (an inline image's `i-{uuid}`). Store names, not URLs, and resolve them
   when rendering; post bodies store references (Interactions).
-- `PublicImages(ctx, ref)` is one item's images; `Registry.DefaultImage`
-  is a preset's default.
+  `image.URL(width)` picks a rendition, `image.SrcSet()` gives `srcset`.
+- `Registry.DefaultImage` is a preset's default.
 
 A republish keeps the current files published until their successor is
 ready, and cleanup retires a generation only after the projection names the
@@ -1488,18 +1502,6 @@ reactions and comment threads never do.
   before writers resume: `POST /v1/import` with `preference_floor` (only ever
   advancing).
 
-## Attribution export (paged evaluation data)
-
-`hub.Attribution(ctx, signal.AttributionOptions{Stage, Window, Surface, Limit, ClickLimit, After})`
-exports one deterministic sequence per (stage, window, surface): renders at
-the stage in `RenderID` order with their canonical clicks, then the
-`Unattributed` clicks. Every page holds at most `Limit` renders and
-`ClickLimit` click rows; `Next` resumes exactly after the last row (a render
-whose clicks did not fit continues with `Continued: true`). Concatenating all
-pages at any bounds yields the single-page result. Clicks are signals of type
-`signal.TypeClick` carrying `render_id`/`position` (`Signal.WithAttribution`).
-Erased subjects are excluded through the erasure ledger at read time.
-
 ## Signal-plane account deletion
 
 `AnonymizeAccount` completes its signal step only when:
@@ -1513,10 +1515,8 @@ Erased subjects are excluded through the erasure ledger at read time.
    and export evaluates the ledger inside its own statement.
 
 The subject key is dead in that tenant forever. Residue (rows that landed
-after the fence or came back with a restore) is unreadable. Cleanup is
-explicit: the host can call `hub.EnforceErasures`; ContentKit does not schedule
-an erasure sweep. After a restore, run `ReplayErasureFences` for the
-accounts deleted since the backup. A shared account exists in every tenant:
+after the fence or came back with a restore) is unreadable. After a restore,
+run `ReplayErasureFences` for the accounts deleted since the backup. A shared account exists in every tenant:
 each host erases its own tenant.
 
 ## Discovery candidates
@@ -1557,11 +1557,12 @@ rating behavior.
 - Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
 - Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
 - Wire `Options.Moderator` when comments require screening and grant `root:moderation:review` to reviewers. Polls use predefined choices.
-- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.AnonymizeAccount` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
+- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.AnonymizeAccount` into deletion and move favorite and reaction readers onto the routes.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
-- Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
+- Rename `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
+- Replace host SQL on ContentKit tables with the reads and events in [Host references](#host-references).
 
 Channel create/delete/restore calls the existing AuthKit client synchronously.
 The same channel/group identity makes caller retries safe, including a lost
