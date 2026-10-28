@@ -817,7 +817,7 @@ visibility rule (access, site scope, content filters, listing and language)
 over `content_facets`, and answers one card per content item with the version
 that fits the reader (`display_language` first, then position).
 
-- `GET /contents`: `kind`, `groups` (all of), `exclude_groups`, `owner_group`,
+- `GET /contents`: `kind`, `groups` (all of), `owner_group`,
   `creators` (credited user ids), `access` (`public`: what anyone opens now;
   `tier`, `group`, `ppv`, `group_ppv`: what stays locked at that level),
   `tiers` (locked behind one of them: a subscribe page's premium), `traits`,
@@ -826,7 +826,7 @@ that fits the reader (`display_language` first, then position).
   (`unseen|in_progress|completed`, signed in), `language` (only content
   serving it), `display_language`, `mode` (`lock` marks locked cards,
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
-  `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
+  `title`, `popular[:period]`, `top_rated`, `most_favorited`,
   `position` in the first of `groups`, which must be of an ordered entity
   kind, `random`), `cursor`, `limit`. A reader's content filters never hide
   an entity's content from a list requiring that entity: a hidden tag's page
@@ -852,11 +852,8 @@ that fits the reader (`display_language` first, then position).
   days, defaults to 10 and UTC, and has no item count cap or cursor. Reveal
   cards from that response in the browser; mount thumbnails only as needed.
   Future, unlisted and deleted publications are excluded.
-- Lists/search accept `published_within=7d|30d|90d|365d|all` independently of
-  the sort's score period. To rank this week's releases, pair
-  `sort=popular:7d` with `published_within=7d`; old releases with recent views
-  then stay out. The cursor pins the publication cutoff while paging. Popular
-  ordering uses the shared ContentKit quality score, not personal affinity.
+- Popular ordering uses the shared ContentKit quality score, not personal
+  affinity.
 - `GET /content-filters` (public): the configured `content_filters`, their
   entrypoint defaults and the current reader's effective settings.
   `PATCH /me/content-filters` atomically merges submitted shared entity choices,
@@ -1504,7 +1501,7 @@ Keyword documents enrich content with active associations and their ancestors.
 Collection associations remain active until explicitly changed; subscription
 and rental expiry belong to the entitlement provider.
 
-Stable descriptive membership fields (`groups`, `exclude_groups`) and channel
+Stable descriptive membership fields (`groups`) and channel
 access-rule fields (`group_id`),
 access values (`group`, `group_ppv`), billing key namespaces (`:group:`) and
 AuthKit permission strings and deterministic scope identities retain their

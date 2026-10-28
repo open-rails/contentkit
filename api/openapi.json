@@ -5531,19 +5531,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -5630,14 +5617,6 @@
             }
           },
           {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
             "name": "tz",
             "in": "query",
             "description": "the IANA time zone of released_on and release dates; UTC by default",
@@ -5680,7 +5659,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "newest, oldest, title, popular[:bucket], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
+            "description": "newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest",
             "schema": {
               "type": "string"
             }
@@ -10505,19 +10484,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -10593,14 +10559,6 @@
               "items": {
                 "type": "string"
               }
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
-            "schema": {
-              "type": "string"
             }
           },
           {
@@ -10879,19 +10837,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -10973,14 +10918,6 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }
@@ -11298,19 +11235,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -11392,14 +11316,6 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }
@@ -11560,19 +11476,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -11654,14 +11557,6 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }
@@ -11818,19 +11713,6 @@
             }
           },
           {
-            "name": "exclude_groups",
-            "in": "query",
-            "description": "group ids no listed version is in",
-            "style": "form",
-            "explode": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          {
             "name": "channel_id",
             "in": "query",
             "description": "primary channel ids: only content one of them owns",
@@ -11912,14 +11794,6 @@
             "name": "released_on",
             "in": "query",
             "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "published_within",
-            "in": "query",
-            "description": "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window",
             "schema": {
               "type": "string"
             }

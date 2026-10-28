@@ -2572,8 +2572,6 @@ type GetReleasesQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -2586,8 +2584,6 @@ type GetReleasesQuery struct {
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
 	Attribute []string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the signed-in reader's unseen, in_progress or completed contents
 	ViewStatus string
 	// only content with a live version in this language
@@ -2617,9 +2613,6 @@ func (q GetReleasesQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -2637,9 +2630,6 @@ func (q GetReleasesQuery) values() url.Values {
 	}
 	for _, s := range q.Attribute {
 		v.Add("attribute", s)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.ViewStatus != "" {
 		v.Set("view_status", q.ViewStatus)
@@ -2734,8 +2724,6 @@ type GetContentsQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -2750,8 +2738,6 @@ type GetContentsQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2762,7 +2748,7 @@ type GetContentsQuery struct {
 	DisplayLanguage string
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
-	// newest, oldest, title, popular[:bucket], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest
+	// newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
@@ -2791,9 +2777,6 @@ func (q GetContentsQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -2814,9 +2797,6 @@ func (q GetContentsQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -2877,8 +2857,6 @@ type GetSearchQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -2893,8 +2871,6 @@ type GetSearchQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -2937,9 +2913,6 @@ func (q GetSearchQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -2960,9 +2933,6 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -3072,8 +3042,6 @@ type GetContentSimilarQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -3088,8 +3056,6 @@ type GetContentSimilarQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -3119,9 +3085,6 @@ func (q GetContentSimilarQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -3142,9 +3105,6 @@ func (q GetContentSimilarQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -3188,8 +3148,6 @@ type GetRecommendationsQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -3204,8 +3162,6 @@ type GetRecommendationsQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -3235,9 +3191,6 @@ func (q GetRecommendationsQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -3258,9 +3211,6 @@ func (q GetRecommendationsQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)
@@ -3306,8 +3256,6 @@ type GetReleaseDatesQuery struct {
 	Ids []string
 	// group ids every listed version is in; a position sort orders by the first
 	Entities []string
-	// group ids no listed version is in
-	ExcludeEntities []string
 	// primary channel ids: only content one of them owns
 	ChannelId []string
 	// user ids: only content one of them is credited on
@@ -3322,8 +3270,6 @@ type GetReleaseDatesQuery struct {
 	Attribute []string
 	// published on this day (YYYY-MM-DD) or month (YYYY-MM)
 	ReleasedOn string
-	// only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window
-	PublishedWithin string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
 	// the signed-in reader's unseen, in_progress or completed contents
@@ -3354,9 +3300,6 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	if len(q.Entities) > 0 {
 		v.Set("groups", strings.Join(q.Entities, ","))
 	}
-	if len(q.ExcludeEntities) > 0 {
-		v.Set("exclude_groups", strings.Join(q.ExcludeEntities, ","))
-	}
 	if len(q.ChannelId) > 0 {
 		v.Set("channel_id", strings.Join(q.ChannelId, ","))
 	}
@@ -3377,9 +3320,6 @@ func (q GetReleaseDatesQuery) values() url.Values {
 	}
 	if q.ReleasedOn != "" {
 		v.Set("released_on", q.ReleasedOn)
-	}
-	if q.PublishedWithin != "" {
-		v.Set("published_within", q.PublishedWithin)
 	}
 	if q.Tz != "" {
 		v.Set("tz", q.Tz)

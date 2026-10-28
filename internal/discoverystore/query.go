@@ -23,7 +23,6 @@ import (
 	contentstore "github.com/open-rails/contentkit/internal/contentstore"
 	"github.com/open-rails/contentkit/internal/edition"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
-	"github.com/open-rails/contentkit/internal/popularity"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -41,8 +40,7 @@ type Filter struct {
 	// sort orders by the first, which must be of an ordered entity kind. A
 	// reader's content filter never hides an entity's content from a list
 	// requiring that entity.
-	Entities        []string
-	ExcludeEntities []string
+	Entities []string
 	// Traits are all required on the card's version.
 	Traits []string
 	// Attributes are "name:value" equalities on Kind's declared filterable
@@ -51,10 +49,6 @@ type Filter struct {
 	// ReleasedOn is a day (YYYY-MM-DD) or month (YYYY-MM) of publication in
 	// TimeZone.
 	ReleasedOn string
-	// PublishedWithin keeps currently live publications in this popularity
-	// period (7d, 30d, 90d, 365d or all). It does not change the ranking window.
-	PublishedWithin string
-	publishedAsOf   time.Time
 	// TimeZone is an IANA zone; UTC by default.
 	TimeZone string
 	// ViewStatus is unseen, in_progress or completed: the signed-in
@@ -87,7 +81,6 @@ type sel struct {
 	viewer  *catalogstore.Viewer
 	display string // the language of cards' text and paths
 	loc     *time.Location
-	asOf    *time.Time // publication-age window pinned by a paginated query
 }
 
 func (q *sel) and(pred string, args pgx.NamedArgs) {
@@ -158,11 +151,7 @@ func (s *Service) compileWithViewer(ctx context.Context, r discovery.Reader, f F
 	if err != nil {
 		return nil, err
 	}
-	excluded, err := uniqueIDs("exclude_groups", f.ExcludeEntities)
-	if err != nil {
-		return nil, err
-	}
-	selected := append(append(append([]string{}, required...), excluded...), owners...)
+	selected := append(append([]string{}, required...), owners...)
 	if len(selected) > 0 {
 		var internal bool
 		if err := s.o.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.entities+` WHERE tenant_id = $1 AND id = ANY($2::text[]) AND internal)`, s.o.Tenant, selected).Scan(&internal); err != nil {
@@ -214,9 +203,6 @@ func (s *Service) compileWithViewer(ctx context.Context, r discovery.Reader, f F
 	if len(required) > 0 {
 		q.and("f.entity_ids @> @d_groups::text[]", pgx.NamedArgs{"d_groups": required})
 	}
-	if len(excluded) > 0 {
-		q.and("NOT (f.entity_ids && @d_exclude::text[])", pgx.NamedArgs{"d_exclude": excluded})
-	}
 	if len(owners) > 0 {
 		owned := "f.owner_entity_id = ANY(@d_owners::text[])"
 		if f.includeReposts {
@@ -258,24 +244,6 @@ func (s *Service) compileWithViewer(ctx context.Context, r discovery.Reader, f F
 			return nil, err
 		}
 		q.and("f.published_at >= @d_from AND f.published_at < @d_to", pgx.NamedArgs{"d_from": from, "d_to": to})
-	}
-	if f.PublishedWithin != "" {
-		now := s.now()
-		if !f.publishedAsOf.IsZero() {
-			if f.publishedAsOf.After(now) {
-				return nil, fmt.Errorf("%w: cursor publication time is in the future", ErrInvalid)
-			}
-			now = f.publishedAsOf
-		}
-		q.asOf = &now
-		window, err := popularity.WindowForPeriod(f.PublishedWithin, now)
-		if err != nil {
-			return nil, fmt.Errorf("%w: published_within %q is one of %v", ErrInvalid, f.PublishedWithin, popularity.Periods)
-		}
-		q.and("f.published_at IS NOT NULL AND f.published_at <= @d_published_now AND f.live_from <= @d_published_now AND NOT f.deleted", pgx.NamedArgs{"d_published_now": now})
-		if !window.From.IsZero() {
-			q.and("f.published_at >= @d_published_from", pgx.NamedArgs{"d_published_from": window.From})
-		}
 	}
 	if f.ViewStatus != "" {
 		if err := s.viewStatus(ctx, q, r.Actor, f.Kind, f.ViewStatus); err != nil {
@@ -458,13 +426,10 @@ const titleKey = `coalesce((SELECT lower(coalesce(nullif(x.sort_key,''),nullif(x
 
 func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, error) {
 	raw = s.sortName(raw, f.Kind)
-	name, period, hasPeriod := strings.Cut(raw, ":")
+	name, _, hasPeriod := strings.Cut(raw, ":")
 	o := order{raw: raw, desc: true, cast: "float8", args: pgx.NamedArgs{}}
-	if hasPeriod && name != discovery.SortPopular && name != discovery.SortTopRated {
+	if hasPeriod && name != discovery.SortPopular {
 		return o, fmt.Errorf("%w: sort %q takes no period", ErrInvalid, raw)
-	}
-	if hasPeriod && name == discovery.SortTopRated && !slices.Contains(popularity.Periods, period) {
-		return o, fmt.Errorf("%w: sort period %q is one of %v", ErrInvalid, period, popularity.Periods)
 	}
 	switch name {
 	case discovery.SortNewest, discovery.SortOldest:
@@ -481,16 +446,8 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	case discovery.SortPopular:
 		return o, fmt.Errorf("%w: popular requires an explicit kind and configured bucket", ErrInvalid)
 	case discovery.SortTopRated:
-		if period == "" || period == "all" {
-			o.expr = contentstore.RatingSQL("coalesce(counts.likes, 0)", "coalesce(counts.dislikes, 0)")
-			o.join = s.countsJoin()
-			break
-		}
-		window, err := popularity.WindowForPeriod(period, s.now())
-		if err != nil {
-			return o, err
-		}
-		return s.standingOrder(raw, window, false), nil
+		o.expr = contentstore.RatingSQL("coalesce(counts.likes, 0)", "coalesce(counts.dislikes, 0)")
+		o.join = s.countsJoin()
 	case discovery.SortMostFavorited:
 		o.expr, o.cast, o.join = "coalesce(counts.favorites, 0)::bigint", "bigint", s.countsJoin()
 
@@ -535,28 +492,12 @@ func (s *Service) sortName(raw, kind string) string {
 	return raw
 }
 
-func publicationCursor(f Filter, raw, sort string) (Filter, error) {
-	if f.PublishedWithin == "" || raw == "" {
-		return f, nil
-	}
-	cur, err := decodeCursor(raw, sort)
-	if err != nil {
-		return f, err
-	}
-	if cur.AsOf == nil || cur.AsOf.IsZero() {
-		return f, fmt.Errorf("%w: cursor publication time is required", ErrInvalid)
-	}
-	f.publishedAsOf = *cur.AsOf
-	return f, nil
-}
-
 // cursor continues a sorted list after the item it names.
 type cursor struct {
-	Sort  string     `json:"s"`
-	Value string     `json:"v"`
-	ID    string     `json:"id"`
-	Seed  string     `json:"r,omitempty"`
-	AsOf  *time.Time `json:"at,omitempty"`
+	Sort  string `json:"s"`
+	Value string `json:"v"`
+	ID    string `json:"id"`
+	Seed  string `json:"r,omitempty"`
 }
 
 func (c cursor) encode() string {
@@ -668,7 +609,7 @@ WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit OFFSET @d_offset`, o.e
 	next := ""
 	if len(got) > limit {
 		last := got[limit-1]
-		next = cursor{Sort: o.raw, Value: last.sk, ID: last.content, Seed: cur.Seed, AsOf: q.asOf}.encode()
+		next = cursor{Sort: o.raw, Value: last.sk, ID: last.content, Seed: cur.Seed}.encode()
 		got = got[:limit]
 	}
 	ids := make([]string, len(got))
