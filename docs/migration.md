@@ -1,28 +1,16 @@
 # Database initialization
 
-Each store has a fresh-install baseline, followed by versioned upgrades:
+Each store has one baseline; later schema changes are numbered migrations after it:
 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
-| PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, offers, the outbox, import ids, codes, interactions, polls, search, preferences, erasure and media state |
-| ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
+| PostgreSQL catalog | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, the event log, import ids, codes, interactions, polls, search, preferences, erasure and media state |
+| PostgreSQL accounts | `migrations.Accounts` | `accounts/0001_baseline.up.sql` | tenant bindings, account media, avatar placement and account erasure records |
+| ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, measured engagement, exposures, popularity and erasure fences |
 
-The PostgreSQL migrator also recognizes the exact baseline shipped before
-version-owned covers (`79d1bcc`, SHA-256 `5f1614f38022…`). Its immutable bytes
-remain embedded under `migrations/compat`; installations that recorded it keep
-that truthful ledger entry and apply the numbered upgrade steps. No checksum
-is silently accepted or rewritten. Other historical baseline hashes require
-an explicitly supported conversion; do not reset a populated store to hide a
-migration error. A version id is NULL for the work itself in PostgreSQL and
-`''` in ClickHouse, whose sorting keys hold it.
-
-The cover upgrade prepares the version column in migration `0003`. Migration
-`0004` refuses to remove content-level metadata while any old cover remains.
-An installation with old covers must first run the explicit media migration:
-inventory and copy the files, verify the destination, move the metadata to its
-declared version owner, then clear the old metadata and rerun migrations.
-Preparation remains applied so the operator can resume; an interrupted copy
-never causes the schema migration to discard the original cover.
+No checksum is silently accepted or rewritten; a database recorded by an
+earlier migration history is recreated, not converted. A version id is NULL for
+the work itself in PostgreSQL and `''` in ClickHouse, whose sorting keys hold it.
 
 ## Content model configuration
 
@@ -32,37 +20,22 @@ reject it rather than silently ignoring it or accepting a legacy alias. The Go
 member remains `kinds.Config.Kinds`. This does not rename the `kinds` field in the
 public `GET /kinds` discovery response or any HTTP query parameters.
 
-## First-class channel upgrade
+## Channels
 
-Move channel configuration out of `entity_kinds` into `channels`. Replace a
-content kind's `owner_entity: {kind: channel, slug: blog}` with
-`channel: {fixed: blog}`; creator-selected kinds use `channel: {required: true}`
-or an empty optional policy. Metadata kinds no longer declare owner or
-permission-group policies. Content HTTP ownership is `channel_id`, and channels
-have their own `/channels` interface. Existing channel IDs, media locations,
-AuthKit group identities and opaque OpenRails membership keys are retained.
+Channels are configured under `channels`. A content kind declares
+`channel: {fixed: blog}`, `channel: {required: true}` or an empty optional
+policy; metadata kinds declare no owner or permission-group policies. Content
+HTTP ownership is `channel_id`, and channels have their own `/channels`
+interface.
 
-Channel create/delete/restore now calls AuthKit synchronously. A failed call
+Channel create/delete/restore calls AuthKit synchronously. A failed call
 returns an error and the caller retries against the same identity. No
-`contentkit_entity_sync` or replacement lifecycle worker remains. Before upgrading,
-finish actionable old channel lifecycle work using the prior version, stop old
-writers, and run the normal explicit migration. Preflight refuses unfinished,
-running or ambiguous legacy obligations. It retires only no-op queued rows and
-preserves terminal history and foreign-app work. Do not delete jobs to bypass
-that check. The content-purge sweep still owns physical retention cleanup.
-
-New migration `0054_channels` adds descriptive channel metadata/repost references
-and moves imported channel identifiers into their own record category. It does
-not move source media or rewrite published SQL. Reposts reference their original
-item and retain its access, versions and editorial authority.
+`contentkit_entity_sync` or lifecycle worker exists. The content-purge sweep
+owns physical retention cleanup. Imported channel identifiers have their own
+record category. Reposts reference their original item and retain its access,
+versions and editorial authority.
 
 ## Authored content belongs to versions
-
-Migration `0055_version_content` moves retained parent-localized text and source
-titles into existing version records, preserving already-authored version titles
-and summaries. Existing IDs, media and files stay in place. The parent text table
-and original-title columns are then removed. This one-time adoption preserves old
-translations; it does not create automatic copying between future editions.
 
 Write initial text through `ContentInput.versions[].text` and update an edition
 through `PATCH /contents/{id}/versions/{vid}`. The former parent-text routes and
@@ -70,10 +43,6 @@ version-fork endpoint are removed. Hidden-version post kinds still create one
 version; callers may supply that initial version explicitly. Additional versions
 start empty. The content reader's title/body/image fields are read-only projections
 from its `selected_version_id`, with no parent or sibling content fallback.
-
-Finish any accepted old body-copy/fork work using the previous version before
-cutover. No replacement copy job or obsolete-job scan is introduced. Existing
-copied files are preserved, not deleted merely because the feature was removed.
 
 ## ContentKit's own schema
 
@@ -153,6 +122,4 @@ references have no cross-store FK enforcement.
 Back up authored content, moderation and retained-publication state,
 reactions, favorites and their revision sequence, source erasure fences,
 and the ClickHouse signal plane. Search documents and group counts are
-rebuildable. The baseline contains only current signal tables, including
-`subject_content_state.last_view_at`; it does not install retired signal
-formats or convert historical rows. See [restore.md](restore.md).
+rebuildable. The baseline contains only current signal tables. See [restore.md](restore.md).
