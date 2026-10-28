@@ -591,6 +591,7 @@ export interface CopyBody {
 }
 
 export interface CopyFrom {
+  kind?: string;
   id: string;
   version?: string;
   path: string;
@@ -1067,6 +1068,7 @@ export interface Frame {
   t?: number;
   auto?: boolean;
   of?: string;
+  from?: CopyFrom;
 }
 
 export interface GuestFilterSetting {

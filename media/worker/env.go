@@ -14,38 +14,45 @@ import (
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
-// FromEnv builds a Config's database and bucket from the environment, with
-// TuningFromEnv; the host then sets Kinds. Neither is dialed.
-// Close the Pool when done.
+// FromEnv builds a Config's database and bucket (StoreFromEnv) from the
+// environment, with TuningFromEnv; the host then sets Kinds. Neither is
+// dialed. Close the Pool when done.
 //
 //	DATABASE_URL                 host Postgres (holds MEDIA_WORKER_SCHEMA)
-//	MEDIA_S3_ENDPOINT            e.g. http://rook-ceph-rgw-external.svc
-//	MEDIA_S3_BUCKET, MEDIA_S3_REGION (default us-east-1), MEDIA_S3_PATH_STYLE (default true)
-//	MEDIA_S3_ACCESS_KEY_ID, MEDIA_S3_SECRET_ACCESS_KEY   read/write key
 func FromEnv(ctx context.Context) (Config, error) {
 	var c Config
 	if err := c.TuningFromEnv(); err != nil {
 		return c, err
 	}
+	store, err := StoreFromEnv()
+	if err != nil {
+		return c, err
+	}
+	c.Store = store
+	if c.Pool, err = pgxpool.New(ctx, os.Getenv("DATABASE_URL")); err != nil {
+		return c, fmt.Errorf("DATABASE_URL: %w", err)
+	}
+	return c, nil
+}
+
+// StoreFromEnv is the media bucket, not dialed:
+//
+//	MEDIA_S3_ENDPOINT            e.g. http://rook-ceph-rgw-external.svc
+//	MEDIA_S3_BUCKET, MEDIA_S3_REGION (default us-east-1), MEDIA_S3_PATH_STYLE (default true)
+//	MEDIA_S3_ACCESS_KEY_ID, MEDIA_S3_SECRET_ACCESS_KEY   read/write key
+func StoreFromEnv() (*mediaS3.Store, error) {
 	pathStyle, err := strconv.ParseBool(envOr("MEDIA_S3_PATH_STYLE", "true"))
 	if err != nil {
-		return c, fmt.Errorf("MEDIA_S3_PATH_STYLE: %w", err)
+		return nil, fmt.Errorf("MEDIA_S3_PATH_STYLE: %w", err)
 	}
-	s3 := mediaS3.Config{
+	return mediaS3.New(mediaS3.Config{
 		Bucket:          os.Getenv("MEDIA_S3_BUCKET"),
 		Region:          os.Getenv("MEDIA_S3_REGION"),
 		Endpoint:        os.Getenv("MEDIA_S3_ENDPOINT"),
 		AccessKeyID:     os.Getenv("MEDIA_S3_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("MEDIA_S3_SECRET_ACCESS_KEY"),
 		UsePathStyle:    pathStyle,
-	}
-	if c.Store, err = mediaS3.New(s3); err != nil {
-		return c, err
-	}
-	if c.Pool, err = pgxpool.New(ctx, os.Getenv("DATABASE_URL")); err != nil {
-		return c, fmt.Errorf("DATABASE_URL: %w", err)
-	}
-	return c, nil
+	})
 }
 
 // TuningFromEnv sets the host queue and tuning fields present in the

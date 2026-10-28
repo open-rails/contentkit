@@ -6588,96 +6588,6 @@
         ]
       }
     },
-    "/v1/media/upload/frame": {
-      "get": {
-        "tags": [
-          "uploads"
-        ],
-        "summary": "A JPEG still of a video upload, for the frame picker (UploadOptions.Frames).",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "query",
-            "description": "the item's kind",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "id",
-            "in": "query",
-            "description": "the item's id",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "version",
-            "in": "query",
-            "description": "a content kind's version id; absent for any other kind's item",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "path",
-            "in": "query",
-            "description": "the video upload's path",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "t",
-            "in": "query",
-            "description": "seconds into the video",
-            "schema": {
-              "type": "number"
-            }
-          },
-          {
-            "name": "w",
-            "in": "query",
-            "description": "the still's width in pixels",
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "image/jpeg": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "upload",
-        "x-contentkit-auth": "editor",
-        "x-contentkit-permission": "root:content:write",
-        "x-contentkit-errors": [
-          "forbidden",
-          "not_found"
-        ],
-        "x-contentkit-error-sets": [
-          "module:upload",
-          "auth",
-          "request"
-        ]
-      }
-    },
     "/v1/media/presets": {
       "get": {
         "tags": [
@@ -14930,6 +14840,9 @@
       "CopyFrom": {
         "type": "object",
         "properties": {
+          "kind": {
+            "type": "string"
+          },
           "id": {
             "type": "string"
           },
@@ -14939,7 +14852,11 @@
           "path": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "id",
+          "path"
+        ]
       },
       "CopyReply": {
         "type": "object",
@@ -16464,6 +16381,9 @@
           },
           "of": {
             "type": "string"
+          },
+          "from": {
+            "$ref": "#/components/schemas/CopyFrom"
           }
         }
       },

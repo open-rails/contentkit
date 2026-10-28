@@ -24,11 +24,16 @@ type frameInput struct {
 	offset float64
 }
 
-// args open the input; -ss before -i decodes from the previous keyframe and
-// drops frames before the offset, so the first frame out is the one there.
-func (in frameInput) args(threads int) []string {
+// args put the frame showing at the offset through filter, as a paused
+// player shows it. -ss alone keeps the first frame starting at or after the
+// offset: the next one when the offset falls inside a frame. So the input
+// starts a second earlier and fps holds each frame on a 0.1 ms grid (frames
+// counted from their start rounded up) until the offset.
+func (in frameInput) args(threads int, filter string) []string {
+	from := math.Max(0, in.offset-1)
 	args := append([]string{"-v", "error", "-nostdin", "-threads", strconv.Itoa(threads)}, in.opts...)
-	return append(args, "-ss", strconv.FormatFloat(math.Max(0, in.offset), 'f', 6, 64), "-i", in.path, "-map", "0:v:0", "-frames:v", "1")
+	return append(args, "-ss", strconv.FormatFloat(from, 'f', 6, 64), "-i", in.path, "-map", "0:v:0",
+		"-vf", fmt.Sprintf("fps=10000:round=up:eof_action=pass,select='gte(t,%.6f)',%s", math.Max(0, in.offset)-from-0.00005, filter), "-frames:v", "1")
 }
 
 // snippet writes the init segment and the segments of the byte-range track
@@ -80,7 +85,7 @@ func copyRange(ctx context.Context, store media.Store, w io.Writer, key string, 
 
 // grabFrame writes the input's frame, scaled to w×h, as a PNG.
 func grabFrame(ctx context.Context, in frameInput, w, h int, out string, threads int) error {
-	args := append(in.args(threads), "-vf", fmt.Sprintf("scale=%d:%d:flags=lanczos,setsar=1", w, h), "-c:v", "png", "-f", "image2", "-y", out)
+	args := append(in.args(threads, fmt.Sprintf("scale=%d:%d:flags=lanczos,setsar=1", w, h)), "-c:v", "png", "-f", "image2", "-y", out)
 	if _, err := command(ctx, "ffmpeg", args...); err != nil {
 		return err
 	}
@@ -93,7 +98,7 @@ func grabFrame(ctx context.Context, in frameInput, w, h int, out string, threads
 // detail is the luma standard deviation (0-255) of the input's frame,
 // measured on a 64×36 thumbnail: near zero for black and flat frames.
 func detail(ctx context.Context, in frameInput, threads int) (float64, error) {
-	out, err := command(ctx, "ffmpeg", append(in.args(threads), "-vf", "scale=64:36,format=gray", "-f", "rawvideo", "pipe:1")...)
+	out, err := command(ctx, "ffmpeg", append(in.args(threads, "scale=64:36,format=gray"), "-f", "rawvideo", "pipe:1")...)
 	if err != nil {
 		return 0, err
 	}
@@ -119,18 +124,4 @@ const minDetail = 12
 // clampTime keeps t off the container's end, past the last frame's start.
 func clampTime(t, duration float64) float64 {
 	return math.Round(math.Min(math.Max(0, t), math.Max(0, duration-0.25))*1000) / 1000
-}
-
-// frameJPEG decodes the input's frame as a JPEG width px wide (0: the
-// frame's own width).
-func frameJPEG(ctx context.Context, in frameInput, width int) ([]byte, error) {
-	out, err := command(ctx, "ffmpeg", append(in.args(1), "-vf", fmt.Sprintf("scale=%d:-2:flags=bicubic,setsar=1", width),
-		"-q:v", "4", "-c:v", "mjpeg", "-f", "image2pipe", "pipe:1")...)
-	if err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("no frame at %.3fs", in.offset)
-	}
-	return out, nil
 }

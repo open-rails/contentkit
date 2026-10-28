@@ -77,7 +77,7 @@ operation. This does not change the operation's result or its authentication.
   entities and the content model at its root, `/media` (reads, HLS),
   `/media/upload`, `/codes`. A mount is a module's full base URL.
 - **`client.media`**: `upload`, `put` (upload, commit, wait), `commit`, `read`,
-  `waitFor`, `editorView`, `getFrame`, `hlsBase(ref, dir)`, `discard`, and
+  `waitFor`, `editorView`, `hlsBase(ref, dir)`, `discard`, and
   `hls` for players (`<VideoPlayer loader={contentkit.media.hls} />`): playlists
   load through the client's fetch, so they carry what its calls carry (an
   `authFetch` adds DPoP proofs); segments carry only cookies.
@@ -502,11 +502,18 @@ lock is uncounted; its public teaser carries `renderLocked`, so the unlock is
 on the first slide;
 the stage is never taller than `maxHeight` (default `80svh`).
 
-### VideoPosterPicker frames from another video
+### VideoPosterPicker frames
 
-`frames={{ item: otherVideo, path: "source" }}` browses another item's video;
-the chosen frame (cropped or whole) is uploaded to the poster path as an
-image. Which video to offer is the host's choice.
+Frames come from the encoded video, never a server decode: the strip is the
+ladder's seek sprite, and the preview and crop source are the browser's own
+decode of its largest rendition up to 1080p (hls.js, so the media gateway
+must allow the page's origin). Crops stay in the source's pixels; saving is
+a `frame` op the worker renders from the source. Until the video has an HLS
+ladder the picker says it is still processing.
+
+`frames={{ item: otherVideo, path: "source" }}` browses another item's video
+the editor may also edit; saving is a `frame` op with `from`, which the
+worker grabs once. Which video to offer is the host's choice.
 
 ### HoverPreview
 

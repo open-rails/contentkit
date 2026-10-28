@@ -204,37 +204,6 @@ func uploadInfo(f File, k *Kind) FileInfo {
 		PageID: k.PageID(f), CreateID: f.CreateID, Staged: f.Staged != "", Edit: f.Edit, Frame: f.Frame, Meta: f.Meta, Unattached: f.Unattached, Pending: pending, Failed: failed}
 }
 
-func (h uploadHandler) frame(w http.ResponseWriter, r *http.Request) {
-	actor := gate.Actor(r.Context())
-	q := r.URL.Query()
-	t, err := strconv.ParseFloat(q.Get("t"), 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorReply{Error: "t must be seconds", Code: CodeInvalid})
-		return
-	}
-	width := 0
-	if v := q.Get("w"); v != "" {
-		if width, err = strconv.Atoi(v); err != nil {
-			writeJSON(w, http.StatusBadRequest, ErrorReply{Error: "w must be pixels", Code: CodeInvalid})
-			return
-		}
-	}
-	ref, err := h.ref(RefBody{Kind: q.Get("kind"), ID: q.Get("id"), Version: q.Get("version")})
-	var jpeg []byte
-	if err == nil {
-		jpeg, err = h.u.Frame(r.Context(), actor, ref, q.Get("path"), t, width)
-	}
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Content-Length", strconv.Itoa(len(jpeg)))
-	w.Header().Set("Cache-Control", "private, max-age=300")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = w.Write(jpeg)
-}
-
 func (h uploadHandler) read(w http.ResponseWriter, r *http.Request, v any) (access.Actor, bool) {
 	actor := gate.Actor(r.Context())
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))

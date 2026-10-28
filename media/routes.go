@@ -53,12 +53,6 @@ var uploadRoutes = []httpapi.Route[uploadHandler]{
 		Errors: []string{CodeConflict, CodeForbidden, CodeImageTooSmall, CodeNotFound, CodeNotUploaded, CodeQuota, CodeRate,
 			CodeTooLarge, CodeTooManyFiles, CodeType}},
 		Serve: httpapi.H(uploadHandler.commit)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/frame", Resource: "uploads", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
-		Doc: "A JPEG still of a video upload, for the frame picker (UploadOptions.Frames).",
-		Query: append(append([]httpapi.Param(nil), refQuery...), httpapi.Text("path", "the video upload's path"),
-			httpapi.Number("t", "seconds into the video"), httpapi.Int("w", "the still's width in pixels")),
-		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "image/jpeg"})}, Errors: []string{CodeForbidden, CodeNotFound}},
-		Serve: httpapi.H(uploadHandler.frame)},
 }
 
 var mediaReadQuery = []httpapi.Param{httpapi.Text("prefix", "only files under this path prefix, e.g. low-res/"),
