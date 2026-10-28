@@ -18,13 +18,13 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// The public media read API is rate limited. Observe publication at under two
-// requests per second rather than turning a storage wait into a 429 burst.
+// Media fixtures disable the HTTP read limiter so publication can be polled
+// promptly while retaining the full worker timeout.
 func waitForChapterPublication(t *testing.T, ready func() bool) {
 	t.Helper()
 	deadline := time.NewTimer(45 * time.Second)
 	defer deadline.Stop()
-	tick := time.NewTicker(550 * time.Millisecond)
+	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		if ready() {
@@ -320,11 +320,10 @@ func TestReleaseDuringPageSelectionKeepsCopyPrivate(t *testing.T) {
 		}
 		return n > before
 	})
-	for range 4 {
+	for stable := time.Now().Add(2 * time.Second); time.Now().Before(stable); time.Sleep(50 * time.Millisecond) {
 		if paths := served(); !slices.Equal(paths, []string{"reader/01.webp"}) {
 			t.Fatalf("copy of chapter two became readable before its date: %v", paths)
 		}
-		time.Sleep(550 * time.Millisecond)
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for due := currentPublicationJob(t, m.app, ref.Version).Due; !due.Equal(future); due = currentPublicationJob(t, m.app, ref.Version).Due {

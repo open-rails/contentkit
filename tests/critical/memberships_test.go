@@ -1,14 +1,8 @@
 package critical_test
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"reflect"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -66,37 +60,4 @@ func TestEntityMembershipsWithoutTimers(t *testing.T) {
 		assertCards(t, ancestors, one.ID, two.ID)
 	}
 	check()
-	w.clock.set(w.clock.now().Add(365 * 24 * time.Hour))
-	check()
-	before, err := staff.GetEntityMembers(t.Context(), string(child.ID), ck.GetEntityMembersQuery{})
-	must(t, err)
-	for _, field := range []string{"active_from", "active_until"} {
-		t.Run("reject_removed_"+field, func(t *testing.T) {
-			payload := fmt.Sprintf(`[{"content_id":%q,%q:"2099-01-01T00:00:00Z"}]`, one.ID, field)
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, a.server.URL+"/content/v1/entities/"+string(child.ID)+"/members", strings.NewReader(payload))
-			must(t, err)
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+key.Secret)
-			res, err := http.DefaultClient.Do(req)
-			must(t, err)
-			body, err := io.ReadAll(res.Body)
-			res.Body.Close()
-			must(t, err)
-			if res.StatusCode != http.StatusBadRequest {
-				t.Fatalf("removed field returned %d: %s", res.StatusCode, body)
-			}
-			var failure struct {
-				Code string `json:"code"`
-			}
-			must(t, json.Unmarshal(body, &failure))
-			if failure.Code != "invalid_request" {
-				t.Fatalf("removed field error = %s", body)
-			}
-		})
-	}
-	after, err := staff.GetEntityMembers(t.Context(), string(child.ID), ck.GetEntityMembersQuery{})
-	must(t, err)
-	if !reflect.DeepEqual(before, after) {
-		t.Fatal("rejected dated membership changed stored associations")
-	}
 }

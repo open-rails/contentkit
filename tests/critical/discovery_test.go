@@ -157,7 +157,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 	must(t, err)
 	waitForWithin(t, 45*time.Second, func() bool {
 		wakeDuePublicationJobs(t, a)
-		time.Sleep(550 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		current, err := public.GetContent(t.Context(), locked.ID, ck.GetContentQuery{})
 		return err == nil && !current.Decision.Allowed
 	})

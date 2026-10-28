@@ -88,12 +88,15 @@ jobs:
         pnpm pack --pack-destination "$RUNNER_TEMP"
         python3 ../../.github/scripts/check-npm-package.py "$RUNNER_TEMP/openrails-contentkit-ui-0.0.0.tgz" 0.0.0
         pnpm exec vite build --config ../../tests/critical/browser/vite.config.mjs
+        RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/search-attribution.config.mjs
+        RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/media-sse-upload.config.mjs
         pnpm exec playwright install --with-deps chromium
     - name: Build and vet public modules and native commands
       run: |
         for module in . adapters/authkit adapters/openrails; do
           (cd "$module" && go build -p 1 ./... && go vet -p 1 ./...)
         done
+        CGO_ENABLED=1 go build -p 1 -o tests/critical/.bin/media-worker ./cmd/media-worker
         # Hosts, server/ and adapters/* reach only the public surface.
         go test -count=1 -p 1 ./internal/boundaries
         # The published server module has no local replacements. Qualify this

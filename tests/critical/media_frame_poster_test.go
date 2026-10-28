@@ -173,7 +173,7 @@ func awaitPoster(t *testing.T, client *ck.Client, ref media.RefBody) media.FileI
 	t.Helper()
 	var poster media.FileInfo
 	waitForWithin(t, 90*time.Second, func() bool {
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		read := editorRead(t, client, ref)
 		if read.Status != nil && read.Status.FailureCount != 0 {
 			t.Fatalf("poster processing failed: %+v", read.Status.Failures)

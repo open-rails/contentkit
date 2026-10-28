@@ -39,9 +39,9 @@
       "behavior": "Invalid tenant/app/dependency configuration refuses startup",
       "status": "verified",
       "evidence": [
-        "Zero app scope, mixed legacy/canonical tenant selection and absent PostgreSQL/authentication/authorization dependencies refuse construction without returning an engine.",
+        "Zero app scope and absent PostgreSQL/authentication/authorization dependencies refuse construction without returning an engine.",
         "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification.",
-        "Public YAML/JSON model config emits content_kinds beside entity_kinds, round-trips without changes, and refuses the retired kinds key (alone or alongside its replacement), including inside permissive host wrappers."
+        "Public YAML/JSON model config emits content_kinds beside entity_kinds, round-trips without changes, and refuses unknown config keys, including inside permissive host wrappers."
       ],
       "cases": [
         "TestHostLifecycle/CK-J01-S04_invalid_scope_refuses_before_serving",
@@ -49,11 +49,9 @@
         "TestHostLifecycle/CK-J01-S04_invalid_scope_refuses_before_serving/authorization",
         "TestHostLifecycle/CK-J01-S04_invalid_scope_refuses_before_serving/postgres",
         "TestPublicContentKindsConfig/json_round_trip",
-        "TestPublicContentKindsConfig/json_reject_old_key",
-        "TestPublicContentKindsConfig/json_reject_both_keys",
+        "TestPublicContentKindsConfig/json_reject_unknown_key",
         "TestPublicContentKindsConfig/yaml_round_trip",
-        "TestPublicContentKindsConfig/yaml_reject_old_key",
-        "TestPublicContentKindsConfig/yaml_reject_both_keys"
+        "TestPublicContentKindsConfig/yaml_reject_unknown_key"
       ]
     },
     {
@@ -80,7 +78,7 @@
       ],
       "cases": [
         "TestConfiguredStandaloneParity/CK-J01-S06_configured_media_and_ClickHouse_work_through_standalone",
-        "TestStandaloneParityAndDrain/CK-J01-S06_standalone_and_embedded_public_surfaces_agree"
+        "TestStandaloneParity/CK-J01-S06_standalone_and_embedded_public_surfaces_agree"
       ]
     },
     {
@@ -93,7 +91,7 @@
         "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
       ],
       "cases": [
-        "TestStandaloneParityAndDrain/CK-J01-S07_drain_fails_readiness_and_finishes_accepted_HTTP_read"
+        "TestStandaloneParity/CK-J01-S07_drain_fails_readiness_and_finishes_accepted_HTTP_read"
       ]
     },
     {
@@ -385,10 +383,10 @@
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
         "TestPublicationWithoutWorkers/CK-J05-S04_public_audience_release_opens_without_a_grant",
         "TestCopiedPageChapterPlacement",
-        "TestHiddenChapterStartKeepsPublishing",
-        "TestHiddenChapterStartSpreadWaits",
-        "TestHiddenPageCopiesWaitForTheirChapter",
-        "TestBlankAndLastChapterStarts",
+        "TestHiddenChapterPublication/TestHiddenChapterStartKeepsPublishing",
+        "TestHiddenChapterPublication/TestHiddenChapterStartSpreadWaits",
+        "TestHiddenChapterPublication/TestHiddenPageCopiesWaitForTheirChapter",
+        "TestHiddenChapterPublication/TestBlankAndLastChapterStarts",
         "TestIndependentChaptersSkipUnreleasedMiddle",
         "TestCompletedPublicationReader",
         "TestInternalArea/CK-J05-S04_editors_read_internal_and_readers_cannot",
@@ -772,12 +770,12 @@
       "status": "verified",
       "evidence": [
         "Actual ClickHouse INSERT constraints independently fail state, daily and canonical tables in disposable databases. Source receipts, revision deduplication, stale public state/activity reads, next-interaction convergence and explicit repair errors are asserted against real persisted data.",
-        "Signal schema recovery runs through the real engine callback with an unstarted River fleet: preference catch-up proves recovery occurred, while projection repair is neither enqueued nor registered. Focused and full execution receipts remain separate qualification gates."
+        "Signal schema recovery runs through the real engine callback with an unstarted River fleet: preference catch-up proves recovery occurred. Focused and full execution receipts remain separate qualification gates."
       ],
       "cases": [
         "TestEngagementSummaryFailuresAreBestEffort",
         "TestEngagementCanonicalFailuresRemainErrors",
-        "TestSignalRecoveryDoesNotScheduleProjectionRepair"
+        "TestSignalRecoverySchedulesPreferences"
       ]
     },
     {
@@ -940,7 +938,7 @@
         "A real versioned upload prepares its reader output and both cover renditions in internal/ and its originals in originals/; release copies the outputs to served public/ or private/ keys readable through the gateway and retires the internal/ source."
       ],
       "cases": [
-        "TestRealMediaIngest/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
+        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
         "TestShippedBrowserClient/CK-J09-S01",
         "TestInternalArea/CK-J09-S01_versioned_derivatives_are_prepared_in_internal",
         "TestInternalArea/CK-J09-S01_release_copies_internal_outputs_to_served_areas"
@@ -1180,8 +1178,7 @@
         "TestMediaFailureRecovery/CK-J11-S06/database-settlement-abort",
         "TestMediaFailureRecovery/CK-J11-S06/resource-failure-is-visible-and-regeneration-recovers",
         "TestMediaFailureRecovery/CK-J11-S06/storage-refusal",
-        "TestMediaWorkerRecovery/exhausted-image-job-records-failure-and-cancels",
-        "TestMediaVideoFailureRecovery/video",
+                "TestMediaVideoFailureRecovery/video",
         "TestMediaVideoFailureRecovery/mp4",
         "TestMediaVideoFailureRecovery/subtitle",
         "TestMediaVideoFailureRecovery/poster",
@@ -1411,7 +1408,7 @@
       "evidence": [
         "Real scope provisioning binds the exact tenant/app. A sibling-app entity edit404s and leaves both owner and description unchanged.",
         "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases.",
-        "Channel253 supersedes the historical queued entity lifecycle: the same scenario IDs now cover synchronous real-provider effects, lost-response errors, idempotent caller retries and zero lifecycle jobs."
+        "Channel253 supersedes the historical queued entity lifecycle: the same scenario IDs now cover synchronous real-provider effects, lost-response errors, idempotent caller retries."
       ],
       "cases": [
         "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app"
@@ -1452,7 +1449,7 @@
       "evidence": [
         "Deleting an owned entity hides its formerly published content and marks its actual app-bound AuthKit group deleted.",
         "Executed under the race detector; all recorded cases are required by the strict future qualification runner.",
-        "Channel253 supersedes the historical queued entity lifecycle: the same scenario IDs now cover synchronous real-provider effects, lost-response errors, idempotent caller retries and zero lifecycle jobs."
+        "Channel253 supersedes the historical queued entity lifecycle: the same scenario IDs now cover synchronous real-provider effects, lost-response errors, idempotent caller retries."
       ],
       "cases": [
         "TestOwnedEntityAuthority/CK-J16-S04_deletion_retires_scope_and_owned_content"
@@ -1466,7 +1463,7 @@
       "evidence": [
         "Restoration preserves owner and scope IDs, revives the real AuthKit group in its original tenant, permits the owner to author again and still denies a stranger.",
         "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases.",
-        "Channel253 supersedes the historical queued entity lifecycle: the same scenario IDs now cover synchronous real-provider effects, lost-response errors, idempotent caller retries and zero lifecycle jobs."
+        "Channel253 supersedes the historical queued entity lifecycle: the same scenario IDs now cover synchronous real-provider effects, lost-response errors, idempotent caller retries."
       ],
       "cases": [
         "TestOwnedEntityAuthority/CK-J16-S05_restore_does_not_widen_scope_or_change_owner"
@@ -1752,58 +1749,6 @@
       "cases": [
         "TestAccountAnonymizationRecoveryAcrossStores/CK-J24-S06_terminal_fence_refuses_late_avatar_and_notification",
         "TestAccountAttributionAndAnonymization/CK-J24-S06_late_write_cannot_reattach_anonymized_account"
-      ]
-    },
-    {
-      "id": "CK-J25-S01",
-      "journey": "CK-J25",
-      "behavior": "Same origin plus recipient yields one receipt",
-      "status": "verified",
-      "evidence": [
-        "Repeating the same origin/recipient preserves one receipt. The same origin sent to a different real recipient produces a distinct receipt, each visible only in its own inbox.",
-        "Root-reviewed oracle strengthening passed under the race detector in resume-reviewed8; failures in that package were confined to separate newly added fixture/oracle cases."
-      ],
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S01_origin_and_recipient_deduplicate"
-      ]
-    },
-    {
-      "id": "CK-J25-S02",
-      "journey": "CK-J25",
-      "behavior": "Another account cannot read or mutate a private receipt",
-      "status": "verified",
-      "evidence": [
-        "The real AuthKit item route first returns the owner receipt; a stranger cannot list, get, mark read or dismiss it. The owner readback retains unread/unarchived state after every refusal. Native ErrorEnvelope decoding preserves status and code.",
-        "Updated for the AuthKit-owned inbox. Exact focused execution and final integrated CI are required; earlier ContentKit-route receipts do not qualify this adapter."
-      ],
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S02_other_user_cannot_read_or_mutate_receipt"
-      ]
-    },
-    {
-      "id": "CK-J25-S03",
-      "journey": "CK-J25",
-      "behavior": "Read/unread and archive/restore change receipt state only",
-      "status": "verified",
-      "evidence": [
-        "Owner read/archive/unread/restore operations preserve unresolved source status, expose the receipt in the correct active/archive views and retain its identity.",
-        "Independently reviewed by root against the public behavioral contract; exact cases passed in the completed 8d5ae7c6 race aggregate."
-      ],
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S03_read_and_archive_do_not_resolve_source_work"
-      ]
-    },
-    {
-      "id": "CK-J25-S04",
-      "journey": "CK-J25",
-      "behavior": "Foreign or unknown recipients receive no notice; malformed mutation batches refuse atomically",
-      "status": "verified",
-      "evidence": [
-        "AuthKit 1.39 native Publisher terminally suppresses absent or foreign-tenant accounts while delivering valid recipients in the same batch. Real owner and foreign inbox reads plus exact scope/recipient storage checks prove no foreign receipt or guard is created.",
-        "A separate malformed-account-ID batch fails with notify.ErrInvalid and leaves the preceding valid recipient inbox empty. This tests atomic mutation validation independently from terminal non-delivery."
-      ],
-      "cases": [
-        "TestNotificationReceiptBoundaries/CK-J25-S04_foreign_or_unknown_recipient_is_refused"
       ]
     },
     {
@@ -2153,7 +2098,7 @@
     {
       "id": "CK-J16-S07",
       "journey": "CK-J16",
-      "behavior": "Ordinary ordered associations stay stable and removed timer fields are refused",
+      "behavior": "Ordinary ordered associations stay stable",
       "status": "verified",
       "evidence": [
         "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
@@ -2187,11 +2132,11 @@
       "cases": [
         "TestFixedSiteChannelPolicy",
         "TestFixedSiteChannelMigration",
-        "TestFixedSiteChannelStaffRevocation",
+        "TestFixedSiteChannelPolicy/TestFixedSiteChannelStaffRevocation",
         "TestFixedSiteChannelAuthorizationScope",
         "TestConfiguredOwnerProvisioning",
-        "TestConfiguredOwnerRechecksAfterProvisioning",
-        "TestConfiguredOwnerKeylessAdapter"
+        "TestConfiguredOwnerAdapters/TestConfiguredOwnerRechecksAfterProvisioning",
+        "TestConfiguredOwnerAdapters/TestConfiguredOwnerKeylessAdapter"
       ]
     },
     {
@@ -2205,7 +2150,7 @@
       ],
       "cases": [
         "TestPostContributorAuthority",
-        "TestPostContributorMediaRevocation",
+        "TestPostContributorAuthority/TestPostContributorMediaRevocation",
         "TestSiteChannelDelegatedCapabilities",
         "TestPendingChannelScopeHasNoAuthority",
         "TestChannelAuthorityUsesBatchedCurrentGrants"
@@ -2220,7 +2165,8 @@
         "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
       ],
       "cases": [
-        "TestRestrictedMediaReadIsNotEditAuthority"
+        "TestRestrictedMediaReadIsNotEditAuthority",
+        "TestMediaAdmissionBoundaries/CK-J03-S10_media_read_limit_is_per_viewer"
       ]
     },
     {
@@ -2294,7 +2240,7 @@
         "The public AnonymizeAccount API is retried with no notification storage. Anonymous favorite counts and published discussion remain; restoring pre-anonymization attribution and local fences then refuses normal startup."
       ],
       "cases": [
-        "TestOptionalInboxAnonymizationRestore"
+        "TestOptionalInboxRestoreErasure"
       ]
     },
     {
@@ -2436,18 +2382,6 @@
       ]
     },
     {
-      "id": "CK-J30-S02",
-      "journey": "CK-J30",
-      "behavior": "Obsolete classifier and projection-repair jobs do not block startup and exhaust their stored River attempt limits",
-      "status": "verified",
-      "evidence": [
-        "Actual Engine startup and migration accept old empty-argument rows. Real River execution discards both obsolete kinds after their three attempts while ordinary search work completes; foreign queues and terminal history remain unchanged."
-      ],
-      "cases": [
-        "TestObsoletePeriodicJobsDoNotBlockStartup/CK-J30-S02_unknown_jobs_fail_finitely_while_supported_work_continues"
-      ]
-    },
-    {
       "id": "CK-J02-S30",
       "journey": "CK-J02",
       "behavior": "Each edition owns independently authored text and media references",
@@ -2458,7 +2392,6 @@
       "cases": [
         "TestVersionOwnedContent/initial_and_alternative_versions_own_their_text",
         "TestVersionOwnedContent/feeds_select_text_and_summary_from_the_same_edition",
-        "TestVersionOwnedContent/parent_text_writes_are_not_an_alias",
         "TestVersionOwnedContent/hidden_initial_version_and_import_use_the_same_contract",
         "TestVersionOwnedContent/title_sort_and_cursor_use_the_displayed_edition",
         "TestVersionOwnedContent/search_and_typeahead_keep_the_matching_version"
@@ -2672,7 +2605,7 @@
       "selection": "included-critical functionality and security",
       "status": "verified",
       "cases": [
-        "TestStandaloneParityAndDrain/CK-J01-S06_standalone_and_embedded_public_surfaces_agree"
+        "TestStandaloneParity/CK-J01-S06_standalone_and_embedded_public_surfaces_agree"
       ],
       "implemented_security_cases": [],
       "evidence": [
@@ -7965,7 +7898,7 @@
       "name": "Client.GetConfig",
       "status": "verified",
       "cases": [
-        "TestStandaloneParityAndDrain/CK-J01-S06_standalone_and_embedded_public_surfaces_agree"
+        "TestStandaloneParity/CK-J01-S06_standalone_and_embedded_public_surfaces_agree"
       ],
       "evidence": [
         "Both transports agree and assert literal2200 maximum and all anonymous permissions false.",
@@ -9046,7 +8979,7 @@
       "name": "Config.MediaKinds",
       "status": "verified",
       "cases": [
-        "TestRealMediaIngest/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
+        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
         "TestConfiguredStandaloneParity/CK-J01-S06_configured_media_and_ClickHouse_work_through_standalone"
       ],
       "evidence": [
@@ -9062,8 +8995,8 @@
         "TestFixedSiteChannelMigration",
         "TestFixedSiteChannelAuthorizationScope",
         "TestConfiguredOwnerProvisioning",
-        "TestConfiguredOwnerRechecksAfterProvisioning",
-        "TestConfiguredOwnerKeylessAdapter"
+        "TestConfiguredOwnerAdapters/TestConfiguredOwnerRechecksAfterProvisioning",
+        "TestConfiguredOwnerAdapters/TestConfiguredOwnerKeylessAdapter"
       ],
       "evidence": [
         "Actual selected public binding asserted by signed child media282aa358; see its frozen receipt and source assertions."
@@ -10601,7 +10534,7 @@
       "name": "authkit.MigrationScopes",
       "status": "verified",
       "cases": [
-        "TestConfiguredOwnerKeylessAdapter"
+        "TestConfiguredOwnerAdapters/TestConfiguredOwnerKeylessAdapter"
       ],
       "evidence": [
         "Real AuthKit store/role configuration prepares a channel group through MigratePostgres without keys or a runtime constructor, preserves the editor grant on replay and rejects a retired group. Requires exact candidate execution."
@@ -10613,11 +10546,9 @@
       "status": "verified",
       "cases": [
         "TestPublicContentKindsConfig/json_round_trip",
-        "TestPublicContentKindsConfig/json_reject_old_key",
-        "TestPublicContentKindsConfig/json_reject_both_keys",
+        "TestPublicContentKindsConfig/json_reject_unknown_key",
         "TestPublicContentKindsConfig/yaml_round_trip",
-        "TestPublicContentKindsConfig/yaml_reject_old_key",
-        "TestPublicContentKindsConfig/yaml_reject_both_keys"
+        "TestPublicContentKindsConfig/yaml_reject_unknown_key"
       ],
       "evidence": [
         "Configuration serialization/strict decoding is distinct from the unchanged GET /kinds ContentModel DTO. Raw config round trips and rejected input preserve the existing model. Exact candidate execution is required."

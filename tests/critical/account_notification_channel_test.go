@@ -384,8 +384,7 @@ func TestAccountNotificationChannel(t *testing.T) {
 	})
 }
 
-func TestHiddenCommentAuthors(t *testing.T) {
-	n := newAccountNoticeWorld(t)
+func hiddenCommentAuthors(t *testing.T, n *accountNoticeWorld) {
 	a := n.a
 	owner, ownerToken := n.w.person(t, 0)
 	writer, writerToken := n.w.person(t, 0)
@@ -451,6 +450,7 @@ func TestHiddenCommentAuthors(t *testing.T) {
 			t.Fatalf("admin omitted hidden state: %+v", cm)
 		}
 	}
+	// This tenant-wide count assumes sibling subtests have created no held comments.
 	queue, err := n.manager.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: content.KindComment})
 	must(t, err)
 	if len(queue.Items) != 2 {
@@ -512,8 +512,7 @@ func TestHiddenCommentAuthors(t *testing.T) {
 	}
 }
 
-func TestHiddenCommentAuthorReactions(t *testing.T) {
-	n := newAccountNoticeWorld(t)
+func hiddenCommentAuthorReactions(t *testing.T, n *accountNoticeWorld) {
 	a := n.a
 	owner, ownerToken := n.w.person(t, 0)
 	writer, writerToken := n.w.person(t, 0)
@@ -677,6 +676,7 @@ func TestHiddenCommentAuthorReactions(t *testing.T) {
 	checkCounts("article", item.ID, 1, 0)
 	checkCounts("article", second.ID, 0, 0)
 	checkNotices()
+	// This tenant-wide count assumes siblings create no hidden anonymized reaction rows.
 	var retained int
 	must(t, n.w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{n.w.schema, "content_reactions"}.Sanitize()+` WHERE tenant_id=$1 AND anonymous_actor_id IS NOT NULL AND user_id IS NULL AND author_hidden AND value<>0`, a.cfg.Scope.AppID.String()).Scan(&retained))
 	if retained != 6 {
@@ -684,8 +684,7 @@ func TestHiddenCommentAuthorReactions(t *testing.T) {
 	}
 }
 
-func TestHiddenReactorNoticeVisibility(t *testing.T) {
-	n := newAccountNoticeWorld(t)
+func hiddenReactorNoticeVisibility(t *testing.T, n *accountNoticeWorld) {
 	a := n.a
 	owner, ownerToken := n.w.person(t, 0)
 	writer, writerToken := n.w.person(t, 0)
@@ -720,4 +719,11 @@ func TestHiddenReactorNoticeVisibility(t *testing.T) {
 	if got := n.items(t, owner.ID); len(got) != 3 {
 		t.Fatalf("restoring comments lost likes made while hidden: %+v", got)
 	}
+}
+
+func TestHiddenAuthorNotices(t *testing.T) {
+	n := newAccountNoticeWorld(t)
+	t.Run("TestHiddenCommentAuthors", func(t *testing.T) { hiddenCommentAuthors(t, n) })
+	t.Run("TestHiddenCommentAuthorReactions", func(t *testing.T) { hiddenCommentAuthorReactions(t, n) })
+	t.Run("TestHiddenReactorNoticeVisibility", func(t *testing.T) { hiddenReactorNoticeVisibility(t, n) })
 }

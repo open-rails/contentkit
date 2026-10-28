@@ -239,7 +239,7 @@ export async function runMediaContracts(group, fixture) {
         const content = await anonymous.contents.get(imageRef.id);
         const url = content.images?.[inline.name];
         if (typeof url === "string" && url !== previous) return content;
-        await new Promise((resolve) => setTimeout(resolve, 550));
+        await new Promise((resolve) => setTimeout(resolve, 50));
       } while (Date.now() < deadline);
       assert.fail("inline image did not reach the completed reader projection");
     };
@@ -314,7 +314,7 @@ export async function runMediaContracts(group, fixture) {
       const edition = await owner.contents.version(imageRef.id, imageRef.version);
       locked = await anonymous.contents.get(imageRef.id);
       if (edition.publication?.state === "completed" && !locked.decision.allowed) break;
-      await new Promise((resolve) => setTimeout(resolve, 550));
+      await new Promise((resolve) => setTimeout(resolve, 50));
     } while (Date.now() < privateDeadline);
     assert.equal(locked.decision.allowed, false);
     assert.equal(locked.body ?? "", "");

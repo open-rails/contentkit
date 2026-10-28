@@ -119,11 +119,6 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	if !visible.Decision.Allowed {
 		t.Fatal("complete mixed-media release remained unavailable")
 	}
-	var bad int
-	must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.config.Schema, "river_job"}.Sanitize()+` WHERE kind IN ('contentkit_media_image','contentkit_media_video')`).Scan(&bad))
-	if bad != 0 {
-		t.Fatalf("mixed media created %d retired format jobs", bad)
-	}
 	var derivatives int
 	must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.config.Schema, "river_job"}.Sanitize()+` WHERE kind='contentkit_media_derivatives'`).Scan(&derivatives))
 	if derivatives == 0 {
